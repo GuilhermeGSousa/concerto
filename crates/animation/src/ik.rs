@@ -270,6 +270,23 @@ mod tests {
     }
 
     #[test]
+    fn a_fully_folded_chain_unfolds_to_reach_its_target() {
+        let folded = TwoBoneChain {
+            root: Vec3::ZERO,
+            mid: Vec3::new(0.0, L1, 0.0),
+            tip: Vec3::ZERO,
+        };
+        let target = Vec3::new(0.5, 0.5, 0.2);
+
+        let solution = solve_two_bone(&folded, target, None, 0.0);
+
+        assert!(is_finite(&solution));
+        let (mid, tip) = apply(&folded, &solution);
+        assert!(tip.distance(target) < 1e-4, "tip {tip}");
+        assert!((mid.length() - L1).abs() < 1e-4, "mid {mid}");
+    }
+
+    #[test]
     fn degenerate_inputs_give_finite_rotations() {
         let straight = TwoBoneChain {
             root: Vec3::ZERO,

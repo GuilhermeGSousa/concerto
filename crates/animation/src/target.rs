@@ -129,8 +129,8 @@ mod tests {
         evaluation::AnimationGraphContext,
         graph::{AnimationGraph, made_live},
         node::{
-            AnimationClipNode, AnimationNode, ReflectAnimationNode, register_node_inputs,
-            state_machine::AnimationStateMachine,
+            AnimationClipNode, AnimationNode, IkGoal, IkTarget, ReflectAnimationNode,
+            TwoBoneIkNode, register_node_inputs, state_machine::AnimationStateMachine,
         },
         player::{AnimationHandleComponent, AnimationPlayer},
         plugin::register_animation_types,
@@ -897,5 +897,92 @@ mod tests {
         bones.animate();
 
         assert_eq!(bones.model_to_world_seen(), Some(Affine3A::IDENTITY));
+    }
+
+    #[test]
+    fn a_two_bone_ik_graph_puts_the_hand_on_a_world_target_under_the_skeletons_parent() {
+        let mut server = AssetServer::new();
+        let clips = AssetStore::<AnimationClip>::new();
+        let graphs = AssetStore::<AnimationGraph>::new();
+        let mut skeletons = AssetStore::<Skeleton>::new();
+        server.register_asset(&clips);
+        server.register_asset(&graphs);
+        server.register_asset(&skeletons);
+        let arm = || {
+            Skeleton::new(
+                vec![Mat4::IDENTITY; 3],
+                vec![None, Some(0), Some(1)],
+                vec!["upper".into(), "lower".into(), "hand".into()],
+                vec![
+                    JointPose::IDENTITY,
+                    JointPose {
+                        translation: Vec3::new(0.0, -1.0, 0.0),
+                        ..JointPose::IDENTITY
+                    },
+                    JointPose {
+                        translation: Vec3::new(0.3, -0.8, 0.0),
+                        ..JointPose::IDENTITY
+                    },
+                ],
+                vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)],
+            )
+            .unwrap()
+        };
+        let skeleton = server.add(arm());
+        skeletons.insert(skeleton.id(), arm());
+
+        let mut walks = Walks::new(clips, graphs);
+        let graph = server.add(AnimationGraph::default());
+        walks.graphs_mut().insert(
+            graph.id(),
+            made_live(AnimationGraph::from_node(TwoBoneIkNode {
+                tip: "hand".into(),
+                target: IkGoal::Param {
+                    param: name!("hand_target"),
+                },
+                ..TwoBoneIkNode::default()
+            })),
+        );
+        let space = Affine3A::from_rotation_translation(
+            Quat::from_rotation_y(0.7),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let target = space.transform_point3(Vec3::new(0.6, -1.2, 0.4));
+        let mut player = AnimationPlayer::new(3);
+        walks.initialize(&mut player, graph);
+        player.set_param(
+            name!("hand_target"),
+            IkTarget {
+                position: target,
+                rotation: None,
+            },
+        );
+
+        let mut world = walks.into_world();
+        let parent = world.spawn(GlobalTransform::new(Mat4::from(space)));
+        let bones: Vec<Entity> = (0..3).map(|_| world.spawn(Transform::IDENTITY)).collect();
+        world.insert(ChildOf::new(parent), bones[0]);
+        world.spawn((
+            player,
+            SkeletonComponent {
+                skeleton,
+                bones: bones.iter().copied().map(SceneEntityRef::Entity).collect(),
+                root: None,
+            },
+        ));
+        world.insert_resource(skeletons);
+        let mut system = animate_targets.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let model = bones.iter().fold(Mat4::IDENTITY, |model, bone| {
+            model
+                * world
+                    .get_component_for_entity::<Transform>(*bone)
+                    .unwrap()
+                    .compute_matrix()
+        });
+        let hand = space.transform_point3(model.w_axis.truncate());
+        assert!(hand.distance(target) < 1e-4, "hand {hand}, target {target}");
     }
 }
