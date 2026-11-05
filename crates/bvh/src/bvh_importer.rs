@@ -8,6 +8,7 @@ use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
@@ -154,7 +155,10 @@ fn build_skeleton(bvh: &Bvh, scale: f32, bone_ids: &[Uuid]) -> Result<Skeleton, 
     Skeleton::new(
         globals.iter().map(Mat4::inverse).collect(),
         parents,
-        bvh.joints.iter().map(|joint| joint.name.clone()).collect(),
+        bvh.joints
+            .iter()
+            .map(|joint| Name::new(&joint.name))
+            .collect(),
         rest_pose,
         bone_ids.to_vec(),
     )

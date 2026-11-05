@@ -77,9 +77,9 @@ ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
 fits the range; a range too short for a window above 3 is left unsmoothed.
 
-`JointName`, from `concerto-mesh`, is a `String` newtype that reflects as a
-leaf, with `Deref<Target = str>`, `From<&str>` and a JSON form. Stored, it is
-the bytes of its text.
+`JointName`, from `concerto-mesh`, is a `Copy` newtype over `Name` (from
+`concerto-name`) that reflects as a leaf, with `Deref<Target = str>`,
+`From<&str>` and a JSON form. Stored, it is the bytes of its text.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -454,7 +454,7 @@ graph that holds the node.
 | `ignore_range_end` | a search never returns the last this many frames of a range; at 0 the playhead can hold the last frame of a range, and a small value can loop it over the last few | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 | `play_rate` | how fast the playhead advances, as a multiple of the database `rate` | 1 |
-| `play_rate_param` | a blackboard float param that multiplies `play_rate`; empty, missing or not an `f32` leaves `play_rate` alone | empty |
+| `play_rate_param` | the `Name` of a blackboard float param that multiplies `play_rate`; `None` (unset), a missing key or a value that isn't an `f32` leaves `play_rate` alone | `None` |
 
 The node plays at `r = effective_play_rate(play_rate, play_rate_param,
 blackboard)` from `concerto_animation::node`: the product, or 0 when it is

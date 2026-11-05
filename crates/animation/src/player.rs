@@ -12,6 +12,7 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform},
 };
 use concerto_mesh::skeleton::Skeleton;
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::{Vec2, Vec3};
 
@@ -85,50 +86,50 @@ impl AnimationPlayer {
         self.graph_state.set_node_weight(node_index, weight);
     }
 
-    pub fn set_param<T: Reflect>(&mut self, key: impl Into<String>, value: T) {
+    pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
         self.blackboard.set(key, value);
     }
 
-    pub fn set_bool_param(&mut self, key: impl Into<String>, value: bool) {
+    pub fn set_bool_param(&mut self, key: Name, value: bool) {
         self.set_param(key, value);
     }
 
-    pub fn set_int_param(&mut self, key: impl Into<String>, value: u32) {
+    pub fn set_int_param(&mut self, key: Name, value: u32) {
         self.set_param(key, value);
     }
 
-    pub fn set_float_param(&mut self, key: impl Into<String>, value: f32) {
+    pub fn set_float_param(&mut self, key: Name, value: f32) {
         self.set_param(key, value);
     }
 
-    pub fn set_vec2_param(&mut self, key: impl Into<String>, value: Vec2) {
+    pub fn set_vec2_param(&mut self, key: Name, value: Vec2) {
         self.set_param(key, value);
     }
 
-    pub fn get_param<T: Reflect>(&self, key: &str) -> Option<&T> {
+    pub fn get_param<T: Reflect>(&self, key: Name) -> Option<&T> {
         self.blackboard.get::<T>(key)
     }
 
-    pub fn get_bool_param(&self, key: &str) -> Option<bool> {
+    pub fn get_bool_param(&self, key: Name) -> Option<bool> {
         self.blackboard.get_bool(key)
     }
 
-    pub fn get_int_param(&self, key: &str) -> Option<u32> {
+    pub fn get_int_param(&self, key: Name) -> Option<u32> {
         self.blackboard.get_int(key)
     }
 
-    pub fn get_float_param(&self, key: &str) -> Option<f32> {
+    pub fn get_float_param(&self, key: Name) -> Option<f32> {
         self.blackboard.get_float(key)
     }
 
-    pub fn get_vec2_param(&self, key: &str) -> Option<Vec2> {
+    pub fn get_vec2_param(&self, key: Name) -> Option<Vec2> {
         self.blackboard.get_vec2(key)
     }
 
-    pub fn current_fsm_state(&self, node_index: &AnimationNodeIndex) -> Option<&str> {
+    pub fn current_fsm_state(&self, node_index: &AnimationNodeIndex) -> Option<Name> {
         self.graph_state
             .get_state::<AnimationStateMachineState>(node_index)
-            .map(AnimationStateMachineState::current_state_name)
+            .and_then(AnimationStateMachineState::current_state_name)
     }
 
     /// Calls `f` with each live node of type `N` in the player's graph, its state and the blackboard.
@@ -279,6 +280,7 @@ impl Deref for AnimationHandleComponent {
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+    use concerto_name::name;
 
     use super::AnimationPlayer;
     use crate::{
@@ -355,15 +357,18 @@ mod tests {
     #[test]
     fn for_each_state_mut_hands_each_node_its_state_and_the_blackboard() {
         let mut fixture = fixture();
-        fixture.player.set_bool_param("flag", true);
-        fixture.player.set_float_param("speed", 3.0);
+        fixture.player.set_bool_param(name!("flag"), true);
+        fixture.player.set_float_param(name!("speed"), 3.0);
 
         let mut seen = Vec::new();
         fixture.player.for_each_state_mut::<AnimationClipNode>(
             fixture.walks.graphs(),
             |_, state, board| {
                 state.play();
-                seen.push((board.get_bool("flag"), board.get_float("speed")));
+                seen.push((
+                    board.get_bool(name!("flag")),
+                    board.get_float(name!("speed")),
+                ));
             },
         );
 

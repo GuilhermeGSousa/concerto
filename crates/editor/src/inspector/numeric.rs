@@ -278,7 +278,7 @@ fn spawn_slot(
         .add_child(field);
 }
 
-fn field_leading(theme: &UITheme) -> f32 {
+pub(super) fn field_leading(theme: &UITheme) -> f32 {
     let line = theme.line_height(theme.font_size_sm);
     ((theme.control_height - line) / 2.0).max(0.0)
 }

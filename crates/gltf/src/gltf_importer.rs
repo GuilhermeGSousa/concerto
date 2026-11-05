@@ -20,6 +20,7 @@ use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
@@ -283,7 +284,7 @@ impl Importer for GltfImporter {
                 joint_positions.entry(joint.index()).or_insert(position);
             }
             let mut parents: Vec<Option<u16>> = Vec::with_capacity(bones.len());
-            let mut names: Vec<String> = Vec::with_capacity(bones.len());
+            let mut names: Vec<Name> = Vec::with_capacity(bones.len());
             let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bones.len());
             for (position, joint) in skin.joints().enumerate() {
                 let parent_position = node_parents
@@ -316,8 +317,8 @@ impl Importer for GltfImporter {
                 names.push(
                     joint
                         .name()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| format!("joint_{}", joint.index())),
+                        .map(Name::new)
+                        .unwrap_or_else(|| Name::new(&format!("joint_{}", joint.index()))),
                 );
                 let (translation, rotation, scale) = joint.transform().decomposed();
                 rest_pose.push(JointPose {

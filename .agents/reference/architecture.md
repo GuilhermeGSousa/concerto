@@ -6,7 +6,7 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 
 | Layer | Crates | What they hold |
 |---|---|---|
-| Core | `ecs`, `tasks`, `app`, `foundation` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math |
+| Core | `ecs`, `tasks`, `app`, `foundation`, `name` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math; interned names |
 | Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj`, `bvh` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF, OBJ and BVH importers |
 | Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `motion-matching-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; extra passes; the debug drawing of motion matching, in the running game and the database preview; a renderer that draws to a terminal |
 | Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database bake; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
