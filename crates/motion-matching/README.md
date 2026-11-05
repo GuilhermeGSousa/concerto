@@ -77,9 +77,9 @@ ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
 fits the range; a range too short for a window above 3 is left unsmoothed.
 
-`JointName`, from `concerto-mesh`, is a `String` newtype that reflects as a
-leaf, with `Deref<Target = str>`, `From<&str>` and a JSON form. Stored, it is
-the bytes of its text.
+`JointName`, from `concerto-mesh`, is a `Copy` newtype over `Name` (from
+`concerto-name`) that reflects as a leaf, with `Deref<Target = str>`,
+`From<&str>` and a JSON form. Stored, it is the bytes of its text.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -453,6 +453,31 @@ graph that holds the node.
 | `ignore_surrounding` | a search returns no other frame fewer than this many frames from the playhead, though the playhead's own frame stays when nothing beats it; at the last frame of a range nothing is excluded around the playhead | 20 |
 | `ignore_range_end` | a search never returns the last this many frames of a range; at 0 the playhead can hold the last frame of a range, and a small value can loop it over the last few | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
+| `play_rate` | how fast the playhead advances, as a multiple of the database `rate` | 1 |
+| `play_rate_param` | the `Name` of a blackboard float param that multiplies `play_rate`; `None` (unset), a missing key or a value that isn't an `f32` leaves `play_rate` alone | `None` |
+
+The node plays at `r = effective_play_rate(play_rate, play_rate_param,
+blackboard)` from `concerto_animation::node`: the product, or 0 when it is
+negative, NaN or infinite. With `dt` the frame's delta, the playhead and the
+root motion advance by `dt * r`. The search timer, the forced-search timer and
+the change per second that forces a search run on `dt`, in real time, as do the
+inertializer's decay and the blended pose's velocity. A database pose velocity
+is per animation second, so it is multiplied by `r` before it is handed to
+`Inertializer::transition`, both for the frame jumped to and for the source when
+there is no previous blended pose to take the velocity from.
+
+A database frame's future trajectory samples are reached after `1 / r` of
+their authored time, so before a search the published samples are rescaled
+into animation time: each sample's position relative to the simulation
+translation, and its velocity, are divided by `r`, and its rotation is kept.
+This is exact for a constant velocity and an approximation while the path
+curves. At `r == 1` the samples are used as published. The forced-search check
+reads the published trajectory, in real time. At `r == 0` the playhead holds,
+the root delta is `RootMotion::IDENTITY`, and no search runs: a search that
+comes due, from the timer, a settled change or the range end, is dropped, the
+timer restarts and the forced-search cooldown is spent as usual, and the next
+search is the next one due while `r` is above 0. The held pose still settles
+through the inertializer.
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
 the blackboard of its `AnimationPlayer`, where only this crate reads it. A
@@ -462,7 +487,7 @@ entity. A player no link names, or a preview `App`, has no trajectory; the node
 then plays the database without searching.
 
 Each frame the graph walk reaches it, the node's `update` advances the playhead
-at the database `rate`,
+at the database `rate` times `r`,
 searches when the timer runs out, when a settled change in the trajectory asks
 for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
@@ -483,6 +508,17 @@ context; when any of them is missing the node does not step and its root motion
 is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
 left. No other system declares the `MotionDatabase` store.
 
+Clip events fire from the clip time crossed within an entry. A step whose
+playhead advances, with no search jump, fires the events of the entry's clip in
+`(clip_time(previous), clip_time(advanced)]`, each as a `FiredEvent` naming that
+clip and key at weight 1. A search jump fires nothing, whether it lands in the
+same entry or another, and so do a held frame and the first step. A mirrored
+entry fires its events as authored, with `mirrored: true`; the game decides what
+a mirrored event means, such as swapping a left footstep for a right one. The
+node's `update` clears what it fired before anything else, so a frame with a
+missing asset or a stopped node fires nothing, and its `evaluate` adds the
+events to the `AnimationFrame` after copying the state's frame into it.
+
 `MotionMatchingState` is the node's per-player state. Its fields are
 private: the step that advances it is its own method, which the node's `update`
 calls. Other crates read it
@@ -491,7 +527,9 @@ through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
 
 `MotionMatchingState::last_query()` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
-`Pose` channels from, `simulation` and `trajectory` what it was built with, and
+`Pose` channels from, `simulation` and `trajectory` what it was built with
+(`trajectory` holds the samples rescaled by the rate, as the features read
+them), and
 `best_cost` the squared distance to the frame the search found, or `None` when it
 found none: a query that holds a NaN or an infinity, or a search at a range's
 last frame when every range is no longer than `ignore_range_end`. All five come from one moment, so a
@@ -503,9 +541,9 @@ query is not drawn. A frame with no search due keeps the last one.
 The state keeps the simulation bone's velocity and angular velocity at the
 playhead, in model space. Each step turns them back by
 the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
-scales them by the frame's time into a `RootMotion` on `state.output`:
-`translation = q⁻¹ * (velocity * dt)` and `rotation =
-from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
+scales them by the frame's animation time into a `RootMotion` on `state.output`:
+`translation = q⁻¹ * (velocity * dt * r)` and `rotation =
+from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt * r))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
 the same way. The root joint is the database skeleton's first without a parent,
 and `rest` is that bone's rest on the skeleton playing it, so a database baked on

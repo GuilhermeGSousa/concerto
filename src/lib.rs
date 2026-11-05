@@ -9,6 +9,7 @@ pub use concerto_gameplay as gameplay;
 use concerto_gameplay::GameplayPlugin;
 pub use concerto_mesh as mesh;
 pub use concerto_motion_matching as motion_matching;
+pub use concerto_name as name;
 pub use concerto_physics as physics;
 pub use concerto_reflect as reflect;
 pub use concerto_render as render;

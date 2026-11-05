@@ -4,7 +4,7 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     clip::AnimationClip,
     inertialization::{Inertializer, PoseVelocity},
-    pose::{Pose, RootMotion},
+    pose::{AnimationFrame, FiredEvent, Pose, RootMotion},
 };
 use concerto_foundation::{
     math::spring_damper::{angular_velocity, from_scaled_angle_axis},
@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     channel::BodyMotion,
     database::{BakeError, MotionDatabase},
-    node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
+    node::{trajectory_key, MotionMatchingNode, MotionMatchingTrajectory},
     query::FeatureQuery,
     search::{cost_of, search},
     simulation::TrajectorySample,
@@ -39,6 +39,7 @@ pub struct MotionMatchingState {
     initialised: bool,
     failed: bool,
     delta_time: f32,
+    play_rate: f32,
     frame: usize,
     sub_frame_time: f32,
     search_timer: f32,
@@ -53,11 +54,12 @@ pub struct MotionMatchingState {
     previous_blended: Pose,
     last_delta: f32,
     inertializer: Option<Inertializer>,
-    output: Pose,
+    output: AnimationFrame,
     query: Option<FeatureQuery>,
     last_query: Option<LastQuery>,
     bone_indices: HashMap<Uuid, usize>,
     root_motion: BodyMotion,
+    fired: Vec<FiredEvent>,
 }
 
 impl MotionMatchingState {
@@ -66,6 +68,7 @@ impl MotionMatchingState {
             initialised: false,
             failed: false,
             delta_time: 0.0,
+            play_rate: 1.0,
             frame: 0,
             sub_frame_time: 0.0,
             search_timer: search_period,
@@ -80,11 +83,12 @@ impl MotionMatchingState {
             previous_blended: Pose::identity(0),
             last_delta: 0.0,
             inertializer: None,
-            output: Pose::identity(0),
+            output: AnimationFrame::identity(0),
             query: None,
             last_query: None,
             bone_indices: HashMap::new(),
             root_motion: BodyMotion::default(),
+            fired: Vec::new(),
         }
     }
 
@@ -122,8 +126,46 @@ impl MotionMatchingState {
         self.output.set_root_motion(RootMotion::IDENTITY);
     }
 
+    pub(crate) fn clear_fired(&mut self) {
+        self.fired.clear();
+    }
+
+    pub(crate) fn fired(&self) -> &[FiredEvent] {
+        &self.fired
+    }
+
+    fn fire(&mut self, sources: &Sources, from: usize, to: usize) {
+        let database = sources.database;
+        if to <= from {
+            return;
+        }
+        let Some((entry, from_time)) = database.clip_time(from) else {
+            return;
+        };
+        let Some((to_entry, to_time)) = database.clip_time(to) else {
+            return;
+        };
+        if entry != to_entry {
+            return;
+        }
+        let (Some(clip), Some(handle)) = (sources.clips.get(entry), database.clips().get(entry))
+        else {
+            return;
+        };
+        let mirrored = database.mirrored().get(entry).copied().unwrap_or(false);
+        for key in clip.events_in(from_time, to_time, false) {
+            self.fired.push(FiredEvent {
+                clip: handle.id(),
+                key: key as u32,
+                time: clip.events()[key].time,
+                weight: 1.0,
+                mirrored,
+            });
+        }
+    }
+
     /// Copies the node's pose into `output` and returns true, or returns false and leaves `output` untouched until the node is initialised.
-    pub(crate) fn write_output(&self, output: &mut Pose) -> bool {
+    pub(crate) fn write_output(&self, output: &mut AnimationFrame) -> bool {
         if !self.initialised || self.output.len() != output.len() {
             return false;
         }
@@ -149,7 +191,7 @@ impl MotionMatchingState {
         };
         let simulation = sources.database.simulation(self.frame).rotation;
         let turn_back = (simulation * joint.rotation * rest.rotation.inverse()).inverse();
-        let dt = self.delta_time;
+        let dt = self.delta_time * self.play_rate;
         RootMotion {
             translation: turn_back * (self.root_motion.velocity * dt),
             rotation: from_scaled_angle_axis(turn_back * (self.root_motion.angular_velocity * dt)),
@@ -162,7 +204,7 @@ impl MotionMatchingState {
                 continue;
             };
             if let (Some(joint), Some(source)) = (
-                self.output.get_joint_pose_mut(index),
+                self.output.joint_mut(index),
                 self.blended.joints().get(bone),
             ) {
                 *joint = source.clone();
@@ -202,10 +244,12 @@ impl MotionMatchingState {
             .ok_or_else(|| "the database has no frames".to_string())?;
         let (pose, velocity) = sample(sources, frame).map_err(|error| error.to_string())?;
 
-        self.output = Pose::from_joints(sources.player_skeleton.rest_pose.to_vec());
+        self.output = AnimationFrame::new(Pose::from_joints(
+            sources.player_skeleton.rest_pose.to_vec(),
+        ));
         self.inertializer = Some(Inertializer::new(bone_count));
-        self.blended = copy_pose(&pose);
-        self.previous_blended = copy_pose(&pose);
+        self.blended = pose.clone();
+        self.previous_blended = pose.clone();
         self.pose = pose;
         self.velocity = velocity;
         self.frame = frame;
@@ -264,12 +308,13 @@ impl MotionMatchingState {
         };
         let simulation =
             Transform::from_translation_rotation(trajectory.translation, trajectory.rotation);
+        let samples = rescaled(trajectory, self.play_rate);
         let raw = match query.raw(
             database,
             sources.skeleton,
             self.frame,
             &simulation,
-            &trajectory.samples,
+            &samples,
         ) {
             Ok(raw) => raw,
             Err(BakeError::TrajectoryTooShort { .. }) => {
@@ -295,7 +340,7 @@ impl MotionMatchingState {
             features: raw,
             frame: self.frame,
             simulation,
-            trajectory: trajectory.samples.clone(),
+            trajectory: samples,
             best_cost: found.map(|(_, cost)| cost),
         });
         let Some((best, best_cost)) = found else {
@@ -317,11 +362,13 @@ impl MotionMatchingState {
         blackboard: &AnimationBlackboard,
         sources: Sources,
     ) -> Result<(), String> {
-        if !self.initialised {
+        let started = self.initialised;
+        if !started {
             self.initialise(&sources)?;
         }
         let database = sources.database;
         let dt = self.delta_time;
+        let play_rate = self.play_rate;
         let rate = database.rate();
         let range = database
             .range_of(self.frame)
@@ -329,14 +376,15 @@ impl MotionMatchingState {
 
         self.search_timer -= dt;
         self.forced_search_timer -= dt;
-        self.sub_frame_time += dt;
+        self.sub_frame_time += dt * play_rate;
         let whole = (self.sub_frame_time * rate).floor().max(0.0) as usize;
         self.sub_frame_time -= whole as f32 / rate;
         let previous_frame = self.frame;
         self.frame = (self.frame + whole).min(range.end - 1);
+        let advanced = self.frame;
         let moved = self.frame != previous_frame;
 
-        let trajectory = blackboard.get::<MotionMatchingTrajectory>(TRAJECTORY_KEY);
+        let trajectory = blackboard.get::<MotionMatchingTrajectory>(trajectory_key());
         let forced = trajectory
             .and_then(|trajectory| trajectory.samples.first())
             .is_some_and(|first| self.forced_search(node, first, dt));
@@ -347,7 +395,7 @@ impl MotionMatchingState {
         let in_range_end = self.frame + node.ignore_range_end >= range.end;
 
         let mut better = None;
-        if timer_due || forced || in_range_end {
+        if (timer_due || forced || in_range_end) && play_rate > 0.0 {
             if let Some(trajectory) = trajectory {
                 better = self.find_better_frame(node, trajectory, &sources)?;
             }
@@ -358,10 +406,15 @@ impl MotionMatchingState {
             let source_velocity = if self.last_delta > 0.0 {
                 PoseVelocity::between(&self.previous_blended, &self.blended, self.last_delta)
             } else {
-                copy_velocity(&self.velocity)
+                self.velocity.scaled(play_rate)
             };
             if let Some(inertializer) = self.inertializer.as_mut() {
-                inertializer.transition(&self.blended, &source_velocity, &pose, &velocity);
+                inertializer.transition(
+                    &self.blended,
+                    &source_velocity,
+                    &pose,
+                    &velocity.scaled(play_rate),
+                );
             }
             self.frame = best;
             self.pose = pose;
@@ -393,6 +446,9 @@ impl MotionMatchingState {
         };
         self.output.set_root_motion(delta);
         self.scatter(&sources);
+        if started && better.is_none() {
+            self.fire(&sources, previous_frame, advanced);
+        }
         Ok(())
     }
 
@@ -400,10 +456,12 @@ impl MotionMatchingState {
         &mut self,
         node: &MotionMatchingNode,
         delta_time: f32,
+        play_rate: f32,
         blackboard: &AnimationBlackboard,
         sources: Sources,
     ) {
         self.delta_time = delta_time;
+        self.play_rate = play_rate;
         self.clear_root_motion();
         if self.failed {
             return;
@@ -423,15 +481,20 @@ pub(crate) struct Sources<'a> {
     pub clips: Vec<&'a AnimationClip>,
 }
 
-fn copy_pose(pose: &Pose) -> Pose {
-    Pose::from_joints(pose.joints().to_vec())
-}
-
-fn copy_velocity(velocity: &PoseVelocity) -> PoseVelocity {
-    PoseVelocity {
-        linear: velocity.linear.clone(),
-        angular: velocity.angular.clone(),
+fn rescaled(trajectory: &MotionMatchingTrajectory, play_rate: f32) -> Vec<TrajectorySample> {
+    if play_rate == 1.0 {
+        return trajectory.samples.clone();
     }
+    trajectory
+        .samples
+        .iter()
+        .map(|sample| TrajectorySample {
+            position: trajectory.translation
+                + (sample.position - trajectory.translation) / play_rate,
+            velocity: sample.velocity / play_rate,
+            rotation: sample.rotation,
+        })
+        .collect()
 }
 
 fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeError> {

@@ -208,7 +208,20 @@ pub(crate) fn pace_database_of(
     skeleton: &Skeleton,
     clips: &[&AnimationClip; 2],
 ) -> MotionDatabase {
-    let definition = two_clip_definition(
+    bake(
+        &pace_definition(speed, skeleton_handle, clip_handles),
+        skeleton,
+        clips,
+    )
+    .unwrap()
+}
+
+pub(crate) fn pace_definition(
+    speed: f32,
+    skeleton_handle: AssetHandle<Skeleton>,
+    clip_handles: [AssetHandle<AnimationClip>; 2],
+) -> MotionDatabaseDefinition {
+    two_clip_definition(
         vec![FeatureChannelData::live(Pace { weight: 1.0 })],
         TrajectorySettings {
             sample_dt: 0.1,
@@ -217,6 +230,5 @@ pub(crate) fn pace_database_of(
         speed,
         skeleton_handle,
         clip_handles,
-    );
-    bake(&definition, skeleton, clips).unwrap()
+    )
 }

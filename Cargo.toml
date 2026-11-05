@@ -64,6 +64,7 @@ concerto-mcp = { path = "crates/mcp", version = "0.1.0" }
 concerto-mesh = { path = "crates/mesh", version = "0.1.0" }
 concerto-motion-matching = { path = "crates/motion-matching", version = "0.1.0" }
 concerto-motion-matching-gizmos = { path = "crates/motion-matching-gizmos", version = "0.1.0" }
+concerto-name = { path = "crates/name", version = "0.1.0" }
 concerto-obj = { path = "crates/obj", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }
 concerto-render = { path = "crates/render", version = "0.1.0" }
@@ -91,6 +92,7 @@ concerto-render.workspace = true
 concerto-director.workspace = true
 concerto-mesh.workspace = true
 concerto-motion-matching.workspace = true
+concerto-name.workspace = true
 concerto-gameplay.workspace = true
 concerto-window.workspace = true
 concerto-winit.workspace = true

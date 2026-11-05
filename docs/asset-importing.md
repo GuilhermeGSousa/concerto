@@ -139,14 +139,24 @@ asset_id = "abfdaec1-d105-4c4c-b37c-138a1231e4ac"
 
 An optional `[settings]` table holds importer-specific settings. The importer
 that owns the source reads it on every import; a sidecar without one uses the
-importer's defaults, and a first import writes none. The `gltf`, `obj` and
-`image` importers read no settings. The `bvh` importer's are described under
-[BVH motion capture](#bvh-motion-capture).
+importer's defaults, and a first import writes none. The `obj` and `image`
+importers read no settings. The `gltf` importer reads only `events`, described
+under [Clip events](#clip-events), and an unknown key fails its import. The
+`bvh` importer's are described under [BVH motion capture](#bvh-motion-capture).
+
+A `bvh` source's settings:
 
 ```toml
 [settings]
 scale = 0.01
 frame_range = [10, 250]
+```
+
+A `gltf` source whose `animation/Run` clip gets two footsteps:
+
+```toml
+[settings.events.Run]
+footstep = [0.2, 0.55]
 ```
 
 Settings are edited by hand. To change them: import the source once, edit the
@@ -193,10 +203,31 @@ Settings, in the sidecar's `[settings]` table:
 |---------------|---------|---------|
 | `scale`       | `0.01`  | Multiplier applied to every offset and translation. The default turns the centimetres most BVH files use into metres. Must be finite and positive. |
 | `frame_range` | whole file | `[start, end)` frame indices to keep. Needs `start < end <= frame count` and at least two frames. Keys are timed from the first kept frame. |
+| `events`      | none    | Named events on the clip, as described under [Clip events](#clip-events). The table is `[settings.events.<name>]`, where `<name>` is the clip's sanitised name, the `<name>` of its `animation/<name>` output: `Walk#Cycle.bvh` gives `Walk_Cycle`. Times count from the first kept frame. |
 
 A `frame_range` outside the file, an empty or one-frame range, a bad `scale`,
-or an unknown key fails the import. The file's own timing is kept; there is no
-resampling setting.
+bad `events`, or an unknown key fails the import. The file's own timing is
+kept; there is no resampling setting.
+
+## Clip events
+
+The `gltf` and `bvh` importers put named events on the clips they emit, read
+from `[settings.events.<clip>]` tables:
+
+```toml
+[settings.events.walk]
+footstep_left = [0.12, 0.62]
+footstep_right = [0.37, 0.87]
+```
+
+- `<clip>` is the `<name>` of the clip's `animation/<name>` output, after the
+  importer has sanitised it and made it unique, not the raw glTF animation
+  name or file stem.
+- Each key is an event name, and its list holds clip times in seconds. Each
+  time becomes an `AnimationEvent { name }` at that time; a time listed twice
+  under one name adds one event.
+- A table for a clip the source does not emit, or a time that is negative,
+  not finite, or past the clip's duration, fails the import.
 
 ## The `.gasset` file format
 
@@ -270,6 +301,20 @@ node type also fails its check. That is a change to the persisted form, but not
 to the field layout: old graphs need the old name to resolve, not a version
 bump.
 
+Adding a reflected field to a node type is not a version bump either. A node is
+stored as its reflected fields by name, so the graph's bincode layout does not
+change, and a stored node without the new field loads with the field's value
+from the type's `Default` and no warning. The bytes of a newly encoded node do
+change, so the fixture is re-blessed at the same version, with the field set
+to something other than its default in the checked graph.
+
+A reflected node field that changes type is not a version bump either, for the
+same reason. A stored node whose field holds a value of the old kind, such as a
+`String` leaf where the field is now an `Option<Name>`, loads with that field
+at its value from the type's `Default` and a warning that the stored data is a
+different kind of value; the graph still loads. The fixture is re-blessed at
+the same version.
+
 When you change one:
 
 1. Raise the version. A derived type writes `#[asset(version = N)]` next to
@@ -297,6 +342,18 @@ When you change one:
    `.gasset` under `examples/*` carries that version. Its fixture and test go
    with it, and the PR says so. After that, files at that version are
    rejected.
+
+`AnimationClip` is at version 2, which adds the clip's events. Its `migrate`
+reads a version-1 payload through `legacy::AnimationClipV1`
+(`crates/animation/src/clip.rs`) as a clip with no events, and
+`AnimationClip.v1.bin` stays with a test that decodes it. The clips committed
+under `examples/tech-demo/content/UAL1/` and
+`examples/tech-demo/content/lafan1/animations/` are still version 1: they
+migrate in memory on every load, and the editor reports them as outdated until
+they are re-imported. Like a graph's nodes, each event is stored as its Rust
+type name and reflected fields. A clip makes its events live when it loads; an
+event whose type is not registered with `register_clip_event`, or whose stored
+value leaves a warning, is dropped with a warning naming the clip and the type.
 
 The editor reports outdated files when the first scene of a project opens.
 It compares each entry's `kind_version` with the `FORMAT_VERSION` that the

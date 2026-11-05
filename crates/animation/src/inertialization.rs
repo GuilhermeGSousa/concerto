@@ -39,6 +39,14 @@ impl PoseVelocity {
             angular: angular.into_boxed_slice(),
         }
     }
+
+    /// This velocity with every bone's linear and angular velocity multiplied by `factor`.
+    pub fn scaled(&self, factor: f32) -> Self {
+        Self {
+            linear: self.linear.iter().map(|v| *v * factor).collect(),
+            angular: self.angular.iter().map(|v| *v * factor).collect(),
+        }
+    }
 }
 
 const SETTLED_EPSILON: f32 = 1.0e-4;
@@ -151,7 +159,7 @@ impl Inertializer {
             .enumerate()
             .take(self.offset_position.len())
         {
-            if let Some(output) = output.get_joint_pose_mut(bone) {
+            if let Some(output) = output.joint_mut(bone) {
                 output.translation = destination.translation + self.offset_position[bone];
                 output.rotation = self.offset_rotation[bone] * destination.rotation;
                 output.scale = destination.scale;
@@ -193,7 +201,7 @@ mod tests {
     fn between_gives_linear_difference_over_dt() {
         let previous = Pose::identity(2);
         let mut next = Pose::identity(2);
-        next.get_joint_pose_mut(1).unwrap().translation = Vec3::new(1.0, -2.0, 0.5);
+        next.joint_mut(1).unwrap().translation = Vec3::new(1.0, -2.0, 0.5);
 
         let velocity = PoseVelocity::between(&previous, &next, 0.5);
 
@@ -205,7 +213,7 @@ mod tests {
     fn between_gives_angular_velocity_about_the_rotation_axis() {
         let previous = Pose::identity(1);
         let mut next = Pose::identity(1);
-        next.get_joint_pose_mut(0).unwrap().rotation = Quat::from_rotation_z(0.1);
+        next.joint_mut(0).unwrap().rotation = Quat::from_rotation_z(0.1);
 
         let velocity = PoseVelocity::between(&previous, &next, 0.5);
 
@@ -215,7 +223,7 @@ mod tests {
 
     fn pose_at(translation: Vec3, rotation: Quat) -> Pose {
         let mut pose = Pose::identity(1);
-        let joint = pose.get_joint_pose_mut(0).unwrap();
+        let joint = pose.joint_mut(0).unwrap();
         joint.translation = translation;
         joint.rotation = rotation;
         pose

@@ -74,7 +74,7 @@ pub(crate) fn skeleton_of(names: &[&str]) -> Skeleton {
         (0..bones)
             .map(|bone| bone.checked_sub(1).map(|parent| parent as u16))
             .collect(),
-        names.iter().map(ToString::to_string).collect(),
+        names.iter().map(|name| (*name).into()).collect(),
         vec![JointPose::IDENTITY; bones],
         (0..bones).map(bone_id).collect(),
     )
