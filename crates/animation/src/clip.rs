@@ -1,11 +1,12 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, hash_map::Keys};
+use std::collections::{BTreeMap, HashMap, hash_map::Keys};
 use std::ops::Range;
 
 use concerto_foundation::assets::asset_server::{AssetLoadContext, AssetServer};
 use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{Asset, LoadableAsset};
 use concerto_foundation::math::spring_damper::angular_velocity;
+use concerto_name::Name;
 use concerto_reflect::{
     EncodeError, FromType, Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value,
 };
@@ -14,7 +15,7 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::event::{ClipEvent, ReflectClipEvent};
+use crate::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
 use crate::graph::{Stored, StoredRef};
 use crate::inertialization::PoseVelocity;
 use crate::pose::JointPose;
@@ -399,6 +400,35 @@ impl AnimationClip {
         };
         let end = self.events.partition_point(|key| key.time <= to);
         start..end.max(start)
+    }
+
+    /// Adds an [`AnimationEvent`] per name and distinct time, failing on a time that is negative, non-finite or past the clip's end.
+    pub fn add_animation_events(
+        &mut self,
+        events: &BTreeMap<String, Vec<f32>>,
+    ) -> Result<(), String> {
+        for (name, times) in events {
+            let mut times = times.clone();
+            for &time in &times {
+                if !time.is_finite() || time < 0.0 || time > self.duration {
+                    return Err(format!(
+                        "event `{name}` at {time} must be finite and within the clip's 0 to {} seconds",
+                        self.duration
+                    ));
+                }
+            }
+            times.sort_by(f32::total_cmp);
+            times.dedup();
+            for time in times {
+                self.add_event(
+                    time,
+                    AnimationEvent {
+                        name: Name::new(name),
+                    },
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Builds every stored event from the registry, loading handles through `server`; an event that cannot be built is dropped and leaves a warning naming its type.

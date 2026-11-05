@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use concerto_animation::clip::AnimationClip;
+use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
 use concerto_bvh::bvh_importer::BvhImporter;
 use concerto_ecs::component::scene::SceneEntityRef;
@@ -547,5 +548,85 @@ fn the_clip_is_named_after_the_source_file_stem() {
             .iter()
             .map(|asset| asset.name.as_str())
             .collect::<Vec<_>>()
+    );
+}
+
+fn event_keys(clip: &AnimationClip) -> Vec<(f32, String)> {
+    clip.events()
+        .iter()
+        .map(|key| {
+            assert_eq!(
+                key.event.type_name(),
+                std::any::type_name::<AnimationEvent>()
+            );
+            let mut event = AnimationEvent::default();
+            let warnings = apply_value(&mut event, &key.event.value().unwrap());
+            assert!(warnings.is_empty(), "{warnings:?}");
+            (key.time, event.name.as_str().to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn event_settings_add_sorted_animation_events_to_the_clip() {
+    let settings = "[events.walk]\nfootstep_right = [0.05, 0.01, 0.05]\nfootstep_left = [0.02]\n";
+    let (_, clip) = import_ok("walk.bvh", TWO_JOINTS, settings);
+    assert_eq!(
+        event_keys(&clip),
+        [
+            (0.01, "footstep_right".to_string()),
+            (0.02, "footstep_left".to_string()),
+            (0.05, "footstep_right".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn event_times_count_from_the_first_kept_frame() {
+    let settings = "frame_range = [1, 3]\n[events.trim_events]\nland = [0.0, 0.03]\n";
+    let (_, clip) = import_ok("trim_events.bvh", TWO_JOINTS, settings);
+    assert_eq!(
+        event_keys(&clip),
+        [(0.0, "land".to_string()), (0.03, "land".to_string())]
+    );
+}
+
+#[test]
+fn event_settings_are_keyed_by_the_sanitised_clip_name() {
+    let settings = "[events.\"Walk_Cycle\"]\nstep = [0.0]\n";
+    let outputs = run("Walk#Cycle.bvh", TWO_JOINTS, settings).expect("the import should succeed");
+    let clip: AnimationClip = bincode::deserialize(
+        &outputs
+            .sub_assets
+            .iter()
+            .find(|asset| asset.name == "animation/Walk_Cycle")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert_eq!(event_keys(&clip), [(0.0, "step".to_string())]);
+}
+
+#[test]
+fn invalid_event_settings_are_rejected() {
+    assert_malformed_with(
+        "events.bvh",
+        TWO_JOINTS,
+        "[events.run]\nstep = [0.0]\n",
+        "run",
+    );
+    for time in ["-0.01", "nan", "inf", "0.07"] {
+        assert_malformed_with(
+            "events.bvh",
+            TWO_JOINTS,
+            &format!("[events.events]\nstep = [{time}]\n"),
+            "step",
+        );
+    }
+    assert_malformed_with(
+        "events.bvh",
+        TWO_JOINTS,
+        "frame_range = [1, 3]\n[events.events]\nstep = [0.05]\n",
+        "step",
     );
 }
