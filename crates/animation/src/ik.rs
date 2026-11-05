@@ -37,7 +37,10 @@ pub fn solve_two_bone(
     let lower = chain.tip - chain.mid;
     let l1 = upper.length();
     let l2 = lower.length();
-    if l1 * l1 <= MIN_LENGTH_SQUARED || l2 * l2 <= MIN_LENGTH_SQUARED {
+    if !(l1.is_finite() && l2.is_finite())
+        || l1 * l1 <= MIN_LENGTH_SQUARED
+        || l2 * l2 <= MIN_LENGTH_SQUARED
+    {
         return TwoBoneSolution::IDENTITY;
     }
     let u1 = upper / l1;
@@ -284,6 +287,23 @@ mod tests {
         let (mid, tip) = apply(&folded, &solution);
         assert!(tip.distance(target) < 1e-4, "tip {tip}");
         assert!((mid.length() - L1).abs() < 1e-4, "mid {mid}");
+    }
+
+    #[test]
+    fn a_chain_with_a_joint_that_is_not_finite_is_left_as_it_is() {
+        let mut broken = bent();
+        broken.mid.x = f32::NAN;
+        assert_eq!(
+            solve_two_bone(&broken, Vec3::X, None, 0.2),
+            TwoBoneSolution::IDENTITY
+        );
+
+        let mut far = bent();
+        far.tip = Vec3::splat(f32::INFINITY);
+        assert_eq!(
+            solve_two_bone(&far, Vec3::X, None, 0.2),
+            TwoBoneSolution::IDENTITY
+        );
     }
 
     #[test]
