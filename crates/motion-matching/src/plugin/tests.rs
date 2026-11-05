@@ -471,6 +471,25 @@ fn a_weight_only_change_reuses_the_cached_blob_and_the_search_sees_the_new_weigh
 }
 
 #[test]
+fn a_non_positive_weight_loads_the_same_derived_database_on_a_miss_and_a_hit() {
+    let mut project = Project::new();
+    let (database_id, database) = project.save(0.0);
+    let baked =
+        crate::bake::bake(&database, &skeleton(), &[&walk_forward(), &turn_left()]).unwrap();
+
+    let missed = project.load(database_id);
+    let hit = project.load(database_id);
+
+    assert_eq!(project.blobs().len(), 1);
+    for loaded in [&missed, &hit] {
+        assert_eq!(loaded.baked, Some(baked.clone()));
+        assert!(loaded.scales().is_none());
+        let query = vec![0.0; loaded.feature_dims().unwrap()];
+        assert_eq!(crate::search::search(loaded, &query, None, 0, 0), None);
+    }
+}
+
+#[test]
 fn a_node_does_nothing_for_a_database_not_derived() {
     let (mut app, database_handle, skeleton_handle, database) = stocked_app();
     let world = app.main_mut().world_mut();

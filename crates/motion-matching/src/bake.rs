@@ -327,10 +327,6 @@ pub fn bake_with_progress(
                 type_name: stored.type_name().to_owned(),
                 reason,
             })?;
-        let weight = channel.weight();
-        if !(weight.is_finite() && weight > 0.0) {
-            return Err(BakeError::InvalidWeight(weight));
-        }
     }
     let rate = definition.rate;
 

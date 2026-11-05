@@ -150,6 +150,7 @@ fn run_derive(input: DeriveInput) -> anyhow::Result<Derived> {
     let ids = input.definition.derived_inputs();
     let inputs = pollster::block_on(DerivedInputs::read(&root, &input.assets, &ids))?;
     let database = derived_database(&input, &inputs)?;
+    database.check_weights()?;
     let skeleton: Skeleton = inputs.decode(database.skeleton.id())?;
     let clips = database
         .clips()

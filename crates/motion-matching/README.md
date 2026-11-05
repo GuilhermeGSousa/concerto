@@ -134,7 +134,7 @@ definition that is refused before the first entry.
 | `UnregisteredChannel` | loading a channel whose type name is not in the registry, or lacks `ReflectFeatureChannel` |
 | `UnloadedChannel` | a channel still `Stored`, read where a live one is needed |
 | `ChannelValue` | the stored value does not apply to the channel, or the channel's `validate` failed |
-| `InvalidWeight` | a channel weight, at bake, that is not finite and positive |
+| `InvalidWeight` | a channel weight, from `check_weights`, that is not finite and positive |
 | `ChannelCountMismatch` | a `FeatureQuery` was used with a database of a different channel count |
 | `TrajectoryTooShort` | `FeatureQuery::build` was given fewer trajectory samples than the database's `sample_count` |
 | `RangeTooShort` | an entry bakes fewer than 2 frames |
@@ -256,8 +256,12 @@ and a channel still `Stored` there is `UnloadedChannel`, or no normalisation.
 A channel may also override four methods:
 
 - `weight()` (default 1.0): how much its group counts in the search. It must be
-  finite and positive, or `bake` returns `InvalidWeight`. A top-level field
-  named `weight` means this and nothing else: see [Derived key](#derived-key).
+  finite and positive, or the search finds nothing. `bake` does not read it,
+  so a cache hit and a miss give the same database whatever the weight.
+  `check_weights()` returns `InvalidWeight` for the first loaded channel whose
+  weight is not; `on_load` logs it as a warning, and the editor shows it as the
+  derive failing. A top-level field named `weight` means this and nothing
+  else: see [Derived key](#derived-key).
 - `source()` (default `ChannelSource::Pose`): a `Trajectory` channel reads only
   `simulation` and `trajectory` from its `FrameContext`, so the runtime query
   can compute it from a predicted trajectory.

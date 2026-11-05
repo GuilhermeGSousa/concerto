@@ -1127,21 +1127,34 @@ fn a_default_channel_weighs_one_and_reads_the_pose() {
 }
 
 #[test]
-fn a_non_positive_or_non_finite_weight_is_rejected_before_extracting() {
+fn a_weight_leaves_the_bake_alone() {
     let skeleton = body_skeleton();
     let clip = walk_clip(1.0);
+    let weighed = |weight| {
+        let definition = baking_definition(vec![entry(None)], vec![weighted(weight, 0.0)]);
+        bake(&definition, &skeleton, &[&clip]).unwrap()
+    };
+    let baked = weighed(1.0);
+
+    for weight in [2.0, 0.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert_eq!(weighed(weight), baked);
+    }
+}
+
+#[test]
+fn a_non_positive_or_non_finite_weight_fails_the_weight_check() {
     for weight in [0.0, -1.0, f32::NAN, f32::INFINITY] {
         let definition = baking_definition(vec![entry(None)], vec![weighted(weight, 0.0)]);
 
-        let error = bake(&definition, &skeleton, &[&clip]).err().unwrap();
-
-        match error {
-            BakeError::InvalidWeight(rejected) => {
+        match definition.check_weights() {
+            Err(BakeError::InvalidWeight(rejected)) => {
                 assert!(rejected == weight || (rejected.is_nan() && weight.is_nan()))
             }
             other => panic!("expected InvalidWeight, got {other:?}"),
         }
     }
+    let definition = baking_definition(vec![entry(None)], vec![weighted(0.5, 0.0)]);
+    assert_eq!(definition.check_weights(), Ok(()));
 }
 
 #[test]
@@ -1193,7 +1206,8 @@ fn bake_with_progress_reports_each_entry_once_in_order() {
 fn bake_with_progress_reports_nothing_when_the_definition_is_refused() {
     let skeleton = body_skeleton();
     let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], vec![weighted(-1.0, 0.0)]);
+    let mut definition = baking_definition(vec![entry(None)], vec![weighted(1.0, 0.0)]);
+    definition.simulation.position_joint = "Nowhere".into();
     let mut reports = 0;
 
     let result = bake_with_progress(&definition, &skeleton, &[&clip], |_, _| reports += 1);

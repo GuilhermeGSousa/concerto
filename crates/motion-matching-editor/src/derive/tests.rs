@@ -548,3 +548,22 @@ fn a_refused_open_during_a_derive_keeps_its_error() {
 
     assert_eq!(status(&tab), error);
 }
+
+#[test]
+fn an_invalid_weight_fails_the_derive_on_a_miss_and_a_hit() {
+    let invalid = "Derive failed: channel weight 0 must be positive and finite";
+    let tab = ready_with(fixture(), |definition| {
+        definition.channels = vec![head_positions(0.0)];
+    });
+    assert_eq!(status(&tab), invalid);
+    assert!(tab.state().playback.is_none());
+
+    let mut tab = ready(fixture());
+    let document = tab.document;
+    edit(&mut tab.f, document, "BonePositions", "weight", 0.0);
+    resaved(&mut tab);
+
+    assert_eq!(cache_files(&tab).len(), 1);
+    assert_eq!(status(&tab), invalid);
+    assert!(tab.state().playback.is_none());
+}

@@ -192,6 +192,16 @@ impl MotionDatabase {
             .collect()
     }
 
+    /// Whether every loaded channel's weight is positive and finite, which a search needs.
+    pub fn check_weights(&self) -> Result<(), BakeError> {
+        self.channels
+            .iter()
+            .filter_map(|channel| channel.channel().ok())
+            .map(|channel| channel.weight())
+            .find(|weight| !(weight.is_finite() && *weight > 0.0))
+            .map_or(Ok(()), |weight| Err(BakeError::InvalidWeight(weight)))
+    }
+
     /// One clip per entry, in entry order.
     pub fn clips(&self) -> impl Iterator<Item = &AssetHandle<AnimationClip>> + '_ {
         self.entries.iter().map(|entry| &entry.clip)
@@ -473,6 +483,12 @@ impl LoadableAsset for MotionDatabase {
             if let Err(error) = channel.load(&registry) {
                 log::warn!("motion database {:?}: {error}", context.asset_id());
             }
+        }
+        if let Err(error) = self.check_weights() {
+            log::warn!(
+                "motion database {:?} searches nothing: {error}",
+                context.asset_id()
+            );
         }
         Ok(())
     }
