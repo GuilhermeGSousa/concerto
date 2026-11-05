@@ -2,8 +2,7 @@ use concerto_reflect::{to_value, Reflect, ReflectedValue};
 
 use crate::{
     channel::FeatureChannelData,
-    database::{BakeError, ChannelSpan, MotionDatabase},
-    definition::MotionDatabaseDefinition,
+    database::{BakeError, MotionDatabase},
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -90,7 +89,7 @@ fn stored(value: &dyn Reflect) -> ReflectedValue {
 
 /// A hash, stable across builds, of everything a bake reads except each channel's top-level `weight` field.
 pub fn weightless_hash(
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
     skeleton_bytes: &[u8],
     clip_bytes: &[&[u8]],
 ) -> u64 {
@@ -117,40 +116,12 @@ pub fn weightless_hash(
 }
 
 /// The weight of each channel of `definition`, in order, read from its live channels.
-pub fn weights_of(definition: &MotionDatabaseDefinition) -> Result<Vec<f32>, BakeError> {
+pub fn weights_of(definition: &MotionDatabase) -> Result<Vec<f32>, BakeError> {
     Ok(definition
         .live_channels()?
         .iter()
         .map(|channel| channel.weight())
         .collect())
-}
-
-fn weights_differ(database: &MotionDatabase, definition: &MotionDatabaseDefinition) -> bool {
-    weights_of(definition).map_or(true, |weights| {
-        !database
-            .channels()
-            .iter()
-            .map(ChannelSpan::weight)
-            .eq(weights)
-    })
-}
-
-/// Whether `database` no longer matches `definition`: `hash`, from [`weightless_hash`], differs from its source, or a channel's weight does.
-pub fn is_stale(
-    database: &MotionDatabase,
-    definition: &MotionDatabaseDefinition,
-    hash: u64,
-) -> bool {
-    database.source_hash() != hash || weights_differ(database, definition)
-}
-
-/// [`is_stale`] for the case [`MotionDatabase::reweigh`] can fix: `hash` equals the database's source and a channel's weight differs.
-pub fn weights_changed_only(
-    database: &MotionDatabase,
-    definition: &MotionDatabaseDefinition,
-    hash: u64,
-) -> bool {
-    database.source_hash() == hash && weights_differ(database, definition)
 }
 
 #[cfg(test)]

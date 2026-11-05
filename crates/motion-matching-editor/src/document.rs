@@ -17,15 +17,16 @@ use concerto_editor::{
     tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
-    Asset, AssetId,
+    AssetId,
     content::{decode_content_asset, read_content_asset},
     handle::AssetHandle,
+    kind_matches,
     registry::AssetEntry,
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    BakeError, FeatureChannel, FeatureChannelData, MirrorAxis, MotionDatabaseDefinition,
-    MotionEntry, SimulationBoneSettings, TrajectorySettings,
+    BakeError, FeatureChannel, FeatureChannelData, MirrorAxis, MotionDatabase, MotionEntry,
+    SimulationBoneSettings, TrajectorySettings,
 };
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use uuid::Uuid;
@@ -51,7 +52,7 @@ pub struct DatabaseSettings {
 
 impl DatabaseSettings {
     /// The settings `definition` holds.
-    pub fn of(definition: &MotionDatabaseDefinition) -> Self {
+    pub fn of(definition: &MotionDatabase) -> Self {
         Self {
             rate: definition.rate,
             speed: definition.speed,
@@ -122,7 +123,7 @@ pub struct DefinitionDocument {
     pub settings: Option<DatabaseSettings>,
     pub channels: Vec<HeldChannel>,
     pub bones: Option<Vec<String>>,
-    pub loaded: Option<MotionDatabaseDefinition>,
+    pub loaded: Option<MotionDatabase>,
     pub build: BuildState,
     pub baked: BakedState,
     pub stats: Option<BakedStats>,
@@ -148,12 +149,12 @@ impl DefinitionDocument {
             .find(|facts| facts.clip == clip && facts.skeleton == skeleton)
     }
 
-    pub(crate) fn definition(&self) -> anyhow::Result<MotionDatabaseDefinition> {
+    pub(crate) fn definition(&self) -> anyhow::Result<MotionDatabase> {
         let settings = self
             .settings
             .clone()
             .context("The preview is not running, so the channels cannot be written")?;
-        Ok(MotionDatabaseDefinition {
+        Ok(MotionDatabase {
             skeleton: self.skeleton.clone(),
             entries: self.entries.clone(),
             rate: settings.rate,
@@ -162,6 +163,7 @@ impl DefinitionDocument {
             trajectory: settings.trajectory,
             channels: self.channels.iter().map(HeldChannel::data).collect(),
             mirror_axis: settings.mirror_axis,
+            baked: None,
         })
     }
 
@@ -174,7 +176,7 @@ impl DefinitionDocument {
     }
 }
 
-/// Opens a `MotionDatabaseDefinition` in a tab that holds it, with a preview that plays it.
+/// Opens a `MotionDatabase` in a tab that holds it, with a preview that plays it.
 #[derive(Default)]
 pub struct MotionDatabaseEditor;
 
@@ -263,22 +265,19 @@ pub(crate) fn publish_values(
 }
 
 /// Reads the definition `asset` names under `root`, checking its id and its kind.
-pub fn read_definition(
-    root: &Path,
-    asset: &AssetEntry,
-) -> anyhow::Result<MotionDatabaseDefinition> {
+pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<MotionDatabase> {
     let bytes = std::fs::read(root.join(&asset.address))?;
     let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
-        header.asset_id == asset.id && header.kind == MotionDatabaseDefinition::name(),
+        header.asset_id == asset.id && kind_matches::<MotionDatabase>(&header.kind),
         "Asset identity or type mismatch"
     );
-    Ok(decode_content_asset::<MotionDatabaseDefinition>(&bytes)?.1)
+    Ok(decode_content_asset::<MotionDatabase>(&bytes)?.1)
 }
 
 fn hold_definition(
     state: &mut DefinitionDocument,
-    mut definition: MotionDatabaseDefinition,
+    mut definition: MotionDatabase,
     channels: Option<Vec<HeldChannel>>,
 ) {
     if let Some(channels) = &channels {
@@ -305,7 +304,7 @@ fn hold_definition(
 }
 
 fn live_channels(
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
     registry: &TypeRegistry,
 ) -> anyhow::Result<Vec<HeldChannel>> {
     definition

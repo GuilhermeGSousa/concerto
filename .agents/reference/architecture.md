@@ -133,7 +133,7 @@ time. The running game never reads them.
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
 - An asset that holds trait objects by type name (`AnimationGraph`'s nodes,
-  the feature channels of a `MotionDatabaseDefinition` and a `MotionDatabase`)
+  the feature channels of a `MotionDatabase`)
   keeps each one as a data enum: `Stored { type_name, value }` as decoded and
   `Live { type_name, <boxed value> }` once built (`AnimationNodeData`,
   `FeatureChannelData`). Serde writes the type name and the reflected value for
@@ -145,6 +145,14 @@ time. The running game never reads them.
   loses nothing. Do not keep a parallel `#[serde(skip)]` list of live values,
   rebuild them from the registry at each use, or pass a registry into runtime
   code to do it.
+- An asset whose runtime part is computed from other content assets
+  implements `DerivedData` and is registered with `register_derived_asset`
+  (`MotionDatabase` and its `BakedDatabase`). Its file holds only the
+  definition; a load derives the blob from the inputs it names, or reads it
+  from the project's `derived-cache/` under the key the type computes, and
+  applies it before `Loaded`. The blob holds computed data only: values a user
+  can tune without re-deriving, such as a channel's weight, are read from the
+  live definition at use.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor and is not rewritten.
 

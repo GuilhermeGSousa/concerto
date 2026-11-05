@@ -16,7 +16,7 @@ use concerto_foundation::assets::{
 };
 use concerto_motion_matching::{
     BonePositions, FeatureChannel, FeatureChannelData, FrameContext, MotionDatabase,
-    MotionDatabaseDefinition, ReflectFeatureChannel, TimeRange,
+    ReflectFeatureChannel, TimeRange,
 };
 use concerto_reflect::Reflect;
 use concerto_ui::transform::UIValue;
@@ -40,12 +40,12 @@ fn head_positions(weight: f32) -> FeatureChannelData {
     })
 }
 
-fn buildable(definition: &mut MotionDatabaseDefinition) {
+fn buildable(definition: &mut MotionDatabase) {
     definition.simulation.position_joint = "Spine".into();
     definition.channels = vec![head_positions(1.0)];
 }
 
-fn ready_with(f: SceneFixture, change: impl FnOnce(&mut MotionDatabaseDefinition)) -> Tab {
+fn ready_with(f: SceneFixture, change: impl FnOnce(&mut MotionDatabase)) -> Tab {
     let mut tab = tab_of(f, |definition| {
         buildable(definition);
         change(definition);
@@ -140,7 +140,7 @@ fn the_baked_file_sits_next_to_the_definition() {
     let asset = |address: &str| AssetEntry {
         id: AssetId::from_path(address),
         address: address.into(),
-        kind: MotionDatabaseDefinition::name().into(),
+        kind: MotionDatabase::name().into(),
         kind_version: None,
         provenance: None,
     };
@@ -177,8 +177,7 @@ fn a_full_bake_writes_the_file_and_its_registry_entry() {
     assert!(entry.is::<MotionDatabase>());
 
     let database = baked_database(&tab);
-    assert_ne!(database.source_hash(), 0);
-    assert_eq!(database.frame_count(), 81 + 109);
+    assert_eq!(database.frame_count().unwrap(), 81 + 109);
 
     assert_eq!(status(&tab), format!("Built {BAKED}"));
     assert_eq!(tab.state().baked, BakedState::UpToDate);
@@ -277,7 +276,10 @@ fn a_weight_only_change_takes_the_fast_path() {
     press_build(&mut tab);
 
     assert_eq!(status(&tab), format!("Updated the weights in {BAKED}"));
-    assert_eq!(baked_database(&tab).channels()[0].weight(), 2.5);
+    assert_eq!(
+        baked_database(&tab).channels[0].channel().unwrap().weight(),
+        2.5
+    );
     assert_eq!(tab.state().baked, BakedState::UpToDate);
 }
 
@@ -290,7 +292,7 @@ fn a_changed_setting_bakes_in_full() {
     press_build(&mut tab);
 
     assert_eq!(status(&tab), format!("Built {BAKED}"));
-    assert_eq!(baked_database(&tab).rate(), 30.0);
+    assert_eq!(baked_database(&tab).rate, 30.0);
 }
 
 #[test]
@@ -321,7 +323,7 @@ fn a_definition_pointed_at_another_skeleton_with_identical_bytes_bakes_in_full()
     press_build(&mut tab);
 
     assert_eq!(status(&tab), format!("Built {BAKED}"));
-    assert_eq!(baked_database(&tab).skeleton().id(), id);
+    assert_eq!(baked_database(&tab).skeleton.id(), id);
 }
 
 #[test]
@@ -348,7 +350,7 @@ fn opening_another_definition_drops_the_build() {
     let other = write_definition(
         &mut tab.f,
         "content/hero/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     let build = tab.panels().build;
 
@@ -373,7 +375,7 @@ fn opening_another_definition_drops_the_build() {
 #[test]
 fn a_build_leaves_another_kind_of_asset_at_the_baked_address_alone() {
     let mut tab = ready(fixture());
-    let other = write_definition(&mut tab.f, BAKED, &MotionDatabaseDefinition::default());
+    let other = write_definition(&mut tab.f, BAKED, &MotionDatabase::default());
     let before = std::fs::read(tab.f.project_root.join(BAKED)).unwrap();
     let build = tab.panels().build;
 
@@ -382,7 +384,7 @@ fn a_build_leaves_another_kind_of_asset_at_the_baked_address_alone() {
 
     assert_eq!(
         status(&tab),
-        format!("Build failed: {BAKED} holds a MotionDatabaseDefinition, so Build left it alone")
+        format!("Build failed: {BAKED} holds a MotionDatabase, so Build left it alone")
     );
     assert_eq!(
         std::fs::read(tab.f.project_root.join(BAKED)).unwrap(),
@@ -480,8 +482,8 @@ fn a_game_registered_channel_bakes() {
 
     assert_eq!(status(&tab), format!("Built {BAKED}"));
     let database = baked_database(&tab);
-    assert_eq!(database.channels()[0].type_name(), "GameChannel");
-    assert_eq!(database.features(0), [1.0]);
+    assert_eq!(database.channels[0].type_name(), "GameChannel");
+    assert_eq!(database.features(0).unwrap(), [1.0]);
 }
 
 #[test]
@@ -562,7 +564,7 @@ fn an_edited_document_saves_before_it_builds() {
     assert!(!tab.unsaved());
     let saved = read_definition(&tab.f.project_root, &tab.asset).unwrap();
     assert_eq!(saved.rate, 30.0);
-    assert_eq!(baked_database(&tab).rate(), 30.0);
+    assert_eq!(baked_database(&tab).rate, 30.0);
 }
 
 #[test]
@@ -573,7 +575,10 @@ fn a_weight_typed_but_not_yet_committed_is_in_the_build() {
     queue_edit(&mut tab.f, document, "BonePositions", "weight", 3.5);
     press_build(&mut tab);
 
-    assert_eq!(baked_database(&tab).channels()[0].weight(), 3.5);
+    assert_eq!(
+        baked_database(&tab).channels[0].channel().unwrap().weight(),
+        3.5
+    );
     assert!(!tab.unsaved());
 }
 
@@ -634,7 +639,7 @@ fn reopening_a_built_definition_reads_up_to_date_with_its_stats() {
     let other = write_definition(
         &mut tab.f,
         "content/hero/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     let document = tab.document;
 

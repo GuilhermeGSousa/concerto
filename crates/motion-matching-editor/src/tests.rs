@@ -40,7 +40,7 @@ use concerto_foundation::assets::{
 use concerto_mesh::JointName;
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, FeatureChannel, FeatureChannelData, FrameContext, MirrorAxis,
-    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, TimeRange, TrajectoryDirections,
+    MotionDatabase, MotionEntry, ReflectFeatureChannel, TimeRange, TrajectoryDirections,
     TrajectoryPositions,
 };
 use concerto_reflect::{Reflect, ReflectedValue};
@@ -128,7 +128,7 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     f.world
         .get_resource_mut::<AssetEditorRegistry>()
         .unwrap()
-        .register_creatable::<MotionDatabaseDefinition, MotionDatabaseEditor>()
+        .register_creatable::<MotionDatabase, MotionDatabaseEditor>()
         .unwrap();
     let mut inspector = InspectorRegistry::default();
     inspector.register_property_editor::<JointName, JointNameEditor>();
@@ -181,8 +181,8 @@ pub(crate) fn entry(seconds: f32) -> MotionEntry {
     }
 }
 
-pub(crate) fn definition() -> MotionDatabaseDefinition {
-    MotionDatabaseDefinition {
+pub(crate) fn definition() -> MotionDatabase {
+    MotionDatabase {
         skeleton: AssetHandle::weak(AssetId::new()),
         entries: vec![entry(1.0), entry(2.0)],
         rate: 30.0,
@@ -201,7 +201,7 @@ pub(crate) fn write_asset<A: Asset>(f: &mut SceneFixture, address: &str, asset: 
 pub(crate) fn write_definition(
     f: &mut SceneFixture,
     address: &str,
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
 ) -> AssetEntry {
     write_asset(f, address, definition)
 }
@@ -355,7 +355,7 @@ fn install_registers_a_creatable_editor_with_a_preview() {
     install(&mut app);
 
     let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
-    let kind = MotionDatabaseDefinition::name();
+    let kind = MotionDatabase::name();
     assert!(editors.preview(kind).is_some());
     assert!(editors.bottom_host(kind));
     assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
@@ -371,7 +371,7 @@ fn install_alone_plays_a_clip_in_a_definitions_preview_and_registers_no_clip_edi
         save_content_asset_into(&skeleton, root, "content/hero/skeleton.gasset", &mut assets);
     let walk = clip_of(10, 0..3);
     let walk = save_content_asset_into(&walk, root, "content/hero/walk.gasset", &mut assets);
-    let opened = MotionDatabaseDefinition {
+    let opened = MotionDatabase {
         skeleton: AssetHandle::weak(skeleton.unwrap()),
         entries: vec![MotionEntry {
             clip: AssetHandle::weak(walk.unwrap()),
@@ -538,7 +538,7 @@ fn a_definition_with_no_entries_selects_none() {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
 
     let document = open(&mut f, &asset);
@@ -563,7 +563,7 @@ fn a_broken_file_fails_its_request() {
 fn a_file_of_another_kind_fails_its_request() {
     let mut f = fixture();
     let mistaken = AssetEntry {
-        kind: MotionDatabaseDefinition::name().into(),
+        kind: MotionDatabase::name().into(),
         ..f.scene.clone()
     };
     f.add_to_project(&mistaken);
@@ -574,7 +574,7 @@ fn a_file_of_another_kind_fails_its_request() {
     assert!(state(&f, document).loaded.is_none());
 }
 
-fn with_channel(type_name: &str, value: ReflectedValue) -> MotionDatabaseDefinition {
+fn with_channel(type_name: &str, value: ReflectedValue) -> MotionDatabase {
     let mut definition = definition();
     definition.channels.push(FeatureChannelData::Stored {
         type_name: type_name.into(),
@@ -1099,7 +1099,7 @@ fn install_opens_saves_and_discards_a_definition_in_the_editors_schedule() {
     let world = app.main_mut().world_mut();
     let document = world.spawn((
         EditorDocument {
-            asset_type: MotionDatabaseDefinition::name(),
+            asset_type: MotionDatabase::name(),
             title: "database".into(),
             current: None,
             pending: Some(asset.clone()),

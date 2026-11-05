@@ -8,8 +8,8 @@ use concerto_motion_matching::bake::{
 };
 use concerto_motion_matching::{
     BakeError, BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData, FrameContext,
-    JointAxis, MirrorAxis, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
-    ReflectFeatureChannel, SimulationBoneSettings, TimeRange, TrajectorySample, TrajectorySettings,
+    JointAxis, MirrorAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel,
+    SimulationBoneSettings, TimeRange, TrajectorySample, TrajectorySettings,
 };
 use concerto_reflect::{Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -32,6 +32,15 @@ fn skeleton() -> Skeleton {
     .unwrap()
 }
 
+fn baked(
+    definition: &MotionDatabase,
+    skeleton: &Skeleton,
+    clips: &[&AnimationClip],
+) -> MotionDatabase {
+    let baked = bake(definition, skeleton, clips).unwrap();
+    definition.clone().with_baked(baked)
+}
+
 fn walk_clip(duration: f32) -> AnimationClip {
     let mut clip = AnimationClip::default();
     clip.add_channel(
@@ -44,8 +53,8 @@ fn walk_clip(duration: f32) -> AnimationClip {
     clip
 }
 
-fn definition(entries: Vec<MotionEntry>, rate: f32, speed: f32) -> MotionDatabaseDefinition {
-    MotionDatabaseDefinition {
+fn definition(entries: Vec<MotionEntry>, rate: f32, speed: f32) -> MotionDatabase {
+    MotionDatabase {
         entries,
         rate,
         speed,
@@ -504,8 +513,8 @@ fn pair() -> FeatureChannelData {
 fn baking_definition(
     entries: Vec<MotionEntry>,
     channels: Vec<FeatureChannelData>,
-) -> MotionDatabaseDefinition {
-    MotionDatabaseDefinition {
+) -> MotionDatabase {
+    MotionDatabase {
         entries,
         rate: 30.0,
         speed: 1.0,
@@ -526,12 +535,12 @@ fn a_channel_fills_its_span_for_every_frame() {
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], vec![probe(7.0)]);
 
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
 
-    assert_eq!(database.feature_dims(), 3);
-    assert_eq!(database.frame_count(), 30);
-    for frame in 0..database.frame_count() {
-        assert_eq!(database.features(frame), [7.0, 3.0, 3.0]);
+    assert_eq!(database.feature_dims().unwrap(), 3);
+    assert_eq!(database.frame_count().unwrap(), 30);
+    for frame in 0..database.frame_count().unwrap() {
+        assert_eq!(database.features(frame).unwrap(), [7.0, 3.0, 3.0]);
     }
 }
 
@@ -541,27 +550,13 @@ fn channels_are_laid_out_in_list_order() {
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], vec![pair(), probe(1.0)]);
 
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
 
-    assert_eq!(database.feature_dims(), 5);
-    assert_eq!(database.channels().len(), 2);
-    assert_eq!(database.channels()[0].type_name(), "PairChannel");
-    assert_eq!(
-        (
-            database.channels()[0].offset(),
-            database.channels()[0].dims()
-        ),
-        (0, 2)
-    );
-    assert_eq!(database.channels()[1].type_name(), "ProbeChannel");
-    assert_eq!(
-        (
-            database.channels()[1].offset(),
-            database.channels()[1].dims()
-        ),
-        (2, 3)
-    );
-    let features = database.features(4);
+    assert_eq!(database.feature_dims().unwrap(), 5);
+    assert_eq!(database.channel_range(0), Some(0..2));
+    assert_eq!(database.channel_range(1), Some(2..5));
+    assert_eq!(database.channel_range(2), None);
+    let features = database.features(4).unwrap();
     assert_eq!(features[1], 3.0);
     assert_eq!(features[2], 1.0);
     assert_eq!(features[3], 3.0);
@@ -578,9 +573,9 @@ fn the_trajectory_settings_are_copied_from_the_definition() {
         sample_count: 4,
     };
 
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
 
-    assert_eq!(database.trajectory(), &definition.trajectory);
+    assert_eq!(&database.trajectory, &definition.trajectory);
 }
 
 #[test]
@@ -600,12 +595,12 @@ fn no_channels_gives_zero_dims() {
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
 
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
 
-    assert_eq!(database.feature_dims(), 0);
-    assert!(database.features(0).is_empty());
-    assert!(database.channels().is_empty());
-    assert_eq!(database.features(3), &[] as &[f32]);
+    assert_eq!(database.feature_dims().unwrap(), 0);
+    assert!(database.features(0).unwrap().is_empty());
+    assert_eq!(database.channel_range(0), None);
+    assert_eq!(database.features(3).unwrap(), &[] as &[f32]);
 }
 
 #[test]
@@ -640,21 +635,21 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
         vec![probe(2.0), pair()],
     );
 
-    let database = bake(&definition, &skeleton, &[&first, &second]).unwrap();
+    let database = baked(&definition, &skeleton, &[&first, &second]);
 
-    assert_eq!(database.bone_count(), 3);
-    assert_eq!(database.frame_count(), 60);
-    assert_eq!(database.rate(), 30.0);
-    assert_eq!(database.clips().len(), 2);
+    assert_eq!(database.bone_count().unwrap(), 3);
+    assert_eq!(database.frame_count().unwrap(), 60);
+    assert_eq!(database.rate, 30.0);
+    assert_eq!(database.clips().count(), 2);
     assert_eq!(database.entry_of(29), Some(0));
     assert_eq!(database.entry_of(30), Some(1));
     assert_eq!(database.range_of(30), Some(30..60));
     assert_eq!(database.clip_time(30), Some((1, 0.5)));
-    assert_eq!(database.feature_dims(), 5);
-    assert_eq!(database.features(31)[1], 3.0);
-    assert_eq!(database.features(31)[2], 3.0);
+    assert_eq!(database.feature_dims().unwrap(), 5);
+    assert_eq!(database.features(31).unwrap()[1], 3.0);
+    assert_eq!(database.features(31).unwrap()[2], 3.0);
 
-    let simulation = database.simulation(10);
+    let simulation = database.simulation_bone(10).unwrap();
     assert!(simulation.translation.y.abs() < 1e-6);
     let facing = simulation.rotation * Vec3::Z;
     assert!((facing - Vec3::NEG_Z).length() < 1e-3);
@@ -706,12 +701,12 @@ fn a_frames_pose_equals_the_pose_the_bake_gave_the_channels() {
     definition.speed = 1.5;
     let clips = [&first, &second];
 
-    let database = bake(&definition, &skeleton, &clips).unwrap();
+    let database = baked(&definition, &skeleton, &clips);
 
-    assert!(database.frame_count() >= 40);
-    for frame in 0..database.frame_count() {
+    assert!(database.frame_count().unwrap() >= 40);
+    for frame in 0..database.frame_count().unwrap() {
         let pose = database.pose(frame, &skeleton, &clips).unwrap();
-        let features = database.features(frame);
+        let features = database.features(frame).unwrap();
         assert_eq!(pose.len(), 3);
         assert_eq!(pose[0].translation.to_array(), features[0..3]);
         assert_eq!(pose[0].rotation.to_array(), features[3..7]);
@@ -724,7 +719,7 @@ fn a_pose_is_expressed_relative_to_the_simulation_bone() {
     let skeleton = body_skeleton();
     let clip = walk_clip(2.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
 
     let pose = database.pose(20, &skeleton, &[&clip]).unwrap();
 
@@ -735,7 +730,7 @@ fn a_pose_is_expressed_relative_to_the_simulation_bone() {
         pose[0].rotation,
         pose[0].scale,
     );
-    let composed = database.simulation(20) * root;
+    let composed = database.simulation_bone(20).unwrap() * root;
     assert!((composed.translation - model[0].translation).length() < 1e-5);
     assert!(composed.rotation.angle_between(model[0].rotation) < 1e-5);
     assert_eq!(pose[1], skeleton.rest_pose[1]);
@@ -749,9 +744,9 @@ fn clip_time_follows_speed_and_rate() {
     let mut definition = baking_definition(vec![entry(None), entry(Some((0.5, 1.5)))], Vec::new());
     definition.speed = 2.0;
 
-    let database = bake(&definition, &skeleton, &[&first, &second]).unwrap();
+    let database = baked(&definition, &skeleton, &[&first, &second]);
 
-    assert_eq!(database.frame_count(), 15 + 15);
+    assert_eq!(database.frame_count().unwrap(), 15 + 15);
     assert_eq!(database.clip_time(0), Some((0, 0.0)));
     assert_eq!(database.clip_time(3), Some((0, 0.2)));
     assert_eq!(database.clip_time(15), Some((1, 0.5)));
@@ -766,7 +761,7 @@ fn a_skeleton_with_another_bone_count_is_an_error() {
     let database_skeleton = body_skeleton();
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = bake(&definition, &database_skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &database_skeleton, &[&clip]);
 
     assert_eq!(
         database.pose(0, &skeleton(), &[&clip]).err(),
@@ -782,7 +777,7 @@ fn pose_rejects_a_wrong_clip_count_and_an_unknown_frame() {
     let skeleton = body_skeleton();
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
 
     assert_eq!(
         database.pose(0, &skeleton, &[&clip, &clip]).err(),
@@ -875,7 +870,7 @@ fn trajectory_definition(
     entries: Vec<MotionEntry>,
     speed: f32,
     channels: Vec<FeatureChannelData>,
-) -> MotionDatabaseDefinition {
+) -> MotionDatabase {
     let mut definition = baking_definition(entries, channels);
     definition.speed = speed;
     definition.trajectory = TrajectorySettings {
@@ -891,9 +886,9 @@ fn a_straight_walk_has_trajectory_samples_ahead_along_the_travel() {
     let clip = walk_clip(3.0);
     for speed in [1.0, 2.0] {
         let definition = trajectory_definition(vec![entry(None)], speed, vec![body_channel()]);
-        let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+        let database = baked(&definition, &skeleton, &[&clip]);
 
-        let features = database.features(5);
+        let features = database.features(5).unwrap();
         assert!((vec3(features, 0) - Vec3::new(0.0, 0.0, -speed)).length() < 1e-3);
         assert!(vec3(features, 3).length() < 1e-3);
         let origin = vec3(features, 6);
@@ -917,10 +912,10 @@ fn a_turning_walk_has_the_turn_rate_as_angular_velocity() {
     let skeleton = body_skeleton();
     let clip = turning_clip(2.0);
     let definition = trajectory_definition(vec![entry(None)], 1.0, vec![body_channel()]);
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
 
-    for frame in [0, 7, 30, database.frame_count() - 1] {
-        let angular = vec3(database.features(frame), 3);
+    for frame in [0, 7, 30, database.frame_count().unwrap() - 1] {
+        let angular = vec3(database.features(frame).unwrap(), 3);
         assert!(angular.x.abs() < 1e-3 && angular.z.abs() < 1e-3, "{frame}");
         assert!((angular.y.abs() - 0.5).abs() < 1e-2, "{frame}: {angular:?}");
     }
@@ -934,16 +929,19 @@ fn two_range_database(channels: Vec<FeatureChannelData>) -> MotionDatabase {
         1.0,
         channels,
     );
-    bake(&definition, &skeleton, &[&clip, &clip]).unwrap()
+    baked(&definition, &skeleton, &[&clip, &clip])
 }
 
 #[test]
 fn trajectory_samples_sit_ahead_of_a_frame_and_stop_at_the_end_of_its_range() {
     let database = two_range_database(Vec::new());
-    let positions = |frames: [usize; 3]| frames.map(|frame| database.simulation(frame).translation);
+    let positions = |frames: [usize; 3]| {
+        frames.map(|frame| database.simulation_bone(frame).unwrap().translation)
+    };
     let samples_at = |frame: usize| -> Vec<Vec3> {
         database
             .trajectory_samples(frame)
+            .unwrap_or_default()
             .iter()
             .map(|sample| sample.position)
             .collect()
@@ -960,8 +958,8 @@ fn trajectory_samples_are_the_ones_the_bake_gave_the_channels() {
     let database = two_range_database(vec![body_channel()]);
 
     for frame in [0, 5, 20, 29, 30, 89] {
-        let samples = database.trajectory_samples(frame);
-        let features = database.features(frame);
+        let samples = database.trajectory_samples(frame).unwrap();
+        let features = database.features(frame).unwrap();
         assert_eq!(samples.len(), SAMPLES);
         for (index, sample) in samples.iter().enumerate() {
             let at = 13 + index * 10;
@@ -981,18 +979,21 @@ fn a_sample_past_the_range_end_equals_the_last_simulation_frame() {
         1.0,
         vec![body_channel()],
     );
-    let database = bake(&definition, &skeleton, &[&clip, &clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip, &clip]);
 
     let range = database.range_of(0).unwrap();
-    let last = database.simulation(range.end - 1);
-    let features = database.features(range.end - 8);
+    let last = database.simulation_bone(range.end - 1).unwrap();
+    let features = database.features(range.end - 8).unwrap();
     let end = 13 + (SAMPLES - 1) * 10;
     assert_eq!(vec3(features, end), last.translation);
     assert_eq!(quat(features, end + 6), last.rotation);
     assert_eq!(vec3(features, 13 + 10), last.translation);
     assert!(vec3(features, 13).distance(last.translation) > 0.0);
-    let in_range = database.features(range.start);
-    assert!(vec3(in_range, 13).distance(database.simulation(range.start).translation) > 0.1);
+    let in_range = database.features(range.start).unwrap();
+    assert!(
+        vec3(in_range, 13).distance(database.simulation_bone(range.start).unwrap().translation)
+            > 0.1
+    );
 }
 
 #[test]
@@ -1004,7 +1005,7 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
         1.0,
         vec![body_channel(), local_channel()],
     );
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip]);
     let local_at = BODY_DIMS;
 
     let yaw = Quat::from_rotation_y(1.2);
@@ -1012,7 +1013,7 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
     let place = |point: Vec3| yaw * point + offset;
 
     for frame in [0, 20, 50] {
-        let features = database.features(frame);
+        let features = database.features(frame).unwrap();
         let trajectory: Vec<TrajectorySample> = (0..SAMPLES)
             .map(|k| {
                 let at = 13 + k * 10;
@@ -1123,23 +1124,6 @@ fn a_default_channel_weighs_one_and_reads_the_pose() {
         channel.validate(&body_skeleton(), &TrajectorySettings::default()),
         Ok(())
     );
-}
-
-#[test]
-fn spans_carry_the_weight_source_and_value_of_their_channel() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], vec![probe(7.0), weighted(2.5, 4.0)]);
-
-    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
-
-    let spans = database.channels();
-    assert_eq!(spans[0].weight(), 1.0);
-    assert_eq!(spans[0].source(), ChannelSource::Pose);
-    assert_eq!(spans[0].channel(), &definition.channels[0]);
-    assert_eq!(spans[1].weight(), 2.5);
-    assert_eq!(spans[1].source(), ChannelSource::Trajectory);
-    assert_eq!(spans[1].channel(), &definition.channels[1]);
 }
 
 #[test]
@@ -1307,17 +1291,14 @@ fn a_mirrored_entry_bakes_the_mirrored_simulation_bone() {
     let clip = diagonal_turning_clip(2.0);
     let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
 
-    let database = bake(&definition, &skeleton, &[&clip, &clip]).unwrap();
+    let database = baked(&definition, &skeleton, &[&clip, &clip]);
 
-    assert_eq!(database.mirrored(), &[false, true]);
-    assert_eq!(database.mirror_axis(), Some(MirrorAxis::X));
-    assert_eq!(database.clips()[0], database.clips()[1]);
     let frames = database.frames_of_entry(0).unwrap();
     assert_eq!(database.frames_of_entry(1), Some(frames));
     let mut travelled = 0.0f32;
     for frame in 0..frames {
-        let original = database.simulation(frame);
-        let mirror = database.simulation(frames + frame);
+        let original = database.simulation_bone(frame).unwrap();
+        let mirror = database.simulation_bone(frames + frame).unwrap();
         travelled = travelled.max(original.translation.x.abs());
         assert!(
             (mirror.translation - reflect_x(original.translation)).length() < 1e-4,
@@ -1341,17 +1322,22 @@ fn a_mirrored_frames_pose_is_the_mirrored_sampled_pose_under_its_simulation_bone
     let clip = diagonal_turning_clip(2.0);
     let definition = baking_definition(vec![entry(None), mirrored(Some((0.5, 1.5)))], Vec::new());
     let clips = [&clip, &clip];
-    let database = bake(&definition, &skeleton, &clips).unwrap();
+    let database = baked(&definition, &skeleton, &clips);
     let mirror = PoseMirror::new(&skeleton, Vec3::X).unwrap();
 
-    for frame in database.ranges().nth(1).unwrap() {
+    for frame in database.ranges().unwrap().nth(1).unwrap() {
         let (entry, time) = database.clip_time(frame).unwrap();
         assert_eq!(entry, 1);
         let sampled = sample_pose(&skeleton, &clip, time);
         let mut expected = sampled.clone();
         mirror.mirror_into(&sampled, &mut expected).unwrap();
         let model = model_pose(&skeleton, &expected);
-        reexpress_roots(&skeleton, &mut expected, &model, database.simulation(frame));
+        reexpress_roots(
+            &skeleton,
+            &mut expected,
+            &model,
+            database.simulation_bone(frame).unwrap(),
+        );
 
         assert_eq!(database.pose(frame, &skeleton, &clips).unwrap(), expected);
     }
@@ -1362,9 +1348,9 @@ fn a_mirrored_frames_pose_on_a_skeleton_that_cannot_be_mirrored_is_a_mirror_erro
     let clip = diagonal_turning_clip(2.0);
     let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
     let clips = [&clip, &clip];
-    let database = bake(&definition, &symmetric_skeleton(), &clips).unwrap();
+    let database = baked(&definition, &symmetric_skeleton(), &clips);
     let asymmetric = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
-    let frame = database.ranges().nth(1).unwrap().start;
+    let frame = database.ranges().unwrap().nth(1).unwrap().start;
 
     assert!(database.pose(0, &asymmetric, &clips).is_ok());
     assert!(matches!(
@@ -1388,16 +1374,13 @@ fn a_mirrored_entry_on_an_asymmetric_skeleton_is_a_mirror_error() {
 }
 
 #[test]
-fn without_a_mirrored_entry_the_mirror_is_neither_built_nor_stored() {
+fn without_a_mirrored_entry_the_mirror_is_not_built() {
     let skeleton = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
     let clip = diagonal_turning_clip(1.0);
     for axis in [MirrorAxis::X, MirrorAxis::Z] {
         let mut definition = baking_definition(vec![entry(None)], Vec::new());
         definition.mirror_axis = axis;
 
-        let database = bake(&definition, &skeleton, &[&clip]).unwrap();
-
-        assert_eq!(database.mirror_axis(), None);
-        assert_eq!(database.mirrored(), &[false]);
+        assert!(bake(&definition, &skeleton, &[&clip]).is_ok());
     }
 }

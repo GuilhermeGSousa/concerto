@@ -1,151 +1,53 @@
-use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
 
+use anyhow::Context;
 use concerto_animation::clip::AnimationClip;
 use concerto_animation::mirror::{MirrorError, PoseMirror};
 use concerto_foundation::assets::{
-    asset_server::AssetLoadContext, handle::AssetHandle, Asset, LoadableAsset,
+    asset_server::AssetLoadContext,
+    derived::{DerivedData, DerivedInputs},
+    handle::AssetHandle,
+    Asset, AssetId, CreatableAsset, LoadableAsset,
 };
 use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
+use concerto_reflect::TypeRegistry;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use concerto_reflect::ReflectedValue;
-
-use crate::bake::{model_pose, reexpress_roots, sample_pose};
-use crate::channel::{BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData};
-use crate::definition::{MirrorAxis, MotionDatabaseDefinition, TrajectorySettings};
+use crate::bake::{bake_with_progress, model_pose, reexpress_roots, sample_pose};
+use crate::channel::{BodyMotion, FeatureChannel, FeatureChannelData};
+use crate::definition::{MirrorAxis, MotionEntry, SimulationBoneSettings, TrajectorySettings};
+use crate::features::reference_channels;
 use crate::simulation::TrajectorySample;
+use crate::staleness::weightless_hash;
 
-/// Where one feature channel's values sit in a frame's feature vector, and the channel that wrote them.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChannelSpan {
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Span {
     offset: usize,
     dims: usize,
-    weight: f32,
-    source: ChannelSource,
-    channel: FeatureChannelData,
 }
 
-impl ChannelSpan {
-    pub(crate) fn new(offset: usize, channel: FeatureChannelData) -> Result<Self, BakeError> {
-        let live = channel.channel()?;
-        Ok(Self {
-            offset,
-            dims: live.dims(),
-            weight: live.weight(),
-            source: live.source(),
-            channel,
-        })
+impl Span {
+    pub(crate) fn new(offset: usize, dims: usize) -> Self {
+        Self { offset, dims }
     }
 
-    /// The index of the span's first value in a feature vector.
-    pub fn offset(&self) -> usize {
-        self.offset
-    }
-
-    /// How many values the span holds.
-    pub fn dims(&self) -> usize {
+    pub(crate) fn dims(&self) -> usize {
         self.dims
     }
 
-    /// The feature indices the span covers.
-    pub fn range(&self) -> Range<usize> {
+    pub(crate) fn range(&self) -> Range<usize> {
         self.offset..self.offset + self.dims
     }
-
-    /// The weight of the span's group.
-    pub fn weight(&self) -> f32 {
-        self.weight
-    }
-
-    /// What the channel reads.
-    pub fn source(&self) -> ChannelSource {
-        self.source
-    }
-
-    /// The registered type name of the channel.
-    pub fn type_name(&self) -> &str {
-        self.channel.type_name()
-    }
-
-    /// The channel, live once the database is loaded.
-    pub fn channel(&self) -> &FeatureChannelData {
-        &self.channel
-    }
 }
 
-#[derive(Serialize)]
-struct SpanRef<'a> {
-    type_name: &'a str,
-    offset: usize,
-    dims: usize,
-    weight: f32,
-    source: ChannelSource,
-    value: Cow<'a, ReflectedValue>,
-}
-
-#[derive(Deserialize)]
-struct StoredSpan {
-    type_name: String,
-    offset: usize,
-    dims: usize,
-    weight: f32,
-    source: ChannelSource,
-    value: ReflectedValue,
-}
-
-impl Serialize for ChannelSpan {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        SpanRef {
-            type_name: self.type_name(),
-            offset: self.offset,
-            dims: self.dims,
-            weight: self.weight,
-            source: self.source,
-            value: self.channel.value().map_err(serde::ser::Error::custom)?,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for ChannelSpan {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let stored = StoredSpan::deserialize(deserializer)?;
-        Ok(Self {
-            offset: stored.offset,
-            dims: stored.dims,
-            weight: stored.weight,
-            source: stored.source,
-            channel: FeatureChannelData::Stored {
-                type_name: stored.type_name,
-                value: stored.value,
-            },
-        })
-    }
-}
-
-/// Baked animation frames: per-frame features and simulation bone, and where each frame plays in its clip.
-#[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[asset(version = 2)]
-pub struct MotionDatabase {
-    skeleton: AssetHandle<Skeleton>,
+/// What a bake computes from a motion database's inputs: per-frame features and simulation bone, where each entry's frames sit, and the normalization.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BakedDatabase {
     bone_count: usize,
-    clips: Vec<AssetHandle<AnimationClip>>,
-    mirrored: Vec<bool>,
-    mirror_axis: Option<MirrorAxis>,
-    rate: f32,
-    speed: f32,
-    trajectory: TrajectorySettings,
     frame_count: usize,
     range_starts: Vec<usize>,
     range_stops: Vec<usize>,
@@ -153,25 +55,15 @@ pub struct MotionDatabase {
     simulation: Vec<(Vec3, Quat)>,
     features: Vec<f32>,
     feature_dims: usize,
-    channels: Vec<ChannelSpan>,
+    spans: Vec<Span>,
     offset: Vec<f32>,
     deviations: Vec<f32>,
-    source_hash: u64,
 }
 
-const DEVIATION_FLOOR: f32 = 1e-6;
-
-impl MotionDatabase {
+impl BakedDatabase {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        skeleton: AssetHandle<Skeleton>,
         bone_count: usize,
-        clips: Vec<AssetHandle<AnimationClip>>,
-        mirrored: Vec<bool>,
-        mirror_axis: Option<MirrorAxis>,
-        rate: f32,
-        speed: f32,
-        trajectory: TrajectorySettings,
         frame_count: usize,
         range_starts: Vec<usize>,
         range_stops: Vec<usize>,
@@ -179,19 +71,12 @@ impl MotionDatabase {
         simulation: Vec<(Vec3, Quat)>,
         features: Vec<f32>,
         feature_dims: usize,
-        channels: Vec<ChannelSpan>,
+        spans: Vec<Span>,
         offset: Vec<f32>,
         deviations: Vec<f32>,
     ) -> Self {
         Self {
-            skeleton,
             bone_count,
-            clips,
-            mirrored,
-            mirror_axis,
-            rate,
-            speed,
-            trajectory,
             frame_count,
             range_starts,
             range_stops,
@@ -199,129 +84,162 @@ impl MotionDatabase {
             simulation,
             features,
             feature_dims,
-            channels,
+            spans,
             offset,
             deviations,
-            source_hash: 0,
         }
     }
 
-    /// Records the hash of what the database was baked from, as [`weightless_hash`](crate::weightless_hash) gives it.
-    pub fn with_source_hash(mut self, source_hash: u64) -> Self {
-        self.source_hash = source_hash;
-        self
+    fn fits(&self, database: &MotionDatabase) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.spans.len() == database.channels.len(),
+            "the blob has {} channels, the database {}",
+            self.spans.len(),
+            database.channels.len()
+        );
+        anyhow::ensure!(
+            self.range_starts.len() == database.entries.len(),
+            "the blob has {} entries, the database {}",
+            self.range_starts.len(),
+            database.entries.len()
+        );
+        Ok(())
     }
 
-    /// The hash of what the database was baked from; 0 until [`with_source_hash`](Self::with_source_hash) sets it.
-    pub fn source_hash(&self) -> u64 {
-        self.source_hash
-    }
-
-    /// The number of baked frames.
-    pub fn frame_count(&self) -> usize {
-        self.frame_count
-    }
-
-    /// The skeleton the database was baked for.
-    pub fn skeleton(&self) -> &AssetHandle<Skeleton> {
-        &self.skeleton
-    }
-
-    /// The skeleton's bone count at bake time.
-    pub fn bone_count(&self) -> usize {
-        self.bone_count
-    }
-
-    /// One clip per entry, in entry order.
-    pub fn clips(&self) -> &[AssetHandle<AnimationClip>] {
-        &self.clips
-    }
-
-    /// Whether each entry plays its clip mirrored, in entry order.
-    pub fn mirrored(&self) -> &[bool] {
-        &self.mirrored
-    }
-
-    /// The axis mirrored entries are mirrored across, when some entry is mirrored.
-    pub fn mirror_axis(&self) -> Option<MirrorAxis> {
-        self.mirror_axis
-    }
-
-    /// Database frames per second.
-    pub fn rate(&self) -> f32 {
-        self.rate
-    }
-
-    /// Clip seconds per database second.
-    pub fn speed(&self) -> f32 {
-        self.speed
-    }
-
-    /// How the trajectory is sampled for the channels.
-    pub fn trajectory(&self) -> &TrajectorySettings {
-        &self.trajectory
-    }
-
-    /// The length of one feature vector.
-    pub fn feature_dims(&self) -> usize {
-        self.feature_dims
-    }
-
-    /// Where each feature channel sits in a feature vector.
-    pub fn channels(&self) -> &[ChannelSpan] {
-        &self.channels
-    }
-
-    /// The live channels, in order; a channel not yet loaded is an error.
-    pub fn live_channels(&self) -> Result<Vec<&dyn FeatureChannel>, BakeError> {
-        self.channels
-            .iter()
-            .map(|span| span.channel.channel())
-            .collect()
-    }
-
-    /// Builds every stored channel into a live one; the first channel that can't be built is the error.
-    pub fn load_channels(
-        &mut self,
-        registry: &concerto_reflect::TypeRegistry,
-    ) -> Result<(), BakeError> {
-        self.channels
-            .iter_mut()
-            .try_for_each(|span| span.channel.load(registry))
-    }
-
-    /// The database frames of every entry, in entry order.
-    pub fn ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+    fn ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.range_starts
             .iter()
             .zip(&self.range_stops)
             .map(|(start, stop)| *start..*stop)
     }
 
+    fn entry_of(&self, frame: usize) -> Option<usize> {
+        self.ranges().position(|range| range.contains(&frame))
+    }
+
+    fn range_of(&self, frame: usize) -> Option<Range<usize>> {
+        self.ranges().nth(self.entry_of(frame)?)
+    }
+
+    fn simulation(&self, frame: usize) -> Option<Transform> {
+        let (translation, rotation) = self.simulation.get(frame)?;
+        Some(Transform::from_translation_rotation(
+            *translation,
+            *rotation,
+        ))
+    }
+}
+
+/// A motion database: the clips, sampling, simulation bone, trajectory and feature channels it is built from, and once derived, the baked frames.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MotionDatabase {
+    pub skeleton: AssetHandle<Skeleton>,
+    pub entries: Vec<MotionEntry>,
+    pub rate: f32,
+    pub speed: f32,
+    pub simulation: SimulationBoneSettings,
+    pub trajectory: TrajectorySettings,
+    pub channels: Vec<FeatureChannelData>,
+    pub mirror_axis: MirrorAxis,
+    #[serde(skip)]
+    pub baked: Option<BakedDatabase>,
+}
+
+const DEVIATION_FLOOR: f32 = 1e-6;
+
+const DEFINITION_NAME: &str = "MotionDatabaseDefinition";
+
+impl Default for MotionDatabase {
+    fn default() -> Self {
+        Self {
+            skeleton: AssetHandle::default(),
+            entries: Vec::new(),
+            rate: 60.0,
+            speed: 1.1,
+            simulation: SimulationBoneSettings::default(),
+            trajectory: TrajectorySettings::default(),
+            channels: reference_channels(),
+            mirror_axis: MirrorAxis::X,
+            baked: None,
+        }
+    }
+}
+
+impl MotionDatabase {
+    /// This database with `baked` as its computed part, for code that bakes inline.
+    pub fn with_baked(mut self, baked: BakedDatabase) -> Self {
+        self.baked = Some(baked);
+        self
+    }
+
+    /// Whether the computed part is present.
+    pub fn is_baked(&self) -> bool {
+        self.baked.is_some()
+    }
+
+    /// Builds every stored channel into a live one; the first channel that can't be built is the error.
+    pub fn load_channels(&mut self, registry: &TypeRegistry) -> Result<(), BakeError> {
+        self.channels
+            .iter_mut()
+            .try_for_each(|channel| channel.load(registry))
+    }
+
+    /// The live channels, in order; a channel not yet loaded is an error.
+    pub fn live_channels(&self) -> Result<Vec<&dyn FeatureChannel>, BakeError> {
+        self.channels
+            .iter()
+            .map(FeatureChannelData::channel)
+            .collect()
+    }
+
+    /// One clip per entry, in entry order.
+    pub fn clips(&self) -> impl Iterator<Item = &AssetHandle<AnimationClip>> + '_ {
+        self.entries.iter().map(|entry| &entry.clip)
+    }
+
+    /// The number of baked frames.
+    pub fn frame_count(&self) -> Option<usize> {
+        Some(self.baked.as_ref()?.frame_count)
+    }
+
+    /// The skeleton's bone count at bake time.
+    pub fn bone_count(&self) -> Option<usize> {
+        Some(self.baked.as_ref()?.bone_count)
+    }
+
+    /// The length of one feature vector.
+    pub fn feature_dims(&self) -> Option<usize> {
+        Some(self.baked.as_ref()?.feature_dims)
+    }
+
+    /// The feature indices channel `channel` wrote.
+    pub fn channel_range(&self, channel: usize) -> Option<Range<usize>> {
+        Some(self.baked.as_ref()?.spans.get(channel)?.range())
+    }
+
+    /// The database frames of every entry, in entry order.
+    pub fn ranges(&self) -> Option<impl Iterator<Item = Range<usize>> + '_> {
+        Some(self.baked.as_ref()?.ranges())
+    }
+
     /// The number of frames entry `index` baked.
     pub fn frames_of_entry(&self, index: usize) -> Option<usize> {
-        self.ranges().nth(index).map(|range| range.len())
+        self.ranges()?.nth(index).map(|range| range.len())
     }
 
     /// The index of the entry whose range contains `frame`.
     pub fn entry_of(&self, frame: usize) -> Option<usize> {
-        self.range_starts
-            .iter()
-            .zip(&self.range_stops)
-            .position(|(start, stop)| (*start..*stop).contains(&frame))
+        self.baked.as_ref()?.entry_of(frame)
     }
 
     /// The database frames of the entry that contains `frame`.
     pub fn range_of(&self, frame: usize) -> Option<Range<usize>> {
-        let entry = self.entry_of(frame)?;
-        Some(self.range_starts[entry]..self.range_stops[entry])
+        self.baked.as_ref()?.range_of(frame)
     }
 
-    /// The simulation bone's velocities at `frame`, by central difference and one-sided at the ends of its range; zero for a frame the database did not bake.
-    pub fn body_motion(&self, frame: usize) -> BodyMotion {
-        let Some(range) = self.range_of(frame) else {
-            return BodyMotion::default();
-        };
+    /// The simulation bone's velocities at `frame`, by central difference and one-sided at the ends of its range.
+    pub fn body_motion(&self, frame: usize) -> Option<BodyMotion> {
+        let range = self.range_of(frame)?;
         let previous = if frame > range.start {
             frame - 1
         } else {
@@ -333,42 +251,41 @@ impl MotionDatabase {
             frame
         };
         if previous == next {
-            return BodyMotion::default();
+            return Some(BodyMotion::default());
         }
         let dt = (next - previous) as f32 / self.rate;
-        let previous = self.simulation(previous);
-        let next = self.simulation(next);
-        BodyMotion {
+        let previous = self.simulation_bone(previous)?;
+        let next = self.simulation_bone(next)?;
+        Some(BodyMotion {
             velocity: (next.translation - previous.translation) / dt,
             angular_velocity: angular_velocity(next.rotation, previous.rotation, dt),
-        }
+        })
     }
 
-    /// The trajectory samples of `frame` as the bake saw them, in sample order and clamped to its range's last frame; none for a frame the database did not bake.
-    pub fn trajectory_samples(&self, frame: usize) -> Vec<TrajectorySample> {
-        let Some(range) = self.range_of(frame) else {
-            return Vec::new();
-        };
+    /// The trajectory samples of `frame` as the bake saw them, in sample order and clamped to its range's last frame.
+    pub fn trajectory_samples(&self, frame: usize) -> Option<Vec<TrajectorySample>> {
+        let range = self.range_of(frame)?;
         (0..self.trajectory.sample_count)
             .map(|sample| {
                 let target = frame
                     .saturating_add(self.trajectory.frame_offset(sample, self.rate))
                     .min(range.end - 1);
-                let simulation = self.simulation(target);
-                TrajectorySample {
+                let simulation = self.simulation_bone(target)?;
+                Some(TrajectorySample {
                     position: simulation.translation,
-                    velocity: self.body_motion(target).velocity,
+                    velocity: self.body_motion(target)?.velocity,
                     rotation: simulation.rotation,
-                }
+                })
             })
             .collect()
     }
 
     /// The entry of `frame` and the clip time in seconds that the frame plays.
     pub fn clip_time(&self, frame: usize) -> Option<(usize, f32)> {
-        let entry = self.entry_of(frame)?;
-        let offset = (frame - self.range_starts[entry]) as f32 * self.speed / self.rate;
-        Some((entry, self.clip_starts[entry] + offset))
+        let baked = self.baked.as_ref()?;
+        let entry = baked.entry_of(frame)?;
+        let offset = (frame - baked.range_starts[entry]) as f32 * self.speed / self.rate;
+        Some((entry, baked.clip_starts[entry] + offset))
     }
 
     /// The local pose of `frame`, sampled from its clip with each parentless bone re-expressed under the simulation bone.
@@ -378,133 +295,169 @@ impl MotionDatabase {
         skeleton: &Skeleton,
         clips: &[&AnimationClip],
     ) -> Result<Vec<JointPose>, BakeError> {
-        if skeleton.bone_count() != self.bone_count {
+        let baked = self.baked.as_ref().ok_or(BakeError::NotBaked)?;
+        if skeleton.bone_count() != baked.bone_count {
             return Err(BakeError::BoneCountMismatch {
-                expected: self.bone_count,
+                expected: baked.bone_count,
                 actual: skeleton.bone_count(),
             });
         }
-        if clips.len() != self.clips.len() {
+        if clips.len() != self.entries.len() {
             return Err(BakeError::ClipCountMismatch {
-                expected: self.clips.len(),
+                expected: self.entries.len(),
                 actual: clips.len(),
             });
         }
-        let (entry, time) = self.clip_time(frame).ok_or(BakeError::FrameOutOfRange {
+        let out_of_range = BakeError::FrameOutOfRange {
             frame,
-            frame_count: self.frame_count,
-        })?;
-        let mut local = sample_pose(skeleton, clips[entry], time);
-        if let Some(axis) = self
-            .mirror_axis
-            .filter(|_| self.mirrored.get(entry).copied().unwrap_or(false))
-        {
+            frame_count: baked.frame_count,
+        };
+        let (entry, time) = self.clip_time(frame).ok_or(out_of_range.clone())?;
+        let clip = clips.get(entry).ok_or(out_of_range.clone())?;
+        let simulation = baked.simulation(frame).ok_or(out_of_range)?;
+        let mut local = sample_pose(skeleton, clip, time);
+        if self.entries.get(entry).is_some_and(|entry| entry.mirrored) {
             let sampled = local.clone();
-            PoseMirror::new(skeleton, axis.normal())
+            PoseMirror::new(skeleton, self.mirror_axis.normal())
                 .and_then(|mirror| mirror.mirror_into(&sampled, &mut local))
                 .map_err(BakeError::Mirror)?;
         }
         let model = model_pose(skeleton, &local);
-        reexpress_roots(skeleton, &mut local, &model, self.simulation(frame));
+        reexpress_roots(skeleton, &mut local, &model, simulation);
         Ok(local)
     }
 
     /// The model-space simulation bone of `frame`.
-    pub fn simulation(&self, frame: usize) -> Transform {
-        let (translation, rotation) = self.simulation[frame];
-        Transform::from_translation_rotation(translation, rotation)
+    pub fn simulation_bone(&self, frame: usize) -> Option<Transform> {
+        self.baked.as_ref()?.simulation(frame)
     }
 
     /// The feature vector of `frame`.
-    pub fn features(&self, frame: usize) -> &[f32] {
-        let dims = self.feature_dims;
-        &self.features[frame * dims..(frame + 1) * dims]
+    pub fn features(&self, frame: usize) -> Option<&[f32]> {
+        let baked = self.baked.as_ref()?;
+        let dims = baked.feature_dims;
+        baked.features.get(frame * dims..(frame + 1) * dims)
     }
 
     /// The mean of every feature dimension over all frames.
-    pub fn offset(&self) -> &[f32] {
-        &self.offset
+    pub fn offset(&self) -> Option<&[f32]> {
+        Some(&self.baked.as_ref()?.offset)
     }
 
     /// The mean standard deviation of each channel's group, one per channel in order.
-    pub fn deviations(&self) -> &[f32] {
-        &self.deviations
+    pub fn deviations(&self) -> Option<&[f32]> {
+        Some(&self.baked.as_ref()?.deviations)
     }
 
     /// The bytes held by the feature, simulation and range arrays.
-    pub fn size_in_bytes(&self) -> usize {
-        size_of_val(self.features.as_slice())
-            + size_of_val(self.simulation.as_slice())
-            + size_of_val(self.range_starts.as_slice())
-            + size_of_val(self.range_stops.as_slice())
-            + size_of_val(self.clip_starts.as_slice())
+    pub fn size_in_bytes(&self) -> Option<usize> {
+        let baked = self.baked.as_ref()?;
+        Some(
+            size_of_val(baked.features.as_slice())
+                + size_of_val(baked.simulation.as_slice())
+                + size_of_val(baked.range_starts.as_slice())
+                + size_of_val(baked.range_stops.as_slice())
+                + size_of_val(baked.clip_starts.as_slice()),
+        )
     }
 
-    /// The divisor of every feature dimension: its group's floored deviation over the group's weight.
-    pub fn scales(&self) -> Vec<f32> {
-        let mut scales = vec![1.0; self.feature_dims];
-        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
-            let scale = deviation.max(DEVIATION_FLOOR) / span.weight;
-            scales[span.range()].fill(scale);
+    fn weighted_spans(&self) -> Option<Vec<(Range<usize>, f32, f32)>> {
+        let baked = self.baked.as_ref()?;
+        if baked.spans.len() != self.channels.len() {
+            return None;
         }
-        scales
+        baked
+            .spans
+            .iter()
+            .zip(&baked.deviations)
+            .zip(&self.channels)
+            .map(|((span, deviation), channel)| {
+                let weight = channel.channel().ok()?.weight();
+                (weight.is_finite() && weight > 0.0).then(|| (span.range(), *deviation, weight))
+            })
+            .collect()
     }
 
-    pub(crate) fn divisors(&self) -> Vec<f32> {
-        let mut divisors = self.scales();
-        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
-            if *deviation < DEVIATION_FLOOR {
-                divisors[span.range()].fill(f32::INFINITY);
+    /// The divisor of every feature dimension: its group's floored deviation over the weight its live channel has now.
+    pub fn scales(&self) -> Option<Vec<f32>> {
+        let mut scales = vec![1.0; self.feature_dims()?];
+        for (range, deviation, weight) in self.weighted_spans()? {
+            scales[range].fill(deviation.max(DEVIATION_FLOOR) / weight);
+        }
+        Some(scales)
+    }
+
+    pub(crate) fn divisors(&self) -> Option<Vec<f32>> {
+        let mut divisors = self.scales()?;
+        for (range, deviation, _) in self.weighted_spans()? {
+            if deviation < DEVIATION_FLOOR {
+                divisors[range].fill(f32::INFINITY);
             }
         }
-        divisors
+        Some(divisors)
     }
 
     /// Subtracts the offset and divides by the scale in place; a group with no deviation becomes 0.
-    pub fn normalise(&self, features: &mut [f32]) {
-        let scales = self.scales();
-        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
-            let range = span.range();
-            if *deviation < DEVIATION_FLOOR {
-                features[range].fill(0.0);
+    pub fn normalise(&self, features: &mut [f32]) -> Option<()> {
+        let scales = self.scales()?;
+        let offset = self.offset()?;
+        for (range, deviation, _) in self.weighted_spans()? {
+            if deviation < DEVIATION_FLOOR {
+                features.get_mut(range)?.fill(0.0);
                 continue;
             }
             for dim in range {
-                features[dim] = (features[dim] - self.offset[dim]) / scales[dim];
+                let value = *features.get(dim)?;
+                features[dim] = (value - offset[dim]) / scales[dim];
             }
         }
+        Some(())
     }
 
     /// The feature vector of `frame` after `normalise`.
-    pub fn normalised_features(&self, frame: usize) -> Vec<f32> {
-        let mut features = self.features(frame).to_vec();
-        self.normalise(&mut features);
-        features
+    pub fn normalised_features(&self, frame: usize) -> Option<Vec<f32>> {
+        let mut features = self.features(frame)?.to_vec();
+        self.normalise(&mut features)?;
+        Some(features)
     }
 
-    /// Takes `definition`'s channels and their weights without a re-bake; `definition` must differ from what the database was baked from only in weights.
-    pub fn reweigh(&mut self, definition: &MotionDatabaseDefinition) -> Result<(), BakeError> {
-        if definition.channels.len() != self.channels.len() {
-            return Err(BakeError::ChannelCountMismatch {
-                expected: definition.channels.len(),
-                actual: self.channels.len(),
-            });
+    fn input_bytes<'a>(&self, inputs: &'a DerivedInputs, id: AssetId) -> anyhow::Result<&'a [u8]> {
+        inputs
+            .bytes(id)
+            .with_context(|| format!("motion database input {id:?} was not read"))
+    }
+}
+
+impl Asset for MotionDatabase {
+    const FORMAT_VERSION: u32 = 3;
+
+    const FORMER_NAMES: &'static [&'static str] = &[DEFINITION_NAME];
+
+    fn name() -> &'static str {
+        "MotionDatabase"
+    }
+
+    fn migrate(version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
+        anyhow::bail!(
+            "MotionDatabase version {version} is a bake; a baked motion database is now derived from its definition; delete this file"
+        )
+    }
+
+    fn migrate_former(name: &str, version: u32, payload: &[u8]) -> anyhow::Result<Self> {
+        if name == DEFINITION_NAME && version == 2 {
+            return bincode::deserialize(payload)
+                .with_context(|| format!("failed to deserialize {name} version {version}"));
         }
-        let spans = self
-            .channels
-            .iter()
-            .zip(&definition.channels)
-            .map(|(span, channel)| {
-                let span = ChannelSpan::new(span.offset, channel.clone())?;
-                if span.weight.is_finite() && span.weight > 0.0 {
-                    Ok(span)
-                } else {
-                    Err(BakeError::InvalidWeight(span.weight))
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        self.channels = spans;
-        Ok(())
+        anyhow::bail!(
+            "{name} version {version} has no migration to MotionDatabase version {}; re-create it in the editor",
+            Self::FORMAT_VERSION
+        )
+    }
+}
+
+impl CreatableAsset for MotionDatabase {
+    fn new_asset() -> Self {
+        Self::default()
     }
 }
 
@@ -512,15 +465,57 @@ impl LoadableAsset for MotionDatabase {
     fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
         let server = context.asset_server();
         self.skeleton = server.load(self.skeleton.id());
-        for clip in &mut self.clips {
-            *clip = server.load(clip.id());
+        for entry in &mut self.entries {
+            entry.clip = server.load(entry.clip.id());
         }
         let registry = context.type_registry().read();
-        for span in &mut self.channels {
-            if let Err(error) = span.channel.load(&registry) {
+        for channel in &mut self.channels {
+            if let Err(error) = channel.load(&registry) {
                 log::warn!("motion database {:?}: {error}", context.asset_id());
             }
         }
+        Ok(())
+    }
+}
+
+impl DerivedData for MotionDatabase {
+    const DERIVED_VERSION: u32 = 1;
+
+    fn derived_inputs(&self) -> Vec<AssetId> {
+        std::iter::once(self.skeleton.id())
+            .chain(self.clips().map(AssetHandle::id))
+            .collect()
+    }
+
+    fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64> {
+        let skeleton = self.input_bytes(inputs, self.skeleton.id())?;
+        let clips = self
+            .clips()
+            .map(|clip| self.input_bytes(inputs, clip.id()))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(weightless_hash(self, skeleton, &clips))
+    }
+
+    fn derive(
+        &self,
+        inputs: &DerivedInputs,
+        progress: &mut dyn FnMut(usize, usize),
+    ) -> anyhow::Result<Vec<u8>> {
+        let skeleton: Skeleton = inputs.decode(self.skeleton.id())?;
+        let clips = self
+            .clips()
+            .map(|clip| inputs.decode::<AnimationClip>(clip.id()))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let clips: Vec<&AnimationClip> = clips.iter().collect();
+        let baked = bake_with_progress(self, &skeleton, &clips, progress)?;
+        bincode::serialize(&baked).context("failed to encode a baked motion database")
+    }
+
+    fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+        let baked: BakedDatabase =
+            bincode::deserialize(blob).context("failed to decode a baked motion database")?;
+        baked.fits(self)?;
+        self.baked = Some(baked);
         Ok(())
     }
 }
@@ -546,6 +541,7 @@ pub enum BakeError {
     ChannelCountMismatch { expected: usize, actual: usize },
     TrajectoryTooShort { needed: usize, actual: usize },
     Mirror(MirrorError),
+    NotBaked,
 }
 
 impl fmt::Display for BakeError {
@@ -612,6 +608,7 @@ impl fmt::Display for BakeError {
                 )
             }
             BakeError::Mirror(error) => write!(f, "the pose cannot be mirrored: {error}"),
+            BakeError::NotBaked => write!(f, "the motion database has not been derived yet"),
         }
     }
 }

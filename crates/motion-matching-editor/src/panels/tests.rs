@@ -19,7 +19,7 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, MotionDatabaseDefinition, MotionEntry, TimeRange,
+    BonePositions, BoneVelocities, MotionDatabase, MotionEntry, TimeRange,
 };
 use concerto_reflect::to_value;
 use concerto_ui::{
@@ -124,10 +124,7 @@ pub(crate) fn tab_with(f: SceneFixture) -> Tab {
     tab_of(f, |_| {})
 }
 
-pub(crate) fn tab_of(
-    mut f: SceneFixture,
-    change: impl FnOnce(&mut MotionDatabaseDefinition),
-) -> Tab {
+pub(crate) fn tab_of(mut f: SceneFixture, change: impl FnOnce(&mut MotionDatabase)) -> Tab {
     let skeleton = write_asset(
         &mut f,
         "content/hero/skeleton.gasset",
@@ -135,7 +132,7 @@ pub(crate) fn tab_of(
     );
     let walk = write_asset(&mut f, "content/hero/walk.gasset", &clip_of(10, 0..3));
     let run = write_asset(&mut f, "content/hero/run.gasset", &clip_of(2, 0..2));
-    let mut opened = MotionDatabaseDefinition {
+    let mut opened = MotionDatabase {
         skeleton: AssetHandle::weak(skeleton.id),
         entries: vec![
             entry_of(
@@ -466,7 +463,7 @@ fn a_definition_with_no_skeleton_reads_none() {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     let document = open(&mut f, &asset);
     hosts(&mut f, document);
@@ -534,7 +531,7 @@ fn a_skeleton_that_cannot_be_read_shows_under_the_picker() {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition {
+        &MotionDatabase {
             skeleton: AssetHandle::weak(skeleton.id),
             ..Default::default()
         },
@@ -1213,7 +1210,7 @@ fn failed_tab() -> Tab {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition {
+        &MotionDatabase {
             skeleton: AssetHandle::weak(skeleton.id),
             entries: vec![entry_of(&walk, None)],
             ..Default::default()
@@ -1283,7 +1280,7 @@ fn the_mirrored_checkbox_is_disabled_on_a_read_only_document() {
 fn nothing_can_be_edited_before_the_definition_opens() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
-    let document = f.request_kind(MotionDatabaseDefinition::name());
+    let document = f.request_kind(MotionDatabase::name());
     hosts(&mut f, document);
     let tab = Tab {
         f,
@@ -1303,7 +1300,7 @@ fn nothing_can_be_edited_before_the_definition_opens() {
 #[test]
 fn a_second_definition_replaces_the_rows_and_the_timeline() {
     let mut tab = tab();
-    let other = MotionDatabaseDefinition {
+    let other = MotionDatabase {
         entries: vec![entry_of(&tab.run, None)],
         channels: vec![],
         ..Default::default()
@@ -1508,7 +1505,7 @@ fn opening_a_definition_again_reads_its_clips_again() {
     let other = write_definition(
         &mut tab.f,
         "content/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     let asset = tab.asset.clone();
 

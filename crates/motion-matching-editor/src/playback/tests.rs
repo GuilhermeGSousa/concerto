@@ -25,8 +25,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MotionDatabase,
-    MotionDatabaseDefinition, MotionEntry, TimeRange, TrajectoryPositions, bake,
+    BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MotionDatabase, MotionEntry,
+    TimeRange, TrajectoryPositions, bake,
 };
 use glam::{Quat, Vec3};
 use uuid::Uuid;
@@ -90,7 +90,7 @@ fn baked_with(
     speed: f32,
     channels: Vec<FeatureChannelData>,
 ) -> BakedPlayback {
-    let mut definition = MotionDatabaseDefinition {
+    let mut definition = MotionDatabase {
         skeleton: AssetHandle::weak(AssetId::new()),
         rate: RATE,
         speed,
@@ -103,7 +103,8 @@ fn baked_with(
     definition.entries = entries;
     let skeleton = skeleton();
     let sampled: Vec<&AnimationClip> = clips.iter().collect();
-    let database = bake(&definition, &skeleton, &sampled).unwrap();
+    let baked = bake(&definition, &skeleton, &sampled).unwrap();
+    let database = definition.with_baked(baked);
     let channels: Vec<Box<dyn FeatureChannel>> = database
         .live_channels()
         .unwrap()
@@ -283,8 +284,14 @@ fn a_position_outside_the_range_starts_it() {
 fn with_no_entry_sought_the_whole_database_loops() {
     let database = baked().database;
 
-    assert_eq!(looped_range(&database, None), 0..database.frame_count());
-    assert_eq!(looped_range(&database, Some(7)), 0..database.frame_count());
+    assert_eq!(
+        looped_range(&database, None),
+        0..database.frame_count().unwrap()
+    );
+    assert_eq!(
+        looped_range(&database, Some(7)),
+        0..database.frame_count().unwrap()
+    );
 }
 
 #[test]
@@ -305,7 +312,7 @@ fn a_sought_entry_loops_on_itself_and_does_not_run_into_the_next() {
 #[test]
 fn a_seek_lands_on_the_baked_frame_of_the_entry_nearest_the_time() {
     let database = baked().database;
-    let second = database.ranges().nth(1).unwrap();
+    let second = database.ranges().unwrap().nth(1).unwrap();
 
     assert_eq!(frame_in_entry(&database, 0, 1.0), Some(30));
     assert_eq!(frame_in_entry(&database, 1, 1.0), Some(second.start + 30));
@@ -314,7 +321,7 @@ fn a_seek_lands_on_the_baked_frame_of_the_entry_nearest_the_time() {
 #[test]
 fn a_seek_stays_inside_the_entry() {
     let database = baked().database;
-    let first = database.ranges().next().unwrap();
+    let first = database.ranges().unwrap().next().unwrap();
 
     assert_eq!(frame_in_entry(&database, 0, 100.0), Some(first.end - 1));
     assert_eq!(frame_in_entry(&database, 0, -1.0), Some(first.start));
@@ -466,7 +473,7 @@ fn a_shorter_database_starts_over() {
 #[test]
 fn progress_is_written_once_per_frame_shown_with_the_entry_and_the_clip_time() {
     let mut stage = Stage::shown();
-    let second = stage.database().ranges().nth(1).unwrap().start;
+    let second = stage.database().ranges().unwrap().nth(1).unwrap().start;
 
     stage.frame();
     stage.frame();
@@ -516,7 +523,7 @@ fn the_shapes_draw_the_features_of_the_shown_frame() {
 
     let shapes = frame_shapes(&shown, 30).unwrap();
 
-    let features = shown.database.features(30);
+    let features = shown.database.features(30).unwrap();
     let FeatureShape::Line { end, .. } = shapes[0][0] else {
         panic!("{shapes:?}");
     };
@@ -630,7 +637,7 @@ fn logging() -> SceneFixture {
     fixture_with(logging_recipe)
 }
 
-fn buildable(definition: &mut MotionDatabaseDefinition) {
+fn buildable(definition: &mut MotionDatabase) {
     definition.simulation.position_joint = "Spine".into();
     definition.channels = vec![FeatureChannelData::live(BonePositions {
         bones: vec!["Head".into()],
@@ -825,7 +832,7 @@ fn a_definition_opened_with_baked_data_never_plays_a_clip() {
     let other = write_definition(
         &mut tab.f,
         "content/hero/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     tab.f.request(&other);
     tab.f
@@ -858,7 +865,7 @@ fn a_definition_with_no_baked_data_stops_the_database() {
     let other = write_definition(
         &mut tab.f,
         "content/hero/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
 
     tab.f.request(&other);
@@ -1002,7 +1009,7 @@ fn the_timeline_head_comes_back_without_the_playback_leaving_the_selected_entry(
     let mut tab = built(logging());
     let document = tab.document;
     let database = tab.state().playback.as_ref().unwrap().database.clone();
-    let last = database.ranges().next().unwrap().end - 1;
+    let last = database.ranges().unwrap().next().unwrap().end - 1;
     let (_, end) = database.clip_time(last).unwrap();
 
     scrub(&mut tab, end);

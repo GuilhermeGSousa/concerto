@@ -104,14 +104,14 @@ fn stepped(position: f32, delta: f32, rate: f32, range: Range<usize>) -> f32 {
 
 fn looped_range(database: &MotionDatabase, entry: Option<usize>) -> Range<usize> {
     entry
-        .and_then(|entry| database.ranges().nth(entry))
-        .unwrap_or(0..database.frame_count())
+        .and_then(|entry| database.ranges()?.nth(entry))
+        .unwrap_or(0..database.frame_count().unwrap_or(0))
 }
 
 fn frame_in_entry(database: &MotionDatabase, entry: usize, time: f32) -> Option<usize> {
-    let range = database.ranges().nth(entry)?;
+    let range = database.ranges()?.nth(entry)?;
     let (_, start) = database.clip_time(range.start)?;
-    let along = (time - start) * database.rate() / database.speed();
+    let along = (time - start) * database.rate / database.speed;
     let last = range.len().checked_sub(1)?;
     Some(range.start + (along.round().max(0.0) as usize).min(last))
 }
@@ -153,13 +153,16 @@ fn play_database(
     playback.position = stepped(
         playback.position,
         time.delta().as_secs_f32(),
-        shown.database.rate(),
+        shown.database.rate,
         looped_range(&shown.database, playback.looped),
     );
     let frame = playback.position as usize;
     let clips = sampled_clips(shown);
+    let Some(simulation) = shown.database.simulation_bone(frame) else {
+        return;
+    };
     let Some(pose) = local_pose(&shown.database, &shown.skeleton, &clips, frame)
-        .map(|pose| placed_pose(&shown.skeleton, &shown.database.simulation(frame), pose))
+        .map(|pose| placed_pose(&shown.skeleton, &simulation, pose))
     else {
         return;
     };
@@ -187,7 +190,7 @@ fn frame_shapes(shown: &BakedPlayback, frame: usize) -> Option<Vec<Vec<FeatureSh
     Some(preview_features(
         &shown.channels,
         &baked.context(&shown.skeleton),
-        shown.database.features(frame),
+        shown.database.features(frame)?,
     ))
 }
 
@@ -214,8 +217,11 @@ fn draw_simulation_bone(
     let Some(shown) = &playback.shown else {
         return;
     };
+    let Some(simulation) = shown.database.simulation_bone(playback.frame()) else {
+        return;
+    };
     let stage = stage_of(&skeletons, &parents, &globals);
-    let bone = stage.mul_transform(shown.database.simulation(playback.frame()));
+    let bone = stage.mul_transform(simulation);
     gizmos.set_line_width(SIMULATION_WIDTH);
     draw_simulation(&mut gizmos, &bone);
 }
@@ -238,8 +244,11 @@ fn draw_feature_channels(
     let Some(channels) = frame_shapes(shown, frame) else {
         return;
     };
+    let Some(simulation) = shown.database.simulation_bone(frame) else {
+        return;
+    };
     let stage = stage_of(&skeletons, &parents, &globals);
-    let bone = stage.mul_transform(shown.database.simulation(frame));
+    let bone = stage.mul_transform(simulation);
     gizmos.set_line_width(SIMULATION_WIDTH);
     for (channel, shapes) in channels.iter().enumerate() {
         let color = channel_color(channel, playback.picked);
@@ -257,7 +266,8 @@ fn show_database(on: On<ShowDatabase>, mut playback: ResMut<DatabasePlayback>) {
     let shown = on.signal().0.clone();
     let frames = shown
         .as_ref()
-        .map_or(0, |shown| shown.database.frame_count());
+        .and_then(|shown| shown.database.frame_count())
+        .unwrap_or(0);
     if playback.frame() >= frames {
         playback.position = 0.0;
     }
@@ -280,10 +290,10 @@ fn seek_database(on: On<SeekDatabase>, mut playback: ResMut<DatabasePlayback>) {
 pub(crate) fn baked_entry(state: &DefinitionDocument) -> Option<usize> {
     let index = state.selected_entry?;
     let database = &state.playback.as_ref()?.database;
-    let baked = database.clips().get(index)?;
-    let mirrored = *database.mirrored().get(index)?;
+    database.frames_of_entry(index)?;
+    let baked = database.entries.get(index)?;
     let entry = state.entries.get(index)?;
-    (entry.clip.id() == baked.id() && entry.mirrored == mirrored).then_some(index)
+    (entry.clip.id() == baked.clip.id() && entry.mirrored == baked.mirrored).then_some(index)
 }
 
 pub(crate) fn scrub_entry(document: Entity) -> Listener<TimelineScrubbed> {
@@ -331,7 +341,7 @@ fn picked_channel(
 ) -> Option<usize> {
     let index = shown_index(values?, shown?)?.checked_sub(1)?;
     let held = state.channels.get(index)?;
-    let baked = state.playback.as_ref()?.database.channels().get(index)?;
+    let baked = state.playback.as_ref()?.database.channels.get(index)?;
     (held.type_name == baked.type_name()).then_some(index)
 }
 
@@ -354,7 +364,7 @@ pub(crate) fn follow_playback(
         if state
             .playback
             .as_ref()
-            .is_some_and(|shown| shown.database.skeleton().id() != skeleton)
+            .is_some_and(|shown| shown.database.skeleton.id() != skeleton)
         {
             state.playback = None;
             previews.trigger(document, ShowDatabase(None));

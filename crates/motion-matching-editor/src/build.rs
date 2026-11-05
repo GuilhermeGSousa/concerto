@@ -29,10 +29,7 @@ use concerto_foundation::assets::{
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mesh::Skeleton;
-use concerto_motion_matching::{
-    FeatureChannel, MotionDatabase, MotionDatabaseDefinition, bake_with_progress, is_stale,
-    weightless_hash,
-};
+use concerto_motion_matching::{FeatureChannel, MotionDatabase, bake_with_progress};
 
 use crate::{
     document::DefinitionDocument,
@@ -94,38 +91,39 @@ pub struct BakedStats {
 impl BakedStats {
     /// The stats of `database`.
     pub fn of(database: &MotionDatabase) -> Self {
-        let trajectory = database.trajectory();
+        let trajectory = &database.trajectory;
         let horizon = trajectory.sample_dt * trajectory.sample_count as f32;
         let entries = database
             .clips()
-            .iter()
             .enumerate()
             .map(|(index, clip)| {
                 let frames = database.frames_of_entry(index).unwrap_or(0);
                 EntryStats {
                     clip: clip.id(),
                     frames,
-                    short: (frames as f32) < horizon * database.rate(),
+                    short: (frames as f32) < horizon * database.rate,
                 }
             })
             .collect();
         let channels = database
-            .channels()
+            .channels
             .iter()
-            .zip(database.deviations())
-            .map(|(span, deviation)| {
-                let means = &database.offset()[span.range()];
-                ChannelStats {
-                    name: span.type_name().to_owned(),
-                    mean: means.iter().sum::<f32>() / span.dims().max(1) as f32,
+            .enumerate()
+            .zip(database.deviations().unwrap_or_default())
+            .filter_map(|((index, channel), deviation)| {
+                let range = database.channel_range(index)?;
+                let means = database.offset()?.get(range.clone())?;
+                Some(ChannelStats {
+                    name: channel.type_name().to_owned(),
+                    mean: means.iter().sum::<f32>() / range.len().max(1) as f32,
                     deviation: *deviation,
-                }
+                })
             })
             .collect();
         Self {
             entries,
-            frames: database.frame_count(),
-            bytes: database.size_in_bytes(),
+            frames: database.frame_count().unwrap_or(0),
+            bytes: database.size_in_bytes().unwrap_or(0),
             horizon,
             channels,
         }
@@ -135,7 +133,6 @@ impl BakedStats {
 struct Built {
     bytes: Vec<u8>,
     stats: BakedStats,
-    weights_only: bool,
 }
 
 struct BuildJob {
@@ -236,7 +233,7 @@ struct Sources {
 }
 
 impl Sources {
-    fn of(definition: &MotionDatabaseDefinition, root: PathBuf, assets: &AssetRegistry) -> Self {
+    fn of(definition: &MotionDatabase, root: PathBuf, assets: &AssetRegistry) -> Self {
         Self {
             root,
             skeleton: Source::of(definition.skeleton.id(), "the skeleton".into(), assets),
@@ -269,13 +266,6 @@ struct SourceBytes {
     clips: Vec<Vec<u8>>,
 }
 
-impl SourceBytes {
-    fn hash(&self, definition: &MotionDatabaseDefinition) -> u64 {
-        let clips: Vec<&[u8]> = self.clips.iter().map(Vec::as_slice).collect();
-        weightless_hash(definition, &self.skeleton, &clips)
-    }
-}
-
 fn read_baked(root: &Path, address: &str) -> Option<MotionDatabase> {
     let bytes = std::fs::read(root.join(address)).ok()?;
     decode_content_asset::<MotionDatabase>(&bytes)
@@ -283,7 +273,7 @@ fn read_baked(root: &Path, address: &str) -> Option<MotionDatabase> {
         .map(|(_, database)| database)
 }
 
-fn packed(database: &MotionDatabase, address: &str, weights_only: bool) -> anyhow::Result<Built> {
+fn packed(database: &MotionDatabase, address: &str) -> anyhow::Result<Built> {
     let header = ContentAssetHeader {
         asset_id: AssetId::from_path(address),
         references: database.referenced_sub_assets(),
@@ -295,12 +285,11 @@ fn packed(database: &MotionDatabase, address: &str, weights_only: bool) -> anyho
     Ok(Built {
         bytes: write_content_asset(&header, &payload)?,
         stats: BakedStats::of(database),
-        weights_only,
     })
 }
 
 struct BuildInput {
-    definition: MotionDatabaseDefinition,
+    definition: MotionDatabase,
     sources: Sources,
     address: String,
     progress: Arc<AtomicUsize>,
@@ -317,13 +306,6 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
         .read()
         .map_err(|asset| anyhow!("Can't read {asset}"))?;
     refuse_another_asset(&sources.root.join(&address), &address)?;
-    let hash = read.hash(&definition);
-    if let Some(mut database) = read_baked(&sources.root, &address)
-        && database.source_hash() == hash
-    {
-        database.reweigh(&definition)?;
-        return packed(&database, &address, true);
-    }
     let skeleton: Skeleton = decode(&read.skeleton)?;
     let clips = read
         .clips
@@ -331,11 +313,10 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
         .map(|clip| decode(clip))
         .collect::<anyhow::Result<Vec<AnimationClip>>>()?;
     let clips: Vec<&AnimationClip> = clips.iter().collect();
-    let database = bake_with_progress(&definition, &skeleton, &clips, |finished, _| {
+    let baked = bake_with_progress(&definition, &skeleton, &clips, |finished, _| {
         progress.store(finished, Ordering::Relaxed);
-    })?
-    .with_source_hash(hash);
-    packed(&database, &address, false)
+    })?;
+    packed(&definition.with_baked(baked), &address)
 }
 
 fn begin(
@@ -453,12 +434,8 @@ fn install(
     Ok(address)
 }
 
-fn built_status(built: &Built, address: &str) -> String {
-    if built.weights_only {
-        format!("Updated the weights in {address}")
-    } else {
-        format!("Built {address}")
-    }
+fn built_status(address: &str) -> String {
+    format!("Built {address}")
 }
 
 pub(crate) fn finish_build(
@@ -490,7 +467,7 @@ pub(crate) fn finish_build(
             });
         match built {
             Ok((built, address)) => {
-                document.status = built_status(&built, &address);
+                document.status = built_status(&address);
                 state.baked = BakedState::UpToDate;
                 state.stats = Some(built.stats);
                 state.baked_wanted = true;
@@ -501,7 +478,7 @@ pub(crate) fn finish_build(
 }
 
 struct CheckInput {
-    definition: MotionDatabaseDefinition,
+    definition: MotionDatabase,
     sources: Sources,
     address: String,
     types: AppTypeRegistry,
@@ -509,27 +486,24 @@ struct CheckInput {
 }
 
 fn baked_state(database: &MotionDatabase, input: &CheckInput) -> BakedState {
-    let read = match input.sources.read() {
-        Ok(read) => read,
-        Err(asset) => return BakedState::CantRead(asset),
-    };
-    let hash = read.hash(&input.definition);
-    if is_stale(database, &input.definition, hash) {
-        BakedState::OutOfDate
-    } else {
+    if let Err(asset) = input.sources.read() {
+        return BakedState::CantRead(asset);
+    }
+    if database.is_baked() {
         BakedState::UpToDate
+    } else {
+        BakedState::OutOfDate
     }
 }
 
 fn read_playback(mut database: MotionDatabase, input: &CheckInput) -> Option<BakedPlayback> {
-    if database.skeleton().id() != input.definition.skeleton.id() {
+    if database.skeleton.id() != input.definition.skeleton.id() {
         return None;
     }
     let root = &input.sources.root;
     let skeleton: Skeleton = decode(&input.sources.skeleton.read::<Skeleton>(root).ok()?).ok()?;
     let clips = database
         .clips()
-        .iter()
         .map(|clip| {
             let source = Source::of(clip.id(), String::new(), &input.assets);
             let bytes = source.read::<AnimationClip>(root).ok()?;

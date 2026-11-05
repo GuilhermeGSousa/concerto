@@ -11,10 +11,7 @@ use crate::{
         ChannelSource, FeatureChannel, FeatureChannelData, FrameContext, ReflectFeatureChannel,
     },
     database::MotionDatabase,
-    definition::{
-        JointAxis, MirrorAxis, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
-        TrajectorySettings,
-    },
+    definition::{JointAxis, MirrorAxis, MotionEntry, SimulationBoneSettings, TrajectorySettings},
 };
 
 pub(crate) const TURN_RATE: f32 = 1.5;
@@ -22,7 +19,7 @@ pub(crate) const TURN_RATE: f32 = 1.5;
 #[derive(Reflect, Default, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub(crate) struct YawRate {
-    weight: f32,
+    pub(crate) weight: f32,
 }
 
 impl FeatureChannel for YawRate {
@@ -42,7 +39,7 @@ impl FeatureChannel for YawRate {
 #[derive(Reflect, Default, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub(crate) struct Speed {
-    weight: f32,
+    pub(crate) weight: f32,
 }
 
 impl FeatureChannel for Speed {
@@ -110,7 +107,7 @@ pub(crate) fn turn_left() -> AnimationClip {
 #[derive(Reflect, Default, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub(crate) struct Pace {
-    weight: f32,
+    pub(crate) weight: f32,
 }
 
 impl FeatureChannel for Pace {
@@ -140,9 +137,9 @@ fn two_clip_definition(
     speed: f32,
     skeleton: AssetHandle<Skeleton>,
     clips: [AssetHandle<AnimationClip>; 2],
-) -> MotionDatabaseDefinition {
+) -> MotionDatabase {
     let [walk, turn] = clips;
-    MotionDatabaseDefinition {
+    MotionDatabase {
         skeleton,
         entries: vec![
             MotionEntry {
@@ -167,6 +164,23 @@ fn two_clip_definition(
         trajectory,
         channels,
         mirror_axis: MirrorAxis::X,
+        baked: None,
+    }
+}
+
+pub(crate) fn baked(
+    definition: MotionDatabase,
+    skeleton: &Skeleton,
+    clips: &[&AnimationClip],
+) -> MotionDatabase {
+    let baked = bake(&definition, skeleton, clips).unwrap();
+    definition.with_baked(baked)
+}
+
+pub(crate) fn unbaked(database: MotionDatabase) -> MotionDatabase {
+    MotionDatabase {
+        baked: None,
+        ..database
     }
 }
 
@@ -184,7 +198,7 @@ pub(crate) fn two_clip_database() -> MotionDatabase {
         Default::default(),
         Default::default(),
     );
-    bake(&definition, &skeleton(), &[&walk_forward(), &turn_left()]).unwrap()
+    baked(definition, &skeleton(), &[&walk_forward(), &turn_left()])
 }
 
 pub(crate) fn pace_database(
@@ -218,5 +232,5 @@ pub(crate) fn pace_database_of(
         skeleton_handle,
         clip_handles,
     );
-    bake(&definition, skeleton, clips).unwrap()
+    baked(definition, skeleton, clips)
 }

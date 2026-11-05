@@ -510,14 +510,14 @@ fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
     let last = fixture.database.range_of(0).unwrap().end - 1;
     state.frame = last;
     state.search_timer = 10.0;
-    let simulation = fixture.database.simulation(last);
+    let simulation = fixture.database.simulation_bone(last).unwrap();
     let mut board = AnimationBlackboard::default();
     board.set(
         TRAJECTORY_KEY,
         MotionMatchingTrajectory {
             translation: simulation.translation,
             rotation: simulation.rotation,
-            samples: fixture.database.trajectory_samples(last),
+            samples: fixture.database.trajectory_samples(last).unwrap(),
         },
     );
 
@@ -967,7 +967,7 @@ fn started(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingState 
 fn at_rate_two_the_playhead_advances_twice_the_frames_of_rate_one() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
-    let dt = 2.65 / fixture.database.rate();
+    let dt = 2.65 / fixture.database.rate;
     let advanced = |rate: f32| {
         let mut state = started(&fixture, &node);
         let start = state.frame;
