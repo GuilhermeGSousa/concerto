@@ -10,12 +10,12 @@ use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
     content::{
-        read_content_asset, read_content_asset_parts, save_content_asset_into, write_content_asset,
+        read_content_asset, read_content_asset_parts, save_content_asset_into,
         write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection,
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
-    registry::{AssetEntry, AssetRegistry},
+    registry::AssetRegistry,
     Asset, AssetId, ContentAssetRoot, LoadableAsset,
 };
 use serde::{Deserialize, Serialize};
