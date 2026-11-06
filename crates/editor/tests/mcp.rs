@@ -656,9 +656,17 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new() -> Self {
+    fn without_a_scene() -> Self {
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir(directory.path().join("content")).unwrap();
+        Self {
+            directory,
+            scene: AssetId::new(),
+        }
+    }
+
+    fn new() -> Self {
+        let fixture = Self::without_a_scene();
         let node = |name: &str, children: Vec<usize>| {
             let mut node = SceneNode {
                 name: name.into(),
@@ -682,15 +690,15 @@ impl Fixture {
         };
         let id = AssetId::new();
         write_asset(
-            directory.path(),
+            fixture.directory.path(),
             "content/level.gasset",
             id,
             Scene::name(),
             &bincode::serialize(&scene).unwrap(),
         );
         Self {
-            directory,
             scene: id,
+            ..fixture
         }
     }
 
@@ -920,6 +928,12 @@ async fn until(client: &Client, tool: &'static str, done: impl Fn(&str) -> bool)
     }
 }
 
+async fn close_the_project_scene(client: &Client) {
+    until(client, "state", |state| state.contains("level target")).await;
+    let document = document_id(&ok(client, "status").await);
+    ok_with(client, "close_document", json!({ "document": document })).await;
+}
+
 async fn open(client: &Client) {
     until(client, "state", |state| state.starts_with("project")).await;
     assert_eq!(ok(client, "open_scene").await, "queued");
@@ -928,7 +942,7 @@ async fn open(client: &Client) {
 
 #[test]
 fn unmet_needs_answer_the_editor_codes() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
         let errors = vec![
@@ -1276,7 +1290,7 @@ fn scene_tree_walks_the_open_scene_to_its_depth_and_limit() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "scene_tree").await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -1370,7 +1384,7 @@ fn find_entities_matches_names_and_components_with_their_paths() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "find_entities").await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -1452,7 +1466,7 @@ fn inspect_reads_components_as_json_with_their_paths_and_adapters() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error_with(&client, "inspect", json!({ "entity": "1v1" })).await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -2049,7 +2063,7 @@ fn select_sets_and_clears_the_selection() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error_with(&client, "select", json!({ "entity": "1v1" })).await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -2203,7 +2217,7 @@ fn frame_answers_once_the_camera_has_framed() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "frame").await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -2255,7 +2269,7 @@ fn set_camera_places_the_camera_by_angles_or_by_a_point_to_face() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let angles = json!({ "position": [1.0, 2.0, 3.0], "yaw": 0.5, "pitch": 0.25 });
         let closed = error_with(&client, "set_camera", angles.clone()).await;
         open(&client).await;
@@ -2443,7 +2457,7 @@ fn screenshot_answers_the_viewport_and_the_whole_editor_as_png() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let editor = call_with(&client, "screenshot", json!({ "target": "editor" })).await;
         let small_editor = call_with(
             &client,
@@ -2676,7 +2690,7 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error_with(&client, "create_entity", json!({})).await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -3219,7 +3233,7 @@ fn save_writes_the_scene_and_answers_when_there_is_nothing_to_save() {
     let level = fixture.root().join("content/level.gasset");
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, move |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "save").await;
         open(&client).await;
         let document = document_id(&ok(&client, "status").await);
@@ -4944,7 +4958,10 @@ impl AssetEditor for ShownTuneEditor {
 #[derive(Deserialize, JsonSchema)]
 struct FinishTune {}
 
-fn finish_tune(mut calls: ToolCalls<FinishTune>, documents: Query<&mut EditorDocument>) {
+fn finish_tune(
+    mut calls: ToolCalls<FinishTune>,
+    documents: Query<&mut EditorDocument, With<HeldTune>>,
+) {
     for (_, reply) in calls.read() {
         for mut document in documents.iter() {
             if let Some(asset) = document.pending.clone() {
@@ -5086,7 +5103,7 @@ struct ValueCalls {
 
 #[test]
 fn open_asset_answers_another_kind_once_its_editor_has_loaded_or_refused_it() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     fixture.add("content/broken_tune.gasset", "Tune");
     fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
@@ -5130,7 +5147,7 @@ fn open_asset_answers_another_kind_once_its_editor_has_loaded_or_refused_it() {
 
 #[test]
 fn a_shown_value_leaves_every_value_reachable_by_name() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
     let Some(served) = serve_with(
@@ -5161,7 +5178,7 @@ fn a_shown_value_leaves_every_value_reachable_by_name() {
 
 #[test]
 fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     let tune = fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
     let held = move |app: &mut App| held_tune_editor(app, tune);
@@ -5277,7 +5294,7 @@ fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
 
 #[test]
 fn a_value_call_is_refused_by_its_arguments_with_no_scene_open() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
     let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
