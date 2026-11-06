@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail};
 use concerto_app::App;
-use concerto_ecs::events::event_reader::EventReader;
+use concerto_ecs::events::{event_reader::EventReader, event_writer::EventWriter};
 use concerto_ecs::{
     Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
@@ -16,6 +16,9 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
+
+use crate::project::AssetsWritten;
+use crate::scene::SceneSaved;
 
 /// Installs an editor's components when its document is created.
 pub trait AssetEditor: Send + Sync + 'static {
@@ -228,6 +231,17 @@ pub(crate) fn request_save(
             .is_some_and(|document| document.pending.is_none())
     {
         commands.insert(SaveRequested, entity);
+    }
+}
+
+pub(crate) fn report_saves_as_written(
+    mut saved: EventReader<SceneSaved>,
+    mut written: EventWriter<AssetsWritten>,
+) {
+    for saved in saved.read() {
+        written.write(AssetsWritten {
+            ids: vec![saved.asset.id],
+        });
     }
 }
 
@@ -505,6 +519,39 @@ mod tests {
         process_editor_commands(w);
         w.get_resource::<ActiveEditor>().unwrap().0.unwrap()
     }
+    #[test]
+    fn a_save_sends_the_saved_asset_as_written() {
+        use concerto_ecs::events::{event_channel::EventChannel, event_cursor::EventCursor};
+        let mut w = World::new();
+        w.insert_resource(EventChannel::<SceneSaved>::new());
+        w.insert_resource(EventChannel::<AssetsWritten>::new());
+        let mut system = report_saves_as_written.into_system();
+        system.initialize(&mut w);
+        let saved = asset("a");
+        let document = w.spawn((Unsaved,));
+        w.get_resource_mut::<EventChannel<SceneSaved>>()
+            .unwrap()
+            .push_event(SceneSaved {
+                document,
+                asset: saved.clone(),
+            });
+
+        system.run_and_apply((), &mut w);
+
+        let written: Vec<AssetsWritten> = w
+            .get_resource::<EventChannel<AssetsWritten>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .cloned()
+            .collect();
+        assert_eq!(
+            written,
+            [AssetsWritten {
+                ids: vec![saved.id]
+            }]
+        );
+    }
+
     #[test]
     fn selecting_active_document_does_not_mark_active_resource_changed() {
         let mut w = world();

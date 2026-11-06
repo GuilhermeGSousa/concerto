@@ -40,7 +40,7 @@ use concerto_ui::{
 use concerto_window::input::MouseButton;
 
 use crate::{
-    build::{BakedStats, BuildRequested, build_refusal, progress_line},
+    derive::BakedStats,
     document::{ChannelId, DefinitionDocument, HeldChannel, publish_values},
     facts::EntryFacts,
     menu::{NameMenu, close_menu, open_name_menu},
@@ -68,13 +68,10 @@ pub(crate) struct DefinitionPanels {
     add_channel: Entity,
     channel_rows: Vec<ChannelWidgets>,
     pub(crate) timeline: Entity,
-    pub(crate) build: Entity,
-    pub(crate) note: Entity,
-    pub(crate) baked: Entity,
     pub(crate) stats_view: Entity,
     pub(crate) stats: Entity,
     shown_stats: Option<BakedStats>,
-    status: Entity,
+    pub(crate) status: Entity,
 }
 
 struct EntryWidgets {
@@ -93,9 +90,6 @@ struct ChannelWidgets {
 }
 
 struct InspectorPanel {
-    build: Entity,
-    note: Entity,
-    baked: Entity,
     stats_view: Entity,
     stats: Entity,
     status: Entity,
@@ -448,15 +442,6 @@ fn pick_channel(document: Entity, name: String) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn request_build(document: Entity) -> Listener<UIClick> {
-    (move |on: On<UIClick>, mut cmd: CommandQueue| {
-        if on.signal().button == MouseButton::Left {
-            cmd.insert(BuildRequested, document);
-        }
-    })
-    .into_listener()
-}
-
 fn title(theme: &UITheme, text: &str) -> Label {
     theme
         .label(text.to_uppercase())
@@ -697,32 +682,8 @@ fn spawn_channel_row(
     }
 }
 
-fn build_inspector(
-    host: &mut EntityCommandQueue,
-    document: Entity,
-    theme: &UITheme,
-) -> InspectorPanel {
+fn build_inspector(host: &mut EntityCommandQueue, theme: &UITheme) -> InspectorPanel {
     let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm));
-    let build = panel
-        .spawn_child(
-            theme
-                .button("Build")
-                .fixed()
-                .on_click(request_build(document)),
-        )
-        .entity();
-    let note = panel
-        .spawn_child(theme.label("").small().muted().hidden().fixed())
-        .entity();
-    let baked = panel
-        .spawn_child(
-            theme
-                .label("")
-                .font_size(theme.font_size_sm)
-                .hidden()
-                .fixed(),
-        )
-        .entity();
     let mut view = panel.spawn_child((theme.column().fixed().clipped().hidden(), Interactable));
     let stats_view = view.entity();
     let stats = view
@@ -737,9 +698,6 @@ fn build_inspector(
     });
     let status = panel.spawn_child(theme.label("").hidden().fixed()).entity();
     InspectorPanel {
-        build,
-        note,
-        baked,
         stats_view,
         stats,
         status,
@@ -775,7 +733,7 @@ pub(crate) fn build_definition_panels(
             continue;
         };
         let left = build_left(&mut cmd.entity(left), document, &theme);
-        let inspector = build_inspector(&mut cmd.entity(inspector), document, &theme);
+        let inspector = build_inspector(&mut cmd.entity(inspector), &theme);
         let timeline = build_bottom(&mut cmd.entity(bottom), document, &theme);
         cmd.insert(
             DefinitionPanels {
@@ -792,9 +750,6 @@ pub(crate) fn build_definition_panels(
                 add_channel: left.add_channel,
                 channel_rows: Vec::new(),
                 timeline,
-                build: inspector.build,
-                note: inspector.note,
-                baked: inspector.baked,
                 stats_view: inspector.stats_view,
                 stats: inspector.stats,
                 shown_stats: None,
@@ -1040,19 +995,6 @@ pub(crate) fn sync_definition_panels(
         write_line(&texts, &nodes, panels.skeleton_error, error);
         write_line(&texts, &nodes, panels.status, &document.status);
 
-        let refusal = build_refusal(state, hosted.is_some());
-        write_disabled(
-            &disabled,
-            &mut cmd,
-            panels.build,
-            refusal.is_some() || state.build.is_running(),
-        );
-        let note = state.build.progress().map_or_else(
-            || refusal.unwrap_or_default().to_owned(),
-            |(finished, total)| progress_line(finished, total),
-        );
-        write_line(&texts, &nodes, panels.note, &note);
-        write_line(&texts, &nodes, panels.baked, &state.baked.line());
         if panels.shown_stats != state.stats {
             let lines = state
                 .stats

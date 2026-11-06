@@ -23,9 +23,9 @@ use concerto_ecs::{
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::{JointPose, SkeletonComponent};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MirrorAxis,
-    MotionDatabaseDefinition, MotionEntry, MotionMatchingState, SimulationBoneSettings,
-    TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
+    BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MirrorAxis, MotionDatabase,
+    MotionEntry, MotionMatchingState, SimulationBoneSettings, TrajectoryDirections,
+    TrajectoryPositions, TrajectorySettings, bake,
 };
 use concerto_reflect::TypeRegistry;
 use glam::{Mat4, Quat};
@@ -129,7 +129,7 @@ fn baked(
     skeleton_handle: AssetHandle<Skeleton>,
     [walk_handle, turn_handle]: [AssetHandle<AnimationClip>; 2],
 ) -> MotionDatabase {
-    let definition = MotionDatabaseDefinition {
+    let definition = MotionDatabase {
         skeleton: skeleton_handle,
         entries: vec![
             MotionEntry {
@@ -157,8 +157,10 @@ fn baked(
         },
         channels,
         mirror_axis: MirrorAxis::X,
+        baked: None,
     };
-    bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap()
+    let baked = bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap();
+    definition.with_baked(baked)
 }
 
 fn read_state<R>(
@@ -596,6 +598,29 @@ fn a_replaced_database_of_another_length_draws_no_features() {
     stage.only(&[QUERY, MATCHED]);
 
     stage.replace_database(vec![every_channel().remove(0)]);
+
+    assert_eq!(stage.matched(&bone()), None);
+    assert_eq!(stage.query(&bone()), None);
+    stage.tick();
+    assert_eq!(stage.segments(), 0);
+}
+
+#[test]
+fn a_database_not_derived_draws_no_features() {
+    let mut stage = Stage::new();
+    stage.only(&[QUERY, MATCHED]);
+    stage.tick();
+    let database = MotionDatabase {
+        baked: None,
+        ..stage.database.clone()
+    };
+    let id = stage.database_id;
+    stage
+        .world()
+        .get_resource_mut::<AssetStore<MotionDatabase>>()
+        .unwrap()
+        .insert(id, database.clone());
+    stage.database = database;
 
     assert_eq!(stage.matched(&bone()), None);
     assert_eq!(stage.query(&bone()), None);

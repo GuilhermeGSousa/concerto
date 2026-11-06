@@ -304,6 +304,7 @@ fn an_output_owned_by_another_source_rejects_import_before_any_writes() {
             source: "assets/another_source.gltf".into(),
             sub_asset: "scene".into(),
         }),
+        derived: None,
     };
     std::fs::write(
         occupied,
@@ -354,6 +355,7 @@ fn legacy_content_bootstraps_metadata_and_retains_its_uuid_and_address() {
             source: "assets/characters/hero.gltf".into(),
             sub_asset: "scene".into(),
         }),
+        derived: None,
     };
     std::fs::write(
         &legacy_path,
@@ -417,6 +419,7 @@ fn external_legacy_source_bootstraps_without_changing_its_identity() {
             source: source.to_str().unwrap().into(),
             sub_asset: "scene".into(),
         }),
+        derived: None,
     };
     std::fs::write(
         &path,

@@ -68,6 +68,7 @@ fn read_content_asset_header_does_not_read_the_payload() {
         kind: "Thing".to_string(),
         kind_version: 1,
         provenance: None,
+        derived: None,
     };
     // A payload far larger than the header, so a whole-file read would be
     // obviously wasteful and a prefix read is provably enough.
@@ -130,6 +131,7 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id() {
             kind: kind.to_string(),
             kind_version: 1,
             provenance: provenance.clone(),
+            derived: None,
         };
         std::fs::create_dir_all(dir.join("content/hero")).unwrap();
         std::fs::write(
@@ -168,6 +170,7 @@ fn from_content_tree_repoints_a_moved_file_at_its_new_address() {
         kind: "Mesh".to_string(),
         kind_version: 1,
         provenance: None,
+        derived: None,
     };
     std::fs::create_dir_all(dir.join("content/hero")).unwrap();
     let bytes = write_content_asset(&header, b"payload").unwrap();
@@ -208,6 +211,7 @@ fn from_content_tree_rejects_two_files_sharing_an_id() {
         kind: "Mesh".to_string(),
         kind_version: 1,
         provenance: None,
+        derived: None,
     };
     let bytes = write_content_asset(&header, b"payload").unwrap();
     std::fs::create_dir_all(dir.join("content/hero")).unwrap();

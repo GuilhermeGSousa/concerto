@@ -20,8 +20,9 @@ const REGISTRY_FILE: &str = "concerto_registry.toml";
 /// macros. This reads no asset payloads and works on stable Rust. Register one
 /// common directory containing all assets referenced by the package's macros.
 /// It also writes the registry of the content tree `content.toml` names through
-/// [`write_registry_into`], which `concerto::content_registry!()` embeds; a
-/// duplicate id or an unreadable header fails the build. Cargo also watches that
+/// [`write_registry_into`], which `concerto::content_registry!()` embeds with
+/// the package directory, `CONCERTO_PROJECT_ROOT`; a duplicate id or an
+/// unreadable header fails the build. Cargo also watches that
 /// tree and `content.toml` when they exist; one created later is read the next
 /// time the build script runs.
 pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
@@ -34,6 +35,10 @@ pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
     println!(
         "cargo:rustc-env=CONCERTO_ASSET_ROOT={}",
         build_script_path(&directory)?
+    );
+    println!(
+        "cargo:rustc-env=CONCERTO_PROJECT_ROOT={}",
+        build_script_path(Path::new(&manifest))?
     );
     for path in watched_paths(Path::new(&manifest), directory) {
         println!("cargo:rerun-if-changed={}", build_script_path(&path)?);

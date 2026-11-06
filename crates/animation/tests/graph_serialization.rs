@@ -431,6 +431,7 @@ fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
         kind: "AnimationClip".to_string(),
         kind_version: 1,
         provenance: None,
+        derived: None,
     };
     let bytes = write_content_asset(&header, &payload).unwrap();
 
