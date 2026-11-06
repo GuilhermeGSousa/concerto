@@ -179,7 +179,7 @@ where
     let _turn = ONE_APP_AT_A_TIME
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    Gpu::request_for_test()?;
+    let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let client = std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
@@ -194,10 +194,10 @@ where
     let started = Instant::now();
     run_with(
         server_io,
+        gpu,
         recipe(count.clone(), observed.clone(), closes),
         (320, 180),
-    )
-    .expect("an adapter was found");
+    );
     let took = started.elapsed();
     let result = client
         .join()

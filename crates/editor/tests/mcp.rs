@@ -770,7 +770,7 @@ where
     let _turn = ONE_APP_AT_A_TIME
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    Gpu::request_for_test()?;
+    let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let cancelled = Arc::new(Mutex::new(None::<Instant>));
     let cancelled_by_client = cancelled.clone();
@@ -793,6 +793,7 @@ where
     let log = log.clone();
     run_with(
         server_io,
+        gpu,
         move |app| {
             concerto_editor::mcp::editor(recipe, root, vec![extension])(app);
             app.insert_resource(log)
@@ -849,8 +850,7 @@ where
             configure(app);
         },
         SIZE,
-    )
-    .expect("an adapter was found");
+    );
     let returned = Instant::now();
     let result = client
         .join()
