@@ -209,6 +209,7 @@ pub(crate) struct CookedBlob {
     pub(crate) blob: Vec<u8>,
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) struct DerivedBlob {
     pub(crate) key: u64,
     pub(crate) blob: Vec<u8>,
@@ -288,13 +289,7 @@ pub(crate) fn derived_hook<A: DerivedData>(
                 return Ok(Box::new(asset) as Box<dyn Any + Send>);
             }
         }
-        let derived = derive_and_apply(&mut asset, &server).await?;
-        log::debug!(
-            "applied the {} blob {:016x} of {} bytes",
-            A::name(),
-            derived.key,
-            derived.blob.len()
-        );
+        derive_and_apply(&mut asset, &server).await?;
         Ok(Box::new(asset) as Box<dyn Any + Send>)
     })
 }
