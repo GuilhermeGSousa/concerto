@@ -399,6 +399,7 @@ fn install_alone_plays_a_clip_in_a_definitions_preview_and_registers_no_clip_edi
     project.project = Some(Project {
         root: root.into(),
         content_root: "content".into(),
+        default_scene: None,
     });
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
@@ -1090,6 +1091,7 @@ fn install_opens_saves_and_discards_a_definition_in_the_editors_schedule() {
     project.project = Some(Project {
         root: directory.path().into(),
         content_root: "content".into(),
+        default_scene: None,
     });
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)

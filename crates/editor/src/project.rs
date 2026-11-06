@@ -1,10 +1,12 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{
-    Event, Res, ResMut, Resource, World, events::event_writer::EventWriter,
-    system::input::SystemLocal, world::FromWorld,
+    Event, IntoSystemConfig, Res, ResMut, Resource, World,
+    events::{event_reader::EventReader, event_writer::EventWriter},
+    system::input::SystemLocal,
+    world::FromWorld,
 };
 use concerto_foundation::assets::{
-    AssetId, asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+    Asset, AssetId, asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
 };
 use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
@@ -19,6 +21,8 @@ pub struct Project {
     pub root: PathBuf,
     /// The project-relative folder the catalogue is read from.
     pub content_root: String,
+    /// The content address of the scene the editor opens with the project, from `content.toml`.
+    pub default_scene: Option<String>,
 }
 
 /// Read-only catalogue discovery. Never creates or rewrites a project's registry.
@@ -31,6 +35,7 @@ pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)>
         Project {
             root,
             content_root: config.root,
+            default_scene: config.default_scene,
         },
         registry,
     ))
@@ -127,6 +132,7 @@ impl Plugin for ProjectPlugin {
             .register_event::<ProjectOpenFailed>()
             .register_event::<AssetsWritten>()
             .add_system(Update, process_commands)
+            .add_system(Update, open_project_scene.after(process_commands))
             .add_system(Update, report_outdated_content);
     }
 }
@@ -208,6 +214,43 @@ fn report_outdated_content(
     if total > 0 {
         state.status = format!("{total} content assets are outdated; see the log");
     }
+}
+
+fn open_project_scene(
+    mut opened: EventReader<ProjectOpened>,
+    state: Res<ProjectState>,
+    registry: Res<AssetRegistry>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    for event in opened.read() {
+        let Some(project) = state
+            .project
+            .as_ref()
+            .filter(|project| project.root == event.root)
+        else {
+            continue;
+        };
+        if let Some(id) = project_scene(project, &registry) {
+            commands.0.push_back(EditorCommand::OpenAsset(id));
+        }
+    }
+}
+
+fn project_scene(project: &Project, registry: &AssetRegistry) -> Option<AssetId> {
+    if let Some(address) = &project.default_scene {
+        let scene = registry.id_for_address(address).filter(|id| {
+            registry
+                .get(*id)
+                .is_some_and(|entry| entry.kind == Scene::name())
+        });
+        if scene.is_some() {
+            return scene;
+        }
+        log::warn!(
+            "content.toml's default_scene {address} is not a scene in the project; opening the first scene instead"
+        );
+    }
+    registry.of_type::<Scene>().next().map(|entry| entry.id)
 }
 
 fn process_commands(
@@ -363,6 +406,91 @@ mod tests {
             .unwrap();
         }
         id
+    }
+
+    fn write_scene(root: &Path, address: &str, kind: &str) -> AssetId {
+        std::fs::create_dir_all(root.join("content")).unwrap();
+        let header = ContentAssetHeader {
+            asset_id: AssetId::new(),
+            references: vec![],
+            kind: kind.into(),
+            kind_version: 1,
+            provenance: None,
+            derived: None,
+        };
+        std::fs::write(
+            root.join(address),
+            write_content_asset(&header, &[]).unwrap(),
+        )
+        .unwrap();
+        header.asset_id
+    }
+
+    fn opened_scene(root: &Path) -> Vec<AssetId> {
+        use concerto_ecs::{IntoSystem, System};
+        let mut world = project_world();
+        let mut open = open_project_scene.into_system();
+        open.initialize(&mut world);
+        settle(&mut world, Some(EditorCommand::OpenProject(root.into())));
+        open.run_and_apply((), &mut world);
+        world
+            .get_resource::<EditorCommands>()
+            .unwrap()
+            .0
+            .iter()
+            .filter_map(|command| match command {
+                EditorCommand::OpenAsset(id) => Some(*id),
+                EditorCommand::OpenProject(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn opening_a_project_opens_its_default_scene() {
+        let dir = tempfile::tempdir().unwrap();
+        write_scene(dir.path(), "content/a.gasset", "Scene");
+        let forest = write_scene(dir.path(), "content/forest.gasset", "Scene");
+        std::fs::write(
+            dir.path().join("content.toml"),
+            "default_scene = \"content/forest.gasset\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(opened_scene(dir.path()), [forest]);
+    }
+
+    #[test]
+    fn opening_a_project_with_no_default_scene_opens_its_first_scene() {
+        let dir = tempfile::tempdir().unwrap();
+        write_scene(dir.path(), "content/b.gasset", "Scene");
+        let first = write_scene(dir.path(), "content/a.gasset", "Scene");
+        write_scene(dir.path(), "content/0.gasset", "Mesh");
+
+        assert_eq!(opened_scene(dir.path()), [first]);
+    }
+
+    #[test]
+    fn a_default_scene_that_is_missing_or_not_a_scene_falls_back_to_the_first_scene() {
+        for default in ["content/gone.gasset", "content/mesh.gasset"] {
+            let dir = tempfile::tempdir().unwrap();
+            let first = write_scene(dir.path(), "content/a.gasset", "Scene");
+            write_scene(dir.path(), "content/mesh.gasset", "Mesh");
+            std::fs::write(
+                dir.path().join("content.toml"),
+                format!("default_scene = \"{default}\"\n"),
+            )
+            .unwrap();
+
+            assert_eq!(opened_scene(dir.path()), [first], "{default}");
+        }
+    }
+
+    #[test]
+    fn opening_a_project_with_no_scene_opens_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        write_scene(dir.path(), "content/mesh.gasset", "Mesh");
+
+        assert_eq!(opened_scene(dir.path()), []);
     }
 
     #[test]
@@ -590,6 +718,7 @@ mod tests {
                 Project {
                     root: gone.clone(),
                     content_root: "content".into(),
+                    default_scene: None,
                 },
                 AssetRegistry::default(),
             ))),

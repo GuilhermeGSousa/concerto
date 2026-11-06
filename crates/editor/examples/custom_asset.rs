@@ -357,6 +357,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     project.project = Some(Project {
         root: root.into(),
         content_root: "content".into(),
+        default_scene: None,
     });
     app.insert_resource(project);
     app.insert_resource(AssetRegistry::default());

@@ -72,7 +72,9 @@ pub use rows::{
     EditContext, EditError, PlainRow, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyKind, PropertyRow, PropertyRowValue,
 };
-pub use target::{ComponentTarget, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld};
+pub use target::{
+    ComponentTarget, DocumentTypes, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld,
+};
 pub use values::{
     CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ShownValue, ValueCard,
     ValueSnapshot,

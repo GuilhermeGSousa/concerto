@@ -126,7 +126,9 @@ is the last frame drawn: the viewport's picture changes only when the edit
 `App` steps. `scene_tree`, `find_entities`, `inspect` of an entity and
 `screenshot`'s viewport need an open scene. These six look.
 
-`open_project` opens `path` and answers once the catalogue is read.
+`open_project` opens `path` and answers once the catalogue is read; the
+project's default or first scene then opens, as it does when the editor opens
+a project.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
 editor: it answers once the asset has loaded, and at once if it is already
 shown. A scene that fails to load answers `open_failed`; another kind answers
@@ -428,8 +430,10 @@ was. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
 
 **New** beside Import… lists one row, `New <kind>`, per creatable asset kind
-(see [Custom asset editors](#custom-asset-editors)); Scene is the only one the
-editor ships. It creates in the selected folder, or in the content root when
+(see [Custom asset editors](#custom-asset-editors) and
+[Inspected assets](#inspected-assets)); Scene is the only one the editor
+ships. The rows follow the registry, so the game's inspected kinds join them
+once a scene's edit `App` has built. It creates in the selected folder, or in the content root when
 nothing or an asset is selected. Right-clicking a folder opens a menu with the
 same rows, which create in that folder; right-clicking the tree's empty space
 opens it for the content root. Right-clicking an asset opens no menu. Picking a
@@ -468,9 +472,16 @@ refused over unsaved changes, and a scene asked for with no project open each
 fail, and `message` is the status the tab shows. A request that is cancelled or
 superseded writes neither, and neither does selecting the scene already shown.
 
+Opening a project opens a scene in the Scene tab: the one `content.toml`'s
+`default_scene` names, or else the project's first scene, by folder and then
+name. A `default_scene` that is missing or is not a Scene logs a warning and
+the first scene opens instead; a project with no scene opens nothing. A scene
+that fails to open keeps its tab with the failure as its status, and no other
+scene is tried.
+
 With no tabs open, the editor shows an empty viewport. Switching projects
-closes all editors. There is only one Scene tab, from the first scene opened
-until the project changes or the editor quits; it has a Play button where other
+closes all editors. There is only one Scene tab, from the scene that opens with
+the project until the project changes or the editor quits; it has a Play button where other
 tabs have a close button. An asset editor says whether its tabs can be closed
 with `AssetEditor::closable`, which is true unless it says otherwise; the Scene
 editor's is false. `AssetEditorCommand::Close` still closes a Scene document.
@@ -1068,6 +1079,25 @@ Register custom interaction systems in `Update` after `EditorPlugin`. Workspace
 visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
 input. Loading and saving belong to the custom editor.
+
+### Inspected assets
+
+A game marks a reflectable content asset type as inspected with
+`app.register_inspected_asset::<T>()` from its own plugin. The editor learns
+those kinds, and the game's type registry, from each scene's edit `App` once it
+has built: on `SceneOpened`, every inspected kind that has no editor yet gets
+the generic `InspectedAssetEditor` and a row in New. A kind that already has an
+editor keeps it, and one whose `New <kind> 999` is not a valid asset name is
+skipped with a warning. `ProjectTypes` holds the type registry of the last
+scene's edit `App`.
+
+Before the first scene's edit `App` has built, and all along in a project with
+no scene, an inspected kind has no editor: double-clicking one in the Asset
+Browser does nothing, and MCP `open_asset` answers `open_failed`, naming it a
+kind with no editor.
+
+A document whose values are in a registry other than its hosted `App`'s or the
+editor's carries `DocumentTypes`, which `DocumentValue` reads first.
 
 ### Previews
 

@@ -1040,7 +1040,7 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
         let before = until(&client, "status", |status| {
-            !status.starts_with("project: none") && status.ends_with("busy: no")
+            status.contains("Scene content/level.gasset · editing") && status.ends_with("busy: no")
         })
         .await;
         open(&client).await;
@@ -1059,8 +1059,13 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
     let (before, after, hero) = served.result;
     assert_eq!(line(&before, "project: "), root.display().to_string());
     line(&before, "project status: ");
-    assert_eq!(line(&before, "documents: "), "none");
-    assert_eq!(line(&before, "active: "), "none");
+    let opened = document_id(&before);
+    assert!(
+        documents(&before)[0]
+            .starts_with(&format!("{opened} Scene content/level.gasset · editing")),
+        "{before}"
+    );
+    assert_eq!(line(&before, "active: "), opened);
     assert_eq!(line(&before, "values: "), "none");
     assert_eq!(line(&before, "selection: "), "none");
 
@@ -1081,6 +1086,7 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
         rest.starts_with("Scene content/level.gasset · editing"),
         "{after}"
     );
+    assert_eq!(document, opened);
     assert_eq!(line(&after, "active: "), document);
     assert_eq!(line(&after, "selection: "), format!("{hero} Hero"));
     let (width, height) = line(&after, "viewport: ").split_once('x').unwrap();
