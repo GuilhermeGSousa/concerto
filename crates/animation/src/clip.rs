@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, hash_map::Keys};
 use std::ops::Range;
 
 use concerto_foundation::assets::asset_server::{AssetLoadContext, AssetServer};
-use concerto_foundation::assets::handle::LiveLeaves;
+use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_foundation::assets::{Asset, LoadableAsset};
 use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_name::Name;
@@ -207,8 +207,71 @@ impl<'de> Deserialize<'de> for ClipEventData {
     }
 }
 
+/// Whether a clip is additive, and against what.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Additive {
+    #[default]
+    None,
+    LocalSpace(AdditiveBase),
+}
+
+/// The clip a delta is taken against, the spans of both clips that are aligned, and the bones whose translation is not added.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AdditiveBase {
+    pub clip: AssetHandle<AnimationClip>,
+    pub base_range: Option<ClipRange>,
+    pub range: Option<ClipRange>,
+    pub roots: Vec<Uuid>,
+}
+
+impl AdditiveBase {
+    /// A base over the whole of `clip` and the whole of this clip, with no roots.
+    pub fn new(clip: AssetHandle<AnimationClip>) -> Self {
+        Self {
+            clip,
+            base_range: None,
+            range: None,
+            roots: Vec::new(),
+        }
+    }
+
+    /// Aligns only this span of the base clip.
+    pub fn with_base_range(mut self, base_range: ClipRange) -> Self {
+        self.base_range = Some(base_range);
+        self
+    }
+
+    /// Aligns only this span of the additive clip.
+    pub fn with_range(mut self, range: ClipRange) -> Self {
+        self.range = Some(range);
+        self
+    }
+
+    /// Adds a bone whose translation is not added.
+    pub fn with_root(mut self, root: Uuid) -> Self {
+        self.roots.push(root);
+        self
+    }
+}
+
+/// A span of a clip in seconds, from `start` to `end`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipRange {
+    pub start: f32,
+    pub end: f32,
+}
+
+impl ClipRange {
+    /// The span from `start` to `end` seconds.
+    pub fn new(start: f32, end: f32) -> Self {
+        Self { start, end }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct AnimationClip {
+    additive: Additive,
     channels: HashMap<Uuid, Vec<AnimationChannel>>,
     duration: f32,
     frame_rate: Option<f32>,
@@ -218,6 +281,7 @@ pub struct AnimationClip {
 impl Default for AnimationClip {
     fn default() -> Self {
         Self {
+            additive: Additive::None,
             channels: HashMap::new(),
             duration: 0.0,
             frame_rate: None,
@@ -227,7 +291,7 @@ impl Default for AnimationClip {
 }
 
 impl Asset for AnimationClip {
-    const FORMAT_VERSION: u32 = 2;
+    const FORMAT_VERSION: u32 = 3;
 
     fn name() -> &'static str {
         "AnimationClip"
@@ -237,6 +301,10 @@ impl Asset for AnimationClip {
         match version {
             1 => {
                 let old: legacy::AnimationClipV1 = bincode::deserialize(payload)?;
+                Ok(legacy::AnimationClipV2::from(old).into())
+            }
+            2 => {
+                let old: legacy::AnimationClipV2 = bincode::deserialize(payload)?;
                 Ok(old.into())
             }
             _ => anyhow::bail!(
@@ -253,7 +321,7 @@ mod legacy {
     use serde::Deserialize;
     use uuid::Uuid;
 
-    use super::{AnimationChannel, AnimationClip};
+    use super::{Additive, AnimationChannel, AnimationClip, ClipEventKey};
 
     #[derive(Deserialize)]
     pub(super) struct AnimationClipV1 {
@@ -262,13 +330,33 @@ mod legacy {
         frame_rate: Option<f32>,
     }
 
-    impl From<AnimationClipV1> for AnimationClip {
+    #[derive(Deserialize)]
+    pub(super) struct AnimationClipV2 {
+        channels: HashMap<Uuid, Vec<AnimationChannel>>,
+        duration: f32,
+        frame_rate: Option<f32>,
+        events: Vec<ClipEventKey>,
+    }
+
+    impl From<AnimationClipV1> for AnimationClipV2 {
         fn from(old: AnimationClipV1) -> Self {
             Self {
                 channels: old.channels,
                 duration: old.duration,
                 frame_rate: old.frame_rate,
                 events: Vec::new(),
+            }
+        }
+    }
+
+    impl From<AnimationClipV2> for AnimationClip {
+        fn from(old: AnimationClipV2) -> Self {
+            Self {
+                additive: Additive::None,
+                channels: old.channels,
+                duration: old.duration,
+                frame_rate: old.frame_rate,
+                events: old.events,
             }
         }
     }
@@ -302,6 +390,16 @@ impl AnimationClip {
 
     pub fn duration(&self) -> f32 {
         self.duration
+    }
+
+    /// Whether the clip is additive, and against what.
+    pub fn additive(&self) -> &Additive {
+        &self.additive
+    }
+
+    /// Makes the clip additive against a base, or plain with [`Additive::None`].
+    pub fn set_additive(&mut self, additive: Additive) {
+        self.additive = additive;
     }
 
     /// Estimates the sample rate from the median key spacing of the channel with the most keys.

@@ -349,10 +349,15 @@ When you change one:
    with it, and the PR says so. After that, files at that version are
    rejected.
 
-`AnimationClip` is at version 2, which adds the clip's events. Its `migrate`
-reads a version-1 payload through `legacy::AnimationClipV1`
-(`crates/animation/src/clip.rs`) as a clip with no events, and
-`AnimationClip.v1.bin` stays with a test that decodes it. The clips committed
+`AnimationClip` is at version 3. Version 2 adds the clip's events, and
+version 3 adds `additive`, an `Additive` stored as the payload's first field:
+`None` for a plain clip, or `LocalSpace` with the base clip's asset id, the
+optional `base_range` and `range`, and the root bones. Its `migrate` reads a
+version-2 payload through `legacy::AnimationClipV2`
+(`crates/animation/src/clip.rs`) as a clip that isn't additive, and a version-1
+payload through `legacy::AnimationClipV1`, which becomes an `AnimationClipV2`
+with no events and then the current clip. `AnimationClip.v1.bin` and
+`AnimationClip.v2.bin` stay, each with a test that decodes it. The clips committed
 under `examples/tech-demo/content/UAL1/` and
 `examples/tech-demo/content/lafan1/animations/` are still version 1: they
 migrate in memory on every load, and the editor reports them as outdated until
