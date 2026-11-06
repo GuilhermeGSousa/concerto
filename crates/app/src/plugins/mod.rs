@@ -327,21 +327,15 @@ mod tests {
             .register_plugin(TimePlugin)
             .register_plugin(AssetManagerPlugin);
         app.register_asset::<Probe>();
+        app.get_resource::<AssetServer>()
+            .unwrap()
+            .publish_content_source(ContentAssetRoot::Directory(root.clone()), scanned);
         wait_for_plugins(&mut app);
         app.finish_plugin_build();
         app.register_type::<Probed>();
-        let server = app.get_resource::<AssetServer>().unwrap();
-        server.publish_content_source(ContentAssetRoot::Directory(root.clone()), scanned);
 
-        let handle = server.load::<Probe>(id);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while app
-            .get_resource::<AssetStore<Probe>>()
-            .unwrap()
-            .get(&handle)
-            .is_none()
-        {
-            assert!(Instant::now() < deadline, "the probe never loaded");
+        let handle = app.get_resource::<AssetServer>().unwrap().load::<Probe>(id);
+        while app.get_resource::<AssetServer>().unwrap().is_loading() {
             app.update();
             std::thread::yield_now();
         }
@@ -349,7 +343,7 @@ mod tests {
             .get_resource::<AssetStore<Probe>>()
             .unwrap()
             .get(&handle)
-            .unwrap();
+            .expect("the probe failed to load");
         assert!(probe.saw_default);
         std::fs::remove_dir_all(root).unwrap();
     }
