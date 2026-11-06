@@ -1,7 +1,7 @@
 # cargo concerto
 
 The project tool. It creates Concerto game projects, adds the editor crate to
-an existing game, and builds a game with its derived data cooked. It is a Cargo
+an existing game, and builds or runs a game with its derived data cooked. It is a Cargo
 subcommand, a binary named `cargo-concerto`.
 
 ```sh
@@ -10,6 +10,7 @@ cargo concerto new <dir> [--engine <path>]
 cargo concerto editor <dir> [--engine <path>]
 cargo concerto editor <dir> --update [--engine <path>]
 cargo concerto build [<dir>] [--cook] [--release] [--target wasm32-unknown-unknown] [--public-url <url>] [--dist <dir>]
+cargo concerto run [<dir>] [--cook] [--release] [-- <game args>]
 ```
 
 ## `new`
@@ -182,6 +183,17 @@ load again; one that changed nothing leaves the cooked files, which match the
 content. A load applies a cooked blob without checking its key, so a change to
 derive code that doesn't raise `DERIVED_VERSION` is not caught: cook again after
 one.
+
+## `run`
+
+Does what a native `build` does with the same `<dir>`, `--cook` and
+`--release`, then runs the executable cargo reported and waits for it to exit.
+Everything after `--` is passed to the game, so
+`cargo concerto run examples/tech-demo --cook -- --forest` builds, cooks and
+stages the tech demo, then opens the forest. The game runs in the working
+directory the command was run from, and finds its content beside its executable
+as a plain run does. A game that exits with a failure fails the command.
+`--target`, `--public-url` and `--dist` are refused: `run` is native only.
 
 ## Engine dependencies
 

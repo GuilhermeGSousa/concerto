@@ -202,7 +202,6 @@ pub enum SetHandleError {
 #[derive(Clone, Copy)]
 pub struct ReflectAssetHandle {
     kind: &'static str,
-    former_names: &'static [&'static str],
     id: fn(&dyn Reflect) -> Option<AssetId>,
     set: fn(&mut dyn Reflect, &AssetServer, AssetId) -> Result<(), SetHandleError>,
 }
@@ -213,11 +212,6 @@ impl ReflectAssetHandle {
     /// The handled asset's kind, as [`Asset::name`] gives it.
     pub fn kind(&self) -> &'static str {
         self.kind
-    }
-
-    /// The handled asset's former names, as [`Asset::FORMER_NAMES`] gives them.
-    pub fn former_names(&self) -> &'static [&'static str] {
-        self.former_names
     }
 
     /// The id `value` holds, or `None` if it is not this handle type.
@@ -240,7 +234,6 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectAssetHandle {
     fn from_type() -> Self {
         Self {
             kind: A::name(),
-            former_names: A::FORMER_NAMES,
             id: |value| {
                 (value as &dyn std::any::Any)
                     .downcast_ref::<AssetHandle<A>>()

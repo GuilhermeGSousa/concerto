@@ -170,13 +170,11 @@ original's forward only when the facing joint's rest axis, its model-space rest
 rotation times `facing_axis`, lies in the plane; the bake does not check this.
 With no mirrored entry no mirror is built.
 
-`MotionDatabase` is at version 3, and implements `Asset` by hand. Its former
-name is `MotionDatabaseDefinition`: a `MotionDatabaseDefinition` version-2 file
-loads through `migrate_former` as a `MotionDatabase`, since the layouts are the
-same, and is written back under the new name when it is saved. A
+`MotionDatabase` is at version 3, and implements `Asset` by hand. A
 `MotionDatabase` file at version 1 or 2 is an old bake and fails to load with
 "a baked motion database is now derived from its definition; delete this
-file". A `MotionDatabaseDefinition` version-1 file fails to load.
+file". A file of the old `MotionDatabaseDefinition` kind is not read: re-create
+it in the editor as a `MotionDatabase`.
 
 ### Feature channels
 

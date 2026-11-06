@@ -48,10 +48,8 @@ pub trait DerivedData: LoadableAsset {
 
 static DERIVED_KINDS: RwLock<BTreeSet<&'static str>> = RwLock::new(BTreeSet::new());
 
-pub(crate) fn note_derived_kinds<A: DerivedData>() {
-    let mut kinds = DERIVED_KINDS.write().unwrap();
-    kinds.insert(A::name());
-    kinds.extend(A::FORMER_NAMES.iter().copied());
+pub(crate) fn note_derived_kind<A: DerivedData>() {
+    DERIVED_KINDS.write().unwrap().insert(A::name());
 }
 
 fn is_derived_kind(kind: &str) -> bool {

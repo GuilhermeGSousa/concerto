@@ -30,7 +30,7 @@ use serde_json::{Map, Value};
 
 use super::{BusyInputs, act::describe_pose, is_busy, value::value_names};
 use crate::{
-    asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, Unsaved},
+    asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
     inspector::{InspectedValues, InspectionSource, InspectorRegistry, Property, PropertyKind},
     project::ProjectState,
@@ -301,11 +301,10 @@ fn list_assets(
     mut calls: ToolCalls<ListAssets>,
     state: Res<ProjectState>,
     registry: Res<AssetRegistry>,
-    editors: Res<AssetEditorRegistry>,
 ) {
     for (arguments, reply) in calls.read() {
         if state.project.is_some() {
-            reply.ok(list(&registry, &editors, &arguments));
+            reply.ok(list(&registry, &arguments));
         }
     }
 }
@@ -318,11 +317,7 @@ fn counted(count: usize) -> String {
     }
 }
 
-fn filtered<'a>(
-    registry: &'a AssetRegistry,
-    editors: &AssetEditorRegistry,
-    arguments: &ListAssets,
-) -> Vec<&'a AssetEntry> {
+fn filtered<'a>(registry: &'a AssetRegistry, arguments: &ListAssets) -> Vec<&'a AssetEntry> {
     let query = arguments.query.as_deref().unwrap_or("").to_lowercase();
     let folder = arguments.folder.as_deref();
     let kind = arguments.kind.as_deref();
@@ -338,9 +333,7 @@ fn filtered<'a>(
                         .is_some_and(|suffix| suffix.starts_with('/'))
             })
         })
-        .filter(|asset| {
-            kind.is_none_or(|kind| asset.kind == kind || editors.current_kind(&asset.kind) == kind)
-        })
+        .filter(|asset| kind.is_none_or(|kind| asset.kind == kind))
         .filter(|asset| {
             query.is_empty()
                 || asset.name().to_lowercase().contains(&query)
@@ -350,8 +343,8 @@ fn filtered<'a>(
         .collect()
 }
 
-fn list(registry: &AssetRegistry, editors: &AssetEditorRegistry, arguments: &ListAssets) -> String {
-    let matches = filtered(registry, editors, arguments);
+fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
+    let matches = filtered(registry, arguments);
     if matches.is_empty() {
         return format!(
             "No assets match. The project has {}.",
@@ -1102,57 +1095,6 @@ fn fitted(picture: RgbaImage, max_edge: u32) -> RgbaImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct Lantern;
-
-    impl concerto_foundation::assets::Asset for Lantern {
-        const FORMER_NAMES: &'static [&'static str] = &["Lamp"];
-
-        fn name() -> &'static str {
-            "Lantern"
-        }
-    }
-
-    #[derive(Default)]
-    struct LanternEditor;
-
-    impl crate::asset_editor::AssetEditor for LanternEditor {}
-
-    #[test]
-    fn a_kind_filter_keeps_files_under_its_former_names() {
-        let mut registry = AssetRegistry::new();
-        let entry = |address: &str, kind: &str| AssetEntry {
-            id: concerto_foundation::assets::AssetId::new(),
-            address: address.into(),
-            kind: kind.into(),
-            kind_version: None,
-            provenance: None,
-        };
-        let lamp = entry("content/lamp.gasset", "Lamp");
-        let lantern = entry("content/lantern.gasset", "Lantern");
-        registry.insert(lamp.clone());
-        registry.insert(lantern.clone());
-        registry.insert(entry("content/rock.gasset", "Mesh"));
-        let mut editors = AssetEditorRegistry::default();
-        editors.register::<Lantern, LanternEditor>().unwrap();
-        let of_kind = |kind: &str| {
-            let arguments = ListAssets {
-                query: None,
-                kind: Some(kind.into()),
-                folder: None,
-                limit: 50,
-                offset: 0,
-            };
-            filtered(&registry, &editors, &arguments)
-                .into_iter()
-                .map(|asset| asset.id)
-                .collect::<Vec<_>>()
-        };
-
-        assert_eq!(of_kind("Lantern"), [lamp.id, lantern.id]);
-        assert_eq!(of_kind("Lamp"), [lamp.id]);
-    }
 
     #[derive(Reflect, Default)]
     struct Stride {

@@ -62,7 +62,6 @@ impl Creator {
 #[derive(Resource, Default)]
 pub struct AssetEditorRegistry {
     editors: HashMap<&'static str, Box<dyn AssetEditor>>,
-    former_names: HashMap<&'static str, &'static str>,
     creators: BTreeMap<&'static str, Creator>,
 }
 
@@ -111,9 +110,6 @@ impl AssetEditorRegistry {
             bail!("an editor is already registered for {}", T::name());
         }
         self.editors.insert(T::name(), Box::new(E::default()));
-        for former in T::FORMER_NAMES {
-            self.former_names.insert(former, T::name());
-        }
         Ok(())
     }
 
@@ -140,16 +136,9 @@ impl AssetEditorRegistry {
         self.creators.iter().map(|(kind, creator)| (*kind, creator))
     }
 
-    /// Returns the registered asset kind matching `kind`, or the one `kind` is a former name of, if it has an editor.
+    /// Returns the registered asset kind matching `kind`, if it has an editor.
     pub fn editor_kind(&self, kind: &str) -> Option<&'static str> {
-        self.editors
-            .get_key_value(self.current_kind(kind))
-            .map(|(kind, _)| *kind)
-    }
-
-    /// The current name of a kind a file's header names: the type with an editor that `kind` is a former name of, or else `kind`.
-    pub fn current_kind<'a>(&self, kind: &'a str) -> &'a str {
-        self.former_names.get(kind).copied().unwrap_or(kind)
+        self.editors.get_key_value(kind).map(|(kind, _)| *kind)
     }
 
     /// Whether a tab of `kind` shows a close button; a kind with no editor does.
@@ -932,44 +921,6 @@ mod tests {
         for kind in ["TestAsset", "ThirdAsset", "OtherAsset"] {
             assert_eq!(registry.editor_kind(kind), Some(kind));
         }
-    }
-
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct RenamedAsset;
-    impl Asset for RenamedAsset {
-        const FORMER_NAMES: &'static [&'static str] = &["FormerAsset"];
-        fn name() -> &'static str {
-            "RenamedAsset"
-        }
-    }
-
-    #[test]
-    fn a_file_under_a_former_name_opens_in_its_types_editor() {
-        let mut w = world();
-        w.get_resource_mut::<AssetEditorRegistry>()
-            .unwrap()
-            .register::<RenamedAsset, OtherFake>()
-            .unwrap();
-        let mut former = asset("other");
-        former.kind = "FormerAsset".into();
-        let registry = w.get_resource::<AssetEditorRegistry>().unwrap();
-        assert_eq!(registry.editor_kind("FormerAsset"), Some("RenamedAsset"));
-        assert_eq!(registry.current_kind("FormerAsset"), "RenamedAsset");
-        assert_eq!(registry.current_kind("Unknown"), "Unknown");
-
-        w.get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::Open(former));
-        process_editor_commands(&mut w);
-
-        let document = w.get_resource::<ActiveEditor>().unwrap().0.unwrap();
-        assert_eq!(
-            w.get_component_for_entity::<EditorDocument>(document)
-                .unwrap()
-                .asset_type,
-            "RenamedAsset"
-        );
     }
 
     #[derive(serde::Serialize, serde::Deserialize)]
