@@ -227,7 +227,8 @@ while it runs:
   open scene's saved file as its startup scene. While it builds it is a
   `PendingPlayApp` beside the edit `App`. Once built, it is stepped hidden,
   with no input, until its loads, scene spawns and render uploads settle, or
-  for at most `WARM_UP_LIMIT` (10 s). Then the edit `App` moves to
+  for at most `WARM_UP_LIMIT` (10 s), or the editor's `WarmUpLimit` resource
+  when it has one. Then the edit `App` moves to
   `ParkedEditApp`, where it is not stepped, and the play `App` becomes the
   document's `HostedApp`, so the stepping, the viewport, input, and the panels
   follow it. Stop drops it and puts the parked edit `App` back. The document's

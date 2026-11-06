@@ -43,19 +43,19 @@ impl fmt::Display for NoAdapter {
 
 /// Serves the `App` that `build` makes over MCP on stdin and stdout, drawing into a texture of `size`; exits with status 1 without a GPU.
 pub fn run(build: impl FnOnce(&mut App), size: (u32, u32)) {
-    let io = tokio::io::join(tokio::io::stdin(), tokio::io::stdout());
-    if let Err(error) = run_with(io, build, size) {
-        eprintln!("{error}");
+    let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(), None)) else {
+        eprintln!("{NoAdapter}");
         std::process::exit(1);
-    }
+    };
+    let io = tokio::io::join(tokio::io::stdin(), tokio::io::stdout());
+    run_with(io, gpu, build, size);
 }
 
 /// Serves the `App` that `build` makes over MCP on `io` until the client disconnects or the `App` sends `WindowCommand::Close`.
-pub fn run_with<IO>(io: IO, build: impl FnOnce(&mut App), size: (u32, u32)) -> Result<(), NoAdapter>
+pub fn run_with<IO>(io: IO, gpu: Gpu, build: impl FnOnce(&mut App), size: (u32, u32))
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    let gpu = pollster::block_on(Gpu::request(&Gpu::instance(), None)).ok_or(NoAdapter)?;
     let picture = SharedTexture::new(wgpu::TextureFormat::Rgba8UnormSrgb);
     let mut app = App::new();
     app.insert_resource(gpu)
@@ -71,7 +71,7 @@ where
     let mut frames = Pacer::default();
     frames.run(&mut app);
     if closes(&mut app) {
-        return Ok(());
+        return;
     }
     let server = spawn_server(&app, io);
     while !server.is_finished() {
@@ -89,7 +89,7 @@ where
             continue;
         }
         if closes(&mut app) {
-            return Ok(());
+            return;
         }
     }
 
@@ -98,7 +98,6 @@ where
     while !closes(&mut app) && Instant::now() < deadline {
         frames.run(&mut app);
     }
-    Ok(())
 }
 
 #[derive(Default)]
