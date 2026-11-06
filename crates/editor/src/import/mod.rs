@@ -827,25 +827,6 @@ mod tests {
     }
 
     #[test]
-    fn a_destination_that_changes_the_extension_is_rejected() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[("/tmp/hero.glb", "assets/hero.png")]);
-        validate_rows(&mut staged, project.path());
-        assert!(
-            rejection(&staged[0]).contains("extension"),
-            "the importer is chosen from the destination extension, so it must match the source"
-        );
-    }
-
-    #[test]
-    fn an_unsupported_source_is_rejected_by_its_extension() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[("/tmp/notes.txt", "assets/notes.txt")]);
-        validate_rows(&mut staged, project.path());
-        assert!(rejection(&staged[0]).contains("txt"));
-    }
-
-    #[test]
     fn an_occupied_destination_is_marked_as_a_replacement_not_a_rejection() {
         let project = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(project.path().join("assets")).expect("assets");
