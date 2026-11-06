@@ -312,7 +312,7 @@ mod tests {
                 Some(7),
                 Some(8),
             ],
-            NAMES.iter().map(|name| Name::new(*name)).collect(),
+            NAMES.iter().map(|name| Name::new(name)).collect(),
             vec![joint(Vec3::Y, Quat::IDENTITY, Vec3::ONE); BONES],
             (0..BONES as u128).map(Uuid::from_u128).collect(),
         )
