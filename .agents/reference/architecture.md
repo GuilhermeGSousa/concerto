@@ -51,8 +51,8 @@ An `App` does not run itself. A host builds it, feeds it, and steps it:
 
 1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`. The
    cook is the exception: it inserts none of them before applying the recipe
-   (`WindowPlugin::build` still inserts a default `Window`), never polls `plugin_state()`, never calls `finish_plugin_build()`,
-   and never runs a schedule, so a plugin's `build` must not need the device;
+   (`WindowPlugin::build` still inserts a default `Window`), never polls
+   `plugin_state()`, never calls `finish_plugin_build()`, and never runs a schedule, so a plugin's `build` must not need the device;
    device work goes in `finish`.
 2. Apply the recipe, a function that registers plugins and systems.
 3. Poll `plugin_state()` until `Ready`, then call `finish_plugin_build()`.

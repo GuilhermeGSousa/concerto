@@ -675,9 +675,12 @@ cargo concerto build <dir> --cook [--release] --target wasm32-unknown-unknown [-
    build doesn't ship is skipped.
 
 The committed `content/` never holds a section, and `build.rs` and
-`index.html` don't change. Staging can't go stale: a later `cargo build` that
-changes `content/` reruns `build.rs`, which copies the raw files back over the
-cooked ones, and the game derives at load again.
+`index.html` don't change. A later `cargo build` that changes `content/` reruns
+`build.rs`, which copies the raw files back over the cooked ones, and the game
+derives at load again. A load applies a cooked blob without checking its key,
+so a change to derive code that doesn't raise `DERIVED_VERSION` leaves the
+staged blob derived by the old code, as it leaves a cached one: cook again
+after such a change.
 
 `cook` writes a `.concerto-cook` marker into `out` and refuses a non-empty
 directory without one, so `--cook` never empties a directory it didn't write.

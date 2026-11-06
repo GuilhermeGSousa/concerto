@@ -175,11 +175,13 @@ The steps, each run only when the options call for it:
 A step that fails stops the build and names its command line and exit status.
 The report lists each cooked file as written and each replaced file as edited.
 
-The staged files cannot go stale. They only exist in a build directory or dist
-the command just built. A later plain `cargo build` that changed `content/`
-reruns `build.rs`, which copies the raw content back over the cooked files, and
-the game derives at load again; one that changed nothing leaves the cooked
-files, which still match.
+The staged files only exist in a build directory or dist the command just
+built. A later plain `cargo build` that changed `content/` reruns `build.rs`,
+which copies the raw content back over the cooked files, and the game derives at
+load again; one that changed nothing leaves the cooked files, which match the
+content. A load applies a cooked blob without checking its key, so a change to
+derive code that doesn't raise `DERIVED_VERSION` is not caught: cook again after
+one.
 
 ## Engine dependencies
 
