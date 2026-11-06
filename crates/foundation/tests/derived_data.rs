@@ -42,29 +42,9 @@ struct Sum<const V: u32> {
     total: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Total {
-    b: AssetId,
-    a: AssetId,
-    tag: String,
-}
-
 impl<const V: u32> Asset for Sum<V> {
-    const FORMER_NAMES: &'static [&'static str] = &["Total"];
-
     fn name() -> &'static str {
         "Sum"
-    }
-
-    fn migrate_former(name: &str, version: u32, payload: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(name == "Total" && version == 1, "no migration from {name}");
-        let total: Total = bincode::deserialize(payload)?;
-        Ok(Self {
-            tag: total.tag,
-            a: total.a,
-            b: total.b,
-            total: None,
-        })
     }
 }
 
@@ -199,38 +179,6 @@ impl Project {
         )
         .unwrap();
         std::fs::write(&path, cooked).unwrap();
-    }
-
-    fn total(&mut self, name: &str, tag: &str, a: AssetId, b: AssetId) -> AssetId {
-        let id = AssetId::new();
-        let address = format!("content/{name}.gasset");
-        let header = ContentAssetHeader {
-            asset_id: id,
-            references: Vec::new(),
-            kind: "Total".to_string(),
-            kind_version: 1,
-            provenance: None,
-            derived: None,
-        };
-        let payload = bincode::serialize(&Total {
-            b,
-            a,
-            tag: tag.to_string(),
-        })
-        .unwrap();
-        std::fs::write(
-            self.root.join(&address),
-            write_content_asset(&header, &payload).unwrap(),
-        )
-        .unwrap();
-        self.registry.insert(AssetEntry {
-            id,
-            address,
-            kind: "Total".to_string(),
-            kind_version: Some(1),
-            provenance: None,
-        });
-        id
     }
 
     fn cache_dir(&self) -> PathBuf {
@@ -823,39 +771,10 @@ fn a_failing_derive_stops_the_cook_naming_its_address() {
 }
 
 #[test]
-fn a_file_under_a_former_name_is_cooked_with_its_bytes_unchanged() {
-    let tag = "cook-former";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    project.total("total", tag, a, b);
-    let out = project.root.join("cooked");
-
-    let report = Runtime::<1>::new(&project, DerivedDataCache::none())
-        .server
-        .cook(&out)
-        .unwrap();
-
-    assert_eq!(report.cooked, vec!["content/total.gasset"]);
-    assert_cooked_from(
-        &project,
-        &out,
-        "content/total.gasset",
-        key_of(&project, &sum_value::<1>(tag, a, b)),
-        &7u64.to_le_bytes(),
-    );
-    assert_eq!(
-        read_cooked(&out.join("content/total.gasset")).header.kind,
-        "Total"
-    );
-}
-
-#[test]
 fn only_derived_kinds_can_be_cooked() {
     let project = Project::new("can-cook");
     let server = Runtime::<1>::new(&project, DerivedDataCache::none()).server;
 
     assert!(server.can_cook("Sum"));
-    assert!(server.can_cook("Total"));
     assert!(!server.can_cook("Leaf"));
 }

@@ -13,7 +13,6 @@ use concerto_ecs::{
 use concerto_foundation::assets::{
     AssetId,
     handle::{ReflectAssetHandle, SetHandleError},
-    kind_is,
     registry::AssetRegistry,
 };
 use concerto_reflect::Reflect;
@@ -95,7 +94,7 @@ impl ErasedEditor for AssetPicker {
         theme: &UITheme,
     ) -> Result<(), EditError> {
         cmd.entity(entity).add_child_with(
-            picker_button(theme).on_click(toggle_asset_picker(entity, self.handle)),
+            picker_button(theme).on_click(toggle_asset_picker(entity, self.handle.kind())),
             |mut button| {
                 button
                     .add_child((picker_label(theme), AssetPickerLabel { row: entity }))
@@ -114,9 +113,10 @@ impl ErasedEditor for AssetPicker {
         let id = *edit
             .downcast_ref::<AssetId>()
             .ok_or(EditError::TypeMismatch)?;
-        let of_kind = context.registry.get(id).is_some_and(|entry| {
-            kind_is(&entry.kind, self.handle.kind(), self.handle.former_names())
-        });
+        let of_kind = context
+            .registry
+            .get(id)
+            .is_some_and(|entry| entry.kind == self.handle.kind());
         if !of_kind {
             return Err(EditError::Rejected);
         }
@@ -197,7 +197,7 @@ pub fn picker_caret(theme: &UITheme) -> (UINode, Text) {
 }
 
 /// Opens `row`'s assets in the shared menu, or closes it if the click came from its own button.
-fn toggle_asset_picker(row: Entity, handle: ReflectAssetHandle) -> Listener<UIClick> {
+fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            values: Query<&PropertyRowValue>,
            menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
@@ -207,10 +207,9 @@ fn toggle_asset_picker(row: Entity, handle: ReflectAssetHandle) -> Listener<UICl
         if on.signal().button != MouseButton::Left {
             return;
         }
-        open_menu_of(
+        open_asset_menu(
             on.entity(),
-            handle.kind(),
-            handle.former_names(),
+            kind,
             Some(row),
             held(&values, row),
             pick_asset,
@@ -227,32 +226,6 @@ fn toggle_asset_picker(row: Entity, handle: ReflectAssetHandle) -> Listener<UICl
 pub fn open_asset_menu(
     button: Entity,
     kind: &str,
-    row: Option<Entity>,
-    current: Option<AssetId>,
-    pick: impl Fn(AssetId) -> Listener<UIClick>,
-    menus: &Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
-    registry: &AssetRegistry,
-    theme: &UITheme,
-    cmd: &mut CommandQueue,
-) {
-    open_menu_of(
-        button,
-        kind,
-        &[],
-        row,
-        current,
-        pick,
-        menus,
-        registry,
-        theme,
-        cmd,
-    );
-}
-
-fn open_menu_of(
-    button: Entity,
-    kind: &str,
-    former_names: &[&str],
     row: Option<Entity>,
     current: Option<AssetId>,
     pick: impl Fn(AssetId) -> Listener<UIClick>,
@@ -280,27 +253,18 @@ fn open_menu_of(
             AssetPickerMenu { row },
         )),
     };
-    fill_menu(
-        &mut menu,
-        kind,
-        former_names,
-        registry,
-        current,
-        pick,
-        theme,
-    );
+    fill_menu(&mut menu, kind, registry, current, pick, theme);
 }
 
 fn fill_menu(
     menu: &mut EntityCommandQueue,
     kind: &str,
-    former_names: &[&str],
     registry: &AssetRegistry,
     current: Option<AssetId>,
     pick: impl Fn(AssetId) -> Listener<UIClick>,
     theme: &UITheme,
 ) {
-    let entries: Vec<_> = registry.of_kind(kind, former_names).collect();
+    let entries: Vec<_> = registry.of_kind(kind).collect();
     if entries.is_empty() {
         menu.add_child(
             theme

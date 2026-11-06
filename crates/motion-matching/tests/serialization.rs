@@ -403,21 +403,6 @@ fn content_asset(kind: &str, version: u32, fixture: &str) -> Vec<u8> {
 }
 
 #[test]
-fn a_version_2_definition_loads_as_a_motion_database() {
-    let bytes = content_asset(
-        "MotionDatabaseDefinition",
-        2,
-        "MotionDatabaseDefinition.v2.bin",
-    );
-
-    let (header, database) = decode_content_asset::<MotionDatabase>(&bytes).unwrap();
-
-    assert_eq!(header.kind, "MotionDatabaseDefinition");
-    assert_eq!(database, encoded_definition());
-    assert!(!database.is_baked());
-}
-
-#[test]
 fn a_version_2_bake_is_rejected_with_the_delete_message() {
     let bytes = content_asset(MotionDatabase::name(), 2, "MotionDatabase.v2.bin");
 

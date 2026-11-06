@@ -131,47 +131,43 @@ impl Plugin for ProjectPlugin {
     }
 }
 
-/// Content assets of one kind whose header is under a former name or at a type version other than this build's.
+/// Content assets of one kind whose header is at a type version other than this build's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutdatedContent {
     pub kind: String,
     pub file_version: u32,
-    pub current_kind: String,
     pub current: u32,
     pub count: usize,
 }
 
-/// Groups `registry`'s entries whose kind or `kind_version` differs from the name and version `current(kind)` gives, by kind then file version.
+/// Groups `registry`'s entries whose `kind_version` differs from `current(kind)`, by kind then file version.
 pub fn outdated_content(
     registry: &AssetRegistry,
-    current: impl Fn(&str) -> Option<(&'static str, u32)>,
+    current: impl Fn(&str) -> Option<u32>,
 ) -> Vec<OutdatedContent> {
-    let mut groups = BTreeMap::<(&str, u32), (&'static str, u32, usize)>::new();
+    let mut groups = BTreeMap::<(&str, u32), (u32, usize)>::new();
     for entry in registry.iter() {
         let Some(file_version) = entry.kind_version else {
             continue;
         };
-        let Some((current_kind, current)) = current(&entry.kind) else {
+        let Some(current) = current(&entry.kind) else {
             continue;
         };
-        if current_kind != entry.kind || file_version != current {
+        if file_version != current {
             groups
                 .entry((&entry.kind, file_version))
-                .or_insert((current_kind, current, 0))
-                .2 += 1;
+                .or_insert((current, 0))
+                .1 += 1;
         }
     }
     groups
         .into_iter()
-        .map(
-            |((kind, file_version), (current_kind, current, count))| OutdatedContent {
-                kind: kind.into(),
-                file_version,
-                current_kind: current_kind.into(),
-                current,
-                count,
-            },
-        )
+        .map(|((kind, file_version), (current, count))| OutdatedContent {
+            kind: kind.into(),
+            file_version,
+            current,
+            count,
+        })
         .collect()
 }
 
@@ -197,14 +193,14 @@ fn report_outdated_content(
         return;
     }
     reported.0 = Some(root.clone());
-    let outdated = outdated_content(&registry, |kind| server.current_kind(kind));
+    let outdated = outdated_content(&registry, |kind| server.format_version(kind));
     for group in &outdated {
         log::warn!(
             "{} {} content assets are at version {}; this build's {} is version {}. Loading migrates or rejects them; see docs/asset-importing.md",
             group.count,
             group.kind,
             group.file_version,
-            group.current_kind,
+            group.kind,
             group.current
         );
     }
@@ -718,8 +714,8 @@ mod tests {
             registry.insert(entry);
         }
         let versions = |kind: &str| match kind {
-            "Mesh" => Some(("Mesh", 3)),
-            "Clip" => Some(("Clip", 1)),
+            "Mesh" => Some(3),
+            "Clip" => Some(1),
             _ => None,
         };
 
@@ -729,48 +725,22 @@ mod tests {
                 OutdatedContent {
                     kind: "Clip".into(),
                     file_version: 0,
-                    current_kind: "Clip".into(),
                     current: 1,
                     count: 1,
                 },
                 OutdatedContent {
                     kind: "Mesh".into(),
                     file_version: 1,
-                    current_kind: "Mesh".into(),
                     current: 3,
                     count: 2,
                 },
                 OutdatedContent {
                     kind: "Mesh".into(),
                     file_version: 2,
-                    current_kind: "Mesh".into(),
                     current: 3,
                     count: 1,
                 },
             ]
-        );
-    }
-
-    #[test]
-    fn outdated_content_reports_a_file_under_a_former_name_at_any_version() {
-        let mut registry = AssetRegistry::default();
-        for entry in [versioned("Lamp", Some(2)), versioned("Lantern", Some(2))] {
-            registry.insert(entry);
-        }
-        let versions = |kind: &str| match kind {
-            "Lamp" | "Lantern" => Some(("Lantern", 2)),
-            _ => None,
-        };
-
-        assert_eq!(
-            outdated_content(&registry, versions),
-            [OutdatedContent {
-                kind: "Lamp".into(),
-                file_version: 2,
-                current_kind: "Lantern".into(),
-                current: 2,
-                count: 1,
-            }]
         );
     }
 

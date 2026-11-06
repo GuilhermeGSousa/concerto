@@ -147,8 +147,6 @@ pub struct MotionDatabase {
 
 const DEVIATION_FLOOR: f32 = 1e-6;
 
-const DEFINITION_NAME: &str = "MotionDatabaseDefinition";
-
 impl Default for MotionDatabase {
     fn default() -> Self {
         Self {
@@ -441,8 +439,6 @@ impl MotionDatabase {
 impl Asset for MotionDatabase {
     const FORMAT_VERSION: u32 = 3;
 
-    const FORMER_NAMES: &'static [&'static str] = &[DEFINITION_NAME];
-
     fn name() -> &'static str {
         "MotionDatabase"
     }
@@ -450,17 +446,6 @@ impl Asset for MotionDatabase {
     fn migrate(version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
         anyhow::bail!(
             "MotionDatabase version {version} is a bake; a baked motion database is now derived from its definition; delete this file"
-        )
-    }
-
-    fn migrate_former(name: &str, version: u32, payload: &[u8]) -> anyhow::Result<Self> {
-        if name == DEFINITION_NAME && version == 2 {
-            return bincode::deserialize(payload)
-                .with_context(|| format!("failed to deserialize {name} version {version}"));
-        }
-        anyhow::bail!(
-            "{name} version {version} has no migration to MotionDatabase version {}; re-create it in the editor",
-            Self::FORMAT_VERSION
         )
     }
 }
