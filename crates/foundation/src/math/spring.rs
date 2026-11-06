@@ -107,10 +107,18 @@ impl<T: SpringValue> Spring<T> {
     /// Critically damped, tuned so the remaining distance to the target
     /// halves every `halflife` seconds (when starting at rest).
     pub fn critically_damped_with_halflife(value: T, halflife: f32) -> Self {
+        let mut spring = Self::critically_damped(value, 0.0);
+        spring.set_halflife(halflife);
+        spring
+    }
+
+    /// Critically damped at the angular frequency that halves the remaining distance every `halflife` seconds from rest; keeps the value and velocity.
+    pub fn set_halflife(&mut self, halflife: f32) {
         // Root of (1 + x)e^{-x} = 1/2: the ω·t at which a critically damped
         // spring from rest has covered half its displacement.
         const OMEGA_TIMES_HALFLIFE: f32 = 1.678_347;
-        Self::critically_damped(value, OMEGA_TIMES_HALFLIFE / halflife.max(1.0e-5))
+        self.angular_frequency = OMEGA_TIMES_HALFLIFE / halflife.max(1.0e-5);
+        self.damping_ratio = 1.0;
     }
 
     pub fn update(&mut self, target: T, dt: f32) -> T {
@@ -282,6 +290,27 @@ mod tests {
         assert!(
             (spring.value - 0.5).abs() < 1.0e-3,
             "after one halflife the spring should sit halfway, was {}",
+            spring.value
+        );
+    }
+
+    #[test]
+    fn set_halflife_keeps_the_motion_and_halves_from_rest() {
+        let mut spring = Spring::new(0.0f32, 4.0, 0.3);
+        spring.update(1.0, 0.1);
+        let moving = spring;
+
+        spring.set_halflife(0.5);
+
+        assert_eq!(spring.value, moving.value);
+        assert_eq!(spring.velocity, moving.velocity);
+        assert_eq!(spring.damping_ratio, 1.0);
+
+        spring.reset_to(0.0);
+        spring.update(1.0, 0.5);
+        assert!(
+            (spring.value - 0.5).abs() < 1.0e-3,
+            "after one new halflife the spring should sit halfway, was {}",
             spring.value
         );
     }
