@@ -9,6 +9,13 @@ use std::{
 
 use anyhow::Context;
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::{
+    asset_server::AssetLoadContext,
+    content::{
+        decode_content_payload, read_content_asset_parts, write_cooked_content_asset, CookedSection,
+    },
+};
 use super::{
     asset_server::AssetServer,
     content::{decode_content_asset, DerivedSection},
@@ -183,6 +190,20 @@ pub(crate) type DerivedFuture =
 #[cfg(target_arch = "wasm32")]
 pub(crate) type DerivedFuture = Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn Any + Send>>>>>;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type CookFuture = Pin<Box<dyn Future<Output = anyhow::Result<Vec<u8>>> + Send>>;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type CookHook = fn(id: AssetId, file: Vec<u8>, server: AssetServer) -> CookFuture;
+
+/// The addresses a cook wrote, in the order it wrote them.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CookReport {
+    /// The content addresses written under the output directory.
+    pub cooked: Vec<String>,
+}
+
 pub(crate) struct CookedBlob {
     pub(crate) section: DerivedSection,
     pub(crate) blob: Vec<u8>,
@@ -275,5 +296,28 @@ pub(crate) fn derived_hook<A: DerivedData>(
             derived.blob.len()
         );
         Ok(Box::new(asset) as Box<dyn Any + Send>)
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn cook_hook<A: DerivedData>(
+    id: AssetId,
+    file: Vec<u8>,
+    server: AssetServer,
+) -> CookFuture {
+    Box::pin(async move {
+        let parts = read_content_asset_parts(&file)?;
+        let mut asset = decode_content_payload::<A>(&parts.header, parts.payload)?;
+        asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
+        let derived = derive_and_apply(&mut asset, &server).await?;
+        write_cooked_content_asset(
+            &parts.header,
+            parts.payload,
+            CookedSection {
+                derived_version: A::DERIVED_VERSION,
+                key: derived.key,
+                blob: &derived.blob,
+            },
+        )
     })
 }

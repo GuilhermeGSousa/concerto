@@ -24,14 +24,12 @@ bincode = "1.3"
 concerto-foundation-macros.workspace = true
 derive_more = { version = "2", features = ["full"] }
 
-[dev-dependencies]
-pollster = "0.4.0"
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Off-thread file reads for the content-asset loader: async-fs runs the
 # blocking read on the `blocking` crate's thread pool so it never parks a
 # LoadTaskPool executor thread.
 async-fs = "2"
+pollster = "0.4.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Other dependencies
