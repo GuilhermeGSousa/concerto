@@ -1,3 +1,4 @@
+use concerto_foundation::hash::Fnv1a;
 use concerto_reflect::{to_value, Reflect, ReflectedValue};
 
 use crate::{
@@ -5,81 +6,22 @@ use crate::{
     database::{BakeError, MotionDatabase},
 };
 
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
 const WEIGHT_FIELD: &str = "weight";
 
-struct Fnv1a(u64);
-
-impl Fnv1a {
-    fn new() -> Self {
-        Self(FNV_OFFSET)
-    }
-
-    fn raw(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(FNV_PRIME);
-        }
-    }
-
-    fn count(&mut self, count: usize) {
-        self.raw(&(count as u64).to_le_bytes());
-    }
-
-    fn bytes(&mut self, bytes: &[u8]) {
-        self.count(bytes.len());
-        self.raw(bytes);
-    }
-
-    fn fields<'a>(
-        &mut self,
-        count: usize,
-        fields: impl Iterator<Item = &'a (String, ReflectedValue)>,
-    ) {
-        self.count(count);
-        for (name, value) in fields {
-            self.bytes(name.as_bytes());
-            self.value(value);
-        }
-    }
-
-    fn value(&mut self, value: &ReflectedValue) {
-        match value {
-            ReflectedValue::Leaf(bytes) => {
-                self.raw(&[0]);
-                self.bytes(bytes);
-            }
-            ReflectedValue::Struct(fields) => {
-                self.raw(&[1]);
-                self.fields(fields.len(), fields.iter());
-            }
-            ReflectedValue::Variant { name, fields } => {
-                self.raw(&[2]);
-                self.bytes(name.as_bytes());
-                self.fields(fields.len(), fields.iter());
-            }
-            ReflectedValue::List(elements) => {
-                self.raw(&[3]);
-                self.count(elements.len());
-                for element in elements {
-                    self.value(element);
-                }
+fn channel(hash: &mut Fnv1a, channel: &FeatureChannelData) {
+    hash.bytes(channel.type_name().as_bytes());
+    let value = channel.value().expect("a feature channel encodes");
+    match value.as_ref() {
+        ReflectedValue::Struct(fields) => {
+            let kept = || fields.iter().filter(|(name, _)| name != WEIGHT_FIELD);
+            hash.raw(&[1]);
+            hash.count(kept().count());
+            for (name, value) in kept() {
+                hash.bytes(name.as_bytes());
+                hash.value(value);
             }
         }
-    }
-
-    fn channel(&mut self, channel: &FeatureChannelData) {
-        self.bytes(channel.type_name().as_bytes());
-        let value = channel.value().expect("a feature channel encodes");
-        match value.as_ref() {
-            ReflectedValue::Struct(fields) => {
-                let kept = || fields.iter().filter(|(name, _)| name != WEIGHT_FIELD);
-                self.raw(&[1]);
-                self.fields(kept().count(), kept());
-            }
-            value => self.value(value),
-        }
+        value => hash.value(value),
     }
 }
 
@@ -106,13 +48,13 @@ pub fn weightless_hash(
     hash.value(&stored(&definition.simulation));
     hash.value(&stored(&definition.trajectory));
     hash.count(definition.channels.len());
-    for channel in &definition.channels {
-        hash.channel(channel);
+    for feature in &definition.channels {
+        channel(&mut hash, feature);
     }
     if definition.entries.iter().any(|entry| entry.mirrored) {
         hash.value(&stored(&definition.mirror_axis));
     }
-    hash.0
+    hash.finish()
 }
 
 /// The weight of each channel of `definition`, in order, read from its live channels.
@@ -122,22 +64,4 @@ pub fn weights_of(definition: &MotionDatabase) -> Result<Vec<f32>, BakeError> {
         .iter()
         .map(|channel| channel.weight())
         .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn digest(bytes: &[u8]) -> u64 {
-        let mut hash = Fnv1a::new();
-        hash.raw(bytes);
-        hash.0
-    }
-
-    #[test]
-    fn the_hash_is_fnv_1a() {
-        assert_eq!(digest(b""), 0xcbf2_9ce4_8422_2325);
-        assert_eq!(digest(b"a"), 0xaf63_dc4c_8601_ec8c);
-        assert_eq!(digest(b"foobar"), 0x8594_4171_f739_67e8);
-    }
 }

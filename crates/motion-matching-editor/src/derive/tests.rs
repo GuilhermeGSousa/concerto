@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use concerto_animation::clip::{Additive, AdditiveBase};
 use concerto_app::App;
 use concerto_ecs::events::event_channel::EventChannel;
 use concerto_editor::{
@@ -270,6 +271,28 @@ fn a_missing_clip_fails_the_derive_naming_it() {
         status(&tab)
     );
     assert!(status(&tab).contains(&tab.run.address), "{}", status(&tab));
+    assert!(tab.state().playback.is_none());
+    assert!(!preview_shows_a_database(&tab));
+}
+
+#[test]
+fn an_additive_clip_fails_the_derive_naming_it() {
+    let mut tab = ready(fixture());
+    let mut additive = clip_of(2, 0..2);
+    additive.set_additive(Additive::LocalSpace(AdditiveBase::new(AssetHandle::weak(
+        tab.walk.id,
+    ))));
+    let address = tab.run.address.clone();
+    let run = write_asset(&mut tab.f, &address, &additive);
+
+    written(&mut tab, vec![run.id]);
+
+    let line = status(&tab);
+    assert!(line.starts_with("Derive failed: "), "{line}");
+    assert!(
+        line.contains(&address) && line.contains("itself derived"),
+        "{line}"
+    );
     assert!(tab.state().playback.is_none());
     assert!(!preview_shows_a_database(&tab));
 }

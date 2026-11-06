@@ -3,7 +3,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation::clip::{
+    AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
+};
 use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
@@ -37,6 +39,9 @@ pub struct BvhSettings {
     /// Per clip name, the clip times in seconds of each named event.
     #[serde(default)]
     pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
+    /// Per clip name, the base the clip is additive against.
+    #[serde(default)]
+    pub additive: BTreeMap<String, AdditiveSetting>,
 }
 
 impl Default for BvhSettings {
@@ -45,6 +50,7 @@ impl Default for BvhSettings {
             scale: DEFAULT_SCALE,
             frame_range: None,
             events: BTreeMap::new(),
+            additive: BTreeMap::new(),
         }
     }
 }
@@ -109,6 +115,25 @@ impl Importer for BvhImporter {
                 )));
             }
             clip.add_animation_events(events).map_err(malformed)?;
+        }
+        let roots: Vec<Uuid> = skeleton
+            .parents
+            .iter()
+            .zip(skeleton.bone_ids.iter())
+            .filter(|(parent, _)| parent.is_none())
+            .map(|(_, id)| *id)
+            .collect();
+        for (name, additive) in &settings.additive {
+            if *name != clip_name {
+                return Err(malformed(format!(
+                    "additive is set for clip `{name}`, but the only clip is `{clip_name}`"
+                )));
+            }
+            clip.set_additive(
+                additive
+                    .additive(clip.duration(), roots.clone())
+                    .map_err(malformed)?,
+            );
         }
         ctx.emit("skeleton/0", &skeleton)?;
         if clip_name != "0" {

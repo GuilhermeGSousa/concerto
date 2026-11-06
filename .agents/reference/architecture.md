@@ -153,8 +153,12 @@ time. The running game never reads them.
   code to do it.
 - An asset whose runtime part is computed from other content assets
   implements `DerivedData` and is registered with `register_derived_asset`
-  (`MotionDatabase` and its `BakedDatabase`). Its file holds only the
-  definition; a load derives the blob from the inputs it names, or reads it
+  (`MotionDatabase` and its `BakedDatabase`). Whether an asset derives is
+  decided per asset by `is_derived()`, `true` by default: one that doesn't
+  loads as it is, is accepted as another derived asset's input, and isn't
+  cooked; `DerivedInputs::read` asks a derived kind's `file_is_derived` and
+  refuses an input that derives. Its file holds only the
+  definition; a load of one that derives derives the blob from the inputs it names, or reads it
   from the project's `derived-cache/` under the key the type computes, and
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the
@@ -165,7 +169,8 @@ time. The running game never reads them.
   project root as the content root and the project's `derived-cache/`, empties
   `<out>` (refusing a non-empty directory that holds no `.concerto-cook` marker
   from an earlier cook), and has `AssetServer::cook` write each registry entry of a
-  registered derived kind to `<out>/<address>`: the committed header and
+  registered derived kind whose asset derives to `<out>/<address>`, skipping
+  and leaving out of the report one that doesn't: the committed header and
   payload byte for byte, plus a trailing derived section with the blob. It
   prints each address and a total, or the error, and exits 0 or 1. A load that
   finds a section of the type's current `DERIVED_VERSION` applies it without

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use concerto_animation::{
     animate_targets,
-    clip::AnimationClip,
+    clip::{Additive, AdditiveBase, AnimationClip},
     event::{AnimationEvent, AnimationSignal},
     graph::AnimationGraph,
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -293,6 +293,10 @@ impl Project {
     }
 
     fn load(&self, id: AssetId) -> MotionDatabase {
+        self.try_load(id).expect("the database loaded")
+    }
+
+    fn try_load(&self, id: AssetId) -> Option<MotionDatabase> {
         let mut app = motion_app();
         let world = app.main_mut().world_mut();
         let server = self.serve(world);
@@ -309,8 +313,7 @@ impl Project {
             .get_resource::<AssetStore<MotionDatabase>>()
             .unwrap()
             .get(&handle)
-            .expect("the database loaded")
-            .clone()
+            .cloned()
     }
 }
 
@@ -366,6 +369,39 @@ fn a_database_loaded_through_the_server_derives_and_plays() {
         root_transform.rotation,
         expected[0].rotation
     );
+}
+
+#[test]
+fn an_entry_naming_an_additive_clip_fails_the_databases_load_naming_the_clip() {
+    let mut project = Project::new();
+    let [walk_id, turn_id] = project.clip_ids;
+    let mut turn = turn_left();
+    turn.set_additive(Additive::LocalSpace(AdditiveBase::new(AssetHandle::weak(
+        walk_id,
+    ))));
+    save_content_asset_into(
+        &turn,
+        &project.root,
+        "content/turn.gasset",
+        &mut project.registry,
+    )
+    .unwrap();
+    let (database_id, _) = project.save(1.0);
+
+    assert!(project.try_load(database_id).is_none());
+    let mut app = motion_app();
+    let server = project.serve(app.main_mut().world_mut());
+    let error = server
+        .cook(&project.root.join("cooked"))
+        .expect_err("a database naming an additive clip can't be cooked");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&format!("{turn_id:?}"))
+            && message.contains("content/turn.gasset")
+            && message.contains("itself derived"),
+        "{message}"
+    );
+    assert!(project.blobs().is_empty());
 }
 
 #[test]

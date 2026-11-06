@@ -498,6 +498,56 @@ its start time, but no other jump fires what lies between. A motion matching
 state fires nothing on its first frame: entering it resets the state, and it
 fires only once it has started playing an entry.
 
+### Additive clips
+
+An additive clip is layered over another pose instead of replacing it: an
+overlay such as cold, wounded or fear is recorded as a full take next to a
+matched neutral take, its base, and what is layered is the difference between
+the two. `AnimationClip::additive()` says whether a clip is additive, as an
+`Additive` (`concerto::animation::clip`):
+
+- `Additive::None`, the default: a plain clip.
+- `Additive::LocalSpace(AdditiveBase)`: additive in each bone's local space
+  against `AdditiveBase::clip`, the base clip, kept by asset id.
+
+The importers set it from a source's import settings
+([asset importing](../asset-importing.md)), and code can with
+`set_additive`, building the base with `AdditiveBase::new(clip)` and
+`with_range`, `with_base_range` and `with_root`. `set_additive` drops any delta
+the clip already holds, so a clip made plain, or given a new base, samples no
+delta until it is built again.
+
+The clip keeps its full-pose keys, so `AnimationClipNode` and the clip editor
+play it as any other clip. The difference, the delta, is derived data: it is
+built when the clip loads, kept in the derived data cache, and written into the
+clip by a cook, so a cooked build doesn't read the base. A clip whose
+base is missing, unset, itself additive, or whose ranges don't fit fails to
+load, with an error naming the clip and the reason. A clip added in code with
+`AssetServer::add` derives nothing, and has no delta.
+
+For each frame, the delta of a bone is the clip's rotation times the inverse of
+the base's, and the clip's translation minus the base's. Applied with
+`apply_additive(&mut pose, &delta, weight)` (`concerto::animation::pose`), it
+turns the pose's rotation by the delta, slerped from identity by `weight`, and
+moves its translation by the weighted delta. At weight 1 over the base it gives
+the clip back. `AnimationClip::sample_additive(time, &bone)` gives the delta at
+a time, clamped to the delta, and `additive_duration()` its length.
+
+The base is aligned by normalized time: `range` and `base_range`, in seconds,
+trim each clip, the whole clip when unset, and the base's span is stretched to
+the clip's, so a base twice as long is read at twice the clip's time. Keys are
+taken at the clip's frame rate, its detected rate when it has none stored, or
+30 frames a second, and land on both ends of `range`.
+
+A delta exists only for a bone and component that both clips animate; any other
+reads as identity. The bones in `roots`, the roots of the skeleton the source
+emits, keep their rotation delta but no translation, so an overlay adds a lean
+of the whole body but no root motion. Scale is never layered, nor are a clip's
+events: they stay on the clip.
+
+Mesh-space deltas, a single-frame or rest-pose base, and the graph node that
+plays an additive clip over a pose are not there yet.
+
 ## Gameplay helpers
 
 `concerto::gameplay` has pieces most character games need:

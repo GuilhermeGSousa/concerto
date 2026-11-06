@@ -154,8 +154,9 @@ asset_id = "abfdaec1-d105-4c4c-b37c-138a1231e4ac"
 An optional `[settings]` table holds importer-specific settings. The importer
 that owns the source reads it on every import; a sidecar without one uses the
 importer's defaults, and a first import writes none. The `obj` and `image`
-importers read no settings. The `gltf` importer reads only `events`, described
-under [Clip events](#clip-events), and an unknown key fails its import. The
+importers read no settings. The `gltf` importer reads only `events` and
+`additive`, described under [Clip events](#clip-events) and
+[Additive clips](#additive-clips), and an unknown key fails its import. The
 `bvh` importer's are described under [BVH motion capture](#bvh-motion-capture).
 
 A `bvh` source's settings:
@@ -218,9 +219,10 @@ Settings, in the sidecar's `[settings]` table:
 | `scale`       | `0.01`  | Multiplier applied to every offset and translation. The default turns the centimetres most BVH files use into metres. Must be finite and positive. |
 | `frame_range` | whole file | `[start, end)` frame indices to keep. Needs `start < end <= frame count` and at least two frames. Keys are timed from the first kept frame. |
 | `events`      | none    | Named events on the clip, as described under [Clip events](#clip-events). The table is `[settings.events.<name>]`, where `<name>` is the clip's sanitised name, the `<name>` of its `animation/<name>` output: `Walk#Cycle.bvh` gives `Walk_Cycle`. Times count from the first kept frame. |
+| `additive`    | none    | Makes the clip additive against a base clip, as described under [Additive clips](#additive-clips). The table is `[settings.additive.<name>]`, with `<name>` as for `events`. `range` counts from the first kept frame. |
 
 A `frame_range` outside the file, an empty or one-frame range, a bad `scale`,
-bad `events`, or an unknown key fails the import. The file's own timing is
+bad `events` or `additive`, or an unknown key fails the import. The file's own timing is
 kept; there is no resampling setting.
 
 ## Clip events
@@ -242,6 +244,46 @@ footstep_right = [0.37, 0.87]
   under one name adds one event.
 - A table for a clip the source does not emit, or a time that is negative,
   not finite, or past the clip's duration, fails the import.
+
+## Additive clips
+
+The `gltf` and `bvh` importers make a clip additive against a base clip, its
+matched neutral take, from a `[settings.additive.<clip>]` table:
+
+```toml
+[settings.additive.Cold_Walk]
+base = "6f1c2a3e-9d1b-4c84-a1a7-0b6f3a1d2e44"
+base_range = [0.0, 4.2]
+range = { start = 0.1, end = 4.3 }
+```
+
+- `<clip>` is the `<name>` of the clip's `animation/<name>` output, as for
+  [Clip events](#clip-events).
+- `base` is the base clip's asset id, as written in the
+  `[outputs."animation/<name>"]` table of the base source's sidecar. A value
+  that isn't an asset id fails the import.
+- `base_range` and `range` are optional spans in seconds of the base clip and of
+  this clip, each written as a two-element array `[start, end]` or as a
+  `{ start, end }` table. The whole clip is used when one is unset. An extra key
+  in a `{ start, end }` table fails the import.
+- `range` is checked against this clip: a `range` that is not finite, whose
+  `start` is negative or not below its `end`, or whose `end` is past the clip's
+  duration fails the import. `base_range` is checked when the clip loads, once
+  the base is read.
+- The clip's root bones, whose translation the delta leaves out, come from the
+  skeletons the source emits: every bone with no parent in one of them. The
+  sidecar doesn't set them.
+- A table for a clip the source does not emit, or an unknown key, fails the
+  import.
+
+The import doesn't read the base or check that it exists, so the clip and its
+base import in any order. The delta between the two is
+[derived data](#derived-data), built when the clip loads: a missing base, a
+`base_range` that doesn't fit the base, or any other failed derive fails the
+clip's load, with an error naming the clip and the reason. A clip with no table
+is plain, `Additive::None`; removing the table and importing again makes the
+clip plain again. A clip added in code with `AssetServer::add` derives nothing,
+and has no delta.
 
 ## The `.gasset` file format
 
@@ -361,10 +403,15 @@ When you change one:
    with it, and the PR says so. After that, files at that version are
    rejected.
 
-`AnimationClip` is at version 2, which adds the clip's events. Its `migrate`
-reads a version-1 payload through `legacy::AnimationClipV1`
-(`crates/animation/src/clip.rs`) as a clip with no events, and
-`AnimationClip.v1.bin` stays with a test that decodes it. The clips committed
+`AnimationClip` is at version 3. Version 2 adds the clip's events, and
+version 3 adds `additive`, an `Additive` stored as the payload's first field:
+`None` for a plain clip, or `LocalSpace` with the base clip's asset id, the
+optional `base_range` and `range`, and the root bones. Its `migrate` reads a
+version-2 payload through `legacy::AnimationClipV2`
+(`crates/animation/src/clip.rs`) as a clip that isn't additive, and a version-1
+payload through `legacy::AnimationClipV1`, which becomes an `AnimationClipV2`
+with no events and then the current clip. `AnimationClip.v1.bin` and
+`AnimationClip.v2.bin` stay, each with a test that decodes it. The clips committed
 under `examples/tech-demo/content/UAL1/` and
 `examples/tech-demo/content/lafan1/animations/` are still version 1: they
 migrate in memory on every load, and the editor reports them as outdated until
@@ -601,25 +648,39 @@ content tree. `MotionDatabase` is one: its file is the definition, and its
 | Item | Meaning |
 |---|---|
 | `DERIVED_VERSION` | Raised when `derive` gives a different blob for the same inputs |
-| `derived_inputs()` | The content assets the blob is built from; none may itself be derived |
+| `is_derived()` | Whether this asset has a blob to derive; `true` unless the type overrides it |
+| `file_is_derived(&header, payload)` | Whether a file of the type derives, from its header and payload; by default it decodes the payload, migrating, and asks `is_derived()`. A type overrides it when decoding all of it is slow |
+| `derived_inputs()` | The content assets the blob is built from; none may itself derive |
 | `derived_key(&inputs)` | A `u64` that is equal for inputs giving an equal blob |
 | `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)` |
 | `apply_derived(&blob)` | Takes the blob into the asset's runtime part |
 
+Whether an asset derives is decided per asset, not per type. One whose
+`is_derived()` is false is a plain asset of a derived type: it loads as it is,
+reading no inputs, computing no key and touching no cache, and a cook skips it.
+A derived type whose assets all derive, such as `MotionDatabase`, keeps the
+default.
+
 `DerivedInputs::read` reads each input's file from the content root as a load
-does. `bytes(id)` gives the whole file and `decode::<T>(id)` decodes it,
-migrating as a load does but without `on_load`.
+does. An input whose kind is a registered derived type is asked
+`file_is_derived`, and refused when it answers true, with an error naming the
+input's id, its address and its kind and saying it is itself derived. A plain
+asset of a derived type is accepted, and a file of a kind that isn't derived is
+never looked at. `bytes(id)` gives the whole file and `decode::<T>(id)` decodes
+it, migrating as a load does but without `on_load`.
 
 A type is registered with `app.register_derived_asset::<A>()`, which also
-registers it as an asset. A load of it runs `on_load`, then applies the blob
-of a cooked file's derived section when its `derived_version` is the type's
+registers it as an asset. A load of it runs `on_load`. An asset that doesn't
+derive is then loaded as it is, and a derived section on it, which only a
+hand-made file can have, is ignored with a warning. One that derives applies
+the blob of a cooked file's derived section when its `derived_version` is the type's
 `DERIVED_VERSION`, reading no inputs and touching no cache. Without a section,
 or when the section's version differs or `apply_derived` refuses it, with a
 warning, the load reads the inputs, computes the key and looks the blob up in
 the `AssetServer`'s `DerivedDataCache`. A hit is applied; a miss, or a cached blob that
 `apply_derived` refuses, is derived, written to the cache and applied. The
-handle reads as loaded only once the blob is applied, and a missing or derived
-input fails the load. `AssetServer::add` derives nothing: code that adds a
+handle reads as loaded only once the blob is applied, and a missing input, an
+input that itself derives, or a failed derive fails the load. `AssetServer::add` derives nothing: code that adds a
 derived asset in memory attaches the computed part itself.
 
 The key covers the definition and the bytes of its inputs, not code. A change
@@ -641,7 +702,7 @@ the browser, on the main thread. A cooked build carries the blobs instead.
 
 ### Cooking
 
-A cook writes each derived asset's blob into a copy of its `.gasset` file, as a
+A cook writes the blob of each asset that derives into a copy of its `.gasset` file, as a
 trailing derived section, so a shipped build applies it without deriving. It is
 run through the project tool:
 
@@ -662,8 +723,11 @@ after `--`.
    frame. It points the `AssetServer` at the project's `content/` and its
    `derived-cache/`, and calls `AssetServer::cook`.
 3. `AssetServer::cook` takes every registry entry whose kind is a registered
-   derived type, in address order. It decodes the
-   file, runs `on_load`, derives or takes a cache hit as a load does, and
+   derived type, in address order. It asks the type's `file_is_derived`
+   first. An asset that doesn't derive is skipped: it isn't decoded, no file is
+   written and the `CookReport` leaves its address out. One that derives is
+   decoded and its `on_load` runs; then it derives or takes a cache hit as a
+   load does, and
    writes `<out>/<address>`: the original header and payload bytes, unchanged,
    plus the section. A cached blob that `apply_derived` refuses is derived
    again, never cooked. The first failure stops the cook and fails the command,

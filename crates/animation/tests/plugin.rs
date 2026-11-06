@@ -1,7 +1,11 @@
-use std::{thread, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant},
+};
 
 use concerto_animation::{
-    clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+    clip::{Additive, AdditiveBase, AnimationChanelOutput, AnimationChannel, AnimationClip},
     graph::AnimationGraph,
     node::AnimationClipNode,
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -14,7 +18,11 @@ use concerto_app::{
 };
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore},
+    assets::{
+        AssetId, ContentAssetRoot, asset_server::AssetServer, asset_store::AssetStore,
+        content::save_content_asset_into, derived::DerivedDataCache, handle::AssetHandle,
+        registry::AssetRegistry,
+    },
     transform::Transform,
 };
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
@@ -149,4 +157,194 @@ fn an_animation_player_advances_in_a_preview_app_and_not_in_an_edit_app() {
     assert!(bone_x_after_a_few_frames(App::new()) > 0.0);
     assert!(bone_x_after_a_few_frames(App::for_previewing()) > 0.0);
     assert_eq!(bone_x_after_a_few_frames(App::for_editing()), 0.0);
+}
+
+const BONE: Uuid = Uuid::from_u128(7);
+
+struct ClipProject {
+    root: PathBuf,
+    registry: AssetRegistry,
+}
+
+impl Drop for ClipProject {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+impl ClipProject {
+    fn new() -> Self {
+        let root =
+            std::env::temp_dir().join(format!("additive-clips-{}", AssetId::new().simple_hex()));
+        std::fs::create_dir_all(root.join("content")).unwrap();
+        Self {
+            root,
+            registry: AssetRegistry::new(),
+        }
+    }
+
+    fn save(&mut self, name: &str, clip: &AnimationClip) -> AssetId {
+        save_content_asset_into(
+            clip,
+            &self.root,
+            &format!("content/{name}.gasset"),
+            &mut self.registry,
+        )
+        .unwrap()
+    }
+
+    fn blobs(&self) -> usize {
+        std::fs::read_dir(self.root.join("derived-cache/AnimationClip/v1"))
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+    }
+}
+
+fn ramp(to: f32) -> AnimationClip {
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        BONE,
+        AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::from_translation([[0.0, 0.0, 0.0], [to, 0.0, 0.0]].into_iter()),
+        ),
+    );
+    clip.set_frame_rate(10.0);
+    clip
+}
+
+fn additive_ramp(to: f32, base: AssetId) -> AnimationClip {
+    let mut clip = ramp(to);
+    clip.set_additive(Additive::LocalSpace(AdditiveBase::new(AssetHandle::weak(
+        base,
+    ))));
+    clip
+}
+
+struct ClipRuntime {
+    app: App,
+    server: AssetServer,
+}
+
+impl ClipRuntime {
+    fn new(root: &Path, registry: &AssetRegistry, cache: DerivedDataCache) -> Self {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(AnimationPlugin);
+        app.finish_plugin_build();
+        app.update();
+        let server = app.get_resource::<AssetServer>().unwrap().clone();
+        server.set_derived_cache(cache);
+        server.publish_content_source(
+            ContentAssetRoot::Directory(root.to_path_buf()),
+            registry.clone(),
+        );
+        Self { app, server }
+    }
+
+    fn load<R>(&mut self, id: AssetId, read: impl FnOnce(&AnimationClip) -> R) -> Option<R> {
+        let handle = self.server.load::<AnimationClip>(id);
+        let started = Instant::now();
+        while self.server.is_loading() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "load timed out"
+            );
+            thread::sleep(Duration::from_millis(1));
+            self.app.update();
+        }
+        self.app.update();
+        self.app
+            .main()
+            .world()
+            .get_resource::<AssetStore<AnimationClip>>()
+            .unwrap()
+            .get(&handle)
+            .map(read)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct BuiltDelta {
+    duration: f32,
+    halfway: f32,
+}
+
+fn built_delta(clip: &AnimationClip) -> BuiltDelta {
+    BuiltDelta {
+        duration: clip.additive_duration(),
+        halfway: clip.sample_additive(0.5, &BONE).translation.x,
+    }
+}
+
+fn assert_built(delta: Option<BuiltDelta>) {
+    let delta = delta.expect("the additive clip loaded");
+    assert_eq!(delta.duration, 1.0);
+    assert!((delta.halfway - 1.0).abs() < 1e-4, "{delta:?}");
+}
+
+#[test]
+fn an_additive_clip_loaded_with_its_base_holds_a_built_delta() {
+    let mut project = ClipProject::new();
+    let base = project.save("base", &ramp(1.0));
+    let clip = project.save("additive", &additive_ramp(3.0, base));
+    let cache = DerivedDataCache::in_project(&project.root);
+
+    let mut runtime = ClipRuntime::new(&project.root, &project.registry, cache);
+
+    assert_built(runtime.load(clip, built_delta));
+    assert_eq!(project.blobs(), 1);
+}
+
+#[test]
+fn an_additive_clip_whose_base_is_missing_fails_its_load_naming_the_base() {
+    let mut project = ClipProject::new();
+    let missing = AssetId::new();
+    let clip = project.save("additive", &additive_ramp(3.0, missing));
+
+    let mut runtime = ClipRuntime::new(&project.root, &project.registry, DerivedDataCache::none());
+
+    assert!(runtime.load(clip, built_delta).is_none());
+    let error = runtime
+        .server
+        .cook(&project.root.join("cooked"))
+        .expect_err("a clip with a missing base can't be cooked");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&format!("{missing:?}")) && message.contains("content/additive.gasset"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_plain_clip_loads_with_no_derived_data_cache_and_no_inputs() {
+    let mut project = ClipProject::new();
+    let clip = project.save("plain", &ramp(1.0));
+
+    let mut runtime = ClipRuntime::new(&project.root, &project.registry, DerivedDataCache::none());
+
+    let loaded = runtime
+        .load(clip, built_delta)
+        .expect("the plain clip loaded");
+    assert_eq!(loaded.duration, 0.0);
+    assert_eq!(loaded.halfway, 0.0);
+    assert!(!project.root.join("derived-cache").exists());
+}
+
+#[test]
+fn a_cooked_additive_clip_applies_its_blob_without_its_base() {
+    let mut project = ClipProject::new();
+    let base = project.save("base", &ramp(1.0));
+    let clip = project.save("additive", &additive_ramp(3.0, base));
+    let out = project.root.join("cooked");
+    let cooking = ClipRuntime::new(&project.root, &project.registry, DerivedDataCache::none());
+
+    let report = cooking.server.cook(&out).unwrap();
+
+    assert_eq!(report.cooked, ["content/additive.gasset"]);
+    assert!(!out.join("content/base.gasset").exists());
+    let mut runtime = ClipRuntime::new(&out, &project.registry, DerivedDataCache::none());
+    assert_built(runtime.load(clip, built_delta));
 }

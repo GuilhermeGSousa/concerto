@@ -69,7 +69,7 @@ pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.register_asset::<AnimationClip>();
+        app.register_derived_asset::<AnimationClip>();
         app.register_asset::<AnimationGraph>();
         app.register_asset::<Skeleton>();
 
