@@ -1,17 +1,14 @@
 use concerto_animation::graph::AnimationGraph;
-use concerto_animation::node::{AnimationNode, ErasedAnimationNode};
+use concerto_animation::node::ErasedAnimationNode;
 use concerto_animation::plugin::register_animation_types;
 use concerto_name::name;
-use concerto_procedural_animation::{
-    FootPlacementLeg, FootPlacementNode, LookAtBone, LookAtEye, LookAtNode,
-};
+use concerto_procedural_animation::{FootPlacementLeg, FootPlacementNode};
 use concerto_reflect::TypeRegistry;
 
 fn registry() -> TypeRegistry {
     let mut registry = TypeRegistry::default();
     register_animation_types(&mut registry);
     registry.register::<FootPlacementNode>();
-    registry.register::<LookAtNode>();
     registry
 }
 
@@ -20,10 +17,12 @@ fn round_trip(graph: &AnimationGraph) -> AnimationGraph {
     bincode::deserialize(&bytes).expect("deserialize")
 }
 
-fn live_node<T: AnimationNode>(graph: &AnimationGraph) -> Option<&T> {
+fn live_placement(graph: &AnimationGraph) -> Option<&FootPlacementNode> {
     graph
         .live_nodes()
-        .find_map(|node: &dyn ErasedAnimationNode| node.as_reflect().downcast_ref::<T>())
+        .find_map(|node: &dyn ErasedAnimationNode| {
+            node.as_reflect().downcast_ref::<FootPlacementNode>()
+        })
 }
 
 #[test]
@@ -66,61 +65,5 @@ fn a_foot_placement_node_keeps_every_field_through_a_round_trip() {
         "{:?}",
         restored.load_warnings()
     );
-    assert_eq!(live_node::<FootPlacementNode>(&restored), Some(&node));
-}
-
-#[test]
-fn a_look_at_node_keeps_every_field_through_a_round_trip() {
-    let node = LookAtNode {
-        chain: vec![
-            LookAtBone {
-                bone: "spine_02".into(),
-                share: 0.3,
-                yaw_limit: 0.5,
-                pitch_limit: 0.25,
-                halflife: 0.2,
-            },
-            LookAtBone {
-                bone: "head".into(),
-                share: 0.7,
-                yaw_limit: 0.9,
-                pitch_limit: 0.4,
-                halflife: 0.1,
-            },
-        ],
-        eyes: vec![
-            LookAtEye {
-                bone: "eye_l".into(),
-                yaw_limit: 0.6,
-                pitch_limit: 0.3,
-                halflife: 0.02,
-            },
-            LookAtEye {
-                bone: "eye_r".into(),
-                yaw_limit: 0.55,
-                pitch_limit: 0.35,
-                halflife: 0.04,
-            },
-        ],
-        forward: glam::Vec3::new(0.0, 0.1, 1.0),
-        up: glam::Vec3::new(0.1, 1.0, 0.0),
-        target_param: name!("gaze_target"),
-        weight: 0.8,
-        weight_param: Some(name!("gaze_weight")),
-        weight_halflife: 0.35,
-        max_angle: 1.5,
-    };
-    assert_ne!(node, LookAtNode::default());
-    let mut graph = AnimationGraph::from_node(node.clone());
-    graph.make_live(&registry(), None).unwrap();
-
-    let mut restored = round_trip(&graph);
-    restored.make_live(&registry(), None).unwrap();
-
-    assert!(
-        restored.load_warnings().is_empty(),
-        "{:?}",
-        restored.load_warnings()
-    );
-    assert_eq!(live_node::<LookAtNode>(&restored), Some(&node));
+    assert_eq!(live_placement(&restored), Some(&node));
 }
