@@ -29,6 +29,7 @@ game adds itself when it needs them.
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
 | | `jolt-ffi` | the bindings to Jolt, built from the submodule | |
 | | `animation` | clips, skeletons, animation graphs, the animation player | `animation` |
+| | `procedural-animation` | animation graph nodes that read physics: `FootPlacementNode`, which puts a character's feet on the ground | `procedural_animation` |
 | | `scene` | scenes: spawning and capturing | `scene` |
 | | `director` | the virtual-camera stack | `director` |
 | | `gameplay` | camera rigs and player helpers | `gameplay` |

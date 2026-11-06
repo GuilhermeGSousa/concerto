@@ -11,6 +11,7 @@ pub use concerto_mesh as mesh;
 pub use concerto_motion_matching as motion_matching;
 pub use concerto_name as name;
 pub use concerto_physics as physics;
+pub use concerto_procedural_animation as procedural_animation;
 pub use concerto_reflect as reflect;
 pub use concerto_render as render;
 pub use concerto_scene as scene;
@@ -28,6 +29,7 @@ use concerto_app::{
 use concerto_director::CameraDirectorPlugin;
 use concerto_motion_matching::MotionMatchingPlugin;
 use concerto_physics::plugin::PhysicsPlugin;
+use concerto_procedural_animation::ProceduralAnimationPlugin;
 use concerto_render::{
     assets::material::StandardMaterial, plugin::RenderPlugin,
     shadow_pipeline::ShadowPipelinePlugin, MaterialPlugin,
@@ -88,6 +90,7 @@ impl Plugin for DefaultPlugins {
 
         app.register_plugin(PhysicsPlugin)
             .register_plugin(MotionMatchingPlugin)
+            .register_plugin(ProceduralAnimationPlugin)
             .register_plugin(AnimationPlugin)
             .register_plugin(ScenePlugin)
             .register_plugin(WorldGridPlugin)
