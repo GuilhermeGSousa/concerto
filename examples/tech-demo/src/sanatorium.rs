@@ -26,8 +26,8 @@ use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 use glam::{Quat, Vec3};
 
 use crate::character::{
-    CharacterConfig, PlayerSpawner, debug_keys, setup_character_animations, spawn_character,
-    update_movement,
+    CharacterConfig, PlayerSpawner, debug_keys, feed_foot_placement, setup_character_animations,
+    spawn_character, update_movement,
 };
 
 const MARKERS: AssetId = asset_id!("content/sanatorium/MARKERS/scene.gasset");
@@ -70,6 +70,7 @@ pub fn sanatorium(app: &mut App) {
         .add_system(Update, classify_markers)
         .add_system(Update, spawn_character)
         .add_system(Update, setup_character_animations)
+        .add_system(Update, feed_foot_placement)
         .add_system(Update, debug_keys)
         .add_system(Update, update_movement)
         .add_system(Update, (toggle_marker_debug, draw_markers).chain());

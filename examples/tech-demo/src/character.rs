@@ -11,16 +11,19 @@ use concerto::ecs::{Entity, Query, With, Without};
 use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraBoom, CameraPivot, EntityFollow};
-use concerto::mesh::{MeshComponent, primitives::cuboid};
+use concerto::mesh::{JointName, MeshComponent, primitives::cuboid};
 use concerto::motion_matching::{
     Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp, DesiredMotion,
-    MotionMatchingNode, Synchronization,
+    MotionDatabase, MotionMatchingNode, Synchronization,
 };
+use concerto::name::{Name, name};
+use concerto::physics::body::BodyId;
 use concerto::physics::collider::{Collider, ColliderOffset};
 use concerto::physics::ground::GroundProbe;
 use concerto::physics::rigid_body::MotionType::Dynamic;
 use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
 use concerto::physics::shape::MeshCollider;
+use concerto::procedural_animation::{FootPlacementLeg, FootPlacementNode, IgnoredBody};
 use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::input::{Input, KeyCode, PhysicalKey};
@@ -141,10 +144,7 @@ pub(crate) fn spawn_character(
             ))
             .entity();
 
-        let graph = asset_server.add(AnimationGraph::from_node(MotionMatchingNode {
-            database: asset_server.load(DATABASE),
-            ..Default::default()
-        }));
+        let graph = asset_server.add(character_graph(asset_server.load(DATABASE)));
         cmd.spawn((
             placement,
             config.displacement.clone(),
@@ -184,6 +184,44 @@ pub(crate) fn spawn_character(
     }
 }
 
+fn foot_placement_weight() -> Name {
+    name!("foot_placement_weight")
+}
+
+fn foot_placement_ignore() -> Name {
+    name!("foot_placement_ignore")
+}
+
+fn leg(foot: &str, toe: &str) -> FootPlacementLeg {
+    FootPlacementLeg {
+        foot: JointName::from(foot),
+        toe: Some(JointName::from(toe)),
+    }
+}
+
+fn character_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
+    let mut graph = AnimationGraph::new();
+    graph.result_node().with_input(
+        FootPlacementNode {
+            pelvis: JointName::from("Hips"),
+            legs: vec![leg("LeftFoot", "LeftToe"), leg("RightFoot", "RightToe")],
+            weight_param: Some(foot_placement_weight()),
+            ignore_param: Some(foot_placement_ignore()),
+            ..Default::default()
+        },
+        |mut placement| {
+            placement.with_input(
+                MotionMatchingNode {
+                    database,
+                    ..Default::default()
+                },
+                |_| {},
+            );
+        },
+    );
+    graph
+}
+
 /// Spawns the forest's two test walls as static colliders.
 pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {
     for (centre, size) in WALLS {
@@ -203,12 +241,12 @@ pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: Comman
 
 /// Gives the sole `AnimationPlayer` its character's graph once that graph is in the store, and links the character to its capsule and skeleton.
 pub(crate) fn setup_character_animations(
-    players: Query<Entity, With<AnimationPlayer>>,
+    players: Query<(Entity, &mut AnimationPlayer)>,
     characters: Query<(Entity, &PendingLink)>,
     graphs: Res<AssetStore<AnimationGraph>>,
     mut cmd: CommandQueue,
 ) {
-    let Some(skeleton) = players.iter().next() else {
+    let Some((skeleton, mut player)) = players.iter().next() else {
         return;
     };
 
@@ -216,6 +254,7 @@ pub(crate) fn setup_character_animations(
         if graphs.get(&pending.graph).is_none() {
             continue;
         }
+        player.set_float_param(foot_placement_weight(), 0.0);
         cmd.insert(
             AnimationHandleComponent::new(pending.graph.clone()),
             skeleton,
@@ -228,6 +267,38 @@ pub(crate) fn setup_character_animations(
             character,
         );
         cmd.remove::<PendingLink>(character);
+    }
+}
+
+/// Tells each linked skeleton's foot placement to skip its capsule, and to place the feet only while the capsule stands on the ground.
+pub(crate) fn feed_foot_placement(
+    links: Query<&CharacterLink>,
+    capsules: Query<(Option<&BodyId>, &GroundProbe)>,
+    players: Query<&mut AnimationPlayer>,
+) {
+    for link in links.iter() {
+        let (Some(capsule), Some(skeleton)) = (link.capsule.entity(), link.skeleton.entity())
+        else {
+            continue;
+        };
+        let Some(mut player) = players.get_entity(skeleton) else {
+            continue;
+        };
+        let Some((body, probe)) = capsules.get_entity(capsule) else {
+            continue;
+        };
+        let weight = if body.is_some() && probe.is_grounded() {
+            1.0
+        } else {
+            0.0
+        };
+        player.set_param(
+            foot_placement_ignore(),
+            IgnoredBody {
+                body: body.copied(),
+            },
+        );
+        player.set_float_param(foot_placement_weight(), weight);
     }
 }
 
@@ -362,9 +433,16 @@ pub(crate) fn cycle_displacement(characters: Query<&mut CharacterDisplacement>, 
 
 #[cfg(test)]
 mod tests {
-    use concerto::animation::graph::AnimationGraph;
+    use concerto::animation::graph::{AnimationGraph, AnimationNodeIndex};
     use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
+    use concerto::app::{
+        App,
+        schedule_groups::{LateFixedUpdate, LateUpdate},
+    };
     use concerto::ecs::component::scene::SceneEntityRef;
+    use concerto::ecs::system::{
+        executor::single_thread::SingleThreadedExecutor, schedule::Schedules,
+    };
     use concerto::ecs::{Entity, IntoSystem, System, With, Without, World};
     use concerto::foundation::{
         assets::{
@@ -381,12 +459,19 @@ mod tests {
         Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp,
         DesiredMotion, MotionDatabase, MotionMatchingNode, Synchronization,
     };
+    use concerto::name::name;
     use concerto::physics::physics_state::PhysicsState;
+    use concerto::physics::{
+        body::BodyId,
+        ground::GroundProbe,
+        plugin::PhysicsPlugin,
+        rigid_body::{AllowedDofs, RigidBody},
+    };
     use concerto::physics::{
         collider::{Collider, ColliderOffset},
         shape::MeshCollider,
     };
-    use concerto::physics::{ground::GroundProbe, rigid_body::RigidBody};
+    use concerto::procedural_animation::{FootPlacementLeg, FootPlacementNode, IgnoredBody};
     use concerto::reflect::{apply_value, to_value};
     use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
     use concerto::scene::{
@@ -401,9 +486,10 @@ mod tests {
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
 
     use super::{
-        CHARACTER_SCENE, CharacterConfig, DATABASE, Player, PlayerSpawner, RUN, WALK,
-        cycle_displacement, debug_keys, facing, movement, setup_character_animations,
-        spawn_character, spawn_forest_walls, update_movement,
+        CHARACTER_SCENE, CharacterConfig, DATABASE, PendingLink, Player, PlayerSpawner, RUN, WALK,
+        cycle_displacement, debug_keys, facing, feed_foot_placement, foot_placement_ignore,
+        foot_placement_weight, movement, setup_character_animations, spawn_character,
+        spawn_forest_walls, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -644,6 +730,164 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(nodes, vec![to_value(&expected).unwrap()]);
+        assert_eq!(
+            world
+                .get_component_for_entity::<AnimationPlayer>(skeleton)
+                .unwrap()
+                .get_float_param(foot_placement_weight()),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn the_character_graph_places_the_feet_on_the_motion_matching_pose() {
+        let (mut world, _) = world_with_spawner();
+        spawned(&mut world);
+        handle_asset_load_events(&mut world);
+        let handle = world
+            .query::<&PendingLink, ()>()
+            .iter(&mut world)
+            .map(|pending| pending.graph.clone())
+            .next()
+            .unwrap();
+
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let graph = graphs.get(&handle).unwrap();
+        let nodes: Vec<_> = graph.nodes().collect();
+        let placements: Vec<AnimationNodeIndex> = graph
+            .iter()
+            .filter(|index| {
+                nodes[index.index()].type_name() == std::any::type_name::<FootPlacementNode>()
+            })
+            .collect();
+        assert_eq!(placements.len(), 1);
+        let inputs: Vec<&str> = graph
+            .get_node_inputs(placements[0])
+            .map(|input| nodes[input.index()].type_name())
+            .collect();
+        assert_eq!(inputs, vec![std::any::type_name::<MotionMatchingNode>()]);
+        let expected = FootPlacementNode {
+            pelvis: "Hips".into(),
+            legs: vec![
+                FootPlacementLeg {
+                    foot: "LeftFoot".into(),
+                    toe: Some("LeftToe".into()),
+                },
+                FootPlacementLeg {
+                    foot: "RightFoot".into(),
+                    toe: Some("RightToe".into()),
+                },
+            ],
+            weight_param: Some(name!("foot_placement_weight")),
+            ignore_param: Some(name!("foot_placement_ignore")),
+            ..Default::default()
+        };
+        assert_eq!(
+            nodes[placements[0].index()].value().unwrap().into_owned(),
+            to_value(&expected).unwrap()
+        );
+    }
+
+    struct FedPlayer {
+        app: App,
+        capsule: Entity,
+        player: Entity,
+    }
+
+    impl FedPlayer {
+        fn weight(&self) -> Option<f32> {
+            self.app
+                .main()
+                .world()
+                .get_component_for_entity::<AnimationPlayer>(self.player)
+                .unwrap()
+                .get_float_param(foot_placement_weight())
+        }
+
+        fn ignored(&self) -> Option<BodyId> {
+            self.app
+                .main()
+                .world()
+                .get_component_for_entity::<AnimationPlayer>(self.player)
+                .unwrap()
+                .get_param::<IgnoredBody>(foot_placement_ignore())
+                .and_then(|ignored| ignored.body)
+        }
+
+        fn body(&self) -> Option<BodyId> {
+            self.app
+                .main()
+                .world()
+                .get_component_for_entity::<BodyId>(self.capsule)
+                .copied()
+        }
+    }
+
+    fn fed_after(fixed_steps: usize, registered: bool) -> FedPlayer {
+        let mut app = App::new();
+        app.register_plugin(PhysicsPlugin);
+        let world = app.main_mut().world_mut();
+        world.register_component::<Collider>();
+        world.register_component::<Transform>();
+        world.spawn((
+            Collider::cuboid(50.0, 0.5, 50.0),
+            Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+        ));
+        let capsule = world.spawn((
+            RigidBody {
+                allowed_dofs: AllowedDofs::TRANSLATION,
+                ..Default::default()
+            },
+            Collider::capsule(0.5, 0.3),
+            Transform::from_translation(Vec3::new(0.0, 0.85, 0.0)),
+            GroundProbe::default(),
+        ));
+        let player = world.spawn(AnimationPlayer::new(1));
+        world.spawn(CharacterLink {
+            capsule: SceneEntityRef::Entity(capsule),
+            skeleton: SceneEntityRef::Entity(player),
+        });
+        let schedules = world.remove_resource::<Schedules>().unwrap();
+        let compiled = schedules.compile::<SingleThreadedExecutor>(world);
+        world.insert_resource(compiled);
+        if registered {
+            world.run_schedule(LateUpdate);
+        }
+        for _ in 0..fixed_steps {
+            world.run_schedule(LateFixedUpdate);
+        }
+
+        let mut feed = feed_foot_placement.into_system();
+        feed.initialize(world);
+        feed.run_and_apply((), world);
+        FedPlayer {
+            app,
+            capsule,
+            player,
+        }
+    }
+
+    #[test]
+    fn a_grounded_capsule_gives_foot_placement_full_weight_and_its_body_to_ignore() {
+        let grounded = fed_after(60, true);
+
+        assert!(grounded.body().is_some());
+        assert_eq!(grounded.ignored(), grounded.body());
+        assert_eq!(grounded.weight(), Some(1.0));
+
+        let in_air = fed_after(0, true);
+
+        assert!(in_air.body().is_some());
+        assert_eq!(in_air.ignored(), in_air.body());
+        assert_eq!(in_air.weight(), Some(0.0));
+    }
+
+    #[test]
+    fn a_capsule_without_a_body_gives_foot_placement_no_weight() {
+        let unregistered = fed_after(0, false);
+
+        assert_eq!(unregistered.body(), None);
+        assert_eq!(unregistered.weight(), Some(0.0));
     }
 
     fn holds<T>(node: &SceneNode) -> bool {
