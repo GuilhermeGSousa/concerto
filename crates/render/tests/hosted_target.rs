@@ -1,6 +1,6 @@
 use concerto_app::{
     main_schedule::MainSchedulePlugin,
-    plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
+    plugins::{AssetManagerPlugin, PluginsState, TimePlugin, TransformPlugin},
     App,
 };
 use concerto_color::Color;
@@ -172,5 +172,8 @@ fn an_app_with_no_target_steps() {
 #[should_panic(expected = "RenderPlugin needs a Gpu resource")]
 fn an_app_without_a_gpu_is_refused() {
     let mut app = App::new();
-    app.register_plugin(RenderPlugin);
+    app.register_plugin(AssetManagerPlugin)
+        .register_plugin(RenderPlugin);
+    while app.plugin_state() != PluginsState::Ready {}
+    app.finish_plugin_build();
 }

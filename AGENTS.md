@@ -51,17 +51,18 @@ cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
 cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && trunk serve
-cd examples/tech-demo && trunk build --release --public-url ./ --dist <dir>
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
 cargo concerto editor <dir> --update [--engine <path>]
+cargo concerto build <dir> [--cook] [--release] [--target wasm32-unknown-unknown]
+cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
 ```
 
 Examples are `tech-demo` and `ui-showcase`. `tech-demo` starts on the grid
 level: the character with every gizmo layer on an empty floor under the world
 grid. That is also the only level of the web build, which ships no forest or
-sanatorium content; the release build above, zipped with `index.html` at the
-root, is what goes on a web host such as itch.io. `-- --forest` runs the forest, whose scene the editor
+sanatorium content; the cooked release build above, zipped with `index.html` at
+the root, is what goes on a web host such as itch.io. `-- --forest` runs the forest, whose scene the editor
 opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved by root
 motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
 method there); its Blender source and exports are in

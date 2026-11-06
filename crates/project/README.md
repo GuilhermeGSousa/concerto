@@ -1,13 +1,15 @@
 # cargo concerto
 
-The project tool. It creates Concerto game projects and adds the editor crate
-to an existing game. It is a Cargo subcommand, a binary named `cargo-concerto`.
+The project tool. It creates Concerto game projects, adds the editor crate to
+an existing game, and builds a game with its derived data cooked. It is a Cargo
+subcommand, a binary named `cargo-concerto`.
 
 ```sh
 cargo install --path crates/project
 cargo concerto new <dir> [--engine <path>]
 cargo concerto editor <dir> [--engine <path>]
 cargo concerto editor <dir> --update [--engine <path>]
+cargo concerto build [<dir>] [--cook] [--release] [--target wasm32-unknown-unknown] [--public-url <url>] [--dist <dir>]
 ```
 
 ## `new`
@@ -131,6 +133,55 @@ end in `crates/editor`.
 
 `editor` and `editor --update` validate the whole list before writing anything.
 A malformed entry is quoted in the error.
+
+## `build`
+
+Builds the game in `<dir>`, `.` by default. Without `--cook` it is a plain
+build: `cargo build` of the game's binary natively, or `trunk build` with
+`--target wasm32-unknown-unknown`. With `--cook` it also cooks the game's
+derived data and stages the cooked files over the build, so the game applies
+each derived blob at load instead of deriving it.
+
+The package is the `[package] name` in `<dir>/Cargo.toml`, and the binary is
+the bin target of the same name. The target directory is the one
+`cargo metadata` reports. The `cargo` it runs is `$CARGO` when set, so under
+`cargo concerto` it is the toolchain that ran the command.
+
+The steps, each run only when the options call for it:
+
+1. Cargo: `cargo build --manifest-path <dir>/Cargo.toml -p <pkg> --bin <pkg>`,
+   with `--release` when given. Diagnostics stream as usual; the executable is
+   the one cargo reports for that bin. A web cook builds this native binary
+   too, in the same profile, because the cook runs natively.
+2. Cook: runs `<exe> --cook <target>/cooked/<pkg>`. Every game that calls
+   `concerto::run` accepts `--cook <out>`: it builds the game's `App` with no
+   window and no GPU and writes each derived asset to `<out>/<address>`, its
+   committed file plus the derived blob. A derive that fails fails the build,
+   naming the asset. The cook refuses an `<out>` that is not empty and was not
+   written by an earlier cook, which leaves a `.concerto-cook` file in it.
+3. Trunk: `trunk build` in `<dir>`, with `--release` and `--public-url <url>`
+   when given, and always `--dist <dist>`. `<dist>` is `--dist` resolved
+   against the working directory, or `<dir>/dist`. `trunk` must be on `PATH`;
+   install it with `cargo install trunk`. A web build checks for it before
+   any step runs, so a missing `trunk` fails at once rather than after the
+   native build and cook.
+4. Overlay: copies each cooked file over the file at the same relative path,
+   in `<exe dir>/<exe stem>-content/` natively, beside the executable cargo
+   reported, so a `build.target` in cargo's config is followed, and in
+   `<dist>` for the web. Only files the build already has are replaced; a
+   cooked asset the build doesn't ship, such as one the web build's
+   `index.html` doesn't copy, is skipped and listed as a note.
+
+A step that fails stops the build and names its command line and exit status.
+The report lists each cooked file as written and each replaced file as edited.
+
+The staged files only exist in a build directory or dist the command just
+built. A later plain `cargo build` that changed `content/` reruns `build.rs`,
+which copies the raw content back over the cooked files, and the game derives at
+load again; one that changed nothing leaves the cooked files, which match the
+content. A load applies a cooked blob without checking its key, so a change to
+derive code that doesn't raise `DERIVED_VERSION` is not caught: cook again after
+one.
 
 ## Engine dependencies
 

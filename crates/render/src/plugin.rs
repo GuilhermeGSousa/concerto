@@ -81,7 +81,7 @@ fn render_main(world: &mut World) {
 ///
 /// # Panics
 ///
-/// Panics during [`build`](Plugin::build) if the `App` has no [`Gpu`] resource.
+/// Panics during [`finish`](Plugin::finish) if the `App` has no [`Gpu`] resource.
 pub struct RenderPlugin;
 
 /// Makes meshes and skeletons require `SyncWithRenderWorld`.
@@ -92,11 +92,6 @@ pub fn register_sync_requirements(app: &mut concerto_app::App) {
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        assert!(
-            app.get_resource::<Gpu>().is_some(),
-            "RenderPlugin needs a Gpu resource: build the App through a host such as concerto::run"
-        );
-
         app.render_mut()
             .set_update_schedule(RenderMain)
             .add_system(RenderMain, render_main);

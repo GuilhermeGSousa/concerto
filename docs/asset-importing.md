@@ -238,11 +238,12 @@ magic "GRDY" (4 bytes)
 u32   header length, little-endian
       bincode(u32 format version, ContentAssetHeader)
       payload — the asset's own bincode encoding, verbatim
+      derived blob — `derived.len` bytes, only when the header has a `derived` section
 ```
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-The format version is `CONTENT_FORMAT_VERSION`, currently `5`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header. A version-4 file reads as kind version 1 and needs no re-import; it moves to version 5 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `6`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, and version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file. The payload is everything between the header and that blob; `read_content_asset` returns it without the blob, and `read_content_asset_parts` returns both. `write_content_asset` writes no section and refuses a header that has one; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`. Committed content never has a section. A version-4 file reads as kind version 1 and a version-5 file reads with no section; neither needs a re-import, and each moves to version 6 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
@@ -253,6 +254,7 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `5`; it changes only w
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
 | `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, `None` for editor-authored assets |
+| `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
 The header can be read without touching the payload, which is what lets a
 future tool index a whole content tree cheaply.
@@ -370,8 +372,10 @@ such a file still fails when it is loaded.
 
 `CONTENT_FORMAT_VERSION` is a different number. It changes only when the
 framing or `ContentAssetHeader` changes, never for a payload, and a new header
-version keeps the previous one readable where it can, as version 5 reads
-version 4.
+version keeps the previous ones readable where it can, as version 6 reads
+versions 4 and 5. The version-6 framing is pinned by
+`crates/foundation/tests/encoding/content_asset.v6.bin`, rewritten under
+`CONCERTO_BLESS_ENCODING=1`.
 
 ### Renaming a type
 
@@ -612,9 +616,12 @@ does. `bytes(id)` gives the whole file and `decode::<T>(id)` decodes it,
 migrating as a load does but without `on_load`.
 
 A type is registered with `app.register_derived_asset::<A>()`, which also
-registers it as an asset. A load of it runs `on_load`, reads the inputs,
-computes the key and looks the blob up in the `AssetServer`'s
-`DerivedDataCache`. A hit is applied; a miss, or a cached blob that
+registers it as an asset. A load of it runs `on_load`, then applies the blob
+of a cooked file's derived section when its `derived_version` is the type's
+`DERIVED_VERSION`, reading no inputs and touching no cache. Without a section,
+or when the section's version differs or `apply_derived` refuses it, with a
+warning, the load reads the inputs, computes the key and looks the blob up in
+the `AssetServer`'s `DerivedDataCache`. A hit is applied; a miss, or a cached blob that
 `apply_derived` refuses, is derived, written to the cache and applied. The
 handle reads as loaded only once the blob is applied, and a missing or derived
 input fails the load. `AssetServer::add` derives nothing: code that adds a
@@ -634,8 +641,53 @@ write error is logged and the load still succeeds. The editor, a game it hosts
 and a native `concerto::run` all use `<project>/derived-cache/`, which the
 project's `.gitignore` lists, so a blob derived in one is a hit in the others.
 An `App` that sets no cache, such as a test, derives on every load. The web
-build has no cache and derives in the browser, on the main thread, until the
-cook step in #541 builds the blobs ahead of time and the web build reads them.
+build has no cache: an uncooked web build, such as `trunk serve`, derives in
+the browser, on the main thread. A cooked build carries the blobs instead.
+
+### Cooking
+
+A cook writes each derived asset's blob into a copy of its `.gasset` file, as a
+trailing derived section, so a shipped build applies it without deriving. It is
+run through the project tool:
+
+```sh
+cargo concerto build <dir> --cook [--release]
+cargo concerto build <dir> --cook [--release] --target wasm32-unknown-unknown [--public-url <url>] [--dist <dir>]
+```
+
+1. The game is built natively, in the requested profile.
+2. It runs as `<game> --cook <target>/cooked/<pkg>`. Every `concerto::run`
+   binary accepts `--cook <out>`, which calls `concerto::cook` instead of opening
+   a window. That builds the recipe's `App` with no `Gpu`, `Window` or
+   `DrawTarget`, runs each plugin's `build` and never its `finish`, and runs no
+   frame. It points the `AssetServer` at the project's `content/` and its
+   `derived-cache/`, and calls `AssetServer::cook`.
+3. `AssetServer::cook` takes every registry entry whose kind is a registered
+   derived type (a former name included), in address order. It decodes the
+   file, runs `on_load`, derives or takes a cache hit as a load does, and
+   writes `<out>/<address>`: the original header and payload bytes, unchanged,
+   plus the section. A cached blob that `apply_derived` refuses is derived
+   again, never cooked. The first failure stops the cook and fails the command,
+   naming the asset.
+4. The cooked files are *staged*: each is copied over the file at the same
+   path in what the build ships, `<exe dir>/<exe stem>-content/` natively,
+   or `<dist>/` after `trunk build` for the web. A cooked file whose path the
+   build doesn't ship is skipped.
+
+The committed `content/` never holds a section, and `build.rs` and
+`index.html` don't change. A later `cargo build` that changes `content/` reruns
+`build.rs`, which copies the raw files back over the cooked ones, and the game
+derives at load again. A load applies a cooked blob without checking its key,
+so a change to derive code that doesn't raise `DERIVED_VERSION` leaves the
+staged blob derived by the old code, as it leaves a cached one: cook again
+after such a change.
+
+`cook` writes a `.concerto-cook` marker into `out` and refuses a non-empty
+directory without one, so `--cook` never empties a directory it didn't write.
+An `<out>` that starts with `-` is refused as a flag, so `--cook --forest` fails
+instead of cooking into `./--forest`.
+The cook needs no GPU: a plugin that needs the `Gpu` must reach it in `finish`,
+not in `build`.
 
 ## Editor-authored assets
 

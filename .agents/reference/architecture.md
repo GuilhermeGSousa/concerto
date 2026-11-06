@@ -49,7 +49,11 @@ Draw work in the render world is ordered with `RenderSet`
 
 An `App` does not run itself. A host builds it, feeds it, and steps it:
 
-1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`.
+1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`. The
+   cook is the exception: it inserts none of them before applying the recipe
+   (`WindowPlugin::build` still inserts a default `Window`), never polls
+   `plugin_state()`, never calls `finish_plugin_build()`, and never runs a schedule, so a plugin's `build` must not need the device;
+   device work goes in `finish`.
 2. Apply the recipe, a function that registers plugins and systems.
 3. Poll `plugin_state()` until `Ready`, then call `finish_plugin_build()`.
    A host may run `finish_plugin_build()` on another thread, as the editor
@@ -155,6 +159,18 @@ time. The running game never reads them.
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the
   live definition at use.
+- A packaged build can carry the blob in the file. Every `concerto::run`
+  binary run as `<game> --cook <out>` calls `concerto::cook`: it builds the
+  recipe headless (see Hosts), publishes the embedded registry with the
+  project root as the content root and the project's `derived-cache/`, empties
+  `<out>` (refusing a non-empty directory that holds no `.concerto-cook` marker
+  from an earlier cook), and has `AssetServer::cook` write each registry entry of a
+  registered derived kind to `<out>/<address>`: the committed header and
+  payload byte for byte, plus a trailing derived section with the blob. It
+  prints each address and a total, or the error, and exits 0 or 1. A load that
+  finds a section of the type's current `DERIVED_VERSION` applies it without
+  reading the inputs; any other section falls back to deriving. Committed
+  content never carries a section.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor and is not rewritten.
 

@@ -69,6 +69,7 @@ fn content_asset(id: AssetId, kind: &str, kind_version: u32, payload: &[u8]) -> 
         kind: kind.to_string(),
         kind_version,
         provenance: None,
+        derived: None,
     };
     write_content_asset(&header, payload).unwrap()
 }

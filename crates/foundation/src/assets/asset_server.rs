@@ -31,6 +31,11 @@ use super::{
     registry::{AssetEntry, AssetRegistry},
     Asset, AssetId, ContentAssetRoot,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use super::{
+    derived::{cook_hook, CookHook, CookReport},
+    utils::try_read_relative,
+};
 
 struct LoadedAsset {
     pub(crate) id: AssetId,
@@ -109,6 +114,8 @@ pub(crate) struct AssetServerData {
     type_registry: RwLock<AppTypeRegistry>,
     kinds: RwLock<HashMap<&'static str, (&'static str, u32)>>,
     derived_hooks: RwLock<HashMap<TypeId, DerivedHook>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    cook_hooks: RwLock<HashMap<&'static str, CookHook>>,
     derived_cache: RwLock<DerivedDataCache>,
 }
 
@@ -143,6 +150,8 @@ impl AssetServer {
             type_registry: RwLock::new(AppTypeRegistry::default()),
             kinds: RwLock::new(HashMap::new()),
             derived_hooks: RwLock::new(HashMap::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            cook_hooks: RwLock::new(HashMap::new()),
             derived_cache: RwLock::new(DerivedDataCache::none()),
         };
 
@@ -240,6 +249,60 @@ impl AssetServer {
             .write()
             .unwrap()
             .insert(TypeId::of::<A>(), derived_hook::<A>);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut cook_hooks = self.data.cook_hooks.write().unwrap();
+            for kind in std::iter::once(A::name()).chain(A::FORMER_NAMES.iter().copied()) {
+                cook_hooks.insert(kind, cook_hook::<A>);
+            }
+        }
+    }
+
+    /// Whether files of `kind` hold a derived asset that [`cook`](Self::cook) writes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn can_cook(&self, kind: &str) -> bool {
+        self.data.cook_hooks.read().unwrap().contains_key(kind)
+    }
+
+    /// Writes each derived asset of the registry to `<out>/<address>` with its derived blob, in address order, stopping at the first error.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn cook(&self, out: &Path) -> anyhow::Result<CookReport> {
+        let (root, registry) = self.content_source();
+        let hooks = self.data.cook_hooks.read().unwrap().clone();
+        let mut entries: Vec<&AssetEntry> = registry
+            .iter()
+            .filter(|entry| hooks.contains_key(entry.kind.as_str()))
+            .collect();
+        entries.sort_by(|a, b| a.address.cmp(&b.address));
+        let mut report = CookReport::default();
+        for entry in entries {
+            let hook = hooks[entry.kind.as_str()];
+            self.cook_entry(&root, entry, hook, out).with_context(|| {
+                format!("failed to cook the {} at '{}'", entry.kind, entry.address)
+            })?;
+            report.cooked.push(entry.address.clone());
+        }
+        Ok(report)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cook_entry(
+        &self,
+        root: &ContentAssetRoot,
+        entry: &AssetEntry,
+        hook: CookHook,
+        out: &Path,
+    ) -> anyhow::Result<()> {
+        let file = pollster::block_on(try_read_relative(root, &entry.address))?
+            .with_context(|| format!("no content asset at '{}'", entry.address))?;
+        let cooked = pollster::block_on(hook(entry.id, file, self.clone()))?;
+        let path = out.join(&entry.address);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create '{}'", parent.display()))?;
+        }
+        std::fs::write(&path, cooked)
+            .with_context(|| format!("failed to write '{}'", path.display()))
     }
 
     /// Replaces the cache derived loads read and write; every clone sees it.
@@ -381,17 +444,27 @@ impl AssetServer {
                 .get(&TypeId::of::<A>())
                 .copied();
             let asset = async {
-                let mut asset =
-                    crate::assets::utils::load_content_asset::<A>(&content_root, &address)
+                let loaded =
+                    crate::assets::utils::load_content_asset_parts::<A>(&content_root, &address)
                         .await
                         .with_context(|| format!("failed to read {} asset", A::name()))?;
+                let mut asset = loaded.asset;
                 let context = AssetLoadContext::new(server.clone(), id);
                 asset.on_load(&context)?;
-                if let Some(hook) = hook {
-                    asset = *hook(Box::new(asset), server)
-                        .await?
-                        .downcast::<A>()
-                        .map_err(|_| anyhow::anyhow!("the derived hook returned another type"))?;
+                match hook {
+                    Some(hook) => {
+                        asset = *hook(Box::new(asset), loaded.cooked, server)
+                            .await?
+                            .downcast::<A>()
+                            .map_err(|_| {
+                                anyhow::anyhow!("the derived hook returned another type")
+                            })?;
+                    }
+                    None if loaded.cooked.is_some() => log::warn!(
+                        "ignoring the derived section of '{address}': {} is not a derived asset",
+                        A::name()
+                    ),
+                    None => {}
                 }
                 anyhow::Ok(asset)
             }
@@ -704,6 +777,7 @@ mod tests {
             kind: "OldFixture".into(),
             kind_version: 1,
             provenance: None,
+            derived: None,
         };
         let bytes = write_content_asset(&header, &bincode::serialize(&7u32).unwrap()).unwrap();
         std::fs::create_dir_all(dir.join("content/fixture")).unwrap();
