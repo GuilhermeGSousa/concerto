@@ -230,7 +230,7 @@ pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: Comman
     }
 }
 
-/// Gives the sole `AnimationPlayer` its character's graph once that graph is in the store, and links the character to its capsule and skeleton.
+/// Gives the sole `AnimationPlayer` its character's graph once that graph is in the store, starts its foot placement at weight 0, and links the character to its capsule and skeleton.
 pub(crate) fn setup_character_animations(
     players: Query<(Entity, &mut AnimationPlayer)>,
     characters: Query<(Entity, &PendingLink)>,
@@ -261,7 +261,7 @@ pub(crate) fn setup_character_animations(
     }
 }
 
-/// Tells each linked skeleton's foot placement to skip its capsule, and to place the feet only while the capsule stands on the ground.
+/// Tells each linked skeleton's foot placement to skip its capsule, and to place the feet only while the capsule stands on the ground; writes a param only when its value changes.
 pub(crate) fn feed_foot_placement(
     links: Query<&CharacterLink>,
     capsules: Query<(Option<&BodyId>, &GroundProbe)>,
@@ -283,13 +283,17 @@ pub(crate) fn feed_foot_placement(
         } else {
             0.0
         };
-        player.set_param(
-            foot_placement_ignore(),
-            IgnoredBody {
-                body: body.copied(),
-            },
-        );
-        player.set_float_param(foot_placement_weight(), weight);
+        let body = body.copied();
+        if player
+            .get_param::<IgnoredBody>(foot_placement_ignore())
+            .map(|ignored| ignored.body)
+            != Some(body)
+        {
+            player.set_param(foot_placement_ignore(), IgnoredBody { body });
+        }
+        if player.get_float_param(foot_placement_weight()) != Some(weight) {
+            player.set_float_param(foot_placement_weight(), weight);
+        }
     }
 }
 
@@ -434,7 +438,7 @@ mod tests {
     use concerto::ecs::system::{
         executor::single_thread::SingleThreadedExecutor, schedule::Schedules,
     };
-    use concerto::ecs::{Entity, IntoSystem, System, With, Without, World};
+    use concerto::ecs::{Changed, Entity, IntoSystem, System, With, Without, World};
     use concerto::foundation::{
         assets::{
             Asset, AssetId,
@@ -868,6 +872,24 @@ mod tests {
 
         assert_eq!(unregistered.body(), None);
         assert_eq!(unregistered.weight(), Some(0.0));
+    }
+
+    #[test]
+    fn feeding_the_same_probe_state_again_leaves_the_player_unchanged() {
+        let mut fed = fed_after(60, true);
+        let world = fed.app.main_mut().world_mut();
+        world.tick();
+        let mut feed = feed_foot_placement.into_system();
+        feed.initialize(world);
+        feed.run_and_apply((), world);
+
+        let changed = world
+            .query::<Entity, Changed<AnimationPlayer>>()
+            .iter(world)
+            .count();
+        assert_eq!(changed, 0);
+        assert_eq!(fed.weight(), Some(1.0));
+        assert_eq!(fed.ignored(), fed.body());
     }
 
     fn holds<T>(node: &SceneNode) -> bool {
