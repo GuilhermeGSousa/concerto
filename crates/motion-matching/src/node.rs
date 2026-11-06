@@ -49,14 +49,15 @@ fn sources<'a>(
     clips: &'a AssetStore<AnimationClip>,
     player_skeleton: Option<&'a Skeleton>,
 ) -> Option<Sources<'a>> {
-    let database = databases.get(&node.database)?;
+    let database = databases
+        .get(&node.database)
+        .filter(|database| database.is_baked())?;
     Some(Sources {
         database,
-        skeleton: skeletons.get(database.skeleton())?,
+        skeleton: skeletons.get(&database.skeleton)?,
         player_skeleton: player_skeleton?,
         clips: database
             .clips()
-            .iter()
             .map(|handle| clips.get(handle))
             .collect::<Option<_>>()?,
     })

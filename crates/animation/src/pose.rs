@@ -43,6 +43,12 @@ pub fn twist_about(rotation: Quat, axis: Vec3) -> Quat {
     twist.normalize()
 }
 
+/// Layers an additive `delta` over `base` at `weight`: the rotation turns by the delta slerped from identity, the translation moves by the weighted delta, and scale is left alone.
+pub fn apply_additive(base: &mut JointPose, delta: &JointPose, weight: f32) {
+    base.rotation = Quat::IDENTITY.slerp(delta.rotation, weight) * base.rotation;
+    base.translation += delta.translation * weight;
+}
+
 /// A clip event crossed this frame: the key on its clip, and the weight its source has in the frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FiredEvent {

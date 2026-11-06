@@ -15,6 +15,7 @@ use crate::{
 
 pub mod blend_space;
 pub mod definition;
+pub mod model_space;
 pub mod state_machine;
 pub mod two_bone_ik;
 

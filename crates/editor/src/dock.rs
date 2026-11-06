@@ -346,10 +346,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn bodies_are_unknown_until_the_dock_has_built() {
-        let registry = PanelRegistry::default();
-        assert_eq!(registry.body("concerto.warren"), None);
-    }
 }

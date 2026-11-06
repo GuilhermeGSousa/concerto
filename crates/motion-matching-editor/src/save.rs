@@ -37,11 +37,11 @@ pub(crate) fn save_document(
     document.title = saved.name().to_owned();
     document.current = Some(saved.clone());
     state.loaded = Some(definition);
-    state.baked_wanted = true;
+    state.derive_wanted = true;
     Ok(saved)
 }
 
-pub(crate) fn save_and_report(
+fn save_and_report(
     entity: Entity,
     document: &mut EditorDocument,
     state: &mut DefinitionDocument,

@@ -723,6 +723,7 @@ mod tests {
         project.project = Some(Project {
             root: directory.path().into(),
             content_root: "content".into(),
+            default_scene: None,
         });
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)

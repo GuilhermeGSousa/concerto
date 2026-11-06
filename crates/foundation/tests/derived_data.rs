@@ -1,0 +1,1031 @@
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Mutex};
+use std::time::{Duration, Instant};
+
+use concerto_ecs::World;
+use concerto_foundation::assets::{
+    asset_server::{handle_asset_load_events, AssetServer},
+    asset_store::AssetStore,
+    content::{
+        read_content_asset, read_content_asset_parts, save_content_asset_into,
+        write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection,
+    },
+    derived::{DerivedData, DerivedDataCache, DerivedInputs},
+    handle::AssetHandle,
+    registry::AssetRegistry,
+    Asset, AssetId, ContentAssetRoot, LoadableAsset,
+};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct Leaf {
+    value: u64,
+}
+
+impl Asset for Leaf {
+    fn name() -> &'static str {
+        "Leaf"
+    }
+}
+
+impl LoadableAsset for Leaf {}
+
+#[derive(Serialize, Deserialize)]
+struct Sum<const V: u32> {
+    tag: String,
+    a: AssetId,
+    b: AssetId,
+    #[serde(skip)]
+    total: Option<u64>,
+}
+
+impl<const V: u32> Asset for Sum<V> {
+    fn name() -> &'static str {
+        "Sum"
+    }
+}
+
+impl<const V: u32> LoadableAsset for Sum<V> {}
+
+#[derive(Default)]
+struct Probe {
+    derives: usize,
+    fail_derive: bool,
+    gate: Option<mpsc::Receiver<()>>,
+}
+
+static PROBES: Mutex<Option<HashMap<String, Probe>>> = Mutex::new(None);
+
+fn with_probe<R>(tag: &str, f: impl FnOnce(&mut Probe) -> R) -> R {
+    let mut probes = PROBES.lock().unwrap();
+    f(probes
+        .get_or_insert_with(HashMap::new)
+        .entry(tag.to_string())
+        .or_default())
+}
+
+fn derives(tag: &str) -> usize {
+    with_probe(tag, |probe| probe.derives)
+}
+
+impl<const V: u32> DerivedData for Sum<V> {
+    const DERIVED_VERSION: u32 = V;
+
+    fn derived_inputs(&self) -> Vec<AssetId> {
+        vec![self.a, self.b]
+    }
+
+    fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64> {
+        let mut hasher = DefaultHasher::new();
+        for id in self.derived_inputs() {
+            inputs.bytes(id).unwrap().hash(&mut hasher);
+        }
+        Ok(hasher.finish())
+    }
+
+    fn derive(
+        &self,
+        inputs: &DerivedInputs,
+        progress: &mut dyn FnMut(usize, usize),
+    ) -> anyhow::Result<Vec<u8>> {
+        let gate = with_probe(&self.tag, |probe| {
+            probe.derives += 1;
+            anyhow::ensure!(!probe.fail_derive, "the sum would overflow");
+            Ok(probe.gate.take())
+        })?;
+        if let Some(gate) = gate {
+            gate.recv().unwrap();
+        }
+        let a = inputs.decode::<Leaf>(self.a)?.value;
+        progress(1, 2);
+        let b = inputs.decode::<Leaf>(self.b)?.value;
+        progress(2, 2);
+        Ok((a + b).to_le_bytes().to_vec())
+    }
+
+    fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+        let bytes: [u8; 8] = blob
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("a sum blob is 8 bytes, not {}", blob.len()))?;
+        self.total = Some(u64::from_le_bytes(bytes));
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Maybe {
+    tag: String,
+    derive: bool,
+    value: u64,
+    inputs: Vec<AssetId>,
+    #[serde(skip)]
+    total: Option<u64>,
+}
+
+impl Maybe {
+    fn new(tag: &str, derive: bool, value: u64, inputs: Vec<AssetId>) -> Self {
+        Self {
+            tag: tag.to_string(),
+            derive,
+            value,
+            inputs,
+            total: None,
+        }
+    }
+}
+
+impl Asset for Maybe {
+    fn name() -> &'static str {
+        "Maybe"
+    }
+}
+
+impl LoadableAsset for Maybe {}
+
+fn input_value(inputs: &DerivedInputs, id: AssetId) -> anyhow::Result<u64> {
+    match inputs.decode::<Leaf>(id) {
+        Ok(leaf) => Ok(leaf.value),
+        Err(_) => Ok(inputs.decode::<Maybe>(id)?.value),
+    }
+}
+
+impl DerivedData for Maybe {
+    const DERIVED_VERSION: u32 = 1;
+
+    fn is_derived(&self) -> bool {
+        self.derive
+    }
+
+    fn derived_inputs(&self) -> Vec<AssetId> {
+        self.inputs.clone()
+    }
+
+    fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64> {
+        let mut hasher = DefaultHasher::new();
+        self.value.hash(&mut hasher);
+        for &id in &self.inputs {
+            inputs.bytes(id).unwrap().hash(&mut hasher);
+        }
+        Ok(hasher.finish())
+    }
+
+    fn derive(
+        &self,
+        inputs: &DerivedInputs,
+        _progress: &mut dyn FnMut(usize, usize),
+    ) -> anyhow::Result<Vec<u8>> {
+        with_probe(&self.tag, |probe| probe.derives += 1);
+        let mut total = self.value;
+        for &id in &self.inputs {
+            total += input_value(inputs, id)?;
+        }
+        Ok(total.to_le_bytes().to_vec())
+    }
+
+    fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+        let bytes: [u8; 8] = blob
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("a maybe blob is 8 bytes, not {}", blob.len()))?;
+        self.total = Some(u64::from_le_bytes(bytes));
+        Ok(())
+    }
+}
+
+struct Project {
+    root: PathBuf,
+    registry: AssetRegistry,
+}
+
+impl Drop for Project {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+impl Project {
+    fn new(tag: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "derived-data-{tag}-{}",
+            AssetId::new().simple_hex()
+        ));
+        std::fs::create_dir_all(root.join("content")).unwrap();
+        Self {
+            root,
+            registry: AssetRegistry::new(),
+        }
+    }
+
+    fn leaf(&mut self, name: &str, value: u64) -> AssetId {
+        save_content_asset_into(
+            &Leaf { value },
+            &self.root,
+            &format!("content/{name}.gasset"),
+            &mut self.registry,
+        )
+        .unwrap()
+    }
+
+    fn sum<const V: u32>(&mut self, name: &str, tag: &str, a: AssetId, b: AssetId) -> AssetId {
+        save_content_asset_into(
+            &Sum::<V> {
+                tag: tag.to_string(),
+                a,
+                b,
+                total: None,
+            },
+            &self.root,
+            &format!("content/{name}.gasset"),
+            &mut self.registry,
+        )
+        .unwrap()
+    }
+
+    fn maybe(&mut self, name: &str, value: &Maybe) -> AssetId {
+        save_content_asset_into(
+            value,
+            &self.root,
+            &format!("content/{name}.gasset"),
+            &mut self.registry,
+        )
+        .unwrap()
+    }
+
+    fn cook(&self, name: &str, derived_version: u32, blob: &[u8]) {
+        let path = self.root.join(format!("content/{name}.gasset"));
+        let bytes = std::fs::read(&path).unwrap();
+        let (header, payload) = read_content_asset(&bytes).unwrap();
+        let cooked = write_cooked_content_asset(
+            &header,
+            payload,
+            CookedSection {
+                derived_version,
+                key: 0x5eed,
+                blob,
+            },
+        )
+        .unwrap();
+        std::fs::write(&path, cooked).unwrap();
+    }
+
+    fn cache_dir(&self) -> PathBuf {
+        self.root.join("derived-cache")
+    }
+
+    fn content_root(&self) -> ContentAssetRoot {
+        ContentAssetRoot::Directory(self.root.clone())
+    }
+}
+
+struct Runtime<const V: u32> {
+    server: AssetServer,
+    world: World,
+}
+
+impl<const V: u32> Runtime<V> {
+    fn new(project: &Project, cache: DerivedDataCache) -> Self {
+        let mut server = AssetServer::with_content_root(project.content_root());
+        let leaves = AssetStore::<Leaf>::new();
+        let sums = AssetStore::<Sum<V>>::new();
+        let maybes = AssetStore::<Maybe>::new();
+        server.register_asset(&leaves);
+        server.register_derived_asset(&sums);
+        server.register_derived_asset(&maybes);
+        server.publish_registry(project.registry.clone());
+        server.set_derived_cache(cache);
+        let mut world = World::new();
+        world.insert_resource(leaves);
+        world.insert_resource(sums);
+        world.insert_resource(maybes);
+        world.insert_resource(server.clone());
+        Self { server, world }
+    }
+
+    fn pump(&mut self) {
+        handle_asset_load_events(&mut self.world);
+    }
+
+    fn total(&self, handle: &AssetHandle<Sum<V>>) -> Option<Option<u64>> {
+        self.world
+            .get_resource::<AssetStore<Sum<V>>>()
+            .unwrap()
+            .get(handle)
+            .map(|sum| sum.total)
+    }
+
+    fn load(&mut self, id: AssetId) -> Option<u64> {
+        let handle = self.server.load::<Sum<V>>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            if let Some(total) = self.total(&handle) {
+                return Some(total.expect("a loaded sum has its blob applied"));
+            }
+            if !self.server.is_loading() {
+                return None;
+            }
+            assert!(Instant::now() < deadline, "load timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+impl Runtime<1> {
+    fn load_leaf(&mut self, id: AssetId) -> Option<u64> {
+        let handle = self.server.load::<Leaf>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            if let Some(leaf) = self
+                .world
+                .get_resource::<AssetStore<Leaf>>()
+                .unwrap()
+                .get(&handle)
+            {
+                return Some(leaf.value);
+            }
+            if !self.server.is_loading() {
+                return None;
+            }
+            assert!(Instant::now() < deadline, "load timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+impl<const V: u32> Runtime<V> {
+    fn load_maybe(&mut self, id: AssetId) -> Option<Option<u64>> {
+        let handle = self.server.load::<Maybe>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            if let Some(maybe) = self
+                .world
+                .get_resource::<AssetStore<Maybe>>()
+                .unwrap()
+                .get(&handle)
+            {
+                return Some(maybe.total);
+            }
+            if !self.server.is_loading() {
+                return None;
+            }
+            assert!(Instant::now() < deadline, "load timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+fn key_of<const V: u32>(project: &Project, sum: &Sum<V>) -> u64 {
+    let inputs = pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &sum.derived_inputs(),
+    ))
+    .unwrap();
+    sum.derived_key(&inputs).unwrap()
+}
+
+fn entry_path(cache: &Path, version: u32, key: u64) -> PathBuf {
+    cache.join(format!("Sum/v{version}/{key:016x}.blob"))
+}
+
+fn sum_value<const V: u32>(tag: &str, a: AssetId, b: AssetId) -> Sum<V> {
+    Sum {
+        tag: tag.to_string(),
+        a,
+        b,
+        total: None,
+    }
+}
+
+fn put_cached(cache: &Path, key: u64, blob: &[u8]) {
+    let path = entry_path(cache, 1, key);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, blob).unwrap();
+}
+
+struct CookedFile {
+    header: ContentAssetHeader,
+    payload: Vec<u8>,
+    section: Option<DerivedSection>,
+    blob: Vec<u8>,
+}
+
+fn read_cooked(path: &Path) -> CookedFile {
+    let bytes = std::fs::read(path).unwrap();
+    let parts = read_content_asset_parts(&bytes).unwrap();
+    CookedFile {
+        header: ContentAssetHeader {
+            derived: None,
+            ..parts.header.clone()
+        },
+        payload: parts.payload.to_vec(),
+        section: parts.header.derived,
+        blob: parts.derived_blob.unwrap_or_default().to_vec(),
+    }
+}
+
+fn assert_cooked_from(project: &Project, out: &Path, address: &str, key: u64, blob: &[u8]) {
+    let original = read_cooked(&project.root.join(address));
+    let cooked = read_cooked(&out.join(address));
+    assert_eq!(cooked.header, original.header);
+    assert_eq!(cooked.payload, original.payload);
+    assert_eq!(
+        cooked.section,
+        Some(DerivedSection {
+            derived_version: 1,
+            key,
+            len: blob.len() as u64,
+        })
+    );
+    assert_eq!(cooked.blob, blob);
+}
+
+fn cache_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return files;
+    };
+    for entry in read {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(cache_files(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
+
+#[test]
+fn a_load_derives_applies_the_blob_and_writes_one_cache_file_at_its_path() {
+    let tag = "derives";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load(id), Some(7));
+
+    let key = key_of(&project, &sum_value::<1>(tag, a, b));
+    assert_eq!(cache_files(&cache), vec![entry_path(&cache, 1, key)]);
+    assert_eq!(
+        std::fs::read(entry_path(&cache, 1, key)).unwrap(),
+        7u64.to_le_bytes()
+    );
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_second_server_over_the_same_cache_loads_without_deriving() {
+    let tag = "hit";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(7)
+    );
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(7)
+    );
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn changing_an_input_changes_the_key_and_derives_again() {
+    let tag = "input-change";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+    let before = key_of(&project, &sum_value::<1>(tag, a, b));
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(7)
+    );
+    project.leaf("b", 10);
+    let after = key_of(&project, &sum_value::<1>(tag, a, b));
+    assert_ne!(before, after);
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(13)
+    );
+    assert_eq!(derives(tag), 2);
+}
+
+#[test]
+fn a_raised_derived_version_misses_the_old_entry() {
+    let tag = "version";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(7)
+    );
+    assert_eq!(
+        Runtime::<2>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(7)
+    );
+    assert_eq!(derives(tag), 2);
+    let key = key_of(&project, &sum_value::<2>(tag, a, b));
+    assert!(entry_path(&cache, 2, key).is_file());
+}
+
+#[test]
+fn a_cached_blob_that_apply_refuses_is_derived_again_and_overwritten() {
+    let tag = "refused";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+    let path = entry_path(&cache, 1, key_of(&project, &sum_value::<1>(tag, a, b)));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"bad").unwrap();
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(7)
+    );
+    assert_eq!(derives(tag), 1);
+    assert_eq!(std::fs::read(&path).unwrap(), 7u64.to_le_bytes());
+}
+
+#[test]
+fn a_missing_input_fails_the_load_naming_it() {
+    let tag = "missing";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let missing = AssetId::new();
+    let id = project.sum::<1>("sum", tag, a, missing);
+
+    let error = pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[a, missing],
+    ))
+    .expect_err("a missing input is an error");
+    assert!(
+        format!("{error:#}").contains(&format!("{missing:?}")),
+        "got: {error:#}"
+    );
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load(id), None);
+    assert_eq!(derives(tag), 0);
+}
+
+#[test]
+fn a_derived_input_fails_the_load_naming_it() {
+    let tag = "derived-input";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let inner = project.sum::<1>("inner", tag, a, b);
+    let outer = project.sum::<1>("outer", tag, a, inner);
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    let error = pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[a, inner],
+    ))
+    .expect_err("a derived input is an error");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("derived assets can't derive from derived assets")
+            && message.contains(&format!("{inner:?}")),
+        "got: {message}"
+    );
+
+    assert_eq!(runtime.load(outer), None);
+    assert_eq!(derives(tag), 0);
+}
+
+#[test]
+fn a_derive_error_fails_the_load() {
+    let tag = "derive-error";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    with_probe(tag, |probe| probe.fail_derive = true);
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load(id), None);
+    assert_eq!(derives(tag), 1);
+    assert!(cache_files(&cache).is_empty());
+}
+
+#[test]
+fn a_cache_whose_root_is_a_file_still_loads_with_the_blob_in_memory() {
+    let tag = "root-is-file";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+    std::fs::write(&cache, b"not a directory").unwrap();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load(id), Some(7));
+    assert!(cache.is_file());
+}
+
+#[test]
+fn with_no_cache_every_load_derives() {
+    let tag = "no-cache";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::none()).load(id),
+        Some(7)
+    );
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::none()).load(id),
+        Some(7)
+    );
+    assert_eq!(derives(tag), 2);
+    assert!(!project.cache_dir().exists());
+}
+
+#[test]
+fn a_handle_never_reads_as_loaded_before_its_blob_is_applied() {
+    let tag = "gated";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    let (release, gate) = mpsc::channel();
+    with_probe(tag, |probe| probe.gate = Some(gate));
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    let handle = runtime.server.load::<Sum<1>>(id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while derives(tag) == 0 {
+        runtime.pump();
+        assert_eq!(runtime.total(&handle), None);
+        assert!(Instant::now() < deadline, "derive never started");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    for _ in 0..20 {
+        runtime.pump();
+        assert_eq!(runtime.total(&handle), None);
+        assert!(runtime.server.is_loading());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    release.send(()).unwrap();
+    assert_eq!(runtime.load(id), Some(7));
+}
+
+#[test]
+fn a_cooked_blob_loads_without_its_inputs_and_without_deriving() {
+    let tag = "cooked";
+    let mut project = Project::new(tag);
+    let id = project.sum::<1>("sum", tag, AssetId::new(), AssetId::new());
+    project.cook("sum", 1, &42u64.to_le_bytes());
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load(id), Some(42));
+    assert_eq!(derives(tag), 0);
+    assert!(!cache.exists());
+}
+
+#[test]
+fn a_cooked_blob_of_another_derived_version_is_derived_again() {
+    let tag = "cooked-version";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    project.cook("sum", 2, &42u64.to_le_bytes());
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load(id), Some(7));
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_cooked_blob_that_apply_refuses_is_derived_again() {
+    let tag = "cooked-refused";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    project.cook("sum", 1, b"bad");
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load(id), Some(7));
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_derived_section_on_an_asset_that_is_not_derived_is_ignored() {
+    let tag = "cooked-leaf";
+    let mut project = Project::new(tag);
+    let id = project.leaf("leaf", 5);
+    project.cook("leaf", 1, b"stray");
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_leaf(id), Some(5));
+}
+
+#[test]
+fn a_cook_writes_each_derived_entry_with_its_payload_key_and_blob() {
+    let tag = "cook";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    project.sum::<1>("sum", tag, a, b);
+    project.sum::<1>("nested/double", tag, a, a);
+    let out = project.root.join("cooked");
+
+    let report = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .unwrap();
+
+    assert_eq!(
+        report.cooked,
+        vec!["content/nested/double.gasset", "content/sum.gasset"]
+    );
+    assert_cooked_from(
+        &project,
+        &out,
+        "content/sum.gasset",
+        key_of(&project, &sum_value::<1>(tag, a, b)),
+        &7u64.to_le_bytes(),
+    );
+    assert_cooked_from(
+        &project,
+        &out,
+        "content/nested/double.gasset",
+        key_of(&project, &sum_value::<1>(tag, a, a)),
+        &6u64.to_le_bytes(),
+    );
+    assert_eq!(derives(tag), 2);
+}
+
+#[test]
+fn a_cook_skips_entries_that_are_not_derived() {
+    let tag = "cook-skip";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    project.sum::<1>("sum", tag, a, b);
+    let out = project.root.join("cooked");
+
+    Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .unwrap();
+
+    assert_eq!(cache_files(&out), vec![out.join("content/sum.gasset")]);
+}
+
+#[test]
+fn a_cook_uses_a_cached_blob() {
+    let tag = "cook-hit";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+    let key = key_of(&project, &sum_value::<1>(tag, a, b));
+    put_cached(&cache, key, &99u64.to_le_bytes());
+    let out = project.root.join("cooked");
+
+    Runtime::<1>::new(&project, DerivedDataCache::at(&cache))
+        .server
+        .cook(&out)
+        .unwrap();
+
+    assert_cooked_from(
+        &project,
+        &out,
+        "content/sum.gasset",
+        key,
+        &99u64.to_le_bytes(),
+    );
+    assert_eq!(derives(tag), 0);
+}
+
+#[test]
+fn a_cook_derives_again_over_a_cached_blob_that_apply_refuses() {
+    let tag = "cook-refused";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    project.sum::<1>("sum", tag, a, b);
+    let cache = project.cache_dir();
+    let key = key_of(&project, &sum_value::<1>(tag, a, b));
+    put_cached(&cache, key, b"bad");
+    let out = project.root.join("cooked");
+
+    Runtime::<1>::new(&project, DerivedDataCache::at(&cache))
+        .server
+        .cook(&out)
+        .unwrap();
+
+    assert_cooked_from(
+        &project,
+        &out,
+        "content/sum.gasset",
+        key,
+        &7u64.to_le_bytes(),
+    );
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_failing_derive_stops_the_cook_naming_its_address() {
+    let tag = "cook-fail";
+    let after = "cook-fail-after";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    project.sum::<1>("first", tag, a, b);
+    project.sum::<1>("second", after, a, b);
+    with_probe(tag, |probe| probe.fail_derive = true);
+    let out = project.root.join("cooked");
+
+    let error = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .expect_err("a failing derive fails the cook");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("content/first.gasset") && message.contains("Sum"),
+        "got: {message}"
+    );
+    assert!(cache_files(&out).is_empty());
+    assert_eq!(derives(after), 0);
+}
+
+#[test]
+fn only_derived_kinds_can_be_cooked() {
+    let project = Project::new("can-cook");
+    let server = Runtime::<1>::new(&project, DerivedDataCache::none()).server;
+
+    assert!(server.can_cook("Sum"));
+    assert!(!server.can_cook("Leaf"));
+}
+
+#[test]
+fn an_instance_that_does_not_derive_loads_without_reading_inputs_or_touching_the_cache() {
+    let tag = "maybe-plain";
+    let mut project = Project::new(tag);
+    let id = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load_maybe(id), Some(None));
+    assert_eq!(derives(tag), 0);
+    assert!(!cache.exists());
+}
+
+#[test]
+fn an_instance_that_derives_loads_with_its_blob() {
+    let tag = "maybe-derived";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let id = project.maybe("derived", &Maybe::new(tag, true, 5, vec![a]));
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_maybe(id), Some(Some(8)));
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn an_input_that_does_not_derive_is_accepted_and_one_that_derives_is_refused() {
+    let tag = "maybe-input";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let plain = project.maybe("plain", &Maybe::new(tag, false, 4, vec![AssetId::new()]));
+    let derived = project.maybe("derived", &Maybe::new(tag, true, 6, vec![a]));
+    let over_plain = project.maybe("over-plain", &Maybe::new(tag, true, 1, vec![plain]));
+    let over_derived = project.maybe("over-derived", &Maybe::new(tag, true, 1, vec![derived]));
+
+    pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[a, plain],
+    ))
+    .expect("an input that does not derive is accepted");
+
+    let error = pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[a, derived],
+    ))
+    .expect_err("an input that derives is refused");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&format!("{derived:?}"))
+            && message.contains("content/derived.gasset")
+            && message.contains("Maybe")
+            && message.contains("itself derived"),
+        "got: {message}"
+    );
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_maybe(over_plain), Some(Some(5)));
+    assert_eq!(runtime.load_maybe(over_derived), None);
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn an_input_of_a_derived_kind_that_cannot_be_read_fails_naming_it() {
+    let tag = "maybe-unreadable-input";
+    let mut project = Project::new(tag);
+    let plain = project.maybe("plain", &Maybe::new(tag, false, 4, vec![AssetId::new()]));
+    std::fs::write(
+        project.root.join("content/plain.gasset"),
+        b"not a content asset",
+    )
+    .unwrap();
+
+    let error = pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[plain],
+    ))
+    .expect_err("an unreadable input is refused");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&format!("{plain:?}")) && message.contains("content/plain.gasset"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn a_cook_writes_and_reports_only_the_instances_that_derive() {
+    let tag = "maybe-cook";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    project.maybe("derived", &Maybe::new(tag, true, 5, vec![a]));
+    project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    let out = project.root.join("cooked");
+
+    let report = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .unwrap();
+
+    assert_eq!(report.cooked, vec!["content/derived.gasset"]);
+    assert_eq!(cache_files(&out), vec![out.join("content/derived.gasset")]);
+    let cooked = read_cooked(&out.join("content/derived.gasset"));
+    assert_eq!(cooked.blob, 8u64.to_le_bytes());
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_cooked_section_on_an_instance_that_does_not_derive_is_not_applied() {
+    let tag = "maybe-cooked-plain";
+    let mut project = Project::new(tag);
+    let id = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    project.cook("plain", 1, &42u64.to_le_bytes());
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_maybe(id), Some(None));
+    assert_eq!(derives(tag), 0);
+}
+
+#[test]
+fn file_is_derived_decodes_the_payload_by_default() {
+    let tag = "maybe-file";
+    let mut project = Project::new(tag);
+    project.maybe("plain", &Maybe::new(tag, false, 5, Vec::new()));
+    project.maybe("derived", &Maybe::new(tag, true, 5, Vec::new()));
+
+    let answer = |name: &str| {
+        let bytes = std::fs::read(project.root.join(format!("content/{name}.gasset"))).unwrap();
+        let (header, payload) = read_content_asset(&bytes).unwrap();
+        Maybe::file_is_derived(&header, payload).unwrap()
+    };
+    assert!(!answer("plain"));
+    assert!(answer("derived"));
+}

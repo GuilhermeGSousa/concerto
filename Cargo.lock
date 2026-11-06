@@ -810,6 +810,7 @@ dependencies = [
 name = "concerto"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "concerto-animation",
  "concerto-app",
  "concerto-color",
@@ -821,6 +822,7 @@ dependencies = [
  "concerto-motion-matching",
  "concerto-name",
  "concerto-physics",
+ "concerto-procedural-animation",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
@@ -835,6 +837,8 @@ dependencies = [
  "log",
  "pollster",
  "profiling",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]
@@ -1233,6 +1237,7 @@ dependencies = [
  "concerto-scene",
  "glam 0.30.10",
  "log",
+ "pollster",
  "serde",
  "uuid",
 ]
@@ -1254,12 +1259,12 @@ dependencies = [
  "concerto-mesh",
  "concerto-motion-matching",
  "concerto-motion-matching-gizmos",
- "concerto-name",
  "concerto-reflect",
  "concerto-ui",
  "concerto-window",
  "glam 0.30.10",
  "log",
+ "pollster",
  "serde",
  "tempfile",
  "uuid",
@@ -1332,10 +1337,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-procedural-animation"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "concerto-animation",
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-name",
+ "concerto-physics",
+ "concerto-reflect",
+ "glam 0.30.10",
+ "log",
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "concerto-project"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde_json",
  "tempfile",
  "toml_edit 0.22.27",
 ]

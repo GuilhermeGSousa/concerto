@@ -14,6 +14,7 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::Unsaved,
+    guard::DiscardEdits,
     hosted::testing::{SceneFixture, plain_recipe, scene_entry, write_scene_file},
     preview::PreviewPlugin,
     timeline::TimelineScrubbed,
@@ -25,8 +26,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MotionDatabase,
-    MotionDatabaseDefinition, MotionEntry, TimeRange, TrajectoryPositions, bake,
+    BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MotionDatabase, MotionEntry,
+    TimeRange, TrajectoryPositions, bake,
 };
 use glam::{Quat, Vec3};
 use uuid::Uuid;
@@ -35,7 +36,7 @@ use super::*;
 use crate::{
     database_preview,
     panels::tests::{Tab, bone_id, clip_of, skeleton_of, tab_of},
-    tests::{database_recipe, edit, fixture_with, save, state, write_asset, write_definition},
+    tests::{database_recipe, fixture_with, save, state, write_asset, write_definition},
 };
 
 const NEAR: f32 = 1e-3;
@@ -90,7 +91,7 @@ fn baked_with(
     speed: f32,
     channels: Vec<FeatureChannelData>,
 ) -> BakedPlayback {
-    let mut definition = MotionDatabaseDefinition {
+    let mut definition = MotionDatabase {
         skeleton: AssetHandle::weak(AssetId::new()),
         rate: RATE,
         speed,
@@ -103,7 +104,8 @@ fn baked_with(
     definition.entries = entries;
     let skeleton = skeleton();
     let sampled: Vec<&AnimationClip> = clips.iter().collect();
-    let database = bake(&definition, &skeleton, &sampled).unwrap();
+    let baked = bake(&definition, &skeleton, &sampled).unwrap();
+    let database = definition.with_baked(baked);
     let channels: Vec<Box<dyn FeatureChannel>> = database
         .live_channels()
         .unwrap()
@@ -283,8 +285,14 @@ fn a_position_outside_the_range_starts_it() {
 fn with_no_entry_sought_the_whole_database_loops() {
     let database = baked().database;
 
-    assert_eq!(looped_range(&database, None), 0..database.frame_count());
-    assert_eq!(looped_range(&database, Some(7)), 0..database.frame_count());
+    assert_eq!(
+        looped_range(&database, None),
+        0..database.frame_count().unwrap()
+    );
+    assert_eq!(
+        looped_range(&database, Some(7)),
+        0..database.frame_count().unwrap()
+    );
 }
 
 #[test]
@@ -305,7 +313,7 @@ fn a_sought_entry_loops_on_itself_and_does_not_run_into_the_next() {
 #[test]
 fn a_seek_lands_on_the_baked_frame_of_the_entry_nearest_the_time() {
     let database = baked().database;
-    let second = database.ranges().nth(1).unwrap();
+    let second = database.ranges().unwrap().nth(1).unwrap();
 
     assert_eq!(frame_in_entry(&database, 0, 1.0), Some(30));
     assert_eq!(frame_in_entry(&database, 1, 1.0), Some(second.start + 30));
@@ -314,7 +322,7 @@ fn a_seek_lands_on_the_baked_frame_of_the_entry_nearest_the_time() {
 #[test]
 fn a_seek_stays_inside_the_entry() {
     let database = baked().database;
-    let first = database.ranges().next().unwrap();
+    let first = database.ranges().unwrap().next().unwrap();
 
     assert_eq!(frame_in_entry(&database, 0, 100.0), Some(first.end - 1));
     assert_eq!(frame_in_entry(&database, 0, -1.0), Some(first.start));
@@ -466,7 +474,7 @@ fn a_shorter_database_starts_over() {
 #[test]
 fn progress_is_written_once_per_frame_shown_with_the_entry_and_the_clip_time() {
     let mut stage = Stage::shown();
-    let second = stage.database().ranges().nth(1).unwrap().start;
+    let second = stage.database().ranges().unwrap().nth(1).unwrap().start;
 
     stage.frame();
     stage.frame();
@@ -516,7 +524,7 @@ fn the_shapes_draw_the_features_of_the_shown_frame() {
 
     let shapes = frame_shapes(&shown, 30).unwrap();
 
-    let features = shown.database.features(30);
+    let features = shown.database.features(30).unwrap();
     let FeatureShape::Line { end, .. } = shapes[0][0] else {
         panic!("{shapes:?}");
     };
@@ -630,7 +638,7 @@ fn logging() -> SceneFixture {
     fixture_with(logging_recipe)
 }
 
-fn buildable(definition: &mut MotionDatabaseDefinition) {
+fn derivable(definition: &mut MotionDatabase) {
     definition.simulation.position_joint = "Spine".into();
     definition.channels = vec![FeatureChannelData::live(BonePositions {
         bones: vec!["Head".into()],
@@ -639,16 +647,18 @@ fn buildable(definition: &mut MotionDatabaseDefinition) {
 }
 
 fn ready(f: SceneFixture) -> Tab {
-    let mut tab = tab_of(f, buildable);
+    let mut tab = tab_of(f, derivable);
     tab.until_read();
     tab.until_settled();
     tab
 }
 
-fn built(f: SceneFixture) -> Tab {
-    let mut tab = ready(f);
-    let build = tab.panels().build;
-    tab.clicked(build);
+fn underived(f: SceneFixture) -> Tab {
+    let mut tab = tab_of(f, |definition| {
+        derivable(definition);
+        definition.simulation.position_joint = "Nowhere".into();
+    });
+    tab.until_read();
     tab.until_settled();
     tab
 }
@@ -742,8 +752,8 @@ fn a_scene_that_cannot_be_read_says_so_under_the_picker() {
 }
 
 #[test]
-fn with_no_baked_data_the_selected_entrys_clip_plays_and_the_timeline_follows_it() {
-    let mut tab = ready(logging());
+fn with_no_derived_data_the_selected_entrys_clip_plays_and_the_timeline_follows_it() {
+    let mut tab = underived(logging());
     let document = tab.document;
 
     assert_eq!(played(&tab).last(), Some(&Played::Clip(10.0)));
@@ -755,7 +765,7 @@ fn with_no_baked_data_the_selected_entrys_clip_plays_and_the_timeline_follows_it
 
 #[test]
 fn selecting_another_entry_plays_its_clip() {
-    let mut tab = ready(logging());
+    let mut tab = underived(logging());
 
     tab.state_mut().selected_entry = Some(1);
     tab.until_settled();
@@ -764,23 +774,24 @@ fn selecting_another_entry_plays_its_clip() {
 }
 
 #[test]
-fn no_clip_is_wanted_until_the_baked_state_is_known() {
+fn no_clip_is_wanted_while_a_derive_is_wanted() {
     let mut state = DefinitionDocument {
         entries: vec![entry(None)],
         selected_entry: Some(0),
+        derive_wanted: true,
         ..Default::default()
     };
 
     assert_eq!(wanted_clip(&state), None);
 
-    state.baked = BakedState::NotBuilt;
+    state.derive_wanted = false;
 
     assert_eq!(wanted_clip(&state), Some(state.entries[0].clip.id()));
 }
 
 #[test]
 fn a_clip_that_cannot_be_read_empties_the_preview() {
-    let mut tab = ready(logging());
+    let mut tab = underived(logging());
     let run = tab.f.project_root.join(&tab.run.address);
     std::fs::remove_file(run).unwrap();
 
@@ -792,7 +803,7 @@ fn a_clip_that_cannot_be_read_empties_the_preview() {
 
 #[test]
 fn no_entry_clears_the_clip() {
-    let mut tab = ready(logging());
+    let mut tab = underived(logging());
 
     tab.state_mut().selected_entry = None;
     tab.until_settled();
@@ -801,31 +812,28 @@ fn no_entry_clears_the_clip() {
 }
 
 #[test]
-fn a_build_stops_the_clip_and_plays_the_database() {
-    let tab = built(logging());
+fn an_opened_definition_plays_its_derived_database_and_never_a_clip() {
+    let tab = ready(logging());
 
     let played = played(&tab);
-    let database = played.iter().rposition(|shown| *shown == Played::Database);
-    let cleared = played.iter().rposition(|shown| *shown == Played::Cleared);
-    assert!(database.is_some() && cleared.is_some(), "{played:?}");
+    assert!(played.contains(&Played::Database), "{played:?}");
     assert!(
-        !played[database.unwrap()..]
-            .iter()
-            .any(|shown| matches!(shown, Played::Clip(_)))
+        !played.iter().any(|shown| matches!(shown, Played::Clip(_))),
+        "{played:?}"
     );
     assert!(preview_shows_a_database(&tab));
     assert!(tab.state().playback.is_some());
 }
 
 #[test]
-fn a_definition_opened_with_baked_data_never_plays_a_clip() {
-    let mut tab = built(logging());
+fn a_definition_opened_again_never_plays_a_clip() {
+    let mut tab = ready(logging());
     let document = tab.document;
     let first = tab.asset.clone();
     let other = write_definition(
         &mut tab.f,
         "content/hero/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     tab.f.request(&other);
     tab.f
@@ -852,13 +860,13 @@ fn a_definition_opened_with_baked_data_never_plays_a_clip() {
 }
 
 #[test]
-fn a_definition_with_no_baked_data_stops_the_database() {
-    let mut tab = built(logging());
+fn a_definition_that_derives_nothing_stops_the_database() {
+    let mut tab = ready(logging());
     let document = tab.document;
     let other = write_definition(
         &mut tab.f,
         "content/hero/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
 
     tab.f.request(&other);
@@ -874,7 +882,7 @@ fn a_definition_with_no_baked_data_stops_the_database() {
 
 #[test]
 fn another_skeleton_stops_the_database_and_plays_the_clip() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
     let other = write_asset(
         &mut tab.f,
         "content/other/skeleton.gasset",
@@ -891,22 +899,8 @@ fn another_skeleton_stops_the_database_and_plays_the_clip() {
 }
 
 #[test]
-fn a_build_that_is_out_of_date_keeps_playing() {
-    let mut tab = built(logging());
-    let document = tab.document;
-
-    edit(&mut tab.f, document, "BonePositions", "weight", 2.0);
-    tab.f.frame();
-    save(&mut tab.f, document);
-    tab.until_settled();
-
-    assert_eq!(tab.state().baked, BakedState::OutOfDate);
-    assert!(preview_shows_a_database(&tab));
-}
-
-#[test]
-fn a_baked_clip_that_cannot_be_read_falls_back_to_the_selected_clip() {
-    let mut tab = built(logging());
+fn a_derive_that_cannot_read_a_clip_falls_back_to_the_selected_clip() {
+    let mut tab = ready(logging());
     let document = tab.document;
     std::fs::remove_file(tab.f.project_root.join(&tab.run.address)).unwrap();
 
@@ -918,8 +912,8 @@ fn a_baked_clip_that_cannot_be_read_falls_back_to_the_selected_clip() {
 }
 
 #[test]
-fn an_entry_baked_after_the_definition_changed_plays_the_clips_the_database_names() {
-    let mut tab = built(logging());
+fn a_saved_entry_removal_plays_the_database_without_it() {
+    let mut tab = ready(logging());
     let document = tab.document;
 
     tab.state_mut().entries.remove(0);
@@ -928,14 +922,14 @@ fn an_entry_baked_after_the_definition_changed_plays_the_clips_the_database_name
     save(&mut tab.f, document);
     tab.until_settled();
 
-    assert_eq!(tab.state().baked, BakedState::OutOfDate);
     let playback = tab.state().playback.as_ref().expect("it still plays");
-    assert_eq!(playback.clips.len(), 2);
+    assert_eq!(playback.clips.len(), 1);
+    assert!(preview_shows_a_database(&tab));
 }
 
 #[test]
 fn scrubbing_seeks_the_clip() {
-    let mut tab = ready(logging());
+    let mut tab = underived(logging());
     let document = tab.document;
 
     scrub(&mut tab, 5.0);
@@ -948,7 +942,7 @@ fn scrubbing_seeks_the_clip() {
 
 #[test]
 fn scrubbing_seeks_the_baked_frames_of_the_selected_entry() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
     tab.state_mut().selected_entry = Some(1);
     tab.f.frame();
     tab.f.frame();
@@ -974,7 +968,7 @@ fn a_scrub_shows_on_the_timeline_at_once() {
 
 #[test]
 fn selecting_an_entry_moves_the_baked_playback_to_it() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
 
     tab.state_mut().selected_entry = Some(1);
     tab.f.frame();
@@ -986,7 +980,7 @@ fn selecting_an_entry_moves_the_baked_playback_to_it() {
 
 #[test]
 fn the_timeline_follows_the_baked_frames_of_the_selected_entry() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
     let document = tab.document;
 
     scrub(&mut tab, 1.5);
@@ -999,10 +993,10 @@ fn the_timeline_follows_the_baked_frames_of_the_selected_entry() {
 
 #[test]
 fn the_timeline_head_comes_back_without_the_playback_leaving_the_selected_entry() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
     let document = tab.document;
     let database = tab.state().playback.as_ref().unwrap().database.clone();
-    let last = database.ranges().next().unwrap().end - 1;
+    let last = database.ranges().unwrap().next().unwrap().end - 1;
     let (_, end) = database.clip_time(last).unwrap();
 
     scrub(&mut tab, end);
@@ -1020,7 +1014,7 @@ fn the_timeline_head_comes_back_without_the_playback_leaving_the_selected_entry(
 
 #[test]
 fn the_timeline_ignores_frames_of_other_entries() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
     tab.state_mut().selected_entry = Some(1);
     tab.f.frame();
     tab.f.frame();
@@ -1041,7 +1035,7 @@ fn the_timeline_ignores_frames_of_other_entries() {
 
 #[test]
 fn an_entry_whose_clip_moved_since_the_build_is_not_sought() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
     let walk = tab.state().entries[0].clip.clone();
     tab.state_mut().entries[1].clip = walk;
 
@@ -1053,7 +1047,7 @@ fn an_entry_whose_clip_moved_since_the_build_is_not_sought() {
 
 #[test]
 fn an_entry_mirrored_since_the_build_is_not_sought() {
-    let mut tab = built(logging());
+    let mut tab = ready(logging());
     tab.state_mut().selected_entry = Some(1);
     assert_eq!(baked_entry(tab.state()), Some(1));
 
@@ -1083,7 +1077,7 @@ fn a_clip_being_read_marks_the_document() {
 
 #[test]
 fn picking_a_channel_row_tells_the_preview_and_settings_clears_it() {
-    let mut tab = built(fixture_with(database_recipe));
+    let mut tab = ready(fixture_with(database_recipe));
     assert_eq!(picked_in_preview(&tab), None);
 
     let row = tab.channel_row_entity(0);
@@ -1099,7 +1093,7 @@ fn picking_a_channel_row_tells_the_preview_and_settings_clears_it() {
 
 #[test]
 fn a_channel_whose_type_differs_from_the_baked_one_is_not_highlighted() {
-    let mut tab = built(fixture_with(database_recipe));
+    let mut tab = ready(fixture_with(database_recipe));
     let row = tab.channel_row_entity(0);
     tab.clicked(row);
     tab.f.frame();
@@ -1114,4 +1108,27 @@ fn a_channel_whose_type_differs_from_the_baked_one_is_not_highlighted() {
     tab.f.frame();
 
     assert_eq!(picked_in_preview(&tab), None);
+}
+
+#[test]
+fn discarding_another_skeleton_plays_the_database_again() {
+    let mut tab = ready(logging());
+    let document = tab.document;
+    let other = write_asset(
+        &mut tab.f,
+        "content/other/skeleton.gasset",
+        &skeleton_of(&["Hips", "Spine", "Head"]),
+    );
+    tab.state_mut().skeleton = AssetHandle::weak(other.id);
+    tab.f.world.insert(Unsaved, document);
+    tab.until_read();
+    tab.until_settled();
+    assert!(!preview_shows_a_database(&tab));
+
+    tab.f.world.trigger(DiscardEdits(document));
+    tab.until_read();
+    tab.until_settled();
+
+    assert!(tab.state().playback.is_some());
+    assert!(preview_shows_a_database(&tab));
 }

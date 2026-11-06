@@ -1,5 +1,6 @@
 //! Framing for game-ready content assets: `magic | u32 header_len |
-//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim)`. The header is read
+//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim) | derived blob`, the
+//! blob present only when the header describes one. The header is read
 //! without touching the payload, so a future asset registry can index a
 //! whole content tree by scanning headers alone.
 use std::path::Path;
@@ -10,13 +11,22 @@ use super::registry::{AssetEntry, AssetRegistry};
 use super::{Asset, AssetId};
 
 pub use concerto_asset_format::{
-    read_content_asset, read_content_asset_header, write_content_asset, ContentAssetHeader,
-    ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
+    read_content_asset, read_content_asset_header, read_content_asset_parts, write_content_asset,
+    write_cooked_content_asset, ContentAssetHeader, ContentAssetParts, CookedSection,
+    DerivedSection, ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
 pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
     let (header, payload) = read_content_asset(bytes)?;
+    let value = decode_content_payload::<A>(&header, payload)?;
+    Ok((header, value))
+}
+
+pub(crate) fn decode_content_payload<A: Asset>(
+    header: &ContentAssetHeader,
+    payload: &[u8],
+) -> anyhow::Result<A> {
     if header.kind != A::name() {
         anyhow::bail!(
             "content asset holds a {} but a {} was requested",
@@ -40,7 +50,7 @@ pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAs
             A::name()
         ),
     };
-    Ok((header, value))
+    Ok(value)
 }
 
 /// Compares `value`'s payload encoding with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`, for a crate's encoding test.
@@ -86,6 +96,7 @@ pub fn save_content_asset_into<A: Asset>(
         kind: A::name().to_string(),
         kind_version: A::FORMAT_VERSION,
         provenance: None,
+        derived: None,
     };
     let kind = header.kind.clone();
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;

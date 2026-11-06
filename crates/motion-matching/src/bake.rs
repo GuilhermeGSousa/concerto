@@ -8,8 +8,8 @@ use glam::{Quat, Vec3};
 
 use crate::{
     channel::{extract_features, BodyMotion, FrameContext},
-    database::{BakeError, ChannelSpan, MotionDatabase},
-    definition::{MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings},
+    database::{BakeError, BakedDatabase, MotionDatabase, Span},
+    definition::{SimulationBoneSettings, TrajectorySettings},
     filter::savitzky_golay,
     simulation::TrajectorySample,
 };
@@ -29,9 +29,9 @@ impl EntryPlan {
     }
 }
 
-/// Checks the rate, speed, clips and ranges of a definition and lays out the frames of every entry.
+/// Checks the rate, speed, clips and ranges of a database and lays out the frames of every entry.
 pub fn plan_entries(
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
 ) -> Result<Vec<EntryPlan>, BakeError> {
@@ -297,22 +297,22 @@ pub fn trajectory_samples(
         .collect()
 }
 
-/// Bakes a motion database from its definition, whose channels are loaded, the skeleton and one resolved clip per entry.
+/// Bakes the computed part of a motion database whose channels are loaded, from the skeleton and one resolved clip per entry.
 pub fn bake(
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
-) -> Result<MotionDatabase, BakeError> {
+) -> Result<BakedDatabase, BakeError> {
     bake_with_progress(definition, skeleton, clips, |_, _| {})
 }
 
 /// [`bake`], calling `on_entry(finished, total)` after each entry, with `finished` counting from 1.
 pub fn bake_with_progress(
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
     mut on_entry: impl FnMut(usize, usize),
-) -> Result<MotionDatabase, BakeError> {
+) -> Result<BakedDatabase, BakeError> {
     let plans = plan_entries(definition, skeleton, clips)?;
     let mirror = mirror_of(definition, skeleton)?;
     check_window("position_window", definition.simulation.position_window)?;
@@ -327,10 +327,6 @@ pub fn bake_with_progress(
                 type_name: stored.type_name().to_owned(),
                 reason,
             })?;
-        let weight = channel.weight();
-        if !(weight.is_finite() && weight > 0.0) {
-            return Err(BakeError::InvalidWeight(weight));
-        }
     }
     let rate = definition.rate;
 
@@ -339,8 +335,8 @@ pub fn bake_with_progress(
 
     let mut spans = Vec::with_capacity(channels.len());
     let mut feature_dims = 0;
-    for channel in &definition.channels {
-        let span = ChannelSpan::new(feature_dims, channel.clone())?;
+    for channel in &channels {
+        let span = Span::new(feature_dims, channel.dims());
         feature_dims += span.dims();
         spans.push(span);
     }
@@ -411,23 +407,8 @@ pub fn bake_with_progress(
 
     let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &spans);
 
-    Ok(MotionDatabase::new(
-        definition.skeleton.clone(),
+    Ok(BakedDatabase::new(
         bone_count,
-        definition
-            .entries
-            .iter()
-            .map(|entry| entry.clip.clone())
-            .collect(),
-        definition
-            .entries
-            .iter()
-            .map(|entry| entry.mirrored)
-            .collect(),
-        mirror.as_ref().map(|_| definition.mirror_axis),
-        rate,
-        definition.speed,
-        definition.trajectory,
         frame_count,
         range_starts,
         range_stops,
@@ -442,7 +423,7 @@ pub fn bake_with_progress(
 }
 
 fn mirror_of(
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
     skeleton: &Skeleton,
 ) -> Result<Option<PoseMirror>, BakeError> {
     if !definition.entries.iter().any(|entry| entry.mirrored) {
@@ -458,7 +439,7 @@ fn feature_statistics(
     features: &[f32],
     frame_count: usize,
     feature_dims: usize,
-    spans: &[ChannelSpan],
+    spans: &[Span],
 ) -> (Vec<f32>, Vec<f32>) {
     if frame_count == 0 {
         return (vec![0.0; feature_dims], vec![0.0; spans.len()]);

@@ -212,6 +212,55 @@ A graph is a tree of nodes under a result node:
   `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space.
+- **Look-at** (`LookAtNode`, in `concerto::procedural_animation`, registered
+  by `ProceduralAnimationPlugin`) turns a character's spine, neck, head and eyes
+  toward a point while the body plays its input. The `chain` lists
+  `LookAtBone`s from the spine to the head, each under the one before, all
+  under bone 0. Each bone turns by its `share` of the angle left to it, and
+  within its `yaw_limit` and `pitch_limit` in radians, so a bone held at a
+  limit leaves the rest to the bones after it. The `eyes`, `LookAtEye`s under
+  the last chain bone, then each aim on their own from their own position,
+  within their limits. `forward` and `up` are model-space axes, +Z and +Y by
+  default, read in each bone's rest pose. The target is a world-space `Vec3`
+  the game set under `target_param`. `weight`, times the float under
+  `weight_param`, blends the look in; a target that is missing, or more than
+  `max_angle` (at most 170°) off the first bone's animated gaze, eases it out
+  over `weight_halflife`. Each bone eases toward its turn with its own
+  `halflife`, so fast eyes reach the target while a slower head is still
+  turning. The look starts from the input's pose when the node starts or
+  resets. Wire it after the nodes whose pose it turns, and before two-bone
+  IK. The yaw and pitch maths are `concerto_animation::look_at` for code
+  outside a graph.
+- **Foot placement** (`FootPlacementNode`, in
+  `concerto::procedural_animation`, registered by `ProceduralAnimationPlugin`)
+  puts each foot on the ground under it. Each `FootPlacementLeg` names a foot
+  bone, whose parent is the knee and grandparent the hip, under the `pelvis`
+  bone, and an optional toe bone. The node casts physics rays straight down at
+  the ankle and the toe, from `max_step_up` above the floor, the model
+  origin's world height, to `max_step_down` below it; a missing
+  `PhysicsState` counts as every ray missing. It lifts or lowers each foot by
+  the ground under it, keeping the clip's lift above its floor, pitches it to
+  the line from ankle to toe hit and rolls it to the ankle hit's normal,
+  within `max_foot_angle`, and lowers the pelvis by the lowest foot, at most
+  `max_pelvis_drop`. Each leg is then bent to its foot with the two-bone
+  solve, with `softness` as in two-bone IK; the toe keeps its local rotation.
+  The pelvis, the foot heights and the foot tilts ease toward their targets
+  with `pelvis_halflife`, `foot_halflife` and `rotation_halflife`, and snap
+  on the first evaluate. `weight`, times the float under `weight_param`,
+  eases in and out with `weight_halflife`; a game sets that param to 0 while
+  the character is in the air. Under `ignore_param` the game sets an
+  `IgnoredBody` naming the character's own capsule, which the rays then skip.
+  Wire it after the layers, aim and look-at nodes and before hand IK.
+  `FootPlacementNode::new(pelvis)` starts from the defaults, `with_leg` adds a
+  leg, and each other field has a `with_<field>`:
+  ```rust
+  FootPlacementNode::new("Hips")
+      .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+      .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
+      .with_max_step_up(0.4)
+      .with_weight_param(name!("foot_placement_weight"))
+      .with_ignore_param(name!("foot_placement_ignore"))
+  ```
 
 Parameters are set on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`
@@ -448,6 +497,56 @@ skipped: a state machine entering a state restarts it, so a clip state fires
 its start time, but no other jump fires what lies between. A motion matching
 state fires nothing on its first frame: entering it resets the state, and it
 fires only once it has started playing an entry.
+
+### Additive clips
+
+An additive clip is layered over another pose instead of replacing it: an
+overlay such as cold, wounded or fear is recorded as a full take next to a
+matched neutral take, its base, and what is layered is the difference between
+the two. `AnimationClip::additive()` says whether a clip is additive, as an
+`Additive` (`concerto::animation::clip`):
+
+- `Additive::None`, the default: a plain clip.
+- `Additive::LocalSpace(AdditiveBase)`: additive in each bone's local space
+  against `AdditiveBase::clip`, the base clip, kept by asset id.
+
+The importers set it from a source's import settings
+([asset importing](../asset-importing.md)), and code can with
+`set_additive`, building the base with `AdditiveBase::new(clip)` and
+`with_range`, `with_base_range` and `with_root`. `set_additive` drops any delta
+the clip already holds, so a clip made plain, or given a new base, samples no
+delta until it is built again.
+
+The clip keeps its full-pose keys, so `AnimationClipNode` and the clip editor
+play it as any other clip. The difference, the delta, is derived data: it is
+built when the clip loads, kept in the derived data cache, and written into the
+clip by a cook, so a cooked build doesn't read the base. A clip whose
+base is missing, unset, itself additive, or whose ranges don't fit fails to
+load, with an error naming the clip and the reason. A clip added in code with
+`AssetServer::add` derives nothing, and has no delta.
+
+For each frame, the delta of a bone is the clip's rotation times the inverse of
+the base's, and the clip's translation minus the base's. Applied with
+`apply_additive(&mut pose, &delta, weight)` (`concerto::animation::pose`), it
+turns the pose's rotation by the delta, slerped from identity by `weight`, and
+moves its translation by the weighted delta. At weight 1 over the base it gives
+the clip back. `AnimationClip::sample_additive(time, &bone)` gives the delta at
+a time, clamped to the delta, and `additive_duration()` its length.
+
+The base is aligned by normalized time: `range` and `base_range`, in seconds,
+trim each clip, the whole clip when unset, and the base's span is stretched to
+the clip's, so a base twice as long is read at twice the clip's time. Keys are
+taken at the clip's frame rate, its detected rate when it has none stored, or
+30 frames a second, and land on both ends of `range`.
+
+A delta exists only for a bone and component that both clips animate; any other
+reads as identity. The bones in `roots`, the roots of the skeleton the source
+emits, keep their rotation delta but no translation, so an overlay adds a lean
+of the whole body but no root motion. Scale is never layered, nor are a clip's
+events: they stay on the clip.
+
+Mesh-space deltas, a single-frame or rest-pose base, and the graph node that
+plays an additive clip over a pose are not there yet.
 
 ## Gameplay helpers
 

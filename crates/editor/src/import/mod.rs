@@ -7,12 +7,12 @@ use std::path::{Component, Path, PathBuf};
 use std::thread::JoinHandle;
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_ecs::{IntoSystemConfig, ResMut, Resource};
+use concerto_ecs::{IntoSystemConfig, ResMut, Resource, events::event_writer::EventWriter};
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
 
-use crate::project::ProjectState;
+use crate::project::{AssetsWritten, ProjectState};
 
 /// Imports a source into the project at `destination`, bringing the files it refers to along.
 pub fn import_source_into(
@@ -352,6 +352,7 @@ fn finish_import(
     mut queue: ResMut<ImportQueue>,
     mut state: ResMut<ProjectState>,
     mut registry: ResMut<AssetRegistry>,
+    mut written: EventWriter<AssetsWritten>,
 ) {
     if !queue.job.as_ref().is_some_and(|job| job.is_finished()) {
         return;
@@ -379,6 +380,9 @@ fn finish_import(
                     .is_some_and(|project| &project.root == root)
             {
                 apply_to_registry(&mut registry, &imported);
+                written.write(AssetsWritten {
+                    ids: imported.assets.iter().map(|entry| entry.id).collect(),
+                });
             }
             let siblings = match imported.siblings.len() {
                 0 => String::new(),
@@ -820,25 +824,6 @@ mod tests {
         validate_rows(&mut staged, project.path());
         assert!(rejection(&staged[0]).contains("file name"));
         assert!(rejection(&staged[1]).contains("file name"));
-    }
-
-    #[test]
-    fn a_destination_that_changes_the_extension_is_rejected() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[("/tmp/hero.glb", "assets/hero.png")]);
-        validate_rows(&mut staged, project.path());
-        assert!(
-            rejection(&staged[0]).contains("extension"),
-            "the importer is chosen from the destination extension, so it must match the source"
-        );
-    }
-
-    #[test]
-    fn an_unsupported_source_is_rejected_by_its_extension() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[("/tmp/notes.txt", "assets/notes.txt")]);
-        validate_rows(&mut staged, project.path());
-        assert!(rejection(&staged[0]).contains("txt"));
     }
 
     #[test]

@@ -51,17 +51,19 @@ cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
 cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && trunk serve
-cd examples/tech-demo && trunk build --release --public-url ./ --dist <dir>
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
 cargo concerto editor <dir> --update [--engine <path>]
+cargo concerto build <dir> [--cook] [--release] [--target wasm32-unknown-unknown]
+cargo concerto run <dir> [--cook] [--release] [-- <game args>]
+cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
 ```
 
 Examples are `tech-demo` and `ui-showcase`. `tech-demo` starts on the grid
 level: the character with every gizmo layer on an empty floor under the world
 grid. That is also the only level of the web build, which ships no forest or
-sanatorium content; the release build above, zipped with `index.html` at the
-root, is what goes on a web host such as itch.io. `-- --forest` runs the forest, whose scene the editor
+sanatorium content; the cooked release build above, zipped with `index.html` at
+the root, is what goes on a web host such as itch.io. `-- --forest` runs the forest, whose scene the editor
 opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved by root
 motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
 method there); its Blender source and exports are in
@@ -88,7 +90,7 @@ cargo test --locked -p concerto-physics --no-default-features --features force-r
 cargo build --locked --target wasm32-unknown-unknown
 ```
 
-A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on macOS and Windows.
+A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on Windows.
 
 Test builds carry line tables only and `cargo build` carries full debug info,
 so the two compile everything separately, third-party crates and Jolt
@@ -183,6 +185,12 @@ style follow the file you are in.
 **No tuples as types.** Don't use a tuple such as `(u32, f32)` as a field
 type, a collection element, a return type or a parameter, in tests too. Name
 each field in a struct, and give it methods where they read better.
+
+**Builders for wide structs.** A public struct with many public fields that
+users set, such as a graph node's settings, gets `new(..)` for what it can't
+default and a consuming `with_<field>(mut self, value) -> Self` per field, as
+`UINode` has, so users change a few defaults without a struct literal. A
+collection field gets `with_<item>` that adds one.
 
 **Tests first.** Write the failing test, watch it fail, then make it pass. A
 cloud pipeline session writes the test first but cannot run it, so the red step

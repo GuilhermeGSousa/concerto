@@ -11,7 +11,9 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation::clip::{
+    AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
+};
 use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names, hash_file_contents};
 use concerto_color::Color;
 use concerto_ecs::component::scene::SceneEntityRef;
@@ -52,6 +54,9 @@ pub struct GltfSettings {
     /// Per emitted clip name, the clip times in seconds of each named event.
     #[serde(default)]
     pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
+    /// Per emitted clip name, the base the clip is additive against.
+    #[serde(default)]
+    pub additive: BTreeMap<String, AdditiveSetting>,
 }
 
 /// One emitted primitive of a glTF mesh: the sub-asset indices of its imported
@@ -261,6 +266,7 @@ impl Importer for GltfImporter {
         // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
         // vector position, so a skipped skin cannot misalign the rest.
         let mut skins: Vec<SkinInfo> = Vec::new();
+        let mut roots: BTreeSet<Uuid> = BTreeSet::new();
         for (skin_index, skin) in document.skins().enumerate() {
             let Some(inverse_bind_matrices) = skin
                 .reader(|buffer| Some(&buffers[buffer.index()]))
@@ -355,6 +361,14 @@ impl Importer for GltfImporter {
                     },
                 )?;
             ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
+            roots.extend(
+                skeleton
+                    .parents
+                    .iter()
+                    .zip(skeleton.bone_ids.iter())
+                    .filter(|(parent, _)| parent.is_none())
+                    .map(|(_, id)| *id),
+            );
 
             skins.push(SkinInfo {
                 skeleton_index: skin_index,
@@ -380,6 +394,16 @@ impl Importer for GltfImporter {
                 "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
             )));
         }
+        if let Some(name) = settings
+            .additive
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(malformed_settings(format!(
+                "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
+        let roots: Vec<Uuid> = roots.into_iter().collect();
         for (animation_index, (animation, animation_name)) in
             document.animations().zip(&animation_names).enumerate()
         {
@@ -441,6 +465,15 @@ impl Importer for GltfImporter {
                     .map_err(|message| {
                         malformed_settings(format!("clip `{animation_name}`: {message}"))
                     })?;
+            }
+
+            if let Some(additive) = settings.additive.get(animation_name) {
+                let additive = additive
+                    .additive(animation_clip.duration(), roots.clone())
+                    .map_err(|message| {
+                        malformed_settings(format!("clip `{animation_name}`: {message}"))
+                    })?;
+                animation_clip.set_additive(additive);
             }
 
             let index_name = animation_index.to_string();

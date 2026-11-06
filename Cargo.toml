@@ -67,6 +67,7 @@ concerto-motion-matching-gizmos = { path = "crates/motion-matching-gizmos", vers
 concerto-name = { path = "crates/name", version = "0.1.0" }
 concerto-obj = { path = "crates/obj", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }
+concerto-procedural-animation = { path = "crates/procedural-animation", version = "0.1.0" }
 concerto-render = { path = "crates/render", version = "0.1.0" }
 concerto-render-macros = { path = "crates/render/macros", version = "0.1.0" }
 concerto-scene = { path = "crates/scene", version = "0.1.0" }
@@ -92,6 +93,7 @@ concerto-render.workspace = true
 concerto-director.workspace = true
 concerto-mesh.workspace = true
 concerto-motion-matching.workspace = true
+concerto-procedural-animation.workspace = true
 concerto-name.workspace = true
 concerto-gameplay.workspace = true
 concerto-window.workspace = true
@@ -108,12 +110,17 @@ concerto-world-grid.workspace = true
 concerto-physics.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow = "1.0.97"
 pollster = "0.4.0"
 env_logger = "0.11.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = "1.0.0"
 console_error_panic_hook = "0.1.7"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
 
 [profile.dev]
 opt-level = 1

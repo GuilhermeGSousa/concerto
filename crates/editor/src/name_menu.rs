@@ -2,7 +2,6 @@ use concerto_ecs::{
     Component, Entity, Query, Res, With, command::CommandQueue,
     query::change_detection::DetectChanges, signal::listener::Listener,
 };
-use concerto_editor::asset_editor::ActiveEditor;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
@@ -13,13 +12,16 @@ use concerto_ui::{
     transform::UIValue,
 };
 
+use crate::asset_editor::ActiveEditor;
+
 const MENU_WIDTH: f32 = 220.0;
 const ITEM_HEIGHT: f32 = 26.0;
 const LIST_MAX_HEIGHT: f32 = 280.0;
 const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
 
+/// The popup listing names to pick from, shared by every name picker.
 #[derive(Component)]
-pub(crate) struct NameMenu;
+pub struct NameMenu;
 
 fn menu_panel(button: Entity) -> UIAnchoredPanel {
     UIAnchoredPanel::new(UIAnchorTarget::from_node(button))
@@ -30,7 +32,8 @@ fn menu_panel(button: Entity) -> UIAnchoredPanel {
         .with_open(true)
 }
 
-pub(crate) fn open_name_menu(
+/// Opens the name menu under `button` listing `names`, or closes it when it is already open there.
+pub fn open_name_menu(
     button: Entity,
     names: &[impl AsRef<str>],
     current: Option<&str>,
@@ -114,13 +117,15 @@ pub(crate) fn open_name_menu(
     );
 }
 
-pub(crate) fn close_menu(menus: &Query<&mut UIAnchoredPanel, With<NameMenu>>) {
+/// Closes the name menu.
+pub fn close_menu(menus: &Query<&mut UIAnchoredPanel, With<NameMenu>>) {
     for mut panel in menus.iter() {
         panel.open = false;
     }
 }
 
-pub(crate) fn close_name_menu(
+/// Closes the name menu when another tab comes to the front.
+pub fn close_name_menu(
     active: Res<ActiveEditor>,
     menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
 ) {

@@ -10,7 +10,9 @@ use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin},
 };
-use concerto_ecs::{Entity, IntoSystem, Res, System, command::CommandQueue};
+use concerto_ecs::{
+    Entity, IntoSystem, Res, System, command::CommandQueue, events::event_channel::EventChannel,
+};
 use concerto_editor::{
     EditorPlugin,
     asset_editor::{
@@ -27,20 +29,24 @@ use concerto_editor::{
         InspectedSnapshots, InspectedValues, InspectorRegistry, PropertyCommits, PropertyRow,
         PropertyTarget, ShownValue, ValueCard, commit_number, spawn_panel, value_systems,
     },
+    name_menu::close_name_menu,
     preview::{PreviewFailed, PreviewHostPlugin},
-    project::{Project, ProjectState},
+    project::{AssetsWritten, Project, ProjectState},
     scene::{SaveFailed, ScenePlugin, SceneRecipe, SceneSaved},
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
+    asset_server::AssetServer,
+    asset_store::AssetStore,
     content::save_content_asset_into,
+    derived::DerivedDataCache,
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mesh::JointName;
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, FeatureChannel, FeatureChannelData, FrameContext, MirrorAxis,
-    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, TimeRange, TrajectoryDirections,
+    MotionDatabase, MotionEntry, ReflectFeatureChannel, TimeRange, TrajectoryDirections,
     TrajectoryPositions,
 };
 use concerto_reflect::{Reflect, ReflectedValue};
@@ -50,14 +56,12 @@ use glam::Vec2;
 
 use crate::{
     DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
-    build::{check_baked, finish_build, mark_background_work, start_build},
+    derive::{derive_definitions, follow_written_inputs, mark_background_work},
     document::{
         clear_status_on_edit, follow_definition_edits, load_definition, restore_discarded_edits,
     },
     facts::{follow_skeleton, read_entry_facts},
     install,
-    joint::{JointNameEditor, refresh_joint_rows},
-    menu::close_name_menu,
     panels::{
         build_definition_panels, sync_channel_rows, sync_definition_panels,
         tests::{clip_of, skeleton_of},
@@ -120,6 +124,19 @@ fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
 
 pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     let mut f = SceneFixture::new();
+    f.world
+        .get_resource::<AssetServer>()
+        .unwrap()
+        .set_derived_cache(DerivedDataCache::in_project(&f.project_root));
+    let clips = AssetStore::<AnimationClip>::new();
+    f.world
+        .get_resource::<AssetServer>()
+        .unwrap()
+        .clone()
+        .register_derived_asset(&clips);
+    f.world.insert_resource(clips);
+    f.world
+        .insert_resource(EventChannel::<AssetsWritten>::new());
     f.world.insert_resource(SceneRecipe {
         recipe,
         gpu: None,
@@ -128,11 +145,9 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     f.world
         .get_resource_mut::<AssetEditorRegistry>()
         .unwrap()
-        .register_creatable::<MotionDatabaseDefinition, MotionDatabaseEditor>()
+        .register_creatable::<MotionDatabase, MotionDatabaseEditor>()
         .unwrap();
-    let mut inspector = InspectorRegistry::default();
-    inspector.register_property_editor::<JointName, JointNameEditor>();
-    f.world.insert_resource(inspector);
+    f.world.insert_resource(InspectorRegistry::default());
     f.world.insert_resource(InspectedSnapshots::default());
     let mut panel = build_inspector.into_system();
     panel.initialize(&mut f.world);
@@ -146,12 +161,11 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     }
     f.add_delivery(follow_definition_edits.into_boxed_system());
     f.add_delivery(save_definitions.into_boxed_system());
-    f.add_delivery(start_build.into_boxed_system());
     f.add_delivery(load_definition.into_boxed_system());
     f.add_delivery(follow_skeleton.into_boxed_system());
     f.add_delivery(read_entry_facts.into_boxed_system());
-    f.add_delivery(finish_build.into_boxed_system());
-    f.add_delivery(check_baked.into_boxed_system());
+    f.add_delivery(follow_written_inputs.into_boxed_system());
+    f.add_delivery(derive_definitions.into_boxed_system());
     f.add_delivery(follow_playback.into_boxed_system());
     f.add_delivery(follow_preview_time.into_boxed_system());
     f.add_delivery(mark_background_work.into_boxed_system());
@@ -162,7 +176,6 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     for system in cards {
         f.add_delivery(system);
     }
-    f.add_delivery(refresh_joint_rows.into_boxed_system());
     f
 }
 
@@ -181,8 +194,8 @@ pub(crate) fn entry(seconds: f32) -> MotionEntry {
     }
 }
 
-pub(crate) fn definition() -> MotionDatabaseDefinition {
-    MotionDatabaseDefinition {
+pub(crate) fn definition() -> MotionDatabase {
+    MotionDatabase {
         skeleton: AssetHandle::weak(AssetId::new()),
         entries: vec![entry(1.0), entry(2.0)],
         rate: 30.0,
@@ -201,7 +214,7 @@ pub(crate) fn write_asset<A: Asset>(f: &mut SceneFixture, address: &str, asset: 
 pub(crate) fn write_definition(
     f: &mut SceneFixture,
     address: &str,
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
 ) -> AssetEntry {
     write_asset(f, address, definition)
 }
@@ -219,6 +232,10 @@ pub(crate) fn open(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
     let document = request(f, asset);
     f.frame();
     f.frame();
+    f.frames_until("the derive never ended", |f| {
+        let state = state(f, document);
+        !state.derive_wanted && state.derive_job.is_none()
+    });
     document
 }
 
@@ -355,10 +372,12 @@ fn install_registers_a_creatable_editor_with_a_preview() {
     install(&mut app);
 
     let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
-    let kind = MotionDatabaseDefinition::name();
+    let kind = MotionDatabase::name();
     assert!(editors.preview(kind).is_some());
     assert!(editors.bottom_host(kind));
     assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
+    let server = app.get_resource::<AssetServer>().unwrap();
+    assert!(server.can_cook(AnimationClip::name()));
 }
 
 #[test]
@@ -371,7 +390,7 @@ fn install_alone_plays_a_clip_in_a_definitions_preview_and_registers_no_clip_edi
         save_content_asset_into(&skeleton, root, "content/hero/skeleton.gasset", &mut assets);
     let walk = clip_of(10, 0..3);
     let walk = save_content_asset_into(&walk, root, "content/hero/walk.gasset", &mut assets);
-    let opened = MotionDatabaseDefinition {
+    let opened = MotionDatabase {
         skeleton: AssetHandle::weak(skeleton.unwrap()),
         entries: vec![MotionEntry {
             clip: AssetHandle::weak(walk.unwrap()),
@@ -386,6 +405,7 @@ fn install_alone_plays_a_clip_in_a_definitions_preview_and_registers_no_clip_edi
     project.project = Some(Project {
         root: root.into(),
         content_root: "content".into(),
+        default_scene: None,
     });
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
@@ -467,7 +487,7 @@ fn opening_a_definition_holds_its_settings_and_its_channels_in_order() {
         1.5
     );
     assert_eq!(f.document(document).current, Some(asset));
-    assert_eq!(f.status(document), "");
+    assert_eq!(f.document(document).failed, None);
     assert!(!f.unsaved(document));
 }
 
@@ -538,7 +558,7 @@ fn a_definition_with_no_entries_selects_none() {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
 
     let document = open(&mut f, &asset);
@@ -563,7 +583,7 @@ fn a_broken_file_fails_its_request() {
 fn a_file_of_another_kind_fails_its_request() {
     let mut f = fixture();
     let mistaken = AssetEntry {
-        kind: MotionDatabaseDefinition::name().into(),
+        kind: MotionDatabase::name().into(),
         ..f.scene.clone()
     };
     f.add_to_project(&mistaken);
@@ -574,7 +594,7 @@ fn a_file_of_another_kind_fails_its_request() {
     assert!(state(&f, document).loaded.is_none());
 }
 
-fn with_channel(type_name: &str, value: ReflectedValue) -> MotionDatabaseDefinition {
+fn with_channel(type_name: &str, value: ReflectedValue) -> MotionDatabase {
     let mut definition = definition();
     definition.channels.push(FeatureChannelData::Stored {
         type_name: type_name.into(),
@@ -761,6 +781,7 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
     assert!(f.unsaved(document));
 
     save(&mut f, document);
+    assert_eq!(f.status(document), "Saved content/database.gasset");
 
     let saved = read_definition(&f.project_root, &asset).unwrap();
     assert_eq!(saved.rate, 48.0);
@@ -798,7 +819,6 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
         }]
     );
     assert!(f.written::<SaveFailed>().is_empty());
-    assert_eq!(f.status(document), "Saved content/database.gasset");
     assert_eq!(f.document(document).current, Some(asset));
 }
 
@@ -973,6 +993,9 @@ fn the_next_edit_clears_the_saved_line() {
     edit(&mut f, document, "Settings", "speed", 2.0);
     save(&mut f, document);
     assert_eq!(f.status(document), "Saved content/database.gasset");
+    f.frames_until("the derive never ended", |f| {
+        state(f, document).derive_job.is_none()
+    });
 
     edit(&mut f, document, "Settings", "speed", 3.0);
 
@@ -1074,9 +1097,11 @@ fn install_opens_saves_and_discards_a_definition_in_the_editors_schedule() {
     project.project = Some(Project {
         root: directory.path().into(),
         content_root: "content".into(),
+        default_scene: None,
     });
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
         .register_plugin(WindowPlugin)
         .insert_resource(Window::new((640, 480), 1.0))
@@ -1099,7 +1124,7 @@ fn install_opens_saves_and_discards_a_definition_in_the_editors_schedule() {
     let world = app.main_mut().world_mut();
     let document = world.spawn((
         EditorDocument {
-            asset_type: MotionDatabaseDefinition::name(),
+            asset_type: MotionDatabase::name(),
             title: "database".into(),
             current: None,
             pending: Some(asset.clone()),

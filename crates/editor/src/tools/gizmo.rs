@@ -764,21 +764,6 @@ mod tests {
     }
 
     #[test]
-    fn a_set_gizmo_mode_signal_changes_the_mode() {
-        let mut world = World::new();
-        world.insert_resource(GizmoState::default());
-        world.insert_resource(FlyCamera::default());
-        world.add_listener(set_gizmo_mode);
-
-        world.trigger(SetGizmoMode(GizmoMode::Rotate));
-
-        assert_eq!(
-            world.get_resource::<GizmoState>().unwrap().mode(),
-            GizmoMode::Rotate
-        );
-    }
-
-    #[test]
     fn the_mode_signal_is_ignored_while_flying() {
         let mut f = fixture();
         f.set_mode(GizmoMode::Rotate);

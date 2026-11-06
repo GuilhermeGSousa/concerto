@@ -135,6 +135,7 @@ fn editor(sources: &[&str]) -> (App, tempfile::TempDir) {
     state.project = Some(Project {
         root: project.path().to_path_buf(),
         content_root: "content".into(),
+        default_scene: None,
     });
     app.insert_resource(state);
     concerto_ui::list::install_listeners(app.main_mut().world_mut());
