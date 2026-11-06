@@ -39,6 +39,7 @@ mod registry;
 mod rows;
 mod sync;
 mod target;
+mod text_field;
 mod values;
 mod variants;
 
@@ -59,6 +60,7 @@ pub use numeric::commit_number;
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields, refresh_numeric_labels,
 };
+use text_field::{cancel_text_fields, commit_text_fields, refresh_text_fields};
 use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
@@ -150,6 +152,8 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, cancel_numeric_fields)
             .add_system(LateUpdate, commit_name_fields)
             .add_system(LateUpdate, cancel_name_fields)
+            .add_system(LateUpdate, commit_text_fields)
+            .add_system(LateUpdate, cancel_text_fields)
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
@@ -171,6 +175,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, refresh_color_swatches)
             .add_system(LateUpdate, refresh_bool_fields)
             .add_system(LateUpdate, refresh_name_fields)
+            .add_system(LateUpdate, refresh_text_fields)
             .add_system(LateUpdate, refresh_variant_labels)
             .add_system(LateUpdate, refresh_option_fields)
             .add_system(LateUpdate, sync_inspector_scroll);

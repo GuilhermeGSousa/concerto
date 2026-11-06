@@ -839,8 +839,8 @@ index from 0, in one of three shapes. An element with an editor gets that
 editor's row, with a remove button at the end. An element with fields, such as a
 struct, gets a heading with its index and the remove button, followed by a row
 per field. Anything else gets an "Unsupported type" row with a remove button, so
-whatever add creates can be removed; `Vec<String>` falls here, since there is no
-`String` editor. Elements cannot be reordered.
+whatever add creates can be removed; `Vec<u64>` falls here, since there is no
+`u64` editor. Elements cannot be reordered.
 
 Add and remove are property commits, so they mark the scene unsaved. The editor
 has no undo, so a removal stands until the scene is reloaded. A list in a list,
@@ -871,6 +871,17 @@ registered on the editor's `App`. Submitting the field commits the typed text
 as a `Name`; Escape or moving focus away puts the shown text back without an
 edit. This is the interned name type, not the entity `Name` component, which
 the field above the cards edits.
+
+### Text and numbers
+
+A `String` field is a text field that behaves like a `Name` field: submitting
+commits the typed text, and Escape or moving focus away puts the shown text
+back without an edit. `f32` and `f64` fields are one number field each, `Vec2`
+two and `Vec3` three, each edited on its own. `usize` and `u32` fields take a
+whole number from 0 up, and `i32` fields a whole number of either sign. A
+fraction, a negative count, or a number the field's type cannot hold is
+refused, and the field shows the value again. Nothing is registered on the
+editor's `App` for any of them.
 
 ### Asset handles
 
@@ -920,7 +931,7 @@ through unchanged.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat`, `bool` and `Name`, the
+holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `bool`, `Name` and `String`, the
 asset picker and the entity picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
