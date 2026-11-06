@@ -924,6 +924,35 @@ mod tests {
     }
 
     #[test]
+    fn each_bone_turns_by_its_offset_on_top_of_its_input_rotation() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.3, 0.1, 2.0));
+        rig.joints[SPINE].rotation *= Quat::from_rotation_y(0.3);
+        rig.joints[HEAD].rotation *= Quat::from_rotation_x(-0.2);
+        rig.joints[EYE_L].rotation *= Quat::from_rotation_y(0.1);
+        let mut looker = Looker::start(&rig, with_eyes());
+
+        let frame = looker.settle(&rig);
+
+        let input = rig.input();
+        let offsets = &looker.state.offsets;
+        assert_eq!(offsets.len(), CHAIN.len() + EYES.len());
+        for (bone, offset) in CHAIN.into_iter().chain(EYES).zip(offsets) {
+            let actual = frame.joints()[bone].rotation;
+            let expected = input.joints()[bone].rotation * offset.value;
+            let expected = if actual.dot(expected) < 0.0 {
+                -expected
+            } else {
+                expected
+            };
+            assert!(
+                actual.abs_diff_eq(expected, 1e-4),
+                "bone {bone}: expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    #[test]
     fn each_eye_looks_at_a_near_target_from_its_own_position() {
         let mut rig = Rig::new();
         let input = rig.input();
@@ -1316,6 +1345,39 @@ mod tests {
 
             assert!(rig.turned(&easing, HEAD) > 1e-3);
             assert_unchanged(&rig, &settled);
+        }
+    }
+
+    #[test]
+    fn an_absent_target_holds_the_offsets_at_rest() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
+        let mut looker = Looker::start(&rig, eased());
+        for _ in 0..5 {
+            looker.step(&rig, DT);
+        }
+        assert!(
+            looker
+                .state
+                .offsets
+                .iter()
+                .any(|offset| offset.velocity != Vec3::ZERO)
+        );
+        let held: Vec<Quat> = looker
+            .state
+            .offsets
+            .iter()
+            .map(|offset| offset.value)
+            .collect();
+        rig.blackboard = AnimationBlackboard::default();
+
+        looker.step(&rig, DT);
+
+        assert!(looker.state.weight.value > 0.0);
+        assert_eq!(looker.state.offsets.len(), held.len());
+        for (offset, value) in looker.state.offsets.iter().zip(&held) {
+            assert_eq!(offset.velocity, Vec3::ZERO);
+            assert_eq!(offset.value, *value);
         }
     }
 
