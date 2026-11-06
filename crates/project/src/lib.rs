@@ -34,6 +34,7 @@ const ARRAY_WIDTH: usize = 60;
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const COOK_MARKER: &str = ".concerto-cook";
+const TRUNK_MISSING: &str = "trunk is not on PATH; install it with `cargo install trunk`";
 
 const OWN_WORKSPACE: &str = "\n[workspace]\nmembers = [\".\", \"editor\"]\n\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3";
 
@@ -301,6 +302,9 @@ pub fn build(options: BuildOptions) -> Result<Report> {
         dist: options.dist.as_deref().map(absolute).transpose()?,
         ..options
     };
+    if options.wasm {
+        require_trunk("trunk".as_ref())?;
+    }
     let package = package_name(&options.dir)?;
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let target_dir = target_directory(&cargo, &options.dir)?;
@@ -405,12 +409,27 @@ fn run_trunk(mut command: process::Command) -> Result<()> {
     let status = match command.status() {
         Ok(status) => status,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            bail!("trunk is not on PATH; install it with `cargo install trunk`")
+            bail!(TRUNK_MISSING)
         }
         Err(error) => return Err(error).with_context(|| format!("could not run `{shown}`")),
     };
     ensure!(status.success(), "`{shown}` failed with {status}");
     Ok(())
+}
+
+fn require_trunk(trunk: &std::ffi::OsStr) -> Result<()> {
+    let mut command = process::Command::new(trunk);
+    command
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match command.status() {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(TRUNK_MISSING),
+        Err(error) => {
+            Err(error).with_context(|| format!("could not run `{}`", command_line(&command)))
+        }
+    }
 }
 
 fn run_cargo(mut command: process::Command, package: &str) -> Result<PathBuf> {
@@ -2360,6 +2379,13 @@ mod tests {
             "{:?}",
             report.notes
         );
+    }
+
+    #[test]
+    fn a_missing_trunk_is_named_with_how_to_install_it() {
+        let error = require_trunk(std::ffi::OsStr::new("concerto-no-such-trunk")).unwrap_err();
+
+        assert_eq!(error.to_string(), TRUNK_MISSING);
     }
 
     const CARGO_MESSAGES: &str = r#"{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["custom-build"],"crate_types":["bin"],"name":"build-script-build","src_path":"/g/build.rs","edition":"2024","doc":false,"doctest":false,"test":false},"features":[],"filenames":["/t/debug/build/g-1/build-script-build"],"executable":null,"fresh":true}

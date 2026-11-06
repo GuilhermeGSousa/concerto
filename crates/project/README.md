@@ -162,7 +162,9 @@ The steps, each run only when the options call for it:
 3. Trunk: `trunk build` in `<dir>`, with `--release` and `--public-url <url>`
    when given, and always `--dist <dist>`. `<dist>` is `--dist` resolved
    against the working directory, or `<dir>/dist`. `trunk` must be on `PATH`;
-   install it with `cargo install trunk`.
+   install it with `cargo install trunk`. A web build checks for it before
+   any step runs, so a missing `trunk` fails at once rather than after the
+   native build and cook.
 4. Overlay: copies each cooked file over the file at the same relative path,
    in `<target>/<profile>/<pkg>-content/` natively (`<profile>` is `debug` or
    `release`) and in `<dist>` for the web. Only files the build already has
