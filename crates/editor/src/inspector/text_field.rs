@@ -13,11 +13,9 @@ use crate::inspector::rows::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
-/// A text field for a `String`, committing the typed text on submit.
 #[derive(Default)]
 pub(crate) struct TextField;
 
-/// The text field of a [`TextField`] row and the text it last showed.
 #[derive(Component)]
 pub(crate) struct TextFieldInput {
     row: Entity,
@@ -122,7 +120,6 @@ pub(crate) fn cancel_text_fields(
     }
 }
 
-/// Writes each row's text into its field, except the focused one.
 pub(crate) fn refresh_text_fields(
     focused: Res<FocusedWidget>,
     rows: Query<&PropertyRowValue>,
