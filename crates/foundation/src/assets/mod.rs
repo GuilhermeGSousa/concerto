@@ -28,6 +28,7 @@ pub mod asset_container;
 pub mod asset_server;
 pub mod asset_store;
 pub mod content;
+pub mod derived;
 pub mod handle;
 pub mod registry;
 pub mod utils;

@@ -60,6 +60,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     use concerto_animation::node::state_machine::AnimationStateMachine;
     use concerto_animation::node::{
         AnimationClipNode, BlendNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
+        TwoBoneIkNode,
     };
     use concerto_ecs::reflect::AppTypeRegistry;
     use concerto_foundation::assets::handle::AssetHandle;
@@ -77,6 +78,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(has_node_data(TypeId::of::<BlendSpace2DNode>()));
     assert!(has_node_data(TypeId::of::<AnimationStateMachine>()));
     assert!(has_node_data(TypeId::of::<PlaceholderNode>()));
+    assert!(has_node_data(TypeId::of::<TwoBoneIkNode>()));
     assert!(
         registry
             .get(TypeId::of::<AssetHandle<AnimationClip>>())
@@ -114,7 +116,7 @@ fn bone_x_after_a_few_frames(mut app: App) -> f32 {
         Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
-            vec!["bone".to_string()],
+            vec!["bone".into()],
             vec![JointPose::IDENTITY],
             vec![bone_id],
         )

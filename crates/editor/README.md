@@ -579,6 +579,14 @@ the scene the document now shows, or `SaveFailed { document, message }`, where
 a save only when the document has unsaved changes; otherwise it writes neither,
 even while it shows "Stop to save".
 
+Every write of a content asset in the editor also ends in
+`AssetsWritten { ids }` in the editor's world, naming the assets written: a
+finished import sends every asset it wrote, unless its project was replaced
+while it ran; a save by any asset editor sends the saved asset, taken from its
+`SceneSaved`, so an asset editor's save reports it by writing `SceneSaved`; and
+a New in the Asset Browser sends the created asset. Code that keeps data
+derived from other assets reads it to know when to derive again.
+
 Replacing the open scene, closing a dirty tab, switching project, and closing
 the window all ask first when there are unsaved changes: Save, Discard, or
 Cancel. Escape cancels. Discard marks the scene clean, so its replacement
@@ -853,6 +861,14 @@ is stored as 90°. The swatch always shows the color at full alpha, and an HDR
 color clips at full brightness. An editor registered for `Color` with
 `register_property_editor::<Color, _>` still takes precedence.
 
+### Names
+
+A `concerto_name::Name` field is a text field holding its text, with nothing
+registered on the editor's `App`. Submitting the field commits the typed text
+as a `Name`; Escape or moving focus away puts the shown text back without an
+edit. This is the interned name type, not the entity `Name` component, which
+the field above the cards edits.
+
 ### Asset handles
 
 `AssetPicker` edits every `AssetHandle<A>` the scene's `AppTypeRegistry` holds,
@@ -901,7 +917,7 @@ through unchanged.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool`, the
+holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat`, `bool` and `Name`, the
 asset picker and the entity picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A

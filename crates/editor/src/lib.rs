@@ -72,6 +72,10 @@ impl Plugin for EditorPlugin {
             concerto_app::schedule_groups::LateUpdate,
             asset_editor::request_save,
         );
+        app.add_system(
+            concerto_app::schedule_groups::Update,
+            asset_editor::report_saves_as_written,
+        );
         app.register_plugin(hosted::HostedPlugin);
         app.register_plugin(preview::PreviewHostPlugin);
         app.register_plugin(scene::ScenePlugin {

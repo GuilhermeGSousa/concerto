@@ -13,4 +13,6 @@ concerto-foundation.workspace = true
 concerto-render.workspace = true
 concerto-window.workspace = true
 concerto-ecs.workspace = true
+concerto-physics.workspace = true
+concerto-reflect.workspace = true
 glam = { version = "0.30.1" }

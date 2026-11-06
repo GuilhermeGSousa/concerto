@@ -3,7 +3,9 @@ use concerto_ecs::{
     Event, Res, ResMut, Resource, World, events::event_writer::EventWriter,
     system::input::SystemLocal, world::FromWorld,
 };
-use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
+use concerto_foundation::assets::{
+    AssetId, asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+};
 use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
 use std::{
@@ -53,6 +55,12 @@ pub struct ProjectOpened {
 pub struct ProjectOpenFailed {
     pub root: PathBuf,
     pub message: String,
+}
+
+/// Content assets `ids` were written to disk by an import, an asset editor's save, or a New in the content browser.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct AssetsWritten {
+    pub ids: Vec<AssetId>,
 }
 
 struct ProjectJob {
@@ -117,6 +125,7 @@ impl Plugin for ProjectPlugin {
     fn build(&self, app: &mut App) {
         app.register_event::<ProjectOpened>()
             .register_event::<ProjectOpenFailed>()
+            .register_event::<AssetsWritten>()
             .add_system(Update, process_commands)
             .add_system(Update, report_outdated_content);
     }
@@ -238,6 +247,7 @@ fn process_commands(
                     });
                     return;
                 }
+                asset_server.set_derived_cache(DerivedDataCache::in_project(&project.root));
                 state.status.clear();
                 opened.write(ProjectOpened {
                     root: project.root.clone(),
@@ -344,6 +354,7 @@ mod tests {
                     source: "assets/model.glb".into(),
                     sub_asset: name.into(),
                 }),
+                derived: None,
             };
             std::fs::write(
                 root.join(format!("content/{name}.gasset")),
@@ -502,6 +513,30 @@ mod tests {
             }]
         );
         assert!(written::<ProjectOpenFailed>(&world).is_empty());
+    }
+
+    #[test]
+    fn an_opened_project_keeps_derived_data_in_its_derived_cache_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut world = project_world();
+
+        settle(
+            &mut world,
+            Some(EditorCommand::OpenProject(dir.path().into())),
+        );
+
+        let cache = world.get_resource::<AssetServer>().unwrap().derived_cache();
+        assert_eq!(
+            cache.root(),
+            Some(
+                dir.path()
+                    .canonicalize()
+                    .unwrap()
+                    .join("derived-cache")
+                    .as_path()
+            )
+        );
+        assert!(!dir.path().join("derived-cache").exists());
     }
 
     #[test]

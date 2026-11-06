@@ -12,8 +12,9 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform},
 };
 use concerto_mesh::skeleton::Skeleton;
+use concerto_name::Name;
 use concerto_reflect::Reflect;
-use glam::{Vec2, Vec3};
+use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
@@ -23,7 +24,7 @@ use crate::{
         AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
         state_machine::AnimationStateMachineState,
     },
-    pose::PosePool,
+    pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
 };
 
@@ -47,8 +48,10 @@ impl ActiveNodeState {
 pub struct AnimationPlayer {
     graph_state: AnimationGraphState,
     blackboard: AnimationBlackboard,
-    pose_pool: PosePool,
+    frame_pool: FramePool,
     paused: bool,
+    event_threshold: f32,
+    pub(crate) fired: Vec<FiredEvent>,
 }
 
 impl AnimationPlayer {
@@ -56,9 +59,16 @@ impl AnimationPlayer {
         Self {
             graph_state: AnimationGraphState::default(),
             blackboard: AnimationBlackboard::default(),
-            pose_pool: PosePool::new(bone_count),
+            frame_pool: FramePool::new(bone_count),
             paused: false,
+            event_threshold: 0.0,
+            fired: Vec::new(),
         }
+    }
+
+    /// Drops clip events whose source weighs no more than `threshold` in the final frame; 0 by default.
+    pub fn set_event_threshold(&mut self, threshold: f32) {
+        self.event_threshold = threshold;
     }
 
     /// Freezes the player: its graph stops advancing and its bones are no
@@ -80,54 +90,55 @@ impl AnimationPlayer {
         }
     }
 
+    /// Sets the weight a `BlendNode` gives this node's pose among its inputs.
     pub fn set_node_weight(&mut self, node_index: &AnimationNodeIndex, weight: f32) {
         self.graph_state.set_node_weight(node_index, weight);
     }
 
-    pub fn set_param<T: Reflect>(&mut self, key: impl Into<String>, value: T) {
+    pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
         self.blackboard.set(key, value);
     }
 
-    pub fn set_bool_param(&mut self, key: impl Into<String>, value: bool) {
+    pub fn set_bool_param(&mut self, key: Name, value: bool) {
         self.set_param(key, value);
     }
 
-    pub fn set_int_param(&mut self, key: impl Into<String>, value: u32) {
+    pub fn set_int_param(&mut self, key: Name, value: u32) {
         self.set_param(key, value);
     }
 
-    pub fn set_float_param(&mut self, key: impl Into<String>, value: f32) {
+    pub fn set_float_param(&mut self, key: Name, value: f32) {
         self.set_param(key, value);
     }
 
-    pub fn set_vec2_param(&mut self, key: impl Into<String>, value: Vec2) {
+    pub fn set_vec2_param(&mut self, key: Name, value: Vec2) {
         self.set_param(key, value);
     }
 
-    pub fn get_param<T: Reflect>(&self, key: &str) -> Option<&T> {
+    pub fn get_param<T: Reflect>(&self, key: Name) -> Option<&T> {
         self.blackboard.get::<T>(key)
     }
 
-    pub fn get_bool_param(&self, key: &str) -> Option<bool> {
+    pub fn get_bool_param(&self, key: Name) -> Option<bool> {
         self.blackboard.get_bool(key)
     }
 
-    pub fn get_int_param(&self, key: &str) -> Option<u32> {
+    pub fn get_int_param(&self, key: Name) -> Option<u32> {
         self.blackboard.get_int(key)
     }
 
-    pub fn get_float_param(&self, key: &str) -> Option<f32> {
+    pub fn get_float_param(&self, key: Name) -> Option<f32> {
         self.blackboard.get_float(key)
     }
 
-    pub fn get_vec2_param(&self, key: &str) -> Option<Vec2> {
+    pub fn get_vec2_param(&self, key: Name) -> Option<Vec2> {
         self.blackboard.get_vec2(key)
     }
 
-    pub fn current_fsm_state(&self, node_index: &AnimationNodeIndex) -> Option<&str> {
+    pub fn current_fsm_state(&self, node_index: &AnimationNodeIndex) -> Option<Name> {
         self.graph_state
             .get_state::<AnimationStateMachineState>(node_index)
-            .map(AnimationStateMachineState::current_state_name)
+            .and_then(AnimationStateMachineState::current_state_name)
     }
 
     /// Calls `f` with each live node of type `N` in the player's graph, its state and the blackboard.
@@ -150,6 +161,7 @@ impl AnimationPlayer {
             blackboard: &self.blackboard,
             root: None,
             skeleton: None,
+            model_to_world: None,
             inputs,
         };
         self.graph_state
@@ -167,6 +179,7 @@ impl AnimationPlayer {
             blackboard: &self.blackboard,
             root: None,
             skeleton,
+            model_to_world: None,
             inputs,
         };
         self.graph_state.update(delta_time, graphs, &context);
@@ -183,6 +196,7 @@ impl AnimationPlayer {
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
+        self.fired.clear();
         let bone_ids = &skeleton.bone_ids;
         let rest_pose = &skeleton.rest_pose;
         let root = bones
@@ -205,29 +219,38 @@ impl AnimationPlayer {
             blackboard: &self.blackboard,
             root,
             skeleton: Some(skeleton),
+            model_to_world: Some(model_to_world_of(bones, parents, globals)),
             inputs,
         };
 
-        self.pose_pool.set_rest(rest_pose);
-        let mut output_pose = self.pose_pool.acquire();
+        self.frame_pool.set_rest(rest_pose);
+        let mut output_frame = self.frame_pool.acquire();
         if !self.graph_state.evaluate(
             graphs,
             &context,
             bone_ids,
-            &mut self.pose_pool,
-            &mut output_pose,
+            &mut self.frame_pool,
+            &mut output_frame,
         ) {
             // No graph evaluated — keep the bones' current (default) pose.
-            self.pose_pool.release(output_pose);
+            self.frame_pool.release(output_frame);
             return false;
         }
 
-        let root_motion = output_pose.root_motion();
+        let threshold = self.event_threshold;
+        self.fired.extend(
+            output_frame
+                .events
+                .drain(..)
+                .filter(|event| event.weight > threshold),
+        );
+
+        let root_motion = output_frame.root_motion();
         for (bone_index, bone) in bones.iter().enumerate() {
             let Some(bone_entity) = bone.entity() else {
                 continue;
             };
-            let Some(joint_pose) = output_pose.get_joint_pose(bone_index) else {
+            let Some(joint_pose) = output_frame.joint(bone_index) else {
                 continue;
             };
 
@@ -242,9 +265,24 @@ impl AnimationPlayer {
             }
         }
 
-        self.pose_pool.release(output_pose);
+        self.frame_pool.release(output_frame);
         true
     }
+}
+
+fn model_to_world_of(
+    bones: &[SceneEntityRef],
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+) -> Affine3A {
+    bones
+        .first()
+        .and_then(|bone| bone.entity())
+        .and_then(|bone| parents.get_entity(bone))
+        .and_then(|parent| globals.get_entity(parent.parent()))
+        .map_or(Affine3A::IDENTITY, |global| {
+            Affine3A::from_mat4(global.matrix())
+        })
 }
 
 fn up_of(root: Entity, parents: &Query<&ChildOf>, globals: &Query<&GlobalTransform>) -> Vec3 {
@@ -278,6 +316,7 @@ impl Deref for AnimationHandleComponent {
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+    use concerto_name::name;
 
     use super::AnimationPlayer;
     use crate::{
@@ -354,15 +393,18 @@ mod tests {
     #[test]
     fn for_each_state_mut_hands_each_node_its_state_and_the_blackboard() {
         let mut fixture = fixture();
-        fixture.player.set_bool_param("flag", true);
-        fixture.player.set_float_param("speed", 3.0);
+        fixture.player.set_bool_param(name!("flag"), true);
+        fixture.player.set_float_param(name!("speed"), 3.0);
 
         let mut seen = Vec::new();
         fixture.player.for_each_state_mut::<AnimationClipNode>(
             fixture.walks.graphs(),
             |_, state, board| {
                 state.play();
-                seen.push((board.get_bool("flag"), board.get_float("speed")));
+                seen.push((
+                    board.get_bool(name!("flag")),
+                    board.get_float(name!("speed")),
+                ));
             },
         );
 

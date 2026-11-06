@@ -379,6 +379,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
             kind: Dialogue::name().into(),
             kind_version: Dialogue::FORMAT_VERSION,
             provenance: Some(provenance.clone()),
+            derived: None,
         };
         let address = format!("{name}.gasset");
         std::fs::write(

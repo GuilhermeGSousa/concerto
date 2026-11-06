@@ -33,6 +33,7 @@ mod color;
 mod component_menu;
 mod list;
 mod name_field;
+mod name_text;
 mod numeric;
 mod registry;
 mod rows;
@@ -52,6 +53,7 @@ use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
 use color::refresh_color_swatches;
+use name_text::{cancel_name_fields, commit_name_fields, refresh_name_fields};
 #[cfg(any(test, feature = "testing"))]
 pub use numeric::commit_number;
 use numeric::{
@@ -146,6 +148,8 @@ impl Plugin for InspectorPlugin {
             .add_system(Update, send_component_edits);
         app.add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
+            .add_system(LateUpdate, commit_name_fields)
+            .add_system(LateUpdate, cancel_name_fields)
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
@@ -166,6 +170,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, refresh_numeric_labels)
             .add_system(LateUpdate, refresh_color_swatches)
             .add_system(LateUpdate, refresh_bool_fields)
+            .add_system(LateUpdate, refresh_name_fields)
             .add_system(LateUpdate, refresh_variant_labels)
             .add_system(LateUpdate, refresh_option_fields)
             .add_system(LateUpdate, sync_inspector_scroll);

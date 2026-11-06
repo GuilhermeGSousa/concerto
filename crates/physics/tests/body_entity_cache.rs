@@ -9,6 +9,7 @@ use concerto_foundation::transform::Transform;
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
 use concerto_physics::physics_state::PhysicsState;
+use concerto_physics::query::QueryFilter;
 use glam::Vec3;
 
 #[test]
@@ -54,7 +55,7 @@ fn cache_cleared_on_despawn() {
     let hit = world
         .get_resource::<PhysicsState>()
         .unwrap()
-        .cast_ray(origin, ray)
+        .cast_ray(origin, ray, QueryFilter::default())
         .expect("floor should be hittable while it exists");
     assert_eq!(
         hit.entity,
@@ -67,7 +68,7 @@ fn cache_cleared_on_despawn() {
         world
             .get_resource::<PhysicsState>()
             .unwrap()
-            .cast_ray(origin, ray)
+            .cast_ray(origin, ray, QueryFilter::default())
             .is_none(),
         "despawning the floor should leave nothing to hit"
     );

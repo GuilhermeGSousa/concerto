@@ -137,9 +137,9 @@ fix the entry in the same commit as the change that made it false.
   `GlobalTransform`, so such a mesh disappears whenever that box is out of
   view. The world grid, whose three vertices sit at the origin, requires
   `NoFrustumCulling` and `NotShadowCaster` for this reason.
-- **`Pose::identity` has zero translation per joint.** Applying a pose that was
-  never evaluated collapses every bone to the origin and the mesh folds onto
-  itself. A pose from `PosePool::acquire` starts at the skeleton's rest pose,
+- **`Pose::identity` and `AnimationFrame::identity` have zero translation per
+  joint.** Applying a pose that was never evaluated collapses every bone to the
+  origin and the mesh folds onto itself. A frame from `FramePool::acquire` starts at the skeleton's rest pose,
   recycled ones too, so a node that writes nothing leaves rest; don't overwrite
   `output` with identity. A pool that was never given a rest pose, as in a test,
   hands out identity. `AnimationPlayer::evaluate` calls `set_rest` first, and
@@ -239,10 +239,6 @@ fix the entry in the same commit as the change that made it false.
   load requested from inside another plugin's
   `build` sees a partial registry, since plugins register their types in
   `build`, before `Startup`.
-- **A cached copy of a live value is replaced with it, never alone.** A
-  `ChannelSpan` caches its channel's `weight`, `dims` and `source`; writing only
-  the cached weight would be undone when the channel is next loaded from its
-  value. `MotionDatabase::reweigh` replaces the channel and the cache together.
 - **An asset's bytes do not change with its in-memory type.** The
   `check_encoding` fixtures under each crate's `tests/encoding` fail when they
   do. Keep the old layout with a private mirror struct behind a hand-written
@@ -254,6 +250,13 @@ fix the entry in the same commit as the change that made it false.
 - **Examples share one `target/` directory.** Each copies its `content/` to its
   own `<package>-content/` directory beside the binary. After changing an
   example's sources or content, build that example, not just the workspace.
+  `cargo concerto build --cook` stages cooked files over that copy; they stay
+  until `build.rs` next reruns, which only a change to `content/` or
+  `content.toml` causes.
+- **A cooked section is trusted as it is.** A load applies it without checking
+  its key. A change to how a derived input decodes or migrates, made without
+  raising `DERIVED_VERSION`, leaves a staged cooked blob (and a cached one)
+  derived by the old code; cook again, or delete `derived-cache/`.
 - **Large scenes take a long time to load in a debug build.** A scene
   such as Sponza can need more than 40 seconds before anything but the clear
   colour and the grid appears. That looks exactly like a broken renderer.

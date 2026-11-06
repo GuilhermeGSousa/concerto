@@ -1,14 +1,14 @@
 use concerto_ecs::system::input::Inputs;
 use concerto_mesh::Skeleton;
-use glam::Vec3;
+use glam::{Affine3A, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
-    pose::{EvaluatedPose, JointPose},
+    pose::{EvaluatedFrame, JointPose},
 };
 
 pub struct AnimationGraphEvaluator {
-    pub(crate) evaluation_stack: Vec<EvaluatedPose>,
+    pub(crate) evaluation_stack: Vec<EvaluatedFrame>,
 }
 
 impl AnimationGraphEvaluator {
@@ -18,11 +18,11 @@ impl AnimationGraphEvaluator {
         }
     }
 
-    pub fn push_evaluation(&mut self, evaluated_pose: EvaluatedPose) {
-        self.evaluation_stack.push(evaluated_pose);
+    pub fn push_evaluation(&mut self, evaluated_frame: EvaluatedFrame) {
+        self.evaluation_stack.push(evaluated_frame);
     }
 
-    pub fn pop_evaluation(&mut self) -> Option<EvaluatedPose> {
+    pub fn pop_evaluation(&mut self) -> Option<EvaluatedFrame> {
         self.evaluation_stack.pop()
     }
 
@@ -30,7 +30,7 @@ impl AnimationGraphEvaluator {
         self.evaluation_stack.len()
     }
 
-    pub fn view_stack(&self, start: usize) -> &[EvaluatedPose] {
+    pub fn view_stack(&self, start: usize) -> &[EvaluatedFrame] {
         &self.evaluation_stack[start..]
     }
 }
@@ -54,6 +54,7 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) blackboard: &'a AnimationBlackboard,
     pub(crate) root: Option<RootBone>,
     pub(crate) skeleton: Option<&'a Skeleton>,
+    pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
 }
 
@@ -70,5 +71,10 @@ impl<'a> AnimationGraphContext<'a> {
     /// The skeleton of the player being walked, once its asset is loaded.
     pub fn skeleton(&self) -> Option<&'a Skeleton> {
         self.skeleton
+    }
+
+    /// In `evaluate`, the world transform of the skeleton's model space: the `GlobalTransform` of bone 0's parent, or identity when it has none.
+    pub fn model_to_world(&self) -> Option<Affine3A> {
+        self.model_to_world
     }
 }

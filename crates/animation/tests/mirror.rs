@@ -15,7 +15,7 @@ fn skeleton(bones: &[(&str, Option<u16>, JointPose)]) -> Skeleton {
     Skeleton::new(
         vec![Mat4::IDENTITY; bones.len()],
         bones.iter().map(|(_, parent, _)| *parent).collect(),
-        bones.iter().map(|(name, _, _)| name.to_string()).collect(),
+        bones.iter().map(|(name, _, _)| (*name).into()).collect(),
         bones.iter().map(|(_, _, pose)| pose.clone()).collect(),
         bones.iter().map(|_| Uuid::new_v4()).collect(),
     )

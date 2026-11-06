@@ -5,7 +5,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::JointName;
-use concerto_motion_matching::{BonePositions, MotionDatabaseDefinition};
+use concerto_motion_matching::{BonePositions, MotionDatabase};
 use concerto_ui::{interaction::UIDisabled, text::UIText, theme::UITheme};
 
 use super::*;
@@ -219,11 +219,7 @@ fn a_name_the_skeleton_lacks_shows_in_the_warning_colour() {
 #[test]
 fn with_no_skeleton_the_row_is_a_disabled_button_reading_the_stored_name() {
     let mut f = fixture();
-    let asset = write_definition(
-        &mut f,
-        "content/plain.gasset",
-        &MotionDatabaseDefinition::default(),
-    );
+    let asset = write_definition(&mut f, "content/plain.gasset", &MotionDatabase::default());
     let mut tab = tab_with(f);
     tab.until_read();
     crate::tests::open(&mut tab.f, &asset);
