@@ -9,6 +9,7 @@ use concerto_editor::{
     asset_picker::AssetPickerMenu,
     hosted::testing::SceneFixture,
     inspector::{InspectedValues, PropertyCommits, ShownValue, commit_number},
+    name_menu::NameMenu,
     timeline::{Timeline, TimelineSelected, time_of_frame},
 };
 use concerto_foundation::assets::{
@@ -19,7 +20,7 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, MotionDatabaseDefinition, MotionEntry, TimeRange,
+    BonePositions, BoneVelocities, MotionDatabase, MotionEntry, TimeRange,
 };
 use concerto_reflect::to_value;
 use concerto_ui::{
@@ -37,9 +38,7 @@ use uuid::Uuid;
 
 use super::*;
 use crate::{
-    ChannelId, DefinitionDocument, EntryFacts,
-    menu::NameMenu,
-    read_definition,
+    ChannelId, DefinitionDocument, EntryFacts, read_definition,
     tests::{
         broken_recipe, card_names, channel_at, definition, edit, fixture, fixture_with, open,
         request, row_of, save, show, shown_name, state, value_names, write_asset, write_definition,
@@ -74,7 +73,7 @@ pub(crate) fn skeleton_of(names: &[&str]) -> Skeleton {
         (0..bones)
             .map(|bone| bone.checked_sub(1).map(|parent| parent as u16))
             .collect(),
-        names.iter().map(ToString::to_string).collect(),
+        names.iter().map(|name| (*name).into()).collect(),
         vec![JointPose::IDENTITY; bones],
         (0..bones).map(bone_id).collect(),
     )
@@ -124,10 +123,7 @@ pub(crate) fn tab_with(f: SceneFixture) -> Tab {
     tab_of(f, |_| {})
 }
 
-pub(crate) fn tab_of(
-    mut f: SceneFixture,
-    change: impl FnOnce(&mut MotionDatabaseDefinition),
-) -> Tab {
+pub(crate) fn tab_of(mut f: SceneFixture, change: impl FnOnce(&mut MotionDatabase)) -> Tab {
     let skeleton = write_asset(
         &mut f,
         "content/hero/skeleton.gasset",
@@ -135,7 +131,7 @@ pub(crate) fn tab_of(
     );
     let walk = write_asset(&mut f, "content/hero/walk.gasset", &clip_of(10, 0..3));
     let run = write_asset(&mut f, "content/hero/run.gasset", &clip_of(2, 0..2));
-    let mut opened = MotionDatabaseDefinition {
+    let mut opened = MotionDatabase {
         skeleton: AssetHandle::weak(skeleton.id),
         entries: vec![
             entry_of(
@@ -370,16 +366,8 @@ impl Tab {
     pub(crate) fn until_settled(&mut self) {
         let document = self.document;
         self.f.frames_until("the workers never settled", |f| {
-            let requested = f
-                .world
-                .get_component_for_entity::<BuildRequested>(document)
-                .is_some();
             let state = state(f, document);
-            !requested
-                && !state.build.is_running()
-                && state.baked_job.is_none()
-                && !state.baked_wanted
-                && state.clip_job.is_none()
+            state.derive_job.is_none() && !state.derive_wanted && state.clip_job.is_none()
         });
         self.f.frame();
         self.f.frame();
@@ -466,7 +454,7 @@ fn a_definition_with_no_skeleton_reads_none() {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     let document = open(&mut f, &asset);
     hosts(&mut f, document);
@@ -534,7 +522,7 @@ fn a_skeleton_that_cannot_be_read_shows_under_the_picker() {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition {
+        &MotionDatabase {
             skeleton: AssetHandle::weak(skeleton.id),
             ..Default::default()
         },
@@ -1190,7 +1178,8 @@ fn a_commit_queued_against_a_removed_channel_changes_nothing() {
 
 #[test]
 fn a_status_shows_on_a_line_of_its_own_and_hides_when_empty() {
-    let mut tab = tab();
+    let mut tab = tab_of(fixture(), |definition| definition.entries.clear());
+    tab.until_settled();
     let status = tab.panels().status;
     assert!(!tab.shown(status));
 
@@ -1213,7 +1202,7 @@ fn failed_tab() -> Tab {
     let asset = write_definition(
         &mut f,
         "content/database.gasset",
-        &MotionDatabaseDefinition {
+        &MotionDatabase {
             skeleton: AssetHandle::weak(skeleton.id),
             entries: vec![entry_of(&walk, None)],
             ..Default::default()
@@ -1283,7 +1272,7 @@ fn the_mirrored_checkbox_is_disabled_on_a_read_only_document() {
 fn nothing_can_be_edited_before_the_definition_opens() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
-    let document = f.request_kind(MotionDatabaseDefinition::name());
+    let document = f.request_kind(MotionDatabase::name());
     hosts(&mut f, document);
     let tab = Tab {
         f,
@@ -1303,7 +1292,7 @@ fn nothing_can_be_edited_before_the_definition_opens() {
 #[test]
 fn a_second_definition_replaces_the_rows_and_the_timeline() {
     let mut tab = tab();
-    let other = MotionDatabaseDefinition {
+    let other = MotionDatabase {
         entries: vec![entry_of(&tab.run, None)],
         channels: vec![],
         ..Default::default()
@@ -1508,7 +1497,7 @@ fn opening_a_definition_again_reads_its_clips_again() {
     let other = write_definition(
         &mut tab.f,
         "content/other.gasset",
-        &MotionDatabaseDefinition::default(),
+        &MotionDatabase::default(),
     );
     let asset = tab.asset.clone();
 

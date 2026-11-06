@@ -532,13 +532,11 @@ fn unsupported_values_build_an_explicit_read_only_row() {
     #[derive(Component, concerto_reflect::Reflect, Default)]
     #[reflect(Component, Default)]
     struct Unsupported {
-        title: String,
+        serial: u64,
     }
     let (mut w, _, _) = inspecting();
     w.register::<Unsupported>();
-    let entity = w.spawn_in_scene(Unsupported {
-        title: "Example".into(),
-    });
+    let entity = w.spawn_in_scene(Unsupported { serial: 7 });
     w.select(Some(entity));
     w.update();
     assert!(rows(&mut w.f.world).is_empty());
@@ -1690,6 +1688,409 @@ mod bool_field {
     }
 }
 
+mod name_text_rows {
+    use super::color_rows::editor_of;
+    use super::variant_rows::{queued, widget};
+    use super::*;
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_name::Name;
+    use concerto_ui::{
+        focus::{FocusedWidget, UIFocusLost},
+        text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
+    };
+
+    #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
+    struct Tag {
+        label: Name,
+    }
+
+    fn fixture() -> (Inspecting, Entity, Entity) {
+        let (mut w, entity, _) = inspecting();
+        w.register::<Tag>();
+        w.f.world.insert_resource(FocusedWidget::default());
+        w.f.world
+            .insert_resource(EventChannel::<UITextInputSubmitted>::default());
+        w.f.world
+            .insert_resource(EventChannel::<UIFocusLost>::default());
+        w.f.world
+            .insert_resource(EventChannel::<UITextInputCancelled>::default());
+        w.scene().insert(
+            Tag {
+                label: Name::new("idle"),
+            },
+            entity,
+        );
+        w.update();
+        w.update();
+        run(&mut w.f.world, name_text::refresh_name_fields);
+        let field = widget(&mut w.f.world, &["label"]);
+        (w, entity, field)
+    }
+
+    fn shown(world: &World, field: Entity) -> String {
+        world
+            .get_component_for_entity::<UITextInput>(field)
+            .unwrap()
+            .value
+            .clone()
+    }
+
+    fn type_text(world: &mut World, field: Entity, text: &str) {
+        world
+            .get_component_for_entity_mut::<UITextInput>(field)
+            .unwrap()
+            .value = text.into();
+        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
+    }
+
+    fn label(w: &Inspecting, entity: Entity) -> Name {
+        w.get::<Tag>(entity).unwrap().label
+    }
+
+    #[test]
+    fn a_name_property_is_a_text_field_showing_its_text() {
+        let (mut w, _, field) = fixture();
+
+        assert_eq!(
+            editor_of(&mut w.f.world, &["label"]),
+            Some(TypeId::of::<name_text::NameText>())
+        );
+        assert_eq!(shown(&w.f.world, field), "idle");
+    }
+
+    #[test]
+    fn submitting_typed_text_commits_it_as_a_name() {
+        let (mut w, entity, field) = fixture();
+
+        type_text(&mut w.f.world, field, "walk");
+        w.f.world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: "walk".into(),
+            });
+        run(&mut w.f.world, name_text::commit_name_fields);
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(label(&w, entity), Name::new("walk"));
+        assert!(w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn cancel_reverts_the_text_and_commits_nothing() {
+        let (mut w, entity, field) = fixture();
+
+        type_text(&mut w.f.world, field, "unfinished");
+        w.f.world
+            .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+            .unwrap()
+            .push_event(UITextInputCancelled { entity: field });
+        run(&mut w.f.world, name_text::cancel_name_fields);
+
+        assert_eq!(shown(&w.f.world, field), "idle");
+        assert_eq!(**w.f.world.get_resource::<FocusedWidget>().unwrap(), None);
+        assert_eq!(queued(&w.f.world), 0);
+        assert_eq!(label(&w, entity), Name::new("idle"));
+    }
+
+    #[test]
+    fn losing_focus_reverts_the_text_and_commits_nothing() {
+        let (mut w, entity, field) = fixture();
+
+        type_text(&mut w.f.world, field, "unfinished");
+        w.f.world
+            .get_resource_mut::<EventChannel<UIFocusLost>>()
+            .unwrap()
+            .push_event(UIFocusLost(field));
+        run(&mut w.f.world, name_text::commit_name_fields);
+
+        assert_eq!(shown(&w.f.world, field), "idle");
+        assert_eq!(queued(&w.f.world), 0);
+        assert_eq!(label(&w, entity), Name::new("idle"));
+    }
+
+    #[test]
+    fn a_name_changed_elsewhere_reaches_the_same_field() {
+        let (mut w, entity, field) = fixture();
+
+        w.scene()
+            .get_component_for_entity_mut::<Tag>(entity)
+            .unwrap()
+            .label = Name::new("run");
+        w.update();
+        w.update();
+        run(&mut w.f.world, name_text::refresh_name_fields);
+
+        assert_eq!(widget(&mut w.f.world, &["label"]), field);
+        assert_eq!(shown(&w.f.world, field), "run");
+    }
+}
+
+mod typed_rows {
+    use super::color_rows::editor_of;
+    use super::variant_rows::{queued, row, widget};
+    use super::*;
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_ui::{
+        focus::{FocusedWidget, UIFocusLost},
+        text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
+    };
+
+    #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
+    struct Spawner {
+        title: String,
+        lives: u32,
+        offset: i32,
+        anchor: Vec2,
+    }
+
+    fn fixture() -> (Inspecting, Entity) {
+        let (mut w, entity, _) = inspecting();
+        w.register::<Spawner>();
+        w.f.world.insert_resource(FocusedWidget::default());
+        w.f.world
+            .insert_resource(EventChannel::<UITextInputSubmitted>::default());
+        w.f.world
+            .insert_resource(EventChannel::<UIFocusLost>::default());
+        w.f.world
+            .insert_resource(EventChannel::<UITextInputCancelled>::default());
+        w.scene().insert(
+            Spawner {
+                title: "Gate".into(),
+                lives: 3,
+                offset: -2,
+                anchor: Vec2::new(1.0, 2.0),
+            },
+            entity,
+        );
+        w.update();
+        w.update();
+        run(&mut w.f.world, text_field::refresh_text_fields);
+        run(&mut w.f.world, numeric::refresh_numeric_fields);
+        (w, entity)
+    }
+
+    fn fields(world: &mut World, path: &[&'static str]) -> Vec<Entity> {
+        let row = row(world, path).expect("the row exists");
+        let mut slots = world.query::<(Entity, &numeric::NumericSlot), ()>();
+        let mut fields: Vec<Entity> = slots
+            .iter(world)
+            .filter(|(_, slot)| slot.row == row)
+            .map(|(entity, _)| entity)
+            .collect();
+        fields.sort_by_key(|field| {
+            world
+                .get_component_for_entity::<numeric::NumericSlot>(*field)
+                .unwrap()
+                .slot
+        });
+        fields
+    }
+
+    fn shown(world: &World, field: Entity) -> String {
+        world
+            .get_component_for_entity::<UITextInput>(field)
+            .unwrap()
+            .value
+            .clone()
+    }
+
+    fn type_text(world: &mut World, field: Entity, text: &str) {
+        world
+            .get_component_for_entity_mut::<UITextInput>(field)
+            .unwrap()
+            .value = text.into();
+        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
+    }
+
+    fn submit_text(world: &mut World, field: Entity, text: &str) {
+        type_text(world, field, text);
+        world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: text.into(),
+            });
+    }
+
+    fn submit_number(w: &mut Inspecting, path: &[&'static str], slot: usize, text: &str) {
+        let field = fields(&mut w.f.world, path)[slot];
+        submit_text(&mut w.f.world, field, text);
+        run(&mut w.f.world, numeric::commit_numeric_fields);
+    }
+
+    fn cancel(world: &mut World, field: Entity) {
+        world
+            .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+            .unwrap()
+            .push_event(UITextInputCancelled { entity: field });
+    }
+
+    fn spawner(w: &Inspecting, entity: Entity) -> &Spawner {
+        w.get::<Spawner>(entity).unwrap()
+    }
+
+    #[test]
+    fn string_u32_i32_and_vec2_properties_show_their_values() {
+        let (mut w, _) = fixture();
+        let world = &mut w.f.world;
+
+        assert_eq!(
+            editor_of(world, &["title"]),
+            Some(TypeId::of::<text_field::TextField>())
+        );
+        for path in ["lives", "offset", "anchor"] {
+            assert_eq!(
+                editor_of(world, &[path]),
+                Some(TypeId::of::<numeric::NumericFields>()),
+                "{path}"
+            );
+        }
+        let title = widget(world, &["title"]);
+        assert_eq!(shown(world, title), "Gate");
+        let lives = fields(world, &["lives"]);
+        assert_eq!(lives.len(), 1);
+        assert_eq!(shown(world, lives[0]), "3");
+        let offset = fields(world, &["offset"]);
+        assert_eq!(offset.len(), 1);
+        assert_eq!(shown(world, offset[0]), "-2");
+        let anchor = fields(world, &["anchor"]);
+        let anchor: Vec<String> = anchor.iter().map(|field| shown(world, *field)).collect();
+        assert_eq!(anchor, ["1.000", "2.000"]);
+    }
+
+    #[test]
+    fn submitting_typed_text_commits_it_as_a_string() {
+        let (mut w, entity) = fixture();
+        let field = widget(&mut w.f.world, &["title"]);
+
+        submit_text(&mut w.f.world, field, "Portcullis");
+        run(&mut w.f.world, text_field::commit_text_fields);
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(spawner(&w, entity).title, "Portcullis");
+        assert!(w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn cancel_reverts_the_text_and_commits_nothing() {
+        let (mut w, entity) = fixture();
+        let field = widget(&mut w.f.world, &["title"]);
+
+        type_text(&mut w.f.world, field, "unfinished");
+        cancel(&mut w.f.world, field);
+        run(&mut w.f.world, text_field::cancel_text_fields);
+
+        assert_eq!(shown(&w.f.world, field), "Gate");
+        assert_eq!(**w.f.world.get_resource::<FocusedWidget>().unwrap(), None);
+        assert_eq!(queued(&w.f.world), 0);
+        assert_eq!(spawner(&w, entity).title, "Gate");
+    }
+
+    #[test]
+    fn losing_focus_reverts_the_text_and_commits_nothing() {
+        let (mut w, entity) = fixture();
+        let field = widget(&mut w.f.world, &["title"]);
+
+        type_text(&mut w.f.world, field, "unfinished");
+        w.f.world
+            .get_resource_mut::<EventChannel<UIFocusLost>>()
+            .unwrap()
+            .push_event(UIFocusLost(field));
+        run(&mut w.f.world, text_field::commit_text_fields);
+
+        assert_eq!(shown(&w.f.world, field), "Gate");
+        assert_eq!(queued(&w.f.world), 0);
+        assert_eq!(spawner(&w, entity).title, "Gate");
+    }
+
+    #[test]
+    fn a_u32_field_commits_a_whole_number() {
+        let (mut w, entity) = fixture();
+
+        submit_number(&mut w, &["lives"], 0, "7");
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(spawner(&w, entity).lives, 7);
+        assert!(w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn a_u32_field_reverts_a_negative_a_fraction_and_what_a_u32_cannot_hold() {
+        let (mut w, entity) = fixture();
+
+        for text in ["-1", "1.5", "4294967296"] {
+            submit_number(&mut w, &["lives"], 0, text);
+            let field = fields(&mut w.f.world, &["lives"])[0];
+            assert_eq!(shown(&w.f.world, field), "3", "{text}");
+            assert_eq!(queued(&w.f.world), 0, "{text}");
+        }
+        assert_eq!(spawner(&w, entity).lives, 3);
+    }
+
+    #[test]
+    fn an_i32_field_commits_a_negative_whole_number() {
+        let (mut w, entity) = fixture();
+
+        submit_number(&mut w, &["offset"], 0, "-40");
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(spawner(&w, entity).offset, -40);
+    }
+
+    #[test]
+    fn an_i32_field_reverts_a_fraction_and_what_an_i32_cannot_hold() {
+        let (mut w, entity) = fixture();
+
+        for text in ["0.5", "2147483648", "-2147483649"] {
+            submit_number(&mut w, &["offset"], 0, text);
+            let field = fields(&mut w.f.world, &["offset"])[0];
+            assert_eq!(shown(&w.f.world, field), "-2", "{text}");
+            assert_eq!(queued(&w.f.world), 0, "{text}");
+        }
+        assert_eq!(spawner(&w, entity).offset, -2);
+    }
+
+    #[test]
+    fn a_vec2_field_commits_its_own_slot() {
+        let (mut w, entity) = fixture();
+
+        submit_number(&mut w, &["anchor"], 1, "-4.5");
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(spawner(&w, entity).anchor, Vec2::new(1.0, -4.5));
+    }
+
+    #[test]
+    fn cancel_reverts_each_numeric_field_and_commits_nothing() {
+        let (mut w, entity) = fixture();
+        let mut all = Vec::new();
+        for path in ["lives", "offset", "anchor"] {
+            all.extend(fields(&mut w.f.world, &[path]));
+        }
+        let before: Vec<String> = all.iter().map(|field| shown(&w.f.world, *field)).collect();
+
+        for field in &all {
+            type_text(&mut w.f.world, *field, "9");
+            cancel(&mut w.f.world, *field);
+            run(&mut w.f.world, numeric::cancel_numeric_fields);
+        }
+
+        let after: Vec<String> = all.iter().map(|field| shown(&w.f.world, *field)).collect();
+        assert_eq!(after, before);
+        assert_eq!(before, ["3", "-2", "1.000", "2.000"]);
+        assert_eq!(queued(&w.f.world), 0);
+        let spawner = spawner(&w, entity);
+        assert_eq!(spawner.lives, 3);
+        assert_eq!(spawner.offset, -2);
+        assert_eq!(spawner.anchor, Vec2::new(1.0, 2.0));
+    }
+}
+
 mod variant_rows {
     use super::*;
     use concerto_render::components::{
@@ -1967,7 +2368,7 @@ mod list_rows {
     #[derive(Component, concerto_reflect::Reflect, Default)]
     #[reflect(Component, Default)]
     struct Titles {
-        names: Vec<String>,
+        names: Vec<u64>,
     }
 
     #[derive(Component, concerto_reflect::Reflect, Default)]
@@ -2248,9 +2649,7 @@ mod list_rows {
 
     #[test]
     fn an_element_with_no_editor_and_no_fields_is_unsupported_and_can_be_removed() {
-        let (mut w, entity) = fixture(Titles {
-            names: vec!["first".into(), "second".into()],
-        });
+        let (mut w, entity) = fixture(Titles { names: vec![1, 2] });
         const NAMES: PathSegment = PathSegment::Field("names");
         let world = &mut w.f.world;
         assert_eq!(labels(world), ["Names", "0", "1"]);
@@ -2259,7 +2658,7 @@ mod list_rows {
 
         let remove = last_child(world, &[NAMES, PathSegment::Index(0)]);
         press(&mut w, remove);
-        assert_eq!(w.get::<Titles>(entity).unwrap().names, ["second"]);
+        assert_eq!(w.get::<Titles>(entity).unwrap().names, [2]);
     }
 
     #[test]
@@ -3013,7 +3412,7 @@ mod value_cards {
     struct Tuning {
         gain: f32,
         parts: Vec<Part>,
-        label: String,
+        serial: u64,
         mode: Mode,
     }
 
@@ -3046,7 +3445,7 @@ mod value_cards {
                 Held(Tuning {
                     gain: 2.0,
                     parts: vec![Part { gain: 1.0 }],
-                    label: "Lead".into(),
+                    serial: 7,
                     mode: Mode::Loud,
                 }),
                 InspectedValues(vec![tuning_of(document)]),
@@ -3264,8 +3663,8 @@ mod value_cards {
             .0;
         assert!(v.widget_count(heading) > 1);
         assert!(
-            plain.iter().any(|(_, row)| row.path.name() == "label"),
-            "a string has no editor"
+            plain.iter().any(|(_, row)| row.path.name() == "serial"),
+            "a u64 has no editor"
         );
         let mode = v.row_at(1, "mode").0;
         assert!(v.widget_count(mode) > 1);

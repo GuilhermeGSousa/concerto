@@ -315,6 +315,7 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
         kind: Scene::name().into(),
         kind_version: Scene::FORMAT_VERSION,
         provenance: asset.provenance.clone(),
+        derived: None,
     };
     std::fs::write(
         root.join(&asset.address),
@@ -386,6 +387,7 @@ impl SceneFixture {
         project.project = Some(Project {
             root: project_root.clone(),
             content_root: "content".into(),
+            default_scene: None,
         });
         world.insert_resource(project);
         world.insert_resource(registry);

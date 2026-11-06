@@ -231,6 +231,7 @@ mod tests {
             project.project = Some(Project {
                 root: PathBuf::from("game"),
                 content_root: "content".into(),
+                default_scene: None,
             });
             project.status = String::new();
             world.insert_resource(project);

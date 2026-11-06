@@ -17,7 +17,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, With, Without,
+    Component, Entity, Query, Res, ResMut, Resource, With, Without, World,
     command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
@@ -26,6 +26,8 @@ use concerto_ecs::{
     signal::On,
     signal::Signal,
     signal::listener::GlobalListener,
+    system::input::SystemLocal,
+    world::FromWorld,
 };
 use concerto_editor::{
     asset_editor::{
@@ -33,7 +35,7 @@ use concerto_editor::{
         Unsaved, finish_asset_request,
     },
     guard::UnsavedGuard,
-    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
+    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted, WarmUpLimit},
     inspector::{
         DocumentValue, EditContext, EditError, EditableApp, InspectedValues, PropertyEditor,
         PropertyTarget, ShownValue,
@@ -60,7 +62,10 @@ use concerto_foundation::{
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::HostClosing, host::run_with};
 use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_render::components::{camera::Camera, light::Light};
+use concerto_render::{
+    components::{camera::Camera, light::Light},
+    gpu::Gpu,
+};
 use concerto_scene::scene::{Scene, SceneNode};
 use concerto_ui::{
     node::UILayoutDiagnostics, text::UIText, text_input::UITextInput, theme::UITheme,
@@ -82,8 +87,6 @@ use serde_json::{Value, json};
 
 const SIZE: (u32, u32) = (800, 600);
 const PATIENCE: Duration = Duration::from_secs(120);
-
-static ONE_APP_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 #[derive(Resource, Default)]
 struct EditFrames(u32);
@@ -640,6 +643,7 @@ fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u
             source: "fixture.glb".into(),
             sub_asset: address.into(),
         }),
+        derived: None,
     };
     let path = root.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -652,9 +656,17 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new() -> Self {
+    fn without_a_scene() -> Self {
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir(directory.path().join("content")).unwrap();
+        Self {
+            directory,
+            scene: AssetId::new(),
+        }
+    }
+
+    fn new() -> Self {
+        let fixture = Self::without_a_scene();
         let node = |name: &str, children: Vec<usize>| {
             let mut node = SceneNode {
                 name: name.into(),
@@ -678,15 +690,15 @@ impl Fixture {
         };
         let id = AssetId::new();
         write_asset(
-            directory.path(),
+            fixture.directory.path(),
             "content/level.gasset",
             id,
             Scene::name(),
             &bincode::serialize(&scene).unwrap(),
         );
         Self {
-            directory,
             scene: id,
+            ..fixture
         }
     }
 
@@ -761,9 +773,7 @@ where
     T: Send + 'static,
     F: Future<Output = T>,
 {
-    let _turn = ONE_APP_AT_A_TIME
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+    let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let cancelled = Arc::new(Mutex::new(None::<Instant>));
     let cancelled_by_client = cancelled.clone();
@@ -784,8 +794,9 @@ where
     let root = fixture.root();
     let scene = fixture.scene;
     let log = log.clone();
-    let served = run_with(
+    run_with(
         server_io,
+        gpu,
         move |app| {
             concerto_editor::mcp::editor(recipe, root, vec![extension])(app);
             app.insert_resource(log)
@@ -844,10 +855,6 @@ where
         SIZE,
     );
     let returned = Instant::now();
-    if served.is_err() {
-        eprintln!("skipped: no GPU adapter");
-        return None;
-    }
     let result = client
         .join()
         .expect("the client's assertions hold")
@@ -921,6 +928,12 @@ async fn until(client: &Client, tool: &'static str, done: impl Fn(&str) -> bool)
     }
 }
 
+async fn close_the_project_scene(client: &Client) {
+    until(client, "state", |state| state.contains("level target")).await;
+    let document = document_id(&ok(client, "status").await);
+    ok_with(client, "close_document", json!({ "document": document })).await;
+}
+
 async fn open(client: &Client) {
     until(client, "state", |state| state.starts_with("project")).await;
     assert_eq!(ok(client, "open_scene").await, "queued");
@@ -929,7 +942,7 @@ async fn open(client: &Client) {
 
 #[test]
 fn unmet_needs_answer_the_editor_codes() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
         let errors = vec![
@@ -1041,7 +1054,7 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
         let before = until(&client, "status", |status| {
-            !status.starts_with("project: none") && status.ends_with("busy: no")
+            status.contains("Scene content/level.gasset · editing") && status.ends_with("busy: no")
         })
         .await;
         open(&client).await;
@@ -1060,10 +1073,18 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
     let (before, after, hero) = served.result;
     assert_eq!(line(&before, "project: "), root.display().to_string());
     line(&before, "project status: ");
-    assert_eq!(line(&before, "documents: "), "none");
-    assert_eq!(line(&before, "active: "), "none");
+    let opened = document_id(&before);
+    assert!(
+        documents(&before)[0]
+            .starts_with(&format!("{opened} Scene content/level.gasset · editing")),
+        "{before}"
+    );
+    assert_eq!(line(&before, "active: "), opened);
     assert_eq!(line(&before, "values: "), "none");
-    assert_eq!(line(&before, "selection: "), "none");
+    assert!(
+        concerto_ecs::Entity::parse_id(line(&before, "selection: ")).is_some(),
+        "{before}"
+    );
 
     assert_eq!(line(&after, "project: "), root.display().to_string());
     let documents: Vec<&str> = after
@@ -1082,6 +1103,7 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
         rest.starts_with("Scene content/level.gasset · editing"),
         "{after}"
     );
+    assert_eq!(document, opened);
     assert_eq!(line(&after, "active: "), document);
     assert_eq!(line(&after, "selection: "), format!("{hero} Hero"));
     let (width, height) = line(&after, "viewport: ").split_once('x').unwrap();
@@ -1271,7 +1293,7 @@ fn scene_tree_walks_the_open_scene_to_its_depth_and_limit() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "scene_tree").await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -1365,7 +1387,7 @@ fn find_entities_matches_names_and_components_with_their_paths() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "find_entities").await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -1447,7 +1469,7 @@ fn inspect_reads_components_as_json_with_their_paths_and_adapters() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error_with(&client, "inspect", json!({ "entity": "1v1" })).await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -2044,7 +2066,7 @@ fn select_sets_and_clears_the_selection() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error_with(&client, "select", json!({ "entity": "1v1" })).await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -2198,7 +2220,7 @@ fn frame_answers_once_the_camera_has_framed() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "frame").await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -2250,7 +2272,7 @@ fn set_camera_places_the_camera_by_angles_or_by_a_point_to_face() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let angles = json!({ "position": [1.0, 2.0, 3.0], "yaw": 0.5, "pitch": 0.25 });
         let closed = error_with(&client, "set_camera", angles.clone()).await;
         open(&client).await;
@@ -2438,7 +2460,7 @@ fn screenshot_answers_the_viewport_and_the_whole_editor_as_png() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let editor = call_with(&client, "screenshot", json!({ "target": "editor" })).await;
         let small_editor = call_with(
             &client,
@@ -2671,7 +2693,7 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error_with(&client, "create_entity", json!({})).await;
         open(&client).await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
@@ -3214,7 +3236,7 @@ fn save_writes_the_scene_and_answers_when_there_is_nothing_to_save() {
     let level = fixture.root().join("content/level.gasset");
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, move |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        close_the_project_scene(&client).await;
         let closed = error(&client, "save").await;
         open(&client).await;
         let document = document_id(&ok(&client, "status").await);
@@ -3449,7 +3471,9 @@ fn play_answers_once_what_the_game_loads_at_start_has_loaded() {
         &fixture,
         &Log::default(),
         gated_game,
-        |_| {},
+        |app| {
+            app.insert_resource(WarmUpLimit(Duration::from_secs(1)));
+        },
         |client| async move {
             open(&client).await;
             let document = document_id(&ok(&client, "status").await);
@@ -3488,8 +3512,9 @@ fn play_answers_that_the_game_is_still_loading_when_its_wait_runs_out() {
         &Log::default(),
         gated_game,
         |app| {
+            app.insert_resource(WarmUpLimit(Duration::from_secs(1)));
             app.insert_resource(concerto_editor::mcp::PlayTimeout(
-                concerto_editor::hosted::WARM_UP_LIMIT + Duration::from_secs(4),
+                Duration::from_secs(1) + Duration::from_secs(4),
             ));
         },
         |client| async move {
@@ -4936,7 +4961,10 @@ impl AssetEditor for ShownTuneEditor {
 #[derive(Deserialize, JsonSchema)]
 struct FinishTune {}
 
-fn finish_tune(mut calls: ToolCalls<FinishTune>, documents: Query<&mut EditorDocument>) {
+fn finish_tune(
+    mut calls: ToolCalls<FinishTune>,
+    documents: Query<&mut EditorDocument, With<HeldTune>>,
+) {
     for (_, reply) in calls.read() {
         for mut document in documents.iter() {
             if let Some(asset) = document.pending.clone() {
@@ -4945,6 +4973,56 @@ fn finish_tune(mut calls: ToolCalls<FinishTune>, documents: Query<&mut EditorDoc
         }
         reply.ok("finished");
     }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct QueueTune {}
+
+#[derive(Resource)]
+struct TuneAsset(AssetId);
+
+fn queue_tune(
+    mut calls: ToolCalls<QueueTune>,
+    tune: Res<TuneAsset>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    for (_, reply) in calls.read() {
+        commands.0.push_back(EditorCommand::OpenAsset(tune.0));
+        reply.ok("queued");
+    }
+}
+
+struct TunesSeenLoading {
+    assets: Vec<AssetId>,
+}
+
+impl FromWorld for TunesSeenLoading {
+    fn from_world(_world: &World) -> Self {
+        Self { assets: Vec::new() }
+    }
+}
+
+fn load_tunes(
+    documents: Query<&mut EditorDocument, With<HeldTune>>,
+    mut seen: SystemLocal<TunesSeenLoading>,
+) {
+    let mut loading = Vec::new();
+    for mut document in documents.iter() {
+        let Some(asset) = document.pending.clone() else {
+            continue;
+        };
+        if !seen.assets.contains(&asset.id) {
+            loading.push(asset.id);
+            continue;
+        }
+        let result = if asset.address.contains("broken") {
+            Err(anyhow::anyhow!("{} is out of tune", asset.address))
+        } else {
+            Ok(())
+        };
+        finish_asset_request(&mut document, &asset, result);
+    }
+    seen.assets = loading;
 }
 
 fn note_value_edits(mut committed: EventReader<Hosted<PropertyCommitted>>, log: Res<Log>) {
@@ -4961,6 +5039,15 @@ fn note_value_edits(mut committed: EventReader<Hosted<PropertyCommitted>>, log: 
 fn tune_editor(app: &mut App) {
     app.register_asset_editor::<Tune, TuneEditor>().unwrap();
     app.register_type::<Tuning>()
+        .add_system(Update, load_tunes)
+        .add_system(LateUpdate, note_value_edits);
+}
+
+fn held_tune_editor(app: &mut App, tune: AssetId) {
+    app.register_asset_editor::<Tune, TuneEditor>().unwrap();
+    app.register_type::<Tuning>()
+        .insert_resource(TuneAsset(tune))
+        .add_tool::<QueueTune, _>(McpTool::new("queue_tune"), queue_tune)
         .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune)
         .add_system(LateUpdate, note_value_edits);
 }
@@ -4968,8 +5055,7 @@ fn tune_editor(app: &mut App) {
 fn shown_tune_editor(app: &mut App) {
     app.register_asset_editor::<Tune, ShownTuneEditor>()
         .unwrap();
-    app.register_type::<Tuning>()
-        .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune);
+    app.register_type::<Tuning>().add_system(Update, load_tunes);
 }
 
 async fn open_tune(client: &Client) -> String {
@@ -5019,8 +5105,52 @@ struct ValueCalls {
 }
 
 #[test]
+fn open_asset_answers_another_kind_once_its_editor_has_loaded_or_refused_it() {
+    let fixture = Fixture::without_a_scene();
+    fixture.add("content/broken_tune.gasset", "Tune");
+    fixture.add("content/tune.gasset", "Tune");
+    let log = Log::default();
+    let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let refused = error_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/broken_tune.gasset" }),
+        )
+        .await;
+        let opened = ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/tune.gasset" }),
+        )
+        .await;
+        let status = ok(&client, "status").await;
+        client.cancel().await.unwrap();
+        (refused, opened, status)
+    }) else {
+        return;
+    };
+
+    let (refused, opened, status) = served.result;
+    assert_eq!(refused["code"], "open_failed", "{refused}");
+    assert_eq!(
+        refused["message"],
+        "content/broken_tune.gasset is out of tune"
+    );
+    let document = document_id(&status);
+    assert_eq!(
+        opened,
+        format!("Opened content/tune.gasset in document {document}.")
+    );
+    assert_eq!(
+        documents(&status),
+        [format!("{document} Tune content/tune.gasset")]
+    );
+}
+
+#[test]
 fn a_shown_value_leaves_every_value_reachable_by_name() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
     let Some(served) = serve_with(
@@ -5030,7 +5160,6 @@ fn a_shown_value_leaves_every_value_reachable_by_name() {
         shown_tune_editor,
         |client| async move {
             open_tune(&client).await;
-            ok(&client, "finish_tune").await;
             let status = until(&client, "status", |status| status.ends_with("busy: no")).await;
             let hidden = inspected_target(&client, "Tuning").await;
             let written = set_on_target(&client, "Tuning", "gain", json!(0.75)).await;
@@ -5052,12 +5181,18 @@ fn a_shown_value_leaves_every_value_reachable_by_name() {
 
 #[test]
 fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
-    let fixture = Fixture::new();
-    fixture.add("content/tune.gasset", "Tune");
+    let fixture = Fixture::without_a_scene();
+    let tune = fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
-    let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
-        let document = open_tune(&client).await;
-        let busy = until(&client, "status", |status| status.ends_with("busy: yes")).await;
+    let held = move |app: &mut App| held_tune_editor(app, tune);
+    let Some(served) = serve_with(&fixture, &log, game, held, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        assert_eq!(ok(&client, "queue_tune").await, "queued");
+        let busy = until(&client, "status", |status| {
+            status.ends_with("busy: yes") && status.contains(" · opening content/tune.gasset")
+        })
+        .await;
+        let document = document_id(&busy);
         let in_a_frame = inspected_target(&client, "Tuning").await;
         ok(&client, "finish_tune").await;
         let idle = until(&client, "status", |status| status.ends_with("busy: no")).await;
@@ -5162,7 +5297,7 @@ fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
 
 #[test]
 fn a_value_call_is_refused_by_its_arguments_with_no_scene_open() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::without_a_scene();
     fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
     let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {

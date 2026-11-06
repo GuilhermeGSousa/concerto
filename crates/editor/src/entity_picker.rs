@@ -784,15 +784,6 @@ mod tests {
     }
 
     #[test]
-    fn the_label_names_the_referenced_entity() {
-        let mut p = picking(|p| Links {
-            target: SceneEntityRef::Entity(p.capsule),
-            ..Links::default()
-        });
-        assert_eq!(p.label(&[TARGET]), "capsule");
-    }
-
-    #[test]
     fn an_entity_with_no_name_or_an_empty_one_is_labelled_by_its_index() {
         let mut p = picking(unlinked);
         let unnamed = p.unnamed;

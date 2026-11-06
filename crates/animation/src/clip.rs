@@ -1,11 +1,22 @@
-use std::collections::{HashMap, hash_map::Keys};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap, hash_map::Keys};
+use std::ops::Range;
 
+use concerto_foundation::assets::asset_server::{AssetLoadContext, AssetServer};
+use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{Asset, LoadableAsset};
 use concerto_foundation::math::spring_damper::angular_velocity;
+use concerto_name::Name;
+use concerto_reflect::{
+    EncodeError, FromType, Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value,
+};
 use glam::{Quat, Vec3};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
+use crate::graph::{Stored, StoredRef};
 use crate::inertialization::PoseVelocity;
 use crate::pose::JointPose;
 
@@ -136,11 +147,72 @@ impl AnimationChannel {
     }
 }
 
-#[derive(Asset, Serialize, Deserialize)]
+/// One event on a clip: the value to trigger and the clip time it fires at.
+#[derive(Serialize, Deserialize)]
+pub struct ClipEventKey {
+    pub time: f32,
+    pub event: ClipEventData,
+}
+
+/// A clip event as a clip holds it: `Stored` until the clip loads, `Live` once built.
+pub enum ClipEventData {
+    Stored {
+        type_name: String,
+        value: ReflectedValue,
+    },
+    Live {
+        type_name: String,
+        value: Box<dyn Reflect>,
+        data: ReflectClipEvent,
+    },
+}
+
+impl ClipEventData {
+    /// The registry key of the event's type.
+    pub fn type_name(&self) -> &str {
+        match self {
+            Self::Stored { type_name, .. } | Self::Live { type_name, .. } => type_name,
+        }
+    }
+
+    /// The reflected value a save writes.
+    pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
+        match self {
+            Self::Stored { value, .. } => Ok(Cow::Borrowed(value)),
+            Self::Live { value, .. } => to_value(value.as_ref()).map(Cow::Owned),
+        }
+    }
+}
+
+impl Serialize for ClipEventData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        StoredRef {
+            type_name: self.type_name(),
+            value: self.value().map_err(serde::ser::Error::custom)?,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ClipEventData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let Stored { type_name, value } = Stored::deserialize(deserializer)?;
+        Ok(Self::Stored { type_name, value })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct AnimationClip {
     channels: HashMap<Uuid, Vec<AnimationChannel>>,
     duration: f32,
     frame_rate: Option<f32>,
+    events: Vec<ClipEventKey>,
 }
 
 impl Default for AnimationClip {
@@ -149,6 +221,55 @@ impl Default for AnimationClip {
             channels: HashMap::new(),
             duration: 0.0,
             frame_rate: None,
+            events: Vec::new(),
+        }
+    }
+}
+
+impl Asset for AnimationClip {
+    const FORMAT_VERSION: u32 = 2;
+
+    fn name() -> &'static str {
+        "AnimationClip"
+    }
+
+    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
+        match version {
+            1 => {
+                let old: legacy::AnimationClipV1 = bincode::deserialize(payload)?;
+                Ok(old.into())
+            }
+            _ => anyhow::bail!(
+                "AnimationClip version {version} has no migration to version {}; re-import its source",
+                Self::FORMAT_VERSION
+            ),
+        }
+    }
+}
+
+mod legacy {
+    use std::collections::HashMap;
+
+    use serde::Deserialize;
+    use uuid::Uuid;
+
+    use super::{AnimationChannel, AnimationClip};
+
+    #[derive(Deserialize)]
+    pub(super) struct AnimationClipV1 {
+        channels: HashMap<Uuid, Vec<AnimationChannel>>,
+        duration: f32,
+        frame_rate: Option<f32>,
+    }
+
+    impl From<AnimationClipV1> for AnimationClip {
+        fn from(old: AnimationClipV1) -> Self {
+            Self {
+                channels: old.channels,
+                duration: old.duration,
+                frame_rate: old.frame_rate,
+                events: Vec::new(),
+            }
         }
     }
 }
@@ -248,13 +369,231 @@ impl AnimationClip {
             output.angular[bone] = angular_velocity(after.rotation, before.rotation, elapsed);
         }
     }
+
+    /// Adds `event` at clip time `time`, after any event already at that time.
+    pub fn add_event<S: ClipEvent>(&mut self, time: f32, event: S) {
+        let index = self.events.partition_point(|key| key.time <= time);
+        self.events.insert(
+            index,
+            ClipEventKey {
+                time,
+                event: ClipEventData::Live {
+                    type_name: std::any::type_name::<S>().to_owned(),
+                    value: Box::new(event),
+                    data: <ReflectClipEvent as FromType<S>>::from_type(),
+                },
+            },
+        );
+    }
+
+    /// The clip's events, sorted by time.
+    pub fn events(&self) -> &[ClipEventKey] {
+        &self.events
+    }
+
+    /// The indices of the events after `from`, or at it when `include_from`, up to and including `to`.
+    pub fn events_in(&self, from: f32, to: f32, include_from: bool) -> Range<usize> {
+        let start = if include_from {
+            self.events.partition_point(|key| key.time < from)
+        } else {
+            self.events.partition_point(|key| key.time <= from)
+        };
+        let end = self.events.partition_point(|key| key.time <= to);
+        start..end.max(start)
+    }
+
+    /// Adds an [`AnimationEvent`] per name and distinct time, failing on a time that is negative, non-finite or past the clip's end.
+    pub fn add_animation_events(
+        &mut self,
+        events: &BTreeMap<String, Vec<f32>>,
+    ) -> Result<(), String> {
+        for (name, times) in events {
+            let mut times = times.clone();
+            for &time in &times {
+                if !time.is_finite() || time < 0.0 || time > self.duration {
+                    return Err(format!(
+                        "event `{name}` at {time} must be finite and within the clip's 0 to {} seconds",
+                        self.duration
+                    ));
+                }
+            }
+            times.sort_by(f32::total_cmp);
+            times.dedup();
+            for time in times {
+                self.add_event(
+                    time,
+                    AnimationEvent {
+                        name: Name::new(name),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Builds every stored event from the registry, loading handles through `server`; an event that cannot be built is dropped and leaves a warning naming its type.
+    pub fn make_live(
+        &mut self,
+        registry: &TypeRegistry,
+        server: Option<&AssetServer>,
+    ) -> Vec<ValueWarning> {
+        let mut warnings = Vec::new();
+        if !self
+            .events
+            .iter()
+            .any(|key| matches!(key.event, ClipEventData::Stored { .. }))
+        {
+            return warnings;
+        }
+        let mut leaves = LiveLeaves::from_parts(registry, server);
+        self.events.retain_mut(|key| {
+            let ClipEventData::Stored { type_name, value } = &mut key.event else {
+                return true;
+            };
+            let reason = match registry
+                .get_by_name(type_name)
+                .and_then(|registration| registration.data::<ReflectClipEvent>().copied())
+            {
+                Some(data) => {
+                    let built = (data.from_value)(value, &mut leaves);
+                    if built.warnings.is_empty() {
+                        key.event = ClipEventData::Live {
+                            type_name: std::mem::take(type_name),
+                            value: built.value,
+                            data,
+                        };
+                        return true;
+                    }
+                    built
+                        .warnings
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                }
+                None => "type is not registered as a clip event".to_owned(),
+            };
+            warnings.push(ValueWarning {
+                path: std::mem::take(type_name),
+                reason: format!("event at {} dropped: {reason}", key.time),
+            });
+            false
+        });
+        warnings
+    }
 }
 
-impl LoadableAsset for AnimationClip {}
+impl LoadableAsset for AnimationClip {
+    fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+        if self.events.is_empty() {
+            return Ok(());
+        }
+        let registry = context.type_registry().read();
+        for warning in self.make_live(&registry, Some(context.asset_server())) {
+            warn!("animation clip {:?}: {warning}", context.asset_id());
+        }
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
+    use concerto_name::Name;
+
     use super::*;
+    use crate::event::AnimationEvent;
+
+    fn named(text: &str) -> AnimationEvent {
+        AnimationEvent {
+            name: Name::new(text),
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct NamedKey<'a> {
+        time: f32,
+        name: &'a str,
+    }
+
+    fn key(time: f32, name: &str) -> NamedKey<'_> {
+        NamedKey { time, name }
+    }
+
+    fn event_names(clip: &AnimationClip) -> Vec<NamedKey<'_>> {
+        clip.events()
+            .iter()
+            .map(|key| {
+                let ClipEventData::Live { value, .. } = &key.event else {
+                    panic!("an added event is live");
+                };
+                let event = value
+                    .downcast_ref::<AnimationEvent>()
+                    .expect("the event is an AnimationEvent");
+                NamedKey {
+                    time: key.time,
+                    name: event.name.as_str(),
+                }
+            })
+            .collect()
+    }
+
+    fn quarters() -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        clip.add_event(0.0, named("a"));
+        clip.add_event(0.25, named("b"));
+        clip.add_event(0.5, named("c"));
+        clip.add_event(0.75, named("d"));
+        clip
+    }
+
+    #[test]
+    fn add_event_keeps_events_sorted_by_time_and_equal_times_in_insertion_order() {
+        let mut clip = AnimationClip::default();
+        clip.add_event(0.5, named("second"));
+        clip.add_event(0.1, named("first"));
+        clip.add_event(0.9, named("fourth"));
+        clip.add_event(0.5, named("third"));
+
+        assert_eq!(
+            event_names(&clip),
+            [
+                key(0.1, "first"),
+                key(0.5, "second"),
+                key(0.5, "third"),
+                key(0.9, "fourth")
+            ]
+        );
+    }
+
+    #[test]
+    fn events_in_excludes_from_unless_asked_and_includes_to() {
+        let clip = quarters();
+
+        assert_eq!(clip.events_in(0.25, 0.5, false), 2..3);
+        assert_eq!(clip.events_in(0.25, 0.5, true), 1..3);
+        assert_eq!(clip.events_in(0.1, 0.6, false), 1..3);
+    }
+
+    #[test]
+    fn events_in_a_single_instant_holds_its_event_only_when_from_is_included() {
+        let clip = quarters();
+
+        assert_eq!(clip.events_in(0.0, 0.0, true), 0..1);
+        assert!(clip.events_in(0.0, 0.0, false).is_empty());
+    }
+
+    #[test]
+    fn events_in_is_empty_past_the_last_event_and_for_a_reversed_window() {
+        let clip = quarters();
+
+        assert!(clip.events_in(0.8, 1.0, true).is_empty());
+        assert!(clip.events_in(0.6, 0.3, true).is_empty());
+        assert!(
+            AnimationClip::default()
+                .events_in(0.0, 1.0, true)
+                .is_empty()
+        );
+    }
 
     fn linear_clip(id: Uuid) -> AnimationClip {
         let mut clip = AnimationClip::default();

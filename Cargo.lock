@@ -810,6 +810,7 @@ dependencies = [
 name = "concerto"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "concerto-animation",
  "concerto-app",
  "concerto-color",
@@ -819,7 +820,9 @@ dependencies = [
  "concerto-gameplay",
  "concerto-mesh",
  "concerto-motion-matching",
+ "concerto-name",
  "concerto-physics",
+ "concerto-procedural-animation",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
@@ -834,6 +837,8 @@ dependencies = [
  "log",
  "pollster",
  "profiling",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]
@@ -846,6 +851,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-reflect",
  "derive_more",
  "glam 0.30.10",
@@ -940,6 +946,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-reflect",
  "concerto-scene",
  "glam 0.30.10",
@@ -1039,6 +1046,7 @@ dependencies = [
  "concerto-import",
  "concerto-mcp",
  "concerto-mesh",
+ "concerto-name",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
@@ -1109,6 +1117,8 @@ dependencies = [
  "concerto-director",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-physics",
+ "concerto-reflect",
  "concerto-render",
  "concerto-window",
  "glam 0.30.10",
@@ -1127,6 +1137,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-physics",
  "concerto-reflect",
  "concerto-render",
@@ -1135,6 +1146,8 @@ dependencies = [
  "gltf",
  "image",
  "log",
+ "serde",
+ "toml",
  "uuid",
 ]
 
@@ -1199,6 +1212,7 @@ dependencies = [
  "concerto-color",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-name",
  "concerto-reflect",
  "glam 0.30.10",
  "serde",
@@ -1217,11 +1231,13 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-physics",
  "concerto-reflect",
  "concerto-scene",
  "glam 0.30.10",
  "log",
+ "pollster",
  "serde",
  "uuid",
 ]
@@ -1248,6 +1264,7 @@ dependencies = [
  "concerto-window",
  "glam 0.30.10",
  "log",
+ "pollster",
  "serde",
  "tempfile",
  "uuid",
@@ -1270,6 +1287,16 @@ dependencies = [
  "concerto-render",
  "glam 0.30.10",
  "uuid",
+]
+
+[[package]]
+name = "concerto-name"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "concerto-reflect",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1310,10 +1337,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-procedural-animation"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "concerto-animation",
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-name",
+ "concerto-physics",
+ "concerto-reflect",
+ "glam 0.30.10",
+ "log",
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "concerto-project"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde_json",
  "tempfile",
  "toml_edit 0.22.27",
 ]

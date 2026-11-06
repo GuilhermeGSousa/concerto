@@ -19,6 +19,7 @@ fn write_asset(path: &Path, id: AssetId, kind: &str, provenance: Option<ImportPr
         kind: kind.to_string(),
         kind_version: 1,
         provenance,
+        derived: None,
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
@@ -148,6 +149,7 @@ fn a_scan_reads_the_kind_version_and_registry_text_has_none() {
         kind: "AnimationClip".to_string(),
         kind_version: 3,
         provenance: None,
+        derived: None,
     };
     std::fs::create_dir_all(base.join("content")).unwrap();
     std::fs::write(
@@ -266,6 +268,32 @@ fn content_config_fills_a_missing_field_from_the_default() {
     let config = ContentConfig::load_or_default(&base).expect("parses");
     assert_eq!(config.root, "content");
     assert_eq!(config.extension, "bin");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn content_config_reads_the_default_scene() {
+    let base = temp_root("config-default-scene");
+    std::fs::write(
+        base.join("content.toml"),
+        "default_scene = \"content/levels/forest.gasset\"\n",
+    )
+    .unwrap();
+    let config = ContentConfig::load_or_default(&base).expect("parses");
+    assert_eq!(
+        config.default_scene.as_deref(),
+        Some("content/levels/forest.gasset")
+    );
+    assert_eq!(config.root, "content");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn content_config_has_no_default_scene_unless_one_is_set() {
+    let base = temp_root("config-no-default-scene");
+    std::fs::write(base.join("content.toml"), "extension = \"gasset\"\n").unwrap();
+    let config = ContentConfig::load_or_default(&base).expect("parses");
+    assert_eq!(config.default_scene, None);
     std::fs::remove_dir_all(&base).ok();
 }
 

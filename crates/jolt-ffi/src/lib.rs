@@ -98,6 +98,16 @@ pub struct JoltRayHit {
     pub normal: [f32; 3],
 }
 
+/// The first body a swept sphere touches (mirrors `JoltShapeHit` in `shape_cast.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltShapeHit {
+    pub body: JoltBodyId,
+    pub fraction: f32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
+
 extern "C" {
     /// Process-global one-time Jolt setup. Thread-safe and idempotent;
     /// `jolt_world_create` calls it implicitly.
@@ -270,14 +280,27 @@ extern "C" {
     );
 
     /// Casts a ray from `origin` (xyz) along `direction` (xyz, whose length is
-    /// the maximum cast distance) against all bodies, writing the closest hit
-    /// to `out_hit`. Returns `false` — leaving `out_hit` untouched — if
-    /// nothing was hit.
+    /// the maximum cast distance) against every body except the `ignore_count`
+    /// ids at `ignore`, writing the closest hit to `out_hit`. Returns `false`
+    /// — leaving `out_hit` untouched — if nothing was hit.
     pub fn jolt_world_cast_ray(
         world: *const JoltWorld,
         origin: *const f32,
         direction: *const f32,
+        ignore: *const JoltBodyId,
+        ignore_count: u32,
         out_hit: *mut JoltRayHit,
+    ) -> bool;
+
+    /// Sweeps a sphere of `radius` from `origin` along `direction`, skipping the `ignore_count` ids at `ignore`, and writes the first hit to `out_hit`.
+    pub fn jolt_world_cast_sphere(
+        world: *const JoltWorld,
+        origin: *const f32,
+        radius: f32,
+        direction: *const f32,
+        ignore: *const JoltBodyId,
+        ignore_count: u32,
+        out_hit: *mut JoltShapeHit,
     ) -> bool;
 
     pub fn jolt_body_add_impulse(world: *const JoltWorld, body: JoltBodyId, impulse: *const f32);

@@ -82,7 +82,7 @@ fn placed_channels(
 ) -> Option<Vec<Vec<FeatureShape>>> {
     let channels = state.query()?.channels();
     let dims: usize = channels.iter().map(|channel| channel.dims()).sum();
-    if features.len() != database.feature_dims() || features.len() != dims {
+    if features.len() != database.feature_dims()? || features.len() != dims {
         return None;
     }
     let shapes = preview_features(channels, &frame.context(skeleton), features);
@@ -111,15 +111,15 @@ pub fn matched_shapes(
     let baked = BakedFrame::placed(
         skeleton,
         state.pose().joints().to_vec(),
-        database.simulation(frame),
-        database.trajectory_samples(frame),
+        database.simulation_bone(frame)?,
+        database.trajectory_samples(frame)?,
     );
     placed_channels(
         state,
         database,
         skeleton,
         &baked,
-        database.features(frame),
+        database.features(frame)?,
         bone,
     )
 }
@@ -226,12 +226,11 @@ pub fn draw_motion_matching(
             let Some(database) = databases.get(&node.database) else {
                 return;
             };
-            let Some(skeleton) = skeletons.get(database.skeleton()) else {
+            let Some(skeleton) = skeletons.get(&database.skeleton) else {
                 return;
             };
             let Some(sampled) = database
                 .clips()
-                .iter()
                 .map(|handle| clips.get(handle))
                 .collect::<Option<Vec<_>>>()
             else {

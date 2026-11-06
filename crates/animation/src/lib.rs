@@ -1,8 +1,11 @@
 pub mod blackboard;
 pub mod clip;
 pub mod evaluation;
+pub mod event;
 pub mod graph;
+pub mod ik;
 pub mod inertialization;
+pub mod look_at;
 pub mod mirror;
 pub mod node;
 pub mod player;
@@ -23,12 +26,14 @@ mod tests {
     use concerto_foundation::assets::{
         LoadableAsset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
+    use concerto_name::{Name, name};
     use glam::Vec3;
     use uuid::Uuid;
 
     use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use crate::evaluation::RootBone;
+    use crate::event::AnimationEvent;
     use crate::graph::{AnimationGraph, made_live};
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
@@ -37,7 +42,7 @@ mod tests {
     use crate::node::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
     };
-    use crate::pose::{JointPose, PosePool, RootMotion};
+    use crate::pose::{FiredEvent, FramePool, JointPose, RootMotion};
     use crate::test_walks::Walks;
     use crate::transition::TransitionBlender;
 
@@ -66,12 +71,12 @@ mod tests {
             .current_time()
     }
 
-    fn state_name(node_state: &NodeState) -> String {
+    fn state_name(node_state: &NodeState) -> Name {
         node_state
             .downcast_ref::<AnimationStateMachineState>()
             .unwrap()
             .current_state_name()
-            .to_string()
+            .unwrap()
     }
 
     #[test]
@@ -213,27 +218,28 @@ mod tests {
 
         // The air state fades in slowly (0.1s) while land snaps in (0.01s), so landing early
         // leaves the air fade in flight after the machine has already moved on to land.
-        let fsm = AnimationStateMachine::from_initial_state("movement", movement, |transition| {
-            transition.to(
-                "jump_start",
-                AnimationFSMTrigger::on_bool("jumped", true),
-                0.01,
-            );
-        })
-        .state("jump_start", jump_start, |transition| {
-            transition.to("air", AnimationFSMTrigger::OnAnimationEnd, 0.1);
-        })
-        .state("air", air, |transition| {
-            transition.to(
-                "land",
-                AnimationFSMTrigger::on_bool("is_grounded", true),
-                0.01,
-            );
-        })
-        .state("land", land, |transition| {
-            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1);
-        })
-        .build();
+        let fsm =
+            AnimationStateMachine::from_initial_state(name!("movement"), movement, |transition| {
+                transition.to(
+                    name!("jump_start"),
+                    AnimationFSMTrigger::on_bool(name!("jumped"), true),
+                    0.01,
+                );
+            })
+            .state(name!("jump_start"), jump_start, |transition| {
+                transition.to(name!("air"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+            })
+            .state(name!("air"), air, |transition| {
+                transition.to(
+                    name!("land"),
+                    AnimationFSMTrigger::on_bool(name!("is_grounded"), true),
+                    0.01,
+                );
+            })
+            .state(name!("land"), land, |transition| {
+                transition.to(name!("movement"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+            })
+            .build();
         let fsm = erased(fsm);
 
         let mut blackboard = AnimationBlackboard::default();
@@ -247,11 +253,11 @@ mod tests {
             state_name(node_state)
         };
 
-        blackboard.set("jumped", true);
+        blackboard.set(name!("jumped"), true);
         assert_eq!(step(&mut node_state, &blackboard), "jump_start");
-        blackboard.set("jumped", false);
+        blackboard.set(name!("jumped"), false);
 
-        let mut state = String::new();
+        let mut state = Name::default();
         for _ in 0..30 {
             state = step(&mut node_state, &blackboard);
             if state == "air" {
@@ -261,7 +267,7 @@ mod tests {
         assert_eq!(state, "air", "jump_start should end and hand off to air");
 
         // Land immediately, while the 0.1s air fade is only ~1 frame in.
-        blackboard.set("is_grounded", true);
+        blackboard.set(name!("is_grounded"), true);
         assert_eq!(step(&mut node_state, &blackboard), "land");
 
         // The land clip must actually play out and end the state, rather than being frozen
@@ -317,15 +323,19 @@ mod tests {
             made_live(AnimationGraph::from_node(AnimationClipNode::new(b_clip))),
         );
 
-        let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
-            transition.to("b", AnimationFSMTrigger::on_bool("go", true), 0.1);
+        let fsm = AnimationStateMachine::from_initial_state(name!("a"), a, |transition| {
+            transition.to(
+                name!("b"),
+                AnimationFSMTrigger::on_bool(name!("go"), true),
+                0.1,
+            );
         })
-        .state("b", b, |_| {})
+        .state(name!("b"), b, |_| {})
         .build();
         let fsm = erased(fsm);
 
         let mut blackboard = AnimationBlackboard::default();
-        blackboard.set("go", true);
+        blackboard.set(name!("go"), true);
 
         let walks = Walks::new(clips, graphs);
         let mut node_state = walks
@@ -339,12 +349,12 @@ mod tests {
         };
 
         let sample_x = |node_state: &mut NodeState| -> f32 {
-            let mut pool = PosePool::new(1);
-            let mut pose = pool.acquire();
+            let mut pool = FramePool::new(1);
+            let mut frame = pool.acquire();
             walks.evaluate(&blackboard, None, |context| {
-                fsm.evaluate(node_state, context, &[bone], &[], &mut pool, &mut pose)
+                fsm.evaluate(node_state, context, &[bone], &[], &mut pool, &mut frame)
             });
-            pose.get_joint_pose(0).unwrap().translation.x
+            frame.joint(0).unwrap().translation.x
         };
 
         // One frame into the 0.1s fade: a genuine blend between the two poses, not a hard cut.
@@ -398,13 +408,18 @@ mod tests {
             )),
         );
 
-        let fsm = AnimationStateMachine::from_initial_state("movement", movement, |transition| {
-            transition.to("jump", AnimationFSMTrigger::on_bool("jump", true), 0.01);
-        })
-        .state("jump", jump, |transition| {
-            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.01);
-        })
-        .build();
+        let fsm =
+            AnimationStateMachine::from_initial_state(name!("movement"), movement, |transition| {
+                transition.to(
+                    name!("jump"),
+                    AnimationFSMTrigger::on_bool(name!("jump"), true),
+                    0.01,
+                );
+            })
+            .state(name!("jump"), jump, |transition| {
+                transition.to(name!("movement"), AnimationFSMTrigger::OnAnimationEnd, 0.01);
+            })
+            .build();
         let fsm = erased(fsm);
 
         let mut blackboard = AnimationBlackboard::default();
@@ -413,7 +428,7 @@ mod tests {
             .create(&blackboard, |context| fsm.create_state(context))
             .unwrap();
 
-        let step = |node_state: &mut NodeState, blackboard: &AnimationBlackboard| -> String {
+        let step = |node_state: &mut NodeState, blackboard: &AnimationBlackboard| -> Name {
             walks.update(blackboard, |context| fsm.update(node_state, FRAME, context));
             state_name(node_state)
         };
@@ -421,9 +436,9 @@ mod tests {
         // Enter jump, then count frames from entry until OnAnimationEnd hands back to movement.
         let frames_in_jump =
             |node_state: &mut NodeState, blackboard: &mut AnimationBlackboard| -> usize {
-                blackboard.set("jump", true);
+                blackboard.set(name!("jump"), true);
                 assert_eq!(step(node_state, blackboard), "jump");
-                blackboard.set("jump", false);
+                blackboard.set(name!("jump"), false);
 
                 let mut frames = 0;
                 loop {
@@ -475,8 +490,9 @@ mod tests {
         blackboard: AnimationBlackboard,
         node_state: NodeState,
         bone: Uuid,
-        pool: PosePool,
+        pool: FramePool,
         root_motion: RootMotion,
+        events: Vec<FiredEvent>,
     }
 
     impl Machine {
@@ -506,14 +522,26 @@ mod tests {
             let b = graph_for(b_clip);
             let c = graph_for(c_clip);
 
-            let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
-                transition.to("b", AnimationFSMTrigger::on_bool("to_b", true), blend_time);
-                transition.to("a", AnimationFSMTrigger::on_bool("again", true), 0.2);
+            let fsm = AnimationStateMachine::from_initial_state(name!("a"), a, |transition| {
+                transition.to(
+                    name!("b"),
+                    AnimationFSMTrigger::on_bool(name!("to_b"), true),
+                    blend_time,
+                );
+                transition.to(
+                    name!("a"),
+                    AnimationFSMTrigger::on_bool(name!("again"), true),
+                    0.2,
+                );
             })
-            .state("b", b, |transition| {
-                transition.to("c", AnimationFSMTrigger::on_bool("to_c", true), blend_time);
+            .state(name!("b"), b, |transition| {
+                transition.to(
+                    name!("c"),
+                    AnimationFSMTrigger::on_bool(name!("to_c"), true),
+                    blend_time,
+                );
             })
-            .state("c", c, |_| {})
+            .state(name!("c"), c, |_| {})
             .blender(blender)
             .build();
             let fsm = erased(fsm);
@@ -531,12 +559,13 @@ mod tests {
                 blackboard,
                 node_state,
                 bone,
-                pool: PosePool::new(1),
+                pool: FramePool::new(1),
                 root_motion: RootMotion::IDENTITY,
+                events: Vec::new(),
             }
         }
 
-        fn set(&mut self, name: &str, value: bool) {
+        fn set(&mut self, name: Name, value: bool) {
             self.blackboard.set(name, value);
         }
 
@@ -550,7 +579,7 @@ mod tests {
                 self.fsm
                     .update(&mut self.node_state, MACHINE_FRAME, context)
             });
-            let mut pose = self.pool.acquire();
+            let mut frame = self.pool.acquire();
             self.walks
                 .evaluate(&self.blackboard, Some(root), |context| {
                     self.fsm.evaluate(
@@ -559,12 +588,13 @@ mod tests {
                         &[self.bone],
                         &[],
                         &mut self.pool,
-                        &mut pose,
+                        &mut frame,
                     )
                 });
-            let x = pose.get_joint_pose(0).unwrap().translation.x;
-            self.root_motion = pose.root_motion();
-            self.pool.release(pose);
+            let x = frame.joint(0).unwrap().translation.x;
+            self.root_motion = frame.root_motion();
+            self.events = frame.events().to_vec();
+            self.pool.release(frame);
             x
         }
 
@@ -576,7 +606,7 @@ mod tests {
             x
         }
 
-        fn state(&self) -> String {
+        fn state(&self) -> Name {
             state_name(&self.node_state)
         }
     }
@@ -598,7 +628,7 @@ mod tests {
         let mut machine = inertialize_machine(0.3);
         let before = machine.run(10);
 
-        machine.set("to_b", true);
+        machine.set(name!("to_b"), true);
         let on_transition = machine.step();
 
         assert_eq!(machine.state(), "b");
@@ -613,9 +643,9 @@ mod tests {
     fn inertialize_converges_to_the_destination() {
         let mut machine = inertialize_machine(0.1);
         machine.run(10);
-        machine.set("to_b", true);
+        machine.set(name!("to_b"), true);
         machine.step();
-        machine.set("to_b", false);
+        machine.set(name!("to_b"), false);
 
         let mut previous_distance = f32::MAX;
         let mut distances = Vec::new();
@@ -641,9 +671,9 @@ mod tests {
         let velocity_before = (last - before_last) / MACHINE_FRAME;
         assert!((velocity_before - 2.0).abs() < 1e-2);
 
-        machine.set("to_b", true);
+        machine.set(name!("to_b"), true);
         let on_transition = machine.step();
-        machine.set("to_b", false);
+        machine.set(name!("to_b"), false);
         let after = machine.step();
         let velocity_after = (after - on_transition) / MACHINE_FRAME;
 
@@ -658,7 +688,7 @@ mod tests {
     fn inertialize_into_the_current_state_changes_nothing() {
         let mut machine = inertialize_machine(0.3);
         machine.run(5);
-        machine.set("again", true);
+        machine.set(name!("again"), true);
 
         for frame in 6..=30 {
             let x = machine.step();
@@ -675,9 +705,9 @@ mod tests {
     fn a_skeleton_swap_drops_an_unsettled_inertializer() {
         let mut machine = inertialize_machine(0.3);
         machine.run(10);
-        machine.set("to_b", true);
+        machine.set(name!("to_b"), true);
         machine.step();
-        machine.set("to_b", false);
+        machine.set(name!("to_b"), false);
         machine.step();
 
         machine.pool.set_rest(&[JointPose::IDENTITY; 2]);
@@ -690,14 +720,14 @@ mod tests {
     fn a_later_transition_inertializes_on_the_swapped_skeleton() {
         let mut machine = inertialize_machine(0.1);
         machine.run(10);
-        machine.set("to_b", true);
+        machine.set(name!("to_b"), true);
         machine.step();
-        machine.set("to_b", false);
+        machine.set(name!("to_b"), false);
         let before = machine.run(600);
 
         machine.pool.set_rest(&[JointPose::IDENTITY; 2]);
         machine.run(2);
-        machine.set("to_c", true);
+        machine.set(name!("to_c"), true);
         let on_transition = machine.step();
 
         assert_eq!(machine.state(), "c");
@@ -723,7 +753,7 @@ mod tests {
     fn a_cross_fade_blends_root_motion_by_the_weight_of_the_fade() {
         let mut machine = machine_moving_at(2.0, 8.0, TransitionBlender::CrossFade);
         machine.run(5);
-        machine.set("to_b", true);
+        machine.set(name!("to_b"), true);
 
         machine.step();
 
@@ -740,7 +770,7 @@ mod tests {
     fn inertialization_gives_the_destination_root_motion_from_the_transition_frame() {
         let mut machine = machine_moving_at(2.0, 8.0, TransitionBlender::Inertialization);
         machine.run(5);
-        machine.set("to_b", true);
+        machine.set(name!("to_b"), true);
 
         machine.step();
 
@@ -750,5 +780,87 @@ mod tests {
             "expected {expected}, got {}",
             machine.root_motion.translation.x
         );
+    }
+
+    fn with_event(mut clip: AnimationClip, time: f32) -> AnimationClip {
+        clip.add_event(
+            time,
+            AnimationEvent {
+                name: name!("step"),
+            },
+        );
+        clip
+    }
+
+    fn machine_firing(blender: TransitionBlender) -> Machine {
+        let bone = Uuid::new_v4();
+        Machine::new(
+            bone,
+            with_event(linear_x_clip(bone, 2.0), 5.5 * MACHINE_FRAME),
+            with_event(linear_x_clip(bone, 8.0), 0.0),
+            constant_x_clip(bone, 0.0),
+            0.1,
+            blender,
+        )
+    }
+
+    #[derive(Debug)]
+    struct TimeWeight {
+        time: f32,
+        weight: f32,
+    }
+
+    fn time_weight(time: f32, weight: f32) -> TimeWeight {
+        TimeWeight { time, weight }
+    }
+
+    fn fired_by_time(machine: &Machine) -> Vec<TimeWeight> {
+        let mut fired: Vec<_> = machine
+            .events
+            .iter()
+            .map(|event| time_weight(event.time, event.weight))
+            .collect();
+        fired.sort_by(|a, b| a.time.total_cmp(&b.time));
+        fired
+    }
+
+    fn assert_fired(actual: &[TimeWeight], expected: &[TimeWeight]) {
+        assert_eq!(actual.len(), expected.len(), "fired {actual:?}");
+        for (fired, expected_fired) in actual.iter().zip(expected) {
+            assert!(
+                (fired.time - expected_fired.time).abs() < 1e-6
+                    && (fired.weight - expected_fired.weight).abs() < 1e-5,
+                "expected {expected:?}, fired {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cross_fade_gives_each_event_the_weight_of_its_state_in_the_fade() {
+        let mut machine = machine_firing(TransitionBlender::CrossFade);
+        machine.run(5);
+        machine.set(name!("to_b"), true);
+
+        machine.step();
+
+        let entered = MACHINE_FRAME / 0.1;
+        assert_fired(
+            &fired_by_time(&machine),
+            &[
+                time_weight(0.0, entered),
+                time_weight(5.5 * MACHINE_FRAME, 1.0 - entered),
+            ],
+        );
+    }
+
+    #[test]
+    fn inertialization_fires_the_start_of_the_entered_state_at_full_weight() {
+        let mut machine = machine_firing(TransitionBlender::Inertialization);
+        machine.run(5);
+        machine.set(name!("to_b"), true);
+
+        machine.step();
+
+        assert_fired(&fired_by_time(&machine), &[time_weight(0.0, 1.0)]);
     }
 }

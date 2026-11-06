@@ -29,7 +29,8 @@ use concerto_ecs::{
     system::{NonSendMarker, executor::multi_thread::MainThreadExecutor},
 };
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, registry::AssetRegistry,
+    asset_server::AssetServer, asset_store::AssetStore, derived::DerivedDataCache,
+    registry::AssetRegistry,
 };
 use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
@@ -57,6 +58,11 @@ pub const HOSTED_UPLOAD_BYTES_PER_FRAME: usize = 32 * 1024 * 1024;
 
 /// How long an edit or play `App` is stepped hidden, waiting for its loads and uploads to settle, before it is shown anyway.
 pub const WARM_UP_LIMIT: Duration = Duration::from_secs(10);
+
+/// Replaces `WARM_UP_LIMIT` for the edit and play `App`s this editor starts.
+#[doc(hidden)]
+#[derive(Resource, Clone, Copy)]
+pub struct WarmUpLimit(pub Duration);
 
 #[derive(Resource)]
 pub(crate) struct FinishBuildsOffThread;
@@ -174,10 +180,11 @@ impl HostedApp {
     }
 
     fn serve_project(&mut self, root: &Path, registry: &AssetRegistry) {
-        if let Some(server) = self.app.get_resource::<AssetServer>()
-            && let Err(error) = server.publish_project_content(root, registry.clone())
-        {
-            log::error!("Could not activate project assets: {error:#}");
+        if let Some(server) = self.app.get_resource::<AssetServer>() {
+            match server.publish_project_content(root, registry.clone()) {
+                Ok(()) => server.set_derived_cache(DerivedDataCache::in_project(root)),
+                Err(error) => log::error!("Could not activate project assets: {error:#}"),
+            }
         }
         self.app.insert_resource(registry.clone());
     }
@@ -392,8 +399,7 @@ impl PendingApp {
         promoted
     }
 
-    #[cfg(test)]
-    fn with_warm_up_limit(mut self, limit: Duration) -> Self {
+    pub(crate) fn with_warm_up_limit(mut self, limit: Duration) -> Self {
         self.warm_up_limit = limit;
         self
     }

@@ -126,11 +126,14 @@ is the last frame drawn: the viewport's picture changes only when the edit
 `App` steps. `scene_tree`, `find_entities`, `inspect` of an entity and
 `screenshot`'s viewport need an open scene. These six look.
 
-`open_project` opens `path` and answers once the catalogue is read.
+`open_project` opens `path` and answers once the catalogue is read; the
+project's default or first scene then opens, as it does when the editor opens
+a project.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
-editor: a scene answers once it has loaded, and at once if it is already shown;
-another kind answers once its document exists, or `open_failed` with the
-document's status if the load failed, and a kind with no editor answers
+editor: it answers once the asset has loaded, and at once if it is already
+shown. A scene that fails to load answers `open_failed`; another kind answers
+once its editor calls `finish_asset_request`, or `open_failed` with the
+document's status if the load failed. A kind with no editor answers
 `open_failed`. `close_document` closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
@@ -332,7 +335,9 @@ steps, and drops. The crate has three parts:
   `First`, whatever tab is in front and with no input, until a step leaves its
   `AssetServer` not loading, no `SceneSpawnerComponent` whose scene is in its
   `AssetStore<Scene>`, and `render_assets_settled` true, or until
-  `WARM_UP_LIMIT`, 10 s after the join.
+  `WARM_UP_LIMIT`, 10 s after the join. A `WarmUpLimit` resource in the
+  editor's world, when present, replaces `WARM_UP_LIMIT` for the edit and play
+  `App`s it starts.
   Only then does it become the document's `HostedApp`; a panic in a hidden
   step is the build's failure, in the step `warming up`. A preview `App` skips
   the warm-up. `finish_blocking` and `PendingApp::finish_now` finish on the
@@ -425,8 +430,10 @@ was. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
 
 **New** beside Import… lists one row, `New <kind>`, per creatable asset kind
-(see [Custom asset editors](#custom-asset-editors)); Scene is the only one the
-editor ships. It creates in the selected folder, or in the content root when
+(see [Custom asset editors](#custom-asset-editors) and
+[Inspected assets](#inspected-assets)); Scene is the only one the editor
+ships. The rows follow the registry, so the game's inspected kinds join them
+once a scene's edit `App` has built. It creates in the selected folder, or in the content root when
 nothing or an asset is selected. Right-clicking a folder opens a menu with the
 same rows, which create in that folder; right-clicking the tree's empty space
 opens it for the content root. Right-clicking an asset opens no menu. Picking a
@@ -465,9 +472,16 @@ refused over unsaved changes, and a scene asked for with no project open each
 fail, and `message` is the status the tab shows. A request that is cancelled or
 superseded writes neither, and neither does selecting the scene already shown.
 
+Opening a project opens a scene in the Scene tab: the one `content.toml`'s
+`default_scene` names, or else the project's first scene, by folder and then
+name. A `default_scene` that is missing or is not a Scene logs a warning and
+the first scene opens instead; a project with no scene opens nothing. A scene
+that fails to open keeps its tab with the failure as its status, and no other
+scene is tried.
+
 With no tabs open, the editor shows an empty viewport. Switching projects
-closes all editors. There is only one Scene tab, from the first scene opened
-until the project changes or the editor quits; it has a Play button where other
+closes all editors. There is only one Scene tab, from the scene that opens with
+the project until the project changes or the editor quits; it has a Play button where other
 tabs have a close button. An asset editor says whether its tabs can be closed
 with `AssetEditor::closable`, which is true unless it says otherwise; the Scene
 editor's is false. `AssetEditorCommand::Close` still closes a Scene document.
@@ -578,6 +592,14 @@ the scene the document now shows, or `SaveFailed { document, message }`, where
 `message` is the status the tab shows, "Stop to save" included. Ctrl+S asks for
 a save only when the document has unsaved changes; otherwise it writes neither,
 even while it shows "Stop to save".
+
+Every write of a content asset in the editor also ends in
+`AssetsWritten { ids }` in the editor's world, naming the assets written: a
+finished import sends every asset it wrote, unless its project was replaced
+while it ran; a save by any asset editor sends the saved asset, taken from its
+`SceneSaved`, so an asset editor's save reports it by writing `SceneSaved`; and
+a New in the Asset Browser sends the created asset. Code that keeps data
+derived from other assets reads it to know when to derive again.
 
 Replacing the open scene, closing a dirty tab, switching project, and closing
 the window all ask first when there are unsaved changes: Save, Discard, or
@@ -736,12 +758,12 @@ component on the document in the editor's world, and lists its targets in the
 fn build(&self, editor: &mut EntityCommandQueue) {
     let document = editor.entity();
     editor.insert((
-        DialogueDocument { dialogue: None },
-        InspectedValues(vec![Arc::new(DocumentValue::<DialogueDocument> {
-            name: "Dialogue".into(),
+        PaletteDocument { palette: None },
+        InspectedValues(vec![Arc::new(DocumentValue::<PaletteDocument> {
+            name: "Palette".into(),
             document,
-            read: Box::new(|held| held.dialogue.as_ref().map(|d| d as &dyn Reflect)),
-            edit: Box::new(|held| held.dialogue.as_mut().map(|d| d as &mut dyn Reflect)),
+            read: Box::new(|held| held.palette.as_ref().map(|p| p as &dyn Reflect)),
+            edit: Box::new(|held| held.palette.as_mut().map(|p| p as &mut dyn Reflect)),
         })]),
     ));
 }
@@ -828,8 +850,8 @@ index from 0, in one of three shapes. An element with an editor gets that
 editor's row, with a remove button at the end. An element with fields, such as a
 struct, gets a heading with its index and the remove button, followed by a row
 per field. Anything else gets an "Unsupported type" row with a remove button, so
-whatever add creates can be removed; `Vec<String>` falls here, since there is no
-`String` editor. Elements cannot be reordered.
+whatever add creates can be removed; `Vec<u64>` falls here, since there is no
+`u64` editor. Elements cannot be reordered.
 
 Add and remove are property commits, so they mark the scene unsaved. The editor
 has no undo, so a removal stands until the scene is reloaded. A list in a list,
@@ -853,6 +875,25 @@ is stored as 90°. The swatch always shows the color at full alpha, and an HDR
 color clips at full brightness. An editor registered for `Color` with
 `register_property_editor::<Color, _>` still takes precedence.
 
+### Names
+
+A `concerto_name::Name` field is a text field holding its text, with nothing
+registered on the editor's `App`. Submitting the field commits the typed text
+as a `Name`; Escape or moving focus away puts the shown text back without an
+edit. This is the interned name type, not the entity `Name` component, which
+the field above the cards edits.
+
+### Text and numbers
+
+A `String` field is a text field that behaves like a `Name` field: submitting
+commits the typed text, and Escape or moving focus away puts the shown text
+back without an edit. `f32` and `f64` fields are one number field each, `Vec2`
+two and `Vec3` three, each edited on its own. `usize` and `u32` fields take a
+whole number from 0 up, and `i32` fields a whole number of either sign. A
+fraction, a negative count, or a number the field's type cannot hold is
+refused, and the field shows the value again. Nothing is registered on the
+editor's `App` for any of them.
+
 ### Asset handles
 
 `AssetPicker` edits every `AssetHandle<A>` the scene's `AppTypeRegistry` holds,
@@ -872,6 +913,32 @@ registered the asset type with `register_asset`. `AssetPickerPlugin` keeps the
 row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
 handle's id, so MCP's `set_property` on a handle field picks that asset through
 the same checks.
+
+### Joint names
+
+`JointNameEditor` edits every `concerto_mesh::JointName` field, on a field and
+in a list, with nothing registered on the editor's `App`:
+`InspectorRegistry::default()` registers it and `InspectorPlugin` adds its
+systems. The row is a button naming the joint, which opens a menu of the bones
+in the front document's `DocumentBones`, so it needs no edit target. Without
+bones the button is disabled and reads the stored name in the muted colour. A
+name the skeleton lacks uses the warning colour, an empty name reads `None`,
+and the menu closes when another tab comes to the front. Picking the name
+already set makes no edit. The picker's `edit_to` takes the value.
+
+`DocumentBones(Option<Vec<Name>>)` is a component any document may carry: the
+bones of the skeleton its value names, or `None` while it names none that can
+be read. An asset type names its skeleton by implementing
+`concerto_mesh::SkeletonSource` and writing `#[reflect(SkeletonSource)]`; the
+editor reads the id through `ReflectSkeletonSource` without naming the type.
+The generic tab of an [inspected asset](#inspected-assets) fills its
+`DocumentBones`. An editor of its own fills it however it reads the skeleton,
+as the motion database editor does.
+
+The menu is `name_menu`'s `NameMenu`, opened with `open_name_menu` and closed
+with `close_menu`; `close_name_menu` closes it when another tab comes to the
+front. An extension crate opens it for names of its own, as the motion database
+editor's channel-type picker does.
 
 ### Entity references
 
@@ -901,8 +968,8 @@ through unchanged.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool`, the
-asset picker and the entity picker implement it; `Quat` goes
+holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `bool`, `Name` and `String`, the
+asset picker, the entity picker and the joint picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
 custom editor opts in by implementing it; MCP's `set_property` writes a field
@@ -932,8 +999,8 @@ Asset editors are separate from property editors. Register the asset with
 `app.register_asset::<T>()`, then use `AssetEditorAppExt`:
 
 ```rust,ignore
-app.register_asset::<Dialogue>();
-app.register_asset_editor::<Dialogue, DialogueEditor>()?;
+app.register_asset::<Palette>();
+app.register_asset_editor::<Palette, PaletteEditor>()?;
 ```
 
 The editor type implements `Default`, which is how the registry builds it.
@@ -947,15 +1014,15 @@ implement it, to give the value a new asset starts from, and register with
 `register_creatable_asset_editor`:
 
 ```rust,ignore
-impl CreatableAsset for Dialogue {
+impl CreatableAsset for Palette {
     fn new_asset() -> Self {
-        Dialogue {
-            text: "Hello".into(),
+        Palette {
+            colors: Vec::new(),
         }
     }
 }
 
-app.register_creatable_asset_editor::<Dialogue, DialogueEditor>()?;
+app.register_creatable_asset_editor::<Palette, PaletteEditor>()?;
 ```
 
 `AssetEditorRegistry::creatable()` lists the creatable kinds in name order,
@@ -987,28 +1054,29 @@ spans the space between the cards and sits over the viewport, which keeps its
 full size, as it does under the cards. Chatter stays visible on every tab. A
 Scene document gets no `bottom` host.
 
-The [custom asset editor example](examples/custom_asset.rs) loads a
-non-Clone Dialogue asset through `decode_content_asset`, which checks its kind
-and type version, builds its own text widget, replaces its contents,
-rejects invalid input without mutation, hosts a preview of a cube that it sets
-spinning with a signal, publishes the `Dialogue` as a
-[document value](#document-values) whose edits mark the document unsaved and
-send the speed to the preview, and registers through the public API. `text`
-shows "Unsupported type", since there is no `String` editor. It stops at marking:
-it never answers `SaveRequested`, so its edits cannot be saved. An editor that
-marks `Unsaved` must follow the rules below. Run its headless smoke test with:
+The [custom asset example](examples/custom_asset.rs) writes no editor of its
+own. Its game marks a non-Clone `Dialogue { text: String, spin_speed: f32 }`
+as an [inspected asset](#inspected-assets), so the generic tab opens, edits,
+saves and discards it: `text` is a text field and `spin_speed` a number field.
+`cargo run -p concerto-editor --example custom_asset` opens the editor over a
+temporary project holding one empty scene; New lists ExampleDialogue once that
+scene's edit `App` has built. Its smoke test, `tests/asset_editor.rs`, drives a
+hand-built editor `App` with `ProjectPlugin`, `ScenePlugin`,
+`InspectedAssetPlugin` and `ContentPlugin` through the same steps without a
+window: open the project, wait for ExampleDialogue to be creatable, create and
+open one, edit both fields in the inspector, check it is unsaved, save, and
+decode the file.
 
-```sh
-cargo run -p concerto-editor --example custom_asset
-```
-
-The example uses a synchronous ECS loading system for clarity. Asynchronous
-systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
+A custom editor may load in a synchronous ECS system, as the generic tab does.
+Asynchronous systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
 before mutating domain state, use `asset_request_is_current` with it to reject
 cancelled or superseded results. Call `finish_asset_request` with a mutable
 document borrow, the captured `AssetEntry`, and success or an error to update
-the tab's current asset and status. A result for a closed tab has no document to
-land on, and switching project closes every tab. An `AssetEditorCommand::Open`
+the tab's current asset and status. A request still pending in its tab needs
+that call: MCP's `open_asset` waits for it, and times out without it. A call
+waiting on a request that was superseded or whose tab closed times out too. A
+result for a closed tab has no document to land on, and switching project
+closes every tab. An `AssetEditorCommand::Open`
 for an asset that is not in the current project's registry is ignored. Failed
 loads must leave the previous presentation intact. Finishing a replacement does not clear
 `Unsaved`: refuse a replacement that finishes loading while the document is
@@ -1036,6 +1104,50 @@ visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
 input. Loading and saving belong to the custom editor.
 
+### Inspected assets
+
+A game marks a reflectable content asset type as inspected with
+`app.register_inspected_asset::<T>()` from its own plugin, where `T` is a
+`CreatableAsset`, a `LoadableAsset` (an empty `impl` when it has no load-time
+work) and `Reflect`. That registers the asset and its type in the game, and
+records what the editor needs to create, decode and save it without naming
+`T`. The editor learns those kinds, and the game's type registry, from each
+scene's edit `App` once it has built: on `SceneOpened`, every inspected kind
+that has no editor yet gets the generic `InspectedAssetEditor` and a row in New.
+A kind that already has an editor keeps it, and one whose `New <kind> 999` is
+not a valid asset name is skipped with a warning. `ProjectTypes` holds the type
+registry of the last scene's edit `App`.
+
+Before the first scene's edit `App` has built, and all along in a project with
+no scene, an inspected kind has no editor: double-clicking one in the Asset
+Browser does nothing, and MCP `open_asset` answers `open_failed`, naming it a
+kind with no editor.
+
+The generic tab is the inspector alone, with no preview and no bottom host, and
+it closes like any other tab. Its document carries `InspectedDocument`, which
+holds the kind's record, the value being edited, and the file's bytes as last
+read or saved, and publishes the value as one
+[document value](#document-values) named after the kind. Opening reads the
+file, decodes it and checks that its header carries the asset's id; a file
+that cannot be read or decoded, or holds another asset's id, fails the open
+with the error as the tab's status. The value's types come from
+`DocumentTypes`, which the tab takes from `ProjectTypes`, so the inspector
+walks the game's lists, options and enums. A document whose values are in a
+registry other than its hosted `App`'s or the editor's carries
+`DocumentTypes`, which `DocumentValue` reads first.
+
+An edit through the inspector marks the tab unsaved. Ctrl+S, or the
+unsaved-changes prompt's Save, writes the value over the file it was opened
+from, keeps the file's id, reads the written file back as what was last
+saved, and ends in `SceneSaved`, with "Saved <address>" as the status until
+the next edit clears it. A failed save ends in `SaveFailed`, shows why, and leaves the tab unsaved.
+Discard decodes the file as last read or saved back into the value. There is
+no undo. A value whose type carries `ReflectSkeletonSource` gives the document
+the bones of the skeleton it names in `DocumentBones`, read again whenever an
+edit, a save or a discard changes the skeleton it names, so its `JointName`
+fields pick from them; see [Joint names](#joint-names). MCP works on the tab as on any document value: `open_asset`,
+`inspect`, `set_property`, `list_push`, `list_remove` and `save`.
+
 ### Previews
 
 The Scene editor hosts an `App` for each open scene, with its own camera,
@@ -1044,15 +1156,15 @@ returning a `PreviewSpec` from `AssetEditor::preview`, which is `None` unless
 it says otherwise:
 
 ```rust,ignore
-impl AssetEditor for DialogueEditor {
+impl AssetEditor for PaletteEditor {
     fn preview(&self) -> Option<PreviewSpec> {
-        Some(PreviewSpec { build: dialogue_preview })
+        Some(PreviewSpec { build: palette_preview })
     }
 }
 
-fn dialogue_preview(app: &mut App) {
-    app.add_system(Update, spin_cubes.at_preview_time())
-        .add_listener(set_spin.at_preview_time());
+fn palette_preview(app: &mut App) {
+    app.add_system(Update, draw_swatches.at_preview_time())
+        .add_listener(set_swatches.at_preview_time());
 }
 ```
 

@@ -1,11 +1,13 @@
 //! The on-disk framing for game-ready content assets: magic, a
-//! length-prefixed bincode header, then the payload verbatim.
+//! length-prefixed bincode header, the payload verbatim, then an optional derived blob.
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, write_content_asset, ContentAssetHeader,
+    read_content_asset, read_content_asset_header, read_content_asset_parts, write_content_asset,
+    write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection,
     ImportProvenance, CONTENT_ASSET_MAGIC,
 };
 use concerto_foundation::assets::AssetId;
 use serde::Serialize;
+use std::path::Path;
 
 fn header() -> ContentAssetHeader {
     ContentAssetHeader {
@@ -17,7 +19,26 @@ fn header() -> ContentAssetHeader {
         kind: "Mesh".to_string(),
         kind_version: 3,
         provenance: None,
+        derived: None,
     }
+}
+
+fn section(blob: &[u8]) -> CookedSection<'_> {
+    CookedSection {
+        derived_version: 2,
+        key: 0x0123_4567_89ab_cdef,
+        blob,
+    }
+}
+
+#[derive(Serialize)]
+struct HeaderV5 {
+    format_version: u32,
+    asset_id: AssetId,
+    references: Vec<AssetId>,
+    kind: String,
+    kind_version: u32,
+    provenance: Option<ImportProvenance>,
 }
 
 #[derive(Serialize)]
@@ -110,10 +131,188 @@ fn rejects_a_truncated_header() {
 }
 
 #[test]
-fn writes_header_version_5_after_the_length() {
+fn writes_header_version_6_after_the_length() {
     let bytes = write_content_asset(&header(), b"payload").expect("write");
     let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
+}
+
+#[test]
+fn a_cooked_file_round_trips_header_payload_and_blob() {
+    let payload: Vec<u8> = (0u8..=255).collect();
+    let blob = b"derived blob bytes";
+    let bytes = write_cooked_content_asset(&header(), &payload, section(blob)).expect("write");
+
+    let parts = read_content_asset_parts(&bytes).expect("read");
+    let expected = ContentAssetHeader {
+        derived: Some(DerivedSection {
+            derived_version: 2,
+            key: 0x0123_4567_89ab_cdef,
+            len: blob.len() as u64,
+        }),
+        ..header()
+    };
+    assert_eq!(parts.header, expected);
+    assert_eq!(parts.payload, &payload[..]);
+    assert_eq!(parts.derived_blob, Some(&blob[..]));
+}
+
+#[test]
+fn read_content_asset_leaves_the_derived_blob_out_of_the_payload() {
+    let bytes = write_cooked_content_asset(&header(), b"payload", section(b"blob")).expect("write");
+
+    let (decoded, payload) = read_content_asset(&bytes).expect("read");
+    assert_eq!(payload, b"payload");
+    assert!(decoded.derived.is_some());
+}
+
+#[test]
+fn a_file_without_a_section_has_no_derived_blob() {
+    let bytes = write_content_asset(&header(), b"payload").expect("write");
+
+    let parts = read_content_asset_parts(&bytes).expect("read");
+    assert_eq!(parts.header, header());
+    assert_eq!(parts.payload, b"payload");
+    assert_eq!(parts.derived_blob, None);
+}
+
+#[test]
+fn a_version_5_header_reads_with_no_derived_section() {
+    let old = HeaderV5 {
+        format_version: 5,
+        asset_id: AssetId::from_path("content/hero/body.gasset"),
+        references: vec![AssetId::from_path("content/hero/skin.gasset")],
+        kind: "Mesh".to_string(),
+        kind_version: 3,
+        provenance: None,
+    };
+    let bytes = framed(&old, b"payload");
+    let expected = ContentAssetHeader {
+        asset_id: old.asset_id,
+        references: old.references.clone(),
+        kind: old.kind.clone(),
+        kind_version: 3,
+        provenance: None,
+        derived: None,
+    };
+
+    let parts = read_content_asset_parts(&bytes).expect("read");
+    assert_eq!(parts.header, expected);
+    assert_eq!(parts.payload, b"payload");
+    assert_eq!(parts.derived_blob, None);
+
+    let path = written_to_disk("v5", &bytes);
+    let from_file = read_content_asset_header(&path);
+    std::fs::remove_file(&path).ok();
+    assert_eq!(from_file.expect("read header"), expected);
+}
+
+#[test]
+fn rejects_a_section_longer_than_the_file() {
+    let oversized = ContentAssetHeader {
+        derived: Some(DerivedSection {
+            derived_version: 1,
+            key: 7,
+            len: 1000,
+        }),
+        ..header()
+    };
+    let bytes = framed(&(6u32, &oversized), b"payload");
+
+    for message in [
+        format!(
+            "{:#}",
+            read_content_asset_parts(&bytes).expect_err("must reject")
+        ),
+        format!("{:#}", read_content_asset(&bytes).expect_err("must reject")),
+    ] {
+        assert!(
+            message.contains("content asset truncated: derived section claims 1000 bytes"),
+            "error should name the claimed section length, got: {message}"
+        );
+    }
+}
+
+#[test]
+fn write_content_asset_refuses_a_header_with_a_derived_section() {
+    let cooked = ContentAssetHeader {
+        derived: Some(DerivedSection {
+            derived_version: 1,
+            key: 7,
+            len: 4,
+        }),
+        ..header()
+    };
+
+    assert!(write_content_asset(&cooked, b"payload").is_err());
+}
+
+#[test]
+fn read_content_asset_header_reads_a_cooked_header() {
+    let bytes = write_cooked_content_asset(&header(), b"payload", section(b"blob")).expect("write");
+
+    let path = written_to_disk("v6", &bytes);
+    let from_file = read_content_asset_header(&path);
+    std::fs::remove_file(&path).ok();
+    assert_eq!(
+        from_file.expect("read header"),
+        ContentAssetHeader {
+            derived: Some(DerivedSection {
+                derived_version: 2,
+                key: 0x0123_4567_89ab_cdef,
+                len: 4,
+            }),
+            ..header()
+        }
+    );
+}
+
+#[test]
+fn the_cooked_framing_matches_its_fixture() {
+    let header = ContentAssetHeader {
+        asset_id: AssetId::from_bytes([
+            0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87, 0x98, 0xa9, 0xba, 0xcb, 0xdc, 0xed,
+            0xfe, 0x0f,
+        ]),
+        references: vec![AssetId::from_bytes([0x5a; 16])],
+        kind: "MotionDatabase".to_string(),
+        kind_version: 4,
+        provenance: Some(ImportProvenance {
+            source: "assets/hero.glb".to_string(),
+            sub_asset: "anim/idle".to_string(),
+        }),
+        derived: None,
+    };
+    let bytes = write_cooked_content_asset(
+        &header,
+        b"payload",
+        CookedSection {
+            derived_version: 3,
+            key: 0xfedc_ba98_7654_3210,
+            blob: b"derived",
+        },
+    )
+    .expect("write");
+
+    let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"));
+    let path = dir.join("content_asset.v6.bin");
+    if std::env::var("CONCERTO_BLESS_ENCODING").as_deref() == Ok("1") {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("failed to create '{}': {error}", dir.display()));
+        std::fs::write(&path, &bytes)
+            .unwrap_or_else(|error| panic!("failed to write '{}': {error}", path.display()));
+        return;
+    }
+    let Ok(fixture) = std::fs::read(&path) else {
+        panic!(
+            "no encoding fixture for the content asset framing version 6 at {}; run this test with CONCERTO_BLESS_ENCODING=1 to write it",
+            path.display()
+        );
+    };
+    assert!(
+        fixture == bytes,
+        "the content asset framing changed but CONTENT_FORMAT_VERSION is still 6: raise it to 7 and read version 6 files as before, then run with CONCERTO_BLESS_ENCODING=1"
+    );
 }
 
 #[test]
@@ -126,6 +325,7 @@ fn a_version_4_header_reads_as_kind_version_1_through_both_readers() {
         kind: old.kind.clone(),
         kind_version: 1,
         provenance: old.provenance.clone(),
+        derived: None,
     };
 
     let (decoded, payload) = read_content_asset(&bytes).expect("read");
@@ -139,8 +339,8 @@ fn a_version_4_header_reads_as_kind_version_1_through_both_readers() {
 }
 
 #[test]
-fn rejects_versions_3_and_6_through_both_readers() {
-    for version in [3u32, 6] {
+fn rejects_versions_3_and_7_through_both_readers() {
+    for version in [3u32, 7] {
         let mut old = version_4_header();
         old.format_version = version;
         let bytes = framed(&old, b"payload");
@@ -149,7 +349,7 @@ fn rejects_versions_3_and_6_through_both_readers() {
         let message = format!("{err:#}");
         assert!(
             message.contains(&format!("version {version}"))
-                && message.contains("reads versions 4 and 5"),
+                && message.contains("reads versions 4 to 6"),
             "error should name version {version} and the readable versions, got: {message}"
         );
 
@@ -159,7 +359,7 @@ fn rejects_versions_3_and_6_through_both_readers() {
         let message = format!("{:#}", from_file.expect_err("must reject"));
         assert!(
             message.contains(&format!("version {version}"))
-                && message.contains("reads versions 4 and 5"),
+                && message.contains("reads versions 4 to 6"),
             "error should name version {version} and the readable versions, got: {message}"
         );
     }

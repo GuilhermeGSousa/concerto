@@ -13,6 +13,7 @@ game adds itself when it needs them.
 | | `tasks` | task pools for background work | |
 | | `color` | colors | `color` |
 | | `reflect` | reflection: field access by path, the type registry | `reflect` |
+| | `name` | `Name`, an interned string that compares as one integer and persists as its text, and `name!` | `name` |
 | Assets | `asset-format` | `AssetId` and the `.gasset` framing | |
 | | `asset-import` | the `Importer` trait | |
 | | `asset-build` | `track_assets` for build scripts, which also writes the registry a game embeds | |
@@ -28,6 +29,7 @@ game adds itself when it needs them.
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
 | | `jolt-ffi` | the bindings to Jolt, built from the submodule | |
 | | `animation` | clips, skeletons, animation graphs, the animation player | `animation` |
+| | `procedural-animation` | procedural animation graph nodes: `FootPlacementNode`, which reads physics to put a character's feet on the ground, and `LookAtNode`, which turns its spine, head and eyes toward a point | `procedural_animation` |
 | | `scene` | scenes: spawning and capturing | `scene` |
 | | `director` | the virtual-camera stack | `director` |
 | | `gameplay` | camera rigs and player helpers | `gameplay` |

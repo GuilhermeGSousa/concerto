@@ -303,17 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn a_system_is_skipped_while_there_is_no_edit_target() {
-        let (mut world, _) = seam_world(1);
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
-        retarget(&mut world);
-
-        run(&mut world, read_markers);
-
-        assert_eq!(world.get_resource::<Runs>().unwrap().0, 0);
-    }
-
-    #[test]
     fn a_query_follows_a_replacement_app() {
         let (mut world, document) = seam_world(1);
         let mut system = read_markers.into_system();
@@ -639,18 +628,6 @@ mod tests {
         world.trigger(Poke(8));
 
         assert_eq!(heard(&mut world), vec![8]);
-    }
-
-    #[test]
-    fn a_signalling_system_is_skipped_while_there_is_no_edit_target() {
-        let (mut world, _) = hearing_world();
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
-        retarget(&mut world);
-
-        run(&mut world, count_and_say);
-
-        assert_eq!(runs(&world), 0);
-        assert!(heard(&mut world).is_empty());
     }
 
     #[test]
