@@ -232,7 +232,7 @@ mod tests {
         Skeleton::new(
             vec![Mat4::IDENTITY; count],
             parents,
-            names.iter().map(|name| Name::new(*name)).collect(),
+            names.iter().map(|name| Name::new(name)).collect(),
             vec![JointPose::IDENTITY; count],
             (0..count as u128).map(Uuid::from_u128).collect(),
         )
