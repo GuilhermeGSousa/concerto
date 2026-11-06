@@ -822,6 +822,7 @@ dependencies = [
  "concerto-motion-matching",
  "concerto-name",
  "concerto-physics",
+ "concerto-procedural-animation",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
@@ -1334,6 +1335,25 @@ dependencies = [
  "log",
  "profiling",
  "rapier3d",
+]
+
+[[package]]
+name = "concerto-procedural-animation"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "concerto-animation",
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-name",
+ "concerto-physics",
+ "concerto-reflect",
+ "glam 0.30.10",
+ "log",
+ "serde",
+ "uuid",
 ]
 
 [[package]]

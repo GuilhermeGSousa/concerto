@@ -60,7 +60,10 @@ use concerto_foundation::{
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::HostClosing, host::run_with};
 use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_render::components::{camera::Camera, light::Light};
+use concerto_render::{
+    components::{camera::Camera, light::Light},
+    gpu::Gpu,
+};
 use concerto_scene::scene::{Scene, SceneNode};
 use concerto_ui::{
     node::UILayoutDiagnostics, text::UIText, text_input::UITextInput, theme::UITheme,
@@ -765,6 +768,7 @@ where
     let _turn = ONE_APP_AT_A_TIME
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
+    Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let cancelled = Arc::new(Mutex::new(None::<Instant>));
     let cancelled_by_client = cancelled.clone();
@@ -785,7 +789,7 @@ where
     let root = fixture.root();
     let scene = fixture.scene;
     let log = log.clone();
-    let served = run_with(
+    run_with(
         server_io,
         move |app| {
             concerto_editor::mcp::editor(recipe, root, vec![extension])(app);
@@ -843,12 +847,9 @@ where
             configure(app);
         },
         SIZE,
-    );
+    )
+    .expect("an adapter was found");
     let returned = Instant::now();
-    if served.is_err() {
-        eprintln!("skipped: no GPU adapter");
-        return None;
-    }
     let result = client
         .join()
         .expect("the client's assertions hold")
