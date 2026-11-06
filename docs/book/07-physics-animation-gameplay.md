@@ -212,6 +212,24 @@ A graph is a tree of nodes under a result node:
   `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space.
+- **Look-at** (`LookAtNode`) turns a character's spine, neck, head and eyes
+  toward a point while the body plays its input. The `chain` lists
+  `LookAtBone`s from the spine to the head, each under the one before, all
+  under bone 0. Each bone turns by its `share` of the angle left to it, and
+  within its `yaw_limit` and `pitch_limit` in radians, so a bone held at a
+  limit leaves the rest to the bones after it. The `eyes`, `LookAtEye`s under
+  the last chain bone, then each aim on their own from their own position,
+  within their limits. `forward` and `up` are model-space axes, +Z and +Y by
+  default, read in each bone's rest pose. The target is a world-space `Vec3`
+  the game set under `target_param`. `weight`, times the float under
+  `weight_param`, blends the look in; a target that is missing, or more than
+  `max_angle` (at most 170°) off the first bone's animated gaze, eases it out
+  over `weight_halflife`. Each bone eases toward its turn with its own
+  `halflife`, so fast eyes reach the target while a slower head is still
+  turning. The look starts from the input's pose when the node starts or
+  resets. Wire it after the nodes whose pose it turns, and before two-bone
+  IK. The yaw and pitch maths are `concerto_animation::look_at` for code
+  outside a graph.
 
 Parameters are set on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`

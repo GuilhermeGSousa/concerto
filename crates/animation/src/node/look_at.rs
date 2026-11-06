@@ -1,5 +1,6 @@
 use std::f32::consts::PI;
 
+use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::Name;
 use concerto_reflect::Reflect;
@@ -20,6 +21,7 @@ use crate::{
 };
 
 const MAX_ANGLE_CAP: f32 = 170.0 * PI / 180.0;
+const SNAP_WEIGHT: f32 = 1.0e-4;
 
 /// Turns a chain of bones, then each eye, toward a world-space point; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
@@ -94,11 +96,35 @@ impl Default for LookAtEye {
     }
 }
 
-/// The turn of each chain bone and then each eye, and whether a [`LookAtNode`] has already warned about bones it cannot resolve.
-#[derive(Debug, Default)]
+/// The eased weight and turn of each chain bone and then each eye, the time since the last evaluate, and whether a [`LookAtNode`] has already warned about bones it cannot resolve.
+#[derive(Debug)]
 pub struct LookAtState {
-    offsets: Vec<Quat>,
+    elapsed: f32,
+    fresh: bool,
+    weight: Spring<f32>,
+    offsets: Vec<Spring<Quat>>,
     warned: bool,
+}
+
+impl LookAtState {
+    fn take_time(&mut self) -> f32 {
+        let elapsed = std::mem::take(&mut self.elapsed);
+        if std::mem::take(&mut self.fresh) {
+            0.0
+        } else {
+            elapsed
+        }
+    }
+
+    fn offsets_to_rest(&mut self) {
+        for offset in &mut self.offsets {
+            offset.reset_to(Quat::IDENTITY);
+        }
+    }
+}
+
+fn identity_offsets(count: usize) -> Vec<Spring<Quat>> {
+    vec![Spring::critically_damped(Quat::IDENTITY, 0.0); count]
 }
 
 struct LookBone {
@@ -116,6 +142,14 @@ struct ResolvedLook<'a> {
 impl LookAtNode {
     fn entry_count(&self) -> usize {
         self.chain.len() + self.eyes.len()
+    }
+
+    fn halflives(&self) -> impl Iterator<Item = f32> + '_ {
+        self.chain
+            .iter()
+            .map(|link| link.halflife)
+            .chain(self.eyes.iter().map(|eye| eye.halflife))
+            .map(halflife)
     }
 
     fn effective_weight(&self, blackboard: &AnimationBlackboard) -> f32 {
@@ -245,6 +279,14 @@ fn share(share: f32) -> f32 {
     }
 }
 
+fn halflife(halflife: f32) -> f32 {
+    if halflife.is_finite() && halflife > 0.0 {
+        halflife
+    } else {
+        0.0
+    }
+}
+
 fn limits(yaw: f32, pitch: f32) -> YawPitch {
     let limit = |limit: f32| if limit > 0.0 { limit } else { 0.0 };
     YawPitch {
@@ -275,7 +317,8 @@ fn descends(skeleton: &Skeleton, bone: usize, ancestor: usize) -> bool {
 fn solve(
     look: &ResolvedLook<'_>,
     target: Vec3,
-    offsets: &mut [Quat],
+    offsets: &mut [Spring<Quat>],
+    delta_time: f32,
     working: &mut AnimationFrame,
 ) {
     for (look_bone, offset) in look.bones.iter().zip(offsets.iter_mut()) {
@@ -286,15 +329,16 @@ fn solve(
             joint.rotation.inverse() * (target - Vec3::from(joint.transform.translation));
         let angles = yaw_pitch_to(&look_bone.frame, direction);
         let limits = look_bone.limits;
-        *offset = look_rotation(
+        let goal = look_rotation(
             &look_bone.frame,
             YawPitch {
                 yaw: (look_bone.part * angles.yaw).clamp(-limits.yaw, limits.yaw),
                 pitch: (look_bone.part * angles.pitch).clamp(-limits.pitch, limits.pitch),
             },
         );
+        let turn = offset.update(goal, delta_time);
         if let Some(local) = working.joint_mut(look_bone.bone) {
-            local.rotation = (local.rotation * *offset).normalize();
+            local.rotation = (local.rotation * turn).normalize();
         }
     }
 }
@@ -307,12 +351,25 @@ impl AnimationNode for LookAtNode {
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> LookAtState {
         LookAtState {
-            offsets: vec![Quat::IDENTITY; self.entry_count()],
+            elapsed: 0.0,
+            fresh: true,
+            weight: Spring::critically_damped(0.0, 0.0),
+            offsets: identity_offsets(self.entry_count()),
             warned: false,
         }
     }
 
-    fn update(&self, _: &mut LookAtState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(
+        &self,
+        state: &mut LookAtState,
+        delta_time: f32,
+        _: &(),
+        _: &AnimationGraphContext<'_>,
+    ) {
+        if delta_time.is_finite() && delta_time > 0.0 {
+            state.elapsed += delta_time;
+        }
+    }
 
     fn evaluate(
         &self,
@@ -325,6 +382,7 @@ impl AnimationNode for LookAtNode {
         output: &mut AnimationFrame,
     ) {
         pass_through(evaluated_inputs, output);
+        let delta_time = state.take_time();
         if self.entry_count() == 0 {
             return;
         }
@@ -342,28 +400,54 @@ impl AnimationNode for LookAtNode {
             }
         };
         if state.offsets.len() != look.bones.len() {
-            state.offsets = vec![Quat::IDENTITY; look.bones.len()];
+            state.offsets = identity_offsets(look.bones.len());
         }
-        let Some(target) = self.target(context) else {
+        state.weight.set_halflife(halflife(self.weight_halflife));
+        for (offset, seconds) in state.offsets.iter_mut().zip(self.halflives()) {
+            offset.set_halflife(seconds);
+        }
+        let target = self.target(context);
+        let goal = target.map_or(0.0, |target| {
+            self.goal_weight(&look, output.joints(), target, context.blackboard())
+        });
+        let weight = state.weight.update(goal, delta_time).clamp(0.0, 1.0);
+        state.weight.value = weight;
+        if goal <= 0.0 && weight < SNAP_WEIGHT {
+            state.weight.reset_to(0.0);
+            state.offsets_to_rest();
             return;
-        };
-        let weight = self.goal_weight(&look, output.joints(), target, context.blackboard());
+        }
+        match target {
+            Some(target) => {
+                let mut working = pool.acquire();
+                working.pose_mut().copy_from(output.pose());
+                solve(&look, target, &mut state.offsets, delta_time, &mut working);
+                pool.release(working);
+            }
+            None => {
+                for offset in &mut state.offsets {
+                    let held = offset.value;
+                    offset.reset_to(held);
+                }
+            }
+        }
         if weight <= 0.0 {
             return;
         }
-        let mut working = pool.acquire();
-        working.pose_mut().copy_from(output.pose());
-        solve(&look, target, &mut state.offsets, &mut working);
-        pool.release(working);
         for (look_bone, offset) in look.bones.iter().zip(&state.offsets) {
             if let Some(joint) = output.joint_mut(look_bone.bone) {
                 joint.rotation =
-                    (joint.rotation * Quat::IDENTITY.slerp(*offset, weight)).normalize();
+                    (joint.rotation * Quat::IDENTITY.slerp(offset.value, weight)).normalize();
             }
         }
     }
 
-    fn reset(&self, _: &mut LookAtState) {}
+    fn reset(&self, state: &mut LookAtState) {
+        state.elapsed = 0.0;
+        state.fresh = true;
+        state.weight.reset_to(0.0);
+        state.offsets_to_rest();
+    }
 }
 
 #[cfg(test)]
@@ -373,7 +457,7 @@ mod tests {
     use concerto_name::name;
     use glam::{Affine3A, Mat4, Quat, Vec3};
 
-    use super::{LookAtBone, LookAtEye, LookAtNode};
+    use super::{LookAtBone, LookAtEye, LookAtNode, LookAtState};
     use crate::{
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
@@ -395,6 +479,8 @@ mod tests {
     const PROP_CHILD: usize = 9;
     const CHAIN: [usize; 3] = [SPINE, NECK, HEAD];
     const EYES: [usize; 2] = [EYE_L, EYE_R];
+    const DT: f32 = 1.0 / 60.0;
+    const SETTLE_STEPS: usize = 300;
 
     struct RigBone {
         name: &'static str,
@@ -524,45 +610,13 @@ mod tests {
         }
 
         fn solve(&self, node: &LookAtNode) -> AnimationFrame {
-            self.run(node, true)
+            Looker::start(self, node.clone()).step(self, DT)
         }
 
         fn solve_without_skeleton(&self, node: &LookAtNode) -> AnimationFrame {
-            self.run(node, false)
-        }
-
-        fn run(&self, node: &LookAtNode, with_skeleton: bool) -> AnimationFrame {
-            let input = [EvaluatedFrame {
-                frame: self.input(),
-                weight: 1.0,
-            }];
-            let mut pool = FramePool::new(self.skeleton.bone_count());
-            let mut output = pool.acquire();
-            let mut state = self
-                .walks
-                .create(&self.blackboard, |context| node.create_state(&(), context));
-            let evaluate = |context: &AnimationGraphContext<'_>| {
-                node.evaluate(
-                    &mut state,
-                    &(),
-                    context,
-                    &[],
-                    &input,
-                    &mut pool,
-                    &mut output,
-                )
-            };
-            if with_skeleton {
-                self.walks.evaluate_posed(
-                    &self.blackboard,
-                    &self.skeleton,
-                    self.model_to_world,
-                    evaluate,
-                );
-            } else {
-                self.walks.evaluate(&self.blackboard, None, evaluate);
-            }
-            output
+            let mut looker = Looker::new(self, node.clone());
+            looker.frame(self, 0.0, false);
+            looker.frame(self, DT, false)
         }
 
         fn model(&self, frame: &AnimationFrame, bone: usize) -> Mat4 {
@@ -619,6 +673,79 @@ mod tests {
                 .unwrap_or_default()
                 .transform_point3(model_target);
             self.blackboard.set(name!("look_target"), world);
+        }
+    }
+
+    struct Looker {
+        node: LookAtNode,
+        state: LookAtState,
+        pool: FramePool,
+    }
+
+    impl Looker {
+        fn new(rig: &Rig, node: LookAtNode) -> Self {
+            let state = rig
+                .walks
+                .create(&rig.blackboard, |context| node.create_state(&(), context));
+            Self {
+                pool: FramePool::new(rig.skeleton.bone_count()),
+                node,
+                state,
+            }
+        }
+
+        fn start(rig: &Rig, node: LookAtNode) -> Self {
+            let mut looker = Self::new(rig, node);
+            looker.step(rig, 0.0);
+            looker
+        }
+
+        fn update(&mut self, rig: &Rig, delta_time: f32) {
+            let Self { node, state, .. } = self;
+            rig.walks.update(&rig.blackboard, |context| {
+                node.update(state, delta_time, &(), context)
+            });
+        }
+
+        fn evaluate(&mut self, rig: &Rig, with_skeleton: bool) -> AnimationFrame {
+            let Self { node, state, pool } = self;
+            let input = [EvaluatedFrame {
+                frame: rig.input(),
+                weight: 1.0,
+            }];
+            let mut output = pool.acquire();
+            let evaluate = |context: &AnimationGraphContext<'_>| {
+                node.evaluate(state, &(), context, &[], &input, pool, &mut output)
+            };
+            if with_skeleton {
+                rig.walks.evaluate_posed(
+                    &rig.blackboard,
+                    &rig.skeleton,
+                    rig.model_to_world,
+                    evaluate,
+                );
+            } else {
+                rig.walks.evaluate(&rig.blackboard, None, evaluate);
+            }
+            output
+        }
+
+        fn frame(&mut self, rig: &Rig, delta_time: f32, with_skeleton: bool) -> AnimationFrame {
+            self.update(rig, delta_time);
+            self.evaluate(rig, with_skeleton)
+        }
+
+        fn step(&mut self, rig: &Rig, delta_time: f32) -> AnimationFrame {
+            self.frame(rig, delta_time, true)
+        }
+
+        fn settle(&mut self, rig: &Rig) -> AnimationFrame {
+            let mut frame = self.step(rig, DT);
+            for _ in 1..SETTLE_STEPS {
+                let next = self.step(rig, DT);
+                self.pool.release(std::mem::replace(&mut frame, next));
+            }
+            frame
         }
     }
 
@@ -1079,5 +1206,240 @@ mod tests {
         });
 
         assert_unchanged(&rig, &frame);
+    }
+
+    fn eased() -> LookAtNode {
+        let mut node = with_eyes();
+        for link in &mut node.chain {
+            link.halflife = LookAtBone::default().halflife;
+        }
+        for eye in &mut node.eyes {
+            eye.halflife = LookAtEye::default().halflife;
+        }
+        node.weight_halflife = LookAtNode::default().weight_halflife;
+        node
+    }
+
+    #[test]
+    fn the_eyes_reach_the_target_while_a_slow_head_is_still_turning() {
+        let mut rig = Rig::new();
+        let target = rig.toward(HEAD, 0.6, 0.15, 2.0);
+        rig.aim(target);
+        let mut node = with_eyes();
+        node.chain[2].halflife = 0.2;
+
+        let first = Looker::start(&rig, node.clone()).step(&rig, DT);
+        let settled = Looker::start(&rig, node).settle(&rig);
+
+        let limits = LookAtEye::default();
+        for bone in EYES {
+            assert_gaze(&rig, &first, bone, target);
+            let turn = rig.turn(&first, bone);
+            assert!(turn.yaw.abs() <= limits.yaw_limit + 1e-4, "eye {bone}");
+            assert!(turn.pitch.abs() <= limits.pitch_limit + 1e-4, "eye {bone}");
+        }
+        let head = rig.turned(&first, HEAD);
+        let full = rig.turned(&settled, HEAD);
+        assert!(head < 0.5 * full, "the head turned {head} of {full}");
+    }
+
+    #[test]
+    fn an_offset_covers_half_its_turn_in_one_halflife() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
+        let halflife = 0.1;
+        let node = LookAtNode {
+            chain: vec![LookAtBone {
+                halflife,
+                ..link("head")
+            }],
+            ..look()
+        };
+
+        let half = Looker::start(&rig, node.clone()).step(&rig, halflife);
+        let settled = Looker::start(&rig, node).settle(&rig);
+
+        let ratio = rig.turned(&half, HEAD) / rig.turned(&settled, HEAD);
+        assert_near(ratio, 0.5, 0.01);
+    }
+
+    #[test]
+    fn a_partial_weight_eases_each_bone_part_way() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.6, 0.2, 2.0));
+        rig.blackboard.set(name!("look_weight"), 0.5_f32);
+        let settle = |node: LookAtNode| Looker::start(&rig, node).settle(&rig);
+        let full = eased();
+
+        let solved = settle(full.clone());
+        let by_weight = settle(LookAtNode {
+            weight: 0.5,
+            ..full.clone()
+        });
+        let by_param = settle(LookAtNode {
+            weight_param: Some(name!("look_weight")),
+            ..full.clone()
+        });
+        let off = settle(LookAtNode {
+            weight: 0.0,
+            ..full
+        });
+
+        let input = rig.input();
+        for bone in CHAIN.into_iter().chain(EYES) {
+            let halfway = input.joints()[bone]
+                .rotation
+                .slerp(solved.joints()[bone].rotation, 0.5);
+            assert_rotation(by_weight.joints()[bone].rotation, halfway);
+            assert_rotation(by_param.joints()[bone].rotation, halfway);
+        }
+        assert_unchanged(&rig, &off);
+    }
+
+    #[test]
+    fn an_absent_target_eases_the_look_back_to_the_input_pose() {
+        let absences: [fn(&mut Rig); 3] = [
+            |rig| rig.blackboard = AnimationBlackboard::default(),
+            |rig| rig.blackboard.set(name!("look_target"), 1.0_f32),
+            |rig| rig.model_to_world = Some(Affine3A::from_scale(Vec3::ZERO)),
+        ];
+
+        for absence in absences {
+            let mut rig = Rig::new();
+            rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
+            let mut looker = Looker::start(&rig, eased());
+            looker.settle(&rig);
+            absence(&mut rig);
+
+            let easing = looker.step(&rig, DT);
+            let settled = looker.settle(&rig);
+
+            assert!(rig.turned(&easing, HEAD) > 1e-3);
+            assert_unchanged(&rig, &settled);
+        }
+    }
+
+    #[test]
+    fn time_before_the_first_evaluate_does_not_snap_the_look_in() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
+        let node = LookAtNode {
+            weight_halflife: 0.2,
+            ..look()
+        };
+        let full = rig.turned(&Looker::start(&rig, node.clone()).settle(&rig), HEAD);
+        let mut looker = Looker::new(&rig, node);
+        for _ in 0..120 {
+            looker.update(&rig, DT);
+        }
+
+        let first = looker.evaluate(&rig, true);
+        let next = looker.step(&rig, DT);
+
+        assert_unchanged(&rig, &first);
+        assert_ne!(next.joints()[HEAD], rig.input().joints()[HEAD]);
+        let turned = rig.turned(&next, HEAD);
+        assert!(turned < 0.5 * full, "turned {turned} of {full}");
+    }
+
+    #[test]
+    fn a_weight_faded_below_the_threshold_returns_the_input_pose_exactly() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
+        let mut looker = Looker::start(&rig, eased());
+        looker.settle(&rig);
+        rig.blackboard = AnimationBlackboard::default();
+
+        let mut snapped = false;
+        for _ in 0..SETTLE_STEPS {
+            let frame = looker.step(&rig, DT);
+            if looker.state.weight.value > 0.0 {
+                assert_ne!(frame.joints(), rig.input().joints());
+            } else {
+                assert_unchanged(&rig, &frame);
+                snapped = true;
+                break;
+            }
+        }
+        assert!(snapped, "the weight never snapped to zero");
+    }
+
+    #[test]
+    fn a_target_moved_past_max_angle_eases_the_look_out_and_one_inside_does_not() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(SPINE, 0.3, 0.0, 3.0));
+        let mut past = Looker::start(&rig, eased());
+        past.settle(&rig);
+        let mut inside = Looker::start(&rig, eased());
+        inside.settle(&rig);
+
+        rig.aim(rig.toward(SPINE, 125.0_f32.to_radians(), 0.0, 3.0));
+        let easing = past.step(&rig, DT);
+        let faded = past.settle(&rig);
+        assert!(rig.turned(&easing, SPINE) > 1e-3);
+        assert_unchanged(&rig, &faded);
+
+        rig.aim(rig.toward(SPINE, 115.0_f32.to_radians(), 0.0, 3.0));
+        let held = inside.settle(&rig);
+        for bone in CHAIN {
+            assert!(rig.turned(&held, bone) > 1e-3, "bone {bone}");
+        }
+    }
+
+    #[test]
+    fn a_chain_bone_added_live_rebuilds_the_offsets_and_turns() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.5, 0.2, 2.0));
+        let node = LookAtNode {
+            chain: links(&["neck", "head"]),
+            ..look()
+        };
+        let mut looker = Looker::start(&rig, node);
+        looker.settle(&rig);
+
+        looker.node.chain.insert(0, link("spine"));
+        looker.step(&rig, DT);
+        let frame = looker.step(&rig, DT);
+
+        assert_eq!(looker.state.offsets.len(), CHAIN.len());
+        for bone in CHAIN {
+            assert!(rig.turned(&frame, bone) > 1e-3, "bone {bone}");
+        }
+    }
+
+    #[test]
+    fn a_reset_look_starts_again_from_the_input_pose() {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
+        let mut looker = Looker::start(&rig, eased());
+        looker.settle(&rig);
+
+        looker.node.reset(&mut looker.state);
+
+        assert_unchanged(&rig, &looker.step(&rig, DT));
+    }
+
+    #[test]
+    fn a_negative_or_non_finite_halflife_snaps() {
+        let mut rig = Rig::new();
+        let target = rig.toward(HEAD, 0.4, 0.2, 2.0);
+        rig.aim(target);
+
+        for halflife in [-1.0, f32::NAN, f32::INFINITY] {
+            let mut node = with_eyes();
+            node.weight_halflife = halflife;
+            for link in &mut node.chain {
+                link.halflife = halflife;
+            }
+            for eye in &mut node.eyes {
+                eye.halflife = halflife;
+            }
+
+            let frame = rig.solve(&node);
+
+            for bone in [HEAD, EYE_L, EYE_R] {
+                assert_gaze(&rig, &frame, bone, target);
+            }
+        }
     }
 }
