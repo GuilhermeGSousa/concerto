@@ -681,6 +681,8 @@ cooked ones, and the game derives at load again.
 
 `cook` writes a `.concerto-cook` marker into `out` and refuses a non-empty
 directory without one, so `--cook` never empties a directory it didn't write.
+An `<out>` that starts with `-` is refused as a flag, so `--cook --forest` fails
+instead of cooking into `./--forest`.
 The cook needs no GPU: a plugin that needs the `Gpu` must reach it in `finish`,
 not in `build`.
 

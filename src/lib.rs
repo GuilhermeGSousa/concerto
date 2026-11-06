@@ -47,15 +47,15 @@ pub fn run(
 ) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut args = std::env::args().skip(1);
-        if args.any(|arg| arg == "--cook") {
-            let code = match args.next() {
-                Some(out) => report_cook(cook(build, content, std::path::Path::new(&out))),
-                None => report_cook(Err(anyhow::anyhow!(
-                    "--cook needs the directory to write the cooked content to"
-                ))),
-            };
-            std::process::exit(code);
+        match cook_arg(std::env::args().skip(1)) {
+            CookArg::Absent => {}
+            CookArg::Dir(out) => std::process::exit(report_cook(cook(build, content, &out))),
+            CookArg::Missing => std::process::exit(report_cook(Err(anyhow::anyhow!(
+                "--cook needs the directory to write the cooked content to"
+            )))),
+            CookArg::Flag(flag) => std::process::exit(report_cook(Err(anyhow::anyhow!(
+                "--cook needs the directory to write the cooked content to, not the flag `{flag}`"
+            )))),
         }
     }
     init_logging();
@@ -63,6 +63,28 @@ pub fn run(
         build(app);
         concerto_app::plugins::install_content_registry(app, content);
     });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, PartialEq, Eq)]
+enum CookArg {
+    Absent,
+    Missing,
+    Flag(String),
+    Dir(std::path::PathBuf),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn cook_arg(args: impl IntoIterator<Item = String>) -> CookArg {
+    let mut args = args.into_iter();
+    if !args.any(|arg| arg == "--cook") {
+        return CookArg::Absent;
+    }
+    match args.next() {
+        None => CookArg::Missing,
+        Some(out) if out.starts_with('-') => CookArg::Flag(out),
+        Some(out) => CookArg::Dir(out.into()),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -210,6 +232,46 @@ mod tests {
     fn setting_up_logging_twice_does_not_panic() {
         super::init_logging();
         super::init_logging();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cook_arg_tests {
+    use super::{cook_arg, CookArg};
+
+    fn arg(args: &[&str]) -> CookArg {
+        cook_arg(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn no_cook_flag_is_absent() {
+        assert_eq!(arg(&[]), CookArg::Absent);
+        assert_eq!(arg(&["--forest"]), CookArg::Absent);
+    }
+
+    #[test]
+    fn a_cook_flag_with_nothing_after_it_is_missing() {
+        assert_eq!(arg(&["--forest", "--cook"]), CookArg::Missing);
+    }
+
+    #[test]
+    fn a_cook_flag_followed_by_a_flag_is_refused() {
+        assert_eq!(
+            arg(&["--cook", "--forest"]),
+            CookArg::Flag("--forest".to_string())
+        );
+    }
+
+    #[test]
+    fn a_cook_flag_takes_the_directory_after_it() {
+        assert_eq!(
+            arg(&["--cook", "out"]),
+            CookArg::Dir(std::path::PathBuf::from("out"))
+        );
+        assert_eq!(
+            arg(&["--forest", "--cook", "cooked/dir", "--sanatorium"]),
+            CookArg::Dir(std::path::PathBuf::from("cooked/dir"))
+        );
     }
 }
 
