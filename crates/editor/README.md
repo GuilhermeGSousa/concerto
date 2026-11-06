@@ -758,12 +758,12 @@ component on the document in the editor's world, and lists its targets in the
 fn build(&self, editor: &mut EntityCommandQueue) {
     let document = editor.entity();
     editor.insert((
-        DialogueDocument { dialogue: None },
-        InspectedValues(vec![Arc::new(DocumentValue::<DialogueDocument> {
-            name: "Dialogue".into(),
+        PaletteDocument { palette: None },
+        InspectedValues(vec![Arc::new(DocumentValue::<PaletteDocument> {
+            name: "Palette".into(),
             document,
-            read: Box::new(|held| held.dialogue.as_ref().map(|d| d as &dyn Reflect)),
-            edit: Box::new(|held| held.dialogue.as_mut().map(|d| d as &mut dyn Reflect)),
+            read: Box::new(|held| held.palette.as_ref().map(|p| p as &dyn Reflect)),
+            edit: Box::new(|held| held.palette.as_mut().map(|p| p as &mut dyn Reflect)),
         })]),
     ));
 }
@@ -999,8 +999,8 @@ Asset editors are separate from property editors. Register the asset with
 `app.register_asset::<T>()`, then use `AssetEditorAppExt`:
 
 ```rust,ignore
-app.register_asset::<Dialogue>();
-app.register_asset_editor::<Dialogue, DialogueEditor>()?;
+app.register_asset::<Palette>();
+app.register_asset_editor::<Palette, PaletteEditor>()?;
 ```
 
 The editor type implements `Default`, which is how the registry builds it.
@@ -1014,15 +1014,15 @@ implement it, to give the value a new asset starts from, and register with
 `register_creatable_asset_editor`:
 
 ```rust,ignore
-impl CreatableAsset for Dialogue {
+impl CreatableAsset for Palette {
     fn new_asset() -> Self {
-        Dialogue {
-            text: "Hello".into(),
+        Palette {
+            colors: Vec::new(),
         }
     }
 }
 
-app.register_creatable_asset_editor::<Dialogue, DialogueEditor>()?;
+app.register_creatable_asset_editor::<Palette, PaletteEditor>()?;
 ```
 
 `AssetEditorRegistry::creatable()` lists the creatable kinds in name order,
@@ -1156,15 +1156,15 @@ returning a `PreviewSpec` from `AssetEditor::preview`, which is `None` unless
 it says otherwise:
 
 ```rust,ignore
-impl AssetEditor for DialogueEditor {
+impl AssetEditor for PaletteEditor {
     fn preview(&self) -> Option<PreviewSpec> {
-        Some(PreviewSpec { build: dialogue_preview })
+        Some(PreviewSpec { build: palette_preview })
     }
 }
 
-fn dialogue_preview(app: &mut App) {
-    app.add_system(Update, spin_cubes.at_preview_time())
-        .add_listener(set_spin.at_preview_time());
+fn palette_preview(app: &mut App) {
+    app.add_system(Update, draw_swatches.at_preview_time())
+        .add_listener(set_swatches.at_preview_time());
 }
 ```
 
