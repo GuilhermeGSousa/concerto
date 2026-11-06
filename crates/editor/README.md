@@ -1083,21 +1083,43 @@ input. Loading and saving belong to the custom editor.
 ### Inspected assets
 
 A game marks a reflectable content asset type as inspected with
-`app.register_inspected_asset::<T>()` from its own plugin. The editor learns
-those kinds, and the game's type registry, from each scene's edit `App` once it
-has built: on `SceneOpened`, every inspected kind that has no editor yet gets
-the generic `InspectedAssetEditor` and a row in New. A kind that already has an
-editor keeps it, and one whose `New <kind> 999` is not a valid asset name is
-skipped with a warning. `ProjectTypes` holds the type registry of the last
-scene's edit `App`.
+`app.register_inspected_asset::<T>()` from its own plugin, where `T` is a
+`CreatableAsset`, a `LoadableAsset` (an empty `impl` when it has no load-time
+work) and `Reflect`. That registers the asset and its type in the game, and
+records what the editor needs to create, decode and save it without naming
+`T`. The editor learns those kinds, and the game's type registry, from each
+scene's edit `App` once it has built: on `SceneOpened`, every inspected kind
+that has no editor yet gets the generic `InspectedAssetEditor` and a row in New.
+A kind that already has an editor keeps it, and one whose `New <kind> 999` is
+not a valid asset name is skipped with a warning. `ProjectTypes` holds the type
+registry of the last scene's edit `App`.
 
 Before the first scene's edit `App` has built, and all along in a project with
 no scene, an inspected kind has no editor: double-clicking one in the Asset
 Browser does nothing, and MCP `open_asset` answers `open_failed`, naming it a
 kind with no editor.
 
-A document whose values are in a registry other than its hosted `App`'s or the
-editor's carries `DocumentTypes`, which `DocumentValue` reads first.
+The generic tab is the inspector alone, with no preview and no bottom host, and
+it closes like any other tab. Its document carries `InspectedDocument`, which
+holds the kind's record, the value being edited, and the file's bytes as last
+read or saved, and publishes the value as one
+[document value](#document-values) named after the kind. Opening reads the
+file, decodes it and checks that its header carries the asset's id; a file
+that cannot be read or decoded, or holds another asset's id, fails the open
+with the error as the tab's status. The value's types come from
+`DocumentTypes`, which the tab takes from `ProjectTypes`, so the inspector
+walks the game's lists, options and enums. A document whose values are in a
+registry other than its hosted `App`'s or the editor's carries
+`DocumentTypes`, which `DocumentValue` reads first.
+
+An edit through the inspector marks the tab unsaved. Ctrl+S, or the
+unsaved-changes prompt's Save, writes the value over the file it was opened
+from, keeps the file's id, reads the written file back as what was last
+saved, and ends in `SceneSaved`, with "Saved <address>" as the status. A
+failed save ends in `SaveFailed`, shows why, and leaves the tab unsaved.
+Discard decodes the file as last read or saved back into the value. There is
+no undo. MCP works on the tab as on any document value: `open_asset`,
+`inspect`, `set_property`, `list_push`, `list_remove` and `save`.
 
 ### Previews
 
