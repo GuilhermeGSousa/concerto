@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail};
 use concerto_app::App;
-use concerto_ecs::events::event_reader::EventReader;
+use concerto_ecs::events::{event_reader::EventReader, event_writer::EventWriter};
 use concerto_ecs::{
     Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
@@ -16,6 +16,9 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
+
+use crate::project::AssetsWritten;
+use crate::scene::SceneSaved;
 
 /// Installs an editor's components when its document is created.
 pub trait AssetEditor: Send + Sync + 'static {
@@ -59,6 +62,7 @@ impl Creator {
 #[derive(Resource, Default)]
 pub struct AssetEditorRegistry {
     editors: HashMap<&'static str, Box<dyn AssetEditor>>,
+    former_names: HashMap<&'static str, &'static str>,
     creators: BTreeMap<&'static str, Creator>,
 }
 
@@ -107,6 +111,9 @@ impl AssetEditorRegistry {
             bail!("an editor is already registered for {}", T::name());
         }
         self.editors.insert(T::name(), Box::new(E::default()));
+        for former in T::FORMER_NAMES {
+            self.former_names.insert(former, T::name());
+        }
         Ok(())
     }
 
@@ -133,9 +140,16 @@ impl AssetEditorRegistry {
         self.creators.iter().map(|(kind, creator)| (*kind, creator))
     }
 
-    /// Returns the registered asset kind matching `kind`, if it has an editor.
+    /// Returns the registered asset kind matching `kind`, or the one `kind` is a former name of, if it has an editor.
     pub fn editor_kind(&self, kind: &str) -> Option<&'static str> {
-        self.editors.get_key_value(kind).map(|(kind, _)| *kind)
+        self.editors
+            .get_key_value(self.current_kind(kind))
+            .map(|(kind, _)| *kind)
+    }
+
+    /// The current name of a kind a file's header names: the type with an editor that `kind` is a former name of, or else `kind`.
+    pub fn current_kind<'a>(&self, kind: &'a str) -> &'a str {
+        self.former_names.get(kind).copied().unwrap_or(kind)
     }
 
     /// Whether a tab of `kind` shows a close button; a kind with no editor does.
@@ -228,6 +242,17 @@ pub(crate) fn request_save(
             .is_some_and(|document| document.pending.is_none())
     {
         commands.insert(SaveRequested, entity);
+    }
+}
+
+pub(crate) fn report_saves_as_written(
+    mut saved: EventReader<SceneSaved>,
+    mut written: EventWriter<AssetsWritten>,
+) {
+    for saved in saved.read() {
+        written.write(AssetsWritten {
+            ids: vec![saved.asset.id],
+        });
     }
 }
 
@@ -505,6 +530,39 @@ mod tests {
         process_editor_commands(w);
         w.get_resource::<ActiveEditor>().unwrap().0.unwrap()
     }
+    #[test]
+    fn a_save_sends_the_saved_asset_as_written() {
+        use concerto_ecs::events::{event_channel::EventChannel, event_cursor::EventCursor};
+        let mut w = World::new();
+        w.insert_resource(EventChannel::<SceneSaved>::new());
+        w.insert_resource(EventChannel::<AssetsWritten>::new());
+        let mut system = report_saves_as_written.into_system();
+        system.initialize(&mut w);
+        let saved = asset("a");
+        let document = w.spawn((Unsaved,));
+        w.get_resource_mut::<EventChannel<SceneSaved>>()
+            .unwrap()
+            .push_event(SceneSaved {
+                document,
+                asset: saved.clone(),
+            });
+
+        system.run_and_apply((), &mut w);
+
+        let written: Vec<AssetsWritten> = w
+            .get_resource::<EventChannel<AssetsWritten>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .cloned()
+            .collect();
+        assert_eq!(
+            written,
+            [AssetsWritten {
+                ids: vec![saved.id]
+            }]
+        );
+    }
+
     #[test]
     fn selecting_active_document_does_not_mark_active_resource_changed() {
         let mut w = world();
@@ -874,6 +932,44 @@ mod tests {
         for kind in ["TestAsset", "ThirdAsset", "OtherAsset"] {
             assert_eq!(registry.editor_kind(kind), Some(kind));
         }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct RenamedAsset;
+    impl Asset for RenamedAsset {
+        const FORMER_NAMES: &'static [&'static str] = &["FormerAsset"];
+        fn name() -> &'static str {
+            "RenamedAsset"
+        }
+    }
+
+    #[test]
+    fn a_file_under_a_former_name_opens_in_its_types_editor() {
+        let mut w = world();
+        w.get_resource_mut::<AssetEditorRegistry>()
+            .unwrap()
+            .register::<RenamedAsset, OtherFake>()
+            .unwrap();
+        let mut former = asset("other");
+        former.kind = "FormerAsset".into();
+        let registry = w.get_resource::<AssetEditorRegistry>().unwrap();
+        assert_eq!(registry.editor_kind("FormerAsset"), Some("RenamedAsset"));
+        assert_eq!(registry.current_kind("FormerAsset"), "RenamedAsset");
+        assert_eq!(registry.current_kind("Unknown"), "Unknown");
+
+        w.get_resource_mut::<AssetEditorCommands>()
+            .unwrap()
+            .0
+            .push_back(AssetEditorCommand::Open(former));
+        process_editor_commands(&mut w);
+
+        let document = w.get_resource::<ActiveEditor>().unwrap().0.unwrap();
+        assert_eq!(
+            w.get_component_for_entity::<EditorDocument>(document)
+                .unwrap()
+                .asset_type,
+            "RenamedAsset"
+        );
     }
 
     #[derive(serde::Serialize, serde::Deserialize)]

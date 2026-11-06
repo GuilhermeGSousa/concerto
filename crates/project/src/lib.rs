@@ -961,6 +961,9 @@ mod tests {
         assert!(read(dir.join(".gitignore"))
             .lines()
             .any(|line| line == "content/.registry.toml"));
+        assert!(read(dir.join(".gitignore"))
+            .lines()
+            .any(|line| line == "derived-cache/"));
         assert!(read(dir.join("index.html")).contains("<title>my-game</title>"));
         let editor = read(dir.join("editor/Cargo.toml"));
         assert!(editor.contains("name = \"my-game-editor\""));

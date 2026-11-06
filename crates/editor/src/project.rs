@@ -3,7 +3,9 @@ use concerto_ecs::{
     Event, Res, ResMut, Resource, World, events::event_writer::EventWriter,
     system::input::SystemLocal, world::FromWorld,
 };
-use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
+use concerto_foundation::assets::{
+    AssetId, asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+};
 use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
 use std::{
@@ -53,6 +55,12 @@ pub struct ProjectOpened {
 pub struct ProjectOpenFailed {
     pub root: PathBuf,
     pub message: String,
+}
+
+/// Content assets `ids` were written to disk by an import, an asset editor's save, or a New in the content browser.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct AssetsWritten {
+    pub ids: Vec<AssetId>,
 }
 
 struct ProjectJob {
@@ -117,48 +125,53 @@ impl Plugin for ProjectPlugin {
     fn build(&self, app: &mut App) {
         app.register_event::<ProjectOpened>()
             .register_event::<ProjectOpenFailed>()
+            .register_event::<AssetsWritten>()
             .add_system(Update, process_commands)
             .add_system(Update, report_outdated_content);
     }
 }
 
-/// Content assets of one kind whose header is at a type version other than this build's.
+/// Content assets of one kind whose header is under a former name or at a type version other than this build's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutdatedContent {
     pub kind: String,
     pub file_version: u32,
+    pub current_kind: String,
     pub current: u32,
     pub count: usize,
 }
 
-/// Groups `registry`'s entries whose `kind_version` differs from `current(kind)`, by kind then file version.
+/// Groups `registry`'s entries whose kind or `kind_version` differs from the name and version `current(kind)` gives, by kind then file version.
 pub fn outdated_content(
     registry: &AssetRegistry,
-    current: impl Fn(&str) -> Option<u32>,
+    current: impl Fn(&str) -> Option<(&'static str, u32)>,
 ) -> Vec<OutdatedContent> {
-    let mut groups = BTreeMap::<(&str, u32), (u32, usize)>::new();
+    let mut groups = BTreeMap::<(&str, u32), (&'static str, u32, usize)>::new();
     for entry in registry.iter() {
         let Some(file_version) = entry.kind_version else {
             continue;
         };
-        let Some(current) = current(&entry.kind) else {
+        let Some((current_kind, current)) = current(&entry.kind) else {
             continue;
         };
-        if file_version != current {
+        if current_kind != entry.kind || file_version != current {
             groups
                 .entry((&entry.kind, file_version))
-                .or_insert((current, 0))
-                .1 += 1;
+                .or_insert((current_kind, current, 0))
+                .2 += 1;
         }
     }
     groups
         .into_iter()
-        .map(|((kind, file_version), (current, count))| OutdatedContent {
-            kind: kind.into(),
-            file_version,
-            current,
-            count,
-        })
+        .map(
+            |((kind, file_version), (current_kind, current, count))| OutdatedContent {
+                kind: kind.into(),
+                file_version,
+                current_kind: current_kind.into(),
+                current,
+                count,
+            },
+        )
         .collect()
 }
 
@@ -184,14 +197,14 @@ fn report_outdated_content(
         return;
     }
     reported.0 = Some(root.clone());
-    let outdated = outdated_content(&registry, |kind| server.format_version(kind));
+    let outdated = outdated_content(&registry, |kind| server.current_kind(kind));
     for group in &outdated {
         log::warn!(
             "{} {} content assets are at version {}; this build's {} is version {}. Loading migrates or rejects them; see docs/asset-importing.md",
             group.count,
             group.kind,
             group.file_version,
-            group.kind,
+            group.current_kind,
             group.current
         );
     }
@@ -238,6 +251,7 @@ fn process_commands(
                     });
                     return;
                 }
+                asset_server.set_derived_cache(DerivedDataCache::in_project(&project.root));
                 state.status.clear();
                 opened.write(ProjectOpened {
                     root: project.root.clone(),
@@ -505,6 +519,30 @@ mod tests {
     }
 
     #[test]
+    fn an_opened_project_keeps_derived_data_in_its_derived_cache_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut world = project_world();
+
+        settle(
+            &mut world,
+            Some(EditorCommand::OpenProject(dir.path().into())),
+        );
+
+        let cache = world.get_resource::<AssetServer>().unwrap().derived_cache();
+        assert_eq!(
+            cache.root(),
+            Some(
+                dir.path()
+                    .canonicalize()
+                    .unwrap()
+                    .join("derived-cache")
+                    .as_path()
+            )
+        );
+        assert!(!dir.path().join("derived-cache").exists());
+    }
+
+    #[test]
     fn a_project_that_cannot_be_read_is_reported_failed_once_with_its_status() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("missing");
@@ -679,8 +717,8 @@ mod tests {
             registry.insert(entry);
         }
         let versions = |kind: &str| match kind {
-            "Mesh" => Some(3),
-            "Clip" => Some(1),
+            "Mesh" => Some(("Mesh", 3)),
+            "Clip" => Some(("Clip", 1)),
             _ => None,
         };
 
@@ -690,22 +728,48 @@ mod tests {
                 OutdatedContent {
                     kind: "Clip".into(),
                     file_version: 0,
+                    current_kind: "Clip".into(),
                     current: 1,
                     count: 1,
                 },
                 OutdatedContent {
                     kind: "Mesh".into(),
                     file_version: 1,
+                    current_kind: "Mesh".into(),
                     current: 3,
                     count: 2,
                 },
                 OutdatedContent {
                     kind: "Mesh".into(),
                     file_version: 2,
+                    current_kind: "Mesh".into(),
                     current: 3,
                     count: 1,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn outdated_content_reports_a_file_under_a_former_name_at_any_version() {
+        let mut registry = AssetRegistry::default();
+        for entry in [versioned("Lamp", Some(2)), versioned("Lantern", Some(2))] {
+            registry.insert(entry);
+        }
+        let versions = |kind: &str| match kind {
+            "Lamp" | "Lantern" => Some(("Lantern", 2)),
+            _ => None,
+        };
+
+        assert_eq!(
+            outdated_content(&registry, versions),
+            [OutdatedContent {
+                kind: "Lamp".into(),
+                file_version: 2,
+                current_kind: "Lantern".into(),
+                current: 2,
+                count: 1,
+            }]
         );
     }
 

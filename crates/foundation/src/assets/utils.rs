@@ -21,7 +21,7 @@ pub async fn load_content_asset<A: Asset>(
 /// there (a missing file natively, a non-success status on wasm) so the
 /// caller can turn absence into its own error message. Any other failure
 /// is a real error.
-async fn try_read_relative(
+pub(crate) async fn try_read_relative(
     root: &ContentAssetRoot,
     relative: &str,
 ) -> anyhow::Result<Option<Vec<u8>>> {

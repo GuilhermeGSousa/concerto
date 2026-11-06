@@ -239,10 +239,6 @@ fix the entry in the same commit as the change that made it false.
   load requested from inside another plugin's
   `build` sees a partial registry, since plugins register their types in
   `build`, before `Startup`.
-- **A cached copy of a live value is replaced with it, never alone.** A
-  `ChannelSpan` caches its channel's `weight`, `dims` and `source`; writing only
-  the cached weight would be undone when the channel is next loaded from its
-  value. `MotionDatabase::reweigh` replaces the channel and the cache together.
 - **An asset's bytes do not change with its in-memory type.** The
   `check_encoding` fixtures under each crate's `tests/encoding` fail when they
   do. Keep the old layout with a private mirror struct behind a hand-written

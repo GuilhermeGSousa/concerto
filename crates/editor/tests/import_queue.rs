@@ -1,10 +1,11 @@
 //! The queue runs imports one at a time and survives a failing row.
 use concerto_app::{App, schedule_groups::Update};
+use concerto_ecs::events::{event_channel::EventChannel, event_cursor::EventCursor};
 use concerto_editor::{
     asset_editor::{AssetEditorCommand, AssetEditorCommands},
     guard::UnsavedGuard,
     import::{ImportPlugin, ImportQueue, stage_sources},
-    project::{EditorCommands, ProjectPlugin, ProjectState, discover_project},
+    project::{AssetsWritten, EditorCommands, ProjectPlugin, ProjectState, discover_project},
 };
 use concerto_foundation::assets::{
     AssetId,
@@ -444,4 +445,33 @@ fn an_import_whose_project_was_replaced_while_it_ran_adds_nothing_to_the_new_reg
     assert!(project.path().join("assets/square.obj").is_file());
     let registry = app.get_resource::<AssetRegistry>().expect("registry");
     assert_eq!(registry.iter().cloned().collect::<Vec<_>>(), expected);
+}
+
+#[test]
+fn a_finished_import_sends_the_ids_of_every_asset_it_wrote() {
+    let (_source, path) = scratch_source();
+    let project = tempfile::tempdir().expect("tempdir");
+    let mut app = editor(project.path());
+    app.get_resource_mut::<ImportQueue>()
+        .expect("queue")
+        .enqueue(stage_sources(vec![path]));
+    drain(&mut app);
+
+    let written: Vec<AssetsWritten> = app
+        .get_resource::<EventChannel<AssetsWritten>>()
+        .expect("the event is registered")
+        .read_from(&mut EventCursor::default())
+        .cloned()
+        .collect();
+    let mut imported: Vec<AssetId> = app
+        .get_resource::<AssetRegistry>()
+        .expect("registry")
+        .iter()
+        .map(|entry| entry.id)
+        .collect();
+    imported.sort();
+    assert_eq!(written.len(), 1);
+    let mut ids = written[0].ids.clone();
+    ids.sort();
+    assert_eq!(ids, imported);
 }

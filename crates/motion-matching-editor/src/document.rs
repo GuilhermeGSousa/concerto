@@ -17,22 +17,23 @@ use concerto_editor::{
     tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
-    Asset, AssetId,
+    AssetId,
     content::{decode_content_asset, read_content_asset},
     handle::AssetHandle,
+    kind_matches,
     registry::AssetEntry,
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    BakeError, FeatureChannel, FeatureChannelData, MirrorAxis, MotionDatabaseDefinition,
-    MotionEntry, SimulationBoneSettings, TrajectorySettings,
+    BakeError, FeatureChannel, FeatureChannelData, MirrorAxis, MotionDatabase, MotionEntry,
+    SimulationBoneSettings, TrajectorySettings,
 };
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use uuid::Uuid;
 
 use crate::{
-    build::{BakedJob, BakedState, BakedStats, BuildState},
+    derive::{BakedStats, DeriveJob},
     facts::{EntryFacts, FactsJob, ShownSkeleton},
     playback::{BakedPlayback, ClipJob, ShowDatabase},
     preview::database_preview,
@@ -52,7 +53,7 @@ pub struct DatabaseSettings {
 
 impl DatabaseSettings {
     /// The settings `definition` holds.
-    pub fn of(definition: &MotionDatabaseDefinition) -> Self {
+    pub fn of(definition: &MotionDatabase) -> Self {
         Self {
             rate: definition.rate,
             speed: definition.speed,
@@ -123,16 +124,14 @@ pub struct DefinitionDocument {
     pub settings: Option<DatabaseSettings>,
     pub channels: Vec<HeldChannel>,
     pub bones: Option<Vec<Name>>,
-    pub loaded: Option<MotionDatabaseDefinition>,
-    pub build: BuildState,
-    pub baked: BakedState,
+    pub loaded: Option<MotionDatabase>,
     pub stats: Option<BakedStats>,
     pub entry_facts: Vec<EntryFacts>,
     pub time: f32,
     pub(crate) shown_skeleton: Option<ShownSkeleton>,
     pub(crate) facts_job: Option<FactsJob>,
-    pub(crate) baked_wanted: bool,
-    pub(crate) baked_job: Option<BakedJob>,
+    pub(crate) derive_wanted: bool,
+    pub(crate) derive_job: Option<DeriveJob>,
     pub(crate) playback: Option<BakedPlayback>,
     pub(crate) sought_entry: Option<usize>,
     pub(crate) picked_channel: Option<usize>,
@@ -149,12 +148,12 @@ impl DefinitionDocument {
             .find(|facts| facts.clip == clip && facts.skeleton == skeleton)
     }
 
-    pub(crate) fn definition(&self) -> anyhow::Result<MotionDatabaseDefinition> {
+    pub(crate) fn definition(&self) -> anyhow::Result<MotionDatabase> {
         let settings = self
             .settings
             .clone()
             .context("The preview is not running, so the channels cannot be written")?;
-        Ok(MotionDatabaseDefinition {
+        Ok(MotionDatabase {
             skeleton: self.skeleton.clone(),
             entries: self.entries.clone(),
             rate: settings.rate,
@@ -163,6 +162,7 @@ impl DefinitionDocument {
             trajectory: settings.trajectory,
             channels: self.channels.iter().map(HeldChannel::data).collect(),
             mirror_axis: settings.mirror_axis,
+            baked: None,
         })
     }
 
@@ -175,7 +175,7 @@ impl DefinitionDocument {
     }
 }
 
-/// Opens a `MotionDatabaseDefinition` in a tab that holds it, with a preview that plays it.
+/// Opens a `MotionDatabase` in a tab that holds it, with a preview that plays it.
 #[derive(Default)]
 pub struct MotionDatabaseEditor;
 
@@ -264,22 +264,19 @@ pub(crate) fn publish_values(
 }
 
 /// Reads the definition `asset` names under `root`, checking its id and its kind.
-pub fn read_definition(
-    root: &Path,
-    asset: &AssetEntry,
-) -> anyhow::Result<MotionDatabaseDefinition> {
+pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<MotionDatabase> {
     let bytes = std::fs::read(root.join(&asset.address))?;
     let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
-        header.asset_id == asset.id && header.kind == MotionDatabaseDefinition::name(),
+        header.asset_id == asset.id && kind_matches::<MotionDatabase>(&header.kind),
         "Asset identity or type mismatch"
     );
-    Ok(decode_content_asset::<MotionDatabaseDefinition>(&bytes)?.1)
+    Ok(decode_content_asset::<MotionDatabase>(&bytes)?.1)
 }
 
 fn hold_definition(
     state: &mut DefinitionDocument,
-    mut definition: MotionDatabaseDefinition,
+    mut definition: MotionDatabase,
     channels: Option<Vec<HeldChannel>>,
 ) {
     if let Some(channels) = &channels {
@@ -294,19 +291,13 @@ fn hold_definition(
     state.selected_entry = (!definition.entries.is_empty()).then_some(0);
     state.entry_facts.clear();
     state.shown_skeleton = None;
-    state.build = BuildState::default();
-    state.baked = BakedState::default();
-    state.stats = None;
-    state.baked_job = None;
-    state.baked_wanted = true;
     state.time = 0.0;
-    state.playback = None;
     state.sought_entry = None;
     state.loaded = Some(definition);
 }
 
 fn live_channels(
-    definition: &MotionDatabaseDefinition,
+    definition: &MotionDatabase,
     registry: &TypeRegistry,
 ) -> anyhow::Result<Vec<HeldChannel>> {
     definition
@@ -354,6 +345,10 @@ pub(crate) fn load_definition(
             }
         };
         hold_definition(&mut state, definition, channels);
+        state.stats = None;
+        state.playback = None;
+        state.derive_job = None;
+        state.derive_wanted = true;
         previews.trigger(entity, ShowDatabase(None));
         if let Some(types) = types {
             publish_values(entity, &state, &types.read(), None, &mut cmd);
@@ -365,7 +360,6 @@ pub(crate) fn load_definition(
 pub(crate) fn restore_discarded_edits(
     on: On<DiscardEdits>,
     documents: Query<(&mut DefinitionDocument, Option<&HostedApp>)>,
-    mut previews: PreviewSignals,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
@@ -389,7 +383,7 @@ pub(crate) fn restore_discarded_edits(
         }
     };
     hold_definition(&mut state, definition, channels);
-    previews.trigger(document, ShowDatabase(None));
+    state.derive_wanted = true;
     if let Some(types) = types {
         publish_values(document, &state, &types.read(), None, &mut cmd);
     }

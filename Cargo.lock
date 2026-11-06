@@ -1233,6 +1233,7 @@ dependencies = [
  "concerto-scene",
  "glam 0.30.10",
  "log",
+ "pollster",
  "serde",
  "uuid",
 ]
@@ -1260,6 +1261,7 @@ dependencies = [
  "concerto-window",
  "glam 0.30.10",
  "log",
+ "pollster",
  "serde",
  "tempfile",
  "uuid",

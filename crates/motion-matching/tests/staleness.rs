@@ -1,15 +1,10 @@
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
-use concerto_mesh::{JointPose, Skeleton};
-use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    is_stale, weightless_hash, weights_changed_only, weights_of, BakeError, FeatureChannel,
-    FeatureChannelData, FrameContext, MirrorAxis, MotionDatabase, MotionDatabaseDefinition,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, TimeRange,
+    weightless_hash, weights_of, BakeError, FeatureChannel, FeatureChannelData, FrameContext,
+    MirrorAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
+    TimeRange,
 };
 use concerto_reflect::{Reflect, TypeRegistry};
-use glam::{Mat4, Vec3};
-use uuid::Uuid;
 
 const SKELETON: &[u8] = &[1, 2, 3];
 const WALK: &[u8] = &[4, 5, 6];
@@ -63,37 +58,8 @@ fn registry() -> TypeRegistry {
     registry
 }
 
-fn skeleton() -> Skeleton {
-    Skeleton::new(
-        vec![Mat4::IDENTITY; 2],
-        vec![None, Some(0)],
-        vec!["Root".into(), "Child".into()],
-        vec![
-            JointPose::IDENTITY,
-            JointPose {
-                translation: Vec3::new(0.0, 1.0, 0.0),
-                ..JointPose::IDENTITY
-            },
-        ],
-        vec![Uuid::from_u128(1), Uuid::from_u128(2)],
-    )
-    .unwrap()
-}
-
-fn walk_clip() -> AnimationClip {
-    let mut clip = AnimationClip::default();
-    clip.add_channel(
-        Uuid::from_u128(1),
-        AnimationChannel::new(
-            vec![0.0, 2.0],
-            AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::new(0.0, 0.0, -2.0)]),
-        ),
-    );
-    clip
-}
-
-fn definition() -> MotionDatabaseDefinition {
-    MotionDatabaseDefinition {
+fn definition() -> MotionDatabase {
+    MotionDatabase {
         entries: vec![
             MotionEntry {
                 clip: AssetHandle::weak(AssetId::from_path("walk")),
@@ -123,18 +89,11 @@ fn definition() -> MotionDatabaseDefinition {
     }
 }
 
-fn hash(definition: &MotionDatabaseDefinition) -> u64 {
+fn hash(definition: &MotionDatabase) -> u64 {
     weightless_hash(definition, SKELETON, &[WALK, TURN])
 }
 
-fn baked(definition: &MotionDatabaseDefinition) -> MotionDatabase {
-    let walk = walk_clip();
-    bake(definition, &skeleton(), &[&walk, &walk])
-        .unwrap()
-        .with_source_hash(hash(definition))
-}
-
-fn assert_changes_the_hash(change: impl FnOnce(&mut MotionDatabaseDefinition)) {
+fn assert_changes_the_hash(change: impl FnOnce(&mut MotionDatabase)) {
     let mut changed = definition();
     change(&mut changed);
     assert_ne!(hash(&changed), hash(&definition()));
@@ -275,80 +234,4 @@ fn a_loaded_definition_hashes_as_it_did_stored() {
 
     stored.load_channels(&registry()).unwrap();
     assert_eq!(weights_of(&stored), weights_of(&live));
-}
-
-#[test]
-fn a_database_baked_from_the_same_input_is_not_stale() {
-    let definition = definition();
-
-    assert!(!is_stale(
-        &baked(&definition),
-        &definition,
-        hash(&definition)
-    ));
-}
-
-#[test]
-fn a_changed_weight_is_stale_though_the_hash_is_equal() {
-    let database = baked(&definition());
-    let mut changed = definition();
-    changed.channels[0] = stride(2.0, 0.5, 7.0);
-
-    assert_eq!(hash(&changed), database.source_hash());
-    assert!(is_stale(&database, &changed, hash(&changed)));
-}
-
-#[test]
-fn a_changed_clip_is_stale() {
-    let definition = definition();
-    let database = baked(&definition);
-    let new_hash = weightless_hash(&definition, SKELETON, &[&[4, 5, 7], TURN]);
-
-    assert!(is_stale(&database, &definition, new_hash));
-}
-
-#[test]
-fn a_changed_definition_is_stale() {
-    let database = baked(&definition());
-    let mut changed = definition();
-    changed.rate = 30.0;
-
-    assert!(is_stale(&database, &changed, hash(&changed)));
-}
-
-#[test]
-fn a_channel_that_was_not_loaded_is_stale() {
-    let database = baked(&definition());
-    let mut definition = definition();
-    definition.channels[0] = unloaded(&definition.channels[0]);
-
-    assert!(is_stale(&database, &definition, hash(&definition)));
-}
-
-#[test]
-fn new_weights_applied_to_the_database_are_not_stale() {
-    let mut database = baked(&definition());
-    let mut changed = definition();
-    changed.channels[0] = stride(2.0, 0.5, 7.0);
-
-    database.reweigh(&changed).unwrap();
-
-    assert!(!is_stale(&database, &changed, hash(&changed)));
-}
-
-#[test]
-fn only_the_weights_changed_when_the_hash_is_equal_and_a_weight_differs() {
-    let database = baked(&definition());
-    let mut weights = definition();
-    weights.channels[0] = stride(2.0, 0.5, 7.0);
-    let mut rate = weights.clone();
-    rate.rate = 30.0;
-
-    assert!(weights_changed_only(&database, &weights, hash(&weights)));
-    assert!(!weights_changed_only(
-        &database,
-        &definition(),
-        hash(&definition())
-    ));
-    assert!(!weights_changed_only(&database, &rate, hash(&rate)));
 }

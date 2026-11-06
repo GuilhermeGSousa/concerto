@@ -41,8 +41,8 @@ calls `concerto_asset_build::track_assets("content")`; projects made by
 `cargo concerto new` already do.
 
 The same call scans `content/` and writes the asset registry, which maps each
-id to its file. `concerto::content_registry!()` embeds it in the game, and
-`main` passes it to `concerto::run`. No registry file is committed, so moving
+id to its file. `concerto::content_registry!()` embeds it in the game with
+the project's directory, and `main` passes both to `concerto::run`. No registry file is committed, so moving
 or adding a `.gasset` in a file explorer or through git is picked up at the
 next build.
 

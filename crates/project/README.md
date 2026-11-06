@@ -29,12 +29,15 @@ It writes:
 - `src/lib.rs`: the recipe, `pub fn game(app: &mut App)`, which registers
   `DefaultPlugins`.
 - `src/main.rs`: `concerto::run(<crate>::game, concerto::content_registry!())`.
+  `content_registry!()` embeds the asset registry and the project root, and a
+  native game keeps derived data in `<project>/derived-cache/`.
 - `build.rs`: tracks `content/`, writes the asset registry the binary embeds,
   and copies `content/` next to the binary.
 - `content/.gitkeep`, so `content/` exists.
 - `index.html` and `Trunk.toml`, so `trunk serve` runs the game in a browser.
-- `.gitignore`: `/target`, `/dist` and `content/.registry.toml`, so a registry
-  file from an older engine is never committed.
+- `.gitignore`: `/target`, `/dist`, `content/.registry.toml`, so a registry
+  file from an older engine is never committed, and `derived-cache/`, the
+  local cache of derived data.
 
 There is no scene and no startup scene.
 

@@ -1,4 +1,4 @@
-mod build;
+mod derive;
 mod document;
 mod facts;
 mod joint;
@@ -17,9 +17,9 @@ use concerto_app::{
 use concerto_ecs::IntoSystemConfig;
 use concerto_editor::{asset_editor::AssetEditorAppExt, inspector::EditableApp};
 use concerto_mesh::JointName;
-use concerto_motion_matching::MotionDatabaseDefinition;
+use concerto_motion_matching::MotionDatabase;
 
-pub use build::{BakedState, BakedStats, BuildState, ChannelStats, EntryStats};
+pub use derive::{BakedStats, ChannelStats, EntryStats};
 pub use document::{
     ChannelId, DatabaseSettings, DefinitionDocument, HeldChannel, MotionDatabaseEditor,
     read_definition,
@@ -29,7 +29,7 @@ pub use joint::JointNameEditor;
 pub use playback::{BakedPlayback, DatabaseProgress, SeekDatabase, ShowDatabase};
 pub use preview::database_preview;
 
-use build::{check_baked, finish_build, mark_background_work, start_build};
+use derive::{derive_definitions, follow_written_inputs, mark_background_work};
 use document::{
     clear_status_on_edit, follow_definition_edits, load_definition, restore_discarded_edits,
 };
@@ -44,7 +44,7 @@ use save::save_definitions;
 
 /// Adds the motion database editor to the editor's `App`.
 pub fn install(app: &mut App) {
-    app.register_creatable_asset_editor::<MotionDatabaseDefinition, MotionDatabaseEditor>()
+    app.register_creatable_asset_editor::<MotionDatabase, MotionDatabaseEditor>()
         .expect("the editor's App holds the asset-editor registry")
         .register_property_editor::<JointName, JointNameEditor>()
         .add_system(
@@ -53,12 +53,11 @@ pub fn install(app: &mut App) {
                 (
                     follow_definition_edits,
                     save_definitions,
-                    start_build,
                     load_definition,
                     follow_skeleton,
                     read_entry_facts,
-                    finish_build,
-                    check_baked,
+                    follow_written_inputs,
+                    derive_definitions,
                     follow_playback,
                     follow_preview_time,
                 )

@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.97"
+bincode = "1.3"
 concerto-animation.workspace = true
 concerto-app.workspace = true
 concerto-ecs.workspace = true
@@ -22,5 +23,5 @@ serde = { version = "1", features = ["derive"] }
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 
 [dev-dependencies]
-bincode = "1.3"
+pollster = "0.4.0"
 concerto-scene.workspace = true

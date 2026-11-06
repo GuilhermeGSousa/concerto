@@ -26,6 +26,7 @@ use crate::{
 use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
+    derived::{derived_hook, note_derived_kinds, DerivedData, DerivedDataCache, DerivedHook},
     handle::{AssetHandle, AssetLifetimeEvent},
     registry::{AssetEntry, AssetRegistry},
     Asset, AssetId, ContentAssetRoot,
@@ -106,7 +107,9 @@ pub(crate) struct AssetServerData {
     asset_load_event_receiver: Receiver<AssetLoadEvent>,
     content: RwLock<ContentState>,
     type_registry: RwLock<AppTypeRegistry>,
-    format_versions: RwLock<HashMap<&'static str, u32>>,
+    kinds: RwLock<HashMap<&'static str, (&'static str, u32)>>,
+    derived_hooks: RwLock<HashMap<TypeId, DerivedHook>>,
+    derived_cache: RwLock<DerivedDataCache>,
 }
 
 struct ContentState {
@@ -138,7 +141,9 @@ impl AssetServer {
                 registry: Arc::default(),
             }),
             type_registry: RwLock::new(AppTypeRegistry::default()),
-            format_versions: RwLock::new(HashMap::new()),
+            kinds: RwLock::new(HashMap::new()),
+            derived_hooks: RwLock::new(HashMap::new()),
+            derived_cache: RwLock::new(DerivedDataCache::none()),
         };
 
         Self {
@@ -220,16 +225,36 @@ impl AssetServer {
         self.data
             .handle_provider
             .register_asset::<A>(asset.clone_drop_sender());
-        self.data
-            .format_versions
-            .write()
-            .unwrap()
-            .insert(A::name(), A::FORMAT_VERSION);
+        let mut kinds = self.data.kinds.write().unwrap();
+        for kind in std::iter::once(A::name()).chain(A::FORMER_NAMES.iter().copied()) {
+            kinds.insert(kind, (A::name(), A::FORMAT_VERSION));
+        }
     }
 
-    /// The `FORMAT_VERSION` of the registered asset type named `kind`.
-    pub fn format_version(&self, kind: &str) -> Option<u32> {
-        self.data.format_versions.read().unwrap().get(kind).copied()
+    /// Registers `A` as [`register_asset`](Self::register_asset) does, and derives its blob on every load.
+    pub fn register_derived_asset<A: DerivedData>(&mut self, asset: &AssetStore<A>) {
+        self.register_asset(asset);
+        note_derived_kinds::<A>();
+        self.data
+            .derived_hooks
+            .write()
+            .unwrap()
+            .insert(TypeId::of::<A>(), derived_hook::<A>);
+    }
+
+    /// Replaces the cache derived loads read and write; every clone sees it.
+    pub fn set_derived_cache(&self, cache: DerivedDataCache) {
+        *self.data.derived_cache.write().unwrap() = cache;
+    }
+
+    /// The cache derived loads read and write, none until one is set.
+    pub fn derived_cache(&self) -> DerivedDataCache {
+        self.data.derived_cache.read().unwrap().clone()
+    }
+
+    /// The name and `FORMAT_VERSION` of the registered asset type that reads files of `kind`, under its name or one of its former names.
+    pub fn current_kind(&self, kind: &str) -> Option<(&'static str, u32)> {
+        self.data.kinds.read().unwrap().get(kind).copied()
     }
 
     /// Whether `A` was registered, without which `load` and `add` panic.
@@ -299,6 +324,11 @@ impl AssetServer {
         self.resolve_asset(id).map(|(_, entry)| entry.address)
     }
 
+    pub(crate) fn content_source(&self) -> (ContentAssetRoot, Arc<AssetRegistry>) {
+        let content = self.data.content.read().unwrap();
+        (content.root.clone(), Arc::clone(&content.registry))
+    }
+
     fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, AssetEntry)> {
         let content = self.data.content.read().unwrap();
         let entry = content.registry.get(id)?.clone();
@@ -343,13 +373,26 @@ impl AssetServer {
                 return;
             }
             let address = entry.address;
+            let hook = server
+                .data
+                .derived_hooks
+                .read()
+                .unwrap()
+                .get(&TypeId::of::<A>())
+                .copied();
             let asset = async {
                 let mut asset =
                     crate::assets::utils::load_content_asset::<A>(&content_root, &address)
                         .await
                         .with_context(|| format!("failed to read {} asset", A::name()))?;
-                let context = AssetLoadContext::new(server, id);
+                let context = AssetLoadContext::new(server.clone(), id);
                 asset.on_load(&context)?;
+                if let Some(hook) = hook {
+                    asset = *hook(Box::new(asset), server)
+                        .await?
+                        .downcast::<A>()
+                        .map_err(|_| anyhow::anyhow!("the derived hook returned another type"))?;
+                }
                 anyhow::Ok(asset)
             }
             .await;
@@ -621,6 +664,84 @@ mod tests {
             .expect("asset store");
         assert_eq!(store.get(&handle).map(|asset| asset.value), Some(7));
         assert!(store.get(&handle).unwrap().initialized);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct RenamedFixture {
+        value: u32,
+    }
+
+    impl Asset for RenamedFixture {
+        const FORMAT_VERSION: u32 = 2;
+        const FORMER_NAMES: &'static [&'static str] = &["OldFixture"];
+
+        fn name() -> &'static str {
+            "RenamedFixture"
+        }
+
+        fn migrate_former(name: &str, version: u32, payload: &[u8]) -> anyhow::Result<Self> {
+            anyhow::ensure!(name == "OldFixture" && version == 1);
+            Ok(Self {
+                value: bincode::deserialize::<u32>(payload)? + 100,
+            })
+        }
+    }
+
+    impl LoadableAsset for RenamedFixture {}
+
+    #[test]
+    fn load_reads_a_file_under_a_former_name_through_migrate_former() {
+        use crate::assets::content::{write_content_asset, ContentAssetHeader};
+
+        let dir = temp_root("former-name");
+        let address = "content/fixture/old.gasset";
+        let id = AssetId::new();
+        let header = ContentAssetHeader {
+            asset_id: id,
+            references: Vec::new(),
+            kind: "OldFixture".into(),
+            kind_version: 1,
+            provenance: None,
+        };
+        let bytes = write_content_asset(&header, &bincode::serialize(&7u32).unwrap()).unwrap();
+        std::fs::create_dir_all(dir.join("content/fixture")).unwrap();
+        std::fs::write(dir.join(address), bytes).unwrap();
+        let mut registry = AssetRegistry::new();
+        registry.insert(AssetEntry {
+            id,
+            address: address.into(),
+            kind: "OldFixture".into(),
+            kind_version: Some(1),
+            provenance: None,
+        });
+
+        let mut world = World::new();
+        let store = AssetStore::<RenamedFixture>::new();
+        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        server.register_asset::<RenamedFixture>(&store);
+        server.publish_registry(registry);
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+
+        let handle = server.load::<RenamedFixture>(id);
+        drive_pending_load(&server, id);
+        handle_asset_load_events(&mut world);
+
+        let store = world
+            .get_resource::<AssetStore<RenamedFixture>>()
+            .expect("asset store");
+        assert_eq!(store.get(&handle).map(|asset| asset.value), Some(107));
+        assert_eq!(
+            server.current_kind("OldFixture"),
+            Some(("RenamedFixture", 2))
+        );
+        assert_eq!(
+            server.current_kind("RenamedFixture"),
+            Some(("RenamedFixture", 2))
+        );
+        assert_eq!(server.current_kind("Unregistered"), None);
 
         std::fs::remove_dir_all(&dir).ok();
     }
