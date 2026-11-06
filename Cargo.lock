@@ -1259,7 +1259,6 @@ dependencies = [
  "concerto-mesh",
  "concerto-motion-matching",
  "concerto-motion-matching-gizmos",
- "concerto-name",
  "concerto-reflect",
  "concerto-ui",
  "concerto-window",

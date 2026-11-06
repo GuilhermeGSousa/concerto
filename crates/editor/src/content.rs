@@ -188,7 +188,8 @@ impl Plugin for ContentPlugin {
                     .after(update_filter)
                     .before(UiSet::Project),
             )
-            .add_system(LateUpdate, sync_new_items)
+            .add_system(LateUpdate, rebuild_new_rows)
+            .add_system(LateUpdate, sync_new_items.after(rebuild_new_rows))
             .add_system(
                 LateUpdate,
                 sync_content_items
@@ -329,16 +330,39 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
             CountLabel,
         ));
 
-    let mut menu = cmd.spawn((
-        theme
-            .dropdown(new_button)
-            .anchor_align(UIAnchorAlign::End)
-            .width(UIValue::Px(MENU_WIDTH))
-            .padding(theme.spacing_xs),
-        NewMenu,
-    ));
-    for &kind in creatable {
-        menu.add_child_with(
+    let menu = cmd
+        .spawn((
+            theme
+                .dropdown(new_button)
+                .anchor_align(UIAnchorAlign::End)
+                .width(UIValue::Px(MENU_WIDTH))
+                .padding(theme.spacing_xs),
+            NewMenu,
+        ))
+        .entity();
+    let context_menu = cmd
+        .spawn((
+            theme
+                .context_menu()
+                .width(UIValue::Px(MENU_WIDTH))
+                .padding(theme.spacing_xs),
+            ContentMenu {
+                folder: String::new(),
+            },
+        ))
+        .entity();
+    spawn_new_rows(cmd, menu, context_menu, theme, creatable);
+}
+
+fn spawn_new_rows(
+    cmd: &mut CommandQueue,
+    menu: Entity,
+    context_menu: Entity,
+    theme: &UITheme,
+    kinds: &[&'static str],
+) {
+    for &kind in kinds {
+        cmd.entity(menu).add_child_with(
             (
                 theme
                     .pressable()
@@ -351,19 +375,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
                 entry.add_child(theme.label(format!("New {kind}")).font_size(12.5).no_wrap());
             },
         );
-    }
-
-    let mut context_menu = cmd.spawn((
-        theme
-            .context_menu()
-            .width(UIValue::Px(MENU_WIDTH))
-            .padding(theme.spacing_xs),
-        ContentMenu {
-            folder: String::new(),
-        },
-    ));
-    for &kind in creatable {
-        context_menu.add_child_with(
+        cmd.entity(context_menu).add_child_with(
             (
                 theme
                     .pressable()
@@ -757,6 +769,28 @@ fn commit_pending_asset(
             }
         }
     }
+}
+
+fn rebuild_new_rows(
+    editors: Res<AssetEditorRegistry>,
+    theme: Res<UITheme>,
+    menus: Query<Entity, With<NewMenu>>,
+    context_menus: Query<Entity, With<ContentMenu>>,
+    rows: Query<Entity, Or<(With<NewRow>, With<ContentMenuRow>)>>,
+    mut cmd: CommandQueue,
+) {
+    if !editors.is_changed() {
+        return;
+    }
+    let (Some(menu), Some(context_menu)) = (menus.iter().next(), context_menus.iter().next())
+    else {
+        return;
+    };
+    for row in rows.iter() {
+        cmd.despawn(row);
+    }
+    let kinds: Vec<&'static str> = editors.creatable().map(|(kind, _)| kind).collect();
+    spawn_new_rows(&mut cmd, menu, context_menu, &theme, &kinds);
 }
 
 fn sync_new_items(
@@ -1263,6 +1297,7 @@ mod tests {
             reconcile_content_tree.into_boxed_system(),
             update_trees_system(),
             sync_content_items.into_boxed_system(),
+            rebuild_new_rows.into_boxed_system(),
             sync_new_items.into_boxed_system(),
         ];
         for system in &mut systems {
@@ -1381,6 +1416,7 @@ mod tests {
         project.project = Some(Project {
             root: root.path().to_path_buf(),
             content_root: content_root.into(),
+            default_scene: None,
         });
         world.insert_resource(project);
         let mut registry = AssetRegistry::default();
@@ -2692,6 +2728,7 @@ mod tests {
         project.project = Some(Project {
             root: other.path().to_path_buf(),
             content_root: "game/content".into(),
+            default_scene: None,
         });
         f.world.insert_resource(project);
         f.world.insert_resource(AssetRegistry::default());
@@ -2794,6 +2831,57 @@ mod tests {
 
         assert!(!f.menu_panel(menu).open);
         assert!(f.state().pending.is_none());
+    }
+
+    fn menu_labels(world: &World, row: Entity) -> Vec<String> {
+        world
+            .get_component_for_entity::<Children>(parent(world, row))
+            .unwrap()
+            .iter()
+            .map(|row| {
+                let label = *world
+                    .get_component_for_entity::<Children>(*row)
+                    .unwrap()
+                    .iter()
+                    .next()
+                    .unwrap();
+                world
+                    .get_component_for_entity::<UIText>(label)
+                    .unwrap()
+                    .text
+                    .clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn both_new_menus_gain_a_row_when_a_kind_becomes_creatable() {
+        let mut f = fixture(&[("content/level.gasset", "Scene")]);
+        f.world
+            .get_resource_mut::<AssetEditorRegistry>()
+            .unwrap()
+            .register_inspected(concerto_app::InspectedAsset {
+                kind: "Dialogue",
+                create: |_, _, _| anyhow::bail!("unused"),
+                decode: |_| anyhow::bail!("unused"),
+                save: |_, _, _, _| anyhow::bail!("unused"),
+            });
+
+        f.refresh();
+
+        let rows = new_rows(&mut f.world);
+        let menu = menu_rows(&mut f.world);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(menu.len(), 2);
+        assert_eq!(
+            menu_labels(&f.world, rows[0]),
+            ["New Dialogue", "New Scene"]
+        );
+        assert_eq!(
+            menu_labels(&f.world, menu[0]),
+            ["New Dialogue", "New Scene"]
+        );
+        assert!(rows.iter().chain(&menu).all(|row| !f.disabled(*row)));
     }
 
     #[test]

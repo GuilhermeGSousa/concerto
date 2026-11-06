@@ -272,6 +272,32 @@ fn content_config_fills_a_missing_field_from_the_default() {
 }
 
 #[test]
+fn content_config_reads_the_default_scene() {
+    let base = temp_root("config-default-scene");
+    std::fs::write(
+        base.join("content.toml"),
+        "default_scene = \"content/levels/forest.gasset\"\n",
+    )
+    .unwrap();
+    let config = ContentConfig::load_or_default(&base).expect("parses");
+    assert_eq!(
+        config.default_scene.as_deref(),
+        Some("content/levels/forest.gasset")
+    );
+    assert_eq!(config.root, "content");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn content_config_has_no_default_scene_unless_one_is_set() {
+    let base = temp_root("config-no-default-scene");
+    std::fs::write(base.join("content.toml"), "extension = \"gasset\"\n").unwrap();
+    let config = ContentConfig::load_or_default(&base).expect("parses");
+    assert_eq!(config.default_scene, None);
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
 fn content_config_rejects_a_root_other_than_content() {
     for (tag, root) in [
         ("data", "data"),

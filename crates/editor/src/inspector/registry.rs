@@ -147,7 +147,9 @@ impl Default for InspectorRegistry {
         super::boolean::register_defaults(&mut registry);
         super::color::register_defaults(&mut registry);
         super::name_text::register_defaults(&mut registry);
+        super::text_field::register_defaults(&mut registry);
         crate::entity_picker::register_defaults(&mut registry);
+        crate::joint_picker::register_defaults(&mut registry);
         registry
     }
 }

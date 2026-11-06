@@ -487,6 +487,7 @@ mod tests {
         state.project = Some(Project {
             root: project.path().to_path_buf(),
             content_root: "content".into(),
+            default_scene: None,
         });
         world.insert_resource(state);
         world.insert_resource(ImportStaging {

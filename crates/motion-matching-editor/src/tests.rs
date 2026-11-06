@@ -29,6 +29,7 @@ use concerto_editor::{
         InspectedSnapshots, InspectedValues, InspectorRegistry, PropertyCommits, PropertyRow,
         PropertyTarget, ShownValue, ValueCard, commit_number, spawn_panel, value_systems,
     },
+    name_menu::close_name_menu,
     preview::{PreviewFailed, PreviewHostPlugin},
     project::{AssetsWritten, Project, ProjectState},
     scene::{SaveFailed, ScenePlugin, SceneRecipe, SceneSaved},
@@ -61,8 +62,6 @@ use crate::{
     },
     facts::{follow_skeleton, read_entry_facts},
     install,
-    joint::{JointNameEditor, refresh_joint_rows},
-    menu::close_name_menu,
     panels::{
         build_definition_panels, sync_channel_rows, sync_definition_panels,
         tests::{clip_of, skeleton_of},
@@ -148,9 +147,7 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
         .unwrap()
         .register_creatable::<MotionDatabase, MotionDatabaseEditor>()
         .unwrap();
-    let mut inspector = InspectorRegistry::default();
-    inspector.register_property_editor::<JointName, JointNameEditor>();
-    f.world.insert_resource(inspector);
+    f.world.insert_resource(InspectorRegistry::default());
     f.world.insert_resource(InspectedSnapshots::default());
     let mut panel = build_inspector.into_system();
     panel.initialize(&mut f.world);
@@ -179,7 +176,6 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     for system in cards {
         f.add_delivery(system);
     }
-    f.add_delivery(refresh_joint_rows.into_boxed_system());
     f
 }
 
@@ -409,6 +405,7 @@ fn install_alone_plays_a_clip_in_a_definitions_preview_and_registers_no_clip_edi
     project.project = Some(Project {
         root: root.into(),
         content_root: "content".into(),
+        default_scene: None,
     });
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
@@ -1100,6 +1097,7 @@ fn install_opens_saves_and_discards_a_definition_in_the_editors_schedule() {
     project.project = Some(Project {
         root: directory.path().into(),
         content_root: "content".into(),
+        default_scene: None,
     });
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)

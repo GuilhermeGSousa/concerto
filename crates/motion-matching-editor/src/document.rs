@@ -12,6 +12,7 @@ use concerto_editor::{
     guard::DiscardEdits,
     hosted::{Hosted, HostedApp},
     inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, ShownValue},
+    joint_picker::DocumentBones,
     preview::{PreviewFailed, PreviewSignals},
     project::ProjectState,
     tools::edits::PropertyCommitted,
@@ -27,7 +28,6 @@ use concerto_motion_matching::{
     BakeError, FeatureChannel, FeatureChannelData, MirrorAxis, MotionDatabase, MotionEntry,
     SimulationBoneSettings, TrajectorySettings,
 };
-use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use uuid::Uuid;
 
@@ -122,7 +122,6 @@ pub struct DefinitionDocument {
     pub selected_entry: Option<usize>,
     pub settings: Option<DatabaseSettings>,
     pub channels: Vec<HeldChannel>,
-    pub bones: Option<Vec<Name>>,
     pub loaded: Option<MotionDatabase>,
     pub stats: Option<BakedStats>,
     pub entry_facts: Vec<EntryFacts>,
@@ -180,7 +179,11 @@ pub struct MotionDatabaseEditor;
 
 impl AssetEditor for MotionDatabaseEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
-        editor.insert((DefinitionDocument::default(), InspectedValues::default()));
+        editor.insert((
+            DefinitionDocument::default(),
+            InspectedValues::default(),
+            DocumentBones(None),
+        ));
     }
 
     fn preview(&self) -> Option<PreviewSpec> {

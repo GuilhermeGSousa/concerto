@@ -11,9 +11,12 @@ pub mod guard;
 pub mod hierarchy;
 pub mod hosted;
 pub mod import;
+pub mod inspected_asset;
 pub mod inspector;
+pub mod joint_picker;
 pub mod marks;
 pub mod mcp;
+pub mod name_menu;
 pub mod preview;
 pub mod project;
 mod run;
@@ -82,6 +85,7 @@ impl Plugin for EditorPlugin {
             recipe: self.recipe,
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
+        app.register_plugin(inspected_asset::InspectedAssetPlugin);
         app.register_plugin(timeline::TimelinePlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,

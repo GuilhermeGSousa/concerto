@@ -39,8 +39,9 @@ use log::info;
 
 use concerto_foundation::assets::{
     asset_server::AssetServer, asset_store::AssetStore, derived::DerivedData,
-    handle::AssetLifetimeEvent, Asset, AssetId,
+    handle::AssetLifetimeEvent, Asset, AssetId, CreatableAsset, LoadableAsset,
 };
+use concerto_reflect::{GetTypeRegistration, Reflect};
 
 use crate::{
     edit_time::{AppListener, AtEditTime, EditTime, Preview},
@@ -51,11 +52,13 @@ use crate::{
 
 pub mod edit_time;
 pub mod extractor;
+pub mod inspected_asset;
 pub mod main_schedule;
 pub mod plugins;
 pub mod schedule_groups;
 pub mod subapp;
 
+pub use inspected_asset::{DecodedAsset, InspectedAsset, InspectedAssets};
 pub use plugins::Plugin;
 
 /// The scene a game starts in, declared with [`App::set_startup_scene`].
@@ -159,6 +162,29 @@ impl App {
     /// Registers a derived asset type as [`register_asset`](Self::register_asset) does, deriving its blob on every load.
     pub fn register_derived_asset<A: DerivedData>(&mut self) -> &mut Self {
         self.register_asset_with::<A>(AssetServer::register_derived_asset)
+    }
+
+    /// Registers `A` as an asset and a reflected type, and records it in [`InspectedAssets`] so the editor can create, inspect and save it.
+    pub fn register_inspected_asset<
+        A: CreatableAsset + LoadableAsset + Reflect + GetTypeRegistration,
+    >(
+        &mut self,
+    ) -> &mut Self {
+        let registered = self
+            .get_resource::<AssetServer>()
+            .expect("Asset Server not found")
+            .is_registered::<A>();
+        if !registered {
+            self.register_asset::<A>();
+        }
+        self.register_type::<A>();
+        if self.get_resource::<InspectedAssets>().is_none() {
+            self.insert_resource(InspectedAssets::default());
+        }
+        self.get_resource_mut::<InspectedAssets>()
+            .expect("InspectedAssets was just inserted")
+            .insert(InspectedAsset::of::<A>());
+        self
     }
 
     fn register_asset_with<A: Asset>(

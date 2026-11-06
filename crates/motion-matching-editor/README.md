@@ -12,10 +12,10 @@ plugins = [{ package = "concerto-motion-matching-editor", install = "concerto_mo
 
 `install` registers `MotionDatabaseEditor` as a creatable asset editor, so
 **New ▸ New MotionDatabase** in the content browser makes a definition and opens
-it, and it registers `JointNameEditor` for the inspector. It also registers
-`AnimationClip` as a derived asset in the editor's `App`, so a derive refuses an
-entry naming an additive clip even before any game `App` has added
-`AnimationPlugin`.
+it. Its `JointName` fields are edited by `concerto-editor`'s `JointNameEditor`,
+which the inspector registers by default. It also registers `AnimationClip` as a
+derived asset in the editor's `App`, so a derive refuses an entry naming an
+additive clip even before any game `App` has added `AnimationPlugin`.
 
 Listing this crate doesn't bring the clip tab. A definition's preview still plays
 clips, through `concerto-animation-editor`'s `clip_preview`, but a game that wants
@@ -188,11 +188,10 @@ the preview always plays, and a scrub moves it without pausing.
 
 ## Joint names
 
-`JointNameEditor` makes a `JointName` a button naming the joint, on a field and
-in a list, which opens a menu of the skeleton's bones. The bones are on the
-document, replaced whenever the skeleton changes and `None` when there is no
-skeleton or it cannot be read, so the row reads the front document and needs no
-edit target.
-Without them the button is disabled, and reads the stored name in the muted
-colour. A name the skeleton lacks uses the warning colour, and a derive fails naming it.
-An empty name reads `None`. The menu closes when another tab comes to the front.
+`JointName` fields are edited by `concerto-editor`'s `JointNameEditor`, which
+lists the bones in the document's `DocumentBones`; see the editor's
+[README](../editor/README.md#joint-names). The definition's document fills
+them from the skeleton it reads, replaced whenever the skeleton changes and
+`None` when there is no skeleton or it cannot be read. A name the skeleton
+lacks uses the warning colour, and a derive fails naming it. The channel-type
+picker opens the same `NameMenu`.
