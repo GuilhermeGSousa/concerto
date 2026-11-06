@@ -37,6 +37,7 @@ fn an_imported_texture_is_reachable_at_its_conventional_address() {
         kind: sub_asset.type_name.to_string(),
         kind_version: sub_asset.kind_version,
         provenance: None,
+        derived: None,
     };
     std::fs::create_dir_all(temp_dir.join("content/swatch")).unwrap();
     std::fs::write(

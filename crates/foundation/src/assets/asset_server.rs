@@ -704,6 +704,7 @@ mod tests {
             kind: "OldFixture".into(),
             kind_version: 1,
             provenance: None,
+            derived: None,
         };
         let bytes = write_content_asset(&header, &bincode::serialize(&7u32).unwrap()).unwrap();
         std::fs::create_dir_all(dir.join("content/fixture")).unwrap();

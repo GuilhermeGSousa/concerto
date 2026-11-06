@@ -368,6 +368,7 @@ fn authored_asset(root: &Path, name: &str) -> AssetId {
         kind: "Scene".into(),
         kind_version: 1,
         provenance: None,
+        derived: None,
     };
     std::fs::create_dir_all(root.join("content")).expect("content");
     std::fs::write(

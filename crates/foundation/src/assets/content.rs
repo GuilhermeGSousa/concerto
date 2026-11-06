@@ -1,5 +1,6 @@
 //! Framing for game-ready content assets: `magic | u32 header_len |
-//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim)`. The header is read
+//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim) | derived blob`, the
+//! blob present only when the header describes one. The header is read
 //! without touching the payload, so a future asset registry can index a
 //! whole content tree by scanning headers alone.
 use std::path::Path;
@@ -10,8 +11,9 @@ use super::registry::{AssetEntry, AssetRegistry};
 use super::{kind_matches, Asset, AssetId};
 
 pub use concerto_asset_format::{
-    read_content_asset, read_content_asset_header, write_content_asset, ContentAssetHeader,
-    ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
+    read_content_asset, read_content_asset_header, read_content_asset_parts, write_content_asset,
+    write_cooked_content_asset, ContentAssetHeader, ContentAssetParts, CookedSection,
+    DerivedSection, ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version or a former name.
@@ -97,6 +99,7 @@ pub fn save_content_asset_into<A: Asset>(
         kind: A::name().to_string(),
         kind_version: A::FORMAT_VERSION,
         provenance: None,
+        derived: None,
     };
     let kind = header.kind.clone();
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;

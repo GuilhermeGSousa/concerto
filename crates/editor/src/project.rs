@@ -358,6 +358,7 @@ mod tests {
                     source: "assets/model.glb".into(),
                     sub_asset: name.into(),
                 }),
+                derived: None,
             };
             std::fs::write(
                 root.join(format!("content/{name}.gasset")),

@@ -238,11 +238,12 @@ magic "GRDY" (4 bytes)
 u32   header length, little-endian
       bincode(u32 format version, ContentAssetHeader)
       payload — the asset's own bincode encoding, verbatim
+      derived blob — `derived.len` bytes, only when the header has a `derived` section
 ```
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-The format version is `CONTENT_FORMAT_VERSION`, currently `5`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header. A version-4 file reads as kind version 1 and needs no re-import; it moves to version 5 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `6`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, and version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file. The payload is everything between the header and that blob; `read_content_asset` returns it without the blob, and `read_content_asset_parts` returns both. `write_content_asset` writes no section and refuses a header that has one; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`. Committed content never has a section. A version-4 file reads as kind version 1 and a version-5 file reads with no section; neither needs a re-import, and each moves to version 6 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
@@ -253,6 +254,7 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `5`; it changes only w
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
 | `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, `None` for editor-authored assets |
+| `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
 The header can be read without touching the payload, which is what lets a
 future tool index a whole content tree cheaply.
@@ -370,8 +372,10 @@ such a file still fails when it is loaded.
 
 `CONTENT_FORMAT_VERSION` is a different number. It changes only when the
 framing or `ContentAssetHeader` changes, never for a payload, and a new header
-version keeps the previous one readable where it can, as version 5 reads
-version 4.
+version keeps the previous ones readable where it can, as version 6 reads
+versions 4 and 5. The version-6 framing is pinned by
+`crates/foundation/tests/encoding/content_asset.v6.bin`, rewritten under
+`CONCERTO_BLESS_ENCODING=1`.
 
 ### Renaming a type
 
