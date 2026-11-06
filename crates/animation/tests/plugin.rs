@@ -68,7 +68,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     use concerto_animation::node::blend_space::BlendSpace2DNode;
     use concerto_animation::node::state_machine::AnimationStateMachine;
     use concerto_animation::node::{
-        AnimationClipNode, BlendNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
+        AnimationClipNode, BlendNode, LayerNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
         TwoBoneIkNode,
     };
     use concerto_app::InspectedAssets;
@@ -101,6 +101,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(has_node_data(TypeId::of::<AnimationStateMachine>()));
     assert!(has_node_data(TypeId::of::<PlaceholderNode>()));
     assert!(has_node_data(TypeId::of::<TwoBoneIkNode>()));
+    assert!(has_node_data(TypeId::of::<LayerNode>()));
     assert!(
         registry
             .get(TypeId::of::<AssetHandle<AnimationClip>>())
