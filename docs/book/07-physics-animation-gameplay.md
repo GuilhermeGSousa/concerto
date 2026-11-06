@@ -513,7 +513,9 @@ the two. `AnimationClip::additive()` says whether a clip is additive, as an
 The importers set it from a source's import settings
 ([asset importing](../asset-importing.md)), and code can with
 `set_additive`, building the base with `AdditiveBase::new(clip)` and
-`with_range`, `with_base_range` and `with_root`.
+`with_range`, `with_base_range` and `with_root`. `set_additive` drops any delta
+the clip already holds, so a clip made plain, or given a new base, samples no
+delta until it is built again.
 
 The clip keeps its full-pose keys, so `AnimationClipNode` and the clip editor
 play it as any other clip. The difference, the delta, is derived data: it is

@@ -638,9 +638,10 @@ impl AnimationClip {
         &self.additive
     }
 
-    /// Makes the clip additive against a base, or plain with [`Additive::None`].
+    /// Makes the clip additive against a base, or plain with [`Additive::None`], dropping any delta already built.
     pub fn set_additive(&mut self, additive: Additive) {
         self.additive = additive;
+        self.delta = None;
     }
 
     /// The additive delta of `bone` at `time`, clamped to the delta's span; identity for a bone with no delta, a plain clip, or a delta not yet built.
@@ -1437,6 +1438,25 @@ mod tests {
         for key in bone_delta(&delta, bone).rotation.as_ref().unwrap() {
             assert_same_rotation(*key, Quat::from_rotation_x(0.5));
         }
+    }
+
+    #[test]
+    fn changing_the_additive_setting_drops_the_built_delta() {
+        let bone = Uuid::from_u128(1);
+        let mut base = AnimationClip::default();
+        base.add_channel(bone, still_translation(Vec3::ZERO));
+        let mut clip = AnimationClip::default();
+        clip.add_channel(bone, x_ramp(1.0, 0.0, 2.0));
+        clip.set_frame_rate(4.0);
+        let mut clip = additive(clip, some_base());
+        let delta = clip.delta_against(&base).unwrap();
+        apply(&mut clip, &delta);
+        assert_eq!(clip.additive_duration(), 1.0);
+
+        clip.set_additive(Additive::None);
+
+        assert_eq!(clip.sample_additive(0.5, &bone), JointPose::IDENTITY);
+        assert_eq!(clip.additive_duration(), 0.0);
     }
 
     #[test]
