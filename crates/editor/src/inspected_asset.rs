@@ -120,11 +120,16 @@ pub(crate) fn register_inspected_kinds(
     }
 }
 
+struct ReadAsset {
+    bytes: Vec<u8>,
+    value: Box<dyn Reflect>,
+}
+
 fn read_inspected(
     root: &Path,
     asset: &AssetEntry,
     record: &InspectedAsset,
-) -> anyhow::Result<(Vec<u8>, Box<dyn Reflect>)> {
+) -> anyhow::Result<ReadAsset> {
     let bytes = std::fs::read(root.join(&asset.address))
         .with_context(|| format!("Cannot read {}", asset.address))?;
     let decoded = (record.decode)(&bytes)?;
@@ -133,7 +138,10 @@ fn read_inspected(
         "{} holds another asset's id",
         asset.address
     );
-    Ok((bytes, decoded.value))
+    Ok(ReadAsset {
+        bytes,
+        value: decoded.value,
+    })
 }
 
 pub(crate) fn load_inspected_assets(
@@ -164,9 +172,9 @@ pub(crate) fn load_inspected_assets(
             continue;
         };
         match read_inspected(root, &asset, &state.record) {
-            Ok((bytes, value)) => {
-                state.value = Some(value);
-                state.loaded = bytes;
+            Ok(read) => {
+                state.value = Some(read.value);
+                state.loaded = read.bytes;
                 cmd.remove::<Unsaved>(entity);
                 cmd.trigger(RefreshInspector);
                 finish_asset_request(&mut document, &asset, Ok(()));
