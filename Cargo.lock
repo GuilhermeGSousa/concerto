@@ -810,6 +810,7 @@ dependencies = [
 name = "concerto"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "concerto-animation",
  "concerto-app",
  "concerto-color",
@@ -835,6 +836,8 @@ dependencies = [
  "log",
  "pollster",
  "profiling",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]

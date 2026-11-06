@@ -26,6 +26,8 @@ use concerto_app::{
     App, Plugin,
 };
 use concerto_director::CameraDirectorPlugin;
+#[cfg(not(target_arch = "wasm32"))]
+use concerto_foundation::assets::derived::CookReport;
 use concerto_motion_matching::MotionMatchingPlugin;
 use concerto_physics::plugin::PhysicsPlugin;
 use concerto_render::{
@@ -38,16 +40,83 @@ use concerto_ui::plugin::UIPlugin;
 use concerto_window::plugin::WindowPlugin;
 use concerto_world_grid::plugin::WorldGridPlugin;
 
-/// Sets up logging, opens a window, and runs the `App` that `build` makes with `content`, from [`content_registry!`], installed.
+/// Sets up logging, opens a window, and runs the `App` that `build` makes with `content`, from [`content_registry!`], installed; natively, `--cook <out>` runs [`cook`] instead and exits.
 pub fn run(
     build: impl FnOnce(&mut app::App) + 'static,
     content: concerto_app::plugins::ContentSettings<'static>,
 ) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut args = std::env::args().skip(1);
+        if args.any(|arg| arg == "--cook") {
+            let code = match args.next() {
+                Some(out) => report_cook(cook(build, content, std::path::Path::new(&out))),
+                None => report_cook(Err(anyhow::anyhow!(
+                    "--cook needs the directory to write the cooked content to"
+                ))),
+            };
+            std::process::exit(code);
+        }
+    }
     init_logging();
     concerto_winit::run(move |app| {
         build(app);
         concerto_app::plugins::install_content_registry(app, content);
     });
+}
+
+/// Builds the `App` that `build` makes, with no GPU and no window, and writes each derived asset of `content` to `out` with its derived blob.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn cook(
+    build: impl FnOnce(&mut App),
+    content: concerto_app::plugins::ContentSettings,
+    out: &std::path::Path,
+) -> anyhow::Result<CookReport> {
+    use anyhow::Context;
+    use concerto_foundation::assets::{
+        asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+        ContentAssetRoot,
+    };
+
+    init_logging();
+    let project_root = std::path::PathBuf::from(
+        content
+            .project_root
+            .context("the cook needs the project root that `content_registry!()` embeds")?,
+    );
+    let registry = AssetRegistry::parse(content.registry)
+        .context("the embedded content registry is malformed")?;
+    let mut app = App::new();
+    build(&mut app);
+    let server = app
+        .get_resource::<AssetServer>()
+        .context("the cook needs an AssetServer; register AssetManagerPlugin")?;
+    server.publish_content_source(ContentAssetRoot::Directory(project_root.clone()), registry);
+    server.set_derived_cache(DerivedDataCache::in_project(&project_root));
+    if out.exists() {
+        std::fs::remove_dir_all(out)
+            .with_context(|| format!("failed to remove '{}'", out.display()))?;
+    }
+    std::fs::create_dir_all(out)
+        .with_context(|| format!("failed to create '{}'", out.display()))?;
+    server.cook(out)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn report_cook(result: anyhow::Result<CookReport>) -> i32 {
+    match result {
+        Ok(report) => {
+            for address in &report.cooked {
+                println!("cooked {address}");
+            }
+            println!("cooked {} derived assets", report.cooked.len());
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            1
+        }
+    }
 }
 
 /// The asset registry and project root the package's `build.rs` recorded through `concerto_asset_build::track_assets`.
@@ -127,5 +196,137 @@ mod tests {
     fn setting_up_logging_twice_does_not_panic() {
         super::init_logging();
         super::init_logging();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cook_tests {
+    use concerto_app::{plugins::ContentSettings, App};
+    use concerto_foundation::assets::{
+        content::{read_content_asset_parts, save_content_asset_into},
+        derived::{DerivedData, DerivedInputs},
+        registry::AssetRegistry,
+        Asset, AssetId, LoadableAsset,
+    };
+    use concerto_render::gpu::Gpu;
+    use serde::{Deserialize, Serialize};
+
+    use crate::DefaultPlugins;
+
+    #[derive(Serialize, Deserialize)]
+    struct Doubled {
+        value: u64,
+        #[serde(skip)]
+        doubled: Option<u64>,
+    }
+
+    impl Asset for Doubled {
+        fn name() -> &'static str {
+            "Doubled"
+        }
+    }
+
+    impl LoadableAsset for Doubled {}
+
+    impl DerivedData for Doubled {
+        const DERIVED_VERSION: u32 = 1;
+
+        fn derived_inputs(&self) -> Vec<AssetId> {
+            Vec::new()
+        }
+
+        fn derived_key(&self, _inputs: &DerivedInputs) -> anyhow::Result<u64> {
+            Ok(self.value)
+        }
+
+        fn derive(
+            &self,
+            _inputs: &DerivedInputs,
+            _progress: &mut dyn FnMut(usize, usize),
+        ) -> anyhow::Result<Vec<u8>> {
+            Ok((self.value * 2).to_le_bytes().to_vec())
+        }
+
+        fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+            let bytes: [u8; 8] = blob.try_into()?;
+            self.doubled = Some(u64::from_le_bytes(bytes));
+            Ok(())
+        }
+    }
+
+    fn recipe(app: &mut App) {
+        app.register_plugin(DefaultPlugins)
+            .register_derived_asset::<Doubled>();
+        assert!(app.get_resource::<Gpu>().is_none());
+    }
+
+    #[test]
+    fn a_cook_with_no_gpu_replaces_the_output_with_each_derived_asset_and_its_blob() {
+        let project = tempfile::tempdir().unwrap();
+        let mut registry = AssetRegistry::new();
+        save_content_asset_into(
+            &Doubled {
+                value: 21,
+                doubled: None,
+            },
+            project.path(),
+            "content/doubled.gasset",
+            &mut registry,
+        )
+        .unwrap();
+        let out = project.path().join("cooked");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("stale.gasset"), b"stale").unwrap();
+
+        let report = super::cook(
+            recipe,
+            ContentSettings {
+                registry: &registry.to_toml(),
+                project_root: project.path().to_str(),
+            },
+            &out,
+        )
+        .unwrap();
+
+        assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
+        assert!(!out.join("stale.gasset").exists());
+        let bytes = std::fs::read(out.join("content/doubled.gasset")).unwrap();
+        let parts = read_content_asset_parts(&bytes).unwrap();
+        assert_eq!(parts.header.derived.map(|section| section.key), Some(21));
+        assert_eq!(parts.derived_blob, Some(&42u64.to_le_bytes()[..]));
+    }
+
+    #[test]
+    fn a_cook_without_a_project_root_is_refused() {
+        let out = tempfile::tempdir().unwrap();
+
+        let error = super::cook(
+            recipe,
+            ContentSettings {
+                registry: "",
+                project_root: None,
+            },
+            &out.path().join("cooked"),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("project root"), "{error:#}");
+    }
+
+    #[test]
+    fn a_cook_of_an_app_without_an_asset_server_is_refused() {
+        let project = tempfile::tempdir().unwrap();
+
+        let error = super::cook(
+            |_| {},
+            ContentSettings {
+                registry: "",
+                project_root: project.path().to_str(),
+            },
+            &project.path().join("cooked"),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("AssetServer"), "{error:#}");
     }
 }
