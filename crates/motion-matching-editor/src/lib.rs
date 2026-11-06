@@ -10,6 +10,7 @@ mod save;
 #[cfg(test)]
 mod tests;
 
+use concerto_animation::clip::AnimationClip;
 use concerto_app::{
     App,
     schedule_groups::{LateUpdate, Update},
@@ -44,6 +45,7 @@ use save::save_definitions;
 
 /// Adds the motion database editor to the editor's `App`.
 pub fn install(app: &mut App) {
+    app.register_derived_asset::<AnimationClip>();
     app.register_creatable_asset_editor::<MotionDatabase, MotionDatabaseEditor>()
         .expect("the editor's App holds the asset-editor registry")
         .register_property_editor::<JointName, JointNameEditor>()

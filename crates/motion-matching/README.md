@@ -55,7 +55,10 @@ the type with `register_derived_asset`, so a load through the `AssetServer`
 bakes it from the skeleton and clips the definition names, or takes the blob
 cached under the same key, before the handle reads as loaded:
 
-- `derived_inputs()`: the skeleton and each entry's clip.
+- `derived_inputs()`: the skeleton and each entry's clip. A derived asset
+  can't be an input, so an entry naming an additive clip fails the database's
+  load, and its derive in the motion database editor, with an error naming the
+  clip. Plain clips load as before.
 - `derived_key(&inputs)`: `weightless_hash` of the definition and the inputs'
   file bytes; see [Derived key](#derived-key).
 - `derive(&inputs, progress)`: decodes the skeleton and clips, calls

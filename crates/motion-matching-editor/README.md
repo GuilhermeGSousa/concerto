@@ -12,7 +12,10 @@ plugins = [{ package = "concerto-motion-matching-editor", install = "concerto_mo
 
 `install` registers `MotionDatabaseEditor` as a creatable asset editor, so
 **New ▸ New MotionDatabase** in the content browser makes a definition and opens
-it, and it registers `JointNameEditor` for the inspector.
+it, and it registers `JointNameEditor` for the inspector. It also registers
+`AnimationClip` as a derived asset in the editor's `App`, so a derive refuses an
+entry naming an additive clip even before any game `App` has added
+`AnimationPlugin`.
 
 Listing this crate doesn't bring the clip tab. A definition's preview still plays
 clips, through `concerto-animation-editor`'s `clip_preview`, but a game that wants

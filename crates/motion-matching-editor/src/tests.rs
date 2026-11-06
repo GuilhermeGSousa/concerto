@@ -36,6 +36,7 @@ use concerto_editor::{
 use concerto_foundation::assets::{
     Asset, AssetId,
     asset_server::AssetServer,
+    asset_store::AssetStore,
     content::save_content_asset_into,
     derived::DerivedDataCache,
     handle::AssetHandle,
@@ -128,6 +129,13 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
         .get_resource::<AssetServer>()
         .unwrap()
         .set_derived_cache(DerivedDataCache::in_project(&f.project_root));
+    let clips = AssetStore::<AnimationClip>::new();
+    f.world
+        .get_resource::<AssetServer>()
+        .unwrap()
+        .clone()
+        .register_derived_asset(&clips);
+    f.world.insert_resource(clips);
     f.world
         .insert_resource(EventChannel::<AssetsWritten>::new());
     f.world.insert_resource(SceneRecipe {
@@ -372,6 +380,8 @@ fn install_registers_a_creatable_editor_with_a_preview() {
     assert!(editors.preview(kind).is_some());
     assert!(editors.bottom_host(kind));
     assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
+    let server = app.get_resource::<AssetServer>().unwrap();
+    assert!(server.can_cook(AnimationClip::name()));
 }
 
 #[test]
