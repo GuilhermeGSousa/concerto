@@ -12,8 +12,8 @@ use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
-    AnimationClipNode, AnimationNode, ErasedAnimationNode, IkGoal, ReflectAnimationNode,
-    TipRotation, TwoBoneIkNode,
+    AnimationClipNode, AnimationNode, ErasedAnimationNode, IkGoal, LayerNode, LayerSpace,
+    ReflectAnimationNode, TipRotation, TwoBoneIkNode,
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
@@ -315,6 +315,41 @@ fn a_two_bone_ik_node_keeps_every_field_through_a_round_trip() {
         restored.load_warnings()
     );
     assert_eq!(live_node::<TwoBoneIkNode>(&restored), Some(&node));
+}
+
+#[test]
+fn a_layer_node_keeps_every_field_and_its_inputs_through_a_round_trip() {
+    let node = LayerNode::new(AssetHandle::weak(AssetId::from_path("upper_body")))
+        .with_space(LayerSpace::Local)
+        .with_weight(0.6)
+        .with_weight_param(name!("strength"));
+    assert_ne!(node, LayerNode::default());
+    let mut graph = AnimationGraph::new();
+    graph.result_node().with_layer_input(
+        node.clone(),
+        |mut base| {
+            base.with_input(AnimationClipNode::new(clip("locomotion")), |_| {});
+        },
+        |mut overlay| {
+            overlay.with_input(AnimationClipNode::new(clip("aim")), |_| {});
+        },
+    );
+    graph.make_live(&registry(false), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(false), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<LayerNode>(&restored), Some(&node));
+    assert_eq!(restored.iter().count(), 4);
+    assert_eq!(
+        graph.nodes().collect::<Vec<_>>(),
+        restored.nodes().collect::<Vec<_>>()
+    );
 }
 
 #[test]

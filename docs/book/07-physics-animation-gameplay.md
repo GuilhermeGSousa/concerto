@@ -187,6 +187,56 @@ A graph is a tree of nodes under a result node:
   with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
   at 1.0, so inputs mix equally; an input at weight 0 is left out, and with
   none left the node gives the rest pose.
+- **Layer** (`LayerNode`) lays its second input, the overlay, over its first,
+  the base, on the bones a `BoneMask` asset names. Build it with
+  `with_layer_input(node, base, overlay)`, which adds the base through the
+  first closure and then the overlay through the second, so the order can't
+  come out wrong; it panics unless each closure adds exactly one input. Layers
+  stack by chaining: one layer can be the base of the next. With no overlay
+  the node passes the base through, and inputs after the second are ignored
+  with a warning. A `BoneMask` is made from the content browser's New menu,
+  or in code. Its `branches` are `BoneMaskBranch`es, each a `bone` by name, a
+  `weight`, a `depth` and `descendants`. A branch covers its bone and, with
+  `descendants` on (the default), the bones under it. Each bone takes the
+  nearest branch at or above it that covers it, so a branch on a child
+  overrides its ancestor's, and a branch at weight 0 cuts a sub-branch out.
+  With `descendants` off, a branch changes its own bone alone, and the bones
+  under it keep what covered its parent. `depth` ramps the weight in over that
+  many levels below the bone: `depth: 2` gives ⅓, ⅔ and then the full
+  weight. A bone no branch covers keeps the base. A mask names bones, so one
+  mask serves every skeleton with those names; a name the skeleton lacks is
+  skipped with a warning. `preview_skeleton` is read only by the editor,
+  whose bone picker lists that skeleton's bones; a game never loads it.
+  `space` sets where rotations blend. `LayerSpace::Mesh`, the default, blends
+  each masked bone's model-space rotation, so a masked arm keeps the
+  overlay's orientation whatever the base's spine does: use it for aiming and
+  for a held prop. `LayerSpace::Local` blends each joint's local rotation, as
+  **Blend** does, so the masked bones ride on the base's body: use it when
+  the overlay was made over the same body motion as the base, such as a wave
+  over an idle. Translation and scale blend locally in both. The layer weight
+  is `weight` times the float under `weight_param`, with NaN as 0, clamped to
+  [0, 1]; a missing param leaves `weight` alone. The inputs' node weights are
+  ignored, and nothing eases the weight, so smooth the param in the game.
+  Root motion and the root bone's joint are always the base's, even under a
+  mask that names the root bone, which warns. The base's events keep their
+  weights, and the overlay's are added at their weight times the layer
+  weight, whatever the mask.
+  ```rust
+  let upper_body = assets.add(
+      BoneMask::new()
+          .with_branch(BoneMaskBranch::new("Spine1").with_depth(2))
+          .with_branch(BoneMaskBranch::new("Neck").with_weight(0.0)),
+  );
+  graph.result_node().with_layer_input(
+      LayerNode::new(upper_body).with_weight_param(name!("aim_weight")),
+      |mut base| {
+          base.with_input(AnimationClipNode::new(run), |_| {});
+      },
+      |mut overlay| {
+          overlay.with_input(AnimationClipNode::new(aim), |_| {});
+      },
+  );
+  ```
 - **2D blend space** places clips at points and blends by a `Vec2`
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as
