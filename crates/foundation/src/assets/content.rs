@@ -19,6 +19,14 @@ pub use concerto_asset_format::{
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version or a former name.
 pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
     let (header, payload) = read_content_asset(bytes)?;
+    let value = decode_content_payload::<A>(&header, payload)?;
+    Ok((header, value))
+}
+
+pub(crate) fn decode_content_payload<A: Asset>(
+    header: &ContentAssetHeader,
+    payload: &[u8],
+) -> anyhow::Result<A> {
     if !kind_matches::<A>(&header.kind) {
         anyhow::bail!(
             "content asset holds a {} but a {} was requested",
@@ -36,7 +44,7 @@ pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAs
                 current = A::FORMAT_VERSION
             )
         })?;
-        return Ok((header, value));
+        return Ok(value);
     }
     let current = A::FORMAT_VERSION;
     let value = match version.cmp(&current) {
@@ -53,7 +61,7 @@ pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAs
             A::name()
         ),
     };
-    Ok((header, value))
+    Ok(value)
 }
 
 /// Compares `value`'s payload encoding with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`, for a crate's encoding test.

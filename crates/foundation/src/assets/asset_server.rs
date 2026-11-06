@@ -381,17 +381,27 @@ impl AssetServer {
                 .get(&TypeId::of::<A>())
                 .copied();
             let asset = async {
-                let mut asset =
-                    crate::assets::utils::load_content_asset::<A>(&content_root, &address)
+                let loaded =
+                    crate::assets::utils::load_content_asset_parts::<A>(&content_root, &address)
                         .await
                         .with_context(|| format!("failed to read {} asset", A::name()))?;
+                let mut asset = loaded.asset;
                 let context = AssetLoadContext::new(server.clone(), id);
                 asset.on_load(&context)?;
-                if let Some(hook) = hook {
-                    asset = *hook(Box::new(asset), server)
-                        .await?
-                        .downcast::<A>()
-                        .map_err(|_| anyhow::anyhow!("the derived hook returned another type"))?;
+                match hook {
+                    Some(hook) => {
+                        asset = *hook(Box::new(asset), loaded.cooked, server)
+                            .await?
+                            .downcast::<A>()
+                            .map_err(|_| {
+                                anyhow::anyhow!("the derived hook returned another type")
+                            })?;
+                    }
+                    None if loaded.cooked.is_some() => log::warn!(
+                        "ignoring the derived section of '{address}': {} is not a derived asset",
+                        A::name()
+                    ),
+                    None => {}
                 }
                 anyhow::Ok(asset)
             }

@@ -9,7 +9,9 @@ use concerto_ecs::World;
 use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
-    content::save_content_asset_into,
+    content::{
+        read_content_asset, save_content_asset_into, write_cooked_content_asset, CookedSection,
+    },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
     registry::AssetRegistry,
@@ -161,6 +163,23 @@ impl Project {
         .unwrap()
     }
 
+    fn cook(&self, name: &str, derived_version: u32, blob: &[u8]) {
+        let path = self.root.join(format!("content/{name}.gasset"));
+        let bytes = std::fs::read(&path).unwrap();
+        let (header, payload) = read_content_asset(&bytes).unwrap();
+        let cooked = write_cooked_content_asset(
+            &header,
+            payload,
+            CookedSection {
+                derived_version,
+                key: 0x5eed,
+                blob,
+            },
+        )
+        .unwrap();
+        std::fs::write(&path, cooked).unwrap();
+    }
+
     fn cache_dir(&self) -> PathBuf {
         self.root.join("derived-cache")
     }
@@ -210,6 +229,29 @@ impl<const V: u32> Runtime<V> {
             self.pump();
             if let Some(total) = self.total(&handle) {
                 return Some(total.expect("a loaded sum has its blob applied"));
+            }
+            if !self.server.is_loading() {
+                return None;
+            }
+            assert!(Instant::now() < deadline, "load timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+impl Runtime<1> {
+    fn load_leaf(&mut self, id: AssetId) -> Option<u64> {
+        let handle = self.server.load::<Leaf>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            if let Some(leaf) = self
+                .world
+                .get_resource::<AssetStore<Leaf>>()
+                .unwrap()
+                .get(&handle)
+            {
+                return Some(leaf.value);
             }
             if !self.server.is_loading() {
                 return None;
@@ -496,4 +538,57 @@ fn a_handle_never_reads_as_loaded_before_its_blob_is_applied() {
     }
     release.send(()).unwrap();
     assert_eq!(runtime.load(id), Some(7));
+}
+
+#[test]
+fn a_cooked_blob_loads_without_its_inputs_and_without_deriving() {
+    let tag = "cooked";
+    let mut project = Project::new(tag);
+    let id = project.sum::<1>("sum", tag, AssetId::new(), AssetId::new());
+    project.cook("sum", 1, &42u64.to_le_bytes());
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load(id), Some(42));
+    assert_eq!(derives(tag), 0);
+    assert!(!cache.exists());
+}
+
+#[test]
+fn a_cooked_blob_of_another_derived_version_is_derived_again() {
+    let tag = "cooked-version";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    project.cook("sum", 2, &42u64.to_le_bytes());
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load(id), Some(7));
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_cooked_blob_that_apply_refuses_is_derived_again() {
+    let tag = "cooked-refused";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let id = project.sum::<1>("sum", tag, a, b);
+    project.cook("sum", 1, b"bad");
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load(id), Some(7));
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_derived_section_on_an_asset_that_is_not_derived_is_ignored() {
+    let tag = "cooked-leaf";
+    let mut project = Project::new(tag);
+    let id = project.leaf("leaf", 5);
+    project.cook("leaf", 1, b"stray");
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_leaf(id), Some(5));
 }

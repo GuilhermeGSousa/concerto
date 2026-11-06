@@ -616,9 +616,12 @@ does. `bytes(id)` gives the whole file and `decode::<T>(id)` decodes it,
 migrating as a load does but without `on_load`.
 
 A type is registered with `app.register_derived_asset::<A>()`, which also
-registers it as an asset. A load of it runs `on_load`, reads the inputs,
-computes the key and looks the blob up in the `AssetServer`'s
-`DerivedDataCache`. A hit is applied; a miss, or a cached blob that
+registers it as an asset. A load of it runs `on_load`, then applies the blob
+of a cooked file's derived section when its `derived_version` is the type's
+`DERIVED_VERSION`, reading no inputs and touching no cache. Without a section,
+or when the section's version differs or `apply_derived` refuses it, with a
+warning, the load reads the inputs, computes the key and looks the blob up in
+the `AssetServer`'s `DerivedDataCache`. A hit is applied; a miss, or a cached blob that
 `apply_derived` refuses, is derived, written to the cache and applied. The
 handle reads as loaded only once the blob is applied, and a missing or derived
 input fails the load. `AssetServer::add` derives nothing: code that adds a

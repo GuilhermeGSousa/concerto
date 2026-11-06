@@ -10,8 +10,11 @@ use std::{
 use anyhow::Context;
 
 use super::{
-    asset_server::AssetServer, content::decode_content_asset, registry::AssetRegistry,
-    utils::try_read_relative, Asset, AssetId, ContentAssetRoot, LoadableAsset,
+    asset_server::AssetServer,
+    content::{decode_content_asset, DerivedSection},
+    registry::AssetRegistry,
+    utils::try_read_relative,
+    Asset, AssetId, ContentAssetRoot, LoadableAsset,
 };
 
 /// An asset whose runtime part is a blob derived from other content assets, cached by a key it defines.
@@ -180,36 +183,97 @@ pub(crate) type DerivedFuture =
 #[cfg(target_arch = "wasm32")]
 pub(crate) type DerivedFuture = Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn Any + Send>>>>>;
 
-pub(crate) type DerivedHook = fn(asset: Box<dyn Any + Send>, server: AssetServer) -> DerivedFuture;
+pub(crate) struct CookedBlob {
+    pub(crate) section: DerivedSection,
+    pub(crate) blob: Vec<u8>,
+}
+
+pub(crate) struct DerivedBlob {
+    pub(crate) key: u64,
+    pub(crate) blob: Vec<u8>,
+}
+
+pub(crate) type DerivedHook = fn(
+    asset: Box<dyn Any + Send>,
+    cooked: Option<CookedBlob>,
+    server: AssetServer,
+) -> DerivedFuture;
+
+pub(crate) async fn derive_and_apply<A: DerivedData>(
+    asset: &mut A,
+    server: &AssetServer,
+) -> anyhow::Result<DerivedBlob> {
+    let (root, registry) = server.content_source();
+    let inputs = DerivedInputs::read(&root, &registry, &asset.derived_inputs()).await?;
+    let key = asset.derived_key(&inputs)?;
+    let cache = server.derived_cache();
+    if let Some(blob) = cache.get(A::name(), A::DERIVED_VERSION, key) {
+        match asset.apply_derived(&blob) {
+            Ok(()) => return Ok(DerivedBlob { key, blob }),
+            Err(error) => log::warn!(
+                "discarding the cached {} blob {key:016x}: {error:#}",
+                A::name()
+            ),
+        }
+    }
+    let blob = asset
+        .derive(&inputs, &mut |_, _| {})
+        .with_context(|| format!("failed to derive {}", A::name()))?;
+    cache.put(A::name(), A::DERIVED_VERSION, key, &blob);
+    asset
+        .apply_derived(&blob)
+        .with_context(|| format!("failed to apply the derived {}", A::name()))?;
+    Ok(DerivedBlob { key, blob })
+}
+
+fn apply_cooked<A: DerivedData>(asset: &mut A, cooked: CookedBlob) -> bool {
+    let section = cooked.section;
+    if section.derived_version != A::DERIVED_VERSION {
+        log::warn!(
+            "deriving {} again: its cooked blob is derived version {}, this build's is {}",
+            A::name(),
+            section.derived_version,
+            A::DERIVED_VERSION
+        );
+        return false;
+    }
+    match asset.apply_derived(&cooked.blob) {
+        Ok(()) => {
+            log::debug!("applied the cooked {} blob {:016x}", A::name(), section.key);
+            true
+        }
+        Err(error) => {
+            log::warn!(
+                "deriving {} again: its cooked blob {:016x} was refused: {error:#}",
+                A::name(),
+                section.key
+            );
+            false
+        }
+    }
+}
 
 pub(crate) fn derived_hook<A: DerivedData>(
     asset: Box<dyn Any + Send>,
+    cooked: Option<CookedBlob>,
     server: AssetServer,
 ) -> DerivedFuture {
     Box::pin(async move {
         let mut asset = *asset
             .downcast::<A>()
             .map_err(|_| anyhow::anyhow!("the derived hook for {} got another type", A::name()))?;
-        let (root, registry) = server.content_source();
-        let inputs = DerivedInputs::read(&root, &registry, &asset.derived_inputs()).await?;
-        let key = asset.derived_key(&inputs)?;
-        let cache = server.derived_cache();
-        if let Some(blob) = cache.get(A::name(), A::DERIVED_VERSION, key) {
-            match asset.apply_derived(&blob) {
-                Ok(()) => return Ok(Box::new(asset) as Box<dyn Any + Send>),
-                Err(error) => log::warn!(
-                    "discarding the cached {} blob {key:016x}: {error:#}",
-                    A::name()
-                ),
+        if let Some(cooked) = cooked {
+            if apply_cooked(&mut asset, cooked) {
+                return Ok(Box::new(asset) as Box<dyn Any + Send>);
             }
         }
-        let blob = asset
-            .derive(&inputs, &mut |_, _| {})
-            .with_context(|| format!("failed to derive {}", A::name()))?;
-        cache.put(A::name(), A::DERIVED_VERSION, key, &blob);
-        asset
-            .apply_derived(&blob)
-            .with_context(|| format!("failed to apply the derived {}", A::name()))?;
+        let derived = derive_and_apply(&mut asset, &server).await?;
+        log::debug!(
+            "applied the {} blob {:016x} of {} bytes",
+            A::name(),
+            derived.key,
+            derived.blob.len()
+        );
         Ok(Box::new(asset) as Box<dyn Any + Send>)
     })
 }
