@@ -335,7 +335,9 @@ mod tests {
         app.register_type::<Probed>();
 
         let handle = app.get_resource::<AssetServer>().unwrap().load::<Probe>(id);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while app.get_resource::<AssetServer>().unwrap().is_loading() {
+            assert!(Instant::now() < deadline, "the probe load never finished");
             app.update();
             std::thread::yield_now();
         }
