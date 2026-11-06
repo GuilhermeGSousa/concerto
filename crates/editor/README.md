@@ -1016,9 +1016,11 @@ systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
 before mutating domain state, use `asset_request_is_current` with it to reject
 cancelled or superseded results. Call `finish_asset_request` with a mutable
 document borrow, the captured `AssetEntry`, and success or an error to update
-the tab's current asset and status. Every request needs that call: MCP's
-`open_asset` waits for it, and times out without it. A result for a closed tab has no document to
-land on, and switching project closes every tab. An `AssetEditorCommand::Open`
+the tab's current asset and status. A request still pending in its tab needs
+that call: MCP's `open_asset` waits for it, and times out without it. A call
+waiting on a request that was superseded or whose tab closed times out too. A
+result for a closed tab has no document to land on, and switching project
+closes every tab. An `AssetEditorCommand::Open`
 for an asset that is not in the current project's registry is ignored. Failed
 loads must leave the previous presentation intact. Finishing a replacement does not clear
 `Unsaved`: refuse a replacement that finishes loading while the document is
