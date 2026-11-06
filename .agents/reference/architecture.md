@@ -50,8 +50,8 @@ Draw work in the render world is ordered with `RenderSet`
 An `App` does not run itself. A host builds it, feeds it, and steps it:
 
 1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`. The
-   cook is the exception: it applies the recipe to an `App` with none of
-   them, never polls `plugin_state()`, never calls `finish_plugin_build()`,
+   cook is the exception: it inserts none of them before applying the recipe
+   (`WindowPlugin::build` still inserts a default `Window`), never polls `plugin_state()`, never calls `finish_plugin_build()`,
    and never runs a schedule, so a plugin's `build` must not need the device;
    device work goes in `finish`.
 2. Apply the recipe, a function that registers plugins and systems.
@@ -163,7 +163,8 @@ time. The running game never reads them.
   binary run as `<game> --cook <out>` calls `concerto::cook`: it builds the
   recipe headless (see Hosts), publishes the embedded registry with the
   project root as the content root and the project's `derived-cache/`, empties
-  `<out>`, and has `AssetServer::cook` write each registry entry of a
+  `<out>` (refusing a non-empty directory that holds no `.concerto-cook` marker
+  from an earlier cook), and has `AssetServer::cook` write each registry entry of a
   registered derived kind to `<out>/<address>`: the committed header and
   payload byte for byte, plus a trailing derived section with the blob. It
   prints each address and a total, or the error, and exits 0 or 1. A load that

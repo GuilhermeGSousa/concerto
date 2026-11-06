@@ -250,6 +250,13 @@ fix the entry in the same commit as the change that made it false.
 - **Examples share one `target/` directory.** Each copies its `content/` to its
   own `<package>-content/` directory beside the binary. After changing an
   example's sources or content, build that example, not just the workspace.
+  `cargo concerto build --cook` stages cooked files over that copy; they stay
+  until `build.rs` next reruns, which only a change to `content/` or
+  `content.toml` causes.
+- **A cooked section is trusted as it is.** A load applies it without checking
+  its key. A change to how a derived input decodes or migrates, made without
+  raising `DERIVED_VERSION`, leaves a staged cooked blob (and a cached one)
+  derived by the old code; cook again, or delete `derived-cache/`.
 - **Large scenes take a long time to load in a debug build.** A scene
   such as Sponza can need more than 40 seconds before anything but the clear
   colour and the grid appears. That looks exactly like a broken renderer.
