@@ -27,31 +27,21 @@ fn live_placement(graph: &AnimationGraph) -> Option<&FootPlacementNode> {
 
 #[test]
 fn a_foot_placement_node_keeps_every_field_through_a_round_trip() {
-    let node = FootPlacementNode {
-        pelvis: "Hips".into(),
-        legs: vec![
-            FootPlacementLeg {
-                foot: "LeftFoot".into(),
-                toe: Some("LeftToe".into()),
-            },
-            FootPlacementLeg {
-                foot: "RightFoot".into(),
-                toe: None,
-            },
-        ],
-        max_step_up: 0.4,
-        max_step_down: 0.6,
-        max_pelvis_drop: 0.3,
-        max_foot_angle: 0.4,
-        foot_halflife: 0.07,
-        pelvis_halflife: 0.12,
-        rotation_halflife: 0.08,
-        softness: 0.02,
-        weight: 0.8,
-        weight_param: Some(name!("foot_placement_weight")),
-        weight_halflife: 0.25,
-        ignore_param: Some(name!("foot_placement_ignore")),
-    };
+    let node = FootPlacementNode::new("Hips")
+        .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+        .with_leg(FootPlacementLeg::new("RightFoot"))
+        .with_max_step_up(0.4)
+        .with_max_step_down(0.6)
+        .with_max_pelvis_drop(0.3)
+        .with_max_foot_angle(0.4)
+        .with_foot_halflife(0.07)
+        .with_pelvis_halflife(0.12)
+        .with_rotation_halflife(0.08)
+        .with_softness(0.02)
+        .with_weight(0.8)
+        .with_weight_param(name!("foot_placement_weight"))
+        .with_weight_halflife(0.25)
+        .with_ignore_param(name!("foot_placement_ignore"));
     let defaults = FootPlacementNode::default();
     assert_ne!(node.pelvis, defaults.pelvis);
     assert_ne!(node.max_step_up, defaults.max_step_up);

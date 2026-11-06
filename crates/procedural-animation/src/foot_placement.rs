@@ -63,11 +63,115 @@ impl Default for FootPlacementNode {
     }
 }
 
-/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone adds a second ray.
+impl FootPlacementNode {
+    /// A node with the default settings and no legs, placing under the given pelvis bone.
+    pub fn new(pelvis: impl Into<JointName>) -> Self {
+        Self {
+            pelvis: pelvis.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Adds a leg to place.
+    pub fn with_leg(mut self, leg: FootPlacementLeg) -> Self {
+        self.legs.push(leg);
+        self
+    }
+
+    /// Sets how far above the floor the rays start.
+    pub fn with_max_step_up(mut self, max_step_up: f32) -> Self {
+        self.max_step_up = max_step_up;
+        self
+    }
+
+    /// Sets how far below the floor the rays reach.
+    pub fn with_max_step_down(mut self, max_step_down: f32) -> Self {
+        self.max_step_down = max_step_down;
+        self
+    }
+
+    /// Sets how far the pelvis may drop for the lowest foot.
+    pub fn with_max_pelvis_drop(mut self, max_pelvis_drop: f32) -> Self {
+        self.max_pelvis_drop = max_pelvis_drop;
+        self
+    }
+
+    /// Sets the largest angle, in radians, a foot tilts to the ground.
+    pub fn with_max_foot_angle(mut self, max_foot_angle: f32) -> Self {
+        self.max_foot_angle = max_foot_angle;
+        self
+    }
+
+    /// Sets the halflife the foot heights ease with.
+    pub fn with_foot_halflife(mut self, foot_halflife: f32) -> Self {
+        self.foot_halflife = foot_halflife;
+        self
+    }
+
+    /// Sets the halflife the pelvis drop eases with.
+    pub fn with_pelvis_halflife(mut self, pelvis_halflife: f32) -> Self {
+        self.pelvis_halflife = pelvis_halflife;
+        self
+    }
+
+    /// Sets the halflife the foot tilts ease with.
+    pub fn with_rotation_halflife(mut self, rotation_halflife: f32) -> Self {
+        self.rotation_halflife = rotation_halflife;
+        self
+    }
+
+    /// Sets the two-bone solve's softness near full extension.
+    pub fn with_softness(mut self, softness: f32) -> Self {
+        self.softness = softness;
+        self
+    }
+
+    /// Sets the constant weight, multiplied by the weight param.
+    pub fn with_weight(mut self, weight: f32) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    /// Sets the float param the weight is multiplied by.
+    pub fn with_weight_param(mut self, weight_param: Name) -> Self {
+        self.weight_param = Some(weight_param);
+        self
+    }
+
+    /// Sets the halflife the weight eases with.
+    pub fn with_weight_halflife(mut self, weight_halflife: f32) -> Self {
+        self.weight_halflife = weight_halflife;
+        self
+    }
+
+    /// Sets the param holding the [`IgnoredBody`] the rays skip.
+    pub fn with_ignore_param(mut self, ignore_param: Name) -> Self {
+        self.ignore_param = Some(ignore_param);
+        self
+    }
+}
+
+/// A leg:the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone adds a second ray.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootPlacementLeg {
     pub foot: JointName,
     pub toe: Option<JointName>,
+}
+
+impl FootPlacementLeg {
+    /// A leg on the given foot bone, without a toe.
+    pub fn new(foot: impl Into<JointName>) -> Self {
+        Self {
+            foot: foot.into(),
+            toe: None,
+        }
+    }
+
+    /// Sets the toe bone the second ray is cast at.
+    pub fn with_toe(mut self, toe: impl Into<JointName>) -> Self {
+        self.toe = Some(toe.into());
+        self
+    }
 }
 
 /// The body a foot placement node's rays skip, set on the blackboard by the game: the character's own capsule.
@@ -783,22 +887,10 @@ mod tests {
         skeleton_of(&bones)
     }
 
-    fn leg(foot: &str, toe: Option<&str>) -> FootPlacementLeg {
-        FootPlacementLeg {
-            foot: foot.into(),
-            toe: toe.map(JointName::from),
-        }
-    }
-
     fn placement() -> FootPlacementNode {
-        FootPlacementNode {
-            pelvis: "pelvis".into(),
-            legs: vec![
-                leg("left_foot", Some("left_toe")),
-                leg("right_foot", Some("right_toe")),
-            ],
-            ..Default::default()
-        }
+        FootPlacementNode::new("pelvis")
+            .with_leg(FootPlacementLeg::new("left_foot").with_toe("left_toe"))
+            .with_leg(FootPlacementLeg::new("right_foot").with_toe("right_toe"))
     }
 
     struct Stage {
@@ -1088,16 +1180,65 @@ mod tests {
     }
 
     #[test]
+    fn the_builder_sets_every_field_over_the_defaults() {
+        let built = FootPlacementNode::new("hips")
+            .with_leg(FootPlacementLeg::new("left_foot").with_toe("left_toe"))
+            .with_leg(FootPlacementLeg::new("right_foot"))
+            .with_max_step_up(0.4)
+            .with_max_step_down(0.6)
+            .with_max_pelvis_drop(0.3)
+            .with_max_foot_angle(0.4)
+            .with_foot_halflife(0.07)
+            .with_pelvis_halflife(0.12)
+            .with_rotation_halflife(0.08)
+            .with_softness(0.02)
+            .with_weight(0.8)
+            .with_weight_param(name!("weight"))
+            .with_weight_halflife(0.25)
+            .with_ignore_param(name!("ignore"));
+
+        assert_eq!(
+            built,
+            FootPlacementNode {
+                pelvis: JointName::from("hips"),
+                legs: vec![
+                    FootPlacementLeg {
+                        foot: JointName::from("left_foot"),
+                        toe: Some(JointName::from("left_toe")),
+                    },
+                    FootPlacementLeg {
+                        foot: JointName::from("right_foot"),
+                        toe: None,
+                    },
+                ],
+                max_step_up: 0.4,
+                max_step_down: 0.6,
+                max_pelvis_drop: 0.3,
+                max_foot_angle: 0.4,
+                foot_halflife: 0.07,
+                pelvis_halflife: 0.12,
+                rotation_halflife: 0.08,
+                softness: 0.02,
+                weight: 0.8,
+                weight_param: Some(name!("weight")),
+                weight_halflife: 0.25,
+                ignore_param: Some(name!("ignore")),
+            }
+        );
+        assert_eq!(
+            FootPlacementNode::new("hips"),
+            FootPlacementNode {
+                pelvis: JointName::from("hips"),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
     fn a_leg_the_node_cannot_resolve_leaves_the_input_pose_and_warns_once() {
         let unresolvable = [
-            FootPlacementNode {
-                legs: vec![leg("missing_foot", None)],
-                ..placement()
-            },
-            FootPlacementNode {
-                legs: vec![leg("left_hip", None)],
-                ..placement()
-            },
+            FootPlacementNode::new("pelvis").with_leg(FootPlacementLeg::new("missing_foot")),
+            FootPlacementNode::new("pelvis").with_leg(FootPlacementLeg::new("left_hip")),
             FootPlacementNode {
                 pelvis: "right_hip".into(),
                 ..placement()
@@ -1216,11 +1357,9 @@ mod tests {
 
     #[test]
     fn the_pelvis_drops_no_further_than_its_limit() {
-        let node = FootPlacementNode {
-            max_pelvis_drop: 0.4,
-            max_step_down: 0.7,
-            ..placement()
-        };
+        let node = placement()
+            .with_max_pelvis_drop(0.4)
+            .with_max_step_down(0.7);
         let mut stage = settled(node, |stage| {
             stage.add_slab(0.0, 2.0, 0.0);
             stage.add_slab(-2.0, 0.0, -0.6);
@@ -1339,10 +1478,9 @@ mod tests {
 
     #[test]
     fn a_leg_without_a_toe_tilts_its_foot_to_the_ankle_hits_normal() {
-        let node = FootPlacementNode {
-            legs: vec![leg("left_foot", None), leg("right_foot", None)],
-            ..placement()
-        };
+        let node = FootPlacementNode::new("pelvis")
+            .with_leg(FootPlacementLeg::new("left_foot"))
+            .with_leg(FootPlacementLeg::new("right_foot"));
         let rotation = Quat::from_rotation_x(-SLOPE);
         let mut stage = settled(node, |stage| stage.add_slope(rotation));
 
@@ -1373,10 +1511,7 @@ mod tests {
     fn the_ignored_body_is_skipped_and_the_feet_land_on_the_floor_below() {
         let skeleton = rig();
         let input = ConstantPose::rest_of(&skeleton);
-        let node = FootPlacementNode {
-            ignore_param: Some(name!("ignore")),
-            ..placement()
-        };
+        let node = placement().with_ignore_param(name!("ignore"));
         let mut stage = Stage::new(skeleton, input, node).with_physics();
         let around = around_the_feet(&mut stage);
         let body = *stage
@@ -1397,10 +1532,7 @@ mod tests {
 
     #[test]
     fn weight_zero_leaves_the_input_pose() {
-        let node = FootPlacementNode {
-            weight: 0.0,
-            ..placement()
-        };
+        let node = placement().with_weight(0.0);
         let mut stage = settled(node, step_under_the_left_foot);
 
         stage.assert_input_pose();
@@ -1408,10 +1540,7 @@ mod tests {
 
     #[test]
     fn half_weight_gives_half_the_offset() {
-        let node = FootPlacementNode {
-            weight: 0.5,
-            ..placement()
-        };
+        let node = placement().with_weight(0.5);
         let mut stage = settled(node, step_under_the_left_foot);
 
         assert_near(stage.rise(LEFT_FOOT), 0.075, EPS);
@@ -1421,10 +1550,7 @@ mod tests {
     fn a_weight_param_of_half_gives_half_the_offset() {
         let skeleton = rig();
         let input = ConstantPose::rest_of(&skeleton);
-        let node = FootPlacementNode {
-            weight_param: Some(name!("weight")),
-            ..placement()
-        };
+        let node = placement().with_weight_param(name!("weight"));
         let mut stage = Stage::new(skeleton, input, node).with_physics();
         step_under_the_left_foot(&mut stage);
         stage.set_param(name!("weight"), 0.5_f32);
@@ -1435,10 +1561,7 @@ mod tests {
 
     #[test]
     fn a_new_step_is_reached_halfway_after_one_halflife() {
-        let node = FootPlacementNode {
-            foot_halflife: 0.1,
-            ..placement()
-        };
+        let node = placement().with_foot_halflife(0.1);
         let mut stage = settled(node, |stage| stage.add_floor(0.0));
         assert_near(stage.rise(LEFT_FOOT), 0.0, EPS);
 

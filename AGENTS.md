@@ -184,6 +184,11 @@ style follow the file you are in.
 type, a collection element, a return type or a parameter, in tests too. Name
 each field in a struct, and give it methods where they read better.
 
+**Builders for wide structs.** A public struct with many public fields that
+users set, such as a graph node's settings, gets `new(..)` for what it can't
+default and a consuming `with_<field>(mut self, value) -> Self` per field, as
+`UINode` has, so users change a few defaults without a struct literal.
+
 **Tests first.** Write the failing test, watch it fail, then make it pass. A
 cloud pipeline session writes the test first but cannot run it, so the red step
 is not observed.

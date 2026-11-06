@@ -11,7 +11,7 @@ use concerto::ecs::{Entity, Query, With, Without};
 use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraBoom, CameraPivot, EntityFollow};
-use concerto::mesh::{JointName, MeshComponent, primitives::cuboid};
+use concerto::mesh::{MeshComponent, primitives::cuboid};
 use concerto::motion_matching::{
     Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp, DesiredMotion,
     MotionDatabase, MotionMatchingNode, Synchronization,
@@ -192,23 +192,14 @@ fn foot_placement_ignore() -> Name {
     name!("foot_placement_ignore")
 }
 
-fn leg(foot: &str, toe: &str) -> FootPlacementLeg {
-    FootPlacementLeg {
-        foot: JointName::from(foot),
-        toe: Some(JointName::from(toe)),
-    }
-}
-
 fn character_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
     graph.result_node().with_input(
-        FootPlacementNode {
-            pelvis: JointName::from("Hips"),
-            legs: vec![leg("LeftFoot", "LeftToe"), leg("RightFoot", "RightToe")],
-            weight_param: Some(foot_placement_weight()),
-            ignore_param: Some(foot_placement_ignore()),
-            ..Default::default()
-        },
+        FootPlacementNode::new("Hips")
+            .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+            .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
+            .with_weight_param(foot_placement_weight())
+            .with_ignore_param(foot_placement_ignore()),
         |mut placement| {
             placement.with_input(
                 MotionMatchingNode {
@@ -766,22 +757,11 @@ mod tests {
             .map(|input| nodes[input.index()].type_name())
             .collect();
         assert_eq!(inputs, vec![std::any::type_name::<MotionMatchingNode>()]);
-        let expected = FootPlacementNode {
-            pelvis: "Hips".into(),
-            legs: vec![
-                FootPlacementLeg {
-                    foot: "LeftFoot".into(),
-                    toe: Some("LeftToe".into()),
-                },
-                FootPlacementLeg {
-                    foot: "RightFoot".into(),
-                    toe: Some("RightToe".into()),
-                },
-            ],
-            weight_param: Some(name!("foot_placement_weight")),
-            ignore_param: Some(name!("foot_placement_ignore")),
-            ..Default::default()
-        };
+        let expected = FootPlacementNode::new("Hips")
+            .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+            .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
+            .with_weight_param(name!("foot_placement_weight"))
+            .with_ignore_param(name!("foot_placement_ignore"));
         assert_eq!(
             nodes[placements[0].index()].value().unwrap().into_owned(),
             to_value(&expected).unwrap()

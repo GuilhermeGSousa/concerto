@@ -232,6 +232,17 @@ A graph is a tree of nodes under a result node:
   the character is in the air. Under `ignore_param` the game sets an
   `IgnoredBody` naming the character's own capsule, which the rays then skip.
   Wire it after the layers, aim and look-at nodes and before hand IK.
+  `FootPlacementNode::new(pelvis)` starts from the defaults, `with_leg` adds a
+  leg, and each other field has a `with_<field>`:
+
+  ```rust
+  FootPlacementNode::new("Hips")
+      .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+      .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
+      .with_max_step_up(0.4)
+      .with_weight_param(name!("foot_placement_weight"))
+      .with_ignore_param(name!("foot_placement_ignore"))
+  ```
 
 Parameters are set on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`
