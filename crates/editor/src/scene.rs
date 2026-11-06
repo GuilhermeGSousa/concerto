@@ -33,8 +33,8 @@ use crate::{
     hierarchy::HierarchyState,
     hosted::{
         self, HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, PendingApp,
-        PendingPlayApp, PlayFailed, PlayFailure, PlayState, StopPlay, input::ViewportShown,
-        toggle_play,
+        PendingPlayApp, PlayFailed, PlayFailure, PlayState, StopPlay, WarmUpLimit,
+        input::ViewportShown, toggle_play,
     },
     inspector::{ComponentEdits, PropertyCommits},
     project::ProjectState,
@@ -467,14 +467,18 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
         role: HostRole::Game,
         clipboard: recipe.clipboard,
     };
-    Ok(hosted::begin(
+    let pending = hosted::begin(
         request,
         move |app| {
             app.register_plugin(EditToolsCorePlugin);
             app.set_startup_scene(scene);
         },
         |_| {},
-    ))
+    );
+    Ok(match world.get_resource::<WarmUpLimit>() {
+        Some(limit) => pending.with_warm_up_limit(limit.0),
+        None => pending,
+    })
 }
 
 pub(crate) fn scene_actions(
@@ -587,7 +591,7 @@ pub(crate) fn update_scenes(
     states: Query<&PlayState>,
     project: Res<ProjectState>,
     recipe: Res<SceneRecipe>,
-    (shown, window): (Res<ViewportShown>, Res<Window>),
+    (shown, window, warm_up): (Res<ViewportShown>, Res<Window>, Option<Res<WarmUpLimit>>),
     mut summary: ResMut<SceneState>,
     mut commands: CommandQueue,
     mut outcomes: OpenOutcomes,
@@ -686,16 +690,20 @@ pub(crate) fn update_scenes(
                             role: HostRole::Edit,
                             clipboard: recipe.clipboard,
                         };
+                        let pending = hosted::begin(
+                            request,
+                            |app| {
+                                app.register_plugin(EditToolsPlugin);
+                            },
+                            move |hosted| {
+                                hosted.trigger(OpenScene(scene));
+                            },
+                        );
                         commands.insert(
-                            hosted::begin(
-                                request,
-                                |app| {
-                                    app.register_plugin(EditToolsPlugin);
-                                },
-                                move |hosted| {
-                                    hosted.trigger(OpenScene(scene));
-                                },
-                            ),
+                            match warm_up.as_deref() {
+                                Some(limit) => pending.with_warm_up_limit(limit.0),
+                                None => pending,
+                            },
                             editor,
                         );
                         state.building = Some(job.asset);

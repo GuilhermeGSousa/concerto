@@ -47,7 +47,7 @@ pub struct OpenProject {
     pub unsaved: Option<UnsavedChoice>,
 }
 
-/// Opens an asset of the project in its editor; a scene replaces the one shown, and the call waits until it has loaded.
+/// Opens an asset of the project in its editor and waits until it has loaded; a scene replaces the one shown.
 #[derive(Deserialize, JsonSchema)]
 pub struct OpenAsset {
     /// The asset's address, such as content/level.gasset, or its id, as list_assets shows them.
@@ -390,10 +390,10 @@ fn answer_asset_opens(
         }
         let shown = documents.iter().find(|(_, document)| {
             document.asset_type == opening.kind
-                && [&document.current, &document.pending]
-                    .into_iter()
-                    .flatten()
-                    .any(|asset| asset.id == opening.asset.id)
+                && document
+                    .current
+                    .as_ref()
+                    .is_some_and(|asset| asset.id == opening.asset.id)
         });
         if let Some((document, _)) = shown {
             pending.reply.ok(opened(&opening.asset, document));
