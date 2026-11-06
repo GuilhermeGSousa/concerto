@@ -88,8 +88,6 @@ use serde_json::{Value, json};
 const SIZE: (u32, u32) = (800, 600);
 const PATIENCE: Duration = Duration::from_secs(120);
 
-static ONE_APP_AT_A_TIME: Mutex<()> = Mutex::new(());
-
 #[derive(Resource, Default)]
 struct EditFrames(u32);
 
@@ -767,9 +765,6 @@ where
     T: Send + 'static,
     F: Future<Output = T>,
 {
-    let _turn = ONE_APP_AT_A_TIME
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
     let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let cancelled = Arc::new(Mutex::new(None::<Instant>));
