@@ -166,10 +166,11 @@ The steps, each run only when the options call for it:
    any step runs, so a missing `trunk` fails at once rather than after the
    native build and cook.
 4. Overlay: copies each cooked file over the file at the same relative path,
-   in `<target>/<profile>/<pkg>-content/` natively (`<profile>` is `debug` or
-   `release`) and in `<dist>` for the web. Only files the build already has
-   are replaced; a cooked asset the build doesn't ship, such as one the web
-   build's `index.html` doesn't copy, is skipped and listed as a note.
+   in `<exe dir>/<exe stem>-content/` natively, beside the executable cargo
+   reported, so a `build.target` in cargo's config is followed, and in
+   `<dist>` for the web. Only files the build already has are replaced; a
+   cooked asset the build doesn't ship, such as one the web build's
+   `index.html` doesn't copy, is skipped and listed as a note.
 
 A step that fails stops the build and names its command line and exit status.
 The report lists each cooked file as written and each replaced file as edited.

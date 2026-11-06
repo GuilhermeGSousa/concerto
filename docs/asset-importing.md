@@ -670,7 +670,7 @@ cargo concerto build <dir> --cook [--release] --target wasm32-unknown-unknown [-
    again, never cooked. The first failure stops the cook and fails the command,
    naming the asset.
 4. The cooked files are *staged*: each is copied over the file at the same
-   path in what the build ships, `<target>/<profile>/<pkg>-content/` natively,
+   path in what the build ships, `<exe dir>/<exe stem>-content/` natively,
    or `<dist>/` after `trunk build` for the web. A cooked file whose path the
    build doesn't ship is skipped.
 

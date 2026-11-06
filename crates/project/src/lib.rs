@@ -100,7 +100,14 @@ pub enum BuildStep {
     Cargo { args: Vec<String> },
     Cook { out: PathBuf },
     Trunk { dir: PathBuf, args: Vec<String> },
-    Overlay { from: PathBuf, onto: PathBuf },
+    Overlay { from: PathBuf, onto: OverlayTarget },
+}
+
+/// Where an overlay step copies the cooked files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverlayTarget {
+    BuiltContent,
+    Dir(PathBuf),
 }
 
 /// The files a command wrote, the manifests it edited, and what it has to say.
@@ -282,14 +289,13 @@ pub fn plan_build(options: &BuildOptions, package: &str, target_dir: &Path) -> B
         if options.cook {
             steps.push(BuildStep::Overlay {
                 from: cooked,
-                onto: dist,
+                onto: OverlayTarget::Dir(dist),
             });
         }
     } else if options.cook {
-        let profile = if options.release { "release" } else { "debug" };
         steps.push(BuildStep::Overlay {
             from: cooked,
-            onto: target_dir.join(profile).join(format!("{package}-content")),
+            onto: OverlayTarget::BuiltContent,
         });
     }
     BuildPlan { steps }
@@ -337,7 +343,16 @@ pub fn build(options: BuildOptions) -> Result<Report> {
                 command.args(args).current_dir(dir);
                 run_trunk(command)?;
             }
-            BuildStep::Overlay { from, onto } => overlay(from, onto, &mut report)?,
+            BuildStep::Overlay { from, onto } => {
+                let onto = match onto {
+                    OverlayTarget::Dir(dir) => dir.clone(),
+                    OverlayTarget::BuiltContent => executable
+                        .as_deref()
+                        .and_then(built_content_dir)
+                        .context("staging the cook needs the executable a cargo step builds")?,
+                };
+                overlay(from, &onto, &mut report)?
+            }
         }
     }
     Ok(report)
@@ -469,6 +484,11 @@ fn executable_of(line: &str, package: &str) -> Option<PathBuf> {
         return None;
     }
     message.get("executable")?.as_str().map(PathBuf::from)
+}
+
+fn built_content_dir(executable: &Path) -> Option<PathBuf> {
+    let stem = executable.file_stem()?.to_string_lossy();
+    Some(executable.parent()?.join(format!("{stem}-content")))
 }
 
 fn files_under(root: &Path) -> Result<Vec<PathBuf>> {
@@ -2280,7 +2300,7 @@ mod tests {
                 },
                 BuildStep::Overlay {
                     from: cooked,
-                    onto: target.join("release").join("g-content"),
+                    onto: OverlayTarget::BuiltContent,
                 },
             ]
         );
@@ -2339,7 +2359,7 @@ mod tests {
                 },
                 BuildStep::Overlay {
                     from: cooked,
-                    onto: dist.to_path_buf(),
+                    onto: OverlayTarget::Dir(dist.to_path_buf()),
                 },
             ]
         );
@@ -2378,6 +2398,20 @@ mod tests {
             report.notes[0].contains("content/c.gasset"),
             "{:?}",
             report.notes
+        );
+    }
+
+    #[test]
+    fn the_built_content_sits_next_to_the_executable_under_its_stem() {
+        assert_eq!(
+            built_content_dir(Path::new("/t/x86_64-unknown-linux-gnu/release/g")),
+            Some(PathBuf::from(
+                "/t/x86_64-unknown-linux-gnu/release/g-content"
+            ))
+        );
+        assert_eq!(
+            built_content_dir(Path::new("/t/debug/g.exe")),
+            Some(PathBuf::from("/t/debug/g-content"))
         );
     }
 
