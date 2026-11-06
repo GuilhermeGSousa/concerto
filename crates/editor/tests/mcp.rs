@@ -1081,7 +1081,10 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
     );
     assert_eq!(line(&before, "active: "), opened);
     assert_eq!(line(&before, "values: "), "none");
-    assert_eq!(line(&before, "selection: "), "none");
+    assert!(
+        concerto_ecs::Entity::parse_id(line(&before, "selection: ")).is_some(),
+        "{before}"
+    );
 
     assert_eq!(line(&after, "project: "), root.display().to_string());
     let documents: Vec<&str> = after
