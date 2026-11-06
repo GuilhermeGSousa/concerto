@@ -4,11 +4,11 @@
 //! through serialized component payloads.
 use std::path::Path;
 
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
 use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportOutputs, Importer};
 use concerto_ecs::component::Component;
-use concerto_foundation::assets::AssetId;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_gltf::gltf_importer::GltfImporter;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
 use concerto_reflect::{Reflect, apply_value};
@@ -535,4 +535,87 @@ fn invalid_event_settings_fail_the_import() {
 #[test]
 fn an_unknown_settings_key_fails_the_import() {
     assert_import_fails("scale = 0.01\n", "scale");
+}
+
+const BASE_ID: &str = "d6e76e64-a888-49cd-bc16-61f0566f36ab";
+
+fn emitted_clip(outputs: &ImportOutputs, name: &str) -> AnimationClip {
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
+    bincode::deserialize(&entry.bytes).expect("the clip sub-asset must decode")
+}
+
+#[test]
+fn an_additive_table_makes_the_named_clip_additive_against_its_base() {
+    let outputs = import_named_animations(&format!(
+        "[additive.Wiggle_2]\nbase = \"{BASE_ID}\"\nbase_range = [0.5, 1.5]\nrange = {{ start = 0.25, end = 0.75 }}\n"
+    ))
+    .expect("the import should succeed");
+    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
+    let mut expected = AdditiveBase::new(AssetHandle::weak(
+        AssetId::from_simple_hex(BASE_ID).unwrap(),
+    ))
+    .with_base_range(ClipRange::new(0.5, 1.5))
+    .with_range(ClipRange::new(0.25, 0.75));
+    for (parent, id) in skeleton.parents.iter().zip(skeleton.bone_ids.iter()) {
+        if parent.is_none() {
+            expected = expected.with_root(*id);
+        }
+    }
+    assert!(!expected.roots.is_empty());
+    assert_eq!(
+        emitted_clip(&outputs, "animation/Wiggle_2").additive(),
+        &Additive::LocalSpace(expected)
+    );
+    assert_eq!(
+        emitted_clip(&outputs, "animation/Wiggle").additive(),
+        &Additive::None
+    );
+    assert_eq!(
+        emitted_clip(&outputs, "animation/1").additive(),
+        &Additive::None
+    );
+}
+
+#[test]
+fn a_sidecar_without_an_additive_table_imports_plain_clips() {
+    let outputs = import_named_animations("").expect("the import should succeed");
+    for name in ["animation/1", "animation/Wiggle", "animation/Wiggle_2"] {
+        assert_eq!(emitted_clip(&outputs, name).additive(), &Additive::None);
+    }
+}
+
+#[test]
+fn invalid_additive_settings_fail_the_import() {
+    assert_import_fails(
+        &format!("[additive.Wobble]\nbase = \"{BASE_ID}\"\n"),
+        "Wobble",
+    );
+    assert_import_fails("[additive.Wiggle]\nbase = \"not-an-id\"\n", "UUID");
+    assert_import_fails(
+        &format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\nweight = 1.0\n"),
+        "weight",
+    );
+    assert_import_fails(
+        &format!(
+            "[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = {{ start = 0.0, end = 0.5, step = 0.1 }}\n"
+        ),
+        "step",
+    );
+    for range in [
+        "[0.0, 1.5]",
+        "[0.5, 0.5]",
+        "[0.75, 0.25]",
+        "[-0.25, 0.5]",
+        "[nan, 0.5]",
+        "[0.0, inf]",
+    ] {
+        assert_import_fails(
+            &format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = {range}\n"),
+            "range",
+        );
+    }
 }

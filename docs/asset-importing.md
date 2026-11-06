@@ -142,8 +142,9 @@ asset_id = "abfdaec1-d105-4c4c-b37c-138a1231e4ac"
 An optional `[settings]` table holds importer-specific settings. The importer
 that owns the source reads it on every import; a sidecar without one uses the
 importer's defaults, and a first import writes none. The `obj` and `image`
-importers read no settings. The `gltf` importer reads only `events`, described
-under [Clip events](#clip-events), and an unknown key fails its import. The
+importers read no settings. The `gltf` importer reads only `events` and
+`additive`, described under [Clip events](#clip-events) and
+[Additive clips](#additive-clips), and an unknown key fails its import. The
 `bvh` importer's are described under [BVH motion capture](#bvh-motion-capture).
 
 A `bvh` source's settings:
@@ -206,9 +207,10 @@ Settings, in the sidecar's `[settings]` table:
 | `scale`       | `0.01`  | Multiplier applied to every offset and translation. The default turns the centimetres most BVH files use into metres. Must be finite and positive. |
 | `frame_range` | whole file | `[start, end)` frame indices to keep. Needs `start < end <= frame count` and at least two frames. Keys are timed from the first kept frame. |
 | `events`      | none    | Named events on the clip, as described under [Clip events](#clip-events). The table is `[settings.events.<name>]`, where `<name>` is the clip's sanitised name, the `<name>` of its `animation/<name>` output: `Walk#Cycle.bvh` gives `Walk_Cycle`. Times count from the first kept frame. |
+| `additive`    | none    | Makes the clip additive against a base clip, as described under [Additive clips](#additive-clips). The table is `[settings.additive.<name>]`, with `<name>` as for `events`. `range` counts from the first kept frame. |
 
 A `frame_range` outside the file, an empty or one-frame range, a bad `scale`,
-bad `events`, or an unknown key fails the import. The file's own timing is
+bad `events` or `additive`, or an unknown key fails the import. The file's own timing is
 kept; there is no resampling setting.
 
 ## Clip events
@@ -230,6 +232,46 @@ footstep_right = [0.37, 0.87]
   under one name adds one event.
 - A table for a clip the source does not emit, or a time that is negative,
   not finite, or past the clip's duration, fails the import.
+
+## Additive clips
+
+The `gltf` and `bvh` importers make a clip additive against a base clip, its
+matched neutral take, from a `[settings.additive.<clip>]` table:
+
+```toml
+[settings.additive.Cold_Walk]
+base = "6f1c2a3e-9d1b-4c84-a1a7-0b6f3a1d2e44"
+base_range = [0.0, 4.2]
+range = { start = 0.1, end = 4.3 }
+```
+
+- `<clip>` is the `<name>` of the clip's `animation/<name>` output, as for
+  [Clip events](#clip-events).
+- `base` is the base clip's asset id, as written in the
+  `[outputs."animation/<name>"]` table of the base source's sidecar. A value
+  that isn't an asset id fails the import.
+- `base_range` and `range` are optional spans in seconds of the base clip and of
+  this clip, each written as a two-element array `[start, end]` or as a
+  `{ start, end }` table. The whole clip is used when one is unset. An extra key
+  in a `{ start, end }` table fails the import.
+- `range` is checked against this clip: a `range` that is not finite, whose
+  `start` is negative or not below its `end`, or whose `end` is past the clip's
+  duration fails the import. `base_range` is checked when the clip loads, once
+  the base is read.
+- The clip's root bones, whose translation the delta leaves out, come from the
+  skeletons the source emits: every bone with no parent in one of them. The
+  sidecar doesn't set them.
+- A table for a clip the source does not emit, or an unknown key, fails the
+  import.
+
+The import doesn't read the base or check that it exists, so the clip and its
+base import in any order. The delta between the two is
+[derived data](#derived-data), built when the clip loads: a missing base, a
+`base_range` that doesn't fit the base, or any other failed derive fails the
+clip's load, with an error naming the clip and the reason. A clip with no table
+is plain, `Additive::None`; removing the table and importing again makes the
+clip plain again. A clip added in code with `AssetServer::add` derives nothing,
+and has no delta.
 
 ## The `.gasset` file format
 

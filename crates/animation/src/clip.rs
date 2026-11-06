@@ -321,6 +321,32 @@ impl ClipRange {
     }
 }
 
+/// One clip's `[settings.additive.<clip>]` table in an importer's sidecar.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdditiveSetting {
+    pub base: AssetId,
+    #[serde(default)]
+    pub base_range: Option<ClipRange>,
+    #[serde(default)]
+    pub range: Option<ClipRange>,
+}
+
+impl AdditiveSetting {
+    /// Checks `range` against a clip of `duration` seconds and builds the clip's [`Additive::LocalSpace`] with `roots`.
+    pub fn additive(&self, duration: f32, roots: Vec<Uuid>) -> Result<Additive, String> {
+        if self.range.is_some() {
+            checked_range(self.range, duration, "range").map_err(|err| err.to_string())?;
+        }
+        Ok(Additive::LocalSpace(AdditiveBase {
+            clip: AssetHandle::weak(self.base),
+            base_range: self.base_range,
+            range: self.range,
+            roots,
+        }))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct AdditiveDelta {
     duration: f32,
