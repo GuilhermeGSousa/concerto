@@ -711,10 +711,11 @@ after `--`.
    frame. It points the `AssetServer` at the project's `content/` and its
    `derived-cache/`, and calls `AssetServer::cook`.
 3. `AssetServer::cook` takes every registry entry whose kind is a registered
-   derived type, in address order. It decodes the
-   file and runs `on_load`. An asset that doesn't derive is skipped: no file is
-   written and the `CookReport` leaves its address out. For one that derives,
-   it derives or takes a cache hit as a load does, and
+   derived type, in address order. It asks the type's `file_is_derived`
+   first. An asset that doesn't derive is skipped: it isn't decoded, no file is
+   written and the `CookReport` leaves its address out. One that derives is
+   decoded and its `on_load` runs; then it derives or takes a cache hit as a
+   load does, and
    writes `<out>/<address>`: the original header and payload bytes, unchanged,
    plus the section. A cached blob that `apply_derived` refuses is derived
    again, never cooked. The first failure stops the cook and fails the command,

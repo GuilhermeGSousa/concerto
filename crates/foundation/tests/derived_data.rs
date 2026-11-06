@@ -958,6 +958,30 @@ fn an_input_that_does_not_derive_is_accepted_and_one_that_derives_is_refused() {
 }
 
 #[test]
+fn an_input_of_a_derived_kind_that_cannot_be_read_fails_naming_it() {
+    let tag = "maybe-unreadable-input";
+    let mut project = Project::new(tag);
+    let plain = project.maybe("plain", &Maybe::new(tag, false, 4, vec![AssetId::new()]));
+    std::fs::write(
+        project.root.join("content/plain.gasset"),
+        b"not a content asset",
+    )
+    .unwrap();
+
+    let error = pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[plain],
+    ))
+    .expect_err("an unreadable input is refused");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&format!("{plain:?}")) && message.contains("content/plain.gasset"),
+        "got: {message}"
+    );
+}
+
+#[test]
 fn a_cook_writes_and_reports_only_the_instances_that_derive() {
     let tag = "maybe-cook";
     let mut project = Project::new(tag);

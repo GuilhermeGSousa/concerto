@@ -102,10 +102,11 @@ impl DerivedInputs {
                     )
                 })?;
             if let Some(check) = file_is_derived_check(&entry.kind) {
-                let parts = read_content_asset_parts(&bytes)?;
-                let derives = check(&parts.header, parts.payload).with_context(|| {
-                    format!("failed to read derived input {id:?} at '{}'", entry.address)
-                })?;
+                let derives = read_content_asset_parts(&bytes)
+                    .and_then(|parts| check(&parts.header, parts.payload))
+                    .with_context(|| {
+                        format!("failed to read derived input {id:?} at '{}'", entry.address)
+                    })?;
                 if derives {
                     anyhow::bail!(
                         "derived input {id:?} at '{}' is a {} that is itself derived: derived assets can't derive from derived assets",
@@ -331,11 +332,11 @@ pub(crate) fn cook_hook<A: DerivedData>(
 ) -> CookFuture {
     Box::pin(async move {
         let parts = read_content_asset_parts(&file)?;
-        let mut asset = decode_content_payload::<A>(&parts.header, parts.payload)?;
-        asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
-        if !asset.is_derived() {
+        if !A::file_is_derived(&parts.header, parts.payload)? {
             return Ok(None);
         }
+        let mut asset = decode_content_payload::<A>(&parts.header, parts.payload)?;
+        asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
         let derived = derive_and_apply(&mut asset, &server).await?;
         write_cooked_content_asset(
             &parts.header,

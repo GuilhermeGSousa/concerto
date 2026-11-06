@@ -520,7 +520,7 @@ delta until it is built again.
 The clip keeps its full-pose keys, so `AnimationClipNode` and the clip editor
 play it as any other clip. The difference, the delta, is derived data: it is
 built when the clip loads, kept in the derived data cache, and written into the
-clip by a cook, so a cooked build doesn't ship or read the base. A clip whose
+clip by a cook, so a cooked build doesn't read the base. A clip whose
 base is missing, unset, itself additive, or whose ranges don't fit fails to
 load, with an error naming the clip and the reason. A clip added in code with
 `AssetServer::add` derives nothing, and has no delta.
