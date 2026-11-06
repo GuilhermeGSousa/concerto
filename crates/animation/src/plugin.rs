@@ -8,6 +8,7 @@ use crate::{
     clip::AnimationClip,
     event::{AnimationEvent, ClipEvent},
     graph::AnimationGraph,
+    mask::BoneMask,
     node::{
         AnimationClipNode, AnimationNode, BlendNode, PlaceholderNode, ResultNode, TwoBoneIkNode,
         blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
@@ -30,6 +31,8 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<AnimationEvent>();
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
+    registry.register::<AssetHandle<BoneMask>>();
+    registry.register::<AssetHandle<Skeleton>>();
 }
 
 /// Registers the inputs of the built-in animation nodes with the graph walks of `world`.
@@ -72,6 +75,7 @@ impl Plugin for AnimationPlugin {
         app.register_derived_asset::<AnimationClip>();
         app.register_asset::<AnimationGraph>();
         app.register_asset::<Skeleton>();
+        app.register_inspected_asset::<BoneMask>();
 
         if let Some(registry) = app.get_resource::<AppTypeRegistry>() {
             register_animation_types(&mut registry.write());

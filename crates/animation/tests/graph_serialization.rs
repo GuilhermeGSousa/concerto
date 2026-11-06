@@ -8,6 +8,7 @@ use concerto_animation::clip::{
 use concerto_animation::evaluation::AnimationGraphContext;
 use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
 use concerto_animation::graph::AnimationGraph;
+use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
@@ -634,4 +635,21 @@ fn a_handle_inside_a_game_event_comes_back_strong_when_its_clip_loads() {
 #[test]
 fn animation_graph_encoding_matches_its_fixture() {
     check_encoding(&mixed_graph(), encoding_dir());
+}
+
+#[test]
+fn bone_mask_encoding_matches_its_fixture() {
+    let mask = BoneMask::new()
+        .with_preview_skeleton(AssetHandle::weak(AssetId::from_bytes(
+            Uuid::from_u128(13).into_bytes(),
+        )))
+        .with_branch(BoneMaskBranch::new("Spine1"))
+        .with_branch(
+            BoneMaskBranch::new("LeftArm")
+                .with_weight(0.5)
+                .with_depth(2)
+                .with_descendants(false),
+        );
+
+    check_encoding(&mask, encoding_dir());
 }
