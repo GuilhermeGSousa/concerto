@@ -28,6 +28,7 @@ use concerto_motion_matching::{
     BakeError, FeatureChannel, FeatureChannelData, MirrorAxis, MotionDatabase, MotionEntry,
     SimulationBoneSettings, TrajectorySettings,
 };
+use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use uuid::Uuid;
 
@@ -122,7 +123,7 @@ pub struct DefinitionDocument {
     pub selected_entry: Option<usize>,
     pub settings: Option<DatabaseSettings>,
     pub channels: Vec<HeldChannel>,
-    pub bones: Option<Vec<String>>,
+    pub bones: Option<Vec<Name>>,
     pub loaded: Option<MotionDatabase>,
     pub stats: Option<BakedStats>,
     pub entry_facts: Vec<EntryFacts>,

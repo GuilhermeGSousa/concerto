@@ -861,6 +861,14 @@ is stored as 90°. The swatch always shows the color at full alpha, and an HDR
 color clips at full brightness. An editor registered for `Color` with
 `register_property_editor::<Color, _>` still takes precedence.
 
+### Names
+
+A `concerto_name::Name` field is a text field holding its text, with nothing
+registered on the editor's `App`. Submitting the field commits the typed text
+as a `Name`; Escape or moving focus away puts the shown text back without an
+edit. This is the interned name type, not the entity `Name` component, which
+the field above the cards edits.
+
 ### Asset handles
 
 `AssetPicker` edits every `AssetHandle<A>` the scene's `AppTypeRegistry` holds,
@@ -910,7 +918,7 @@ through unchanged.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool`, the
+holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat`, `bool` and `Name`, the
 asset picker and the entity picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A

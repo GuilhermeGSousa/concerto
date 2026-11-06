@@ -2,11 +2,12 @@ use concerto_animation::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
     node::{effective_play_rate, AnimationNode, ReflectAnimationNode},
-    pose::{EvaluatedPose, Pose, PosePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::skeleton::Skeleton;
+use concerto_name::{name, Name};
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
@@ -18,7 +19,9 @@ use crate::{
 };
 
 /// The blackboard key under which the trajectory is published.
-pub(crate) const TRAJECTORY_KEY: &str = "trajectory";
+pub(crate) fn trajectory_key() -> Name {
+    name!("trajectory")
+}
 
 /// The character's simulation transform and predicted path, published on the animation blackboard for the node to match against.
 #[derive(Reflect, Clone, Debug, PartialEq)]
@@ -73,7 +76,7 @@ pub struct MotionMatchingNode {
     pub ignore_range_end: usize,
     pub blend_halflife: f32,
     pub play_rate: f32,
-    pub play_rate_param: String,
+    pub play_rate_param: Option<Name>,
 }
 
 impl Default for MotionMatchingNode {
@@ -88,7 +91,7 @@ impl Default for MotionMatchingNode {
             ignore_range_end: 20,
             blend_halflife: 0.1,
             play_rate: 1.0,
-            play_rate_param: String::new(),
+            play_rate_param: None,
         }
     }
 }
@@ -118,13 +121,11 @@ impl AnimationNode for MotionMatchingNode {
         ),
         context: &AnimationGraphContext<'_>,
     ) {
+        state.clear_fired();
         match sources(self, databases, skeletons, clips, context.skeleton()) {
             Some(sources) => {
-                let rate = effective_play_rate(
-                    self.play_rate,
-                    &self.play_rate_param,
-                    context.blackboard(),
-                );
+                let rate =
+                    effective_play_rate(self.play_rate, self.play_rate_param, context.blackboard());
                 state.step(self, delta_time, rate, context.blackboard(), sources)
             }
             None => state.clear_root_motion(),
@@ -137,11 +138,14 @@ impl AnimationNode for MotionMatchingNode {
         _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[Uuid],
-        _evaluated_inputs: &[EvaluatedPose],
-        _pool: &mut PosePool,
-        output: &mut Pose,
+        _evaluated_inputs: &[EvaluatedFrame],
+        _pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         state.write_output(output);
+        for event in state.fired() {
+            output.push_event(*event);
+        }
     }
 
     fn reset(&self, state: &mut MotionMatchingState) {
@@ -155,6 +159,7 @@ mod tests {
         graph::AnimationGraph, node::ReflectAnimationNode, plugin::register_animation_types,
     };
     use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
+    use concerto_name::name;
     use concerto_reflect::{to_value, ReflectedValue, TypeRegistry};
 
     use super::{MotionMatchingNode, MotionMatchingTrajectory};
@@ -188,7 +193,7 @@ mod tests {
         assert_eq!(node.ignore_range_end, 20);
         assert_eq!(node.blend_halflife, 0.1);
         assert_eq!(node.play_rate, 1.0);
-        assert_eq!(node.play_rate_param, "");
+        assert_eq!(node.play_rate_param, None);
         assert_eq!(
             node.database.id(),
             AssetHandle::<MotionDatabase>::default().id()
@@ -217,7 +222,7 @@ mod tests {
             ignore_range_end: 9,
             blend_halflife: 0.4,
             play_rate: 1.5,
-            play_rate_param: "speed".into(),
+            play_rate_param: Some(name!("speed")),
             ..Default::default()
         };
         let graph = AnimationGraph::from_node(node);
@@ -236,7 +241,7 @@ mod tests {
         assert_eq!(restored.ignore_range_end, 9);
         assert_eq!(restored.blend_halflife, 0.4);
         assert_eq!(restored.play_rate, 1.5);
-        assert_eq!(restored.play_rate_param, "speed");
+        assert_eq!(restored.play_rate_param, Some(name!("speed")));
     }
 
     #[test]
@@ -245,7 +250,7 @@ mod tests {
         let node = MotionMatchingNode {
             search_period: 0.25,
             play_rate: 1.5,
-            play_rate_param: "speed".into(),
+            play_rate_param: Some(name!("speed")),
             ..Default::default()
         };
         let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
@@ -266,7 +271,7 @@ mod tests {
             .unwrap();
         assert_eq!(built.search_period, 0.25);
         assert_eq!(built.play_rate, 1.0);
-        assert_eq!(built.play_rate_param, "");
+        assert_eq!(built.play_rate_param, None);
     }
 
     #[test]

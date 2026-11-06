@@ -98,9 +98,9 @@ ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
 fits the range; a range too short for a window above 3 is left unsmoothed.
 
-`JointName`, from `concerto-mesh`, is a `String` newtype that reflects as a
-leaf, with `Deref<Target = str>`, `From<&str>` and a JSON form. Stored, it is
-the bytes of its text.
+`JointName`, from `concerto-mesh`, is a `Copy` newtype over `Name` (from
+`concerto-name`) that reflects as a leaf, with `Deref<Target = str>`,
+`From<&str>` and a JSON form. Stored, it is the bytes of its text.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -479,7 +479,7 @@ graph that holds the node.
 | `ignore_range_end` | a search never returns the last this many frames of a range; at 0 the playhead can hold the last frame of a range, and a small value can loop it over the last few | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 | `play_rate` | how fast the playhead advances, as a multiple of the database `rate` | 1 |
-| `play_rate_param` | a blackboard float param that multiplies `play_rate`; empty, missing or not an `f32` leaves `play_rate` alone | empty |
+| `play_rate_param` | the `Name` of a blackboard float param that multiplies `play_rate`; `None` (unset), a missing key or a value that isn't an `f32` leaves `play_rate` alone | `None` |
 
 The node plays at `r = effective_play_rate(play_rate, play_rate_param,
 blackboard)` from `concerto_animation::node`: the product, or 0 when it is
@@ -532,6 +532,17 @@ databases, skeletons and clips, and the player's skeleton comes from the graph
 context; when any of them is missing, or the database is not baked yet, the
 node does not step and its root motion is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
 left. No other system declares the `MotionDatabase` store.
+
+Clip events fire from the clip time crossed within an entry. A step whose
+playhead advances, with no search jump, fires the events of the entry's clip in
+`(clip_time(previous), clip_time(advanced)]`, each as a `FiredEvent` naming that
+clip and key at weight 1. A search jump fires nothing, whether it lands in the
+same entry or another, and so do a held frame and the first step. A mirrored
+entry fires its events as authored, with `mirrored: true`; the game decides what
+a mirrored event means, such as swapping a left footstep for a right one. The
+node's `update` clears what it fired before anything else, so a frame with a
+missing asset or a stopped node fires nothing, and its `evaluate` adds the
+events to the `AnimationFrame` after copying the state's frame into it.
 
 `MotionMatchingState` is the node's per-player state. Its fields are
 private: the step that advances it is its own method, which the node's `update`

@@ -4,7 +4,7 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     clip::AnimationClip,
     inertialization::{Inertializer, PoseVelocity},
-    pose::{Pose, RootMotion},
+    pose::{AnimationFrame, FiredEvent, Pose, RootMotion},
 };
 use concerto_foundation::{
     math::spring_damper::{angular_velocity, from_scaled_angle_axis},
@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     channel::BodyMotion,
     database::{BakeError, MotionDatabase},
-    node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
+    node::{trajectory_key, MotionMatchingNode, MotionMatchingTrajectory},
     query::FeatureQuery,
     search::{cost_of, search},
     simulation::TrajectorySample,
@@ -54,11 +54,12 @@ pub struct MotionMatchingState {
     previous_blended: Pose,
     last_delta: f32,
     inertializer: Option<Inertializer>,
-    output: Pose,
+    output: AnimationFrame,
     query: Option<FeatureQuery>,
     last_query: Option<LastQuery>,
     bone_indices: HashMap<Uuid, usize>,
     root_motion: BodyMotion,
+    fired: Vec<FiredEvent>,
 }
 
 impl MotionMatchingState {
@@ -82,11 +83,12 @@ impl MotionMatchingState {
             previous_blended: Pose::identity(0),
             last_delta: 0.0,
             inertializer: None,
-            output: Pose::identity(0),
+            output: AnimationFrame::identity(0),
             query: None,
             last_query: None,
             bone_indices: HashMap::new(),
             root_motion: BodyMotion::default(),
+            fired: Vec::new(),
         }
     }
 
@@ -124,8 +126,47 @@ impl MotionMatchingState {
         self.output.set_root_motion(RootMotion::IDENTITY);
     }
 
+    pub(crate) fn clear_fired(&mut self) {
+        self.fired.clear();
+    }
+
+    pub(crate) fn fired(&self) -> &[FiredEvent] {
+        &self.fired
+    }
+
+    fn fire(&mut self, sources: &Sources, from: usize, to: usize) {
+        let database = sources.database;
+        if to <= from {
+            return;
+        }
+        let Some((entry, from_time)) = database.clip_time(from) else {
+            return;
+        };
+        let Some((to_entry, to_time)) = database.clip_time(to) else {
+            return;
+        };
+        if entry != to_entry {
+            return;
+        }
+        let (Some(clip), Some(stored)) = (sources.clips.get(entry), database.entries.get(entry))
+        else {
+            return;
+        };
+        let handle = &stored.clip;
+        let mirrored = stored.mirrored;
+        for key in clip.events_in(from_time, to_time, false) {
+            self.fired.push(FiredEvent {
+                clip: handle.id(),
+                key: key as u32,
+                time: clip.events()[key].time,
+                weight: 1.0,
+                mirrored,
+            });
+        }
+    }
+
     /// Copies the node's pose into `output` and returns true, or returns false and leaves `output` untouched until the node is initialised.
-    pub(crate) fn write_output(&self, output: &mut Pose) -> bool {
+    pub(crate) fn write_output(&self, output: &mut AnimationFrame) -> bool {
         if !self.initialised || self.output.len() != output.len() {
             return false;
         }
@@ -167,7 +208,7 @@ impl MotionMatchingState {
                 continue;
             };
             if let (Some(joint), Some(source)) = (
-                self.output.get_joint_pose_mut(index),
+                self.output.joint_mut(index),
                 self.blended.joints().get(bone),
             ) {
                 *joint = source.clone();
@@ -209,10 +250,12 @@ impl MotionMatchingState {
             .ok_or_else(|| "the database has no frames".to_string())?;
         let (pose, velocity) = sample(sources, frame).map_err(|error| error.to_string())?;
 
-        self.output = Pose::from_joints(sources.player_skeleton.rest_pose.to_vec());
+        self.output = AnimationFrame::new(Pose::from_joints(
+            sources.player_skeleton.rest_pose.to_vec(),
+        ));
         self.inertializer = Some(Inertializer::new(bone_count));
-        self.blended = copy_pose(&pose);
-        self.previous_blended = copy_pose(&pose);
+        self.blended = pose.clone();
+        self.previous_blended = pose.clone();
         self.pose = pose;
         self.velocity = velocity;
         self.frame = frame;
@@ -328,7 +371,8 @@ impl MotionMatchingState {
         blackboard: &AnimationBlackboard,
         sources: Sources,
     ) -> Result<(), String> {
-        if !self.initialised {
+        let started = self.initialised;
+        if !started {
             self.initialise(&sources)?;
         }
         let database = sources.database;
@@ -346,9 +390,10 @@ impl MotionMatchingState {
         self.sub_frame_time -= whole as f32 / rate;
         let previous_frame = self.frame;
         self.frame = (self.frame + whole).min(range.end - 1);
+        let advanced = self.frame;
         let moved = self.frame != previous_frame;
 
-        let trajectory = blackboard.get::<MotionMatchingTrajectory>(TRAJECTORY_KEY);
+        let trajectory = blackboard.get::<MotionMatchingTrajectory>(trajectory_key());
         let forced = trajectory
             .and_then(|trajectory| trajectory.samples.first())
             .is_some_and(|first| self.forced_search(node, first, dt));
@@ -410,6 +455,9 @@ impl MotionMatchingState {
         };
         self.output.set_root_motion(delta);
         self.scatter(&sources);
+        if started && better.is_none() {
+            self.fire(&sources, previous_frame, advanced);
+        }
         Ok(())
     }
 
@@ -456,10 +504,6 @@ fn rescaled(trajectory: &MotionMatchingTrajectory, play_rate: f32) -> Vec<Trajec
             rotation: sample.rotation,
         })
         .collect()
-}
-
-fn copy_pose(pose: &Pose) -> Pose {
-    Pose::from_joints(pose.joints().to_vec())
 }
 
 fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeError> {

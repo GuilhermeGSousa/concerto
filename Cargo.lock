@@ -819,6 +819,7 @@ dependencies = [
  "concerto-gameplay",
  "concerto-mesh",
  "concerto-motion-matching",
+ "concerto-name",
  "concerto-physics",
  "concerto-reflect",
  "concerto-render",
@@ -846,6 +847,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-reflect",
  "derive_more",
  "glam 0.30.10",
@@ -940,6 +942,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-reflect",
  "concerto-scene",
  "glam 0.30.10",
@@ -1039,6 +1042,7 @@ dependencies = [
  "concerto-import",
  "concerto-mcp",
  "concerto-mesh",
+ "concerto-name",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
@@ -1129,6 +1133,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-physics",
  "concerto-reflect",
  "concerto-render",
@@ -1137,6 +1142,8 @@ dependencies = [
  "gltf",
  "image",
  "log",
+ "serde",
+ "toml",
  "uuid",
 ]
 
@@ -1201,6 +1208,7 @@ dependencies = [
  "concerto-color",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-name",
  "concerto-reflect",
  "glam 0.30.10",
  "serde",
@@ -1219,6 +1227,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
  "concerto-physics",
  "concerto-reflect",
  "concerto-scene",
@@ -1246,6 +1255,7 @@ dependencies = [
  "concerto-mesh",
  "concerto-motion-matching",
  "concerto-motion-matching-gizmos",
+ "concerto-name",
  "concerto-reflect",
  "concerto-ui",
  "concerto-window",
@@ -1274,6 +1284,16 @@ dependencies = [
  "concerto-render",
  "glam 0.30.10",
  "uuid",
+]
+
+[[package]]
+name = "concerto-name"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "concerto-reflect",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

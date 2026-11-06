@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -8,6 +9,7 @@ use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
@@ -32,6 +34,9 @@ pub struct BvhSettings {
     /// Frames to keep as `[start, end)`; the whole file when absent.
     #[serde(default)]
     pub frame_range: Option<[usize; 2]>,
+    /// Per clip name, the clip times in seconds of each named event.
+    #[serde(default)]
+    pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
 }
 
 impl Default for BvhSettings {
@@ -39,6 +44,7 @@ impl Default for BvhSettings {
         Self {
             scale: DEFAULT_SCALE,
             frame_range: None,
+            events: BTreeMap::new(),
         }
     }
 }
@@ -93,10 +99,18 @@ impl Importer for BvhImporter {
 
         let bone_ids = bone_ids(&bvh);
         let skeleton = build_skeleton(&bvh, settings.scale, &bone_ids).map_err(malformed)?;
-        let clip = build_clip(&bvh, settings.scale, start..end, &bone_ids);
-        ctx.emit("skeleton/0", &skeleton)?;
+        let mut clip = build_clip(&bvh, settings.scale, start..end, &bone_ids);
         let stem = source_path.file_stem().and_then(|stem| stem.to_str());
         let clip_name = clip_names(&[stem]).remove(0);
+        for (name, events) in &settings.events {
+            if *name != clip_name {
+                return Err(malformed(format!(
+                    "events are set for clip `{name}`, but the only clip is `{clip_name}`"
+                )));
+            }
+            clip.add_animation_events(events).map_err(malformed)?;
+        }
+        ctx.emit("skeleton/0", &skeleton)?;
         if clip_name != "0" {
             ctx.renamed_from(&format!("animation/{clip_name}"), "animation/0");
         }
@@ -154,7 +168,10 @@ fn build_skeleton(bvh: &Bvh, scale: f32, bone_ids: &[Uuid]) -> Result<Skeleton, 
     Skeleton::new(
         globals.iter().map(Mat4::inverse).collect(),
         parents,
-        bvh.joints.iter().map(|joint| joint.name.clone()).collect(),
+        bvh.joints
+            .iter()
+            .map(|joint| Name::new(&joint.name))
+            .collect(),
         rest_pose,
         bone_ids.to_vec(),
     )

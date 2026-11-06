@@ -1,22 +1,31 @@
 use std::path::Path;
 
 use concerto_animation::TransitionBlender;
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation::clip::{
+    AnimationChanelOutput, AnimationChannel, AnimationClip, ClipEventData,
+};
 use concerto_animation::evaluation::AnimationGraphContext;
+use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
 use concerto_animation::graph::AnimationGraph;
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
-    AnimationClipNode, AnimationNode, ErasedAnimationNode, ReflectAnimationNode,
+    AnimationClipNode, AnimationNode, ErasedAnimationNode, IkGoal, ReflectAnimationNode,
+    TipRotation, TwoBoneIkNode,
 };
 use concerto_animation::plugin::register_animation_types;
-use concerto_animation::pose::{EvaluatedPose, Pose, PosePool};
+use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
+use concerto_ecs::reflect::AppTypeRegistry;
+use concerto_ecs::world::World;
 use concerto_foundation::assets::AssetId;
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::asset_server::{AssetServer, handle_asset_load_events};
 use concerto_foundation::assets::asset_store::AssetStore;
-use concerto_foundation::assets::content::check_encoding;
+use concerto_foundation::assets::content::{
+    ContentAssetHeader, check_encoding, decode_content_asset, write_content_asset,
+};
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
-use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_value};
+use concerto_name::{Name, name};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
 use uuid::Uuid;
 
 #[derive(Default, Reflect)]
@@ -41,14 +50,30 @@ impl AnimationNode for Gain {
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
-        _: &[EvaluatedPose],
-        _: &mut PosePool,
-        _: &mut Pose,
+        _: &[EvaluatedFrame],
+        _: &mut FramePool,
+        _: &mut AnimationFrame,
     ) {
     }
 
     fn reset(&self, _: &mut ()) {}
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(ClipEvent)]
+struct Footstep {
+    strength: f32,
+}
+
+impl ClipEvent for Footstep {}
+
+#[derive(Clone, Default, Reflect)]
+#[reflect(ClipEvent)]
+struct Impact {
+    pose: AssetHandle<AnimationClip>,
+}
+
+impl ClipEvent for Impact {}
 
 fn encoding_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"))
@@ -82,14 +107,22 @@ fn live_node<T: AnimationNode>(graph: &AnimationGraph) -> Option<&T> {
 
 fn state_machine() -> AnimationStateMachine {
     let state = |name: &str| AssetHandle::weak(AssetId::from_path(name));
-    AnimationStateMachine::from_initial_state("idle", state("idle_graph"), |transition| {
-        transition.to("walk", AnimationFSMTrigger::on_bool("go", true), 0.2);
+    AnimationStateMachine::from_initial_state(name!("idle"), state("idle_graph"), |transition| {
+        transition.to(
+            name!("walk"),
+            AnimationFSMTrigger::on_bool(name!("go"), true),
+            0.2,
+        );
     })
-    .state("walk", state("walk_graph"), |transition| {
-        transition.to("run", AnimationFSMTrigger::on_non_zero_vec("move"), 0.15);
+    .state(name!("walk"), state("walk_graph"), |transition| {
+        transition.to(
+            name!("run"),
+            AnimationFSMTrigger::on_non_zero_vec(name!("move")),
+            0.15,
+        );
     })
-    .state("run", state("run_graph"), |transition| {
-        transition.to("idle", AnimationFSMTrigger::OnAnimationEnd, 0.1);
+    .state(name!("run"), state("run_graph"), |transition| {
+        transition.to(name!("idle"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
     })
     .blender(TransitionBlender::Inertialization)
     .build()
@@ -103,11 +136,11 @@ fn mixed_graph() -> AnimationGraph {
         .with_input(
             AnimationClipNode::new(clip("outer_pose"))
                 .with_play_rate(1.5)
-                .with_play_rate_param("draw_speed"),
+                .with_play_rate_param(name!("draw_speed")),
             |_| {},
         )
         .with_input(state_machine(), |_| {})
-        .with_blend_space_2d_input("movement", |ctx| {
+        .with_blend_space_2d_input(name!("movement"), |ctx| {
             ctx.animation_clip_input(clip("idle"), glam::Vec2::ZERO)
                 .animation_clip_input(clip("walk"), glam::Vec2::new(0.0, 1.0));
         });
@@ -147,7 +180,7 @@ fn a_blend_space_keeps_its_input_param_and_points() {
     restored.make_live(&registry, None).unwrap();
 
     let blend_space = live_node::<BlendSpace2DNode>(&restored).expect("blend space survived");
-    assert_eq!(blend_space.input().param, "movement");
+    assert_eq!(blend_space.input().param, name!("movement"));
     assert_eq!(
         blend_space.points(),
         &[glam::Vec2::ZERO, glam::Vec2::new(0.0, 1.0)]
@@ -166,20 +199,20 @@ fn a_state_machine_keeps_trigger_payloads_blender_and_blend_times() {
     let bool_equals = triggers
         .iter()
         .find_map(|trigger| match trigger {
-            AnimationFSMTrigger::BoolEquals { param, value } => Some((param.as_str(), *value)),
+            AnimationFSMTrigger::BoolEquals { param, value } => Some((*param, *value)),
             _ => None,
         })
         .expect("BoolEquals trigger survived");
-    assert_eq!(bool_equals, ("go", true));
+    assert_eq!(bool_equals, (name!("go"), true));
 
     let vec2_non_zero = triggers
         .iter()
         .find_map(|trigger| match trigger {
-            AnimationFSMTrigger::Vec2NonZero { param } => Some(param.as_str()),
+            AnimationFSMTrigger::Vec2NonZero { param } => Some(*param),
             _ => None,
         })
         .expect("Vec2NonZero trigger survived");
-    assert_eq!(vec2_non_zero, "move");
+    assert_eq!(vec2_non_zero, name!("move"));
     assert!(
         triggers
             .iter()
@@ -251,6 +284,38 @@ fn a_placeholder_builds_once_its_type_is_registered() {
 }
 
 #[test]
+fn a_two_bone_ik_node_keeps_every_field_through_a_round_trip() {
+    let node = TwoBoneIkNode {
+        tip: "hand_l".into(),
+        target: IkGoal::Bone {
+            bone: "hand_r".into(),
+            translation: glam::Vec3::new(0.05, -0.02, 0.1),
+            rotation: glam::Quat::from_rotation_y(0.4),
+        },
+        pole: Some(IkGoal::Param {
+            param: name!("elbow_pole"),
+        }),
+        tip_rotation: TipRotation::FromTarget,
+        softness: 0.03,
+        weight: 0.75,
+        weight_param: Some(name!("grip_weight")),
+    };
+    assert_ne!(node, TwoBoneIkNode::default());
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(false), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(false), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<TwoBoneIkNode>(&restored), Some(&node));
+}
+
+#[test]
 fn a_clip_handle_in_a_node_comes_back_strong() {
     let mut server = AssetServer::new();
     server.register_asset(&AssetStore::<AnimationClip>::new());
@@ -265,26 +330,72 @@ fn a_clip_handle_in_a_node_comes_back_strong() {
     assert_eq!(handle.id(), AssetId::from_path("outer_pose"));
 }
 
+fn play_rate_param_of(value: &ReflectedValue) -> &ReflectedValue {
+    let ReflectedValue::Struct(fields) = value else {
+        panic!("a clip node is stored as a struct");
+    };
+    fields
+        .iter()
+        .find_map(|(name, value)| (name == "play_rate_param").then_some(value))
+        .expect("play_rate_param is stored")
+}
+
+fn load_clip_node(
+    registry: &TypeRegistry,
+    stored: ReflectedValue,
+) -> (ReflectedValue, Vec<ValueWarning>) {
+    let data = *registry
+        .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<AnimationClipNode>())
+        .unwrap();
+    let mut leaves = LiveLeaves::from_parts(registry, None);
+    let (built, warnings) = (data.from_value)(&stored, &mut leaves);
+    ((data.to_value)(&*built).unwrap().unwrap(), warnings)
+}
+
 #[test]
-fn a_stored_clip_node_without_a_play_rate_param_loads_with_an_empty_param_and_no_warning() {
+fn a_stored_clip_node_without_a_play_rate_param_loads_with_no_param_and_no_warning() {
     let registry = registry(false);
     let node = AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
     let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
         panic!("a clip node is stored as a struct");
     };
     fields.retain(|(name, _)| name != "play_rate_param");
-    let data = *registry
-        .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<AnimationClipNode>())
-        .unwrap();
 
-    let mut leaves = LiveLeaves::from_parts(&registry, None);
-    let (built, warnings) = (data.from_value)(&ReflectedValue::Struct(fields), &mut leaves);
+    let (built, warnings) = load_clip_node(&registry, ReflectedValue::Struct(fields));
 
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(
-        (data.to_value)(&*built).unwrap().unwrap(),
-        to_value(&node).unwrap()
+        play_rate_param_of(&built),
+        &to_value(&None::<Name>).unwrap()
     );
+    assert_eq!(built, to_value(&node).unwrap());
+}
+
+#[test]
+fn a_stored_clip_node_whose_play_rate_param_is_a_string_loads_with_one_warning_and_no_param() {
+    let registry = registry(false);
+    let node = AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+        panic!("a clip node is stored as a struct");
+    };
+    for (name, value) in &mut fields {
+        if name == "play_rate_param" {
+            *value = to_value(&String::from("draw_speed")).unwrap();
+        }
+    }
+
+    let (built, warnings) = load_clip_node(&registry, ReflectedValue::Struct(fields));
+
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(
+        warnings[0].reason,
+        "stored data is a different kind of value"
+    );
+    assert_eq!(
+        play_rate_param_of(&built),
+        &to_value(&None::<Name>).unwrap()
+    );
+    assert_eq!(built, to_value(&node).unwrap());
 }
 
 #[test]
@@ -301,8 +412,186 @@ fn animation_clip_encoding_matches_its_fixture() {
         ),
     );
     clip.set_frame_rate(30.0);
+    clip.add_event(
+        0.25,
+        AnimationEvent {
+            name: name!("footstep_left"),
+        },
+    );
 
     check_encoding(&clip, encoding_dir());
+}
+
+#[test]
+fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
+    let payload = std::fs::read(encoding_dir().join("AnimationClip.v1.bin")).unwrap();
+    let header = ContentAssetHeader {
+        asset_id: AssetId::from_path("content/clips/turn.gasset"),
+        references: Vec::new(),
+        kind: "AnimationClip".to_string(),
+        kind_version: 1,
+        provenance: None,
+    };
+    let bytes = write_content_asset(&header, &payload).unwrap();
+
+    let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
+
+    assert!(clip.events().is_empty());
+    assert_eq!(clip.duration(), 0.5);
+    assert_eq!(clip.frame_rate(), Some(30.0));
+    assert_eq!(
+        clip.get_channels(&Uuid::from_u128(7)).map(Vec::len),
+        Some(1)
+    );
+}
+
+fn round_trip_clip(clip: &AnimationClip) -> AnimationClip {
+    bincode::deserialize(&bincode::serialize(clip).unwrap()).unwrap()
+}
+
+fn live_event<T: ClipEvent>(clip: &AnimationClip, index: usize) -> Option<&T> {
+    match &clip.events()[index].event {
+        ClipEventData::Live { value, .. } => value.downcast_ref::<T>(),
+        ClipEventData::Stored { .. } => None,
+    }
+}
+
+#[test]
+fn a_loaded_animation_event_is_stored_until_made_live() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(
+        0.25,
+        AnimationEvent {
+            name: name!("footstep_left"),
+        },
+    );
+    let mut loaded = round_trip_clip(&clip);
+    assert!(matches!(
+        loaded.events()[0].event,
+        ClipEventData::Stored { .. }
+    ));
+
+    let warnings = loaded.make_live(&registry(false), None);
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.events()[0].time, 0.25);
+    assert_eq!(
+        live_event::<AnimationEvent>(&loaded, 0),
+        Some(&AnimationEvent {
+            name: name!("footstep_left"),
+        })
+    );
+}
+
+#[test]
+fn a_registered_game_event_is_made_live_with_its_stored_fields() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(0.5, Footstep { strength: 2.5 });
+    let mut loaded = round_trip_clip(&clip);
+    let mut registry = registry(false);
+    registry.register::<Footstep>();
+
+    let warnings = loaded.make_live(&registry, None);
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        live_event::<Footstep>(&loaded, 0),
+        Some(&Footstep { strength: 2.5 })
+    );
+}
+
+#[test]
+fn an_unregistered_stored_event_is_dropped_with_one_warning_naming_its_type() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(0.1, Footstep { strength: 1.0 });
+    clip.add_event(
+        0.2,
+        AnimationEvent {
+            name: name!("land"),
+        },
+    );
+    let mut loaded = round_trip_clip(&clip);
+
+    let warnings = loaded.make_live(&registry(false), None);
+
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].path, std::any::type_name::<Footstep>());
+    assert_eq!(loaded.events().len(), 1);
+    assert_eq!(loaded.events()[0].time, 0.2);
+    assert!(live_event::<AnimationEvent>(&loaded, 0).is_some());
+}
+
+struct ClipLoader {
+    server: AssetServer,
+    world: World,
+}
+
+impl ClipLoader {
+    fn new(registry: TypeRegistry) -> Self {
+        let mut server = AssetServer::new();
+        let store = AssetStore::<AnimationClip>::new();
+        server.register_asset(&store);
+        let shared = AppTypeRegistry::default();
+        *shared.write() = registry;
+        server.set_type_registry(shared);
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        Self { server, world }
+    }
+
+    fn load(&mut self, clip: AnimationClip) -> &AnimationClip {
+        let handle = self.server.add(clip);
+        handle_asset_load_events(&mut self.world);
+        let store = self
+            .world
+            .get_resource::<AssetStore<AnimationClip>>()
+            .unwrap();
+        store.get(&handle).expect("the clip loaded")
+    }
+}
+
+#[test]
+fn a_clip_added_to_the_asset_server_makes_its_stored_events_live() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(
+        0.25,
+        AnimationEvent {
+            name: name!("footstep_left"),
+        },
+    );
+    let mut loader = ClipLoader::new(registry(false));
+
+    let loaded = loader.load(round_trip_clip(&clip));
+
+    assert_eq!(
+        live_event::<AnimationEvent>(loaded, 0),
+        Some(&AnimationEvent {
+            name: name!("footstep_left"),
+        })
+    );
+}
+
+#[test]
+fn a_handle_inside_a_game_event_comes_back_strong_when_its_clip_loads() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(
+        0.5,
+        Impact {
+            pose: self::clip("impact_pose"),
+        },
+    );
+    let mut registry = registry(false);
+    registry.register::<Impact>();
+    let mut loader = ClipLoader::new(registry);
+
+    let loaded = loader.load(round_trip_clip(&clip));
+
+    let pose = &live_event::<Impact>(loaded, 0)
+        .expect("the event is live")
+        .pose;
+    assert!(matches!(pose, AssetHandle::Strong(..)));
+    assert_eq!(pose.id(), AssetId::from_path("impact_pose"));
 }
 
 #[test]
