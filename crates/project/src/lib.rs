@@ -59,7 +59,7 @@ const RESERVED: &[&str] = &[
 ];
 
 /// How to run the tool.
-pub const USAGE: &str = "usage: cargo concerto new <dir> [--engine <path>]\n       cargo concerto editor <dir> [--update] [--engine <path>]\n       cargo concerto build [<dir>] [--cook] [--release] [--target wasm32-unknown-unknown] [--public-url <url>] [--dist <dir>]";
+pub const USAGE: &str = "usage: cargo concerto new <dir> [--engine <path>]\n       cargo concerto editor <dir> [--update] [--engine <path>]\n       cargo concerto build [<dir>] [--cook] [--release] [--target wasm32-unknown-unknown] [--public-url <url>] [--dist <dir>]\n       cargo concerto run [<dir>] [--cook] [--release] [-- <game args>]";
 
 /// Where a generated project's engine dependencies come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +75,7 @@ pub enum Command {
     Editor(PathBuf, Engine),
     UpdateEditor(PathBuf, Option<Engine>),
     Build(BuildOptions),
+    Run(RunOptions),
 }
 
 /// What `build` was asked for.
@@ -86,6 +87,13 @@ pub struct BuildOptions {
     pub wasm: bool,
     pub public_url: Option<String>,
     pub dist: Option<PathBuf>,
+}
+
+/// What `run` was asked for: a native build, and the arguments the game is run with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunOptions {
+    pub build: BuildOptions,
+    pub args: Vec<String>,
 }
 
 /// The steps `build` runs, in order.
@@ -101,6 +109,7 @@ pub enum BuildStep {
     Cook { out: PathBuf },
     Trunk { dir: PathBuf, args: Vec<String> },
     Overlay { from: PathBuf, onto: OverlayTarget },
+    Run { args: Vec<String> },
 }
 
 /// Where an overlay step copies the cooked files.
@@ -148,8 +157,8 @@ where
         args.next();
     }
     let command = args.next().context("missing a command")?;
-    if command == "build" {
-        return parse_build(args);
+    if command == "build" || command == "run" {
+        return parse_build(&command, args);
     }
     ensure!(
         command == "new" || command == "editor",
@@ -190,10 +199,13 @@ pub fn run(command: Command) -> Result<Report> {
         Command::Editor(dir, engine) => add_editor(dir, engine),
         Command::UpdateEditor(dir, engine) => update_editor(dir, engine),
         Command::Build(options) => build(options),
+        Command::Run(options) => run_game(options),
     }
 }
 
-fn parse_build(mut args: impl Iterator<Item = String>) -> Result<Command> {
+fn parse_build(command: &str, mut args: impl Iterator<Item = String>) -> Result<Command> {
+    let run = command == "run";
+    let mut game_args = Vec::new();
     let mut dir = None;
     let mut cook = false;
     let mut release = false;
@@ -202,6 +214,13 @@ fn parse_build(mut args: impl Iterator<Item = String>) -> Result<Command> {
     let mut dist = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--" if run => {
+                game_args.extend(args.by_ref());
+                break;
+            }
+            "--target" | "--public-url" | "--dist" if run => {
+                bail!("{arg} applies to `build`; `run` builds and runs natively")
+            }
             "--cook" => cook = true,
             "--release" => release = true,
             "--target" => {
@@ -218,7 +237,7 @@ fn parse_build(mut args: impl Iterator<Item = String>) -> Result<Command> {
                     args.next().context("--dist needs a directory")?,
                 ))
             }
-            "--engine" => bail!("--engine applies to `new` and `editor`, not `build`"),
+            "--engine" => bail!("--engine applies to `new` and `editor`, not `{command}`"),
             _ if arg.starts_with('-') => bail!("unknown option `{arg}`"),
             _ if dir.is_none() => dir = Some(PathBuf::from(arg)),
             _ => bail!("unexpected argument `{arg}`"),
@@ -232,14 +251,22 @@ fn parse_build(mut args: impl Iterator<Item = String>) -> Result<Command> {
         wasm || dist.is_none(),
         "--dist applies only with --target {WASM_TARGET}"
     );
-    Ok(Command::Build(BuildOptions {
+    let options = BuildOptions {
         dir: dir.unwrap_or_else(|| PathBuf::from(".")),
         cook,
         release,
         wasm,
         public_url,
         dist,
-    }))
+    };
+    Ok(if run {
+        Command::Run(RunOptions {
+            build: options,
+            args: game_args,
+        })
+    } else {
+        Command::Build(options)
+    })
 }
 
 /// Turns `options` into the steps that build `package`, whose Cargo target directory is `target_dir`.
@@ -301,8 +328,36 @@ pub fn plan_build(options: &BuildOptions, package: &str, target_dir: &Path) -> B
     BuildPlan { steps }
 }
 
+/// The steps of [`plan_build`] for `options`, then one that runs the built `package` with `args`.
+pub fn plan_run(
+    options: &BuildOptions,
+    args: &[String],
+    package: &str,
+    target_dir: &Path,
+) -> BuildPlan {
+    let mut plan = plan_build(options, package, target_dir);
+    plan.steps.push(BuildStep::Run {
+        args: args.to_vec(),
+    });
+    plan
+}
+
 /// Builds the game in `options.dir`, cooking and staging its derived data when asked.
 pub fn build(options: BuildOptions) -> Result<Report> {
+    execute(options, plan_build)
+}
+
+/// Builds the game as [`build`] does, then runs it with `options.args` and waits for it to exit.
+pub fn run_game(options: RunOptions) -> Result<Report> {
+    execute(options.build, |build, package, target_dir| {
+        plan_run(build, &options.args, package, target_dir)
+    })
+}
+
+fn execute(
+    options: BuildOptions,
+    plan: impl FnOnce(&BuildOptions, &str, &Path) -> BuildPlan,
+) -> Result<Report> {
     let options = BuildOptions {
         dir: absolute(&options.dir)?,
         dist: options.dist.as_deref().map(absolute).transpose()?,
@@ -314,7 +369,7 @@ pub fn build(options: BuildOptions) -> Result<Report> {
     let package = package_name(&options.dir)?;
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let target_dir = target_directory(&cargo, &options.dir)?;
-    let plan = plan_build(&options, &package, &target_dir);
+    let plan = plan(&options, &package, &target_dir);
     let mut report = Report::default();
     let mut executable = None;
     for step in &plan.steps {
@@ -352,6 +407,14 @@ pub fn build(options: BuildOptions) -> Result<Report> {
                         .context("staging the cook needs the executable a cargo step builds")?,
                 };
                 overlay(from, &onto, &mut report)?
+            }
+            BuildStep::Run { args } => {
+                let executable = executable
+                    .as_ref()
+                    .context("running the game needs the executable a cargo step builds")?;
+                let mut command = process::Command::new(executable);
+                command.args(args);
+                run_step(command)?;
             }
         }
     }
@@ -2250,6 +2313,46 @@ mod tests {
         refused(&["build", "a", "b"], "`b`");
     }
 
+    #[test]
+    fn the_parser_reads_run_with_the_game_s_arguments_after_a_double_dash() {
+        assert_eq!(
+            parse(["concerto", "run"]).unwrap(),
+            Command::Run(RunOptions {
+                build: build_options("."),
+                args: Vec::new(),
+            })
+        );
+        assert_eq!(
+            parse([
+                "run",
+                "g",
+                "--cook",
+                "--release",
+                "--",
+                "--forest",
+                "--cook"
+            ])
+            .unwrap(),
+            Command::Run(RunOptions {
+                build: BuildOptions {
+                    cook: true,
+                    release: true,
+                    ..build_options("g")
+                },
+                args: args(&["--forest", "--cook"]),
+            })
+        );
+    }
+
+    #[test]
+    fn the_parser_refuses_web_options_for_run() {
+        refused(&["run", "--target", "wasm32-unknown-unknown"], "`build`");
+        refused(&["run", "--public-url", "./"], "`build`");
+        refused(&["run", "--dist", "out"], "`build`");
+        refused(&["run", "--forest"], "--forest");
+        refused(&["build", "--", "--forest"], "`--`");
+    }
+
     fn arg(path: impl AsRef<Path>) -> String {
         path.as_ref().display().to_string()
     }
@@ -2301,6 +2404,36 @@ mod tests {
                 BuildStep::Overlay {
                     from: cooked,
                     onto: OverlayTarget::BuiltContent,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_builds_cooks_and_stages_then_runs_the_binary_with_the_game_s_arguments() {
+        let game = Path::new("/g");
+        let target = Path::new("/t");
+        let options = BuildOptions {
+            cook: true,
+            ..build_options("/g")
+        };
+
+        let plan = plan_run(&options, &args(&["--forest"]), "g", target);
+
+        let cooked = target.join("cooked").join("g");
+        assert_eq!(
+            plan.steps,
+            vec![
+                cargo_step(game, false),
+                BuildStep::Cook {
+                    out: cooked.clone()
+                },
+                BuildStep::Overlay {
+                    from: cooked,
+                    onto: OverlayTarget::BuiltContent,
+                },
+                BuildStep::Run {
+                    args: args(&["--forest"]),
                 },
             ]
         );

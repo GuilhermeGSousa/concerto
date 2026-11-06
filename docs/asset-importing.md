@@ -636,7 +636,11 @@ run through the project tool:
 ```sh
 cargo concerto build <dir> --cook [--release]
 cargo concerto build <dir> --cook [--release] --target wasm32-unknown-unknown [--public-url <url>] [--dist <dir>]
+cargo concerto run <dir> --cook [--release] [-- <game args>]
 ```
+
+`run` does what the native `build` does, then runs the game with the arguments
+after `--`.
 
 1. The game is built natively, in the requested profile.
 2. It runs as `<game> --cook <target>/cooked/<pkg>`. Every `concerto::run`
