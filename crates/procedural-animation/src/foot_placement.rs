@@ -1,18 +1,26 @@
 use concerto_animation::{
+    blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
+    ik::{TwoBoneChain, solve_two_bone},
     node::{
         AnimationNode, ReflectAnimationNode,
-        model_space::{WorldToModel, bone_under_first, parent},
+        model_space::{WorldToModel, bone_under_first, model_joint, parent},
     },
-    pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
 use concerto_ecs::Res;
+use concerto_foundation::math::{Spring, SpringValue};
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::Name;
-use concerto_physics::{body::BodyId, physics_state::PhysicsState};
+use concerto_physics::{body::BodyId, physics_state::PhysicsState, query::QueryFilter};
 use concerto_reflect::Reflect;
+use glam::{Affine3A, Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
+
+const MIN_TOE_DISTANCE: f32 = 0.01;
+const MIN_NORMAL_LENGTH: f32 = 1.0e-3;
+const MIN_WEIGHT: f32 = 1.0e-4;
 
 /// Puts each leg's foot on the ground under it and lowers the pelvis for the lowest; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
@@ -69,17 +77,97 @@ pub struct IgnoredBody {
     pub body: Option<BodyId>,
 }
 
-/// The time a [`FootPlacementNode`] has to ease over, and whether it has warned about legs it cannot resolve.
-#[derive(Debug, Default)]
+/// The springs a [`FootPlacementNode`] eases with, the time it has to ease over, and whether it has warned about legs it cannot resolve.
+#[derive(Debug)]
 pub struct FootPlacementState {
     warned: bool,
     elapsed: f32,
+    started: bool,
+    weight: Spring<f32>,
+    pelvis: Spring<f32>,
+    offsets: Vec<Spring<f32>>,
+    tilts: Vec<Spring<Quat>>,
+}
+
+impl FootPlacementState {
+    fn new(node: &FootPlacementNode) -> Self {
+        Self {
+            warned: false,
+            elapsed: 0.0,
+            started: false,
+            weight: Spring::critically_damped_with_halflife(0.0, node.weight_halflife),
+            pelvis: Spring::critically_damped_with_halflife(0.0, node.pelvis_halflife),
+            offsets: Vec::new(),
+            tilts: Vec::new(),
+        }
+    }
+}
+
+struct ResolvedLegs<'a> {
+    skeleton: &'a Skeleton,
+    pelvis: usize,
+    legs: Vec<ResolvedLeg>,
+}
+
+struct ResolvedLeg {
+    hip: usize,
+    knee: usize,
+    foot: usize,
+    toe: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct Ground {
+    height: f32,
+    normal: Option<Vec3>,
+}
+
+struct FootTarget {
+    offset: f32,
+    tilt: Quat,
+}
+
+struct PlacedLeg {
+    foot: Vec3,
+    target: FootTarget,
+}
+
+struct LegGoal {
+    position: Vec3,
+    tilt: Quat,
+}
+
+struct Caster<'a> {
+    physics: Option<&'a PhysicsState>,
+    filter: QueryFilter<'a>,
+    floor: f32,
+    up: f32,
+    down: f32,
+}
+
+impl Caster<'_> {
+    fn ground(&self, at: Vec3) -> Option<Ground> {
+        let physics = self.physics?;
+        let length = self.up + self.down;
+        let origin = Vec3::new(at.x, self.floor + self.up, at.z);
+        if length <= 0.0 || !length.is_finite() || !origin.is_finite() {
+            return None;
+        }
+        let hit = physics.cast_ray(origin, Vec3::NEG_Y * length, self.filter)?;
+        Some(Ground {
+            height: hit.point.y - self.floor,
+            normal: Some(hit.normal)
+                .filter(|normal| normal.is_finite() && normal.length() >= MIN_NORMAL_LENGTH)
+                .map(Vec3::normalize),
+        })
+    }
 }
 
 impl FootPlacementNode {
-    fn resolve(&self, skeleton: Option<&Skeleton>) -> Result<(), String> {
+    fn resolve<'a>(&self, skeleton: Option<&'a Skeleton>) -> Result<ResolvedLegs<'a>, String> {
         let skeleton = skeleton.ok_or("the player has no skeleton")?;
         let pelvis = bone_under_first(skeleton, self.pelvis)?;
+        let mut legs = Vec::with_capacity(self.legs.len());
         for leg in &self.legs {
             let foot = bone_under_first(skeleton, leg.foot)?;
             let knee = parent(skeleton, foot)
@@ -92,17 +180,271 @@ impl FootPlacementNode {
                     &*leg.foot, &*self.pelvis
                 ));
             }
-            if let Some(toe) = leg.toe {
-                bone_under_first(skeleton, toe)?;
-            }
+            let toe = leg
+                .toe
+                .map(|toe| bone_under_first(skeleton, toe))
+                .transpose()?;
+            legs.push(ResolvedLeg {
+                hip,
+                knee,
+                foot,
+                toe,
+            });
         }
-        Ok(())
+        Ok(ResolvedLegs {
+            skeleton,
+            pelvis,
+            legs,
+        })
+    }
+
+    fn weight_target(&self, blackboard: &AnimationBlackboard) -> f32 {
+        let scale = self
+            .weight_param
+            .and_then(|param| blackboard.get_float(param))
+            .unwrap_or(1.0);
+        let weight = self.weight * scale;
+        if weight.is_nan() {
+            0.0
+        } else {
+            weight.clamp(0.0, 1.0)
+        }
+    }
+
+    fn max_foot_angle(&self) -> f32 {
+        if self.max_foot_angle.is_nan() {
+            0.0
+        } else {
+            self.max_foot_angle.max(0.0)
+        }
+    }
+
+    fn place(
+        &self,
+        resolved: &ResolvedLegs<'_>,
+        physics: Option<&PhysicsState>,
+        blackboard: &AnimationBlackboard,
+        model_to_world: Affine3A,
+        joints: &[JointPose],
+    ) -> Option<Vec<PlacedLeg>> {
+        let ignored = self
+            .ignore_param
+            .and_then(|param| blackboard.get::<IgnoredBody>(param))
+            .and_then(|ignored| ignored.body);
+        let caster = Caster {
+            physics,
+            filter: QueryFilter {
+                ignore: ignored.as_slice(),
+            },
+            floor: model_to_world.translation.y,
+            up: self.max_step_up,
+            down: self.max_step_down,
+        };
+        let world = |bone| {
+            model_joint(resolved.skeleton, joints, bone)
+                .map(|joint| model_to_world.transform_point3(joint.transform.translation.into()))
+        };
+        resolved
+            .legs
+            .iter()
+            .map(|leg| {
+                let foot = world(leg.foot)?;
+                let toe = match leg.toe {
+                    Some(toe) => Some(world(toe)?),
+                    None => None,
+                };
+                Some(PlacedLeg {
+                    foot,
+                    target: self.foot_target(&caster, foot, toe),
+                })
+            })
+            .collect()
+    }
+
+    fn foot_target(&self, caster: &Caster<'_>, foot: Vec3, toe: Option<Vec3>) -> FootTarget {
+        let max_angle = self.max_foot_angle();
+        let toe = toe.filter(|toe| horizontal(*toe - foot).length() >= MIN_TOE_DISTANCE);
+        let ankle_ground = caster.ground(foot);
+        let toe_ground = toe.and_then(|toe| caster.ground(toe));
+        let target = match (ankle_ground, toe, toe_ground) {
+            (Some(ankle), Some(toe), Some(toe_ground)) => {
+                pitched(foot, toe, ankle, toe_ground, max_angle)
+            }
+            (Some(ankle), _, _) => FootTarget {
+                offset: ankle.height,
+                tilt: ankle.normal.map_or(Quat::IDENTITY, |normal| {
+                    Quat::from_rotation_arc(Vec3::Y, normal)
+                }),
+            },
+            (None, _, Some(toe_ground)) => FootTarget {
+                offset: toe_ground.height,
+                tilt: Quat::IDENTITY,
+            },
+            (None, _, None) => FootTarget {
+                offset: 0.0,
+                tilt: Quat::IDENTITY,
+            },
+        };
+        FootTarget {
+            tilt: limit_angle(target.tilt, max_angle),
+            ..target
+        }
+    }
+
+    fn pelvis_target(&self, placed: &[PlacedLeg]) -> f32 {
+        let max_drop = if self.max_pelvis_drop.is_nan() {
+            0.0
+        } else {
+            self.max_pelvis_drop.max(0.0)
+        };
+        placed
+            .iter()
+            .map(|leg| leg.target.offset)
+            .fold(0.0_f32, f32::min)
+            .clamp(-max_drop, 0.0)
     }
 }
 
 fn descends_from(skeleton: &Skeleton, bone: usize, ancestor: usize) -> bool {
     std::iter::successors(parent(skeleton, bone), |&up| parent(skeleton, up))
         .any(|up| up == ancestor)
+}
+
+fn horizontal(v: Vec3) -> Vec3 {
+    Vec3::new(v.x, 0.0, v.z)
+}
+
+fn pitched(foot: Vec3, toe: Vec3, ankle: Ground, toe_ground: Ground, max_angle: f32) -> FootTarget {
+    let v = toe - foot;
+    let flat = horizontal(v);
+    let forward = flat / flat.length();
+    let side = forward.cross(Vec3::Y);
+    let pitch = (toe_ground.height - ankle.height)
+        .atan2(flat.length())
+        .clamp(-max_angle, max_angle);
+    let pitch_rotation = Quat::from_axis_angle(side, pitch);
+    let roll = ankle
+        .normal
+        .map_or(0.0, |normal| roll_about(forward, normal))
+        .clamp(-max_angle, max_angle);
+    let roll_rotation = Quat::from_axis_angle(forward, roll);
+    let rise = (pitch_rotation * v).y - v.y;
+    FootTarget {
+        offset: ankle.height.max(toe_ground.height - rise),
+        tilt: pitch_rotation * roll_rotation,
+    }
+}
+
+fn roll_about(forward: Vec3, normal: Vec3) -> f32 {
+    let across = normal - forward * normal.dot(forward);
+    if across.length() < MIN_NORMAL_LENGTH {
+        return 0.0;
+    }
+    forward
+        .dot(Vec3::Y.cross(across))
+        .atan2(Vec3::Y.dot(across))
+}
+
+fn limit_angle(tilt: Quat, max_angle: f32) -> Quat {
+    let angle = tilt.angle_between(Quat::IDENTITY);
+    if angle > max_angle {
+        Quat::IDENTITY.slerp(tilt, max_angle / angle)
+    } else {
+        tilt
+    }
+}
+
+fn ease<T: SpringValue>(spring: &mut Spring<T>, target: T, halflife: f32, elapsed: f32) -> T {
+    spring.set_halflife(halflife);
+    if halflife > 0.0 {
+        spring.update(target, elapsed)
+    } else {
+        spring.reset_to(target);
+        target
+    }
+}
+
+fn drop_pelvis(
+    resolved: &ResolvedLegs<'_>,
+    world_to_model: &WorldToModel,
+    drop: f32,
+    output: &mut AnimationFrame,
+) {
+    let skeleton = resolved.skeleton;
+    let in_model = world_to_model.transform.transform_vector3(Vec3::Y * drop);
+    let local = match parent(skeleton, resolved.pelvis) {
+        Some(up) => match model_joint(skeleton, output.joints(), up) {
+            Some(joint) => joint.transform.inverse().transform_vector3(in_model),
+            None => return,
+        },
+        None => in_model,
+    };
+    if let Some(joint) = output.joint_mut(resolved.pelvis) {
+        joint.translation += local;
+    }
+}
+
+fn bend_leg(
+    skeleton: &Skeleton,
+    leg: &ResolvedLeg,
+    goal: &LegGoal,
+    softness: f32,
+    output: &mut AnimationFrame,
+) {
+    let joints = output.joints();
+    let Some(hip) = model_joint(skeleton, joints, leg.hip) else {
+        return;
+    };
+    let Some(knee) = model_joint(skeleton, joints, leg.knee) else {
+        return;
+    };
+    let Some(foot) = model_joint(skeleton, joints, leg.foot) else {
+        return;
+    };
+    let parent_rotation = match parent(skeleton, leg.hip) {
+        Some(up) => match model_joint(skeleton, joints, up) {
+            Some(joint) => joint.rotation,
+            None => return,
+        },
+        None => Quat::IDENTITY,
+    };
+    let solution = solve_two_bone(
+        &TwoBoneChain {
+            root: hip.transform.translation.into(),
+            mid: knee.transform.translation.into(),
+            tip: foot.transform.translation.into(),
+        },
+        goal.position,
+        None,
+        softness,
+    );
+    let hip_rotation = solution.root * hip.rotation;
+    let knee_rotation = solution.mid * knee.rotation;
+    let foot_rotation = goal.tilt * foot.rotation;
+    let locals = [
+        LocalRotation {
+            bone: leg.hip,
+            rotation: parent_rotation.inverse() * hip_rotation,
+        },
+        LocalRotation {
+            bone: leg.knee,
+            rotation: hip_rotation.inverse() * knee_rotation,
+        },
+        LocalRotation {
+            bone: leg.foot,
+            rotation: knee_rotation.inverse() * foot_rotation,
+        },
+    ];
+    for local in locals {
+        if let Some(joint) = output.joint_mut(local.bone) {
+            joint.rotation = local.rotation.normalize();
+        }
+    }
+}
+
+struct LocalRotation {
+    bone: usize,
+    rotation: Quat,
 }
 
 impl AnimationNode for FootPlacementNode {
@@ -112,7 +454,7 @@ impl AnimationNode for FootPlacementNode {
     type EvaluateInput = Option<Res<'static, PhysicsState>>;
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> FootPlacementState {
-        FootPlacementState::default()
+        FootPlacementState::new(self)
     }
 
     fn update(
@@ -130,35 +472,112 @@ impl AnimationNode for FootPlacementNode {
     fn evaluate(
         &self,
         state: &mut FootPlacementState,
-        _physics: &Option<Res<PhysicsState>>,
+        physics: &Option<Res<PhysicsState>>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         evaluated_inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let elapsed = std::mem::take(&mut state.elapsed);
         if let Some(input) = evaluated_inputs.first() {
             output.copy_from(&input.frame);
         }
         if self.legs.is_empty() {
             return;
         }
-        if let Err(reason) = self.resolve(context.skeleton()) {
-            if !state.warned {
-                warn!("foot placement on `{}` skipped: {reason}", &*self.pelvis);
-                state.warned = true;
+        let resolved = match self.resolve(context.skeleton()) {
+            Ok(resolved) => resolved,
+            Err(reason) => {
+                if !state.warned {
+                    warn!("foot placement on `{}` skipped: {reason}", &*self.pelvis);
+                    state.warned = true;
+                }
+                return;
             }
-            return;
-        }
+        };
         let model_to_world = context.model_to_world().unwrap_or_default();
-        if !model_to_world.is_finite() || !WorldToModel::new(model_to_world).is_finite() {
+        let world_to_model = WorldToModel::new(model_to_world);
+        if !model_to_world.is_finite() || !world_to_model.is_finite() {
             return;
         }
-        state.elapsed = 0.0;
+        let blackboard = context.blackboard();
+        let Some(placed) = self.place(
+            &resolved,
+            physics.as_deref(),
+            blackboard,
+            model_to_world,
+            output.joints(),
+        ) else {
+            return;
+        };
+
+        let weight_target = self.weight_target(blackboard);
+        let pelvis_target = self.pelvis_target(&placed);
+        state.offsets.resize(
+            placed.len(),
+            Spring::critically_damped_with_halflife(0.0, self.foot_halflife),
+        );
+        state.tilts.resize(
+            placed.len(),
+            Spring::critically_damped_with_halflife(Quat::IDENTITY, self.rotation_halflife),
+        );
+        if !state.started {
+            state.weight.reset_to(weight_target);
+            state.pelvis.reset_to(pelvis_target);
+            for (spring, leg) in state.offsets.iter_mut().zip(&placed) {
+                spring.reset_to(leg.target.offset);
+            }
+            for (spring, leg) in state.tilts.iter_mut().zip(&placed) {
+                spring.reset_to(leg.target.tilt);
+            }
+            state.started = true;
+        }
+
+        let weight = ease(
+            &mut state.weight,
+            weight_target,
+            self.weight_halflife,
+            elapsed,
+        )
+        .clamp(0.0, 1.0);
+        let pelvis = weight
+            * ease(
+                &mut state.pelvis,
+                pelvis_target,
+                self.pelvis_halflife,
+                elapsed,
+            );
+        let goals: Vec<LegGoal> = placed
+            .iter()
+            .zip(state.offsets.iter_mut().zip(state.tilts.iter_mut()))
+            .map(|(leg, (offset, tilt))| {
+                let offset = weight * ease(offset, leg.target.offset, self.foot_halflife, elapsed);
+                let tilt = Quat::IDENTITY.slerp(
+                    ease(tilt, leg.target.tilt, self.rotation_halflife, elapsed),
+                    weight,
+                );
+                LegGoal {
+                    position: world_to_model
+                        .transform
+                        .transform_point3(leg.foot + Vec3::Y * offset),
+                    tilt: world_to_model.rotation * tilt * world_to_model.rotation.inverse(),
+                }
+            })
+            .collect();
+
+        if weight.is_nan() || weight < MIN_WEIGHT {
+            return;
+        }
+        drop_pelvis(&resolved, &world_to_model, pelvis, output);
+        for (leg, goal) in resolved.legs.iter().zip(&goals) {
+            bend_leg(resolved.skeleton, leg, goal, self.softness, output);
+        }
     }
 
     fn reset(&self, state: &mut FootPlacementState) {
         state.elapsed = 0.0;
+        state.started = false;
     }
 }
 
@@ -177,6 +596,7 @@ mod tests {
     use concerto_ecs::{
         Entity,
         component::scene::SceneEntityRef,
+        entity::hierarchy::ChildOf,
         system::{
             executor::single_thread::SingleThreadedExecutor,
             schedule::{Schedule, Schedules},
@@ -186,25 +606,34 @@ mod tests {
     use concerto_foundation::{
         assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
         time::Time,
-        transform::Transform,
+        transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::{
         JointName,
         skeleton::{Skeleton, SkeletonComponent},
     };
+    use concerto_name::{Name, name};
     use concerto_physics::{
+        body::BodyId,
         collider::{Collider, register_colliders},
         physics_state::PhysicsState,
     };
     use concerto_reflect::{Reflect, TypeRegistry};
-    use glam::{Mat4, Quat, Vec3};
+    use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
-    use super::{FootPlacementLeg, FootPlacementNode, FootPlacementState};
+    use super::{FootPlacementLeg, FootPlacementNode, FootPlacementState, IgnoredBody};
     use crate::plugin::ProceduralAnimationPlugin;
 
     const EPS: f32 = 1.0e-4;
+    const ANGLE_EPS: f32 = 1.0e-3;
     const KNEE_BEND: f32 = 0.1;
+    const PELVIS: usize = 0;
+    const LEFT_FOOT: usize = 3;
+    const LEFT_TOE: usize = 4;
+    const RIGHT_FOOT: usize = 7;
+    const TOE_AHEAD: Vec3 = Vec3::new(0.0, 0.0, 0.15);
+    const SLOPE: f32 = 10.0_f32.to_radians();
 
     #[derive(Default, Reflect)]
     #[reflect(AnimationNode)]
@@ -303,7 +732,7 @@ mod tests {
         .unwrap()
     }
 
-    fn leg_bones(names: [&'static str; 4], hip_x: f32, first: u16) -> [Bone; 4] {
+    fn leg_bones(names: [&'static str; 4], hip_x: f32, first: u16, toe: Vec3) -> [Bone; 4] {
         let half = 0.45;
         [
             Bone {
@@ -324,12 +753,16 @@ mod tests {
             Bone {
                 name: names[3],
                 parent: Some(first + 2),
-                translation: Vec3::new(0.0, 0.0, 0.15),
+                translation: toe,
             },
         ]
     }
 
     fn rig() -> Skeleton {
+        rig_with_toe(TOE_AHEAD)
+    }
+
+    fn rig_with_toe(toe: Vec3) -> Skeleton {
         let mut bones = vec![Bone {
             name: "pelvis",
             parent: None,
@@ -339,11 +772,13 @@ mod tests {
             ["left_hip", "left_knee", "left_foot", "left_toe"],
             0.1,
             1,
+            toe,
         ));
         bones.extend(leg_bones(
             ["right_hip", "right_knee", "right_foot", "right_toe"],
             -0.1,
             5,
+            toe,
         ));
         skeleton_of(&bones)
     }
@@ -369,8 +804,15 @@ mod tests {
     struct Stage {
         app: App,
         bones: Vec<Entity>,
+        parents: Vec<Option<u16>>,
+        model_to_world: Affine3A,
         player: Entity,
         input: ConstantPose,
+    }
+
+    struct SlopedFoot {
+        height: f32,
+        pitch: f32,
     }
 
     impl Stage {
@@ -383,6 +825,7 @@ mod tests {
             app.register_animation_node::<ConstantPose>();
 
             let bone_count = skeleton.bone_count();
+            let parents = skeleton.parents.to_vec();
             let world = app.main_mut().world_mut();
             world.register_component::<Transform>();
             world.register_component::<Collider>();
@@ -414,9 +857,28 @@ mod tests {
             Self {
                 app,
                 bones,
+                parents,
+                model_to_world: Affine3A::IDENTITY,
                 player,
                 input,
             }
+        }
+
+        fn under(mut self, space: Affine3A) -> Self {
+            let root = self.bones[0];
+            let world = self.world();
+            let parent = world.spawn(GlobalTransform::new(Mat4::from(space)));
+            world.insert(ChildOf::new(parent), root);
+            self.model_to_world = space;
+            self
+        }
+
+        fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
+            let player = self.player;
+            self.world()
+                .get_component_for_entity_mut::<AnimationPlayer>(player)
+                .unwrap()
+                .set_param(key, value);
         }
 
         fn world(&mut self) -> &mut World {
@@ -447,6 +909,24 @@ mod tests {
                 Vec3::new(2.0, 0.5, 2.0),
                 Vec3::new(0.0, height - 0.5, 0.0),
                 Quat::IDENTITY,
+            );
+        }
+
+        fn add_slab(&mut self, from_x: f32, to_x: f32, height: f32) -> Entity {
+            self.add_cuboid(
+                Vec3::new((to_x - from_x) / 2.0, 0.5, 2.0),
+                Vec3::new((from_x + to_x) / 2.0, height - 0.5, 0.0),
+                Quat::IDENTITY,
+            )
+        }
+
+        fn add_slope(&mut self, rotation: Quat) {
+            let center = rotation * Vec3::new(0.0, -0.5, 0.0);
+            let space = self.model_to_world;
+            self.add_cuboid(
+                Vec3::new(2.0, 0.5, 2.0),
+                space.transform_point3(center),
+                rotation_of(space) * rotation,
             );
         }
 
@@ -489,6 +969,47 @@ mod tests {
                 .clone()
         }
 
+        fn output_world(&mut self, bone: usize) -> Affine3A {
+            let locals: Vec<Affine3A> = (0..self.bones.len())
+                .map(|bone| {
+                    let local = self.local(bone);
+                    Affine3A::from_scale_rotation_translation(
+                        local.scale,
+                        local.rotation,
+                        local.translation,
+                    )
+                })
+                .collect();
+            self.model_to_world * self.in_model(&locals, bone)
+        }
+
+        fn input_world(&self, bone: usize) -> Affine3A {
+            let locals: Vec<Affine3A> = (0..self.bones.len())
+                .map(|bone| {
+                    Affine3A::from_rotation_translation(
+                        self.input.rotations[bone],
+                        self.input.translations[bone],
+                    )
+                })
+                .collect();
+            self.model_to_world * self.in_model(&locals, bone)
+        }
+
+        fn in_model(&self, locals: &[Affine3A], bone: usize) -> Affine3A {
+            match self.parents[bone] {
+                Some(up) => self.in_model(locals, usize::from(up)) * locals[bone],
+                None => locals[bone],
+            }
+        }
+
+        fn rise(&mut self, bone: usize) -> f32 {
+            self.output_world(bone).translation.y - self.input_world(bone).translation.y
+        }
+
+        fn tilt(&mut self, bone: usize) -> Quat {
+            rotation_of(self.output_world(bone)) * rotation_of(self.input_world(bone)).inverse()
+        }
+
         fn assert_input_pose(&mut self) {
             for bone in 0..self.bones.len() {
                 let local = self.local(bone);
@@ -500,12 +1021,40 @@ mod tests {
                     local.translation
                 );
                 assert!(
-                    local.rotation.angle_between(rotation) < EPS,
+                    angle(local.rotation, rotation) < EPS,
                     "bone {bone}: {:?} vs {rotation:?}",
                     local.rotation
                 );
             }
         }
+    }
+
+    fn angle(a: Quat, b: Quat) -> f32 {
+        2.0 * (a * b.inverse()).xyz().length().min(1.0).asin()
+    }
+
+    fn rotation_of(transform: Affine3A) -> Quat {
+        transform.to_scale_rotation_translation().1
+    }
+
+    fn pitch_of(tilt: Quat, forward: Vec3) -> f32 {
+        (tilt * forward).y.clamp(-1.0, 1.0).asin()
+    }
+
+    fn assert_near(actual: f32, expected: f32, tolerance: f32) {
+        assert!(
+            (actual - expected).abs() < tolerance,
+            "{actual} vs {expected}"
+        );
+    }
+
+    fn settled(node: FootPlacementNode, build: impl FnOnce(&mut Stage)) -> Stage {
+        let skeleton = rig();
+        let input = ConstantPose::rest_of(&skeleton);
+        let mut stage = Stage::new(skeleton, input, node).with_physics();
+        build(&mut stage);
+        stage.settle();
+        stage
     }
 
     fn add_graph(
@@ -627,5 +1176,276 @@ mod tests {
         stage.run();
 
         assert_eq!(stage.with_state(|state| state.elapsed), 0.0);
+    }
+
+    #[test]
+    fn a_flat_floor_at_the_origins_height_leaves_the_input_pose() {
+        let skeleton = rig();
+        let input = ConstantPose::shifted_of(&skeleton);
+        let mut stage = Stage::new(skeleton, input, placement()).with_physics();
+        stage.add_floor(0.0);
+        stage.settle();
+
+        stage.assert_input_pose();
+    }
+
+    #[test]
+    fn a_step_under_one_foot_raises_that_foot_alone() {
+        let mut stage = settled(placement(), |stage| {
+            stage.add_floor(0.0);
+            stage.add_slab(0.0, 2.0, 0.15);
+        });
+
+        assert_near(stage.rise(LEFT_FOOT), 0.15, EPS);
+        assert_near(stage.rise(RIGHT_FOOT), 0.0, EPS);
+        let pelvis = stage.local(PELVIS).translation;
+        assert!(pelvis.distance(stage.input.translations[PELVIS]) < EPS);
+    }
+
+    #[test]
+    fn a_hole_under_one_foot_drops_the_pelvis_and_that_foot() {
+        let mut stage = settled(placement(), |stage| {
+            stage.add_slab(0.0, 2.0, 0.0);
+            stage.add_slab(-2.0, 0.0, -0.2);
+        });
+
+        assert_near(stage.rise(PELVIS), -0.2, EPS);
+        assert_near(stage.rise(RIGHT_FOOT), -0.2, EPS);
+        assert_near(stage.rise(LEFT_FOOT), 0.0, EPS);
+    }
+
+    #[test]
+    fn the_pelvis_drops_no_further_than_its_limit() {
+        let node = FootPlacementNode {
+            max_pelvis_drop: 0.4,
+            max_step_down: 0.7,
+            ..placement()
+        };
+        let mut stage = settled(node, |stage| {
+            stage.add_slab(0.0, 2.0, 0.0);
+            stage.add_slab(-2.0, 0.0, -0.6);
+        });
+
+        assert_near(stage.rise(PELVIS), -0.4, EPS);
+    }
+
+    #[test]
+    fn ground_deeper_than_the_step_down_leaves_the_foot_at_its_input_height() {
+        let mut stage = settled(placement(), |stage| {
+            stage.add_slab(0.0, 2.0, 0.0);
+            stage.add_slab(-2.0, 0.0, -0.6);
+        });
+
+        assert_near(stage.rise(RIGHT_FOOT), 0.0, EPS);
+        assert_near(stage.rise(PELVIS), 0.0, EPS);
+    }
+
+    #[test]
+    fn a_slope_rising_ahead_pitches_the_foot_up_and_keeps_the_ankle_on_it() {
+        let mut stage = settled(placement(), |stage| {
+            stage.add_slope(Quat::from_rotation_x(-SLOPE));
+        });
+
+        assert_near(pitch_of(stage.tilt(LEFT_FOOT), Vec3::Z), SLOPE, ANGLE_EPS);
+        let toe_above_ankle = stage.rise(LEFT_TOE) - stage.rise(LEFT_FOOT);
+        assert_near(toe_above_ankle, TOE_AHEAD.z * SLOPE.sin(), EPS);
+        assert!(stage.rise(LEFT_TOE) > 0.0);
+        assert_near(
+            stage.rise(LEFT_FOOT),
+            TOE_AHEAD.z * (SLOPE.tan() - SLOPE.sin()),
+            EPS,
+        );
+    }
+
+    #[test]
+    fn a_cross_slope_rolls_the_foot_toward_it_without_pitch() {
+        let rotation = Quat::from_rotation_z(SLOPE);
+        let mut stage = settled(placement(), |stage| stage.add_slope(rotation));
+
+        let tilt = stage.tilt(LEFT_FOOT);
+        assert!(
+            (tilt * Vec3::Y).distance(rotation * Vec3::Y) < ANGLE_EPS,
+            "{tilt:?}"
+        );
+        assert!((tilt * Vec3::Z).distance(Vec3::Z) < ANGLE_EPS, "{tilt:?}");
+        let height = 0.1 * SLOPE.tan();
+        assert_near(stage.rise(LEFT_FOOT), height, EPS);
+        assert_near(stage.rise(RIGHT_FOOT), -height, EPS);
+        assert_near(stage.rise(PELVIS), -height, EPS);
+    }
+
+    fn sloped_left_foot(space: Affine3A) -> SlopedFoot {
+        let skeleton = rig();
+        let input = ConstantPose::rest_of(&skeleton);
+        let mut stage = Stage::new(skeleton, input, placement())
+            .with_physics()
+            .under(space);
+        stage.add_slope(Quat::from_rotation_x(-SLOPE));
+        stage.settle();
+
+        let foot = stage.output_world(LEFT_FOOT).translation.y;
+        SlopedFoot {
+            height: foot - space.translation.y,
+            pitch: pitch_of(stage.tilt(LEFT_FOOT), space.transform_vector3(Vec3::Z)),
+        }
+    }
+
+    #[test]
+    fn a_turned_and_raised_model_places_its_feet_as_an_unturned_one() {
+        let unturned = sloped_left_foot(Affine3A::IDENTITY);
+        let turned = sloped_left_foot(Affine3A::from_rotation_translation(
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            Vec3::Y,
+        ));
+
+        assert_near(unturned.pitch, SLOPE, ANGLE_EPS);
+        assert_near(turned.height, unturned.height, EPS);
+        assert_near(turned.pitch, unturned.pitch, ANGLE_EPS);
+    }
+
+    #[test]
+    fn a_steep_slope_pitches_the_foot_by_the_angle_limit_with_the_toe_above_it() {
+        let steep = 45.0_f32.to_radians();
+        let mut stage = settled(placement(), |stage| {
+            stage.add_slope(Quat::from_rotation_x(-steep));
+        });
+
+        assert_near(
+            pitch_of(stage.tilt(LEFT_FOOT), Vec3::Z),
+            placement().max_foot_angle,
+            ANGLE_EPS,
+        );
+        let toe = stage.output_world(LEFT_TOE).translation;
+        assert!(toe.y >= toe.z * steep.tan() - EPS, "{toe:?}");
+    }
+
+    #[test]
+    fn a_toe_over_the_next_tread_clamps_the_pitch_and_lifts_the_ankle() {
+        let skeleton = rig_with_toe(Vec3::new(0.0, 0.0, 0.1));
+        let input = ConstantPose::rest_of(&skeleton);
+        let mut stage = Stage::new(skeleton, input, placement()).with_physics();
+        stage.add_floor(0.0);
+        stage.add_cuboid(
+            Vec3::new(2.0, 0.5, 1.0),
+            Vec3::new(0.0, 0.17 - 0.5, 1.05),
+            Quat::IDENTITY,
+        );
+        stage.settle();
+
+        let limit = 30.0_f32.to_radians();
+        assert_near(pitch_of(stage.tilt(LEFT_FOOT), Vec3::Z), limit, ANGLE_EPS);
+        assert_near(stage.rise(LEFT_FOOT), 0.17 - 0.1 * limit.sin(), EPS);
+    }
+
+    #[test]
+    fn a_leg_without_a_toe_tilts_its_foot_to_the_ankle_hits_normal() {
+        let node = FootPlacementNode {
+            legs: vec![leg("left_foot", None), leg("right_foot", None)],
+            ..placement()
+        };
+        let rotation = Quat::from_rotation_x(-SLOPE);
+        let mut stage = settled(node, |stage| stage.add_slope(rotation));
+
+        let up = stage.tilt(LEFT_FOOT) * Vec3::Y;
+        assert!(up.distance(rotation * Vec3::Y) < ANGLE_EPS, "{up:?}");
+    }
+
+    fn around_the_feet(stage: &mut Stage) -> Entity {
+        stage.add_floor(0.0);
+        stage.add_cuboid(
+            Vec3::new(0.3, 0.3, 0.3),
+            Vec3::new(0.0, 0.4, 0.0),
+            Quat::IDENTITY,
+        )
+    }
+
+    #[test]
+    fn a_body_around_the_feet_is_hit_when_nothing_is_ignored() {
+        let mut stage = settled(placement(), |stage| {
+            around_the_feet(stage);
+        });
+
+        assert!(stage.rise(LEFT_FOOT) > 0.1 - EPS);
+        assert!(stage.rise(RIGHT_FOOT) > 0.1 - EPS);
+    }
+
+    #[test]
+    fn the_ignored_body_is_skipped_and_the_feet_land_on_the_floor_below() {
+        let skeleton = rig();
+        let input = ConstantPose::rest_of(&skeleton);
+        let node = FootPlacementNode {
+            ignore_param: Some(name!("ignore")),
+            ..placement()
+        };
+        let mut stage = Stage::new(skeleton, input, node).with_physics();
+        let around = around_the_feet(&mut stage);
+        let body = *stage
+            .world()
+            .get_component_for_entity::<BodyId>(around)
+            .unwrap();
+        stage.set_param(name!("ignore"), IgnoredBody { body: Some(body) });
+        stage.settle();
+
+        assert_near(stage.rise(LEFT_FOOT), 0.0, EPS);
+        assert_near(stage.rise(RIGHT_FOOT), 0.0, EPS);
+    }
+
+    fn step_under_the_left_foot(stage: &mut Stage) {
+        stage.add_floor(0.0);
+        stage.add_slab(0.0, 2.0, 0.15);
+    }
+
+    #[test]
+    fn weight_zero_leaves_the_input_pose() {
+        let node = FootPlacementNode {
+            weight: 0.0,
+            ..placement()
+        };
+        let mut stage = settled(node, step_under_the_left_foot);
+
+        stage.assert_input_pose();
+    }
+
+    #[test]
+    fn half_weight_gives_half_the_offset() {
+        let node = FootPlacementNode {
+            weight: 0.5,
+            ..placement()
+        };
+        let mut stage = settled(node, step_under_the_left_foot);
+
+        assert_near(stage.rise(LEFT_FOOT), 0.075, EPS);
+    }
+
+    #[test]
+    fn a_weight_param_of_half_gives_half_the_offset() {
+        let skeleton = rig();
+        let input = ConstantPose::rest_of(&skeleton);
+        let node = FootPlacementNode {
+            weight_param: Some(name!("weight")),
+            ..placement()
+        };
+        let mut stage = Stage::new(skeleton, input, node).with_physics();
+        step_under_the_left_foot(&mut stage);
+        stage.set_param(name!("weight"), 0.5_f32);
+        stage.settle();
+
+        assert_near(stage.rise(LEFT_FOOT), 0.075, EPS);
+    }
+
+    #[test]
+    fn a_new_step_is_reached_halfway_after_one_halflife() {
+        let node = FootPlacementNode {
+            foot_halflife: 0.1,
+            ..placement()
+        };
+        let mut stage = settled(node, |stage| stage.add_floor(0.0));
+        assert_near(stage.rise(LEFT_FOOT), 0.0, EPS);
+
+        stage.add_slab(0.0, 2.0, 0.15);
+        stage.with_state(|state| state.elapsed = 0.1);
+        stage.run();
+
+        assert_near(stage.rise(LEFT_FOOT), 0.075, 1.0e-3);
     }
 }

@@ -212,6 +212,26 @@ A graph is a tree of nodes under a result node:
   `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space.
+- **Foot placement** (`FootPlacementNode`, in
+  `concerto::procedural_animation`, registered by `ProceduralAnimationPlugin`)
+  puts each foot on the ground under it. Each `FootPlacementLeg` names a foot
+  bone, whose parent is the knee and grandparent the hip, under the `pelvis`
+  bone, and an optional toe bone. The node casts physics rays straight down at
+  the ankle and the toe, from `max_step_up` above the floor, the model
+  origin's world height, to `max_step_down` below it; a missing
+  `PhysicsState` counts as every ray missing. It lifts or lowers each foot by
+  the ground under it, keeping the clip's lift above its floor, pitches it to
+  the line from ankle to toe hit and rolls it to the ankle hit's normal,
+  within `max_foot_angle`, and lowers the pelvis by the lowest foot, at most
+  `max_pelvis_drop`. Each leg is then bent to its foot with the two-bone
+  solve, with `softness` as in two-bone IK; the toe keeps its local rotation.
+  The pelvis, the foot heights and the foot tilts ease toward their targets
+  with `pelvis_halflife`, `foot_halflife` and `rotation_halflife`, and snap
+  on the first evaluate. `weight`, times the float under `weight_param`,
+  eases in and out with `weight_halflife`; a game sets that param to 0 while
+  the character is in the air. Under `ignore_param` the game sets an
+  `IgnoredBody` naming the character's own capsule, which the rays then skip.
+  Wire it after the layers, aim and look-at nodes and before hand IK.
 
 Parameters are set on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`
