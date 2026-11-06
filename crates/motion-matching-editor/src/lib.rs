@@ -1,8 +1,6 @@
 mod derive;
 mod document;
 mod facts;
-mod joint;
-mod menu;
 mod panels;
 mod playback;
 mod preview;
@@ -15,8 +13,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::IntoSystemConfig;
-use concerto_editor::{asset_editor::AssetEditorAppExt, inspector::EditableApp};
-use concerto_mesh::JointName;
+use concerto_editor::asset_editor::AssetEditorAppExt;
 use concerto_motion_matching::MotionDatabase;
 
 pub use derive::{BakedStats, ChannelStats, EntryStats};
@@ -25,7 +22,6 @@ pub use document::{
     read_definition,
 };
 pub use facts::{EntryFacts, read_skeleton};
-pub use joint::JointNameEditor;
 pub use playback::{BakedPlayback, DatabaseProgress, SeekDatabase, ShowDatabase};
 pub use preview::database_preview;
 
@@ -34,8 +30,6 @@ use document::{
     clear_status_on_edit, follow_definition_edits, load_definition, restore_discarded_edits,
 };
 use facts::{follow_skeleton, read_entry_facts};
-use joint::refresh_joint_rows;
-use menu::close_name_menu;
 use panels::{
     build_definition_panels, sync_channel_rows, sync_definition_panels, sync_panel_scroll,
 };
@@ -46,7 +40,6 @@ use save::save_definitions;
 pub fn install(app: &mut App) {
     app.register_creatable_asset_editor::<MotionDatabase, MotionDatabaseEditor>()
         .expect("the editor's App holds the asset-editor registry")
-        .register_property_editor::<JointName, JointNameEditor>()
         .add_system(
             Update,
             (
@@ -67,13 +60,12 @@ pub fn install(app: &mut App) {
                     build_definition_panels,
                     sync_definition_panels,
                     sync_channel_rows,
-                    close_name_menu,
                 )
                     .chain(),
             )
                 .chain(),
         )
-        .add_system(LateUpdate, (refresh_joint_rows, sync_panel_scroll))
+        .add_system(LateUpdate, sync_panel_scroll)
         .add_listener(clear_status_on_edit)
         .add_listener(restore_discarded_edits);
 }

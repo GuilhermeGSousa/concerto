@@ -73,6 +73,18 @@ tracked in issue #140. A `content.toml` that cannot be parsed, or that sets any
 other `root`, fails the import, the editor's project open, and the build
 instead of being ignored.
 
+`default_scene`, unset by default, names the scene the editor opens when it
+opens the project, by its content address:
+
+```toml
+default_scene = "content/forest/scene.gasset"
+```
+
+When it is unset, or names an address that is missing or is not a Scene, the
+editor opens the first scene in the content instead, and warns in the second
+case. The game ignores it; the scene a game starts in is the one it declares
+with `App::set_startup_scene`.
+
 ## The content tree
 
 For a new sub-asset, the import chooses an initial address:

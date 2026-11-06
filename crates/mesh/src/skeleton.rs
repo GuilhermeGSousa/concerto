@@ -4,9 +4,9 @@ use concerto_ecs::{
     reflect::{ReflectComponent, ReflectSceneComponent},
     Component, Entity,
 };
-use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
+use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId, LoadableAsset};
 use concerto_name::Name;
-use concerto_reflect::{JsonLeaf, Reflect, ReflectDefault, ReflectJson};
+use concerto_reflect::{FromType, JsonLeaf, Reflect, ReflectDefault, ReflectJson, TypeData};
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -189,6 +189,31 @@ impl Skeleton {
 }
 
 impl LoadableAsset for Skeleton {}
+
+/// An asset that names the skeleton its bone fields refer to.
+pub trait SkeletonSource: Reflect {
+    fn skeleton(&self) -> Option<&AssetHandle<Skeleton>>;
+}
+
+/// Reads a value's skeleton without naming its type.
+#[derive(Clone, Copy)]
+pub struct ReflectSkeletonSource {
+    pub skeleton: fn(&dyn Reflect) -> Option<AssetId>,
+}
+
+impl TypeData for ReflectSkeletonSource {}
+
+impl<T: SkeletonSource> FromType<T> for ReflectSkeletonSource {
+    fn from_type() -> Self {
+        Self {
+            skeleton: skeleton_of::<T>,
+        }
+    }
+}
+
+fn skeleton_of<T: SkeletonSource>(value: &dyn Reflect) -> Option<AssetId> {
+    value.downcast_ref::<T>()?.skeleton().map(AssetHandle::id)
+}
 
 /// Runtime data built by the importer; scene-only, so the inspector does not edit it.
 #[derive(Component, Clone, Reflect, Default)]

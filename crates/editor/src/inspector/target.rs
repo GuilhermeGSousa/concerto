@@ -89,6 +89,10 @@ impl PropertyTarget for ComponentTarget {
     }
 }
 
+/// The type registry a document's values are in, ahead of its hosted `App`'s and the editor's.
+#[derive(Component, Clone)]
+pub struct DocumentTypes(pub AppTypeRegistry);
+
 /// A value inside `C`, a component on a document in the editor's world.
 pub struct DocumentValue<C> {
     pub name: String,
@@ -130,8 +134,13 @@ impl<C: Component> PropertyTarget for DocumentValue<C> {
 
     fn types(&self, world: &World) -> Option<AppTypeRegistry> {
         world
-            .get_component_for_entity::<HostedApp>(self.document)
-            .and_then(HostedApp::type_registry)
+            .get_component_for_entity::<DocumentTypes>(self.document)
+            .map(|types| types.0.clone())
+            .or_else(|| {
+                world
+                    .get_component_for_entity::<HostedApp>(self.document)
+                    .and_then(HostedApp::type_registry)
+            })
             .or_else(|| world.get_resource::<AppTypeRegistry>().cloned())
     }
 
@@ -156,5 +165,40 @@ impl PropertyAddress {
                 .target
                 .component()
                 .is_some_and(|component| target.component() == Some(component))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Reflect)]
+    struct OnlyInTheDocument;
+
+    #[derive(Component)]
+    struct Held;
+
+    #[test]
+    fn a_document_value_takes_its_types_from_the_document_first() {
+        let mut world = World::new();
+        world.insert_resource(AppTypeRegistry::default());
+        let types = AppTypeRegistry::default();
+        types.write().register::<OnlyInTheDocument>();
+        let document = world.spawn((Held, DocumentTypes(types)));
+        let value = DocumentValue::<Held> {
+            name: "held".into(),
+            document,
+            read: Box::new(|_| None),
+            edit: Box::new(|_| None),
+        };
+
+        let found = value.types(&world).unwrap();
+
+        assert!(
+            found
+                .read()
+                .get(TypeId::of::<OnlyInTheDocument>())
+                .is_some()
+        );
     }
 }

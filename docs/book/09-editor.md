@@ -52,7 +52,10 @@ it to an AI agent (below).
 - **Import** glTF, OBJ and image files with **Import…** in the asset
   browser, the panel titled **Asset Browser**. Each becomes `.gasset` files in
   `content/` (chapter 5).
-- **Open** a scene by double-clicking it in the asset browser.
+- **Open** a scene by double-clicking it in the asset browser. The project
+  opens with its default scene, the one `content.toml`'s `default_scene`
+  names, or failing that its first scene. The Scene tab has no close button:
+  opening another scene replaces the one it shows.
 - **Arrange** the scene: the hierarchy, titled **Warren**, adds, duplicates,
   renames (F2) and deletes entities; the viewport selects by clicking and
   moves with the gizmo; the inspector, titled **Looking Glass**, adds and

@@ -387,6 +387,7 @@ impl SceneFixture {
         project.project = Some(Project {
             root: project_root.clone(),
             content_root: "content".into(),
+            default_scene: None,
         });
         world.insert_resource(project);
         world.insert_resource(registry);

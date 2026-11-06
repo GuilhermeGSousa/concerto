@@ -510,6 +510,7 @@ mod tests {
         project.project = Some(crate::project::Project {
             root: std::path::PathBuf::from("project"),
             content_root: "content".into(),
+            default_scene: None,
         });
         world.insert_resource(project);
         let mut registry = AssetEditorRegistry::default();

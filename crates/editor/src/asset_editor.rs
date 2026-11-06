@@ -1,7 +1,7 @@
 //! Lifecycle and registration for asset editors.
 
 use anyhow::{Result, bail};
-use concerto_app::App;
+use concerto_app::{App, InspectedAsset};
 use concerto_ecs::events::{event_reader::EventReader, event_writer::EventWriter};
 use concerto_ecs::{
     Component, Entity, Query, Resource,
@@ -17,6 +17,7 @@ use std::path::Path;
 
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 
+use crate::inspected_asset::InspectedAssetEditor;
 use crate::project::AssetsWritten;
 use crate::scene::SceneSaved;
 
@@ -129,6 +130,29 @@ impl AssetEditorRegistry {
             })),
         );
         Ok(())
+    }
+
+    /// Gives `record`'s kind the generic inspector editor and makes it creatable, unless the kind has an editor already.
+    pub fn register_inspected(&mut self, record: InspectedAsset) {
+        if self.editors.contains_key(record.kind) {
+            return;
+        }
+        let longest = new_asset_name(record.kind, MAX_NEW_NUMBER);
+        if let Err(error) = valid_asset_name(&longest) {
+            log::warn!(
+                "{} is not offered for editing: {longest} is not a valid asset name: {error}",
+                record.kind
+            );
+            return;
+        }
+        self.editors
+            .insert(record.kind, Box::new(InspectedAssetEditor { record }));
+        self.creators.insert(
+            record.kind,
+            Creator(Box::new(move |root, address, registry| {
+                (record.create)(root, address, registry)
+            })),
+        );
     }
 
     /// The creatable asset kinds and their creators, ordered by kind.

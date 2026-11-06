@@ -512,6 +512,8 @@ pub struct ContentConfig {
     pub extension: String,
     /// Content tree root, relative to the project root; must be `content` for now.
     pub root: String,
+    /// The address of the scene the editor opens with the project, such as `content/levels/forest.gasset`.
+    pub default_scene: Option<String>,
 }
 
 impl Default for ContentConfig {
@@ -519,6 +521,7 @@ impl Default for ContentConfig {
         Self {
             extension: "gasset".to_string(),
             root: "content".to_string(),
+            default_scene: None,
         }
     }
 }
