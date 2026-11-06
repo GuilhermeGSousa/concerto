@@ -9,6 +9,7 @@ use concerto_editor::{
     asset_picker::AssetPickerMenu,
     hosted::testing::SceneFixture,
     inspector::{InspectedValues, PropertyCommits, ShownValue, commit_number},
+    name_menu::NameMenu,
     timeline::{Timeline, TimelineSelected, time_of_frame},
 };
 use concerto_foundation::assets::{
@@ -37,9 +38,7 @@ use uuid::Uuid;
 
 use super::*;
 use crate::{
-    ChannelId, DefinitionDocument, EntryFacts,
-    menu::NameMenu,
-    read_definition,
+    ChannelId, DefinitionDocument, EntryFacts, read_definition,
     tests::{
         broken_recipe, card_names, channel_at, definition, edit, fixture, fixture_with, open,
         request, row_of, save, show, shown_name, state, value_names, write_asset, write_definition,

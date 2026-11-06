@@ -25,6 +25,8 @@ use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, HostedEventsAppExt};
+use crate::joint_picker::refresh_joint_rows;
+use crate::name_menu::close_name_menu;
 use crate::tools::{edits::PropertyCommitted, scene::SceneRoot, selection::Selection};
 
 mod add_component;
@@ -147,6 +149,7 @@ impl Plugin for InspectorPlugin {
         app.forward_hosted_event::<PropertyCommitted>();
         install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);
+        app.add_system(Update, close_name_menu);
         app.add_system(Update, send_property_commits)
             .add_system(Update, send_value_commits)
             .add_system(Update, send_component_edits);
@@ -178,6 +181,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, refresh_bool_fields)
             .add_system(LateUpdate, refresh_name_fields)
             .add_system(LateUpdate, refresh_text_fields)
+            .add_system(LateUpdate, refresh_joint_rows)
             .add_system(LateUpdate, refresh_variant_labels)
             .add_system(LateUpdate, refresh_option_fields)
             .add_system(LateUpdate, sync_inspector_scroll);

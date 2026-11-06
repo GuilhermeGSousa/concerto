@@ -914,6 +914,32 @@ row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
 handle's id, so MCP's `set_property` on a handle field picks that asset through
 the same checks.
 
+### Joint names
+
+`JointNameEditor` edits every `concerto_mesh::JointName` field, on a field and
+in a list, with nothing registered on the editor's `App`:
+`InspectorRegistry::default()` registers it and `InspectorPlugin` adds its
+systems. The row is a button naming the joint, which opens a menu of the bones
+in the front document's `DocumentBones`, so it needs no edit target. Without
+bones the button is disabled and reads the stored name in the muted colour. A
+name the skeleton lacks uses the warning colour, an empty name reads `None`,
+and the menu closes when another tab comes to the front. Picking the name
+already set makes no edit. The picker's `edit_to` takes the value.
+
+`DocumentBones(Option<Vec<Name>>)` is a component any document may carry: the
+bones of the skeleton its value names, or `None` while it names none that can
+be read. An asset type names its skeleton by implementing
+`concerto_mesh::SkeletonSource` and writing `#[reflect(SkeletonSource)]`; the
+editor reads the id through `ReflectSkeletonSource` without naming the type.
+The generic tab of an [inspected asset](#inspected-assets) fills its
+`DocumentBones`. An editor of its own fills it however it reads the skeleton,
+as the motion database editor does.
+
+The menu is `name_menu`'s `NameMenu`, opened with `open_name_menu` and closed
+with `close_menu`; `close_name_menu` closes it when another tab comes to the
+front. An extension crate opens it for names of its own, as the motion database
+editor's channel-type picker does.
+
 ### Entity references
 
 `EntityPicker` edits every `SceneEntityRef` field, which is how a component
@@ -943,7 +969,7 @@ An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
 holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `bool`, `Name` and `String`, the
-asset picker and the entity picker implement it; `Quat` goes
+asset picker, the entity picker and the joint picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
 custom editor opts in by implementing it; MCP's `set_property` writes a field
@@ -1118,7 +1144,10 @@ from, keeps the file's id, reads the written file back as what was last
 saved, and ends in `SceneSaved`, with "Saved <address>" as the status. A
 failed save ends in `SaveFailed`, shows why, and leaves the tab unsaved.
 Discard decodes the file as last read or saved back into the value. There is
-no undo. MCP works on the tab as on any document value: `open_asset`,
+no undo. A value whose type carries `ReflectSkeletonSource` gives the document
+the bones of the skeleton it names in `DocumentBones`, read again whenever an
+edit, a save or a discard changes the skeleton it names, so its `JointName`
+fields pick from them; see [Joint names](#joint-names). MCP works on the tab as on any document value: `open_asset`,
 `inspect`, `set_property`, `list_push`, `list_remove` and `save`.
 
 ### Previews

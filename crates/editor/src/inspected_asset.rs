@@ -1,9 +1,9 @@
-use std::{path::Path, sync::Arc};
+use std::{any::Any, path::Path, sync::Arc};
 
 use anyhow::Context;
 use concerto_app::{App, InspectedAsset, InspectedAssets, Plugin, schedule_groups::Update};
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
+    Changed, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
     command::{CommandQueue, EntityCommandQueue},
     events::{event_reader::EventReader, event_writer::EventWriter},
     reflect::AppTypeRegistry,
@@ -11,8 +11,11 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     AssetId,
+    content::decode_content_asset,
     registry::{AssetEntry, AssetRegistry},
 };
+use concerto_mesh::{ReflectSkeletonSource, Skeleton};
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 
 use crate::{
@@ -23,6 +26,7 @@ use crate::{
     guard::DiscardEdits,
     hosted::{HostRole, Hosted, HostedApp},
     inspector::{DocumentTypes, DocumentValue, InspectedValues, RefreshInspector},
+    joint_picker::DocumentBones,
     project::ProjectState,
     scene::{SaveFailed, SceneOpened, SceneSaved},
     tools::edits::PropertyCommitted,
@@ -50,6 +54,7 @@ impl AssetEditor for InspectedAssetEditor {
                 skeleton: None,
             },
             InspectedValues(vec![Arc::new(value)]),
+            DocumentBones(None),
         ));
     }
 }
@@ -82,6 +87,7 @@ impl Plugin for InspectedAssetPlugin {
                     follow_inspected_edits,
                     save_inspected_assets,
                     load_inspected_assets,
+                    follow_inspected_skeleton,
                 )
                     .chain(),
             )
@@ -271,8 +277,64 @@ pub(crate) fn restore_discarded_value(
     }
 }
 
+fn skeleton_named(value: &dyn Reflect, types: &AppTypeRegistry) -> Option<AssetId> {
+    let types = types.read();
+    let source = types.get_type_data::<ReflectSkeletonSource>((value as &dyn Any).type_id())?;
+    (source.skeleton)(value).filter(|id| !id.is_nil())
+}
+
+fn read_bones(root: &Path, id: AssetId, assets: &AssetRegistry) -> anyhow::Result<Vec<Name>> {
+    let asset = assets
+        .get(id)
+        .context("The skeleton is not in the project")?;
+    let bytes = std::fs::read(root.join(&asset.address))
+        .with_context(|| format!("Cannot read {}", asset.address))?;
+    let (header, skeleton) = decode_content_asset::<Skeleton>(&bytes)?;
+    anyhow::ensure!(
+        header.asset_id == id,
+        "{} holds another asset's id",
+        asset.address
+    );
+    Ok(skeleton.names.to_vec())
+}
+
+pub(crate) fn follow_inspected_skeleton(
+    documents: Query<
+        (
+            &mut InspectedDocument,
+            &mut DocumentBones,
+            Option<&DocumentTypes>,
+        ),
+        Changed<InspectedDocument>,
+    >,
+    project: Res<ProjectState>,
+    types: Res<ProjectTypes>,
+    assets: Res<AssetRegistry>,
+) {
+    let Some(project) = project.project.as_ref() else {
+        return;
+    };
+    for (mut state, mut bones, held_types) in documents.iter() {
+        let registry = held_types.map(|types| &types.0).or(types.registry.as_ref());
+        let named = registry.and_then(|registry| skeleton_named(state.value.as_deref()?, registry));
+        if named == state.skeleton {
+            continue;
+        }
+        state.skeleton = named;
+        let read = named.map(|id| read_bones(&project.root, id, &assets));
+        bones.0 = match read {
+            Some(Ok(names)) => Some(names),
+            Some(Err(error)) => {
+                log::warn!("The skeleton's bones cannot be read: {error:#}");
+                None
+            }
+            None => None,
+        };
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{
         asset_editor::{AssetEditorRegistry, Creator, SaveRequested},
@@ -291,8 +353,11 @@ mod tests {
     use concerto_foundation::assets::{
         Asset, AssetId, CreatableAsset, LoadableAsset,
         content::{decode_content_asset, save_content_asset_into},
+        handle::AssetHandle,
         registry::{AssetEntry, AssetRegistry},
     };
+    use concerto_mesh::{JointName, JointPose, ReflectSkeletonSource, Skeleton, SkeletonSource};
+    use concerto_name::Name;
     use concerto_reflect::Reflect;
     use concerto_ui::{node::UINode, theme::UITheme};
     use concerto_window::input::actions::{ActionFired, ActionLabel};
@@ -336,6 +401,34 @@ mod tests {
     }
     impl LoadableAsset for Tag {}
 
+    #[derive(serde::Serialize, serde::Deserialize, Reflect, Clone)]
+    #[reflect(SkeletonSource)]
+    pub(crate) struct Rig {
+        pub(crate) skeleton: AssetHandle<Skeleton>,
+        pub(crate) joint: JointName,
+        pub(crate) joints: Vec<JointName>,
+    }
+    impl Asset for Rig {
+        fn name() -> &'static str {
+            "TestRig"
+        }
+    }
+    impl CreatableAsset for Rig {
+        fn new_asset() -> Self {
+            Rig {
+                skeleton: AssetHandle::default(),
+                joint: JointName::default(),
+                joints: Vec::new(),
+            }
+        }
+    }
+    impl LoadableAsset for Rig {}
+    impl SkeletonSource for Rig {
+        fn skeleton(&self) -> Option<&AssetHandle<Skeleton>> {
+            Some(&self.skeleton)
+        }
+    }
+
     #[derive(Default)]
     struct PinnedNoteEditor;
     impl AssetEditor for PinnedNoteEditor {
@@ -348,6 +441,11 @@ mod tests {
         scene_recipe(app);
         app.register_inspected_asset::<Note>()
             .register_inspected_asset::<Tag>();
+    }
+
+    fn rig_recipe(app: &mut App) {
+        inspected_recipe(app);
+        app.register_inspected_asset::<Rig>();
     }
 
     struct Records {
@@ -483,8 +581,16 @@ mod tests {
     }
 
     fn tab_fixture() -> SceneFixture {
+        tab_fixture_with(inspected_recipe)
+    }
+
+    pub(crate) fn rig_fixture() -> SceneFixture {
+        tab_fixture_with(rig_recipe)
+    }
+
+    fn tab_fixture_with(recipe: fn(&mut App)) -> SceneFixture {
         let mut f = SceneFixture::new();
-        let game = hosted_now(inspected_recipe, |_| {});
+        let game = hosted_now(recipe, |_| {});
         let records: Vec<InspectedAsset> = game
             .world()
             .get_resource::<InspectedAssets>()
@@ -513,6 +619,7 @@ mod tests {
         f.add_delivery(follow_inspected_edits.into_boxed_system());
         f.add_delivery(save_inspected_assets.into_boxed_system());
         f.add_delivery(load_inspected_assets.into_boxed_system());
+        f.add_delivery(follow_inspected_skeleton.into_boxed_system());
         for system in cards {
             f.add_delivery(system);
         }
@@ -528,18 +635,173 @@ mod tests {
 
     const ADDRESS: &str = "content/notes/first.gasset";
 
-    fn write_note(f: &mut SceneFixture, note: &Note) -> AssetEntry {
+    pub(crate) fn write_asset<A: Asset>(
+        f: &mut SceneFixture,
+        address: &str,
+        asset: &A,
+    ) -> AssetEntry {
         let root = f.project_root.clone();
         let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-        let id = save_content_asset_into(note, &root, ADDRESS, assets).unwrap();
+        let id = save_content_asset_into(asset, &root, address, assets).unwrap();
         assets.get(id).unwrap().clone()
+    }
+
+    fn write_note(f: &mut SceneFixture, note: &Note) -> AssetEntry {
+        write_asset(f, ADDRESS, note)
+    }
+
+    pub(crate) fn skeleton_of(names: &[&str]) -> Skeleton {
+        let bones = names.len();
+        Skeleton::new(
+            vec![glam::Mat4::IDENTITY; bones],
+            (0..bones)
+                .map(|bone| bone.checked_sub(1).map(|parent| parent as u16))
+                .collect(),
+            names.iter().map(|name| Name::new(name)).collect(),
+            vec![JointPose::IDENTITY; bones],
+            (0..bones).map(|_| Default::default()).collect(),
+        )
+        .unwrap()
+    }
+
+    pub(crate) const RIG_ADDRESS: &str = "content/rigs/hero.gasset";
+
+    pub(crate) fn rig_on(skeleton: &AssetEntry) -> Rig {
+        Rig {
+            skeleton: AssetHandle::weak(skeleton.id),
+            joint: "Hips".into(),
+            joints: vec!["LeftFoot".into(), "Spine".into()],
+        }
+    }
+
+    pub(crate) fn bones_of(f: &SceneFixture, document: Entity) -> Option<Vec<String>> {
+        f.world
+            .get_component_for_entity::<DocumentBones>(document)
+            .expect("the document carries its bones")
+            .0
+            .as_ref()
+            .map(|bones| bones.iter().map(|bone| bone.as_str().to_owned()).collect())
+    }
+
+    fn rig_mut(f: &mut SceneFixture, document: Entity) -> &mut Rig {
+        f.world
+            .get_component_for_entity_mut::<InspectedDocument>(document)
+            .unwrap()
+            .value
+            .as_deref_mut()
+            .and_then(|value| value.downcast_mut::<Rig>())
+            .expect("the document holds a rig")
+    }
+
+    pub(crate) struct OpenRig {
+        pub(crate) f: SceneFixture,
+        pub(crate) document: Entity,
+        pub(crate) skeleton: AssetEntry,
+    }
+
+    pub(crate) fn open_rig() -> OpenRig {
+        let mut f = rig_fixture();
+        let skeleton = write_asset(
+            &mut f,
+            "content/rigs/skeleton.gasset",
+            &skeleton_of(&["Hips", "Spine", "Head"]),
+        );
+        let asset = write_asset(&mut f, RIG_ADDRESS, &rig_on(&skeleton));
+        let document = request_asset(&mut f, &asset);
+        f.frame();
+        OpenRig {
+            f,
+            document,
+            skeleton,
+        }
+    }
+
+    #[test]
+    fn an_inspected_asset_naming_a_skeleton_gives_its_document_the_bones() {
+        let rig = open_rig();
+
+        assert_eq!(
+            bones_of(&rig.f, rig.document).unwrap(),
+            ["Hips", "Spine", "Head"]
+        );
+        assert_eq!(
+            held_document(&rig.f, rig.document).skeleton,
+            Some(rig.skeleton.id)
+        );
+    }
+
+    #[test]
+    fn an_inspected_asset_that_names_no_skeleton_has_no_bones() {
+        let mut f = tab_fixture();
+        let asset = write_note(&mut f, &note("hello", 1.5));
+
+        let document = request_asset(&mut f, &asset);
+        f.frame();
+
+        assert_eq!(bones_of(&f, document), None);
+        assert_eq!(held_document(&f, document).skeleton, None);
+    }
+
+    #[test]
+    fn an_edit_to_the_skeleton_gives_the_document_the_new_bones() {
+        let mut rig = open_rig();
+        let other = write_asset(
+            &mut rig.f,
+            "content/rigs/other.gasset",
+            &skeleton_of(&["Root", "Tail"]),
+        );
+
+        rig_mut(&mut rig.f, rig.document).skeleton = AssetHandle::weak(other.id);
+        rig.f.frame();
+
+        assert_eq!(bones_of(&rig.f, rig.document).unwrap(), ["Root", "Tail"]);
+    }
+
+    #[test]
+    fn discarding_an_edit_to_the_skeleton_brings_back_its_bones() {
+        let mut rig = open_rig();
+        let other = write_asset(
+            &mut rig.f,
+            "content/rigs/other.gasset",
+            &skeleton_of(&["Root", "Tail"]),
+        );
+        rig_mut(&mut rig.f, rig.document).skeleton = AssetHandle::weak(other.id);
+        rig.f.frame();
+
+        rig.f.world.trigger(DiscardEdits(rig.document));
+        rig.f.frame();
+
+        assert_eq!(
+            bones_of(&rig.f, rig.document).unwrap(),
+            ["Hips", "Spine", "Head"]
+        );
+    }
+
+    #[test]
+    fn a_skeleton_that_cannot_be_read_leaves_the_document_with_no_bones() {
+        let mut rig = open_rig();
+        let broken = write_asset(
+            &mut rig.f,
+            "content/rigs/broken.gasset",
+            &skeleton_of(&["Root"]),
+        );
+        std::fs::write(rig.f.project_root.join(&broken.address), b"not a skeleton").unwrap();
+
+        rig_mut(&mut rig.f, rig.document).skeleton = AssetHandle::weak(broken.id);
+        rig.f.frame();
+
+        assert_eq!(bones_of(&rig.f, rig.document), None);
+        assert_eq!(
+            held_document(&rig.f, rig.document).skeleton,
+            Some(broken.id)
+        );
     }
 
     fn file_bytes(f: &SceneFixture) -> Vec<u8> {
         std::fs::read(f.project_root.join(ADDRESS)).unwrap()
     }
 
-    fn request_note(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
+    pub(crate) fn request_asset(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
         f.request(asset);
         let document = f
             .world
@@ -547,7 +809,7 @@ mod tests {
             .unwrap()
             .0
             .unwrap();
-        f.frames_until("the note never finished opening", |f| {
+        f.frames_until("the asset never finished opening", |f| {
             f.document(document).pending.is_none()
         });
         document
@@ -587,7 +849,7 @@ mod tests {
         f.frame();
     }
 
-    fn press_save(f: &mut SceneFixture) {
+    pub(crate) fn press_save(f: &mut SceneFixture) {
         let mut fired = EventChannel::<ActionFired>::default();
         fired.push_event(ActionFired {
             action: crate::actions::Save.intern(),
@@ -604,7 +866,7 @@ mod tests {
         let mut f = tab_fixture();
         let asset = write_note(&mut f, &note("hello", 1.5));
 
-        let document = request_note(&mut f, &asset);
+        let document = request_asset(&mut f, &asset);
 
         assert_eq!(held(&f, document), Some(&note("hello", 1.5)));
         assert_eq!(held_document(&f, document).loaded, file_bytes(&f));
@@ -627,7 +889,7 @@ mod tests {
     fn an_edit_through_the_inspector_marks_the_document_unsaved() {
         let mut f = tab_fixture();
         let asset = write_note(&mut f, &note("hello", 1.5));
-        let document = request_note(&mut f, &asset);
+        let document = request_asset(&mut f, &asset);
 
         edit_weight(&mut f, 4.0);
 
@@ -639,7 +901,7 @@ mod tests {
     fn the_save_action_writes_the_value_and_reports_the_save() {
         let mut f = tab_fixture();
         let asset = write_note(&mut f, &note("hello", 1.5));
-        let document = request_note(&mut f, &asset);
+        let document = request_asset(&mut f, &asset);
         edit_weight(&mut f, 4.0);
 
         press_save(&mut f);
@@ -671,7 +933,7 @@ mod tests {
     fn discarding_goes_back_to_the_value_as_last_saved() {
         let mut f = tab_fixture();
         let asset = write_note(&mut f, &note("hello", 1.5));
-        let document = request_note(&mut f, &asset);
+        let document = request_asset(&mut f, &asset);
         edit_weight(&mut f, 4.0);
         press_save(&mut f);
         edit_weight(&mut f, 9.0);
@@ -686,7 +948,7 @@ mod tests {
     fn a_save_that_cannot_write_reports_it_and_stays_unsaved() {
         let mut f = tab_fixture();
         let asset = write_note(&mut f, &note("hello", 1.5));
-        let document = request_note(&mut f, &asset);
+        let document = request_asset(&mut f, &asset);
         edit_weight(&mut f, 4.0);
         f.make_project_unwritable();
 
@@ -711,7 +973,7 @@ mod tests {
         let asset = write_note(&mut f, &note("hello", 1.5));
         std::fs::write(f.project_root.join(ADDRESS), b"not a note").unwrap();
 
-        let document = request_note(&mut f, &asset);
+        let document = request_asset(&mut f, &asset);
 
         assert!(
             f.status(document).contains("content asset"),
@@ -733,7 +995,7 @@ mod tests {
         };
         f.add_to_project(&mistaken);
 
-        let document = request_note(&mut f, &mistaken);
+        let document = request_asset(&mut f, &mistaken);
 
         assert!(
             f.status(document).contains("another asset"),
@@ -748,7 +1010,7 @@ mod tests {
         let mut f = tab_fixture();
         let asset = write_note(&mut f, &note("hello", 1.5));
 
-        request_note(&mut f, &asset);
+        request_asset(&mut f, &asset);
         f.frame();
 
         let knows_note = |types: &AppTypeRegistry| types.read().get(TypeId::of::<Note>()).is_some();

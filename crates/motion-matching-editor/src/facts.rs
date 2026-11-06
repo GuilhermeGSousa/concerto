@@ -3,7 +3,9 @@ use std::{path::Path, sync::Arc, thread::JoinHandle};
 use anyhow::Context;
 use concerto_animation_editor::{ClipFacts, preview::ShowClipScene, read_clip, read_shown_scene};
 use concerto_ecs::{Entity, Query, Res};
-use concerto_editor::{preview::PreviewSignals, project::ProjectState};
+use concerto_editor::{
+    joint_picker::DocumentBones, preview::PreviewSignals, project::ProjectState,
+};
 use concerto_foundation::assets::{
     Asset, AssetId,
     content::{decode_content_asset, read_content_asset},
@@ -82,7 +84,7 @@ fn scene_of(shown: &mut ShownSkeleton, root: &Path, assets: &AssetRegistry) -> S
 }
 
 pub(crate) fn follow_skeleton(
-    documents: Query<(Entity, &mut DefinitionDocument)>,
+    documents: Query<(Entity, &mut DefinitionDocument, &mut DocumentBones)>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
     mut previews: PreviewSignals,
@@ -90,7 +92,7 @@ pub(crate) fn follow_skeleton(
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for (document, mut state) in documents.iter() {
+    for (document, mut state, mut bones) in documents.iter() {
         let id = state.skeleton.id();
         if state
             .shown_skeleton
@@ -101,7 +103,7 @@ pub(crate) fn follow_skeleton(
         }
         let mut shown = read_shown(id, &project.root, &assets);
         previews.trigger(document, scene_of(&mut shown, &project.root, &assets));
-        state.bones = shown
+        bones.0 = shown
             .skeleton
             .as_ref()
             .map(|skeleton| skeleton.names.to_vec());
@@ -216,3 +218,6 @@ pub(crate) fn read_entry_facts(
         ));
     }
 }
+
+#[cfg(test)]
+mod tests;

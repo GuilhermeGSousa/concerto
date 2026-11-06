@@ -6,13 +6,6 @@ use concerto_ecs::{
         listener::{IntoListener, Listener},
     },
 };
-use concerto_editor::{
-    asset_editor::ActiveEditor,
-    asset_picker::{picker_button, picker_caret, picker_label},
-    inspector::{
-        EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
-    },
-};
 use concerto_mesh::JointName;
 use concerto_name::Name;
 use concerto_ui::elements::prelude::*;
@@ -25,8 +18,13 @@ use concerto_ui::{
 use concerto_window::input::MouseButton;
 
 use crate::{
-    document::DefinitionDocument,
-    menu::{NameMenu, close_menu, open_name_menu},
+    asset_editor::ActiveEditor,
+    asset_picker::{picker_button, picker_caret, picker_label},
+    inspector::{
+        EditContext, EditError, InspectorRegistry, PropertyCommits, PropertyEditor, PropertyRow,
+        PropertyRowValue,
+    },
+    name_menu::{NameMenu, close_menu, open_name_menu},
 };
 
 const NO_NAME: &str = "None";
@@ -35,10 +33,18 @@ const NO_NAME: &str = "None";
 #[derive(Default)]
 pub struct JointNameEditor;
 
+/// The bones of the skeleton a document's value names, or `None` while it names none that can be read.
+#[derive(Component, Debug, Default, PartialEq)]
+pub struct DocumentBones(pub Option<Vec<Name>>);
+
 #[derive(Component)]
 pub(crate) struct JointNameLabel {
     row: Entity,
     button: Entity,
+}
+
+pub(crate) fn register_defaults(registry: &mut InspectorRegistry) {
+    registry.register_property_editor::<JointName, JointNameEditor>();
 }
 
 impl PropertyEditor<JointName> for JointNameEditor {
@@ -93,15 +99,15 @@ fn joint_of(values: &Query<&PropertyRowValue>, row: Entity) -> Option<JointName>
 
 fn front_bones<'a>(
     active: &ActiveEditor,
-    documents: &'a Query<&DefinitionDocument>,
+    documents: &'a Query<&DocumentBones>,
 ) -> Option<&'a [Name]> {
-    documents.get_entity(active.0?)?.bones.as_deref()
+    documents.get_entity(active.0?)?.0.as_deref()
 }
 
 fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            active: Res<ActiveEditor>,
-           documents: Query<&DefinitionDocument>,
+           documents: Query<&DocumentBones>,
            values: Query<&PropertyRowValue>,
            menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
@@ -151,7 +157,7 @@ fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
 
 pub(crate) fn refresh_joint_rows(
     active: Res<ActiveEditor>,
-    documents: Query<&DefinitionDocument>,
+    documents: Query<&DocumentBones>,
     values: Query<&PropertyRowValue>,
     labels: Query<(&JointNameLabel, &mut UIText)>,
     disabled: Query<&UIDisabled>,
@@ -184,4 +190,4 @@ pub(crate) fn refresh_joint_rows(
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

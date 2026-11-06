@@ -19,6 +19,7 @@ use concerto_editor::{
     fonts::{MEDIUM, glyph, icon},
     hosted::HostedApp,
     inspector::{InspectedValues, ShownValue},
+    name_menu::{NameMenu, close_menu, open_name_menu},
     preview::PreviewFailed,
     timeline::{Timeline, TimelineSelected, frame_at, time_of_frame},
 };
@@ -43,7 +44,6 @@ use crate::{
     derive::BakedStats,
     document::{ChannelId, DefinitionDocument, HeldChannel, publish_values},
     facts::EntryFacts,
-    menu::{NameMenu, close_menu, open_name_menu},
     playback::scrub_entry,
 };
 
