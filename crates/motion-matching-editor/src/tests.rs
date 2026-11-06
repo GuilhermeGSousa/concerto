@@ -1103,6 +1103,7 @@ fn install_opens_saves_and_discards_a_definition_in_the_editors_schedule() {
     });
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
         .register_plugin(WindowPlugin)
         .insert_resource(Window::new((640, 480), 1.0))
