@@ -641,8 +641,48 @@ write error is logged and the load still succeeds. The editor, a game it hosts
 and a native `concerto::run` all use `<project>/derived-cache/`, which the
 project's `.gitignore` lists, so a blob derived in one is a hit in the others.
 An `App` that sets no cache, such as a test, derives on every load. The web
-build has no cache and derives in the browser, on the main thread, until the
-cook step in #541 builds the blobs ahead of time and the web build reads them.
+build has no cache: an uncooked web build, such as `trunk serve`, derives in
+the browser, on the main thread. A cooked build carries the blobs instead.
+
+### Cooking
+
+A cook writes each derived asset's blob into a copy of its `.gasset` file, as a
+trailing derived section, so a shipped build applies it without deriving. It is
+run through the project tool:
+
+```sh
+cargo concerto build <dir> --cook [--release]
+cargo concerto build <dir> --cook [--release] --target wasm32-unknown-unknown [--public-url <url>] [--dist <dir>]
+```
+
+1. The game is built natively, in the requested profile.
+2. It runs as `<game> --cook <target>/cooked/<pkg>`. Every `concerto::run`
+   binary accepts `--cook <out>`, which calls `concerto::cook` instead of opening
+   a window. That builds the recipe's `App` with no `Gpu`, `Window` or
+   `DrawTarget`, runs each plugin's `build` and never its `finish`, and runs no
+   frame. It points the `AssetServer` at the project's `content/` and its
+   `derived-cache/`, and calls `AssetServer::cook`.
+3. `AssetServer::cook` takes every registry entry whose kind is a registered
+   derived type (a former name included), in address order. It decodes the
+   file, runs `on_load`, derives or takes a cache hit as a load does, and
+   writes `<out>/<address>`: the original header and payload bytes, unchanged,
+   plus the section. A cached blob that `apply_derived` refuses is derived
+   again, never cooked. The first failure stops the cook and fails the command,
+   naming the asset.
+4. The cooked files are *staged*: each is copied over the file at the same
+   path in what the build ships, `<target>/<profile>/<pkg>-content/` natively,
+   or `<dist>/` after `trunk build` for the web. A cooked file whose path the
+   build doesn't ship is skipped.
+
+The committed `content/` never holds a section, and `build.rs` and
+`index.html` don't change. Staging can't go stale: a later `cargo build` that
+changes `content/` reruns `build.rs`, which copies the raw files back over the
+cooked ones, and the game derives at load again.
+
+`cook` writes a `.concerto-cook` marker into `out` and refuses a non-empty
+directory without one, so `--cook` never empties a directory it didn't write.
+The cook needs no GPU: a plugin that needs the `Gpu` must reach it in `finish`,
+not in `build`.
 
 ## Editor-authored assets
 
