@@ -115,6 +115,85 @@ impl<const V: u32> DerivedData for Sum<V> {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Maybe {
+    tag: String,
+    derive: bool,
+    value: u64,
+    inputs: Vec<AssetId>,
+    #[serde(skip)]
+    total: Option<u64>,
+}
+
+impl Maybe {
+    fn new(tag: &str, derive: bool, value: u64, inputs: Vec<AssetId>) -> Self {
+        Self {
+            tag: tag.to_string(),
+            derive,
+            value,
+            inputs,
+            total: None,
+        }
+    }
+}
+
+impl Asset for Maybe {
+    fn name() -> &'static str {
+        "Maybe"
+    }
+}
+
+impl LoadableAsset for Maybe {}
+
+fn input_value(inputs: &DerivedInputs, id: AssetId) -> anyhow::Result<u64> {
+    match inputs.decode::<Leaf>(id) {
+        Ok(leaf) => Ok(leaf.value),
+        Err(_) => Ok(inputs.decode::<Maybe>(id)?.value),
+    }
+}
+
+impl DerivedData for Maybe {
+    const DERIVED_VERSION: u32 = 1;
+
+    fn is_derived(&self) -> bool {
+        self.derive
+    }
+
+    fn derived_inputs(&self) -> Vec<AssetId> {
+        self.inputs.clone()
+    }
+
+    fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64> {
+        let mut hasher = DefaultHasher::new();
+        self.value.hash(&mut hasher);
+        for &id in &self.inputs {
+            inputs.bytes(id).unwrap().hash(&mut hasher);
+        }
+        Ok(hasher.finish())
+    }
+
+    fn derive(
+        &self,
+        inputs: &DerivedInputs,
+        _progress: &mut dyn FnMut(usize, usize),
+    ) -> anyhow::Result<Vec<u8>> {
+        with_probe(&self.tag, |probe| probe.derives += 1);
+        let mut total = self.value;
+        for &id in &self.inputs {
+            total += input_value(inputs, id)?;
+        }
+        Ok(total.to_le_bytes().to_vec())
+    }
+
+    fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+        let bytes: [u8; 8] = blob
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("a maybe blob is 8 bytes, not {}", blob.len()))?;
+        self.total = Some(u64::from_le_bytes(bytes));
+        Ok(())
+    }
+}
+
 struct Project {
     root: PathBuf,
     registry: AssetRegistry,
@@ -164,6 +243,16 @@ impl Project {
         .unwrap()
     }
 
+    fn maybe(&mut self, name: &str, value: &Maybe) -> AssetId {
+        save_content_asset_into(
+            value,
+            &self.root,
+            &format!("content/{name}.gasset"),
+            &mut self.registry,
+        )
+        .unwrap()
+    }
+
     fn cook(&self, name: &str, derived_version: u32, blob: &[u8]) {
         let path = self.root.join(format!("content/{name}.gasset"));
         let bytes = std::fs::read(&path).unwrap();
@@ -200,13 +289,16 @@ impl<const V: u32> Runtime<V> {
         let mut server = AssetServer::with_content_root(project.content_root());
         let leaves = AssetStore::<Leaf>::new();
         let sums = AssetStore::<Sum<V>>::new();
+        let maybes = AssetStore::<Maybe>::new();
         server.register_asset(&leaves);
         server.register_derived_asset(&sums);
+        server.register_derived_asset(&maybes);
         server.publish_registry(project.registry.clone());
         server.set_derived_cache(cache);
         let mut world = World::new();
         world.insert_resource(leaves);
         world.insert_resource(sums);
+        world.insert_resource(maybes);
         world.insert_resource(server.clone());
         Self { server, world }
     }
@@ -253,6 +345,29 @@ impl Runtime<1> {
                 .get(&handle)
             {
                 return Some(leaf.value);
+            }
+            if !self.server.is_loading() {
+                return None;
+            }
+            assert!(Instant::now() < deadline, "load timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+impl<const V: u32> Runtime<V> {
+    fn load_maybe(&mut self, id: AssetId) -> Option<Option<u64>> {
+        let handle = self.server.load::<Maybe>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            if let Some(maybe) = self
+                .world
+                .get_resource::<AssetStore<Maybe>>()
+                .unwrap()
+                .get(&handle)
+            {
+                return Some(maybe.total);
             }
             if !self.server.is_loading() {
                 return None;
@@ -777,4 +892,116 @@ fn only_derived_kinds_can_be_cooked() {
 
     assert!(server.can_cook("Sum"));
     assert!(!server.can_cook("Leaf"));
+}
+
+#[test]
+fn an_instance_that_does_not_derive_loads_without_reading_inputs_or_touching_the_cache() {
+    let tag = "maybe-plain";
+    let mut project = Project::new(tag);
+    let id = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load_maybe(id), Some(None));
+    assert_eq!(derives(tag), 0);
+    assert!(!cache.exists());
+}
+
+#[test]
+fn an_instance_that_derives_loads_with_its_blob() {
+    let tag = "maybe-derived";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let id = project.maybe("derived", &Maybe::new(tag, true, 5, vec![a]));
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_maybe(id), Some(Some(8)));
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn an_input_that_does_not_derive_is_accepted_and_one_that_derives_is_refused() {
+    let tag = "maybe-input";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let plain = project.maybe("plain", &Maybe::new(tag, false, 4, vec![AssetId::new()]));
+    let derived = project.maybe("derived", &Maybe::new(tag, true, 6, vec![a]));
+    let over_plain = project.maybe("over-plain", &Maybe::new(tag, true, 1, vec![plain]));
+    let over_derived = project.maybe("over-derived", &Maybe::new(tag, true, 1, vec![derived]));
+
+    pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[a, plain],
+    ))
+    .expect("an input that does not derive is accepted");
+
+    let error = pollster::block_on(DerivedInputs::read(
+        &project.content_root(),
+        &project.registry,
+        &[a, derived],
+    ))
+    .expect_err("an input that derives is refused");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&format!("{derived:?}"))
+            && message.contains("content/derived.gasset")
+            && message.contains("Maybe")
+            && message.contains("itself derived"),
+        "got: {message}"
+    );
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_maybe(over_plain), Some(Some(5)));
+    assert_eq!(runtime.load_maybe(over_derived), None);
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_cook_writes_and_reports_only_the_instances_that_derive() {
+    let tag = "maybe-cook";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    project.maybe("derived", &Maybe::new(tag, true, 5, vec![a]));
+    project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    let out = project.root.join("cooked");
+
+    let report = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .unwrap();
+
+    assert_eq!(report.cooked, vec!["content/derived.gasset"]);
+    assert_eq!(cache_files(&out), vec![out.join("content/derived.gasset")]);
+    let cooked = read_cooked(&out.join("content/derived.gasset"));
+    assert_eq!(cooked.blob, 8u64.to_le_bytes());
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_cooked_section_on_an_instance_that_does_not_derive_is_not_applied() {
+    let tag = "maybe-cooked-plain";
+    let mut project = Project::new(tag);
+    let id = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    project.cook("plain", 1, &42u64.to_le_bytes());
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_maybe(id), Some(None));
+    assert_eq!(derives(tag), 0);
+}
+
+#[test]
+fn file_is_derived_decodes_the_payload_by_default() {
+    let tag = "maybe-file";
+    let mut project = Project::new(tag);
+    project.maybe("plain", &Maybe::new(tag, false, 5, Vec::new()));
+    project.maybe("derived", &Maybe::new(tag, true, 5, Vec::new()));
+
+    let answer = |name: &str| {
+        let bytes = std::fs::read(project.root.join(format!("content/{name}.gasset"))).unwrap();
+        let (header, payload) = read_content_asset(&bytes).unwrap();
+        Maybe::file_is_derived(&header, payload).unwrap()
+    };
+    assert!(!answer("plain"));
+    assert!(answer("derived"));
 }

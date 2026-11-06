@@ -589,25 +589,39 @@ content tree. `MotionDatabase` is one: its file is the definition, and its
 | Item | Meaning |
 |---|---|
 | `DERIVED_VERSION` | Raised when `derive` gives a different blob for the same inputs |
-| `derived_inputs()` | The content assets the blob is built from; none may itself be derived |
+| `is_derived()` | Whether this asset has a blob to derive; `true` unless the type overrides it |
+| `file_is_derived(&header, payload)` | Whether a file of the type derives, from its header and payload; by default it decodes the payload, migrating, and asks `is_derived()`. A type overrides it when decoding all of it is slow |
+| `derived_inputs()` | The content assets the blob is built from; none may itself derive |
 | `derived_key(&inputs)` | A `u64` that is equal for inputs giving an equal blob |
 | `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)` |
 | `apply_derived(&blob)` | Takes the blob into the asset's runtime part |
 
+Whether an asset derives is decided per asset, not per type. One whose
+`is_derived()` is false is a plain asset of a derived type: it loads as it is,
+reading no inputs, computing no key and touching no cache, and a cook skips it.
+A derived type whose assets all derive, such as `MotionDatabase`, keeps the
+default.
+
 `DerivedInputs::read` reads each input's file from the content root as a load
-does. `bytes(id)` gives the whole file and `decode::<T>(id)` decodes it,
-migrating as a load does but without `on_load`.
+does. An input whose kind is a registered derived type is asked
+`file_is_derived`, and refused when it answers true, with an error naming the
+input's id, its address and its kind and saying it is itself derived. A plain
+asset of a derived type is accepted, and a file of a kind that isn't derived is
+never looked at. `bytes(id)` gives the whole file and `decode::<T>(id)` decodes
+it, migrating as a load does but without `on_load`.
 
 A type is registered with `app.register_derived_asset::<A>()`, which also
-registers it as an asset. A load of it runs `on_load`, then applies the blob
-of a cooked file's derived section when its `derived_version` is the type's
+registers it as an asset. A load of it runs `on_load`. An asset that doesn't
+derive is then loaded as it is, and a derived section on it, which only a
+hand-made file can have, is ignored with a warning. One that derives applies
+the blob of a cooked file's derived section when its `derived_version` is the type's
 `DERIVED_VERSION`, reading no inputs and touching no cache. Without a section,
 or when the section's version differs or `apply_derived` refuses it, with a
 warning, the load reads the inputs, computes the key and looks the blob up in
 the `AssetServer`'s `DerivedDataCache`. A hit is applied; a miss, or a cached blob that
 `apply_derived` refuses, is derived, written to the cache and applied. The
-handle reads as loaded only once the blob is applied, and a missing or derived
-input fails the load. `AssetServer::add` derives nothing: code that adds a
+handle reads as loaded only once the blob is applied, and a missing input, an
+input that itself derives, or a failed derive fails the load. `AssetServer::add` derives nothing: code that adds a
 derived asset in memory attaches the computed part itself.
 
 The key covers the definition and the bytes of its inputs, not code. A change
@@ -629,7 +643,7 @@ the browser, on the main thread. A cooked build carries the blobs instead.
 
 ### Cooking
 
-A cook writes each derived asset's blob into a copy of its `.gasset` file, as a
+A cook writes the blob of each asset that derives into a copy of its `.gasset` file, as a
 trailing derived section, so a shipped build applies it without deriving. It is
 run through the project tool:
 
@@ -651,7 +665,9 @@ after `--`.
    `derived-cache/`, and calls `AssetServer::cook`.
 3. `AssetServer::cook` takes every registry entry whose kind is a registered
    derived type, in address order. It decodes the
-   file, runs `on_load`, derives or takes a cache hit as a load does, and
+   file and runs `on_load`. An asset that doesn't derive is skipped: no file is
+   written and the `CookReport` leaves its address out. For one that derives,
+   it derives or takes a cache hit as a load does, and
    writes `<out>/<address>`: the original header and payload bytes, unchanged,
    plus the section. A cached blob that `apply_derived` refuses is derived
    again, never cooked. The first failure stops the cook and fails the command,
