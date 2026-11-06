@@ -212,7 +212,8 @@ A graph is a tree of nodes under a result node:
   `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space.
-- **Look-at** (`LookAtNode`) turns a character's spine, neck, head and eyes
+- **Look-at** (`LookAtNode`, in `concerto::procedural_animation`, registered
+  by `ProceduralAnimationPlugin`) turns a character's spine, neck, head and eyes
   toward a point while the body plays its input. The `chain` lists
   `LookAtBone`s from the spine to the head, each under the one before, all
   under bone 0. Each bone turns by its `share` of the angle left to it, and

@@ -10,8 +10,8 @@ use concerto_animation::graph::AnimationGraph;
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
-    AnimationClipNode, AnimationNode, ErasedAnimationNode, IkGoal, LookAtBone, LookAtEye,
-    LookAtNode, ReflectAnimationNode, TipRotation, TwoBoneIkNode,
+    AnimationClipNode, AnimationNode, ErasedAnimationNode, IkGoal, ReflectAnimationNode,
+    TipRotation, TwoBoneIkNode,
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
@@ -313,62 +313,6 @@ fn a_two_bone_ik_node_keeps_every_field_through_a_round_trip() {
         restored.load_warnings()
     );
     assert_eq!(live_node::<TwoBoneIkNode>(&restored), Some(&node));
-}
-
-#[test]
-fn a_look_at_node_keeps_every_field_through_a_round_trip() {
-    let node = LookAtNode {
-        chain: vec![
-            LookAtBone {
-                bone: "spine_02".into(),
-                share: 0.3,
-                yaw_limit: 0.5,
-                pitch_limit: 0.25,
-                halflife: 0.2,
-            },
-            LookAtBone {
-                bone: "head".into(),
-                share: 0.7,
-                yaw_limit: 0.9,
-                pitch_limit: 0.4,
-                halflife: 0.1,
-            },
-        ],
-        eyes: vec![
-            LookAtEye {
-                bone: "eye_l".into(),
-                yaw_limit: 0.6,
-                pitch_limit: 0.3,
-                halflife: 0.02,
-            },
-            LookAtEye {
-                bone: "eye_r".into(),
-                yaw_limit: 0.55,
-                pitch_limit: 0.35,
-                halflife: 0.04,
-            },
-        ],
-        forward: glam::Vec3::new(0.0, 0.1, 1.0),
-        up: glam::Vec3::new(0.1, 1.0, 0.0),
-        target_param: name!("gaze_target"),
-        weight: 0.8,
-        weight_param: Some(name!("gaze_weight")),
-        weight_halflife: 0.35,
-        max_angle: 1.5,
-    };
-    assert_ne!(node, LookAtNode::default());
-    let mut graph = AnimationGraph::from_node(node.clone());
-    graph.make_live(&registry(false), None).unwrap();
-
-    let mut restored = round_trip(&graph);
-    restored.make_live(&registry(false), None).unwrap();
-
-    assert!(
-        restored.load_warnings().is_empty(),
-        "{:?}",
-        restored.load_warnings()
-    );
-    assert_eq!(live_node::<LookAtNode>(&restored), Some(&node));
 }
 
 #[test]
