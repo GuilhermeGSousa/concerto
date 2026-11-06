@@ -7,7 +7,7 @@ use concerto_ecs::{
     command::{CommandQueue, EntityCommandQueue},
     events::{event_reader::EventReader, event_writer::EventWriter},
     reflect::AppTypeRegistry,
-    signal::On,
+    signal::{On, lifecycle::Add},
 };
 use concerto_foundation::assets::{
     AssetId,
@@ -91,7 +91,8 @@ impl Plugin for InspectedAssetPlugin {
                 )
                     .chain(),
             )
-            .add_listener(restore_discarded_value);
+            .add_listener(restore_discarded_value)
+            .add_listener(clear_status_on_edit);
     }
 }
 
@@ -258,6 +259,17 @@ pub(crate) fn save_inspected_assets(
                 });
             }
         }
+    }
+}
+
+pub(crate) fn clear_status_on_edit(
+    on: On<Add<Unsaved>>,
+    documents: Query<&mut EditorDocument, With<InspectedDocument>>,
+) {
+    if let Some(mut document) = documents.get_entity(on.signal().entity)
+        && !document.status.is_empty()
+    {
+        document.status.clear();
     }
 }
 
@@ -619,6 +631,7 @@ pub(crate) mod tests {
         panel.initialize(&mut f.world);
         panel.run_and_apply((), &mut f.world);
         f.world.add_listener(restore_discarded_value);
+        f.world.add_listener(clear_status_on_edit);
         let mut systems = value_systems();
         let cards = systems.split_off(1);
         for system in systems {
@@ -935,6 +948,20 @@ pub(crate) mod tests {
         assert!(f.written::<SaveFailed>().is_empty());
         assert_eq!(f.document(document).current, Some(asset));
         assert_eq!(f.status(document), format!("Saved {ADDRESS}"));
+    }
+
+    #[test]
+    fn an_edit_after_a_save_clears_the_saved_status() {
+        let mut f = tab_fixture();
+        let asset = write_note(&mut f, &note("hello", 1.5));
+        let document = request_asset(&mut f, &asset);
+        edit_weight(&mut f, 4.0);
+        press_save(&mut f);
+
+        edit_weight(&mut f, 9.0);
+
+        assert!(f.unsaved(document));
+        assert_eq!(f.status(document), "");
     }
 
     #[test]
