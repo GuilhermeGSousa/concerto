@@ -1054,23 +1054,21 @@ spans the space between the cards and sits over the viewport, which keeps its
 full size, as it does under the cards. Chatter stays visible on every tab. A
 Scene document gets no `bottom` host.
 
-The [custom asset editor example](examples/custom_asset.rs) loads a
-non-Clone Dialogue asset through `decode_content_asset`, which checks its kind
-and type version, builds its own text widget, replaces its contents,
-rejects invalid input without mutation, hosts a preview of a cube that it sets
-spinning with a signal, publishes the `Dialogue` as a
-[document value](#document-values) whose edits mark the document unsaved and
-send the speed to the preview, and registers through the public API. `text`
-shows "Unsupported type", since there is no `String` editor. It stops at marking:
-it never answers `SaveRequested`, so its edits cannot be saved. An editor that
-marks `Unsaved` must follow the rules below. Run its headless smoke test with:
+The [custom asset example](examples/custom_asset.rs) writes no editor of its
+own. Its game marks a non-Clone `Dialogue { text: String, spin_speed: f32 }`
+as an [inspected asset](#inspected-assets), so the generic tab opens, edits,
+saves and discards it: `text` is a text field and `spin_speed` a number field.
+`cargo run -p concerto-editor --example custom_asset` opens the editor over a
+temporary project holding one empty scene; New lists ExampleDialogue once that
+scene's edit `App` has built. Its smoke test, `tests/asset_editor.rs`, drives a
+hand-built editor `App` with `ProjectPlugin`, `ScenePlugin`,
+`InspectedAssetPlugin` and `ContentPlugin` through the same steps without a
+window: open the project, wait for ExampleDialogue to be creatable, create and
+open one, edit both fields in the inspector, check it is unsaved, save, and
+decode the file.
 
-```sh
-cargo run -p concerto-editor --example custom_asset
-```
-
-The example uses a synchronous ECS loading system for clarity. Asynchronous
-systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
+A custom editor may load in a synchronous ECS system, as the generic tab does.
+Asynchronous systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
 before mutating domain state, use `asset_request_is_current` with it to reject
 cancelled or superseded results. Call `finish_asset_request` with a mutable
 document borrow, the captured `AssetEntry`, and success or an error to update
