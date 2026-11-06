@@ -59,6 +59,11 @@ pub const HOSTED_UPLOAD_BYTES_PER_FRAME: usize = 32 * 1024 * 1024;
 /// How long an edit or play `App` is stepped hidden, waiting for its loads and uploads to settle, before it is shown anyway.
 pub const WARM_UP_LIMIT: Duration = Duration::from_secs(10);
 
+/// Replaces `WARM_UP_LIMIT` for the edit and play `App`s this editor starts.
+#[doc(hidden)]
+#[derive(Resource, Clone, Copy)]
+pub struct WarmUpLimit(pub Duration);
+
 #[derive(Resource)]
 pub(crate) struct FinishBuildsOffThread;
 
@@ -394,8 +399,7 @@ impl PendingApp {
         promoted
     }
 
-    #[cfg(test)]
-    fn with_warm_up_limit(mut self, limit: Duration) -> Self {
+    pub(crate) fn with_warm_up_limit(mut self, limit: Duration) -> Self {
         self.warm_up_limit = limit;
         self
     }

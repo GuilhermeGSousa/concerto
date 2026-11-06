@@ -35,7 +35,7 @@ use concerto_editor::{
         Unsaved, finish_asset_request,
     },
     guard::UnsavedGuard,
-    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
+    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted, WarmUpLimit},
     inspector::{
         DocumentValue, EditContext, EditError, EditableApp, InspectedValues, PropertyEditor,
         PropertyTarget, ShownValue,
@@ -87,8 +87,6 @@ use serde_json::{Value, json};
 
 const SIZE: (u32, u32) = (800, 600);
 const PATIENCE: Duration = Duration::from_secs(120);
-
-static ONE_APP_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 #[derive(Resource, Default)]
 struct EditFrames(u32);
@@ -767,10 +765,7 @@ where
     T: Send + 'static,
     F: Future<Output = T>,
 {
-    let _turn = ONE_APP_AT_A_TIME
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    Gpu::request_for_test()?;
+    let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let cancelled = Arc::new(Mutex::new(None::<Instant>));
     let cancelled_by_client = cancelled.clone();
@@ -793,6 +788,7 @@ where
     let log = log.clone();
     run_with(
         server_io,
+        gpu,
         move |app| {
             concerto_editor::mcp::editor(recipe, root, vec![extension])(app);
             app.insert_resource(log)
@@ -849,8 +845,7 @@ where
             configure(app);
         },
         SIZE,
-    )
-    .expect("an adapter was found");
+    );
     let returned = Instant::now();
     let result = client
         .join()
@@ -3453,7 +3448,9 @@ fn play_answers_once_what_the_game_loads_at_start_has_loaded() {
         &fixture,
         &Log::default(),
         gated_game,
-        |_| {},
+        |app| {
+            app.insert_resource(WarmUpLimit(Duration::from_secs(1)));
+        },
         |client| async move {
             open(&client).await;
             let document = document_id(&ok(&client, "status").await);
@@ -3492,8 +3489,9 @@ fn play_answers_that_the_game_is_still_loading_when_its_wait_runs_out() {
         &Log::default(),
         gated_game,
         |app| {
+            app.insert_resource(WarmUpLimit(Duration::from_secs(1)));
             app.insert_resource(concerto_editor::mcp::PlayTimeout(
-                concerto_editor::hosted::WARM_UP_LIMIT + Duration::from_secs(4),
+                Duration::from_secs(1) + Duration::from_secs(4),
             ));
         },
         |client| async move {
