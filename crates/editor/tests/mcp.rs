@@ -643,6 +643,7 @@ fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u
             source: "fixture.glb".into(),
             sub_asset: address.into(),
         }),
+        derived: None,
     };
     let path = root.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

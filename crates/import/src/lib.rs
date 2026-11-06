@@ -317,6 +317,7 @@ fn import_with(
                 source: provenance_source.clone(),
                 sub_asset: sub_asset.name.clone(),
             }),
+            derived: None,
         };
         plan.push((
             project_root.join(&address),

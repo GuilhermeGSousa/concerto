@@ -39,7 +39,9 @@ impl FeatureQuery {
         trajectory: &[TrajectorySample],
     ) -> Result<Vec<f32>, BakeError> {
         let mut features = self.raw(database, skeleton, pose_frame, simulation, trajectory)?;
-        database.normalise(&mut features);
+        database
+            .normalise(&mut features)
+            .ok_or(BakeError::NotBaked)?;
         Ok(features)
     }
 
@@ -52,29 +54,31 @@ impl FeatureQuery {
         simulation: &Transform,
         trajectory: &[TrajectorySample],
     ) -> Result<Vec<f32>, BakeError> {
-        if skeleton.bone_count() != database.bone_count() {
+        let bone_count = database.bone_count().ok_or(BakeError::NotBaked)?;
+        if skeleton.bone_count() != bone_count {
             return Err(BakeError::BoneCountMismatch {
-                expected: database.bone_count(),
+                expected: bone_count,
                 actual: skeleton.bone_count(),
             });
         }
-        if self.channels.len() != database.channels().len() {
+        if self.channels.len() != database.channels.len() {
             return Err(BakeError::ChannelCountMismatch {
                 expected: self.channels.len(),
-                actual: database.channels().len(),
+                actual: database.channels.len(),
             });
         }
-        if pose_frame >= database.frame_count() {
+        let frame_count = database.frame_count().ok_or(BakeError::NotBaked)?;
+        if pose_frame >= frame_count {
             return Err(BakeError::FrameOutOfRange {
                 frame: pose_frame,
-                frame_count: database.frame_count(),
+                frame_count,
             });
         }
-        let needed = database.trajectory().sample_count;
-        let reads_trajectory = database
-            .channels()
+        let needed = database.trajectory.sample_count;
+        let reads_trajectory = self
+            .channels
             .iter()
-            .any(|span| span.source() == ChannelSource::Trajectory);
+            .any(|channel| channel.source() == ChannelSource::Trajectory);
         if reads_trajectory && trajectory.len() < needed {
             return Err(BakeError::TrajectoryTooShort {
                 needed,
@@ -91,10 +95,14 @@ impl FeatureQuery {
             body: BodyMotion::default(),
             trajectory,
         };
-        let mut features = database.features(pose_frame).to_vec();
-        for (span, channel) in database.channels().iter().zip(&self.channels) {
-            if span.source() == ChannelSource::Trajectory {
-                channel.extract(&context, &mut features[span.range()]);
+        let mut features = database
+            .features(pose_frame)
+            .ok_or(BakeError::NotBaked)?
+            .to_vec();
+        for (index, channel) in self.channels.iter().enumerate() {
+            if channel.source() == ChannelSource::Trajectory {
+                let range = database.channel_range(index).ok_or(BakeError::NotBaked)?;
+                channel.extract(&context, &mut features[range]);
             }
         }
         Ok(features)

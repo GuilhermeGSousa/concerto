@@ -30,8 +30,8 @@ use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonComponent};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, CharacterLink, CharacterSimulation, DesiredMotion,
     FeatureChannelData, FeatureShape, JointAxis, LastQuery, MirrorAxis, MotionDatabase,
-    MotionDatabaseDefinition, MotionEntry, MotionMatchingNode, MotionMatchingPlugin,
-    SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
+    MotionEntry, MotionMatchingNode, MotionMatchingPlugin, SimulationBoneSettings,
+    TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
 };
 use concerto_motion_matching_gizmos::{
     MotionMatchingGizmos, MotionMatchingGizmosPlugin, matched_shapes, query_shapes,
@@ -139,7 +139,7 @@ fn baked(
     skeleton_handle: AssetHandle<Skeleton>,
     [walk_handle, turn_handle]: [AssetHandle<AnimationClip>; 2],
 ) -> MotionDatabase {
-    let definition = MotionDatabaseDefinition {
+    let definition = MotionDatabase {
         skeleton: skeleton_handle,
         entries: vec![
             MotionEntry {
@@ -164,8 +164,10 @@ fn baked(
         trajectory: TrajectorySettings::default(),
         channels: channels(),
         mirror_axis: MirrorAxis::X,
+        baked: None,
     };
-    bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap()
+    let baked = bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap();
+    definition.with_baked(baked)
 }
 
 fn spawn_capsule(world: &mut World) -> Entity {
@@ -370,7 +372,7 @@ fn assert_read_from_the_capsule(last_query: &LastQuery, database: &MotionDatabas
         trajectory,
         ..
     } = last_query;
-    let baked = database.simulation(*frame);
+    let baked = database.simulation_bone(*frame).unwrap();
     assert!(simulation.translation.distance(START) < 1.0);
     assert!(simulation.translation.distance(baked.translation) > FAR_FROM_THE_DATABASE);
     assert!(simulation.rotation.angle_between(Quat::IDENTITY) > 0.0);

@@ -51,10 +51,12 @@ mod tests {
     use std::any::TypeId;
 
     use concerto::{
-        app::StartupScene,
+        app::{App, StartupScene},
         asset_id,
         ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
+        foundation::assets::asset_server::AssetServer,
         reflect::ReflectDefault,
+        render::gpu::Gpu,
     };
 
     use crate::{character::PlayerSpawner, game};
@@ -76,6 +78,33 @@ mod tests {
         assert!(spawner.data::<ReflectComponent>().is_some());
         assert!(spawner.data::<ReflectDefault>().is_some());
         assert!(spawner.data::<ReflectSceneComponent>().is_some());
+    }
+
+    fn builds_with_no_gpu_and_can_cook_the_motion_database(recipe: fn(&mut App)) {
+        let mut app = App::new();
+        recipe(&mut app);
+
+        assert!(app.get_resource::<Gpu>().is_none());
+        assert!(
+            app.get_resource::<AssetServer>()
+                .unwrap()
+                .can_cook("MotionDatabase")
+        );
+    }
+
+    #[test]
+    fn the_grid_builds_with_no_gpu_and_can_cook_the_motion_database() {
+        builds_with_no_gpu_and_can_cook_the_motion_database(crate::grid);
+    }
+
+    #[test]
+    fn the_forest_builds_with_no_gpu_and_can_cook_the_motion_database() {
+        builds_with_no_gpu_and_can_cook_the_motion_database(game);
+    }
+
+    #[test]
+    fn the_sanatorium_builds_with_no_gpu_and_can_cook_the_motion_database() {
+        builds_with_no_gpu_and_can_cook_the_motion_database(crate::sanatorium);
     }
 }
 

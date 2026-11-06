@@ -148,11 +148,12 @@ impl MotionMatchingState {
         if entry != to_entry {
             return;
         }
-        let (Some(clip), Some(handle)) = (sources.clips.get(entry), database.clips().get(entry))
+        let (Some(clip), Some(stored)) = (sources.clips.get(entry), database.entries.get(entry))
         else {
             return;
         };
-        let mirrored = database.mirrored().get(entry).copied().unwrap_or(false);
+        let handle = &stored.clip;
+        let mirrored = stored.mirrored;
         for key in clip.events_in(from_time, to_time, false) {
             self.fired.push(FiredEvent {
                 clip: handle.id(),
@@ -189,7 +190,10 @@ impl MotionMatchingState {
         }) else {
             return RootMotion::IDENTITY;
         };
-        let simulation = sources.database.simulation(self.frame).rotation;
+        let Some(simulation) = sources.database.simulation_bone(self.frame) else {
+            return RootMotion::IDENTITY;
+        };
+        let simulation = simulation.rotation;
         let turn_back = (simulation * joint.rotation * rest.rotation.inverse()).inverse();
         let dt = self.delta_time * self.play_rate;
         RootMotion {
@@ -214,7 +218,9 @@ impl MotionMatchingState {
 
     fn initialise(&mut self, sources: &Sources) -> Result<(), String> {
         let database = sources.database;
-        let bone_count = database.bone_count();
+        let bone_count = database
+            .bone_count()
+            .ok_or_else(|| BakeError::NotBaked.to_string())?;
         if sources.skeleton.bone_count() != bone_count {
             return Err(BakeError::BoneCountMismatch {
                 expected: bone_count,
@@ -239,7 +245,7 @@ impl MotionMatchingState {
         let query = FeatureQuery::new(database).map_err(|error| error.to_string())?;
         let frame = database
             .ranges()
-            .next()
+            .and_then(|mut ranges| ranges.next())
             .map(|range| range.start)
             .ok_or_else(|| "the database has no frames".to_string())?;
         let (pose, velocity) = sample(sources, frame).map_err(|error| error.to_string())?;
@@ -261,7 +267,7 @@ impl MotionMatchingState {
         self.rotation_change = 0.0;
         self.query = Some(query);
         self.bone_indices = bone_indices;
-        self.root_motion = database.body_motion(frame);
+        self.root_motion = database.body_motion(frame).unwrap_or_default();
         self.scatter(sources);
         self.initialised = true;
         Ok(())
@@ -324,7 +330,10 @@ impl MotionMatchingState {
             Err(error) => return Err(error.to_string()),
         };
         let mut features = raw.clone();
-        database.normalise(&mut features);
+        if database.normalise(&mut features).is_none() {
+            self.last_query = None;
+            return Ok(None);
+        }
         let end_of_range = database
             .range_of(self.frame)
             .is_some_and(|range| self.frame + 1 == range.end);
@@ -369,7 +378,7 @@ impl MotionMatchingState {
         let database = sources.database;
         let dt = self.delta_time;
         let play_rate = self.play_rate;
-        let rate = database.rate();
+        let rate = database.rate;
         let range = database
             .range_of(self.frame)
             .ok_or_else(|| "the state's frame left the database".to_string())?;
@@ -437,7 +446,7 @@ impl MotionMatchingState {
             );
         }
         self.last_delta = dt;
-        self.root_motion = database.body_motion(self.frame);
+        self.root_motion = database.body_motion(self.frame).unwrap_or_default();
         let held = self.frame == previous_frame && self.frame + 1 == range.end;
         let delta = if held {
             RootMotion::IDENTITY
@@ -501,7 +510,7 @@ fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeE
     let database = sources.database;
     let range = database.range_of(frame).ok_or(BakeError::FrameOutOfRange {
         frame,
-        frame_count: database.frame_count(),
+        frame_count: database.frame_count().unwrap_or(0),
     })?;
     let (first, second) = if frame + 1 < range.end {
         (frame, frame + 1)
@@ -510,7 +519,7 @@ fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeE
     };
     let first_pose = Pose::from_joints(database.pose(first, sources.skeleton, &sources.clips)?);
     let second_pose = Pose::from_joints(database.pose(second, sources.skeleton, &sources.clips)?);
-    let velocity = PoseVelocity::between(&first_pose, &second_pose, 1.0 / database.rate());
+    let velocity = PoseVelocity::between(&first_pose, &second_pose, 1.0 / database.rate);
     let pose = if first == frame {
         first_pose
     } else {

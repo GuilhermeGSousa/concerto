@@ -1,6 +1,6 @@
 # concerto-motion-matching-editor
 
-The asset editor of a `MotionDatabaseDefinition`, as an extension of
+The asset editor of a `MotionDatabase`, as an extension of
 `concerto-editor`. Only editor crates depend on it. A game lists it in its own
 `Cargo.toml`, and `cargo concerto editor <dir> --update` writes the call into
 the game's generated `editor/`:
@@ -11,8 +11,8 @@ plugins = [{ package = "concerto-motion-matching-editor", install = "concerto_mo
 ```
 
 `install` registers `MotionDatabaseEditor` as a creatable asset editor, so
-**New ▸ New MotionDatabaseDefinition** in the content browser makes a definition
-and opens it, and it registers `JointNameEditor` for the inspector.
+**New ▸ New MotionDatabase** in the content browser makes a definition and opens
+it, and it registers `JointNameEditor` for the inspector.
 
 Listing this crate doesn't bring the clip tab. A definition's preview still plays
 clips, through `concerto-animation-editor`'s `clip_preview`, but a game that wants
@@ -62,8 +62,8 @@ The `left` host scrolls and holds:
   clip's bones, so the clip names bones this skeleton does not have. Before the
   clip has been read it reads `Reading…`, with no skeleton `No skeleton`, and for
   a clip that cannot be read `Can't read`. A **Mirrored** checkbox ends the line:
-  it sets the entry's `mirrored`, so the bake and baked playback take the clip's
-  poses through the mirror across `mirror_axis`, and it is disabled when the
+  it sets the entry's `mirrored`, so the derived database and its playback take
+  the clip's poses through the mirror across `mirror_axis`, and it is disabled when the
   document is read-only. A click selects the entry, **+** opens
   the asset picker over every clip and appends the pick as a whole clip, and **−**
   removes the entry. The same clip can be listed twice, once mirrored, to give
@@ -95,43 +95,43 @@ frames, each capped at the clip's duration because rounding can land above it an
 `bake` refuses that. A click clears the range, so the entry uses the whole clip.
 A clip with no detected rate has no frames, so its range cannot be selected.
 
-The `inspector` host, above the normal inspector, holds **Build**, the line under
-it, the baked state, the stats of the baked file, in a list that scrolls past
-160 px, and the document's status on a line of its own when it is not empty. The
-next edit clears the status.
+The `inspector` host, above the normal inspector, holds the stats of the derived
+database, in a list that scrolls past 160 px, and the document's status on a line
+of its own when it is not empty. The next edit clears the status.
 
-## Build
+## Deriving
 
-Build is off, with the reason on the line below it, while the preview is not
-running, with no skeleton, and with no entry. While it runs it is off and that
-line reads `Baking 2 of 6`: the entry being worked on, out of how many.
+The database a definition plays is derived data: nothing is baked into the
+project, and there is no Build button. The document derives it on open, after
+each save, and when an `AssetsWritten` names its skeleton or one of its clips,
+as an import of that clip sends. Discarding unsaved edits derives again, which
+finds the cached blob, so a database an edit stopped plays again. It derives what
+was last opened or saved, so an
+unsaved edit derives nothing and the preview plays the last derived database.
+Nothing is derived while the preview is not running, with no skeleton or with no
+entry.
 
-Pressing it waits until no property edit is queued, then saves if the document
-is `Unsaved`, so a weight typed and not yet committed is in the build. A failed
-save stops it there. The definition's channels were loaded with the preview's
-`AppTypeRegistry` when the document opened, so a channel the game registers
-bakes. A worker thread then reads the skeleton and clips and hashes them with
-the definition. When `<name>_baked.gasset` next to the definition holds that
-hash, only the weights changed: the worker loads the file and calls `reweigh`,
-and the status reads `Updated the weights in …`. Otherwise it bakes
-in full, and the status reads `Built …`. A `BakeError` shows as `Build failed: …`.
+A worker thread reads the inputs with `DerivedInputs::read` from the project's
+content and the editor's `AssetRegistry`, and computes the key. The editor's
+`AssetServer` holds the project's `derived-cache/`, the one a hosted game and a
+native run of the game use, so a blob found under that key is applied as it is,
+and a weight change, which the key leaves out, finds the blob it had. Otherwise
+the worker derives the blob, writes it to the cache and applies it, while the
+status reads `Deriving 2 of 6`: the entry being worked on, out of how many. A
+cache hit leaves the status alone, except a `Deriving …` line left by a derive
+it replaced, which it clears. An error shows as `Derive failed: …` and
+stops the database, and so does a channel weight that is not finite and
+positive, on a cache hit as on a miss. A derive writes its lines only over an
+empty status, the line it started over, or its own last line: a line written
+while it runs, such as `Save failed: …` or the error of a refused open, stays.
 
-The main thread writes the file, its id derived from its path, and adds it to the
-registry, only if the document still shows the definition the build started for.
-Closing the tab, opening another definition or discarding unsaved edits drops the
-result, while the thread runs to its end. The baked file is an ordinary `.gasset`; the project decides
-whether to commit it. Build refuses when that address holds another kind of
-asset, or a file whose header it can't read, which includes a baked file from an
-older format. It leaves that file alone, and it has to be removed by hand.
-
-The baked state compares that file with the definition as last saved. A worker
-works it out on open, after each save and after each build, so a changed weight
-reads `Out of date` once saved even though the hash leaves it out. A definition
-with no baked file, or one in an older layout, reads `Not built`. A skeleton or
-clip that cannot be read reads `Can't read <asset>`. With a failed preview the
-channels cannot be built, and the line stays empty. The stats come from the baked
-file: the frames in all and per entry, the memory, and each channel's mean and
-standard deviation. An entry shorter than the trajectory looks ahead gets a
+The document holds `BackgroundWork` while the worker runs, so under `--mcp`
+`status` reads `busy: yes` until it ends. A result is dropped when the tab has
+opened another definition since, or when another derive was asked for while it
+ran; closing the tab or opening another definition lets the thread run to its
+end, and its blob still reaches the cache. The stats come from the derived
+database: the frames in all and per entry, the memory, and each channel's mean
+and standard deviation. An entry shorter than the trajectory looks ahead gets a
 warning.
 
 ## The preview
@@ -142,44 +142,43 @@ skeleton's folder, read again whenever the skeleton changes, with a
 `SkeletonGizmo` on each rooted skeleton. A folder with no such scene leaves the
 stage empty, and a scene that cannot be read says why under the skeleton picker.
 
-The worker that works out the baked state also loads what the baked file needs to
-play: the database, its skeleton and the clips it names, which may no longer be
-the definition's. They reach the preview as `Arc`s in a `ShowDatabase` signal, and
-the editor sends `ClearClip` with it, so only one system writes the bones. Then
+The derive's worker also decodes what the database needs to play from the inputs
+it read: the skeleton and the clips of the definition as last saved, which may no
+longer be the ones an unsaved edit shows. They reach the preview as `Arc`s in a
+`ShowDatabase` signal, and the editor sends `ClearClip` with it, so only one system
+writes the bones. Then
 `play_database` steps a frame index at the database's `rate`, looping the entry
 last sought, or every frame in order until one is, and writes
 `database.pose(frame, ..)` to every bone with a match by id in the skeleton's `bone_ids`. That pose holds each
 parentless bone relative to the simulation bone, so it is placed by
 `database.simulation(frame)` first: the character goes where the clip takes it,
 the camera follows it, and the simulation bone, a yellow ring with an arrow along
-its facing, is drawn under it with `DebugGizmos`. An out-of-date file plays until
-the next build, and the baked state says so.
+its facing, is drawn under it with `DebugGizmos`. After an unsaved edit the last
+derived database plays until the next save derives again.
 
 Every channel also draws the frame's features, through its `preview` and
 `preview_features`, so a game's channel can add its own shapes. The channels are
-built from the values in the baked file, so an out-of-date file draws what it
-baked, and channels that cannot be built draw nothing while the database plays.
+the derived database's, so after an unsaved edit they draw what was last saved.
 Channels take colours in turn from a palette without the simulation bone's yellow.
 Each is dimmed unless it is the one picked under **Channels**, which draws at full
 colour, so with `Settings` picked they are all dimmed. `ShowChannel` tells the
-preview which one, by its index among the baked channels, and only when the
-definition's channel there has the type the baked one has, so an out-of-date file
+preview which one, by its index among the derived channels, and only when the
+definition's channel there has the type the derived one has, so an unsaved edit
 never highlights the wrong channel.
 
-With no baked data to play, the preview plays the selected entry's whole clip
-through `clip_preview`, read on a worker, and that is also the fallback for a
-baked file made for another skeleton, one whose clips cannot be read, or one the
-skeleton no longer fits. Picking another skeleton stops a database at once. Nothing
-plays until the baked state is known, so a definition with baked data never
+With no derived database to play, because nothing was derived or the derive
+failed, the preview plays the selected entry's whole clip through `clip_preview`,
+read on a worker. Picking another skeleton stops a database at once. No clip plays
+while a derive is asked for or running, so a definition that derives never
 flashes a clip when it opens. That clip plays unmirrored, even for a mirrored
-entry; once the database is built, it plays the mirrored frames.
+entry; once the database is derived, it plays the mirrored frames.
 
 The `Timeline` is always the selected entry's. With a clip its head is the
 preview's time and a scrub sends `SeekClip`. With a database, selecting an entry
 moves the playback to the entry's first frame, a scrub sends `SeekDatabase` to the
-nearest baked frame of that entry, and `DatabaseProgress` moves the head, so it
+nearest derived frame of that entry, and `DatabaseProgress` moves the head, so it
 returns to the entry's first frame each time the entry loops. An entry whose clip
-is not the one baked at its place, or whose Mirrored differs from the baked
+is not the one derived at its place, or whose Mirrored differs from the derived
 entry's, is not sought, so the head stays where it is and
 the playback goes on looping the entry it was in. The tab has no transport:
 the preview always plays, and a scrub moves it without pausing.
@@ -192,5 +191,5 @@ document, replaced whenever the skeleton changes and `None` when there is no
 skeleton or it cannot be read, so the row reads the front document and needs no
 edit target.
 Without them the button is disabled, and reads the stored name in the muted
-colour. A name the skeleton lacks uses the warning colour, and `bake` reports it.
+colour. A name the skeleton lacks uses the warning colour, and a derive fails naming it.
 An empty name reads `None`. The menu closes when another tab comes to the front.

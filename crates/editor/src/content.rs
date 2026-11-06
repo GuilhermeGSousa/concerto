@@ -9,7 +9,7 @@ use concerto_ecs::{
     command::CommandQueue,
     component::removed::RemovedComponents,
     entity::hierarchy::ChildOf,
-    events::event_reader::EventReader,
+    events::{event_reader::EventReader, event_writer::EventWriter},
     query::{
         change_detection::DetectChanges,
         filter::{Added, Changed, Or, With},
@@ -46,7 +46,7 @@ use taffy::FlexDirection;
 use crate::asset_editor::{AssetEditorRegistry, MAX_NEW_NUMBER, new_asset_name, valid_asset_name};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark};
-use crate::project::{EditorCommand, EditorCommands, ProjectOpened, ProjectState};
+use crate::project::{AssetsWritten, EditorCommand, EditorCommands, ProjectOpened, ProjectState};
 use crate::tree_items::{OrderItems, despawn_outermost, order_items};
 use concerto_foundation::assets::{
     Asset, AssetId,
@@ -660,6 +660,7 @@ fn commit_pending_asset(
     mut focused: ResMut<FocusedWidget>,
     mut commands: ResMut<EditorCommands>,
     highlighted: Query<(Entity, &ContentItem), With<UISelected>>,
+    mut written: EventWriter<AssetsWritten>,
     mut cmd: CommandQueue,
 ) {
     let field = fields.iter().next();
@@ -743,6 +744,7 @@ fn commit_pending_asset(
             state.selected_folder = None;
             state.reveal = Some(ContentKey::Asset(id));
             project.status = format!("Created {address}");
+            written.write(AssetsWritten { ids: vec![id] });
             commands.0.push_back(EditorCommand::OpenAsset(id));
         }
         Err(error) => {
@@ -1198,7 +1200,7 @@ mod tests {
     use crate::{
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::testing::SceneFixture,
-        project::{Project, ProjectOpened, discover_project},
+        project::{AssetsWritten, Project, ProjectOpened, discover_project},
         scene::SceneEditor,
     };
     use concerto_ecs::{
@@ -1251,6 +1253,7 @@ mod tests {
         channel::<UITextInputCancelled>(world);
         channel::<UIFocusLost>(world);
         channel::<ProjectOpened>(world);
+        channel::<AssetsWritten>(world);
         world.track_removals::<UISelected>();
         install_listeners(world);
         run(world, build);
@@ -2372,6 +2375,24 @@ mod tests {
 
         let (_, reopened) = discover_project(f.root.path()).unwrap();
         assert_eq!(reopened.id_for_address(address), Some(id));
+    }
+
+    #[test]
+    fn a_created_asset_is_sent_as_written() {
+        let mut f = level_and_forest();
+        f.new_scene();
+
+        f.submit("Meadow");
+
+        let id = f.asset("content/Meadow.gasset");
+        let written: Vec<AssetsWritten> = f
+            .world
+            .get_resource::<EventChannel<AssetsWritten>>()
+            .unwrap()
+            .read_from(&mut concerto_ecs::events::event_cursor::EventCursor::default())
+            .cloned()
+            .collect();
+        assert_eq!(written, [AssetsWritten { ids: vec![id] }]);
     }
 
     #[test]

@@ -19,6 +19,7 @@ fn write_asset(path: &Path, id: AssetId, kind: &str, provenance: Option<ImportPr
         kind: kind.to_string(),
         kind_version: 1,
         provenance,
+        derived: None,
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
@@ -148,6 +149,7 @@ fn a_scan_reads_the_kind_version_and_registry_text_has_none() {
         kind: "AnimationClip".to_string(),
         kind_version: 3,
         provenance: None,
+        derived: None,
     };
     std::fs::create_dir_all(base.join("content")).unwrap();
     std::fs::write(

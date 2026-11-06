@@ -579,6 +579,14 @@ the scene the document now shows, or `SaveFailed { document, message }`, where
 a save only when the document has unsaved changes; otherwise it writes neither,
 even while it shows "Stop to save".
 
+Every write of a content asset in the editor also ends in
+`AssetsWritten { ids }` in the editor's world, naming the assets written: a
+finished import sends every asset it wrote, unless its project was replaced
+while it ran; a save by any asset editor sends the saved asset, taken from its
+`SceneSaved`, so an asset editor's save reports it by writing `SceneSaved`; and
+a New in the Asset Browser sends the created asset. Code that keeps data
+derived from other assets reads it to know when to derive again.
+
 Replacing the open scene, closing a dirty tab, switching project, and closing
 the window all ask first when there are unsaved changes: Save, Discard, or
 Cancel. Escape cancels. Discard marks the scene clean, so its replacement

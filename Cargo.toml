@@ -110,12 +110,17 @@ concerto-world-grid.workspace = true
 concerto-physics.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow = "1.0.97"
 pollster = "0.4.0"
 env_logger = "0.11.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = "1.0.0"
 console_error_panic_hook = "0.1.7"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
 
 [profile.dev]
 opt-level = 1
