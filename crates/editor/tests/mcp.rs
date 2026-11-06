@@ -17,7 +17,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, With, Without,
+    Component, Entity, Query, Res, ResMut, Resource, With, Without, World,
     command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
@@ -26,6 +26,8 @@ use concerto_ecs::{
     signal::On,
     signal::Signal,
     signal::listener::GlobalListener,
+    system::input::SystemLocal,
+    world::FromWorld,
 };
 use concerto_editor::{
     asset_editor::{
@@ -4949,6 +4951,56 @@ fn finish_tune(mut calls: ToolCalls<FinishTune>, documents: Query<&mut EditorDoc
     }
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct QueueTune {}
+
+#[derive(Resource)]
+struct TuneAsset(AssetId);
+
+fn queue_tune(
+    mut calls: ToolCalls<QueueTune>,
+    tune: Res<TuneAsset>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    for (_, reply) in calls.read() {
+        commands.0.push_back(EditorCommand::OpenAsset(tune.0));
+        reply.ok("queued");
+    }
+}
+
+struct TunesSeenLoading {
+    assets: Vec<AssetId>,
+}
+
+impl FromWorld for TunesSeenLoading {
+    fn from_world(_world: &World) -> Self {
+        Self { assets: Vec::new() }
+    }
+}
+
+fn load_tunes(
+    documents: Query<&mut EditorDocument, With<HeldTune>>,
+    mut seen: SystemLocal<TunesSeenLoading>,
+) {
+    let mut loading = Vec::new();
+    for mut document in documents.iter() {
+        let Some(asset) = document.pending.clone() else {
+            continue;
+        };
+        if !seen.assets.contains(&asset.id) {
+            loading.push(asset.id);
+            continue;
+        }
+        let result = if asset.address.contains("broken") {
+            Err(anyhow::anyhow!("{} is out of tune", asset.address))
+        } else {
+            Ok(())
+        };
+        finish_asset_request(&mut document, &asset, result);
+    }
+    seen.assets = loading;
+}
+
 fn note_value_edits(mut committed: EventReader<Hosted<PropertyCommitted>>, log: Res<Log>) {
     for Hosted { document, event } in committed.read() {
         log.push(format!(
@@ -4963,6 +5015,15 @@ fn note_value_edits(mut committed: EventReader<Hosted<PropertyCommitted>>, log: 
 fn tune_editor(app: &mut App) {
     app.register_asset_editor::<Tune, TuneEditor>().unwrap();
     app.register_type::<Tuning>()
+        .add_system(Update, load_tunes)
+        .add_system(LateUpdate, note_value_edits);
+}
+
+fn held_tune_editor(app: &mut App, tune: AssetId) {
+    app.register_asset_editor::<Tune, TuneEditor>().unwrap();
+    app.register_type::<Tuning>()
+        .insert_resource(TuneAsset(tune))
+        .add_tool::<QueueTune, _>(McpTool::new("queue_tune"), queue_tune)
         .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune)
         .add_system(LateUpdate, note_value_edits);
 }
@@ -4970,8 +5031,7 @@ fn tune_editor(app: &mut App) {
 fn shown_tune_editor(app: &mut App) {
     app.register_asset_editor::<Tune, ShownTuneEditor>()
         .unwrap();
-    app.register_type::<Tuning>()
-        .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune);
+    app.register_type::<Tuning>().add_system(Update, load_tunes);
 }
 
 async fn open_tune(client: &Client) -> String {
@@ -5021,6 +5081,50 @@ struct ValueCalls {
 }
 
 #[test]
+fn open_asset_answers_another_kind_once_its_editor_has_loaded_or_refused_it() {
+    let fixture = Fixture::new();
+    fixture.add("content/broken_tune.gasset", "Tune");
+    fixture.add("content/tune.gasset", "Tune");
+    let log = Log::default();
+    let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let refused = error_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/broken_tune.gasset" }),
+        )
+        .await;
+        let opened = ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/tune.gasset" }),
+        )
+        .await;
+        let status = ok(&client, "status").await;
+        client.cancel().await.unwrap();
+        (refused, opened, status)
+    }) else {
+        return;
+    };
+
+    let (refused, opened, status) = served.result;
+    assert_eq!(refused["code"], "open_failed", "{refused}");
+    assert_eq!(
+        refused["message"],
+        "content/broken_tune.gasset is out of tune"
+    );
+    let document = document_id(&status);
+    assert_eq!(
+        opened,
+        format!("Opened content/tune.gasset in document {document}.")
+    );
+    assert_eq!(
+        documents(&status),
+        [format!("{document} Tune content/tune.gasset")]
+    );
+}
+
+#[test]
 fn a_shown_value_leaves_every_value_reachable_by_name() {
     let fixture = Fixture::new();
     fixture.add("content/tune.gasset", "Tune");
@@ -5032,7 +5136,6 @@ fn a_shown_value_leaves_every_value_reachable_by_name() {
         shown_tune_editor,
         |client| async move {
             open_tune(&client).await;
-            ok(&client, "finish_tune").await;
             let status = until(&client, "status", |status| status.ends_with("busy: no")).await;
             let hidden = inspected_target(&client, "Tuning").await;
             let written = set_on_target(&client, "Tuning", "gain", json!(0.75)).await;
@@ -5055,11 +5158,17 @@ fn a_shown_value_leaves_every_value_reachable_by_name() {
 #[test]
 fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
     let fixture = Fixture::new();
-    fixture.add("content/tune.gasset", "Tune");
+    let tune = fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
-    let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
-        let document = open_tune(&client).await;
-        let busy = until(&client, "status", |status| status.ends_with("busy: yes")).await;
+    let held = move |app: &mut App| held_tune_editor(app, tune);
+    let Some(served) = serve_with(&fixture, &log, game, held, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        assert_eq!(ok(&client, "queue_tune").await, "queued");
+        let busy = until(&client, "status", |status| {
+            status.ends_with("busy: yes") && status.contains(" · opening content/tune.gasset")
+        })
+        .await;
+        let document = document_id(&busy);
         let in_a_frame = inspected_target(&client, "Tuning").await;
         ok(&client, "finish_tune").await;
         let idle = until(&client, "status", |status| status.ends_with("busy: no")).await;
