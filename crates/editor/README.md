@@ -1139,8 +1139,8 @@ registry other than its hosted `App`'s or the editor's carries
 An edit through the inspector marks the tab unsaved. Ctrl+S, or the
 unsaved-changes prompt's Save, writes the value over the file it was opened
 from, keeps the file's id, reads the written file back as what was last
-saved, and ends in `SceneSaved`, with "Saved <address>" as the status. A
-failed save ends in `SaveFailed`, shows why, and leaves the tab unsaved.
+saved, and ends in `SceneSaved`, with "Saved <address>" as the status until
+the next edit clears it. A failed save ends in `SaveFailed`, shows why, and leaves the tab unsaved.
 Discard decodes the file as last read or saved back into the value. There is
 no undo. A value whose type carries `ReflectSkeletonSource` gives the document
 the bones of the skeleton it names in `DocumentBones`, read again whenever an
