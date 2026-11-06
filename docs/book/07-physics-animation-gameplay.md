@@ -234,7 +234,6 @@ A graph is a tree of nodes under a result node:
   Wire it after the layers, aim and look-at nodes and before hand IK.
   `FootPlacementNode::new(pelvis)` starts from the defaults, `with_leg` adds a
   leg, and each other field has a `with_<field>`:
-
   ```rust
   FootPlacementNode::new("Hips")
       .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))

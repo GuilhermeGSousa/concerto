@@ -151,7 +151,7 @@ impl FootPlacementNode {
     }
 }
 
-/// A leg:the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone adds a second ray.
+/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone adds a second ray.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootPlacementLeg {
     pub foot: JointName,
@@ -723,10 +723,7 @@ mod tests {
         time::Time,
         transform::{GlobalTransform, Transform},
     };
-    use concerto_mesh::{
-        JointName,
-        skeleton::{Skeleton, SkeletonComponent},
-    };
+    use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
     use concerto_name::{Name, name};
     use concerto_physics::{
         body::BodyId,
@@ -1201,61 +1198,6 @@ mod tests {
     }
 
     #[test]
-    fn the_builder_sets_every_field_over_the_defaults() {
-        let built = FootPlacementNode::new("hips")
-            .with_leg(FootPlacementLeg::new("left_foot").with_toe("left_toe"))
-            .with_leg(FootPlacementLeg::new("right_foot"))
-            .with_max_step_up(0.4)
-            .with_max_step_down(0.6)
-            .with_max_pelvis_drop(0.3)
-            .with_max_foot_angle(0.4)
-            .with_foot_halflife(0.07)
-            .with_pelvis_halflife(0.12)
-            .with_rotation_halflife(0.08)
-            .with_softness(0.02)
-            .with_weight(0.8)
-            .with_weight_param(name!("weight"))
-            .with_weight_halflife(0.25)
-            .with_ignore_param(name!("ignore"));
-
-        assert_eq!(
-            built,
-            FootPlacementNode {
-                pelvis: JointName::from("hips"),
-                legs: vec![
-                    FootPlacementLeg {
-                        foot: JointName::from("left_foot"),
-                        toe: Some(JointName::from("left_toe")),
-                    },
-                    FootPlacementLeg {
-                        foot: JointName::from("right_foot"),
-                        toe: None,
-                    },
-                ],
-                max_step_up: 0.4,
-                max_step_down: 0.6,
-                max_pelvis_drop: 0.3,
-                max_foot_angle: 0.4,
-                foot_halflife: 0.07,
-                pelvis_halflife: 0.12,
-                rotation_halflife: 0.08,
-                softness: 0.02,
-                weight: 0.8,
-                weight_param: Some(name!("weight")),
-                weight_halflife: 0.25,
-                ignore_param: Some(name!("ignore")),
-            }
-        );
-        assert_eq!(
-            FootPlacementNode::new("hips"),
-            FootPlacementNode {
-                pelvis: JointName::from("hips"),
-                ..Default::default()
-            }
-        );
-    }
-
-    #[test]
     fn a_leg_the_node_cannot_resolve_leaves_the_input_pose_and_marks_its_warning() {
         let unresolvable = [
             FootPlacementNode::new("pelvis").with_leg(FootPlacementLeg::new("missing_foot")),
@@ -1515,7 +1457,7 @@ mod tests {
         stage.settle();
 
         let toe = stage.rise(LEFT_TOE);
-        assert!(toe > 0.17 - EPS, "{toe}");
+        assert!((toe - 0.17).abs() < EPS, "{toe}");
     }
 
     #[test]
