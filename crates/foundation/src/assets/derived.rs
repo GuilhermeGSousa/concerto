@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -12,13 +12,14 @@ use anyhow::Context;
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
     asset_server::AssetLoadContext,
-    content::{
-        decode_content_payload, read_content_asset_parts, write_cooked_content_asset, CookedSection,
-    },
+    content::{write_cooked_content_asset, CookedSection},
 };
 use super::{
     asset_server::AssetServer,
-    content::{decode_content_asset, DerivedSection},
+    content::{
+        decode_content_asset, decode_content_payload, read_content_asset_parts, ContentAssetHeader,
+        DerivedSection,
+    },
     registry::AssetRegistry,
     utils::try_read_relative,
     Asset, AssetId, ContentAssetRoot, LoadableAsset,
@@ -28,6 +29,16 @@ use super::{
 pub trait DerivedData: LoadableAsset {
     /// Bumped when `derive`'s output changes for the same inputs; part of the cache path.
     const DERIVED_VERSION: u32;
+
+    /// Whether this asset has a blob to derive; one that doesn't loads as it is and is not cooked.
+    fn is_derived(&self) -> bool {
+        true
+    }
+
+    /// Whether the content asset with this header and payload derives; decodes it and asks [`is_derived`](Self::is_derived) unless overridden.
+    fn file_is_derived(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<bool> {
+        Ok(decode_content_payload::<Self>(header, payload)?.is_derived())
+    }
 
     /// The content assets the blob is built from.
     fn derived_inputs(&self) -> Vec<AssetId>;
@@ -46,14 +57,19 @@ pub trait DerivedData: LoadableAsset {
     fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()>;
 }
 
-static DERIVED_KINDS: RwLock<BTreeSet<&'static str>> = RwLock::new(BTreeSet::new());
+type FileIsDerived = fn(&ContentAssetHeader, &[u8]) -> anyhow::Result<bool>;
+
+static DERIVED_KINDS: RwLock<BTreeMap<&'static str, FileIsDerived>> = RwLock::new(BTreeMap::new());
 
 pub(crate) fn note_derived_kind<A: DerivedData>() {
-    DERIVED_KINDS.write().unwrap().insert(A::name());
+    DERIVED_KINDS
+        .write()
+        .unwrap()
+        .insert(A::name(), A::file_is_derived);
 }
 
-fn is_derived_kind(kind: &str) -> bool {
-    DERIVED_KINDS.read().unwrap().contains(kind)
+fn file_is_derived_check(kind: &str) -> Option<FileIsDerived> {
+    DERIVED_KINDS.read().unwrap().get(kind).copied()
 }
 
 /// The files a derivation reads, each read whole from the content root and keyed by id.
@@ -63,7 +79,7 @@ pub struct DerivedInputs {
 }
 
 impl DerivedInputs {
-    /// Reads each of `ids` as a load would, failing on an id that is missing or names a derived asset.
+    /// Reads each of `ids` as a load would, failing on an id that is missing or names an asset that itself derives.
     pub async fn read(
         root: &ContentAssetRoot,
         registry: &AssetRegistry,
@@ -77,13 +93,6 @@ impl DerivedInputs {
             let entry = registry
                 .get(id)
                 .with_context(|| format!("derived input {id:?} is not in the content registry"))?;
-            if is_derived_kind(&entry.kind) {
-                anyhow::bail!(
-                    "derived input {id:?} at '{}' is a {}: derived assets can't derive from derived assets",
-                    entry.address,
-                    entry.kind
-                );
-            }
             let bytes = try_read_relative(root, &entry.address)
                 .await?
                 .with_context(|| {
@@ -92,6 +101,20 @@ impl DerivedInputs {
                         entry.address
                     )
                 })?;
+            if let Some(check) = file_is_derived_check(&entry.kind) {
+                let derives = read_content_asset_parts(&bytes)
+                    .and_then(|parts| check(&parts.header, parts.payload))
+                    .with_context(|| {
+                        format!("failed to read derived input {id:?} at '{}'", entry.address)
+                    })?;
+                if derives {
+                    anyhow::bail!(
+                        "derived input {id:?} at '{}' is a {} that is itself derived: derived assets can't derive from derived assets",
+                        entry.address,
+                        entry.kind
+                    );
+                }
+            }
             files.insert(id, bytes);
         }
         Ok(Self { files })
@@ -189,7 +212,7 @@ pub(crate) type DerivedFuture =
 pub(crate) type DerivedFuture = Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn Any + Send>>>>>;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) type CookFuture = Pin<Box<dyn Future<Output = anyhow::Result<Vec<u8>>> + Send>>;
+pub(crate) type CookFuture = Pin<Box<dyn Future<Output = anyhow::Result<Option<Vec<u8>>>> + Send>>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type CookHook = fn(id: AssetId, file: Vec<u8>, server: AssetServer) -> CookFuture;
@@ -282,6 +305,15 @@ pub(crate) fn derived_hook<A: DerivedData>(
         let mut asset = *asset
             .downcast::<A>()
             .map_err(|_| anyhow::anyhow!("the derived hook for {} got another type", A::name()))?;
+        if !asset.is_derived() {
+            if cooked.is_some() {
+                log::warn!(
+                    "ignoring the derived section of a {} that doesn't derive",
+                    A::name()
+                );
+            }
+            return Ok(Box::new(asset) as Box<dyn Any + Send>);
+        }
         if let Some(cooked) = cooked {
             if apply_cooked(&mut asset, cooked) {
                 return Ok(Box::new(asset) as Box<dyn Any + Send>);
@@ -300,6 +332,9 @@ pub(crate) fn cook_hook<A: DerivedData>(
 ) -> CookFuture {
     Box::pin(async move {
         let parts = read_content_asset_parts(&file)?;
+        if !A::file_is_derived(&parts.header, parts.payload)? {
+            return Ok(None);
+        }
         let mut asset = decode_content_payload::<A>(&parts.header, parts.payload)?;
         asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
         let derived = derive_and_apply(&mut asset, &server).await?;
@@ -312,5 +347,6 @@ pub(crate) fn cook_hook<A: DerivedData>(
                 blob: &derived.blob,
             },
         )
+        .map(Some)
     })
 }

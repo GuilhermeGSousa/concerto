@@ -2,12 +2,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
 use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
 use concerto_bvh::bvh_importer::BvhImporter;
 use concerto_ecs::component::scene::SceneEntityRef;
-use concerto_foundation::assets::AssetId;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
 use concerto_reflect::{Reflect, apply_value};
@@ -642,4 +642,76 @@ fn invalid_event_settings_are_rejected() {
         "frame_range = [1, 3]\n[events.events]\nstep = [0.05]\n",
         "step",
     );
+}
+
+const BASE_ID: &str = "d6e76e64-a888-49cd-bc16-61f0566f36ab";
+
+#[test]
+fn an_additive_table_makes_the_clip_additive_against_its_base() {
+    let settings = format!(
+        "[additive.cold_walk]\nbase = \"{BASE_ID}\"\nbase_range = [0.5, 1.5]\nrange = {{ start = 0.01, end = 0.05 }}\n"
+    );
+    let (skeleton, clip) = import_ok("cold_walk.bvh", TWO_JOINTS, &settings);
+    assert_eq!(
+        clip.additive(),
+        &Additive::LocalSpace(
+            AdditiveBase::new(AssetHandle::weak(
+                AssetId::from_simple_hex(BASE_ID).unwrap()
+            ))
+            .with_base_range(ClipRange::new(0.5, 1.5))
+            .with_range(ClipRange::new(0.01, 0.05))
+            .with_root(skeleton.bone_ids[0])
+        )
+    );
+}
+
+#[test]
+fn a_sidecar_without_an_additive_table_imports_a_plain_clip() {
+    let (_, clip) = import_ok("plain.bvh", TWO_JOINTS, "");
+    assert_eq!(clip.additive(), &Additive::None);
+}
+
+#[test]
+fn invalid_additive_settings_are_rejected() {
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        &format!("[additive.run]\nbase = \"{BASE_ID}\"\n"),
+        "run",
+    );
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        "[additive.additive]\nbase = \"not-an-id\"\n",
+        "UUID",
+    );
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        &format!("[additive.additive]\nbase = \"{BASE_ID}\"\nweight = 1.0\n"),
+        "weight",
+    );
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        &format!(
+            "[additive.additive]\nbase = \"{BASE_ID}\"\nrange = {{ start = 0.0, end = 0.05, step = 0.01 }}\n"
+        ),
+        "step",
+    );
+    for range in [
+        "[0.0, 0.07]",
+        "[0.02, 0.02]",
+        "[0.05, 0.01]",
+        "[-0.01, 0.05]",
+        "[nan, 0.05]",
+        "[0.0, inf]",
+    ] {
+        assert_malformed_with(
+            "additive.bvh",
+            TWO_JOINTS,
+            &format!("[additive.additive]\nbase = \"{BASE_ID}\"\nrange = {range}\n"),
+            "range",
+        );
+    }
 }

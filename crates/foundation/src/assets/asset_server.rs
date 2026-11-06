@@ -258,13 +258,13 @@ impl AssetServer {
             .insert(A::name(), cook_hook::<A>);
     }
 
-    /// Whether files of `kind` hold a derived asset that [`cook`](Self::cook) writes.
+    /// Whether files of `kind` hold a derived type, whose assets that derive [`cook`](Self::cook) writes.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn can_cook(&self, kind: &str) -> bool {
         self.data.cook_hooks.read().unwrap().contains_key(kind)
     }
 
-    /// Writes each derived asset of the registry to `<out>/<address>` with its derived blob, in address order, stopping at the first error.
+    /// Writes every asset of the registry that derives to `<out>/<address>` with its derived blob, in address order, stopping at the first error; the report lists only those written.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cook(&self, out: &Path) -> anyhow::Result<CookReport> {
         let (root, registry) = self.content_source();
@@ -277,10 +277,12 @@ impl AssetServer {
         let mut report = CookReport::default();
         for entry in entries {
             let hook = hooks[entry.kind.as_str()];
-            self.cook_entry(&root, entry, hook, out).with_context(|| {
+            let written = self.cook_entry(&root, entry, hook, out).with_context(|| {
                 format!("failed to cook the {} at '{}'", entry.kind, entry.address)
             })?;
-            report.cooked.push(entry.address.clone());
+            if written {
+                report.cooked.push(entry.address.clone());
+            }
         }
         Ok(report)
     }
@@ -292,17 +294,20 @@ impl AssetServer {
         entry: &AssetEntry,
         hook: CookHook,
         out: &Path,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let file = pollster::block_on(try_read_relative(root, &entry.address))?
             .with_context(|| format!("no content asset at '{}'", entry.address))?;
-        let cooked = pollster::block_on(hook(entry.id, file, self.clone()))?;
+        let Some(cooked) = pollster::block_on(hook(entry.id, file, self.clone()))? else {
+            return Ok(false);
+        };
         let path = out.join(&entry.address);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create '{}'", parent.display()))?;
         }
         std::fs::write(&path, cooked)
-            .with_context(|| format!("failed to write '{}'", path.display()))
+            .with_context(|| format!("failed to write '{}'", path.display()))?;
+        Ok(true)
     }
 
     /// Replaces the cache derived loads read and write; every clone sees it.

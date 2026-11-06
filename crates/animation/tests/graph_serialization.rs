@@ -2,7 +2,8 @@ use std::path::Path;
 
 use concerto_animation::TransitionBlender;
 use concerto_animation::clip::{
-    AnimationChanelOutput, AnimationChannel, AnimationClip, ClipEventData,
+    Additive, AdditiveBase, AnimationChanelOutput, AnimationChannel, AnimationClip, ClipEventData,
+    ClipRange,
 };
 use concerto_animation::evaluation::AnimationGraphContext;
 use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
@@ -418,6 +419,14 @@ fn animation_clip_encoding_matches_its_fixture() {
             name: name!("footstep_left"),
         },
     );
+    clip.set_additive(Additive::LocalSpace(
+        AdditiveBase::new(AssetHandle::weak(AssetId::from_bytes(
+            Uuid::from_u128(11).into_bytes(),
+        )))
+        .with_base_range(ClipRange::new(0.0, 1.0))
+        .with_range(ClipRange::new(0.25, 0.5))
+        .with_root(Uuid::from_u128(7)),
+    ));
 
     check_encoding(&clip, encoding_dir());
 }
@@ -437,7 +446,34 @@ fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
 
     let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
 
+    assert_eq!(clip.additive(), &Additive::None);
     assert!(clip.events().is_empty());
+    assert_eq!(clip.duration(), 0.5);
+    assert_eq!(clip.frame_rate(), Some(30.0));
+    assert_eq!(
+        clip.get_channels(&Uuid::from_u128(7)).map(Vec::len),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_version_2_clip_migrates_to_a_clip_that_is_not_additive() {
+    let payload = std::fs::read(encoding_dir().join("AnimationClip.v2.bin")).unwrap();
+    let header = ContentAssetHeader {
+        asset_id: AssetId::from_path("content/clips/turn.gasset"),
+        references: Vec::new(),
+        kind: "AnimationClip".to_string(),
+        kind_version: 2,
+        provenance: None,
+        derived: None,
+    };
+    let bytes = write_content_asset(&header, &payload).unwrap();
+
+    let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
+
+    assert_eq!(clip.additive(), &Additive::None);
+    assert_eq!(clip.events().len(), 1);
+    assert_eq!(clip.events()[0].time, 0.25);
     assert_eq!(clip.duration(), 0.5);
     assert_eq!(clip.frame_rate(), Some(30.0));
     assert_eq!(
