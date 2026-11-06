@@ -128,9 +128,10 @@ is the last frame drawn: the viewport's picture changes only when the edit
 
 `open_project` opens `path` and answers once the catalogue is read.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
-editor: a scene answers once it has loaded, and at once if it is already shown;
-another kind answers once its document exists, or `open_failed` with the
-document's status if the load failed, and a kind with no editor answers
+editor: it answers once the asset has loaded, and at once if it is already
+shown. A scene that fails to load answers `open_failed`; another kind answers
+once its editor calls `finish_asset_request`, or `open_failed` with the
+document's status if the load failed. A kind with no editor answers
 `open_failed`. `close_document` closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
@@ -1015,7 +1016,8 @@ systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
 before mutating domain state, use `asset_request_is_current` with it to reject
 cancelled or superseded results. Call `finish_asset_request` with a mutable
 document borrow, the captured `AssetEntry`, and success or an error to update
-the tab's current asset and status. A result for a closed tab has no document to
+the tab's current asset and status. Every request needs that call: MCP's
+`open_asset` waits for it, and times out without it. A result for a closed tab has no document to
 land on, and switching project closes every tab. An `AssetEditorCommand::Open`
 for an asset that is not in the current project's registry is ignored. Failed
 loads must leave the previous presentation intact. Finishing a replacement does not clear
