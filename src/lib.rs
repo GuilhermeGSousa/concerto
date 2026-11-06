@@ -65,7 +65,10 @@ pub fn run(
     });
 }
 
-/// Builds the `App` that `build` makes, with no GPU and no window, and writes each derived asset of `content` to `out` with its derived blob.
+#[cfg(not(target_arch = "wasm32"))]
+const COOK_MARKER: &str = ".concerto-cook";
+
+/// Builds the `App` that `build` makes, with no GPU and no window, and writes each derived asset of `content` to `out` with its derived blob; `out` must be missing, empty, or a previous cook output, which it replaces.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn cook(
     build: impl FnOnce(&mut App),
@@ -94,11 +97,22 @@ pub fn cook(
     server.publish_content_source(ContentAssetRoot::Directory(project_root.clone()), registry);
     server.set_derived_cache(DerivedDataCache::in_project(&project_root));
     if out.exists() {
+        let empty = std::fs::read_dir(out)
+            .with_context(|| format!("failed to read '{}'", out.display()))?
+            .next()
+            .is_none();
+        anyhow::ensure!(
+            empty || out.join(COOK_MARKER).is_file(),
+            "'{}' is not empty and is not a previous cook output, which holds a `{COOK_MARKER}` file",
+            out.display()
+        );
         std::fs::remove_dir_all(out)
             .with_context(|| format!("failed to remove '{}'", out.display()))?;
     }
     std::fs::create_dir_all(out)
         .with_context(|| format!("failed to create '{}'", out.display()))?;
+    std::fs::write(out.join(COOK_MARKER), "")
+        .with_context(|| format!("failed to write '{}'", out.join(COOK_MARKER).display()))?;
     server.cook(out)
 }
 
@@ -260,40 +274,88 @@ mod cook_tests {
         assert!(app.get_resource::<Gpu>().is_none());
     }
 
-    #[test]
-    fn a_cook_with_no_gpu_replaces_the_output_with_each_derived_asset_and_its_blob() {
-        let project = tempfile::tempdir().unwrap();
-        let mut registry = AssetRegistry::new();
-        save_content_asset_into(
-            &Doubled {
-                value: 21,
-                doubled: None,
-            },
-            project.path(),
-            "content/doubled.gasset",
-            &mut registry,
-        )
-        .unwrap();
-        let out = project.path().join("cooked");
-        std::fs::create_dir_all(&out).unwrap();
-        std::fs::write(out.join("stale.gasset"), b"stale").unwrap();
+    struct DoubledProject {
+        dir: tempfile::TempDir,
+        registry: String,
+    }
 
-        let report = super::cook(
-            recipe,
-            ContentSettings {
-                registry: &registry.to_toml(),
-                project_root: project.path().to_str(),
-            },
-            &out,
-        )
-        .unwrap();
+    impl DoubledProject {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let mut registry = AssetRegistry::new();
+            save_content_asset_into(
+                &Doubled {
+                    value: 21,
+                    doubled: None,
+                },
+                dir.path(),
+                "content/doubled.gasset",
+                &mut registry,
+            )
+            .unwrap();
+            Self {
+                dir,
+                registry: registry.to_toml(),
+            }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+
+        fn cook(&self, out: &std::path::Path) -> anyhow::Result<super::CookReport> {
+            super::cook(
+                recipe,
+                ContentSettings {
+                    registry: &self.registry,
+                    project_root: self.path().to_str(),
+                },
+                out,
+            )
+        }
+    }
+
+    #[test]
+    fn a_cook_with_no_gpu_writes_each_derived_asset_and_its_blob() {
+        let project = DoubledProject::new();
+        let out = project.path().join("cooked");
+
+        let report = project.cook(&out).unwrap();
 
         assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
-        assert!(!out.join("stale.gasset").exists());
+        assert!(out.join(".concerto-cook").is_file());
         let bytes = std::fs::read(out.join("content/doubled.gasset")).unwrap();
         let parts = read_content_asset_parts(&bytes).unwrap();
         assert_eq!(parts.header.derived.map(|section| section.key), Some(21));
         assert_eq!(parts.derived_blob, Some(&42u64.to_le_bytes()[..]));
+    }
+
+    #[test]
+    fn a_cook_replaces_a_previous_cook_output() {
+        let project = DoubledProject::new();
+        let out = project.path().join("cooked");
+        project.cook(&out).unwrap();
+        std::fs::write(out.join("stale.gasset"), b"stale").unwrap();
+
+        let report = project.cook(&out).unwrap();
+
+        assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
+        assert!(!out.join("stale.gasset").exists());
+        assert!(out.join("content/doubled.gasset").is_file());
+    }
+
+    #[test]
+    fn a_cook_refuses_a_non_empty_directory_it_did_not_write() {
+        let project = DoubledProject::new();
+        let out = project.path().join("mine");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("notes.txt"), b"mine").unwrap();
+
+        let error = project.cook(&out).unwrap_err();
+
+        assert!(error.to_string().contains("not empty"), "{error:#}");
+        assert_eq!(std::fs::read(out.join("notes.txt")).unwrap(), b"mine");
+        assert!(!out.join("content").exists());
     }
 
     #[test]
