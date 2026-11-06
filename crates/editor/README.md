@@ -333,7 +333,9 @@ steps, and drops. The crate has three parts:
   `First`, whatever tab is in front and with no input, until a step leaves its
   `AssetServer` not loading, no `SceneSpawnerComponent` whose scene is in its
   `AssetStore<Scene>`, and `render_assets_settled` true, or until
-  `WARM_UP_LIMIT`, 10 s after the join.
+  `WARM_UP_LIMIT`, 10 s after the join. A `WarmUpLimit` resource in the
+  editor's world, when present, replaces `WARM_UP_LIMIT` for the edit and play
+  `App`s it starts.
   Only then does it become the document's `HostedApp`; a panic in a hidden
   step is the build's failure, in the step `warming up`. A preview `App` skips
   the warm-up. `finish_blocking` and `PendingApp::finish_now` finish on the

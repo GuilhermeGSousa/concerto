@@ -35,7 +35,7 @@ use concerto_editor::{
         Unsaved, finish_asset_request,
     },
     guard::UnsavedGuard,
-    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
+    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted, WarmUpLimit},
     inspector::{
         DocumentValue, EditContext, EditError, EditableApp, InspectedValues, PropertyEditor,
         PropertyTarget, ShownValue,
@@ -3453,7 +3453,9 @@ fn play_answers_once_what_the_game_loads_at_start_has_loaded() {
         &fixture,
         &Log::default(),
         gated_game,
-        |_| {},
+        |app| {
+            app.insert_resource(WarmUpLimit(Duration::from_secs(1)));
+        },
         |client| async move {
             open(&client).await;
             let document = document_id(&ok(&client, "status").await);
@@ -3492,8 +3494,9 @@ fn play_answers_that_the_game_is_still_loading_when_its_wait_runs_out() {
         &Log::default(),
         gated_game,
         |app| {
+            app.insert_resource(WarmUpLimit(Duration::from_secs(1)));
             app.insert_resource(concerto_editor::mcp::PlayTimeout(
-                concerto_editor::hosted::WARM_UP_LIMIT + Duration::from_secs(4),
+                Duration::from_secs(1) + Duration::from_secs(4),
             ));
         },
         |client| async move {
