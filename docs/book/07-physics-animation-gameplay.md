@@ -193,8 +193,8 @@ A graph is a tree of nodes under a result node:
   first closure and then the overlay through the second, so the order can't
   come out wrong; it panics unless each closure adds exactly one input. Layers
   stack by chaining: one layer can be the base of the next. With no overlay
-  the node passes the base through, and inputs after the second are ignored
-  with a warning. A `BoneMask` is made from the content browser's New menu,
+  the node passes the base through, with no input at all it gives the rest
+  pose, and inputs after the second are ignored with a warning. A `BoneMask` is made from the content browser's New menu,
   or in code. Its `branches` are `BoneMaskBranch`es, each a `bone` by name, a
   `weight`, a `depth` and `descendants`. A branch covers its bone and, with
   `descendants` on (the default), the bones under it. Each bone takes the
@@ -217,8 +217,10 @@ A graph is a tree of nodes under a result node:
   is `weight` times the float under `weight_param`, with NaN as 0, clamped to
   [0, 1]; a missing param leaves `weight` alone. The inputs' node weights are
   ignored, and nothing eases the weight, so smooth the param in the game.
-  Root motion and the root bone's joint are always the base's, even under a
-  mask that names the root bone, which warns. The base's events keep their
+  Root motion is always the base's. When the player has a root bone (one
+  marked with `AnimationRootBone`), its joint is the base's too, even under a
+  mask that names it, which warns; without one, a mask may cover bone 0 like
+  any other. The base's events keep their
   weights, and the overlay's are added at their weight times the layer
   weight, whatever the mask.
   ```rust
