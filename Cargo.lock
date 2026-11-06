@@ -1341,6 +1341,7 @@ name = "concerto-project"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde_json",
  "tempfile",
  "toml_edit 0.22.27",
 ]

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
+use std::process::{self, Stdio};
 
 use anyhow::{bail, ensure, Context, Result};
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, TableLike, Value};
@@ -30,6 +32,9 @@ const EDITOR_MAIN_WITH_PLUGINS: &str = include_str!("../templates/editor/src/mai
 const PLUGIN_KEYS: &[&str] = &["package", "install", "version", "path"];
 const ARRAY_WIDTH: usize = 60;
 
+const WASM_TARGET: &str = "wasm32-unknown-unknown";
+const COOK_MARKER: &str = ".concerto-cook";
+
 const OWN_WORKSPACE: &str = "\n[workspace]\nmembers = [\".\", \"editor\"]\n\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3";
 
 const KEYWORDS: &[&str] = &[
@@ -53,7 +58,7 @@ const RESERVED: &[&str] = &[
 ];
 
 /// How to run the tool.
-pub const USAGE: &str = "usage: cargo concerto new <dir> [--engine <path>]\n       cargo concerto editor <dir> [--update] [--engine <path>]";
+pub const USAGE: &str = "usage: cargo concerto new <dir> [--engine <path>]\n       cargo concerto editor <dir> [--update] [--engine <path>]\n       cargo concerto build [<dir>] [--cook] [--release] [--target wasm32-unknown-unknown] [--public-url <url>] [--dist <dir>]";
 
 /// Where a generated project's engine dependencies come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +73,33 @@ pub enum Command {
     New(PathBuf, Engine),
     Editor(PathBuf, Engine),
     UpdateEditor(PathBuf, Option<Engine>),
+    Build(BuildOptions),
+}
+
+/// What `build` was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildOptions {
+    pub dir: PathBuf,
+    pub cook: bool,
+    pub release: bool,
+    pub wasm: bool,
+    pub public_url: Option<String>,
+    pub dist: Option<PathBuf>,
+}
+
+/// The steps `build` runs, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildPlan {
+    pub steps: Vec<BuildStep>,
+}
+
+/// One step of a [`BuildPlan`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuildStep {
+    Cargo { args: Vec<String> },
+    Cook { out: PathBuf },
+    Trunk { dir: PathBuf, args: Vec<String> },
+    Overlay { from: PathBuf, onto: PathBuf },
 }
 
 /// The files a command wrote, the manifests it edited, and what it has to say.
@@ -108,6 +140,9 @@ where
         args.next();
     }
     let command = args.next().context("missing a command")?;
+    if command == "build" {
+        return parse_build(args);
+    }
     ensure!(
         command == "new" || command == "editor",
         "unknown command `{command}`"
@@ -146,7 +181,315 @@ pub fn run(command: Command) -> Result<Report> {
         Command::New(dir, engine) => new_project(dir, engine),
         Command::Editor(dir, engine) => add_editor(dir, engine),
         Command::UpdateEditor(dir, engine) => update_editor(dir, engine),
+        Command::Build(options) => build(options),
     }
+}
+
+fn parse_build(mut args: impl Iterator<Item = String>) -> Result<Command> {
+    let mut dir = None;
+    let mut cook = false;
+    let mut release = false;
+    let mut wasm = false;
+    let mut public_url = None;
+    let mut dist = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--cook" => cook = true,
+            "--release" => release = true,
+            "--target" => {
+                let target = args.next().context("--target needs a target triple")?;
+                ensure!(
+                    target == WASM_TARGET,
+                    "`build` builds natively or for --target {WASM_TARGET}, not `{target}`"
+                );
+                wasm = true;
+            }
+            "--public-url" => public_url = Some(args.next().context("--public-url needs a URL")?),
+            "--dist" => {
+                dist = Some(PathBuf::from(
+                    args.next().context("--dist needs a directory")?,
+                ))
+            }
+            "--engine" => bail!("--engine applies to `new` and `editor`, not `build`"),
+            _ if arg.starts_with('-') => bail!("unknown option `{arg}`"),
+            _ if dir.is_none() => dir = Some(PathBuf::from(arg)),
+            _ => bail!("unexpected argument `{arg}`"),
+        }
+    }
+    ensure!(
+        wasm || public_url.is_none(),
+        "--public-url applies only with --target {WASM_TARGET}"
+    );
+    ensure!(
+        wasm || dist.is_none(),
+        "--dist applies only with --target {WASM_TARGET}"
+    );
+    Ok(Command::Build(BuildOptions {
+        dir: dir.unwrap_or_else(|| PathBuf::from(".")),
+        cook,
+        release,
+        wasm,
+        public_url,
+        dist,
+    }))
+}
+
+/// Turns `options` into the steps that build `package`, whose Cargo target directory is `target_dir`.
+pub fn plan_build(options: &BuildOptions, package: &str, target_dir: &Path) -> BuildPlan {
+    let cooked = target_dir.join("cooked").join(package);
+    let mut steps = Vec::new();
+    if options.cook || !options.wasm {
+        let mut args = vec![
+            "build".to_string(),
+            "--manifest-path".to_string(),
+            options.dir.join("Cargo.toml").display().to_string(),
+            "-p".to_string(),
+            package.to_string(),
+            "--bin".to_string(),
+            package.to_string(),
+        ];
+        if options.release {
+            args.push("--release".to_string());
+        }
+        args.push("--message-format=json-render-diagnostics".to_string());
+        steps.push(BuildStep::Cargo { args });
+    }
+    if options.cook {
+        steps.push(BuildStep::Cook {
+            out: cooked.clone(),
+        });
+    }
+    if options.wasm {
+        let dist = options
+            .dist
+            .clone()
+            .unwrap_or_else(|| options.dir.join("dist"));
+        let mut args = vec!["build".to_string()];
+        if options.release {
+            args.push("--release".to_string());
+        }
+        if let Some(url) = &options.public_url {
+            args.push("--public-url".to_string());
+            args.push(url.clone());
+        }
+        args.push("--dist".to_string());
+        args.push(dist.display().to_string());
+        steps.push(BuildStep::Trunk {
+            dir: options.dir.clone(),
+            args,
+        });
+        if options.cook {
+            steps.push(BuildStep::Overlay {
+                from: cooked,
+                onto: dist,
+            });
+        }
+    } else if options.cook {
+        let profile = if options.release { "release" } else { "debug" };
+        steps.push(BuildStep::Overlay {
+            from: cooked,
+            onto: target_dir.join(profile).join(format!("{package}-content")),
+        });
+    }
+    BuildPlan { steps }
+}
+
+/// Builds the game in `options.dir`, cooking and staging its derived data when asked.
+pub fn build(options: BuildOptions) -> Result<Report> {
+    let options = BuildOptions {
+        dir: absolute(&options.dir)?,
+        dist: options.dist.as_deref().map(absolute).transpose()?,
+        ..options
+    };
+    let package = package_name(&options.dir)?;
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let target_dir = target_directory(&cargo, &options.dir)?;
+    let plan = plan_build(&options, &package, &target_dir);
+    let mut report = Report::default();
+    let mut executable = None;
+    for step in &plan.steps {
+        match step {
+            BuildStep::Cargo { args } => {
+                let mut command = process::Command::new(&cargo);
+                command.args(args);
+                executable = Some(run_cargo(command, &package)?);
+            }
+            BuildStep::Cook { out } => {
+                let executable = executable
+                    .as_ref()
+                    .context("the cook needs the executable a cargo step builds")?;
+                let mut command = process::Command::new(executable);
+                command.arg("--cook").arg(out);
+                run_step(command)?;
+                report.written.extend(
+                    files_under(out)?
+                        .into_iter()
+                        .filter(|file| file.as_path() != Path::new(COOK_MARKER))
+                        .map(|file| out.join(file)),
+                );
+            }
+            BuildStep::Trunk { dir, args } => {
+                let mut command = process::Command::new("trunk");
+                command.args(args).current_dir(dir);
+                run_trunk(command)?;
+            }
+            BuildStep::Overlay { from, onto } => overlay(from, onto, &mut report)?,
+        }
+    }
+    Ok(report)
+}
+
+fn package_name(dir: &Path) -> Result<String> {
+    let manifest_path = dir.join("Cargo.toml");
+    let manifest: DocumentMut = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("{} has no Cargo.toml", dir.display()))?
+        .parse()
+        .with_context(|| format!("{} is not valid TOML", manifest_path.display()))?;
+    Ok(manifest
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(Item::as_str)
+        .with_context(|| format!("{} has no package name", manifest_path.display()))?
+        .to_string())
+}
+
+fn target_directory(cargo: &std::ffi::OsStr, dir: &Path) -> Result<PathBuf> {
+    let mut command = process::Command::new(cargo);
+    command
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(dir.join("Cargo.toml"))
+        .stderr(Stdio::inherit());
+    let shown = command_line(&command);
+    let output = command
+        .output()
+        .with_context(|| format!("could not run `{shown}`"))?;
+    ensure!(
+        output.status.success(),
+        "`{shown}` failed with {}",
+        output.status
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("`{shown}` printed something that is not JSON"))?;
+    let target = metadata
+        .get("target_directory")
+        .and_then(serde_json::Value::as_str)
+        .with_context(|| format!("`{shown}` printed no target_directory"))?;
+    Ok(PathBuf::from(target))
+}
+
+fn command_line(command: &process::Command) -> String {
+    std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|part| part.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn run_step(mut command: process::Command) -> Result<()> {
+    let shown = command_line(&command);
+    let status = command
+        .status()
+        .with_context(|| format!("could not run `{shown}`"))?;
+    ensure!(status.success(), "`{shown}` failed with {status}");
+    Ok(())
+}
+
+fn run_trunk(mut command: process::Command) -> Result<()> {
+    let shown = command_line(&command);
+    let status = match command.status() {
+        Ok(status) => status,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            bail!("trunk is not on PATH; install it with `cargo install trunk`")
+        }
+        Err(error) => return Err(error).with_context(|| format!("could not run `{shown}`")),
+    };
+    ensure!(status.success(), "`{shown}` failed with {status}");
+    Ok(())
+}
+
+fn run_cargo(mut command: process::Command, package: &str) -> Result<PathBuf> {
+    let shown = command_line(&command);
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("could not run `{shown}`"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("cargo's output was not captured")?;
+    let mut executable = None;
+    for line in BufReader::new(stdout).lines() {
+        if let Some(found) = executable_of(&line?, package) {
+            executable = Some(found);
+        }
+    }
+    let status = child.wait()?;
+    ensure!(status.success(), "`{shown}` failed with {status}");
+    executable.with_context(|| format!("`{shown}` reported no executable for the bin `{package}`"))
+}
+
+fn executable_of(line: &str, package: &str) -> Option<PathBuf> {
+    let message: serde_json::Value = serde_json::from_str(line).ok()?;
+    if message.get("reason")?.as_str()? != "compiler-artifact" {
+        return None;
+    }
+    let target = message.get("target")?;
+    let is_bin = target
+        .get("kind")?
+        .as_array()?
+        .iter()
+        .any(|kind| kind.as_str() == Some("bin"));
+    if !is_bin || target.get("name")?.as_str()? != package {
+        return None;
+    }
+    message.get("executable")?.as_str().map(PathBuf::from)
+}
+
+fn files_under(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut pending = vec![PathBuf::new()];
+    while let Some(relative) = pending.pop() {
+        let dir = root.join(&relative);
+        for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+            let entry = entry?;
+            let path = relative.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn overlay(from: &Path, onto: &Path, report: &mut Report) -> Result<()> {
+    for file in files_under(from)? {
+        if file.as_path() == Path::new(COOK_MARKER) {
+            continue;
+        }
+        let target = onto.join(&file);
+        if target.is_file() {
+            fs::copy(from.join(&file), &target)
+                .with_context(|| format!("copying over {}", target.display()))?;
+            report.edited.push(target);
+        } else {
+            report.notes.push(format!(
+                "skipped {}: {} has no such file",
+                slashed(&file),
+                onto.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Creates a game project in `dir`, with its editor crate, and makes both workspace members.
@@ -1391,7 +1734,7 @@ mod tests {
             Command::New(PathBuf::from("x"), Engine::Checkout(PathBuf::from("e")))
         );
         assert!(parse(["concerto"]).is_err());
-        assert!(parse(["concerto", "build", "x"]).is_err());
+        assert!(parse(["concerto", "bogus", "x"]).is_err());
         assert!(parse(["concerto", "new"]).is_err());
         assert!(parse(["concerto", "new", "x", "--engine"]).is_err());
         assert!(parse(["concerto", "new", "x", "y"]).is_err());
@@ -1799,5 +2142,241 @@ mod tests {
             )
         );
         assert!(parse(["new", "x", "--update"]).is_err());
+    }
+
+    fn build_options(dir: &str) -> BuildOptions {
+        BuildOptions {
+            dir: PathBuf::from(dir),
+            cook: false,
+            release: false,
+            wasm: false,
+            public_url: None,
+            dist: None,
+        }
+    }
+
+    #[test]
+    fn the_parser_reads_build() {
+        assert_eq!(
+            parse(["concerto", "build"]).unwrap(),
+            Command::Build(build_options("."))
+        );
+        assert_eq!(
+            parse(["build", "g", "--cook", "--release"]).unwrap(),
+            Command::Build(BuildOptions {
+                cook: true,
+                release: true,
+                ..build_options("g")
+            })
+        );
+        assert_eq!(
+            parse([
+                "build",
+                "--target",
+                "wasm32-unknown-unknown",
+                "--public-url",
+                "./",
+                "--dist",
+                "out",
+                "g",
+            ])
+            .unwrap(),
+            Command::Build(BuildOptions {
+                wasm: true,
+                public_url: Some("./".to_string()),
+                dist: Some(PathBuf::from("out")),
+                ..build_options("g")
+            })
+        );
+    }
+
+    fn refused(args: &[&str], words: &str) {
+        let error = parse(args.iter().copied()).unwrap_err();
+        assert!(error.to_string().contains(words), "{args:?}: {error:#}");
+    }
+
+    #[test]
+    fn the_parser_refuses_build_options_that_do_not_apply() {
+        refused(
+            &["build", "--target", "x86_64-unknown-linux-gnu"],
+            "wasm32-unknown-unknown",
+        );
+        refused(&["build", "--target"], "--target");
+        refused(&["build", "--public-url", "./"], "--target");
+        refused(&["build", "--dist", "out"], "--target");
+        refused(&["build", "--public-url"], "--public-url");
+        refused(&["build", "--engine", "e"], "--engine");
+        refused(&["build", "--update"], "--update");
+        refused(&["build", "--bogus"], "--bogus");
+        refused(&["build", "a", "b"], "`b`");
+    }
+
+    fn arg(path: impl AsRef<Path>) -> String {
+        path.as_ref().display().to_string()
+    }
+
+    fn args(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    fn cargo_step(game: &Path, release: bool) -> BuildStep {
+        let mut cargo = args(&["build", "--manifest-path"]);
+        cargo.push(arg(game.join("Cargo.toml")));
+        cargo.extend(args(&["-p", "g", "--bin", "g"]));
+        if release {
+            cargo.push("--release".to_string());
+        }
+        cargo.push("--message-format=json-render-diagnostics".to_string());
+        BuildStep::Cargo { args: cargo }
+    }
+
+    #[test]
+    fn a_native_build_is_one_cargo_step() {
+        let game = Path::new("/g");
+
+        let plan = plan_build(&build_options("/g"), "g", Path::new("/t"));
+
+        assert_eq!(plan.steps, vec![cargo_step(game, false)]);
+    }
+
+    #[test]
+    fn a_native_cook_stages_the_cooked_files_over_the_content_next_to_the_binary() {
+        let game = Path::new("/g");
+        let target = Path::new("/t");
+        let options = BuildOptions {
+            cook: true,
+            release: true,
+            ..build_options("/g")
+        };
+
+        let plan = plan_build(&options, "g", target);
+
+        let cooked = target.join("cooked").join("g");
+        assert_eq!(
+            plan.steps,
+            vec![
+                cargo_step(game, true),
+                BuildStep::Cook {
+                    out: cooked.clone()
+                },
+                BuildStep::Overlay {
+                    from: cooked,
+                    onto: target.join("release").join("g-content"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_web_build_is_one_trunk_step_into_the_game_s_dist() {
+        let game = Path::new("/g");
+        let options = BuildOptions {
+            wasm: true,
+            ..build_options("/g")
+        };
+
+        let plan = plan_build(&options, "g", Path::new("/t"));
+
+        let mut trunk = args(&["build", "--dist"]);
+        trunk.push(arg(game.join("dist")));
+        assert_eq!(
+            plan.steps,
+            vec![BuildStep::Trunk {
+                dir: game.to_path_buf(),
+                args: trunk,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_web_cook_cooks_natively_then_overlays_the_dist() {
+        let game = Path::new("/g");
+        let target = Path::new("/t");
+        let dist = Path::new("/d");
+        let options = BuildOptions {
+            cook: true,
+            release: true,
+            wasm: true,
+            public_url: Some("./".to_string()),
+            dist: Some(dist.to_path_buf()),
+            ..build_options("/g")
+        };
+
+        let plan = plan_build(&options, "g", target);
+
+        let cooked = target.join("cooked").join("g");
+        let mut trunk = args(&["build", "--release", "--public-url", "./", "--dist"]);
+        trunk.push(arg(dist));
+        assert_eq!(
+            plan.steps,
+            vec![
+                cargo_step(game, true),
+                BuildStep::Cook {
+                    out: cooked.clone()
+                },
+                BuildStep::Trunk {
+                    dir: game.to_path_buf(),
+                    args: trunk,
+                },
+                BuildStep::Overlay {
+                    from: cooked,
+                    onto: dist.to_path_buf(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_overlay_replaces_the_files_that_exist_and_skips_the_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let from = tmp.path().join("cooked");
+        let onto = tmp.path().join("dist");
+        write(from.join(".concerto-cook"), "");
+        write(from.join("content/a.gasset"), "cooked a");
+        write(from.join("content/deep/b.gasset"), "cooked b");
+        write(from.join("content/c.gasset"), "cooked c");
+        write(onto.join("content/a.gasset"), "raw a");
+        write(onto.join("content/deep/b.gasset"), "raw b");
+        write(onto.join("index.html"), "page");
+        let mut report = Report::default();
+
+        overlay(&from, &onto, &mut report).unwrap();
+
+        assert_eq!(read(onto.join("content/a.gasset")), "cooked a");
+        assert_eq!(read(onto.join("content/deep/b.gasset")), "cooked b");
+        assert_eq!(read(onto.join("index.html")), "page");
+        assert!(!onto.join("content/c.gasset").exists());
+        assert!(!onto.join(".concerto-cook").exists());
+        assert_eq!(
+            report.edited,
+            vec![
+                onto.join("content").join("a.gasset"),
+                onto.join("content").join("deep").join("b.gasset"),
+            ]
+        );
+        assert_eq!(report.notes.len(), 1, "{:?}", report.notes);
+        assert!(
+            report.notes[0].contains("content/c.gasset"),
+            "{:?}",
+            report.notes
+        );
+    }
+
+    const CARGO_MESSAGES: &str = r#"{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["custom-build"],"crate_types":["bin"],"name":"build-script-build","src_path":"/g/build.rs","edition":"2024","doc":false,"doctest":false,"test":false},"features":[],"filenames":["/t/debug/build/g-1/build-script-build"],"executable":null,"fresh":true}
+{"reason":"build-script-executed","package_id":"path+file:///g#0.1.0","linked_libs":[],"linked_paths":[],"cfgs":[],"env":[],"out_dir":"/t/debug/build/g-2/out"}
+{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"g","src_path":"/g/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"features":[],"filenames":["/t/debug/libg.rlib"],"executable":null,"fresh":false}
+{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"g-tool","src_path":"/g/src/bin/g-tool.rs","edition":"2024","doc":true,"doctest":false,"test":true},"features":[],"filenames":["/t/debug/g-tool"],"executable":"/t/debug/g-tool","fresh":false}
+{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"g","src_path":"/g/src/main.rs","edition":"2024","doc":true,"doctest":false,"test":true},"features":[],"filenames":["/t/debug/g"],"executable":"/t/debug/g","fresh":false}
+{"reason":"build-finished","success":true}"#;
+
+    #[test]
+    fn the_executable_is_the_bin_artifact_named_after_the_package() {
+        let found: Vec<PathBuf> = CARGO_MESSAGES
+            .lines()
+            .filter_map(|line| executable_of(line, "g"))
+            .collect();
+
+        assert_eq!(found, vec![PathBuf::from("/t/debug/g")]);
+        assert_eq!(executable_of("warning: not json", "g"), None);
     }
 }
