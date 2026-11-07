@@ -921,8 +921,69 @@ duplicate chain, a chain end not below its start, a missing clip, a time that
 is not finite, a clip with no channels for the skeleton, or a root height that
 is not finite or not above 0.1 mm.
 
-The solve that plays one rig's motion on another, the clips derived from it and
-the graph node that runs it are coming (#588, #589, #590).
+The solve that plays one rig's motion on another is `PoseRetarget`, below. The
+clips derived from it and the graph node that runs it are coming (#589, #590).
+
+### Retargeting a pose
+
+A `PoseRetarget` (`concerto::animation::retarget`) plays a pose of one
+skeleton, the source, on another, the target. It is built once from the two
+sides' resolved rigs, each beside the skeleton it was resolved against, and
+applied as often as needed without allocating:
+
+```rust
+use concerto::animation::retarget::PoseRetarget;
+
+let source_rig = lafan_rig.resolve(&lafan_skeleton, None)?;
+let target_rig = ual_rig.resolve(&ual_skeleton, None)?;
+let mut retarget = PoseRetarget::new(&source_rig, &lafan_skeleton, &target_rig, &ual_skeleton)?;
+
+let mut pose = ual_skeleton.rest_pose.to_vec();
+retarget.retarget_into(&source_pose, &mut pose)?;
+```
+
+`retarget_into(source, out)` takes a full pose of the source skeleton, in bone
+order, and writes a full pose of the target into `out`. Full means with the
+root motion still in it, as a clip holds it; a graph pose, net of root motion,
+is not one.
+
+Each target bone in a chain the source also has turns in model space as the
+source chain turns: its model rotation's change from the target's reference
+pose is the source bone's change from the source's reference pose. The rigs'
+reference poses are what is compared, so each bone's local axes do not matter,
+and LAFAN1's `Hips` and UAL1's `root` need no correction for theirs. What
+does matter is that the two reference poses are the same pose in model space:
+the same up, the same facing and the same stance, such as both in a T-pose. When
+they differ, align them with a `ClipFrame` reference or `BoneCorrection`s. Chains
+with different bone counts are mapped by normalised length along the chain, the
+source's change slerped between the two source bones around each target bone;
+a single-bone target chain takes the source chain's start.
+
+The target keeps the rest from its reference pose. A bone in no shared chain
+keeps its reference local rotation, a chain only the target has keeps its
+reference pose, and a chain only the source has is ignored. Every bone but the
+root and the motion root keeps its reference local translation and scale.
+
+The target root turns as the source root does and moves by the source root's
+offset from its reference, scaled on all three axes by `scale()`, the target
+root's reference height over the source's. A target motion root takes the
+source motion root's turn and scaled offset when the source rig has one. When
+it has none, the target motion root takes the ground part of the root's motion:
+its turn about +Y and its scaled offset along X and Z. The root, below it,
+still reaches its full position and turn. A target without a motion root
+carries all of the motion on its root. `scale()` is also the factor for
+mapping a frame's root motion by hand.
+
+`new` fails with a `RetargetError`: `RigNotForSkeleton { side }` when a rig's
+pose lengths, bone indices, motion root or root height do not fit the skeleton
+beside it, or the skeleton is invalid, and `NoSharedChain` when the rigs share
+no chain name. `retarget_into` fails with `PoseLength { side, .. }` when the
+source pose or `out` has the wrong number of bones, and then writes nothing.
+
+Bone scale is assumed uniform: rotations are composed without it, so under a
+non-uniform scale a chain bone's turn and the root's position are solved in
+slightly different frames. A source pose with non-finite values gives
+non-finite values in `out`.
 
 ## Gameplay helpers
 
