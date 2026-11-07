@@ -3,7 +3,7 @@ use glam::Vec2;
 
 use crate::{
     clipboard::{answer_paste_requests, ClipboardPasted, WindowClipboard},
-    events::{fold_input, fold_window, FoldInput, InputGate, WindowEvent},
+    events::{fold_input, fold_window, FoldInput, GamepadConnection, InputGate, WindowEvent},
     input::{
         actions::{resolve_actions, ActionFired, ActionMap},
         Input,
@@ -62,6 +62,7 @@ fn update_input(mut input: ResMut<Input>) {
 impl Plugin for WindowPlugin {
     fn build(&self, app: &mut App) {
         app.register_event::<WindowEvent>();
+        app.register_event::<GamepadConnection>();
         if app.get_resource::<Window>().is_none() {
             app.insert_resource(Window::new((0, 0), 1.0));
         }

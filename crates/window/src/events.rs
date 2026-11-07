@@ -1,5 +1,5 @@
 use concerto_ecs::{
-    events::{event_reader::EventReader, Event},
+    events::{event_reader::EventReader, event_writer::EventWriter, Event},
     resource::{Res, ResMut, Resource},
     system::input::SystemLocal,
     world::{FromWorld, World},
@@ -8,7 +8,7 @@ use concerto_ecs::{
 use glam::Vec2;
 
 use crate::{
-    input::{Input, MouseButton, PhysicalKey},
+    input::{GamepadAxis, GamepadButton, GamepadId, Input, MouseButton, PhysicalKey},
     window::Window,
 };
 
@@ -49,13 +49,39 @@ pub enum WindowEvent {
     MouseWheel {
         delta: ScrollDelta,
     },
+    GamepadConnected {
+        id: GamepadId,
+        name: String,
+    },
+    GamepadDisconnected {
+        id: GamepadId,
+    },
+    /// The button's raw value, 0..1.
+    GamepadButton {
+        id: GamepadId,
+        button: GamepadButton,
+        value: f32,
+    },
+    /// The axis's raw value, -1..1.
+    GamepadAxis {
+        id: GamepadId,
+        axis: GamepadAxis,
+        value: f32,
+    },
+}
+
+/// A pad that `Input` gained or lost this frame.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub enum GamepadConnection {
+    Connected { id: GamepadId, name: String },
+    Disconnected { id: GamepadId },
 }
 
 /// The set that folds window events into `Input`; a system ordered before it decides this frame's [`InputGate`].
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct FoldInput;
 
-/// While closed, an `App` folds no key, button, wheel, or raw-motion events into its `Input`.
+/// While closed, an `App` folds no key, mouse button, wheel, or raw-motion events into its `Input`; pad events always fold.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputGate {
     pub open: bool,
@@ -81,10 +107,11 @@ pub(crate) fn fold_input(
     mut input: ResMut<Input>,
     gate: Res<InputGate>,
     mut was_closed: SystemLocal<GateWasClosed>,
+    mut connections: EventWriter<GamepadConnection>,
 ) {
     let closed = !gate.open;
     if closed && !was_closed.0 {
-        input.release_all();
+        input.release_keys_and_buttons();
     }
     was_closed.0 = closed;
     for event in events.read() {
@@ -114,6 +141,25 @@ pub(crate) fn fold_input(
                 input.update_mouse_delta((f64::from(delta.x), f64::from(delta.y)));
             }
             WindowEvent::Focused(false) => input.release_all(),
+            WindowEvent::GamepadConnected { id, name } => {
+                if input.connect_gamepad(*id, name.clone()) {
+                    connections.write(GamepadConnection::Connected {
+                        id: *id,
+                        name: name.clone(),
+                    });
+                }
+            }
+            WindowEvent::GamepadDisconnected { id } => {
+                if input.disconnect_gamepad(*id) {
+                    connections.write(GamepadConnection::Disconnected { id: *id });
+                }
+            }
+            WindowEvent::GamepadButton { id, button, value } => {
+                input.update_gamepad_button(*id, *button, *value);
+            }
+            WindowEvent::GamepadAxis { id, axis, value } => {
+                input.update_gamepad_axis(*id, *axis, *value);
+            }
             _ => {}
         }
     }
@@ -130,7 +176,7 @@ pub(crate) fn fold_window(mut events: EventReader<WindowEvent>, mut window: ResM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::KeyCode;
+    use crate::input::{GamepadStick, KeyCode};
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::TimePlugin,
@@ -140,6 +186,7 @@ mod tests {
     use concerto_ecs::{events::event_channel::EventChannel, Res, Resource};
 
     const KEY: PhysicalKey = PhysicalKey::Code(KeyCode::KeyW);
+    const PAD: GamepadId = GamepadId::new(0);
 
     #[derive(Resource, Default)]
     struct Seen {
@@ -147,13 +194,19 @@ mod tests {
         button_pressed: bool,
         typed: String,
         motion: Vec2,
+        connections: Vec<GamepadConnection>,
     }
 
-    fn observe(input: Res<Input>, mut seen: ResMut<Seen>) {
+    fn observe(
+        input: Res<Input>,
+        mut connections: EventReader<GamepadConnection>,
+        mut seen: ResMut<Seen>,
+    ) {
         seen.key_pressed = input.is_just_pressed(KEY);
         seen.button_pressed = input.is_mouse_button_just_pressed(MouseButton::Left);
         seen.typed = input.typed_chars().iter().collect();
         seen.motion = input.mouse_delta();
+        seen.connections.extend(connections.read().cloned());
     }
 
     fn end_frame(mut input: ResMut<Input>) {
@@ -165,6 +218,7 @@ mod tests {
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
             .register_event::<WindowEvent>()
+            .register_event::<GamepadConnection>()
             .insert_resource(Input::new())
             .insert_resource(InputGate::default())
             .insert_resource(Seen::default())
@@ -407,6 +461,125 @@ mod tests {
         app.get_resource_mut::<InputGate>().unwrap().open = false;
         app.update();
         assert!(!app.get_resource::<Input>().unwrap().is_held(KEY));
+    }
+
+    fn connect(app: &mut App) {
+        push(
+            app,
+            WindowEvent::GamepadConnected {
+                id: PAD,
+                name: "Test pad".into(),
+            },
+        );
+    }
+
+    fn push_stick(app: &mut App, value: f32) {
+        push(
+            app,
+            WindowEvent::GamepadAxis {
+                id: PAD,
+                axis: GamepadAxis::LeftStickX,
+                value,
+            },
+        );
+    }
+
+    #[test]
+    fn pad_events_fold_with_the_gate_closed() {
+        let mut app = app();
+        app.get_resource_mut::<InputGate>().unwrap().open = false;
+        connect(&mut app);
+        push(
+            &mut app,
+            WindowEvent::GamepadButton {
+                id: PAD,
+                button: GamepadButton::South,
+                value: 1.0,
+            },
+        );
+        push_stick(&mut app, 1.0);
+        app.finish_plugin_build();
+        app.update();
+
+        let input = app.get_resource::<Input>().unwrap();
+        let pad = input.gamepad(PAD).unwrap();
+        assert!(pad.is_held(GamepadButton::South));
+        assert_eq!(pad.stick(GamepadStick::Left), Vec2::new(1.0, 0.0));
+    }
+
+    #[test]
+    fn closing_the_gate_keeps_a_held_sticks_value() {
+        let mut app = app();
+        connect(&mut app);
+        push_stick(&mut app, 1.0);
+        app.finish_plugin_build();
+        app.update();
+
+        app.get_resource_mut::<InputGate>().unwrap().open = false;
+        app.update();
+
+        let input = app.get_resource::<Input>().unwrap();
+        assert_eq!(
+            input.gamepad(PAD).unwrap().stick(GamepadStick::Left),
+            Vec2::new(1.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn connecting_and_disconnecting_write_one_connection_event_each() {
+        let mut app = app();
+        connect(&mut app);
+        connect(&mut app);
+        app.finish_plugin_build();
+        app.update();
+        push(&mut app, WindowEvent::GamepadDisconnected { id: PAD });
+        push(&mut app, WindowEvent::GamepadDisconnected { id: PAD });
+        app.update();
+
+        assert_eq!(
+            app.get_resource::<Seen>().unwrap().connections,
+            vec![
+                GamepadConnection::Connected {
+                    id: PAD,
+                    name: "Test pad".into(),
+                },
+                GamepadConnection::Disconnected { id: PAD },
+            ]
+        );
+        assert!(app.get_resource::<Input>().unwrap().gamepad(PAD).is_none());
+    }
+
+    #[test]
+    fn events_for_a_pad_that_is_not_connected_are_ignored() {
+        let other = GamepadId::new(1);
+        let mut app = app();
+        connect(&mut app);
+        push(
+            &mut app,
+            WindowEvent::GamepadButton {
+                id: other,
+                button: GamepadButton::South,
+                value: 1.0,
+            },
+        );
+        push(
+            &mut app,
+            WindowEvent::GamepadAxis {
+                id: other,
+                axis: GamepadAxis::LeftStickX,
+                value: 1.0,
+            },
+        );
+        app.finish_plugin_build();
+        app.update();
+
+        let input = app.get_resource::<Input>().unwrap();
+        assert!(input.gamepad(other).is_none());
+        assert_eq!(input.gamepads().count(), 1);
+        let pad = input.gamepad(PAD).unwrap();
+        assert!(!pad.is_held(GamepadButton::South));
+        assert_eq!(pad.stick(GamepadStick::Left), Vec2::ZERO);
+        assert!(app.get_resource::<Seen>().unwrap().connections.len() == 1);
     }
 
     #[test]

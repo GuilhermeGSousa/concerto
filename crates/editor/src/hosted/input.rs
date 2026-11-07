@@ -298,7 +298,11 @@ pub(crate) fn route_play_input(
                 WindowEvent::Resized { .. }
                 | WindowEvent::ScaleFactorChanged(_)
                 | WindowEvent::Maximised(_)
-                | WindowEvent::CloseRequested => {}
+                | WindowEvent::CloseRequested
+                | WindowEvent::GamepadConnected { .. }
+                | WindowEvent::GamepadDisconnected { .. }
+                | WindowEvent::GamepadButton { .. }
+                | WindowEvent::GamepadAxis { .. } => {}
             },
             InputOwner::Editor => {
                 if matches!(event, WindowEvent::MouseButton { pressed: true, .. })
@@ -373,7 +377,11 @@ pub fn route(
         WindowEvent::Resized { .. }
         | WindowEvent::ScaleFactorChanged(_)
         | WindowEvent::Maximised(_)
-        | WindowEvent::CloseRequested => None,
+        | WindowEvent::CloseRequested
+        | WindowEvent::GamepadConnected { .. }
+        | WindowEvent::GamepadDisconnected { .. }
+        | WindowEvent::GamepadButton { .. }
+        | WindowEvent::GamepadAxis { .. } => None,
     }
 }
 
