@@ -2,6 +2,7 @@
 pub mod events;
 mod panels;
 pub mod preview;
+mod save;
 
 use std::{path::Path, sync::Arc};
 
@@ -42,6 +43,7 @@ use panels::{
 use preview::{
     ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
 };
+use save::{restore_clip_events, save_clip};
 
 define_action!(
     /// Remove the event selected in the active clip tab.
@@ -298,11 +300,13 @@ pub fn install(app: &mut App) {
                 build_clip_panels,
                 apply_clip_event_fields,
                 remove_clip_event,
+                save_clip,
                 sync_clip_panels,
                 sync_clip_events,
             )
                 .chain(),
-        );
+        )
+        .add_listener(restore_clip_events);
     install_event_keys(app);
 }
 
@@ -484,7 +488,7 @@ mod tests {
             .expect("the document is a clip's")
     }
 
-    fn state_mut(f: &mut SceneFixture, document: Entity) -> &mut ClipDocument {
+    pub(super) fn state_mut(f: &mut SceneFixture, document: Entity) -> &mut ClipDocument {
         f.world
             .get_component_for_entity_mut::<ClipDocument>(document)
             .expect("the document is a clip's")
