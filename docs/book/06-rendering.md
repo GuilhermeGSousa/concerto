@@ -199,6 +199,10 @@ releases, and a grey cross at a free foot. Register
 on the entity with the `AnimationPlayer`. Its
 [README](../../crates/procedural-animation-gizmos/README.md) says more.
 
+`NavigationGizmosPlugin`, from the `concerto-navigation-gizmos` crate, draws
+the nav graph and the route each agent is following; see
+[Navigation](07-physics-animation-gameplay.md#drawing-the-graph).
+
 ## Custom materials
 
 A material is an asset whose fields become shader bindings. Derive `Asset` and

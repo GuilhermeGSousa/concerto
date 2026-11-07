@@ -26,12 +26,14 @@ game adds itself when it needs them.
 | | `world-grid` | the ground grid | `world_grid` |
 | | `debug-gizmos` | immediate-mode debug lines and shapes | add `concerto-debug-gizmos` |
 | | `motion-matching-gizmos` | `MotionMatchingGizmos`, which draws a running character's motion matching, and the drawing the database preview shares | add `concerto-motion-matching-gizmos` |
+| | `navigation-gizmos` | `NavigationGizmosPlugin`, which draws the nav graph's points and links and each agent's route, in the game and the editor's scene view | add `concerto-navigation-gizmos` |
 | | `procedural-animation-gizmos` | `FootLockGizmos`, which draws each foot lock of a running player's `FootLockNode` | add `concerto-procedural-animation-gizmos` |
 | | `terminal-renderer` | a renderer that draws into a terminal | |
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
 | | `jolt-ffi` | the bindings to Jolt, built from the submodule | |
 | | `animation` | clips, skeletons, animation graphs, the animation player, retarget rigs | `animation` |
 | | `procedural-animation` | procedural animation graph nodes: `FootPlacementNode`, which reads physics to put a character's feet on the ground, `FootLockNode`, which holds a planted foot where it was planted so it does not slide, `LookAtNode`, which turns its spine, head and eyes toward a point, `AimNode`, which turns its spine so a weapon's barrel points at a target, and `ProceduralMotionNode`, which adds seeded sway, tremor and breathing rotations to masked bones | `procedural_animation` |
+| | `navigation` | hand-placed nav points and their links, the `NavGraph` built from them with nearest-point and shortest-path queries, and `NavAgent`s that steer toward a `NavDestination` and report `NavArrived` or `NavUnreachable` | `navigation` |
 | | `scene` | scenes: spawning and capturing | `scene` |
 | | `director` | the virtual-camera stack | `director` |
 | | `gameplay` | camera rigs and player helpers | `gameplay` |
