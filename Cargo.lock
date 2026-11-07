@@ -821,6 +821,7 @@ dependencies = [
  "concerto-mesh",
  "concerto-motion-matching",
  "concerto-name",
+ "concerto-noise",
  "concerto-physics",
  "concerto-procedural-animation",
  "concerto-reflect",
@@ -1298,6 +1299,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "concerto-noise"
+version = "0.1.0"
 
 [[package]]
 name = "concerto-obj"

@@ -14,6 +14,7 @@ game adds itself when it needs them.
 | | `color` | colors | `color` |
 | | `reflect` | reflection: field access by path, the type registry | `reflect` |
 | | `name` | `Name`, an interned string that compares as one integer and persists as its text, and `name!` | `name` |
+| | `noise` | seeded hashes and 1D gradient and fractal noise, pure functions of their arguments | `noise` |
 | Assets | `asset-format` | `AssetId` and the `.gasset` framing | |
 | | `asset-import` | the `Importer` trait | |
 | | `asset-build` | `track_assets` for build scripts, which also writes the registry a game embeds | |
