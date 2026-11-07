@@ -73,7 +73,7 @@ cargo run -p tech-demo
 
 | Example | What it shows |
 |---|---|
-| `tech-demo` | A motion matched character driven from the keyboard, with a follow camera and debug gizmos, on the world grid; `-- --forest` and `-- --sanatorium` pick the other levels; the one example with an editor |
+| `tech-demo` | A motion matched character driven from the keyboard, with a follow camera and debug gizmos, on the world grid; `-- --forest` and `-- --sanatorium` pick the other levels, and `-- --retarget` plays the grid with the UAL1 character driven by LAFAN1 motion matching through a retarget node; the one example with an editor |
 | `ui-showcase` | Every UI element on one screen |
 
 The first build compiles Jolt and takes a while. In the browser:

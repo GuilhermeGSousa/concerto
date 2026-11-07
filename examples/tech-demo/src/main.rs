@@ -4,6 +4,8 @@ fn main() {
         tech_demo::sanatorium
     } else if has("--forest") {
         tech_demo::game
+    } else if has("--retarget") {
+        tech_demo::retarget
     } else {
         tech_demo::grid
     };
