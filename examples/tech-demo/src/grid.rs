@@ -41,7 +41,7 @@ const SUN_INTENSITY: f32 = 2.0;
 const SUN_YAW: f32 = 0.6;
 const SUN_PITCH: f32 = -0.7;
 
-const NPC_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 8.0);
+const NPC_SPAWN: Vec3 = Vec3::new(-2.0, 0.0, 6.0);
 const PATROL_WAIT: f32 = 1.0;
 
 /// A patrol point: the anchor that names it and where it stands.
@@ -213,7 +213,7 @@ mod tests {
 
     use crate::character::{CharacterConfig, Player};
 
-    use super::{PATROL, Patrol, grid, patrol};
+    use super::{NPC_SPAWN, PATROL, Patrol, grid, patrol};
 
     #[test]
     fn the_grid_level_spawns_the_character_with_every_gizmo_on_a_grid_floor_under_a_sun() {
@@ -254,7 +254,7 @@ mod tests {
             .iter(world)
             .map(|transform| transform.translation)
             .collect();
-        assert_eq!(npcs, vec![Vec3::new(0.0, 0.0, 8.0)]);
+        assert_eq!(npcs, vec![NPC_SPAWN]);
         assert_eq!(world.query::<&NavPoint, ()>().iter(world).count(), 4);
     }
 
