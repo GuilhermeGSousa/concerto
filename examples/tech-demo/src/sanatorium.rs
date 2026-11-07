@@ -73,7 +73,7 @@ pub fn sanatorium(app: &mut App) {
         .add_system(Update, setup_character_animations)
         .add_system(Update, feed_foot_placement)
         .add_system(Update, debug_keys)
-        .add_system(Update, update_movement)
+        .add_system(Update, update_movement.after(update_camera_stance))
         .add_system(
             Update,
             update_camera_stance.before(update_third_person_cameras),

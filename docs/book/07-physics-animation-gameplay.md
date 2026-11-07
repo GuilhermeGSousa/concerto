@@ -808,7 +808,12 @@ cmd.spawn((
     CameraBoom::default(),
 ));
 
-rig.stance = if aiming { CameraStance::Aim } else { CameraStance::Follow };
+fn aim(rigs: Query<&mut ThirdPersonCamera>, input: Res<Input>) {
+    let aiming = input.is_mouse_button_held(MouseButton::Right);
+    for mut rig in rigs.iter() {
+        rig.stance = if aiming { CameraStance::Aim } else { CameraStance::Follow };
+    }
+}
 ```
 
 Next: [User interface](08-ui.md).
