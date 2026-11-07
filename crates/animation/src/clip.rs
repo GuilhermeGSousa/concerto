@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, hash_map::Keys};
 use std::ops::Range;
 
@@ -97,6 +98,11 @@ impl AnimationChannel {
 
     pub fn duration(&self) -> Option<f32> {
         self.time_samples.last().copied()
+    }
+
+    /// The channel's key times in seconds, in order.
+    pub fn key_times(&self) -> &[f32] {
+        &self.time_samples
     }
 
     pub(crate) fn writes(&self) -> ChannelComponent {
@@ -845,6 +851,24 @@ impl AnimationClip {
         &self.events
     }
 
+    /// Replaces the clip's events, sorted by time with equal times kept in the given order; fails on a time that is negative, non-finite or past the clip's end.
+    pub fn replace_events(&mut self, mut events: Vec<ClipEventKey>) -> Result<(), String> {
+        if let Some(bad) = events
+            .iter()
+            .find(|key| !key.time.is_finite() || key.time < 0.0 || key.time > self.duration)
+        {
+            return Err(format!(
+                "event `{}` at {} must be finite and within the clip's 0 to {} seconds",
+                bad.event.type_name(),
+                bad.time,
+                self.duration
+            ));
+        }
+        events.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(Ordering::Equal));
+        self.events = events;
+        Ok(())
+    }
+
     /// The indices of the events after `from`, or at it when `include_from`, up to and including `to`.
     pub fn events_in(&self, from: f32, to: f32, include_from: bool) -> Range<usize> {
         let start = if include_from {
@@ -1023,6 +1047,7 @@ impl AnimationClip {
 
 #[cfg(test)]
 mod tests {
+    use concerto_foundation::assets::content::{decode_content_asset, write_content_asset};
     use concerto_name::Name;
 
     use super::*;
@@ -1118,6 +1143,102 @@ mod tests {
             AnimationClip::default()
                 .events_in(0.0, 1.0, true)
                 .is_empty()
+        );
+    }
+
+    fn stored(time: f32, type_name: &str) -> ClipEventKey {
+        ClipEventKey {
+            time,
+            event: ClipEventData::Stored {
+                type_name: type_name.to_owned(),
+                value: ReflectedValue::Struct(vec![(
+                    "strength".to_owned(),
+                    ReflectedValue::Leaf(vec![0, 0, 32, 64, 7]),
+                )]),
+            },
+        }
+    }
+
+    fn type_names(clip: &AnimationClip) -> Vec<NamedKey<'_>> {
+        clip.events()
+            .iter()
+            .map(|key| NamedKey {
+                time: key.time,
+                name: key.event.type_name(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn replace_events_sorts_by_time_and_keeps_equal_times_in_the_given_order() {
+        let mut clip = linear_clip(Uuid::from_u128(1));
+        clip.add_event(0.3, named("old"));
+
+        clip.replace_events(vec![
+            stored(0.5, "second"),
+            stored(0.1, "first"),
+            stored(1.0, "fourth"),
+            stored(0.5, "third"),
+            stored(0.0, "zeroth"),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            type_names(&clip),
+            [
+                key(0.0, "zeroth"),
+                key(0.1, "first"),
+                key(0.5, "second"),
+                key(0.5, "third"),
+                key(1.0, "fourth")
+            ]
+        );
+    }
+
+    #[test]
+    fn replace_events_refuses_a_bad_time_naming_its_type_and_leaves_the_clip_unchanged() {
+        for bad in [-0.1, 1.5, f32::NAN, f32::INFINITY] {
+            let mut clip = linear_clip(Uuid::from_u128(1));
+            clip.add_event(0.25, named("kept"));
+
+            let error = clip
+                .replace_events(vec![stored(0.5, "fine"), stored(bad, "game::Footstep")])
+                .unwrap_err();
+
+            assert!(error.contains("game::Footstep"), "{error}");
+            assert!(error.contains(&bad.to_string()), "{error}");
+            assert_eq!(event_names(&clip), [key(0.25, "kept")]);
+        }
+    }
+
+    #[test]
+    fn replace_events_keeps_stored_data_byte_for_byte_through_a_save_and_a_load() {
+        let original = stored(0.5, "game::Footstep");
+        let ClipEventData::Stored {
+            value: original_value,
+            ..
+        } = &original.event
+        else {
+            unreachable!();
+        };
+        let original_value = original_value.clone();
+        let mut clip = linear_clip(Uuid::from_u128(1));
+        clip.replace_events(vec![original]).unwrap();
+
+        let payload = bincode::serialize(&clip).unwrap();
+        let bytes = write_content_asset(&header(AnimationClip::FORMAT_VERSION), &payload).unwrap();
+        let (_, loaded) = decode_content_asset::<AnimationClip>(&bytes).unwrap();
+
+        assert_eq!(loaded.events().len(), 1);
+        assert_eq!(loaded.events()[0].time, 0.5);
+        let ClipEventData::Stored { type_name, value } = &loaded.events()[0].event else {
+            panic!("a loaded event stays stored until made live");
+        };
+        assert_eq!(type_name, "game::Footstep");
+        assert_eq!(value, &original_value);
+        assert_eq!(
+            bincode::serialize(value).unwrap(),
+            bincode::serialize(&original_value).unwrap()
         );
     }
 
