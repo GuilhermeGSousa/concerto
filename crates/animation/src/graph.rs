@@ -22,6 +22,7 @@ use crate::{
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, PlaceholderNode, ReflectAnimationNode,
         ResultNode, blend_space::BlendSpace2DBuilderContext,
+        state_machine::AnimationStateMachineState,
     },
     player::ActiveNodeState,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
@@ -521,11 +522,23 @@ impl AnimationGraphState {
         }
     }
 
-    pub(crate) fn stateless_node<'a>(&self, graph: &'a AnimationGraph) -> Option<&'a str> {
+    pub(crate) fn stateless_node<'a>(
+        &self,
+        graphs: &'a AssetStore<AnimationGraph>,
+    ) -> Option<&'a str> {
+        let graph = self.get_animation_graph(graphs)?;
         graph.iter().find_map(|node_index| {
             let node = graph.nodes.node_weight(*node_index)?;
-            (node.live().is_some() && !self.graph_state.contains_key(&node_index))
-                .then_some(node.type_name())
+            node.live()?;
+            let Some(node_state) = self.graph_state.get(&node_index) else {
+                return Some(node.type_name());
+            };
+            node_state
+                .node_state
+                .downcast_ref::<AnimationStateMachineState>()?
+                .state_graphs()
+                .iter()
+                .find_map(|state_graph| state_graph.stateless_node(graphs))
         })
     }
 
@@ -680,6 +693,10 @@ impl AnimationGraphStates {
 
     pub(crate) fn get_mut(&mut self, id: GraphId) -> Option<&mut AnimationGraphState> {
         self.states.get_mut(*id)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &AnimationGraphState> {
+        self.states.iter()
     }
 }
 

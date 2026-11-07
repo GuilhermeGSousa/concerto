@@ -202,6 +202,10 @@ pub struct AnimationStateMachineState {
 }
 
 impl AnimationStateMachineState {
+    pub(crate) fn state_graphs(&self) -> &AnimationGraphStates {
+        &self.state_graphs
+    }
+
     pub(crate) fn new(
         initial_state: StateId,
         state_graphs: Vec<AnimationGraphState>,

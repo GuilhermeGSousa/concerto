@@ -678,7 +678,7 @@ impl fmt::Display for RetargetError {
 
 impl std::error::Error for RetargetError {}
 
-/// Plays `graph` on the source rig's skeleton, retargeted onto the player's; it fails, until the player's graph changes, on a nested retarget node or an inner node whose `CreateInput` is not an update input.
+/// Plays `graph` on the source rig's skeleton, retargeted onto the player's, with nodes that read the world (foot placement, IK, look-at) kept outside it; it fails, until the player's graph changes, on a nested retarget node or an inner node whose `CreateInput` is not an update input.
 #[derive(Clone, Default, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode)]
 pub struct RetargetNode {
@@ -772,7 +772,7 @@ impl RetargetNode {
         running
             .inner
             .initialize(self.graph.clone(), graphs, &inner_context);
-        if let Some(node) = running.inner.stateless_node(inner_graph) {
+        if let Some(node) = running.inner.stateless_node(graphs) {
             return Some(failed(
                 format!(
                     "its inner node {node} has no state; its CreateInput must be an update input"
@@ -1011,6 +1011,9 @@ impl AnimationNode for RetargetNode {
 
     fn reset(&self, state: &mut RetargetNodeState) {
         state.reset_pending = true;
+        if let Stage::Ready(running) = &mut state.stage {
+            running.finished = false;
+        }
     }
 
     fn is_finished(&self, state: &RetargetNodeState) -> bool {
@@ -3096,19 +3099,25 @@ mod tests {
         fn reset(&self, _: &mut ()) {}
     }
 
-    #[test]
-    fn an_inner_node_whose_create_input_is_not_an_update_input_fails_the_node_with_one_warning() {
+    fn played_with_create_only() -> Played {
         let mut played = Played::registering(target_skeleton(), |world| {
             register_input::<CreateNodeInputs, Res<'static, CreateOnly>>(world);
             world.insert_resource(CreateOnly);
         });
         played.load_rigs(node_target_rig());
+        played
+    }
+
+    fn created_once_graph() -> AnimationGraph {
         let mut registry = TypeRegistry::default();
         register_animation_types(&mut registry);
         registry.register::<CreatedOnce>();
-        let mut inner = AnimationGraph::from_node(CreatedOnce {});
-        inner.make_live(&registry, None).unwrap();
-        played.insert_inner(inner);
+        let mut graph = AnimationGraph::from_node(CreatedOnce {});
+        graph.make_live(&registry, None).unwrap();
+        graph
+    }
+
+    fn assert_fails_once_naming_created_once(played: &mut Played) {
         let before = warnings();
 
         played.advance();
@@ -3128,5 +3137,162 @@ mod tests {
         assert!(failures[0].contains("CreatedOnce"), "{}", failures[0]);
         assert_eq!(warnings(), after_first);
         assert!(played.is_finished());
+    }
+
+    #[test]
+    fn an_inner_node_whose_create_input_is_not_an_update_input_fails_the_node_with_one_warning() {
+        let mut played = played_with_create_only();
+        played.insert_inner(created_once_graph());
+
+        assert_fails_once_naming_created_once(&mut played);
+    }
+
+    #[test]
+    fn an_inner_state_machine_state_node_whose_create_input_is_not_an_update_input_fails_the_node()
+    {
+        let mut played = played_with_create_only();
+        played
+            .walks
+            .graphs_mut()
+            .insert(AssetId::from_path(NESTED_GRAPH), created_once_graph());
+        played.insert_inner(made_live(AnimationGraph::from_node(
+            AnimationStateMachine::from_initial_state(
+                name!("created"),
+                handle(NESTED_GRAPH),
+                |_| {},
+            )
+            .build(),
+        )));
+
+        assert_fails_once_naming_created_once(&mut played);
+    }
+
+    fn renamed_target_skeleton() -> Skeleton {
+        let mut skeleton = target_skeleton();
+        skeleton.bone_ids = (0..skeleton.bone_count() as u128)
+            .map(|bone| Uuid::from_u128(3000 + bone))
+            .collect();
+        skeleton
+    }
+
+    #[test]
+    fn a_player_skeleton_changed_while_playing_gives_the_rest_pose_and_one_warning() {
+        let rest = target_skeleton().rest_pose.to_vec();
+        let mut played = Played::loaded(target_skeleton(), node_target_rig());
+        played.advance();
+        assert_poses(&played.pose(), &retargeted_held_pose());
+        let before = warnings();
+
+        played.player_skeleton = renamed_target_skeleton();
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &rest);
+        }
+
+        assert_eq!(warnings() - before, 1);
+        assert!(played.is_finished());
+    }
+
+    fn short_target_skeleton() -> Skeleton {
+        let skeleton = target_skeleton();
+        let count = 3;
+        Skeleton::new(
+            skeleton.inverse_bindposes[..count].to_vec(),
+            skeleton.parents[..count].to_vec(),
+            skeleton.names[..count].to_vec(),
+            skeleton.rest_pose[..count].to_vec(),
+            skeleton.bone_ids[..count].to_vec(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_output_shorter_than_the_target_skeleton_keeps_its_rest_pose_and_passes_events_with_one_warning()
+     {
+        let mut clip = turning_clip();
+        clip.add_event(
+            0.05,
+            AnimationEvent {
+                name: Name::new("step"),
+            },
+        );
+        let mut played = Played::playing(node_source_rig(), clip, inner_clip());
+        played.advance();
+        let rest = short_target_skeleton().rest_pose.to_vec();
+        let before = warnings();
+
+        played.player_skeleton = short_target_skeleton();
+        for _ in 0..3 {
+            let frame = played.frame(None);
+            assert_poses(frame.joints(), &rest);
+            assert_vec3(frame.root_motion().translation, Vec3::ZERO);
+            assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
+            assert_eq!(frame.events().len(), 1);
+            assert_eq!(frame.events()[0].clip, AssetId::from_path(INNER_CLIP));
+        }
+
+        assert_eq!(warnings() - before, 1);
+    }
+
+    const REFERENCE_CLIP: &str = "retarget_node_reference_clip";
+
+    fn source_rest_clip() -> AnimationClip {
+        let skeleton = source_skeleton();
+        let mut clip = AnimationClip::default();
+        for (id, joint) in skeleton.bone_ids.iter().zip(skeleton.rest_pose.iter()) {
+            clip.add_channel(
+                *id,
+                AnimationChannel::new(
+                    vec![0.0, 1.0],
+                    AnimationChanelOutput::Rotation(vec![joint.rotation; 2]),
+                ),
+            );
+        }
+        clip
+    }
+
+    #[test]
+    fn a_retarget_node_stays_pending_until_its_reference_clip_loads() {
+        let rest = target_skeleton().rest_pose.to_vec();
+        let mut played = Played::new(target_skeleton());
+        played.load_rig_pair(
+            node_source_rig().with_reference(ReferencePose::ClipFrame {
+                clip: handle(REFERENCE_CLIP),
+                time: 0.0,
+            }),
+            node_target_rig(),
+        );
+        played.load_inner_graph();
+        let before = warnings();
+
+        for _ in 0..2 {
+            played.advance();
+            assert_poses(&played.pose(), &rest);
+            assert!(!played.is_finished());
+        }
+        assert_eq!(warnings(), before);
+
+        played
+            .walks
+            .clips_mut()
+            .insert(AssetId::from_path(REFERENCE_CLIP), source_rest_clip());
+        played.advance();
+
+        assert_poses(&played.pose(), &retargeted_held_pose());
+    }
+
+    #[test]
+    fn reset_clears_a_finished_inner_graph_before_the_next_update() {
+        let mut played = Played::new(target_skeleton());
+        played.load_rigs(node_target_rig());
+        played.load_inner(
+            AnimationClipNode::new(handle(HELD_CLIP)).with_play_mode(AnimationPlayMode::PlayOnce),
+        );
+        played.advance_by(1.5);
+        assert!(played.is_finished());
+
+        played.reset();
+
+        assert!(!played.is_finished());
     }
 }

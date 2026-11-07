@@ -18,7 +18,9 @@ use concerto_animation::node::{
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
-use concerto_animation::retarget::{BoneCorrection, ReferencePose, RetargetChain, RetargetRig};
+use concerto_animation::retarget::{
+    BoneCorrection, ReferencePose, RetargetChain, RetargetNode, RetargetRig,
+};
 use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_ecs::world::World;
 use concerto_foundation::assets::AssetId;
@@ -432,6 +434,51 @@ fn an_additive_node_keeps_every_field_through_a_round_trip_and_its_clip_comes_ba
     let handle = &live_node::<AdditiveNode>(&loaded).unwrap().clip;
     assert!(matches!(handle, AssetHandle::Strong(..)));
     assert_eq!(handle.id(), AssetId::from_path("cold_overlay"));
+}
+
+fn retarget_node_handle_ids(node: &RetargetNode) -> [AssetId; 3] {
+    [node.graph.id(), node.source.id(), node.target.id()]
+}
+
+#[test]
+fn a_retarget_node_keeps_every_field_through_a_round_trip_and_its_handles_come_back_strong() {
+    let node = RetargetNode::new(
+        AssetHandle::weak(AssetId::from_path("lafan1_locomotion")),
+        AssetHandle::weak(AssetId::from_path("lafan1_rig")),
+        AssetHandle::weak(AssetId::from_path("ual1_rig")),
+    );
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(false), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(false), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(
+        retarget_node_handle_ids(live_node::<RetargetNode>(&restored).unwrap()),
+        retarget_node_handle_ids(&node)
+    );
+
+    let mut server = AssetServer::new();
+    server.register_asset(&AssetStore::<AnimationClip>::new());
+    server.register_asset(&AssetStore::<AnimationGraph>::new());
+    server.register_asset(&AssetStore::<RetargetRig>::new());
+    let mut loaded = round_trip(&graph);
+    loaded.make_live(&registry(false), Some(&server)).unwrap();
+
+    assert!(loaded.load_warnings().is_empty());
+    let loaded = live_node::<RetargetNode>(&loaded).unwrap();
+    assert!(matches!(loaded.graph, AssetHandle::Strong(..)));
+    assert!(matches!(loaded.source, AssetHandle::Strong(..)));
+    assert!(matches!(loaded.target, AssetHandle::Strong(..)));
+    assert_eq!(
+        retarget_node_handle_ids(loaded),
+        retarget_node_handle_ids(&node)
+    );
 }
 
 fn play_rate_param_of(value: &ReflectedValue) -> &ReflectedValue {

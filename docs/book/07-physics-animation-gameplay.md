@@ -1036,9 +1036,10 @@ The node refuses:
 - a rig that does not resolve, or a target rig whose skeleton is not the
   player's, and gives the player's rest pose;
 - a retarget node in its inner graph, directly or in any state of a state
-  machine there, a solve that `PoseRetarget::new` refuses, or an inner node
-  whose `CreateInput` is not also an update input, which would get no state
-  inside the node's update, and gives the target rig's reference pose.
+  machine there, a solve that `PoseRetarget::new` refuses, or an inner node,
+  in the inner graph or in a loaded state of a state machine there, whose
+  `CreateInput` is not also an update input, which would get no state inside
+  the node's update, and gives the target rig's reference pose.
 
 Each refusal logs one warning naming it, and the node then counts as
 finished. It stays refused until the player's graph changes: fixing or
