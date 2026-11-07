@@ -890,7 +890,13 @@ the graph node that runs it are coming (#588, #589, #590).
   takes the pitch limit from the current framing in place of
   `CameraSettings::pitch_limit`, and multiplies `CameraSettings::sensitivity`,
   the player's preference, by its `sensitivity_scale`. Leaving aim narrows the
-  limit as the framing eases, so the pitch eases back into range.
+  limit as the framing eases, so the pitch eases back into range. The pivot
+  also turns with the `Look` action, the right stick, at
+  `CameraSettings::stick_turn_rate` radians per second at full deflection
+  (3.0 by default), scaled the same way.
+- `gameplay::actions` holds the `Move` action (WASD, the arrow keys and the
+  left stick) and `Look` (the right stick). `GameplayPlugin` binds them through
+  `bind_gameplay_actions`, which a test calls on its own `ActionMap`.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
   system flies it with the keyboard and mouse, for looking around a scene.

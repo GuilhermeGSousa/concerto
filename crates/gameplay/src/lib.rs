@@ -1,12 +1,15 @@
 use concerto_app::{Plugin, schedule_groups::Update};
 use concerto_ecs::IntoSystemConfig;
 use concerto_physics::interpolation::interpolate_body_transforms;
+use concerto_window::input::actions::ActionMap;
 
+use crate::actions::bind_gameplay_actions;
 use crate::camera::{
     CameraBoom, CameraSettings, move_camera_pivot, update_camera_booms, update_entity_follow,
 };
 use crate::third_person::{ThirdPersonCamera, update_third_person_cameras};
 
+pub mod actions;
 pub mod camera;
 pub mod movement;
 pub mod player;
@@ -16,6 +19,10 @@ pub struct GameplayPlugin;
 
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut concerto_app::App) {
+        bind_gameplay_actions(
+            app.get_resource_mut::<ActionMap>()
+                .expect("WindowPlugin must be registered before GameplayPlugin"),
+        );
         app.insert_resource(CameraSettings::default());
         app.register_type::<CameraBoom>();
         app.register_type::<ThirdPersonCamera>();
