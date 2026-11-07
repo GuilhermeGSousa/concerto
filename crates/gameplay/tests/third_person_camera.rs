@@ -32,11 +32,15 @@ fn world() -> World {
 }
 
 fn rig(world: &mut World, rig: ThirdPersonCamera) -> Rig {
+    rig_with_boom(world, rig, CameraBoom::default())
+}
+
+fn rig_with_boom(world: &mut World, rig: ThirdPersonCamera, boom: CameraBoom) -> Rig {
     let pivot = world.spawn((CameraPivot::default(), Transform::default(), rig));
     let camera = world.spawn((
         ChildOf::new(pivot),
-        Transform::from_translation(CameraBoom::default().offset),
-        CameraBoom::default(),
+        Transform::from_translation(boom.offset),
+        boom,
         VirtualCamera::new(0).with_lens(Lens {
             fovy: 1.0,
             znear: 0.5,
@@ -161,13 +165,13 @@ fn count_changed(
     counts.rigs = rigs.iter().count();
 }
 
-#[test]
-fn settled_rig_writes_nothing() {
+fn assert_settled_rig_writes_nothing(boom: CameraBoom) {
     let mut world = world();
     world.insert_resource(ChangedCounts::default());
-    rig(
+    rig_with_boom(
         &mut world,
         ThirdPersonCamera::default().with_stance(CameraStance::Aim),
+        boom,
     );
     let mut schedule = Schedule::new();
     schedule.add_system(update_third_person_cameras);
@@ -181,6 +185,16 @@ fn settled_rig_writes_nothing() {
     assert_eq!(counts.booms, 0, "the boom was stamped changed");
     assert_eq!(counts.cameras, 0, "the camera was stamped changed");
     assert_eq!(counts.rigs, 0, "the rig was stamped changed");
+}
+
+#[test]
+fn settled_rig_writes_nothing() {
+    assert_settled_rig_writes_nothing(CameraBoom::default());
+}
+
+#[test]
+fn settled_rig_with_an_off_axis_boom_writes_nothing() {
+    assert_settled_rig_writes_nothing(CameraBoom::default().with_offset(Vec3::new(1.0, 1.0, -3.0)));
 }
 
 #[test]

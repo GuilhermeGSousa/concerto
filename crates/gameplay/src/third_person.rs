@@ -245,10 +245,19 @@ pub fn update_third_person_cameras(
             if let Some(mut boom) = booms.get_entity(*child) {
                 let direction = boom.offset.try_normalize().unwrap_or(Vec3::NEG_Z);
                 let right = Vec3::Y.cross(direction).normalize_or_zero();
-                let framed = (*boom)
-                    .clone()
-                    .with_offset(direction * framing.distance.max(MIN_BOOM_DISTANCE))
-                    .with_shoulder(Vec3::Y * framing.height + right * framing.shoulder);
+                let distance = framing.distance.max(MIN_BOOM_DISTANCE);
+                let offset = if (boom.offset.length() - distance).abs() <= SETTLE_EPSILON {
+                    boom.offset
+                } else {
+                    direction * distance
+                };
+                let shoulder = Vec3::Y * framing.height + right * framing.shoulder;
+                let shoulder = if boom.shoulder.abs_diff_eq(shoulder, SETTLE_EPSILON) {
+                    boom.shoulder
+                } else {
+                    shoulder
+                };
+                let framed = (*boom).clone().with_offset(offset).with_shoulder(shoulder);
                 boom.set_if_neq(framed);
             }
 
