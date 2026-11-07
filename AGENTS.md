@@ -66,7 +66,8 @@ sanatorium content; the cooked release build above, zipped with `index.html` at
 the root, is what goes on a web host such as itch.io. `-- --forest` runs the forest, whose scene the editor
 opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved by root
 motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
-method there); its Blender source and exports are in
+method there; hold the right mouse button to aim, C to lower the camera, Q to swap
+shoulders). The sanatorium's Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
 editor's Import…, over a scratch copy of the project; there is no import
 command line. An example may have an `editor/` crate, named `<game>-editor`,

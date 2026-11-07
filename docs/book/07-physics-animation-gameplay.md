@@ -756,13 +756,41 @@ or rest-pose base are not there yet.
 - `CameraPivot` and `EntityFollow { target, offset }` make a third-person
   camera rig: put a `VirtualCamera` as a child of a pivot that follows the
   player.
-- `CameraBoom { offset, probe_radius, min_distance, return_halflife }` on that
-  camera child keeps it out of walls. Each frame it sweeps a sphere of
-  `probe_radius` from the pivot toward `offset`, ignoring the body of the
-  pivot's `EntityFollow` target, and pulls the camera in to the first hit at
-  once, never closer than `min_distance`. Once the way is clear it eases back
-  out, closing half the gap every `return_halflife` seconds. The pivot must be
-  a root entity.
+- `CameraBoom { offset, shoulder, probe_radius, min_distance, return_halflife }`
+  on that camera child keeps it out of walls. It has a `with_<field>` builder
+  for each field. The boom hangs from a shoulder point: `shoulder` is an offset
+  from the pivot in its level frame, its yaw alone, so pitching the pivot does
+  not move it. Each frame the boom casts two legs, sweeping a sphere of
+  `probe_radius` and ignoring the body of the pivot's `EntityFollow` target.
+  The first leg runs from the pivot to the shoulder point, which stops a small
+  skin short of the first hit, so a shoulder offset never reaches through a
+  wall beside the character. The second runs from the shoulder point along
+  `offset`, and pulls the camera in to the first hit at once, never closer
+  than `min_distance`. Once the way is clear it eases back out, closing half
+  the gap every `return_halflife` seconds. Only the camera's distance eases;
+  the shoulder point follows at once. A zero `shoulder`, the default, hangs
+  the boom from the pivot. The pivot must be a root entity.
+- `ThirdPersonCamera` on the pivot eases its boomed camera between three
+  framings, `follow`, `crouch` and `aim`, each a `CameraFraming { height,
+  shoulder, distance, fovy, sensitivity_scale, pitch_limit, halflife }`.
+  Gameplay code picks the framing by writing the rig's `stance`
+  (`CameraStance::Follow`, `Crouch` or `Aim`) and which shoulder the camera
+  looks over by writing its `side` (`ShoulderSide::Right` or `Left`); the rig
+  reads no input. Each frame `update_third_person_cameras` eases the rig's
+  current framing toward the stance's, closing half of every gap each
+  `halflife` of the framing it is heading for, and writes the result onto the
+  pivot's children: a `CameraBoom`'s `offset` length becomes `distance` and its
+  `shoulder` becomes `height` up plus `shoulder` toward the side, along the
+  view's right or left; a `VirtualCamera`'s lens takes `fovy`. A side swap
+  eases the camera through the centre line rather than jumping. The defaults
+  are a 3 m follow, a crouch 0.5 m lower and 2.5 m back, and an aim 0.5 m over
+  the right shoulder, 1.2 m back, with a 35° field of view, half the look
+  sensitivity and a 60° pitch limit. Each `CameraFraming` and the rig have a
+  `with_<field>` builder per field. On a pivot with a rig, `move_camera_pivot`
+  takes the pitch limit from the current framing in place of
+  `CameraSettings::pitch_limit`, and multiplies `CameraSettings::sensitivity`,
+  the player's preference, by its `sensitivity_scale`. Leaving aim narrows the
+  limit as the framing eases, so the pitch eases back into range.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
   system flies it with the keyboard and mouse, for looking around a scene.
@@ -772,12 +800,26 @@ cmd.spawn((
     CameraPivot::default(),
     Transform::from_translation(spawn_point),
     EntityFollow { target: character, offset: Vec3::Y },
+    ThirdPersonCamera::default(),
 ))
 .add_child((
     VirtualCamera::new(0),
-    Transform::from_translation_rotation(Vec3::NEG_Z * 10.0, Quat::from_rotation_y(PI)),
-    CameraBoom { offset: Vec3::NEG_Z * 10.0, ..Default::default() },
+    Transform::from_translation_rotation(Vec3::NEG_Z * 3.0, Quat::from_rotation_y(PI)),
+    CameraBoom::default(),
 ));
+
+fn aim(rigs: Query<&mut ThirdPersonCamera>, input: Res<Input>) {
+    let stance = if input.is_mouse_button_held(MouseButton::Right) {
+        CameraStance::Aim
+    } else {
+        CameraStance::Follow
+    };
+    for mut rig in rigs.iter() {
+        if rig.stance != stance {
+            rig.stance = stance;
+        }
+    }
+}
 ```
 
 Next: [User interface](08-ui.md).
