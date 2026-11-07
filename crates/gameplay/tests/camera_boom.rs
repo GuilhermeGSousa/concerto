@@ -182,3 +182,20 @@ fn shoulder_stays_level_when_the_pivot_pitches() {
         rotation.inverse() * (Vec3::Y * -0.5) + boom.offset,
     );
 }
+
+#[test]
+fn shoulder_turns_with_the_pivots_yaw() {
+    let mut world = world();
+    let boom = CameraBoom::default().with_shoulder(Vec3::X * 0.5);
+    let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    let camera = rig_with(
+        &mut world,
+        Vec3::new(10.0, 1.0, 10.0),
+        Transform::from_translation_rotation(PIVOT, rotation),
+        boom.clone(),
+    );
+
+    let translation = run_boom(&mut world, camera);
+
+    assert_near(translation, boom.shoulder + boom.offset);
+}
