@@ -1218,7 +1218,7 @@ mod tests {
         let rest = stage.script.clone();
         let lock = stage.legs()[0].lock;
 
-        stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.1)));
+        stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.04)));
         stage.step(DT);
         let leg = stage.legs()[0];
         assert_eq!(leg.phase, LockPhase::Releasing);
@@ -1232,7 +1232,7 @@ mod tests {
         stage.assert_toes_at(&releasing);
         let released = leg.shown - leg.animated;
 
-        let mut reach = 0.15;
+        let mut reach = 0.09;
         stage.pose(rest.moved(Vec3::new(0.0, 0.0, reach)));
         stage.step(0.1);
         let leg = stage.legs()[0];
