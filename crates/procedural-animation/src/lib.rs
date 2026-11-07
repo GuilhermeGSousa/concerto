@@ -1,5 +1,6 @@
 pub mod aim;
 pub mod foot_placement;
+mod leg;
 pub mod look_at;
 pub mod plugin;
 pub mod procedural_motion;

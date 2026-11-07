@@ -1,7 +1,6 @@
 use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
-    ik::{TwoBoneChain, solve_two_bone},
     node::{
         AnimationNode, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint, parent},
@@ -17,6 +16,8 @@ use concerto_reflect::Reflect;
 use glam::{Affine3A, Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
+
+use crate::leg::{ResolvedLeg, bend_leg, resolve_leg};
 
 const MIN_TOE_DISTANCE: f32 = 0.01;
 const MIN_NORMAL_LENGTH: f32 = 1.0e-3;
@@ -213,13 +214,6 @@ struct ResolvedLegs<'a> {
     legs: Vec<ResolvedLeg>,
 }
 
-struct ResolvedLeg {
-    hip: usize,
-    knee: usize,
-    foot: usize,
-    toe: Option<usize>,
-}
-
 #[derive(Clone, Copy)]
 struct Ground {
     height: f32,
@@ -285,27 +279,14 @@ impl FootPlacementNode {
         let pelvis = bone_under_first(skeleton, self.pelvis)?;
         let mut legs = Vec::with_capacity(self.legs.len());
         for leg in &self.legs {
-            let foot = bone_under_first(skeleton, leg.foot)?;
-            let knee = parent(skeleton, foot)
-                .ok_or_else(|| format!("foot `{}` has no parent", &*leg.foot))?;
-            let hip = parent(skeleton, knee)
-                .ok_or_else(|| format!("foot `{}` has no grandparent", &*leg.foot))?;
-            if !descends_from(skeleton, hip, pelvis) {
+            let resolved = resolve_leg(skeleton, leg.foot, leg.toe)?;
+            if !descends_from(skeleton, resolved.hip, pelvis) {
                 return Err(format!(
                     "the hip of foot `{}` does not descend from pelvis `{}`",
                     &*leg.foot, &*self.pelvis
                 ));
             }
-            let toe = leg
-                .toe
-                .map(|toe| bone_under_first(skeleton, toe))
-                .transpose()?;
-            legs.push(ResolvedLeg {
-                hip,
-                knee,
-                foot,
-                toe,
-            });
+            legs.push(resolved);
         }
         Ok(ResolvedLegs {
             skeleton,
@@ -501,69 +482,6 @@ fn drop_pelvis(
     }
 }
 
-fn bend_leg(
-    skeleton: &Skeleton,
-    leg: &ResolvedLeg,
-    goal: &LegGoal,
-    softness: f32,
-    output: &mut AnimationFrame,
-) {
-    let joints = output.joints();
-    let Some(hip) = model_joint(skeleton, joints, leg.hip) else {
-        return;
-    };
-    let Some(knee) = model_joint(skeleton, joints, leg.knee) else {
-        return;
-    };
-    let Some(foot) = model_joint(skeleton, joints, leg.foot) else {
-        return;
-    };
-    let parent_rotation = match parent(skeleton, leg.hip) {
-        Some(up) => match model_joint(skeleton, joints, up) {
-            Some(joint) => joint.rotation,
-            None => return,
-        },
-        None => Quat::IDENTITY,
-    };
-    let solution = solve_two_bone(
-        &TwoBoneChain {
-            root: hip.transform.translation.into(),
-            mid: knee.transform.translation.into(),
-            tip: foot.transform.translation.into(),
-        },
-        goal.position,
-        None,
-        softness,
-    );
-    let hip_rotation = solution.root * hip.rotation;
-    let knee_rotation = solution.mid * knee.rotation;
-    let foot_rotation = goal.tilt * foot.rotation;
-    let locals = [
-        LocalRotation {
-            bone: leg.hip,
-            rotation: parent_rotation.inverse() * hip_rotation,
-        },
-        LocalRotation {
-            bone: leg.knee,
-            rotation: hip_rotation.inverse() * knee_rotation,
-        },
-        LocalRotation {
-            bone: leg.foot,
-            rotation: knee_rotation.inverse() * foot_rotation,
-        },
-    ];
-    for local in locals {
-        if let Some(joint) = output.joint_mut(local.bone) {
-            joint.rotation = local.rotation.normalize();
-        }
-    }
-}
-
-struct LocalRotation {
-    bone: usize,
-    rotation: Quat,
-}
-
 impl AnimationNode for FootPlacementNode {
     type State = FootPlacementState;
     type CreateInput = ();
@@ -686,7 +604,14 @@ impl AnimationNode for FootPlacementNode {
         }
         drop_pelvis(&resolved, &world_to_model, pelvis, output);
         for (leg, goal) in resolved.legs.iter().zip(&goals) {
-            bend_leg(resolved.skeleton, leg, goal, self.softness, output);
+            bend_leg(
+                resolved.skeleton,
+                leg,
+                goal.position,
+                goal.tilt,
+                self.softness,
+                output,
+            );
         }
     }
 
