@@ -160,6 +160,10 @@ impl AnimationStateMachine {
         builder
     }
 
+    pub(crate) fn state_graphs(&self) -> impl Iterator<Item = &AssetHandle<AnimationGraph>> {
+        self.states.iter().map(|state| &state.graph)
+    }
+
     /// The blending backend every transition of this machine uses.
     pub fn blender(&self) -> TransitionBlender {
         self.blender

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use concerto_ecs::Res;
 use concerto_foundation::assets::{
@@ -18,7 +18,7 @@ use crate::{
     clip::AnimationClip,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState},
-    node::{AnimationNode, ReflectAnimationNode},
+    node::{AnimationNode, ReflectAnimationNode, state_machine::AnimationStateMachine},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, twist_about},
 };
 
@@ -678,7 +678,7 @@ impl fmt::Display for RetargetError {
 
 impl std::error::Error for RetargetError {}
 
-/// Plays `graph`, evaluated on the source rig's skeleton, retargeted onto the player's skeleton.
+/// Plays `graph` on the source rig's skeleton, retargeted onto the player's; it fails, until the player's graph changes, on a nested retarget node or an inner node whose `CreateInput` is not an update input.
 #[derive(Clone, Default, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode)]
 pub struct RetargetNode {
@@ -716,7 +716,8 @@ impl RetargetNode {
         let target_skeleton = skeletons.get(&target_rig.skeleton)?;
         let source_clip = reference_clip(source_rig, clips)?;
         let target_clip = reference_clip(target_rig, clips)?;
-        if !graphs.get(&self.graph)?.is_live() {
+        let inner_graph = graphs.get(&self.graph)?;
+        if !inner_graph.is_live() {
             return None;
         }
 
@@ -732,6 +733,12 @@ impl RetargetNode {
             return Some(failed(
                 "the target rig's skeleton is not the player's skeleton",
                 None,
+            ));
+        }
+        if holds_retarget_node(inner_graph, graphs) {
+            return Some(failed(
+                "its inner graph holds a retarget node",
+                Some(target.reference_local.into_boxed_slice()),
             ));
         }
         let retarget = match PoseRetarget::new(&source, source_skeleton, &target, target_skeleton) {
@@ -765,6 +772,14 @@ impl RetargetNode {
         running
             .inner
             .initialize(self.graph.clone(), graphs, &inner_context);
+        if let Some(node) = running.inner.stateless_node(inner_graph) {
+            return Some(failed(
+                format!(
+                    "its inner node {node} has no state; its CreateInput must be an update input"
+                ),
+                Some(target.reference_local.into_boxed_slice()),
+            ));
+        }
         Some(Stage::Ready(Box::new(running)))
     }
 }
@@ -773,6 +788,15 @@ impl RetargetNode {
 pub struct RetargetNodeState {
     stage: Stage,
     reset_pending: bool,
+}
+
+impl RetargetNodeState {
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut AnimationGraphState> {
+        match &mut self.stage {
+            Stage::Ready(running) => Some(&mut running.inner),
+            Stage::Pending | Stage::Failed { .. } => None,
+        }
+    }
 }
 
 enum Stage {
@@ -857,6 +881,30 @@ impl Running {
 fn failed(reason: impl fmt::Display, fallback: Option<Box<[JointPose]>>) -> Stage {
     warn!("RetargetNode does not play: {reason}");
     Stage::Failed { fallback }
+}
+
+fn holds_retarget_node(graph: &AnimationGraph, graphs: &AssetStore<AnimationGraph>) -> bool {
+    let mut seen = HashSet::new();
+    let mut pending = vec![graph];
+    while let Some(graph) = pending.pop() {
+        for node in graph.live_nodes() {
+            let node = node.as_reflect();
+            if node.downcast_ref::<RetargetNode>().is_some() {
+                return true;
+            }
+            let Some(machine) = node.downcast_ref::<AnimationStateMachine>() else {
+                continue;
+            };
+            for handle in machine.state_graphs() {
+                if seen.insert(handle.id())
+                    && let Some(state_graph) = graphs.get(handle)
+                {
+                    pending.push(state_graph);
+                }
+            }
+        }
+    }
+    false
 }
 
 fn reference_clip<'a>(
@@ -1100,12 +1148,17 @@ mod tests {
         thread::ThreadId,
     };
 
-    use concerto_ecs::system::input::SystemInputData;
+    use concerto_ecs::{
+        World,
+        resource::{Res, Resource},
+        system::input::{SystemInputData, register_input},
+    };
     use concerto_foundation::assets::{
         Asset, AssetId, asset_store::AssetStore, handle::AssetHandle,
     };
     use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonError};
-    use concerto_name::Name;
+    use concerto_name::{Name, name};
+    use concerto_reflect::{Reflect, TypeRegistry};
     use glam::{Mat4, Quat, Vec3};
     use uuid::Uuid;
 
@@ -1118,9 +1171,13 @@ mod tests {
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         graph::{AnimationGraph, made_live},
-        node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
+        node::{
+            AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
+            ReflectAnimationNode, state_machine::AnimationStateMachine,
+        },
         player::AnimationPlayer,
-        pose::{AnimationFrame, FiredEvent, FramePool},
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
         test_walks::Walks,
     };
 
@@ -2471,7 +2528,12 @@ mod tests {
         assert_eq!(out, vec![JointPose::IDENTITY; count - 1]);
     }
 
-    static WARNINGS: Mutex<Vec<ThreadId>> = Mutex::new(Vec::new());
+    struct Warning {
+        thread: ThreadId,
+        message: String,
+    }
+
+    static WARNINGS: Mutex<Vec<Warning>> = Mutex::new(Vec::new());
 
     struct WarningCapture;
 
@@ -2482,14 +2544,17 @@ mod tests {
 
         fn log(&self, record: &log::Record) {
             if record.level() == log::Level::Warn {
-                WARNINGS.lock().unwrap().push(std::thread::current().id());
+                WARNINGS.lock().unwrap().push(Warning {
+                    thread: std::thread::current().id(),
+                    message: record.args().to_string(),
+                });
             }
         }
 
         fn flush(&self) {}
     }
 
-    fn warnings() -> usize {
+    fn warning_messages() -> Vec<String> {
         static INSTALL: Once = Once::new();
         INSTALL.call_once(|| {
             log::set_logger(&WarningCapture).unwrap();
@@ -2500,8 +2565,13 @@ mod tests {
             .lock()
             .unwrap()
             .iter()
-            .filter(|thread| **thread == me)
-            .count()
+            .filter(|warning| warning.thread == me)
+            .map(|warning| warning.message.clone())
+            .collect()
+    }
+
+    fn warnings() -> usize {
+        warning_messages().len()
     }
 
     const SOURCE_SKELETON: &str = "retarget_node_source_skeleton";
@@ -2512,6 +2582,7 @@ mod tests {
     const INNER_GRAPH: &str = "retarget_node_inner_graph";
     const OUTER_GRAPH: &str = "retarget_node_outer_graph";
     const INNER_CLIP: &str = "retarget_node_inner_clip";
+    const NESTED_GRAPH: &str = "retarget_node_nested_graph";
 
     fn handle<A: Asset>(path: &str) -> AssetHandle<A> {
         AssetHandle::weak(AssetId::from_path(path))
@@ -2582,7 +2653,11 @@ mod tests {
 
     impl Played {
         fn new(player_skeleton: Skeleton) -> Self {
-            let mut walks = Walks::new(AssetStore::new(), AssetStore::new());
+            Self::registering(player_skeleton, |_| {})
+        }
+
+        fn registering(player_skeleton: Skeleton, register: impl FnOnce(&mut World)) -> Self {
+            let mut walks = Walks::with(AssetStore::new(), AssetStore::new(), register);
             walks
                 .skeletons_mut()
                 .insert(AssetId::from_path(SOURCE_SKELETON), source_skeleton());
@@ -2645,10 +2720,20 @@ mod tests {
         }
 
         fn load_inner(&mut self, inner: AnimationClipNode) {
-            self.walks.graphs_mut().insert(
-                AssetId::from_path(INNER_GRAPH),
-                made_live(AnimationGraph::from_node(inner)),
-            );
+            self.insert_inner(made_live(AnimationGraph::from_node(inner)));
+        }
+
+        fn insert_inner(&mut self, graph: AnimationGraph) {
+            self.walks
+                .graphs_mut()
+                .insert(AssetId::from_path(INNER_GRAPH), graph);
+        }
+
+        fn visits<N: AnimationNode>(&mut self) -> usize {
+            let mut visits = 0;
+            self.player
+                .for_each_state_mut::<N>(self.walks.graphs(), |_, _, _| visits += 1);
+            visits
         }
 
         fn advance(&mut self) {
@@ -2908,5 +2993,138 @@ mod tests {
         played.advance();
 
         assert_poses(&played.pose(), &retargeted_turning_pose(0.1 * 3.0));
+    }
+
+    fn nested_retarget_node() -> RetargetNode {
+        RetargetNode::new(handle(INNER_GRAPH), handle(SOURCE_RIG), handle(TARGET_RIG))
+    }
+
+    fn node_target_reference() -> Vec<JointPose> {
+        node_target_rig()
+            .resolve(&target_skeleton(), None)
+            .unwrap()
+            .reference_local
+    }
+
+    #[test]
+    fn an_inner_graph_holding_a_retarget_node_is_refused() {
+        let before = warnings();
+        let reference = node_target_reference();
+        let mut played = Played::new(target_skeleton());
+        played.load_rigs(node_target_rig());
+        played.insert_inner(made_live(AnimationGraph::from_node(nested_retarget_node())));
+
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &reference);
+        }
+
+        assert_eq!(played.visits::<RetargetNode>(), 1);
+        assert!(played.is_finished());
+        assert_eq!(warnings() - before, 1);
+    }
+
+    #[test]
+    fn an_inner_state_machine_state_holding_a_retarget_node_is_refused() {
+        let before = warnings();
+        let reference = node_target_reference();
+        let mut played = Played::new(target_skeleton());
+        played.load_rigs(node_target_rig());
+        played.walks.graphs_mut().insert(
+            AssetId::from_path(NESTED_GRAPH),
+            made_live(AnimationGraph::from_node(nested_retarget_node())),
+        );
+        played.insert_inner(made_live(AnimationGraph::from_node(
+            AnimationStateMachine::from_initial_state(
+                name!("nested"),
+                handle(NESTED_GRAPH),
+                |_| {},
+            )
+            .build(),
+        )));
+
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &reference);
+        }
+
+        assert_eq!(played.visits::<AnimationStateMachine>(), 0);
+        assert_eq!(warnings() - before, 1);
+    }
+
+    #[test]
+    fn for_each_state_mut_visits_a_node_inside_the_inner_graph() {
+        let mut played = Played::playing(node_source_rig(), turning_clip(), inner_clip());
+        assert_eq!(played.visits::<AnimationClipNode>(), 0);
+
+        played.advance();
+
+        assert_eq!(played.visits::<AnimationClipNode>(), 1);
+    }
+
+    #[derive(Resource)]
+    struct CreateOnly;
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct CreatedOnce {}
+
+    impl AnimationNode for CreatedOnce {
+        type State = ();
+        type CreateInput = Res<'static, CreateOnly>;
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &Res<CreateOnly>, _context: &AnimationGraphContext<'_>) {}
+
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut (),
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+        }
+
+        fn reset(&self, _: &mut ()) {}
+    }
+
+    #[test]
+    fn an_inner_node_whose_create_input_is_not_an_update_input_fails_the_node_with_one_warning() {
+        let mut played = Played::registering(target_skeleton(), |world| {
+            register_input::<CreateNodeInputs, Res<'static, CreateOnly>>(world);
+            world.insert_resource(CreateOnly);
+        });
+        played.load_rigs(node_target_rig());
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<CreatedOnce>();
+        let mut inner = AnimationGraph::from_node(CreatedOnce {});
+        inner.make_live(&registry, None).unwrap();
+        played.insert_inner(inner);
+        let before = warnings();
+
+        played.advance();
+        played.pose();
+        let after_first = warnings();
+        for _ in 0..2 {
+            played.advance();
+            played.pose();
+        }
+
+        let failures: Vec<String> = warning_messages()
+            .split_off(before)
+            .into_iter()
+            .filter(|message| message.starts_with("RetargetNode does not play"))
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("CreatedOnce"), "{}", failures[0]);
+        assert_eq!(warnings(), after_first);
+        assert!(played.is_finished());
     }
 }

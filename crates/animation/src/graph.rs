@@ -25,6 +25,7 @@ use crate::{
     },
     player::ActiveNodeState,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    retarget::RetargetNodeState,
 };
 
 type AnimationDirectedGraph = DiGraph<AnimationNodeData, ()>;
@@ -445,6 +446,15 @@ impl AnimationGraphState {
         blackboard: &AnimationBlackboard,
         mut f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
     ) {
+        self.visit_states_mut(graphs, blackboard, &mut f);
+    }
+
+    fn visit_states_mut<N: AnimationNode>(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        blackboard: &AnimationBlackboard,
+        f: &mut dyn FnMut(&N, &mut N::State, &AnimationBlackboard),
+    ) {
         let Some(graph) = self
             .graph_handle
             .as_ref()
@@ -454,6 +464,13 @@ impl AnimationGraphState {
         };
 
         for (node_index, node_state) in self.graph_state.iter_mut() {
+            if let Some(inner) = node_state
+                .node_state
+                .downcast_mut::<RetargetNodeState>()
+                .and_then(RetargetNodeState::inner_mut)
+            {
+                inner.visit_states_mut(graphs, blackboard, f);
+            }
             let Some(node) = graph
                 .live_node(*node_index)
                 .and_then(|node| node.as_reflect().downcast_ref::<N>())
@@ -502,6 +519,14 @@ impl AnimationGraphState {
                 },
             );
         }
+    }
+
+    pub(crate) fn stateless_node<'a>(&self, graph: &'a AnimationGraph) -> Option<&'a str> {
+        graph.iter().find_map(|node_index| {
+            let node = graph.nodes.node_weight(*node_index)?;
+            (node.live().is_some() && !self.graph_state.contains_key(&node_index))
+                .then_some(node.type_name())
+        })
     }
 
     pub(crate) fn reset(&mut self, graphs: &AssetStore<AnimationGraph>) {
