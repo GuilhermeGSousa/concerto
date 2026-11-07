@@ -90,9 +90,12 @@ example from an `On<Add<Sensor>>` listener.
 - **When a body goes away:** when a body inside a sensor is despawned or loses its
   `Collider`, the sensor gets a `SensorExit` naming it. By then the entity may
   no longer exist. A despawned sensor hears nothing, since its listeners go
-  with it.
+  with it. Rebuilding either body of a pair, by inserting a new `Collider` or
+  by editing a sensor's `BoxCollider` while playing, sends `SensorExit` then
+  `SensorEnter`.
 - **Shapes:** a sensor is a sphere, box or capsule. A triangle mesh has no
-  inside, so a `Sensor` on a `MeshCollider` is ignored, with a warning.
+  inside, so a `Sensor` on a `MeshCollider` without a `BoxCollider` is ignored,
+  with a warning; a `BoxCollider` beside it wins, and the box is the sensor.
 - **Queries:** `cast_ray`, `cast_sphere` and the ground probe never hit a
   sensor.
 

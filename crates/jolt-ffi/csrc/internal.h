@@ -24,8 +24,8 @@
 
 JPH_SUPPRESS_WARNINGS
 
-// Object layers: statics only collide with dynamics; dynamics collide with
-// everything.
+// Object layers: statics and sensors only collide with dynamics; dynamics
+// collide with everything.
 namespace Layers
 {
 	constexpr JPH::ObjectLayer NON_MOVING = 0;

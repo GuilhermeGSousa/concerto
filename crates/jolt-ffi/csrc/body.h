@@ -63,9 +63,7 @@ extern "C"
     void jolt_body_creation_settings_set_allowed_dofs(JoltBodyCreationSettings *settings,
                                                       JoltAllowedDofs allowed_dofs);
 
-    /* Makes the body a sensor: jolt_body_create builds it kinematic, on the
-     * SENSOR layer, never sleeping and active, whatever the other settings
-     * say. */
+    /* Makes the body a kinematic, always active sensor on the SENSOR layer. */
     void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
                                                    bool is_sensor);
 
@@ -92,13 +90,13 @@ extern "C"
                                                      const float scale[3]);
 
     /* Creates a body from `settings` and adds it to the simulation, active
-     * unless static. The settings remain owned by the caller and can be
-     * reused. */
+     * unless static; a sensor is always kinematic and active. The settings
+     * remain owned by the caller and can be reused. */
     JoltBodyId jolt_body_create(JoltWorld *world, const JoltBodyCreationSettings *settings);
 
     /* Removes a body from the simulation and destroys it, waking any bodies that
-     * were touching it (they would otherwise sleep in mid-air). The id is invalid
-     * afterwards. */
+     * were touching it (they would otherwise sleep in mid-air) and forgetting its
+     * sensor pairs. The id is invalid afterwards. */
     void jolt_body_destroy(JoltWorld *world, JoltBodyId body);
 
     typedef struct JoltSensorContact

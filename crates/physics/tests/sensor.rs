@@ -10,13 +10,14 @@ use concerto_ecs::world::World;
 use concerto_ecs::IntoSystemConfig;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::primitives::plane;
+use concerto_mesh::MeshComponent;
 use glam::{Vec2, Vec3};
 mod common;
 use common::physics_world;
 
 use concerto_physics::backend::SensorContactKind;
 use concerto_physics::body::BodyId;
-use concerto_physics::collider::{register_colliders, Collider};
+use concerto_physics::collider::{build_box_colliders, register_colliders, BoxCollider, Collider};
 use concerto_physics::ground::GroundState;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
@@ -83,16 +84,25 @@ impl SensorWorld {
         let mut world = physics_world();
         world.register_component::<Sensor>();
         world.register_component::<MeshCollider>();
+        world.register_component::<MeshComponent>();
+        world.register_component::<BoxCollider>();
         world.register_component::<Listener<SensorEnter>>();
         world.register_component::<Listener<SensorExit>>();
         world.insert_resource(PhysicsPipeline::new());
         world.insert_resource(Contacts::default());
         let mut registration = Schedule::new();
-        registration.add_system(register_colliders);
+        registration.add_system((build_box_colliders, register_colliders).chain());
         let registration = registration.compile::<SingleThreadedExecutor>(&mut world);
         let mut fixed_step = Schedule::new();
-        fixed_step
-            .add_system((register_colliders, step_simulation, report_sensor_contacts).chain());
+        fixed_step.add_system(
+            (
+                build_box_colliders,
+                register_colliders,
+                step_simulation,
+                report_sensor_contacts,
+            )
+                .chain(),
+        );
         let fixed_step = fixed_step.compile::<SingleThreadedExecutor>(&mut world);
         Self {
             world,
@@ -306,6 +316,36 @@ fn a_sensor_on_a_mesh_collider_is_ignored() {
 }
 
 #[test]
+fn a_mesh_collider_with_a_box_collider_is_a_sensor() {
+    let mut physics = SensorWorld::new();
+    physics.world.spawn((
+        MeshComponent::default(),
+        MeshCollider,
+        BoxCollider {
+            half_extents: Vec3::new(2.0, 1.0, 2.0),
+        },
+        Sensor,
+        at(Vec3::new(0.0, 5.0, 0.0)),
+        record_enter(),
+        record_exit(),
+    ));
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 8.0, 0.0)),
+    ));
+    physics.update();
+
+    physics.step(90);
+    assert_eq!(physics.contacts(), [enter(sphere), exit(sphere)]);
+    let height = physics.position(sphere).y;
+    assert!(
+        height < 3.5,
+        "the box wins over the mesh, so the sphere should fall through the sensor, below y = 3.5, was {height}"
+    );
+}
+
+#[test]
 fn a_falling_sphere_enters_and_leaves_a_sensor() {
     let mut physics = SensorWorld::new();
     physics.spawn_sensor(
@@ -384,6 +424,12 @@ fn a_kinematic_sensor_reports_a_resting_sphere_and_not_the_floor() {
     );
     physics.update();
 
+    physics.step(150);
+    assert!(
+        physics.contacts().is_empty(),
+        "the sensor should hear nothing before it moves, got {:?}",
+        physics.contacts()
+    );
     physics.set_velocity(sensor, Vec3::new(4.0, 0.0, 0.0));
     physics.step(150);
     assert_eq!(physics.contacts(), [enter(sphere), exit(sphere)]);
@@ -392,19 +438,83 @@ fn a_kinematic_sensor_reports_a_resting_sphere_and_not_the_floor() {
 #[test]
 fn sensors_do_not_detect_each_other() {
     let mut physics = SensorWorld::new();
-    physics.spawn_sensor(Collider::cuboid(1.0, 1.0, 1.0), at(Vec3::ZERO));
+    physics.world.spawn((
+        Collider::cuboid(20.0, 0.5, 20.0),
+        at(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    physics.spawn_sensor(
+        Collider::cuboid(1.0, 1.0, 1.0),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    );
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    ));
     let moving = physics.spawn_kinematic_sensor(
         Collider::cuboid(1.0, 1.0, 1.0),
-        at(Vec3::new(-3.0, 0.0, 0.0)),
+        at(Vec3::new(-3.0, 0.5, 0.0)),
     );
     physics.update();
 
     physics.set_velocity(moving, Vec3::new(3.0, 0.0, 0.0));
     physics.step(120);
-    assert!(
-        physics.contacts().is_empty(),
-        "sensors should not detect each other, got {:?}",
-        physics.contacts()
+    assert_eq!(
+        physics.contacts(),
+        [enter(sphere), enter(sphere), exit(sphere)],
+        "the sensors should record only the sphere, never each other"
+    );
+}
+
+#[test]
+fn replacing_a_sensors_collider_exits_and_enters_again() {
+    let mut physics = SensorWorld::new();
+    physics.world.spawn((
+        Collider::cuboid(20.0, 0.5, 20.0),
+        at(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    let sensor = physics.spawn_sensor(Collider::cuboid(2.0, 2.0, 2.0), at(Vec3::ZERO));
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    ));
+    physics.update();
+    physics.step(10);
+    assert_eq!(physics.contacts(), [enter(sphere)]);
+
+    physics
+        .world
+        .insert(Collider::cuboid(2.0, 2.0, 2.0), sensor);
+    physics.step(10);
+    assert_eq!(
+        physics.contacts(),
+        [enter(sphere), exit(sphere), enter(sphere)]
+    );
+}
+
+#[test]
+fn replacing_the_collider_of_a_body_inside_a_sensor_exits_and_enters_again() {
+    let mut physics = SensorWorld::new();
+    physics.world.spawn((
+        Collider::cuboid(20.0, 0.5, 20.0),
+        at(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    physics.spawn_sensor(Collider::cuboid(2.0, 2.0, 2.0), at(Vec3::ZERO));
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    ));
+    physics.update();
+    physics.step(10);
+    assert_eq!(physics.contacts(), [enter(sphere)]);
+
+    physics.world.insert(Collider::sphere(0.5), sphere);
+    physics.step(10);
+    assert_eq!(
+        physics.contacts(),
+        [enter(sphere), exit(sphere), enter(sphere)]
     );
 }
 

@@ -118,7 +118,7 @@ fn a_box_collider_builds_a_cuboid_and_rebuilds_it_when_edited() {
 }
 
 #[test]
-fn a_box_collider_with_a_zero_half_extent_builds_a_body() {
+fn a_box_collider_with_a_zero_half_extent_builds_a_thin_plate() {
     let mut physics = BoxWorld::new();
     let plate = physics.world.spawn((
         BoxCollider {
@@ -128,12 +128,20 @@ fn a_box_collider_with_a_zero_half_extent_builds_a_body() {
     ));
     physics.update();
 
+    let hit = physics
+        .world
+        .get_resource::<PhysicsState>()
+        .unwrap()
+        .cast_ray(
+            Vec3::new(0.5, 0.2, 0.5),
+            Vec3::new(0.0, -1.0, 0.0),
+            QueryFilter::default(),
+        )
+        .expect("a ray down onto the flat box should hit it");
+    assert_eq!(hit.entity, Some(plate));
     assert!(
-        physics
-            .world
-            .get_component_for_entity::<BodyId>(plate)
-            .is_some(),
-        "a flat box collider should still build a body"
+        (hit.point.y - 0.001).abs() < 0.005,
+        "the plate's top should sit at its clamped half extent, y = 0.001, was {}",
+        hit.point.y
     );
-    physics.step(1);
 }

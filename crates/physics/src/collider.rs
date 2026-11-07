@@ -149,21 +149,31 @@ pub fn register_colliders(
             Option<&ColliderOffset>,
             Option<&Sensor>,
             Option<&MeshCollider>,
+            Option<&BoxCollider>,
         ),
         Without<BodyId>,
     >,
     mut physics_state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, global_transform, collider, rigid_body, offset, sensor, mesh_collider) in
-        colliders.iter()
+    for (
+        entity,
+        global_transform,
+        collider,
+        rigid_body,
+        offset,
+        sensor,
+        mesh_collider,
+        box_collider,
+    ) in colliders.iter()
     {
-        let sensor = match (sensor, mesh_collider) {
-            (Some(_), Some(_)) => {
+        let mesh_shape = mesh_collider.is_some() && box_collider.is_none();
+        let sensor = match (sensor, mesh_shape) {
+            (Some(_), true) => {
                 warn!("Ignoring Sensor on entity {entity:?}: a mesh collider cannot be a sensor");
                 false
             }
-            (Some(_), None) => {
+            (Some(_), false) => {
                 if rigid_body
                     .is_some_and(|rigid_body| matches!(rigid_body.motion_type, MotionType::Dynamic))
                 {

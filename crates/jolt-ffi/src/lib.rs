@@ -213,9 +213,7 @@ extern "C" {
         out_max: *mut f32,
     );
 
-    /// Makes the body a sensor: [`jolt_body_create`] builds it kinematic, on
-    /// the sensor layer, never sleeping and active, whatever the other
-    /// settings say.
+    /// Makes the body a kinematic, always active sensor on the sensor layer.
     pub fn jolt_body_creation_settings_set_is_sensor(
         settings: *mut JoltBodyCreationSettings,
         is_sensor: bool,
@@ -250,16 +248,16 @@ extern "C" {
     );
 
     /// Creates a body from `settings` and adds it to the simulation, active
-    /// unless static. The settings remain owned by the caller and can be
-    /// reused.
+    /// unless static; a sensor is always kinematic and active. The settings
+    /// remain owned by the caller and can be reused.
     pub fn jolt_body_create(
         world: *mut JoltWorld,
         settings: *const JoltBodyCreationSettings,
     ) -> JoltBodyId;
 
     /// Removes a body from the simulation and destroys it, waking any bodies
-    /// that were touching it (they would otherwise sleep in mid-air). The id
-    /// is invalid afterwards.
+    /// that were touching it (they would otherwise sleep in mid-air) and
+    /// forgetting its sensor pairs. The id is invalid afterwards.
     pub fn jolt_body_destroy(world: *mut JoltWorld, body: JoltBodyId);
 
     /// Moves up to `capacity` queued sensor contacts, oldest first, into `out` and returns how many it wrote.
