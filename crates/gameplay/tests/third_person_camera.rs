@@ -194,7 +194,7 @@ fn settled_rig_writes_nothing() {
 
 #[test]
 fn settled_rig_with_an_off_axis_boom_writes_nothing() {
-    assert_settled_rig_writes_nothing(CameraBoom::default().with_offset(Vec3::new(1.0, 1.0, -3.0)));
+    assert_settled_rig_writes_nothing(CameraBoom::default().with_offset(Vec3::new(1.5, 1.0, -3.0)));
 }
 
 #[test]

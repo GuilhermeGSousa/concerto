@@ -809,9 +809,15 @@ cmd.spawn((
 ));
 
 fn aim(rigs: Query<&mut ThirdPersonCamera>, input: Res<Input>) {
-    let aiming = input.is_mouse_button_held(MouseButton::Right);
+    let stance = if input.is_mouse_button_held(MouseButton::Right) {
+        CameraStance::Aim
+    } else {
+        CameraStance::Follow
+    };
     for mut rig in rigs.iter() {
-        rig.stance = if aiming { CameraStance::Aim } else { CameraStance::Follow };
+        if rig.stance != stance {
+            rig.stance = stance;
+        }
     }
 }
 ```
