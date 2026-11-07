@@ -13,6 +13,8 @@ use crate::{
     },
 };
 
+#[cfg_attr(not(test), expect(dead_code))]
+mod aim_offset;
 pub mod blend_space;
 pub mod definition;
 pub mod layer;
