@@ -245,6 +245,16 @@ footstep_right = [0.37, 0.87]
 - A table for a clip the source does not emit, or a time that is negative,
   not finite, or past the clip's duration, fails the import.
 
+A clip's `AnimationEvent`s can also be added, moved, renamed and removed in the
+editor's clip tab (see `crates/animation-editor/README.md`), and Save writes
+them into the clip's `.gasset` with `resave_content_asset`. Other event types
+show there read-only and are saved as they are. The save keeps the clip's
+import provenance, so the clip stays owned by its source: the next re-import
+of the source rebuilds the clip and its events from `[settings.events]`, and
+the edits saved from the editor are lost. To keep an event across re-imports,
+put it in `[settings.events]`. An authored clip, with no provenance, keeps its
+saved events.
+
 ## Additive clips
 
 The `gltf` and `bvh` importers make a clip additive against a base clip, its
@@ -849,8 +859,10 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
   mean. Matching across such changes is deferred.
 - **Pruning skips editor-saved outputs.** Re-import deletes the `.gasset` and
   the metadata key of every output the importer stopped emitting, and removes
-  it from the editor's registry. An output saved from the editor (its header
-  has no provenance) is kept with its key. Pruning an output that another asset
+  it from the editor's registry. An output saved from the editor with
+  `save_content_asset_into` (its header has no provenance) is kept with its
+  key; one saved with `resave_content_asset` keeps its provenance and is
+  pruned like any other output. Pruning an output that another asset
   still references logs a warning naming the output and the referrer.
 - **A renamed output keeps its id only with a hint.** An importer that renames a
   sub-asset calls `ctx.renamed_from(new_name, old_name)` before it first calls
