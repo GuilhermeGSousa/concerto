@@ -577,6 +577,13 @@ game has it; the host reads both from the window's own events while the game
 has input. `hosted::input::ReleaseInput(document)` gives input to the editor
 from code.
 
+Gamepads are the exception: their events reach the playing game whichever side
+has input, and the editor's panels read none. Giving input to the editor still
+tells the game it lost focus, which zeroes its pads until they move again. When
+the game starts playing, or its viewport is shown again, it is first told about
+the pads connected now, with their buttons and sticks, and about any that went
+away while it was hidden.
+
 ## Saving
 
 An edited document is dirty until it is saved, and its tab shows a dot. Ctrl+S

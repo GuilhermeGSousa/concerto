@@ -78,6 +78,16 @@ pub enum GamepadAxis {
     RightStickY,
 }
 
+impl GamepadAxis {
+    /// Every axis, in declaration order.
+    pub const ALL: [GamepadAxis; 4] = [
+        GamepadAxis::LeftStickX,
+        GamepadAxis::LeftStickY,
+        GamepadAxis::RightStickX,
+        GamepadAxis::RightStickY,
+    ];
+}
+
 /// One of a gamepad's two sticks.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GamepadStick {
@@ -224,6 +234,16 @@ impl Gamepad {
             GamepadAxis::LeftStickY => self.stick(GamepadStick::Left).y,
             GamepadAxis::RightStickX => self.stick(GamepadStick::Right).x,
             GamepadAxis::RightStickY => self.stick(GamepadStick::Right).y,
+        }
+    }
+
+    /// The axis's last raw value, before the dead zone.
+    pub fn raw_axis(&self, axis: GamepadAxis) -> f32 {
+        match axis {
+            GamepadAxis::LeftStickX => self.left.x,
+            GamepadAxis::LeftStickY => self.left.y,
+            GamepadAxis::RightStickX => self.right.x,
+            GamepadAxis::RightStickY => self.right.y,
         }
     }
 
