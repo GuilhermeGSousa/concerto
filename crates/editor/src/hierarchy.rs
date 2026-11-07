@@ -1,5 +1,5 @@
 //! The world tree: the entities of the scene being edited, walked through `Children` from its root, or while playing from every top-level entity of the game's world.
-use crate::actions::{DeleteEntity, DuplicateEntity, RenameEntity, TreeContext};
+use crate::actions::{DeleteEntity, DuplicateEntity, EditorContextSet, RenameEntity, TreeContext};
 use crate::asset_editor::{ActiveEditor, EditorDocument};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{glyph, icon};
@@ -150,7 +150,7 @@ impl Plugin for HierarchyPlugin {
                     .after(reconcile_structure)
                     .before(UiSet::Materials),
             )
-            .add_system(LateUpdate, sync_tree_context)
+            .add_system(LateUpdate, sync_tree_context.in_set(EditorContextSet))
             .add_system(LateUpdate, entity_shortcuts)
             .add_system(LateUpdate, sync_row_menu_items)
             .add_system(LateUpdate, show_header);

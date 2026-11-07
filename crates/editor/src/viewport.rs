@@ -23,7 +23,9 @@ use concerto_ui::{
 use concerto_window::input::actions::{ActionFired, ActionMap};
 use taffy::Position;
 
-use crate::actions::{FrameAll, FrameSelected, GizmoRotate, GizmoTranslate, ViewportContext};
+use crate::actions::{
+    EditorContextSet, FrameAll, FrameSelected, GizmoRotate, GizmoTranslate, ViewportContext,
+};
 use crate::asset_editor::ActiveEditor;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::hosted::{
@@ -51,7 +53,7 @@ impl Plugin for ViewportPlugin {
         });
         app.add_system(Startup, build_panel)
             .add_system(Update, viewport_shortcuts)
-            .add_system(LateUpdate, sync_viewport_context)
+            .add_system(LateUpdate, sync_viewport_context.in_set(EditorContextSet))
             .add_system(LateUpdate, show_active_picture.before(UiSet::Materials))
             .add_system(LateUpdate, show_input_owner.before(UiSet::Materials))
             .add_system(

@@ -1104,6 +1104,16 @@ visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
 input. Loading and saving belong to the custom editor.
 
+A custom editor can bind a key in a context of its own with
+`ActionMap::bind`, and push that context while its keys apply. Delete, for
+one, is bound to `DeleteEntity` in `ViewportContext` and `TreeContext`, and
+`ActionMap::resolve` searches from the last pushed context. The systems that
+push those two run in `LateUpdate` in the public `EditorContextSet`, each
+frame, so a system that pushes a context over them runs in `LateUpdate`
+`.after(EditorContextSet)`; its key then wins while the pointer is over the
+viewport or focus is in the tree. Read the fired action with
+`EventReader<ActionFired>` and `ActionFired::is`, as the editor reads `Save`.
+
 ### Inspected assets
 
 A game marks a reflectable content asset type as inspected with
