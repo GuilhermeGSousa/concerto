@@ -170,6 +170,18 @@ impl<'w> EntityWorldMut<'w> {
 }
 
 #[cfg(test)]
+mod structural_version_tests {
+    use super::EntityStructuralVersion;
+
+    #[test]
+    fn structural_version_wraps_and_continues_incrementing() {
+        let wrapped = EntityStructuralVersion(u16::MAX).next();
+        assert_eq!(wrapped, EntityStructuralVersion(0));
+        assert_eq!(wrapped.next(), EntityStructuralVersion(1));
+    }
+}
+
+#[cfg(test)]
 mod id_string_tests {
     use std::num::NonZero;
 
