@@ -812,8 +812,8 @@ above the model origin with model +Y up. It takes the skeleton and, for a
 fails with a `RigError` naming the bone or chain: an invalid skeleton, an empty
 or unknown bone, a motion root that is not above the root, an unnamed or
 duplicate chain, a chain end not below its start, a missing clip, a time that
-is not finite, a clip with no channels for the skeleton, or a root at or below
-the model origin.
+is not finite, a clip with no channels for the skeleton, or a root height that
+is not finite or not above 0.1 mm.
 
 The solve that plays one rig's motion on another, the clips derived from it and
 the graph node that runs it are coming (#588, #589, #590).
