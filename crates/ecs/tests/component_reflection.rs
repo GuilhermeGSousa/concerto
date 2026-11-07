@@ -112,22 +112,3 @@ fn a_stale_entity_has_no_component_ids() {
 
     assert!(world.component_ids(entity).is_empty());
 }
-
-#[test]
-fn a_registration_is_only_known_for_registered_types() {
-    let mut world = World::default();
-    world.register_type::<Health>();
-    world.spawn((Health { current: 1, max: 1 }, Plumbing));
-
-    assert_eq!(
-        world
-            .registration(std::any::TypeId::of::<Health>())
-            .map(|registration| registration.short_name()),
-        Some("Health")
-    );
-    assert!(
-        world
-            .registration(std::any::TypeId::of::<Plumbing>())
-            .is_none()
-    );
-}

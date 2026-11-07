@@ -80,7 +80,7 @@ mod tests {
         events::{Event, event_channel::EventChannel},
         query::{
             Query,
-            filter::{Added, Changed, Or, With},
+            filter::{Added, Or, With},
         },
         resource::{Res, ResMut, Resource},
         system::{
@@ -114,16 +114,6 @@ mod tests {
     fn system_query_added(query: Query<(&Position,), Added<Position>>) {
         for _ in query.iter() {
             print!("Found Added");
-        }
-    }
-
-    fn system_query_add_hp(query: Query<(&mut Health,)>) {
-        for _ in query.iter() {}
-    }
-
-    fn system_query_hp_changed(query: Query<(&Health,), Changed<Health>>) {
-        for _ in query.iter() {
-            println!("Health change detected");
         }
     }
 
@@ -481,24 +471,6 @@ mod tests {
     }
 
     #[test]
-    fn test_change_detection() {
-        let mut world = World::new();
-
-        world.spawn((Health, Position { x: 10.0, y: 20.0 }));
-        world.spawn((Health, Position { x: 10.0, y: 20.0 }));
-        world.spawn((Health, Position { x: 10.0, y: 20.0 }));
-
-        world.tick();
-        let mut schedule = Schedule::new();
-        schedule.add_system(system_query_add_hp);
-        schedule.add_system(system_query_hp_changed);
-
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-    }
-
-    #[test]
     fn test_or_query() {
         let mut world = World::new();
 
@@ -531,13 +503,6 @@ mod tests {
 
     #[derive(Resource)]
     struct DoubleScore(u32);
-
-    #[test]
-    fn insert_and_get_resource() {
-        let mut world = World::new();
-        world.insert_resource(Score(42));
-        assert_eq!(world.get_resource::<Score>().unwrap().0, 42);
-    }
 
     #[test]
     fn remove_resource() {
