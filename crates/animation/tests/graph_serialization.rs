@@ -12,8 +12,9 @@ use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
-    AimOffsetNode, AimPoint, AnimationClipNode, AnimationNode, ErasedAnimationNode, IkGoal,
-    LayerNode, LayerSpace, ReflectAnimationNode, TipRotation, TwoBoneIkNode,
+    AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, AnimationNode, AnimationPlayMode,
+    ErasedAnimationNode, IkGoal, LayerNode, LayerSpace, ReflectAnimationNode, TipRotation,
+    TwoBoneIkNode,
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
@@ -391,6 +392,45 @@ fn a_clip_handle_in_a_node_comes_back_strong() {
     let handle = live_node::<AnimationClipNode>(&graph).unwrap().clip();
     assert!(matches!(handle, AssetHandle::Strong(..)));
     assert_eq!(handle.id(), AssetId::from_path("outer_pose"));
+}
+
+#[test]
+fn an_additive_node_keeps_every_field_through_a_round_trip_and_its_clip_comes_back_strong() {
+    let node = AdditiveNode::new(clip("cold_overlay"))
+        .with_weight(0.6)
+        .with_weight_param(name!("cold"))
+        .with_play_mode(AnimationPlayMode::PlayOnce)
+        .with_start_time(0.25)
+        .with_play_rate(1.5)
+        .with_play_rate_param(name!("shiver_speed"));
+    assert_ne!(node, AdditiveNode::default());
+    let mut graph = AnimationGraph::new();
+    graph.result_node().with_input(node.clone(), |mut base| {
+        base.with_input(AnimationClipNode::new(clip("idle")), |_| {});
+    });
+    graph.make_live(&registry(false), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(false), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<AdditiveNode>(&restored), Some(&node));
+    assert_eq!(restored.iter().count(), 3);
+
+    let mut server = AssetServer::new();
+    server.register_asset(&AssetStore::<AnimationClip>::new());
+    server.register_asset(&AssetStore::<AnimationGraph>::new());
+    let mut loaded = round_trip(&graph);
+    loaded.make_live(&registry(false), Some(&server)).unwrap();
+
+    assert!(loaded.load_warnings().is_empty());
+    let handle = &live_node::<AdditiveNode>(&loaded).unwrap().clip;
+    assert!(matches!(handle, AssetHandle::Strong(..)));
+    assert_eq!(handle.id(), AssetId::from_path("cold_overlay"));
 }
 
 fn play_rate_param_of(value: &ReflectedValue) -> &ReflectedValue {

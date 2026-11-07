@@ -9,10 +9,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
     mask::{BoneMask, MaskResolution, resolve_mask},
-    node::{AnimationNode, ReflectAnimationNode, model_space::parent},
+    node::{AnimationNode, ReflectAnimationNode, effective_weight, model_space::parent},
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose},
 };
 
@@ -71,19 +70,6 @@ impl LayerNode {
         self.weight_param = Some(param);
         self
     }
-
-    fn effective_weight(&self, blackboard: &AnimationBlackboard) -> f32 {
-        let scale = self
-            .weight_param
-            .and_then(|param| blackboard.get_float(param))
-            .unwrap_or(1.0);
-        let weight = self.weight * scale;
-        if weight.is_nan() {
-            0.0
-        } else {
-            weight.clamp(0.0, 1.0)
-        }
-    }
 }
 
 /// A [`LayerNode`]'s resolved mask, its model-space buffers, and which warnings it has given.
@@ -134,7 +120,7 @@ impl AnimationNode for LayerNode {
         let Some(overlay) = evaluated_inputs.get(1) else {
             return;
         };
-        let weight = self.effective_weight(context.blackboard());
+        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
         if weight <= 0.0 {
             return;
         }

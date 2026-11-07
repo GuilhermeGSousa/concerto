@@ -21,7 +21,7 @@ use crate::{
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex},
     node::{
-        AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
+        AdditiveNodeState, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
         state_machine::AnimationStateMachineState,
     },
     pose::{FiredEvent, FramePool},
@@ -87,6 +87,13 @@ impl AnimationPlayer {
             .get_state_mut::<AnimationClipNodeState>(node_index)
         {
             clip_state.play();
+            return;
+        }
+        if let Some(additive_state) = self
+            .graph_state
+            .get_state_mut::<AdditiveNodeState>(node_index)
+        {
+            additive_state.play();
         }
     }
 

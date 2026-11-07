@@ -69,8 +69,8 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     use concerto_animation::node::blend_space::BlendSpace2DNode;
     use concerto_animation::node::state_machine::AnimationStateMachine;
     use concerto_animation::node::{
-        AimOffsetNode, AimPoint, AnimationClipNode, BlendNode, LayerNode, PlaceholderNode,
-        ReflectAnimationNode, ResultNode, TwoBoneIkNode,
+        AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, BlendNode, LayerNode,
+        PlaceholderNode, ReflectAnimationNode, ResultNode, TwoBoneIkNode,
     };
     use concerto_app::InspectedAssets;
     use concerto_ecs::reflect::AppTypeRegistry;
@@ -103,6 +103,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(has_node_data(TypeId::of::<PlaceholderNode>()));
     assert!(has_node_data(TypeId::of::<TwoBoneIkNode>()));
     assert!(has_node_data(TypeId::of::<LayerNode>()));
+    assert!(has_node_data(TypeId::of::<AdditiveNode>()));
     assert!(has_node_data(TypeId::of::<AimOffsetNode>()));
     assert!(registry.get(TypeId::of::<AimPoint>()).is_some());
     assert!(
