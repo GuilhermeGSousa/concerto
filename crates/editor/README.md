@@ -1216,7 +1216,8 @@ opening one opens no tab.
 ### The timeline
 
 `concerto_editor::timeline::Timeline` is a component on a UI node, which
-`TimelinePlugin` turns into a readout over a ruler, a track and a marker lane.
+`TimelinePlugin` turns into a readout over a ruler, a track, a marker lane and
+track rows.
 The node's owner sizes it and writes its `duration`, `rate`, `time`,
 `selection`, `selectable`, `markers`, `selected_marker` and `tracks`; the
 widget never writes them. `Timeline` has no builders: an owner writes the whole
@@ -1240,9 +1241,21 @@ value each frame and assigns it only when it differs from what is shown.
 - Dragging an unlocked marker sends `TimelineMarkerMoved { index, time }`, the
   time under the pointer snapped to a frame when there is a rate. A locked
   marker sends nothing when dragged.
+- Each `TimelineTrack { label, warning, keys }` in `tracks` is a read-only row
+  under the marker lane, in a scroll area that takes the wheel and fills the
+  space left below the lane. A row draws a tick at each key, and keys within
+  3 px of the one before join into a bar, so a clip keyed on every frame draws
+  one bar. Rows take no clicks.
+- While `tracks` is not empty, a label column runs down the left of every
+  band: the marker lane's reads `Events` and each row's its `label`, in the
+  warning colour when `warning` is set. The ruler, track, lane, rows and head
+  all start after the column and stop short of the scrollbar, so times line
+  up, and the track shrinks to one row's height. With no tracks there is no
+  column and the track fills the space under the ruler.
 
 The lane is rebuilt only when the markers' labels or lock flags change; a
-moved or newly selected marker keeps its node. The head is drawn in an overlay
+moved or newly selected marker keeps its node. The rows are rebuilt only when
+`tracks` or the ruler's width change. The head is drawn in an overlay
 over every band, so it crosses the lane.
 
 Put the listeners for these signals on the `Timeline` entity, and write back
