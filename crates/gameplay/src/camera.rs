@@ -7,7 +7,7 @@ use concerto_foundation::{time::Time, transform::Transform};
 use concerto_physics::{body::BodyId, physics_state::PhysicsState, query::QueryFilter};
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_window::input::Input;
-use glam::{Quat, Vec3};
+use glam::{EulerRot, Quat, Vec3};
 
 #[derive(Resource)]
 pub struct CameraSettings {
@@ -76,11 +76,13 @@ pub(crate) fn update_entity_follow(
     }
 }
 
-/// Holds a pivot's child camera at `offset`, pulled in toward the pivot when a body is in the way.
+/// Holds a pivot's child camera at `offset` from its `shoulder`, each pulled in when a body is in the way.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CameraBoom {
     pub offset: Vec3,
+    /// Where the boom hangs from: an offset from the pivot in its level frame, so pitching the pivot doesn't move it.
+    pub shoulder: Vec3,
     pub probe_radius: f32,
     pub min_distance: f32,
     pub return_halflife: f32,
@@ -90,12 +92,42 @@ impl Default for CameraBoom {
     fn default() -> Self {
         Self {
             offset: Vec3::NEG_Z * 3.0,
+            shoulder: Vec3::ZERO,
             probe_radius: 0.2,
             min_distance: 0.3,
             return_halflife: 0.15,
         }
     }
 }
+
+impl CameraBoom {
+    pub fn with_offset(mut self, offset: Vec3) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    pub fn with_shoulder(mut self, shoulder: Vec3) -> Self {
+        self.shoulder = shoulder;
+        self
+    }
+
+    pub fn with_probe_radius(mut self, probe_radius: f32) -> Self {
+        self.probe_radius = probe_radius;
+        self
+    }
+
+    pub fn with_min_distance(mut self, min_distance: f32) -> Self {
+        self.min_distance = min_distance;
+        self
+    }
+
+    pub fn with_return_halflife(mut self, return_halflife: f32) -> Self {
+        self.return_halflife = return_halflife;
+        self
+    }
+}
+
+const BOOM_SKIN: f32 = 0.02;
 
 /// The boom length after `dt` seconds: `allowed` at once when it is shorter than `current`, else eased toward it.
 pub fn boom_distance(current: f32, allowed: f32, dt: f32, return_halflife: f32) -> f32 {
@@ -105,7 +137,7 @@ pub fn boom_distance(current: f32, allowed: f32, dt: f32, return_halflife: f32) 
     allowed + (current - allowed) * 0.5f32.powf(dt / return_halflife)
 }
 
-/// Pulls each boomed camera in toward its pivot when a body lies between them, and eases it back out.
+/// Pulls each boomed camera in toward its shoulder point when a body lies in the way, and eases it back out.
 pub fn update_camera_booms(
     booms: Query<(&CameraBoom, &ChildOf, &mut Transform)>,
     pivots: Query<(&Transform, Option<&EntityFollow>), Without<CameraBoom>>,
@@ -131,15 +163,34 @@ pub fn update_camera_booms(
         let filter = QueryFilter {
             ignore: ignored.as_slice(),
         };
+
+        let shoulder_point = if boom.shoulder.length_squared() < 1e-8 {
+            pivot.translation
+        } else {
+            let level = Quat::from_rotation_y(pivot.rotation.to_euler(EulerRot::YXZ).0);
+            let shoulder_reach = level * boom.shoulder;
+            let reach_length = shoulder_reach.length();
+            match physics.cast_sphere(pivot.translation, boom.probe_radius, shoulder_reach, filter)
+            {
+                Some(hit) => {
+                    pivot.translation
+                        + shoulder_reach.normalize()
+                            * (hit.fraction * reach_length - BOOM_SKIN).max(0.0)
+                }
+                None => pivot.translation + shoulder_reach,
+            }
+        };
+
         let reach = pivot.rotation * boom.offset;
         let allowed = physics
-            .cast_sphere(pivot.translation, boom.probe_radius, reach, filter)
+            .cast_sphere(shoulder_point, boom.probe_radius, reach, filter)
             .map_or(length, |hit| hit.fraction * length)
             .clamp(boom.min_distance.min(length), length);
 
-        let current = transform.translation.dot(direction);
+        let shoulder_local = pivot.rotation.inverse() * (shoulder_point - pivot.translation);
+        let current = (transform.translation - shoulder_local).dot(direction);
         let distance = boom_distance(current, allowed, dt, boom.return_halflife);
-        transform.translation = direction * distance;
+        transform.translation = shoulder_local + direction * distance;
     }
 }
 

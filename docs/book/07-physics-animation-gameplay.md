@@ -756,13 +756,20 @@ or rest-pose base are not there yet.
 - `CameraPivot` and `EntityFollow { target, offset }` make a third-person
   camera rig: put a `VirtualCamera` as a child of a pivot that follows the
   player.
-- `CameraBoom { offset, probe_radius, min_distance, return_halflife }` on that
-  camera child keeps it out of walls. Each frame it sweeps a sphere of
-  `probe_radius` from the pivot toward `offset`, ignoring the body of the
-  pivot's `EntityFollow` target, and pulls the camera in to the first hit at
-  once, never closer than `min_distance`. Once the way is clear it eases back
-  out, closing half the gap every `return_halflife` seconds. The pivot must be
-  a root entity.
+- `CameraBoom { offset, shoulder, probe_radius, min_distance, return_halflife }`
+  on that camera child keeps it out of walls. It has a `with_<field>` builder
+  for each field. The boom hangs from a shoulder point: `shoulder` is an offset
+  from the pivot in its level frame, its yaw alone, so pitching the pivot does
+  not move it. Each frame the boom casts two legs, sweeping a sphere of
+  `probe_radius` and ignoring the body of the pivot's `EntityFollow` target.
+  The first leg runs from the pivot to the shoulder point, which stops a small
+  skin short of the first hit, so a shoulder offset never reaches through a
+  wall beside the character. The second runs from the shoulder point along
+  `offset`, and pulls the camera in to the first hit at once, never closer
+  than `min_distance`. Once the way is clear it eases back out, closing half
+  the gap every `return_halflife` seconds. Only the camera's distance eases;
+  the shoulder point follows at once. A zero `shoulder`, the default, hangs
+  the boom from the pivot. The pivot must be a root entity.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
   system flies it with the keyboard and mouse, for looking around a scene.
