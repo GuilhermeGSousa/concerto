@@ -553,6 +553,12 @@ fn pad_event(pad: &PadInput, pads: &mut Pads) -> Result<Option<WindowEvent>, Str
             }))
         }
         (Some(false), None, None, _) => {
+            if !pads.sent.contains(&id) {
+                pads.require(id)?;
+                return Err(format!(
+                    "pad {n} is a real gamepad; send_input unplugs only the pads it connected, so unplug it by hand."
+                ));
+            }
             pads.connected.retain(|connected| *connected != id);
             pads.sent.remove(&id);
             Ok(Some(WindowEvent::GamepadDisconnected { id }))
@@ -895,6 +901,28 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    fn unplug(id: u32) -> InputEvent {
+        InputEvent::Pad(PadInput {
+            connect: Some(false),
+            ..pad(id)
+        })
+    }
+
+    #[test]
+    fn unplugging_a_pad_send_input_did_not_connect_is_refused() {
+        let real = pad_events(&[unplug(2)], real_pad(2)).unwrap_err();
+        assert_eq!(
+            real,
+            "events[0]: pad 2 is a real gamepad; send_input unplugs only the pads it connected, so unplug it by hand."
+        );
+
+        let unknown = pad_events(&[unplug(5)], real_pad(2)).unwrap_err();
+        assert_eq!(
+            unknown,
+            "events[0]: pad 5 is not connected; send { \"pad\": 5, \"connect\": true } first. Pads connected: 2."
         );
     }
 

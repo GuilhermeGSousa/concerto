@@ -282,8 +282,9 @@ of the viewport's picture from its top-left corner at its full size, the
 `viewport` size `status` reports; on a screenshot scaled down by `max_edge`, multiply a point by the
 full size over the PNG's size. These answer `invalid_arguments` and send
 nothing: a point off the picture; a key name `KeyCode` lacks, or an unknown pad
-button or axis, with close names; a button or axis for a pad not connected,
-saying to send `{ "pad": n, "connect": true }` first; `"connect": true` for a
+button or axis, with close names; a button, axis or `"connect": false` for a
+pad not connected, saying to send `{ "pad": n, "connect": true }` first;
+`"connect": false` for a real gamepad, which is unplugged by hand; `"connect": true` for a
 number a real gamepad has, listing the numbers in use, so pick another (a pad
 `send_input` already connected is left as it is); and a pad event with none, or
 more than one, of `connect`, `button` and `axis`, or a button or axis without
@@ -598,11 +599,12 @@ has input. `hosted::input::ReleaseInput(document)` gives input to the editor
 from code.
 
 Gamepads are the exception: their events reach the playing game whichever side
-has input, and the editor's panels read none. Giving input to the editor still
-tells the game it lost focus, which zeroes its pads until they move again. When
-the game starts playing, or its viewport is shown again, it is first told about
-the pads connected now, with their buttons and sticks, and about any that went
-away while it was hidden.
+has input, and the editor's panels read none. Giving input to the editor tells
+the game it lost focus and then sends it the buttons and sticks held now, so a
+held stick keeps driving it. The editor window losing focus zeroes the game's
+pads whichever side has input. When the game starts playing, or its viewport
+is shown again, it is first told about the pads connected now, with their
+buttons and sticks, and about any that went away while it was hidden.
 
 ## Saving
 
