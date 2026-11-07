@@ -197,13 +197,19 @@ mod tests {
     };
 
     use concerto::{
+        app::{
+            App,
+            main_schedule::MainSchedulePlugin,
+            plugins::{TimePlugin, TransformPlugin},
+            schedule_groups::Startup,
+        },
         ecs::{
-            Entity, IntoSystem, System, With, Without, World,
+            CommandQueue, Entity, IntoSystem, System, With, Without, World,
             events::{event_channel::EventChannel, event_cursor::EventCursor},
         },
         foundation::{time::Time, transform::Transform},
         name::Name,
-        navigation::{NavAgent, NavArrived, NavDestination, NavGraph, NavPoint},
+        navigation::{NavAgent, NavArrived, NavDestination, NavGraph, NavPoint, NavigationPlugin},
         physics::{collider::Collider, rigid_body::RigidBody},
         render::components::light::Light,
         world_grid::WorldGrid,
@@ -213,7 +219,7 @@ mod tests {
 
     use crate::character::{CharacterConfig, Player};
 
-    use super::{NPC_SPAWN, PATROL, Patrol, grid, patrol};
+    use super::{NPC_SPAWN, PATROL, Patrol, grid, patrol, spawn_patrol_points};
 
     #[test]
     fn the_grid_level_spawns_the_character_with_every_gizmo_on_a_grid_floor_under_a_sun() {
@@ -264,11 +270,19 @@ mod tests {
             .expect("the patrol point is in the graph")
     }
 
+    fn spawn_patrol(mut cmd: CommandQueue) {
+        spawn_patrol_points(&mut cmd);
+    }
+
     #[test]
     fn the_patrol_points_make_a_square_with_a_one_way_diagonal_each_facing_the_next_corner() {
-        let Some(mut app) = concerto::headless(grid) else {
-            return;
-        };
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(TransformPlugin)
+            .register_plugin(NavigationPlugin);
+        app.add_system(Startup, spawn_patrol);
+        app.finish_plugin_build();
         app.update();
         app.update();
 
