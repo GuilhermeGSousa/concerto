@@ -1771,7 +1771,7 @@ mod tests {
 
     #[test]
     fn an_edit_and_the_save_action_in_one_frame_request_a_save() {
-        use concerto_window::input::actions::{ActionFired, ActionLabel};
+        use concerto_window::input::actions::ActionFired;
         let mut f = SceneFixture::new();
         let document = f.open();
         let root = f.scene_root(document);
@@ -1782,9 +1782,7 @@ mod tests {
         f.world
             .get_resource_mut::<EventChannel<ActionFired>>()
             .unwrap()
-            .push_event(ActionFired {
-                action: crate::actions::Save.intern(),
-            });
+            .push_event(ActionFired::new(crate::actions::Save));
         let mut system = crate::asset_editor::request_save.into_system();
         system.initialize(&mut f.world);
         system.run_and_apply((), &mut f.world);
@@ -1964,9 +1962,7 @@ mod tests {
         f.world
             .get_resource_mut::<EventChannel<ActionFired>>()
             .unwrap()
-            .push_event(ActionFired {
-                action: action.intern(),
-            });
+            .push_event(ActionFired::new(action));
         let mut system = scene_actions.into_system();
         system.initialize(&mut f.world);
         system.run_and_apply((), &mut f.world);

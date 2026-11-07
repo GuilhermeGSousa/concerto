@@ -1277,9 +1277,7 @@ mod tests {
                 .unwrap();
             channel.update();
             channel.update();
-            channel.push_event(ActionFired {
-                action: action.intern(),
-            });
+            channel.push_event(ActionFired::new(action));
             run(&mut self.scene.world, entity_shortcuts);
             self.refresh();
         }

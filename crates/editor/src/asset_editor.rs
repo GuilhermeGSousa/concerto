@@ -750,16 +750,13 @@ mod tests {
     }
     fn fire_save(w: &mut World) {
         use concerto_ecs::events::event_channel::EventChannel;
-        use concerto_window::input::actions::ActionLabel;
         if w.get_resource::<EventChannel<ActionFired>>().is_none() {
             w.insert_resource(EventChannel::<ActionFired>::default());
         }
         let channel = w.get_resource_mut::<EventChannel<ActionFired>>().unwrap();
         channel.update();
         channel.update();
-        channel.push_event(ActionFired {
-            action: crate::actions::Save.intern(),
-        });
+        channel.push_event(ActionFired::new(crate::actions::Save));
         let mut system = request_save.into_system();
         system.initialize(w);
         system.run_and_apply((), w);

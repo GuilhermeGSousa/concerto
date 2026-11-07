@@ -696,9 +696,7 @@ mod tests {
                 .unwrap();
             channel.update();
             channel.update();
-            channel.push_event(ActionFired {
-                action: action.intern(),
-            });
+            channel.push_event(ActionFired::new(action));
             run(&mut self.world, press_keys);
             self.frame();
         }

@@ -573,7 +573,7 @@ mod tests {
             FrameAll.intern(),
             crate::actions::Save.intern(),
         ] {
-            channel.push_event(ActionFired { action });
+            channel.push_event(ActionFired::new(action));
         }
 
         run(&mut world, viewport_shortcuts);
