@@ -13,7 +13,10 @@ use concerto_foundation::transform::{
 };
 
 use crate::{
-    agent::{NavAgent, NavArrived, NavSteering, NavUnreachable, plan_nav_routes, steer_nav_agents},
+    agent::{
+        NavAgent, NavArrived, NavSteering, NavUnreachable, plan_nav_routes, steer_nav_agents,
+        stop_nav_agents,
+    },
     graph::{NavGraph, NavPointRecord},
     point::{NavLink, NavLinks, NavPoint},
 };
@@ -40,7 +43,8 @@ impl Plugin for NavigationPlugin {
                 .after(propagate_global_transforms)
                 .at_edit_time(),
         );
-        app.add_system(Update, plan_nav_routes);
+        app.add_system(Update, stop_nav_agents);
+        app.add_system(Update, plan_nav_routes.after(stop_nav_agents));
         app.add_system(Update, steer_nav_agents.after(plan_nav_routes));
     }
 }

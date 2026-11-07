@@ -1,5 +1,5 @@
 use concerto_ecs::{
-    CommandQueue, Component, Entity, Query, Ref, Res, With,
+    CommandQueue, Component, Entity, Or, Query, Ref, Res, With, Without,
     events::{Event, event_writer::EventWriter},
     query::change_detection::DetectChanges,
     reflect::{ReflectComponent, ReflectSceneComponent},
@@ -136,6 +136,23 @@ pub struct NavArrived {
 pub struct NavUnreachable {
     pub agent: Entity,
     pub target: NavTarget,
+}
+
+/// Stops each agent on a route that lost its `NavDestination` or `NavAgent`, keeping its facing.
+pub fn stop_nav_agents(
+    agents: Query<
+        (Entity, &mut NavSteering),
+        (
+            With<NavRoute>,
+            Or<(Without<NavDestination>, Without<NavAgent>)>,
+        ),
+    >,
+    mut cmd: CommandQueue,
+) {
+    for (agent, mut steering) in agents.iter() {
+        steering.velocity = Vec3::ZERO;
+        cmd.remove::<NavRoute>(agent);
+    }
 }
 
 /// Plans a route for each agent whose destination changed, or whose route the changed graph may have broken.

@@ -395,3 +395,51 @@ fn an_agent_whose_first_destination_is_unreachable_gets_no_steering() {
             .is_none()
     );
 }
+
+fn position(app: &mut App, agent: Entity) -> Vec3 {
+    world(app)
+        .get_component_for_entity::<Transform>(agent)
+        .unwrap()
+        .translation
+}
+
+fn walk_part_way() -> Corner {
+    let mut corner = corner();
+    world(&mut corner.app).insert(NavDestination::to_point(corner.c), corner.agent);
+    for _ in 0..20 {
+        corner.app.update();
+    }
+    assert!(steering(&mut corner.app, corner.agent).velocity != Vec3::ZERO);
+    corner
+}
+
+fn assert_stopped(app: &mut App, agent: Entity) {
+    let facing = steering(app, agent).facing;
+    app.update();
+    assert_eq!(steering(app, agent).velocity, Vec3::ZERO);
+    assert_eq!(steering(app, agent).facing, facing);
+    assert!(route(app, agent).is_none());
+    let stopped_at = position(app, agent);
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(position(app, agent), stopped_at);
+}
+
+#[test]
+fn removing_the_destination_stops_the_agent() {
+    let Corner { mut app, agent, .. } = walk_part_way();
+
+    world(&mut app).remove_component::<NavDestination>(agent);
+
+    assert_stopped(&mut app, agent);
+}
+
+#[test]
+fn removing_the_agent_stops_its_steering() {
+    let Corner { mut app, agent, .. } = walk_part_way();
+
+    world(&mut app).remove_component::<NavAgent>(agent);
+
+    assert_stopped(&mut app, agent);
+}
