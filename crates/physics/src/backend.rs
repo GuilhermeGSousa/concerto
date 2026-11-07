@@ -63,6 +63,20 @@ pub struct RawGroundHit<Handle> {
     pub velocity: Vec3,
 }
 
+/// Whether a sensor pair began or stopped overlapping.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SensorContactKind {
+    Enter,
+    Exit,
+}
+
+/// A sensor pair that began or stopped overlapping, in backend terms.
+pub struct RawSensorContact<Handle> {
+    pub sensor: Handle,
+    pub other: Handle,
+    pub kind: SensorContactKind,
+}
+
 /// Raw simulation operations a physics backend must provide.
 ///
 /// Mutating operations take `&mut self` even where the underlying engine
@@ -109,8 +123,12 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies
-    /// that were touching it. The handle is invalid afterwards.
+    /// that were touching it. The handle is invalid afterwards. Sensor pairs
+    /// holding the body are forgotten and report nothing more.
     fn destroy_body(&mut self, body: Self::BodyHandle);
+
+    /// Moves the sensor pair begins and ends seen since the last drain into `out`, in order, keeping only a sensor against a dynamic or kinematic body.
+    fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>);
 
     /// A body's current world-space pose (translation and rotation).
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;

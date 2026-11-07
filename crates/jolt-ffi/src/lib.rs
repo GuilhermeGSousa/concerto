@@ -108,6 +108,15 @@ pub struct JoltShapeHit {
     pub normal: [f32; 3],
 }
 
+/// A sensor pair that began (`entered` = 1) or ended (`entered` = 0) overlapping (mirrors `JoltSensorContact` in `body.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltSensorContact {
+    pub sensor: JoltBodyId,
+    pub other: JoltBodyId,
+    pub entered: u8,
+}
+
 extern "C" {
     /// Process-global one-time Jolt setup. Thread-safe and idempotent;
     /// `jolt_world_create` calls it implicitly.
@@ -252,6 +261,13 @@ extern "C" {
     /// that were touching it (they would otherwise sleep in mid-air). The id
     /// is invalid afterwards.
     pub fn jolt_body_destroy(world: *mut JoltWorld, body: JoltBodyId);
+
+    /// Moves up to `capacity` queued sensor contacts, oldest first, into `out` and returns how many it wrote.
+    pub fn jolt_world_drain_sensor_contacts(
+        world: *mut JoltWorld,
+        out: *mut JoltSensorContact,
+        capacity: u32,
+    ) -> u32;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself) and
     /// reports the most upward-facing contact within `max_separation` below

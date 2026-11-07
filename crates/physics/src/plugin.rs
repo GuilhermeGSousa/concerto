@@ -2,6 +2,7 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{LateFixedUpdate, LateUpdate, Update},
 };
+use concerto_ecs::IntoSystemConfig;
 
 use crate::{
     collider::{build_box_colliders, register_colliders, BoxCollider},
@@ -9,7 +10,7 @@ use crate::{
     interpolation::interpolate_body_transforms,
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
-    sensor::Sensor,
+    sensor::{report_sensor_contacts, Sensor},
     shape::{
         clean_shapes_for_dropped_meshes, generate_mesh_shapes, MeshCollider, PhysicsMeshShapes,
     },
@@ -30,6 +31,10 @@ impl Plugin for PhysicsPlugin {
             .insert_resource(PhysicsMeshShapes::default())
             .add_system(LateFixedUpdate, step_simulation)
             .add_system(LateFixedUpdate, probe_ground)
+            .add_system(
+                LateFixedUpdate,
+                report_sensor_contacts.after(step_simulation),
+            )
             .add_system(Update, generate_mesh_shapes)
             .add_system(Update, build_box_colliders)
             // LateUpdate, so `TransformPlugin` has already propagated global

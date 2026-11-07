@@ -101,6 +101,17 @@ extern "C"
      * afterwards. */
     void jolt_body_destroy(JoltWorld *world, JoltBodyId body);
 
+    typedef struct JoltSensorContact
+    {
+        JoltBodyId sensor;
+        JoltBodyId other;
+        uint8_t entered;
+    } JoltSensorContact;
+
+    uint32_t jolt_world_drain_sensor_contacts(JoltWorld *world,
+                                              JoltSensorContact *out,
+                                              uint32_t capacity);
+
     typedef uint32_t JoltGroundState;
     enum
     {

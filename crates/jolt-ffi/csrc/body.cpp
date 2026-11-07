@@ -142,6 +142,14 @@ extern "C"
 		}
 		bi.DestroyBody(id);
 		world->sensors.erase(id);
+		world->sensor_contact_listener.Forget(id);
+	}
+
+	uint32_t jolt_world_drain_sensor_contacts(JoltWorld *world,
+											  JoltSensorContact *out,
+											  uint32_t capacity)
+	{
+		return world->sensor_contact_listener.Drain(out, capacity);
 	}
 
 	// Transcribed from JPH::Character::PostSimulation / CheckCollision, which
