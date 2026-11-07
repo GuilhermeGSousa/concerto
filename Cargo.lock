@@ -1352,6 +1352,7 @@ dependencies = [
  "concerto-foundation",
  "concerto-mesh",
  "concerto-name",
+ "concerto-noise",
  "concerto-physics",
  "concerto-reflect",
  "glam 0.30.10",
