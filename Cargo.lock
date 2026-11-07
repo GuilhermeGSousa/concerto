@@ -1308,10 +1308,12 @@ dependencies = [
 name = "concerto-navigation"
 version = "0.1.0"
 dependencies = [
+ "concerto-app",
  "concerto-ecs",
  "concerto-foundation",
  "concerto-name",
  "concerto-reflect",
+ "concerto-scene",
  "glam 0.30.10",
  "log",
 ]
