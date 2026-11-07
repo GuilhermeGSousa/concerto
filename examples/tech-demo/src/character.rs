@@ -11,6 +11,9 @@ use concerto::ecs::{Entity, Query, With, Without};
 use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraBoom, CameraPivot, EntityFollow};
+use concerto::gameplay::third_person::{
+    CameraFraming, CameraStance, ShoulderSide, ThirdPersonCamera,
+};
 use concerto::mesh::{MeshComponent, primitives::cuboid};
 use concerto::motion_matching::{
     Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp, DesiredMotion,
@@ -26,7 +29,7 @@ use concerto::physics::shape::MeshCollider;
 use concerto::procedural_animation::{FootPlacementLeg, FootPlacementNode, IgnoredBody};
 use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
-use concerto::window::input::{Input, KeyCode, PhysicalKey};
+use concerto::window::input::{Input, KeyCode, MouseButton, PhysicalKey};
 use concerto::{
     ecs::{CommandQueue, Component, Res, Resource},
     foundation::assets::asset_server::AssetServer,
@@ -46,7 +49,7 @@ const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 const CAMERA_HEIGHT: f32 = 1.4;
 
-/// The player capsule's size, how far behind it the camera sits and whether walls pull it in, and how the visible character follows it.
+/// The player capsule's size, how far behind it the camera sits and whether walls pull it in and it has stances, and how the visible character follows it.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub(crate) struct CharacterConfig {
     pub(crate) radius: f32,
@@ -85,6 +88,7 @@ impl CharacterConfig {
 #[derive(Component, Default)]
 pub(crate) struct Player {
     pub(crate) faces_camera: bool,
+    pub(crate) crouched: bool,
 }
 
 /// The capsule a visible character links to once its skeleton spawns, and the graph that skeleton plays.
@@ -154,15 +158,21 @@ pub(crate) fn spawn_character(
         ));
 
         let (yaw, _, _) = spawn_point.rotation.to_euler(EulerRot::YXZ);
-        cmd.spawn((
+        let mut pivot = cmd.spawn((
             CameraPivot::facing(yaw),
             spawn_point.clone(),
             EntityFollow {
                 target: capsule,
                 offset: Vec3::Y * CAMERA_HEIGHT,
             },
-        ))
-        .add_child_with(
+        ));
+        if config.camera_collision {
+            pivot.insert(
+                ThirdPersonCamera::default()
+                    .with_follow(CameraFraming::default().with_distance(config.camera_distance)),
+            );
+        }
+        pivot.add_child_with(
             (
                 VirtualCamera::new(0),
                 Transform::from_translation_rotation(
@@ -366,21 +376,61 @@ pub(crate) fn facing(velocity: Vec3, current: Quat) -> Quat {
 
 pub(crate) fn update_movement(
     players: Query<(&mut Player, &mut DesiredMotion, &GroundProbe)>,
-    pivots: Query<&CameraPivot>,
+    pivots: Query<(&CameraPivot, Option<&ThirdPersonCamera>)>,
     input: Res<Input>,
 ) {
-    let yaw = pivots.iter().next().map_or(0.0, |pivot| pivot.yaw());
+    let yaw = pivots.iter().next().map_or(0.0, |(pivot, _)| pivot.yaw());
+    let aiming = pivots
+        .iter()
+        .find_map(|(_, rig)| rig)
+        .is_some_and(|rig| rig.stance == CameraStance::Aim);
     let toggled = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyF));
 
     for (mut player, mut desired, ground) in players.iter() {
         if toggled {
             player.faces_camera = !player.faces_camera;
         }
-        let (velocity, rotation) = movement(&input, yaw, player.faces_camera, desired.rotation);
+        let faces_camera = player.faces_camera || aiming;
+        let (velocity, rotation) = movement(&input, yaw, faces_camera, desired.rotation);
         if ground.is_grounded() {
             desired.velocity = velocity;
         }
         desired.rotation = rotation;
+    }
+}
+
+/// Toggles crouching on C and swaps shoulders on Q, and aims every rig while the right mouse button is held, else crouches it while the player is crouched.
+pub(crate) fn update_camera_stance(
+    players: Query<&mut Player>,
+    rigs: Query<&mut ThirdPersonCamera>,
+    input: Res<Input>,
+) {
+    let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
+    if pressed(KeyCode::KeyC) {
+        for mut player in players.iter() {
+            player.crouched = !player.crouched;
+        }
+    }
+    let crouched = players.iter().next().is_some_and(|player| player.crouched);
+    let stance = if input.is_mouse_button_held(MouseButton::Right) {
+        CameraStance::Aim
+    } else if crouched {
+        CameraStance::Crouch
+    } else {
+        CameraStance::Follow
+    };
+    let swapped = pressed(KeyCode::KeyQ);
+
+    for mut rig in rigs.iter() {
+        if rig.stance != stance {
+            rig.stance = stance;
+        }
+        if swapped {
+            rig.side = match rig.side {
+                ShoulderSide::Right => ShoulderSide::Left,
+                ShoulderSide::Left => ShoulderSide::Right,
+            };
+        }
     }
 }
 
@@ -473,18 +523,19 @@ mod tests {
         scene::{Scene, SceneNode},
         spawner::SceneSpawnerComponent,
     };
-    use concerto::window::input::{Input, KeyCode, PhysicalKey};
+    use concerto::window::input::{Input, KeyCode, MouseButton, PhysicalKey};
     use concerto_motion_matching_gizmos::MotionMatchingGizmos;
     use glam::{Quat, Vec3};
 
     use concerto::director::VirtualCamera;
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
+    use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, PendingLink, Player, PlayerSpawner, RUN, WALK,
         cycle_displacement, debug_keys, facing, feed_foot_placement, foot_placement_ignore,
         foot_placement_weight, movement, setup_character_animations, spawn_character,
-        spawn_forest_walls, update_movement,
+        spawn_forest_walls, update_camera_stance, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -615,6 +666,33 @@ mod tests {
         spawned(&mut world);
 
         assert_eq!(camera_booms(&mut world), vec![None]);
+    }
+
+    fn follow_distances(world: &mut World) -> Vec<Option<f32>> {
+        world
+            .query::<(&CameraPivot, Option<&ThirdPersonCamera>), ()>()
+            .iter(world)
+            .map(|(_, rig)| rig.map(|rig| rig.follow.distance))
+            .collect()
+    }
+
+    #[test]
+    fn the_sanatorium_pivot_has_a_third_person_rig_that_follows_at_its_distance() {
+        let (mut world, _) = world_with_spawner();
+        world.insert_resource(CharacterConfig::sanatorium());
+
+        spawned(&mut world);
+
+        assert_eq!(follow_distances(&mut world), vec![Some(3.0)]);
+    }
+
+    #[test]
+    fn the_forest_pivot_has_no_third_person_rig() {
+        let (mut world, _) = world_with_spawner();
+
+        spawned(&mut world);
+
+        assert_eq!(follow_distances(&mut world), vec![None]);
     }
 
     #[test]
@@ -1078,6 +1156,112 @@ mod tests {
             system.run_and_apply((), &mut world);
             assert_eq!(faces_camera(&mut world), expected);
         }
+    }
+
+    #[test]
+    fn aiming_turns_the_character_to_the_camera_yaw() {
+        let yaw = 0.7;
+        let mut world = world_with_player(DesiredMotion::default());
+        world.spawn((
+            CameraPivot::facing(yaw),
+            ThirdPersonCamera::default().with_stance(CameraStance::Aim),
+        ));
+        world.insert_resource(Input::new());
+
+        let mut system = update_movement.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let players: Vec<bool> = world
+            .query::<&Player, ()>()
+            .iter(&mut world)
+            .map(|player| player.faces_camera)
+            .collect();
+        assert_eq!(players, vec![false]);
+        let rotations: Vec<Quat> = world
+            .query::<&DesiredMotion, With<Player>>()
+            .iter(&mut world)
+            .map(|desired| desired.rotation)
+            .collect();
+        assert_eq!(rotations.len(), 1);
+        assert!(rotations[0].abs_diff_eq(Quat::from_rotation_y(yaw), 1e-5));
+    }
+
+    fn world_with_rig() -> World {
+        let mut world = World::new();
+        world.spawn(Player::default());
+        world.spawn(ThirdPersonCamera::default());
+        world
+    }
+
+    fn aiming(keys: &[KeyCode]) -> Input {
+        let mut input = holding(keys);
+        input.update_mouse_button(MouseButton::Right, true);
+        input
+    }
+
+    fn rig_after(world: &mut World, input: Input) -> ThirdPersonCamera {
+        world.insert_resource(input);
+        let mut system = update_camera_stance.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+        world
+            .query::<&ThirdPersonCamera, ()>()
+            .iter(world)
+            .next()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn holding_the_right_mouse_button_aims() {
+        let mut world = world_with_rig();
+
+        assert_eq!(rig_after(&mut world, aiming(&[])).stance, CameraStance::Aim);
+        assert_eq!(
+            rig_after(&mut world, Input::new()).stance,
+            CameraStance::Follow
+        );
+    }
+
+    #[test]
+    fn c_toggles_the_crouch_stance() {
+        let mut world = world_with_rig();
+
+        assert_eq!(
+            rig_after(&mut world, holding(&[KeyCode::KeyC])).stance,
+            CameraStance::Crouch
+        );
+        assert_eq!(
+            rig_after(&mut world, holding(&[KeyCode::KeyC])).stance,
+            CameraStance::Follow
+        );
+    }
+
+    #[test]
+    fn aiming_while_crouched_aims_and_releasing_crouches_again() {
+        let mut world = world_with_rig();
+        rig_after(&mut world, holding(&[KeyCode::KeyC]));
+
+        assert_eq!(rig_after(&mut world, aiming(&[])).stance, CameraStance::Aim);
+        assert_eq!(
+            rig_after(&mut world, Input::new()).stance,
+            CameraStance::Crouch
+        );
+    }
+
+    #[test]
+    fn q_swaps_the_shoulder() {
+        let mut world = world_with_rig();
+
+        assert_eq!(
+            rig_after(&mut world, holding(&[KeyCode::KeyQ])).side,
+            ShoulderSide::Left
+        );
+        assert_eq!(
+            rig_after(&mut world, holding(&[KeyCode::KeyQ])).side,
+            ShoulderSide::Right
+        );
     }
 
     #[test]

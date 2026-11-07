@@ -14,6 +14,7 @@ use concerto::{
         assets::{AssetId, asset_server::AssetServer},
         transform::Transform,
     },
+    gameplay::third_person::update_third_person_cameras,
     mesh::MeshComponent,
     physics::{collider::Collider, shape::MeshCollider},
     render::{MaterialComponent, components::light::Light},
@@ -27,7 +28,7 @@ use glam::{Quat, Vec3};
 
 use crate::character::{
     CharacterConfig, PlayerSpawner, debug_keys, feed_foot_placement, setup_character_animations,
-    spawn_character, update_movement,
+    spawn_character, update_camera_stance, update_movement,
 };
 
 const MARKERS: AssetId = asset_id!("content/sanatorium/MARKERS/scene.gasset");
@@ -73,6 +74,10 @@ pub fn sanatorium(app: &mut App) {
         .add_system(Update, feed_foot_placement)
         .add_system(Update, debug_keys)
         .add_system(Update, update_movement)
+        .add_system(
+            Update,
+            update_camera_stance.before(update_third_person_cameras),
+        )
         .add_system(Update, (toggle_marker_debug, draw_markers).chain());
 }
 
