@@ -10,7 +10,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     ik::{TwoBoneChain, solve_two_bone},
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, ReflectAnimationNode, effective_weight,
         model_space::{ModelJoint, WorldToModel, bone_under_first, model_joint, parent},
         pass_through,
     },
@@ -114,19 +114,6 @@ struct Goal {
 }
 
 impl TwoBoneIkNode {
-    fn effective_weight(&self, blackboard: &AnimationBlackboard) -> f32 {
-        let scale = self
-            .weight_param
-            .and_then(|param| blackboard.get_float(param))
-            .unwrap_or(1.0);
-        let weight = self.weight * scale;
-        if weight.is_nan() {
-            0.0
-        } else {
-            weight.clamp(0.0, 1.0)
-        }
-    }
-
     fn resolve<'a>(&self, skeleton: Option<&'a Skeleton>) -> Result<ResolvedChain<'a>, String> {
         let skeleton = skeleton.ok_or("the player has no skeleton")?;
         let tip = bone_under_first(skeleton, self.tip)?;
@@ -286,7 +273,7 @@ impl AnimationNode for TwoBoneIkNode {
         output: &mut AnimationFrame,
     ) {
         pass_through(evaluated_inputs, output);
-        let weight = self.effective_weight(context.blackboard());
+        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
         if weight <= 0.0 {
             return;
         }
