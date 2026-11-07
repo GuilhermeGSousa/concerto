@@ -177,7 +177,10 @@ time. The running game never reads them.
   reading the inputs; any other section falls back to deriving. Committed
   content never carries a section.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
-  carries import provenance was saved by the editor and is not rewritten.
+  carries import provenance was saved by the editor with
+  `save_content_asset_into` and is not rewritten. An output saved with
+  `resave_content_asset` keeps its provenance, so the next re-import overwrites
+  it.
 
 Each example is a self-contained project: its `build.rs` copies `content/` to
 `<exe-dir>/<package>-content/content/`, so examples sharing one `target/` do not

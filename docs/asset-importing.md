@@ -307,7 +307,7 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `6`; it changes only w
 | `references`     | the `AssetId`s this asset points at, so a tree can be integrity-checked by scanning headers alone |
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
 | `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
-| `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, `None` for editor-authored assets |
+| `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, kept when `resave_content_asset` writes over it; `None` for editor-authored assets and for an imported asset saved with `save_content_asset_into` |
 | `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
 The header can be read without touching the payload, which is what lets a
@@ -769,6 +769,22 @@ in memory. No registry file is written. This API is separate from source
 importing and does not create a source sidecar. The `project_root` is the
 source tree under version control — deliberately *not* the exe-relative
 runtime root, so a save is not overwritten by the next build.
+
+A file written with `provenance: None` belongs to the editor: a re-import of
+the source it came from leaves it untouched, and pruning keeps it. To save an
+edit to an imported asset and leave it owned by its source,
+`resave_content_asset` writes over the existing file instead:
+
+```rust
+use concerto_foundation::assets::content::resave_content_asset;
+
+let id = resave_content_asset(&clip, project_root, "content/walk/animation_walk.gasset", &mut registry)?;
+```
+
+It fails when there is no file at the address or the file holds another kind,
+keeps the header's id and provenance, writes the references and
+`kind_version` of `value`, and upserts the entry in `registry` with the same
+provenance. The next re-import of the source then overwrites the saved edit.
 
 ## Writing a new importer
 
