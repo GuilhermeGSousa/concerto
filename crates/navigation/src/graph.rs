@@ -159,10 +159,13 @@ impl NavGraph {
             graph.indices.insert(record.entity, index);
             if record.anchor != Name::default() {
                 match graph.anchors.entry(record.anchor) {
-                    Entry::Occupied(_) => warn!(
-                        "two nav points share the anchor `{}`; the one with the lower entity index is kept",
-                        record.anchor.as_str()
-                    ),
+                    Entry::Occupied(_) => {
+                        warn!(
+                            "two nav points share the anchor `{}`; the one with the lower entity index is kept",
+                            record.anchor.as_str()
+                        );
+                        graph.points[index].anchor = Name::default();
+                    }
                     Entry::Vacant(entry) => {
                         entry.insert(index);
                     }
@@ -409,6 +412,12 @@ mod tests {
             NavPointRecord::new(low, Vec3::ZERO).with_anchor(name),
         ]);
         assert_eq!(graph.anchor(name), Some(low));
+        assert_eq!(graph.point(low).unwrap().anchor, name);
+        assert_eq!(graph.point(high).unwrap().anchor, Name::default());
+        assert_eq!(
+            graph.points().filter(|point| point.anchor == name).count(),
+            1
+        );
     }
 
     #[test]
