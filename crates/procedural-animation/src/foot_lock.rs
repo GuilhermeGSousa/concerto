@@ -1,6 +1,6 @@
 use concerto_animation::{
     blackboard::AnimationBlackboard,
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, RootBone},
     node::{
         AnimationNode, ReflectAnimationNode,
         model_space::{WorldToModel, model_joint},
@@ -11,14 +11,17 @@ use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::Name;
 use concerto_reflect::Reflect;
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
 
 use crate::{
-    foot_placement::{ease, elapsed_after},
-    leg::{ResolvedLeg, resolve_leg},
+    foot_placement::{ease, elapsed_after, horizontal},
+    leg::{ResolvedLeg, bend_leg, resolve_leg},
 };
+
+const MIN_WEIGHT: f32 = 1.0e-4;
+const RELEASED: f32 = 1.0e-3;
 
 /// Holds each planted foot where it was planted, horizontally, and eases back to the animated foot when the plant ends; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
@@ -237,21 +240,120 @@ impl FootLockNode {
             weight.clamp(0.0, 1.0)
         }
     }
+
+    fn plant(
+        &self,
+        leg: &mut LegLock,
+        contact: Vec3,
+        height: f32,
+        motion: &ModelMotion,
+        elapsed: f32,
+        weight_target: f32,
+    ) {
+        let Some(previous) = leg.previous else {
+            leg.planted = false;
+            leg.previous = Some(contact);
+            return;
+        };
+        if elapsed <= 0.0 {
+            return;
+        }
+        let speed = motion.horizontal_speed(previous, contact, elapsed);
+        leg.planted = speed < self.plant_speed && height < self.plant_height && weight_target > 0.0;
+        leg.previous = Some(contact);
+    }
+
+    fn transition(&self, leg: &mut LegLock) -> bool {
+        let mut releases = false;
+        if leg.phase == LockPhase::Locked {
+            let drift = horizontal(leg.lock - leg.animated);
+            let stretched = drift.length() > self.unlock_radius;
+            if !leg.planted || stretched {
+                leg.phase = LockPhase::Releasing;
+                leg.release.reset_to(drift);
+                leg.waits_for_lift |= stretched;
+                releases = true;
+            }
+        }
+        if leg.phase != LockPhase::Locked && leg.planted && !leg.waits_for_lift {
+            leg.lock = leg.animated + leg.offset;
+            leg.phase = LockPhase::Locked;
+        }
+        if !leg.planted {
+            leg.waits_for_lift = false;
+        }
+        releases
+    }
+
+    fn offset(&self, leg: &mut LegLock, releases: bool, elapsed: f32) -> Vec3 {
+        match leg.phase {
+            LockPhase::Free => Vec3::ZERO,
+            LockPhase::Locked => horizontal(leg.lock - leg.animated),
+            LockPhase::Releasing => {
+                let offset = if releases {
+                    leg.release.value
+                } else {
+                    ease(&mut leg.release, Vec3::ZERO, self.release_halflife, elapsed)
+                };
+                if offset.length() < RELEASED {
+                    leg.phase = LockPhase::Free;
+                    Vec3::ZERO
+                } else {
+                    offset
+                }
+            }
+        }
+    }
 }
 
-fn contact_points(resolved: &ResolvedLegs<'_>, output: &AnimationFrame) -> Option<Vec<Vec3>> {
+struct LegPoints {
+    contact: Vec3,
+    foot: Vec3,
+}
+
+fn leg_points(resolved: &ResolvedLegs<'_>, output: &AnimationFrame) -> Option<Vec<LegPoints>> {
+    let position = |bone| {
+        model_joint(resolved.skeleton, output.joints(), bone)
+            .map(|joint| Vec3::from(joint.transform.translation))
+    };
     resolved
         .legs
         .iter()
         .map(|leg| {
-            model_joint(
-                resolved.skeleton,
-                output.joints(),
-                leg.toe.unwrap_or(leg.foot),
-            )
-            .map(|joint| Vec3::from(joint.transform.translation))
+            Some(LegPoints {
+                contact: position(leg.toe.unwrap_or(leg.foot))?,
+                foot: position(leg.foot)?,
+            })
         })
         .collect()
+}
+
+struct ModelMotion {
+    translation: Vec3,
+    rotation: Quat,
+    up: Vec3,
+}
+
+impl ModelMotion {
+    fn of(root: Option<&RootBone>, skeleton: &Skeleton, frame: &AnimationFrame) -> Self {
+        let motion = frame.root_motion();
+        let facing = root
+            .and_then(|root| {
+                model_joint(skeleton, frame.joints(), root.index)
+                    .map(|joint| joint.rotation * root.rest.rotation.inverse())
+            })
+            .unwrap_or(Quat::IDENTITY);
+        Self {
+            translation: facing * motion.translation,
+            rotation: facing * motion.rotation * facing.inverse(),
+            up: root.map_or(Vec3::Y, |root| root.up),
+        }
+    }
+
+    fn horizontal_speed(&self, previous: Vec3, contact: Vec3, elapsed: f32) -> f32 {
+        let moved = self.translation + self.rotation * contact - previous;
+        (moved - self.up * moved.dot(self.up)).length() / elapsed
+    }
 }
 
 impl AnimationNode for FootLockNode {
@@ -315,22 +417,58 @@ impl AnimationNode for FootLockNode {
             state.weight.reset_to(weight_target);
             state.started = true;
         }
-        ease(
+        let weight = ease(
             &mut state.weight,
             weight_target,
             self.weight_halflife,
             elapsed,
-        );
+        )
+        .clamp(0.0, 1.0);
         for leg in &mut state.legs {
             leg.release.set_halflife(self.release_halflife);
         }
 
-        let Some(contacts) = contact_points(&resolved, output) else {
+        let Some(points) = leg_points(&resolved, output) else {
             return;
         };
-        for (leg, contact) in state.legs.iter_mut().zip(contacts) {
-            leg.animated = model_to_world.transform_point3(contact);
-            leg.shown = leg.animated;
+        let motion = ModelMotion::of(context.root(), resolved.skeleton, output);
+        let floor = model_to_world.translation.y;
+        for (leg, point) in state.legs.iter_mut().zip(&points) {
+            let animated = model_to_world.transform_point3(point.contact);
+            leg.animated = animated;
+            self.plant(
+                leg,
+                point.contact,
+                animated.y - floor,
+                &motion,
+                elapsed,
+                weight_target,
+            );
+            let releases = self.transition(leg);
+            leg.offset = self.offset(leg, releases, elapsed);
+            leg.lock.y = animated.y;
+            leg.shown = animated + leg.offset * weight;
+        }
+
+        if weight.is_nan() || weight < MIN_WEIGHT {
+            return;
+        }
+        for ((leg, lock), point) in resolved.legs.iter().zip(&state.legs).zip(&points) {
+            if lock.offset == Vec3::ZERO {
+                continue;
+            }
+            let foot = model_to_world.transform_point3(point.foot);
+            let goal = world_to_model
+                .transform
+                .transform_point3(foot + lock.offset * weight);
+            bend_leg(
+                resolved.skeleton,
+                leg,
+                goal,
+                Quat::IDENTITY,
+                self.softness,
+                output,
+            );
         }
     }
 
@@ -352,32 +490,37 @@ mod tests {
         player::{AnimationHandleComponent, AnimationPlayer},
         plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
         pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion},
+        root::AnimationRootBone,
     };
     use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
     use concerto_ecs::{
         Entity,
         component::scene::SceneEntityRef,
+        entity::hierarchy::ChildOf,
         system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
         world::World,
     };
     use concerto_foundation::{
         assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
         time::Time,
-        transform::Transform,
+        transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
     use concerto_name::{Name, name};
     use concerto_reflect::{Reflect, TypeRegistry};
-    use glam::{Mat4, Quat, Vec3};
+    use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
-    use super::{FootLockLeg, FootLockNode, FootLockState, LockPhase};
+    use super::{FootLockLeg, FootLockNode, FootLockState, LegLock, LockPhase};
     use crate::plugin::ProceduralAnimationPlugin;
 
     const EPS: f32 = 1.0e-4;
     const DT: f32 = 1.0 / 60.0;
     const KNEE_BEND: f32 = 0.1;
     const TOE_AHEAD: Vec3 = Vec3::new(0.0, 0.0, 0.15);
+    const FEET: [usize; 2] = [3, 7];
+    const TOES: [usize; 2] = [4, 8];
+    const STRIDE: Vec3 = Vec3::new(0.0, 0.0, 0.5);
 
     fn script_param() -> Name {
         name!("script")
@@ -423,6 +566,12 @@ mod tests {
             script.translations[0] += Vec3::new(0.02, -0.03, 0.01);
             script.rotations[0] = Quat::from_rotation_y(0.1);
             script.rotations[2] = Quat::from_rotation_x(0.05);
+            script
+        }
+
+        fn moved(&self, by: Vec3) -> Self {
+            let mut script = self.clone();
+            script.translations[0] += by;
             script
         }
     }
@@ -597,6 +746,9 @@ mod tests {
     struct Stage {
         app: App,
         bones: Vec<Entity>,
+        parents: Vec<Option<u16>>,
+        model: Option<Entity>,
+        model_to_world: Affine3A,
         player: Entity,
         script: Script,
     }
@@ -612,6 +764,7 @@ mod tests {
             app.register_animation_node::<Capture>();
 
             let bone_count = skeleton.bone_count();
+            let parents = skeleton.parents.to_vec();
             let world = app.main_mut().world_mut();
             world.register_component::<Transform>();
             let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
@@ -642,11 +795,106 @@ mod tests {
             let mut stage = Self {
                 app,
                 bones,
+                parents,
+                model: None,
+                model_to_world: Affine3A::IDENTITY,
                 player,
                 script: script.clone(),
             };
             stage.set_param(script_param(), script);
             stage
+        }
+
+        fn under(mut self, space: Affine3A) -> Self {
+            let root = self.bones[0];
+            let world = self.world();
+            let model = world.spawn(GlobalTransform::new(Mat4::from(space)));
+            world.insert(ChildOf::new(model), root);
+            self.model = Some(model);
+            self.model_to_world = space;
+            self
+        }
+
+        fn with_root(mut self) -> Self {
+            let root = self.bones[0];
+            self.world().insert(AnimationRootBone::default(), root);
+            self
+        }
+
+        fn move_model(&mut self, space: Affine3A) {
+            let model = self.model.expect("the stage has a model");
+            self.world()
+                .get_component_for_entity_mut::<GlobalTransform>(model)
+                .unwrap()
+                .set_matrix(Mat4::from(space));
+            self.model_to_world = space;
+        }
+
+        fn pose(&mut self, script: Script) {
+            self.script = script.clone();
+            self.set_param(script_param(), script);
+        }
+
+        fn step(&mut self, elapsed: f32) {
+            self.with_state(|state| state.elapsed = elapsed);
+            self.run();
+        }
+
+        fn legs(&mut self) -> Vec<LegLock> {
+            self.with_state(|state| state.legs().to_vec())
+        }
+
+        fn output_model(&mut self, bone: usize) -> Affine3A {
+            let locals: Vec<Affine3A> = (0..self.bones.len())
+                .map(|bone| {
+                    let local = self.local(bone);
+                    Affine3A::from_scale_rotation_translation(
+                        local.scale,
+                        local.rotation,
+                        local.translation,
+                    )
+                })
+                .collect();
+            self.in_model(&locals, bone)
+        }
+
+        fn input_model(&self, bone: usize) -> Affine3A {
+            let locals: Vec<Affine3A> = (0..self.bones.len())
+                .map(|bone| {
+                    Affine3A::from_rotation_translation(
+                        self.script.rotations[bone],
+                        self.script.translations[bone],
+                    )
+                })
+                .collect();
+            self.in_model(&locals, bone)
+        }
+
+        fn in_model(&self, locals: &[Affine3A], bone: usize) -> Affine3A {
+            match self.parents[bone] {
+                Some(up) => self.in_model(locals, usize::from(up)) * locals[bone],
+                None => locals[bone],
+            }
+        }
+
+        fn output_world(&mut self, bone: usize) -> Vec3 {
+            let model = self.output_model(bone);
+            self.model_to_world
+                .transform_point3(Vec3::from(model.translation))
+        }
+
+        fn input_world(&self, bone: usize) -> Vec3 {
+            self.model_to_world
+                .transform_point3(Vec3::from(self.input_model(bone).translation))
+        }
+
+        fn assert_toes_at(&mut self, locks: &[LegLock]) {
+            for (leg, toe) in locks.iter().zip(TOES) {
+                let shown = self.output_world(toe);
+                assert_near(shown.x, leg.lock.x, EPS);
+                assert_near(shown.z, leg.lock.z, EPS);
+                assert_near(shown.y, self.input_world(toe).y, EPS);
+            }
         }
 
         fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
@@ -729,6 +977,54 @@ mod tests {
 
     fn angle(a: Quat, b: Quat) -> f32 {
         2.0 * (a * b.inverse()).xyz().length().min(1.0).asin()
+    }
+
+    fn rotation_of(transform: Affine3A) -> Quat {
+        transform.to_scale_rotation_translation().1
+    }
+
+    fn assert_near(actual: f32, expected: f32, tolerance: f32) {
+        assert!(
+            (actual - expected).abs() < tolerance,
+            "{actual} vs {expected}"
+        );
+    }
+
+    fn still(node: FootLockNode) -> Stage {
+        let skeleton = rig();
+        let script = Script::rest_of(&skeleton);
+        let mut stage = Stage::new(skeleton, script, node);
+        stage.settle();
+        stage
+    }
+
+    fn locked_in(node: FootLockNode, space: Affine3A) -> Stage {
+        let skeleton = rig();
+        let script = Script::rest_of(&skeleton);
+        let mut stage = Stage::new(skeleton, script, node).under(space);
+        stage.settle();
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+        stage
+    }
+
+    fn locked(node: FootLockNode) -> Stage {
+        locked_in(node, Affine3A::IDENTITY)
+    }
+
+    fn walked(turn: Quat, lift: Vec3) -> Stage {
+        let skeleton = rig();
+        let mut start = Script::rest_of(&skeleton);
+        start.rotations[0] = turn;
+        let start = Script {
+            root_translation: turn.inverse() * (STRIDE + lift),
+            ..start
+        };
+        let mut stage = Stage::new(skeleton, start.clone(), locking()).with_root();
+        stage.settle();
+        stage.pose(start.moved(lift - STRIDE));
+        stage.step(DT);
+        stage
     }
 
     fn add_graph(world: &mut World, node: FootLockNode) -> AssetHandle<AnimationGraph> {
@@ -838,12 +1134,248 @@ mod tests {
         stage.settle();
         assert_eq!(stage.phases(), [LockPhase::Free; 2]);
 
-        stage.with_state(|state| state.elapsed = DT);
-        stage.run();
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
         stage.with_state(|state| node.reset(state));
-        stage.with_state(|state| state.elapsed = DT);
-        stage.run();
+        stage.step(DT);
 
         assert_eq!(stage.phases(), [LockPhase::Free; 2]);
+    }
+
+    #[test]
+    fn a_still_foot_locks_where_its_toe_is() {
+        let mut stage = still(locking());
+        stage.step(DT);
+
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+        for (leg, toe) in stage.legs().into_iter().zip(TOES) {
+            let toe = stage.input_world(toe);
+            assert!(leg.lock.distance(toe) < EPS, "{:?} vs {toe:?}", leg.lock);
+        }
+    }
+
+    #[test]
+    fn a_held_foot_stays_at_its_lock_while_the_character_slides() {
+        let mut stage = locked(locking());
+        let locks = stage.legs();
+
+        stage.move_model(Affine3A::from_translation(Vec3::new(0.02, 0.0, 0.0)));
+        stage.step(DT);
+
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+        stage.assert_toes_at(&locks);
+        for foot in FEET {
+            let output = rotation_of(stage.output_model(foot));
+            let input = rotation_of(stage.input_model(foot));
+            assert!(angle(output, input) < EPS, "foot {foot}");
+        }
+    }
+
+    #[test]
+    fn speed_is_read_in_the_animations_frame() {
+        let skeleton = rig();
+        let running = Script {
+            root_translation: STRIDE,
+            ..Script::rest_of(&skeleton)
+        };
+        let mut stage = Stage::new(skeleton, running, locking());
+        stage.settle();
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Free; 2]);
+
+        let mut stage = walked(Quat::IDENTITY, Vec3::ZERO);
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+    }
+
+    #[test]
+    fn root_motion_is_read_in_the_turned_roots_facing() {
+        let mut stage = walked(Quat::from_rotation_x(20.0_f32.to_radians()), Vec3::ZERO);
+
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+    }
+
+    #[test]
+    fn the_roots_lift_does_not_count_as_speed() {
+        let mut stage = walked(Quat::IDENTITY, Vec3::new(0.0, 0.02, 0.0));
+
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+    }
+
+    #[test]
+    fn a_still_foot_above_the_plant_height_does_not_lock() {
+        let skeleton = rig();
+        let raised = Script::rest_of(&skeleton).moved(Vec3::new(0.0, 0.2, 0.0));
+        let mut stage = Stage::new(skeleton, raised, locking());
+        stage.settle();
+        stage.step(DT);
+
+        assert_eq!(stage.phases(), [LockPhase::Free; 2]);
+    }
+
+    #[test]
+    fn a_plant_that_ends_releases_from_the_lock_and_eases_back() {
+        let mut stage = locked(locking());
+        let rest = stage.script.clone();
+        let lock = stage.legs()[0].lock;
+
+        stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.1)));
+        stage.step(DT);
+        let leg = stage.legs()[0];
+        assert_eq!(leg.phase, LockPhase::Releasing);
+        assert!(leg.lock.distance(lock) < EPS, "{:?} vs {lock:?}", leg.lock);
+        assert!(
+            leg.shown.distance(lock) < EPS,
+            "{:?} vs {lock:?}",
+            leg.shown
+        );
+        let releasing = stage.legs();
+        stage.assert_toes_at(&releasing);
+        let released = leg.shown - leg.animated;
+
+        let mut reach = 0.15;
+        stage.pose(rest.moved(Vec3::new(0.0, 0.0, reach)));
+        stage.step(0.1);
+        let leg = stage.legs()[0];
+        assert_eq!(leg.phase, LockPhase::Releasing);
+        let halved = leg.shown - leg.animated;
+        assert!(
+            halved.distance(released * 0.5) < 1.0e-3,
+            "{halved:?} vs {released:?}"
+        );
+
+        let freed = (0..20).any(|_| {
+            reach += 0.05;
+            stage.pose(rest.moved(Vec3::new(0.0, 0.0, reach)));
+            stage.step(0.1);
+            stage.phases()[0] == LockPhase::Free
+        });
+        assert!(freed);
+        let leg = stage.legs()[0];
+        assert!(leg.shown.distance(leg.animated) < EPS);
+    }
+
+    #[test]
+    fn a_foot_dragged_past_the_unlock_radius_waits_for_its_next_plant() {
+        let mut stage = locked(locking());
+        let rest = stage.script.clone();
+
+        stage.move_model(Affine3A::from_translation(Vec3::new(0.25, 0.0, 0.0)));
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Releasing; 2]);
+
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Releasing; 2]);
+
+        stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.1)));
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Releasing; 2]);
+
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+    }
+
+    #[test]
+    fn a_foot_planted_again_while_releasing_locks_where_it_is_shown() {
+        for weight in [1.0, 0.5] {
+            let mut stage = locked(locking().with_weight(weight));
+            let rest = stage.script.clone();
+
+            stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.05)));
+            stage.step(DT);
+            assert_eq!(stage.phases(), [LockPhase::Releasing; 2], "weight {weight}");
+            let shown = stage.legs()[0].shown;
+            let toe = stage.output_world(TOES[0]);
+
+            stage.step(DT);
+            let leg = stage.legs()[0];
+            assert_eq!(leg.phase, LockPhase::Locked, "weight {weight}");
+            assert!(leg.shown.distance(shown) < EPS, "weight {weight}");
+            let unweighted = leg.animated + (shown - leg.animated) / weight;
+            assert!(leg.lock.distance(unweighted) < EPS, "weight {weight}");
+            assert!(stage.output_world(TOES[0]).distance(toe) < EPS);
+
+            stage.step(DT);
+            assert!(stage.output_world(TOES[0]).distance(toe) < EPS);
+        }
+    }
+
+    #[test]
+    fn an_evaluate_with_no_time_keeps_the_plant_and_the_previous_contact() {
+        let mut stage = locked(locking());
+        let before = stage.legs();
+        let rest = stage.script.clone();
+
+        stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.1)));
+        stage.run();
+
+        for (before, after) in before.iter().zip(stage.legs()) {
+            assert!(after.planted);
+            assert_eq!(after.previous, before.previous);
+            assert_eq!(after.phase, LockPhase::Locked);
+        }
+    }
+
+    #[test]
+    fn weight_zero_leaves_the_input_pose_and_a_zero_weight_param_plants_nothing() {
+        let weight_param = name!("lock_weight");
+        let node = locking()
+            .with_weight_param(weight_param)
+            .with_weight_halflife(0.0);
+
+        let skeleton = rig();
+        let script = Script::rest_of(&skeleton);
+        let mut stage = Stage::new(skeleton, script, node.clone()).under(Affine3A::IDENTITY);
+        stage.set_param(weight_param, 1.0_f32);
+        stage.settle();
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+        stage.move_model(Affine3A::from_translation(Vec3::new(0.02, 0.0, 0.0)));
+        stage.set_param(weight_param, 0.0_f32);
+        stage.step(DT);
+        stage.assert_input_pose();
+        assert_eq!(stage.phases(), [LockPhase::Releasing; 2]);
+
+        let skeleton = rig();
+        let script = Script::rest_of(&skeleton);
+        let mut stage = Stage::new(skeleton, script, node);
+        stage.set_param(weight_param, 0.0_f32);
+        stage.settle();
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Free; 2]);
+    }
+
+    #[test]
+    fn half_weight_holds_the_toe_halfway_to_its_lock() {
+        let mut stage = locked(locking().with_weight(0.5));
+
+        stage.move_model(Affine3A::from_translation(Vec3::new(0.02, 0.0, 0.0)));
+        stage.step(DT);
+
+        for toe in TOES {
+            let shown = stage.output_world(toe);
+            let animated = stage.input_world(toe);
+            assert_near(shown.x, animated.x - 0.01, EPS);
+            assert_near(shown.y, animated.y, EPS);
+            assert_near(shown.z, animated.z, EPS);
+        }
+    }
+
+    #[test]
+    fn a_turned_and_raised_model_holds_the_toe_at_its_lock() {
+        let turn = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let mut stage = locked_in(
+            locking(),
+            Affine3A::from_rotation_translation(turn, Vec3::Y),
+        );
+        let locks = stage.legs();
+
+        stage.move_model(Affine3A::from_rotation_translation(
+            turn,
+            Vec3::new(0.02, 1.0, 0.0),
+        ));
+        stage.step(DT);
+
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+        stage.assert_toes_at(&locks);
     }
 }

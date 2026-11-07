@@ -407,7 +407,7 @@ fn descends_from(skeleton: &Skeleton, bone: usize, ancestor: usize) -> bool {
         .any(|up| up == ancestor)
 }
 
-fn horizontal(v: Vec3) -> Vec3 {
+pub(crate) fn horizontal(v: Vec3) -> Vec3 {
     Vec3::new(v.x, 0.0, v.z)
 }
 
