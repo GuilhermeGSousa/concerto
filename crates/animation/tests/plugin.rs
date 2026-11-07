@@ -64,19 +64,33 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
 
     use concerto_animation::clip::AnimationClip;
     use concerto_animation::graph::AnimationGraph;
+    use concerto_animation::mask::BoneMask;
     use concerto_animation::node::blend_space::BlendSpace2DNode;
     use concerto_animation::node::state_machine::AnimationStateMachine;
     use concerto_animation::node::{
-        AnimationClipNode, BlendNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
+        AnimationClipNode, BlendNode, LayerNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
         TwoBoneIkNode,
     };
+    use concerto_app::InspectedAssets;
     use concerto_ecs::reflect::AppTypeRegistry;
-    use concerto_foundation::assets::handle::AssetHandle;
+    use concerto_foundation::assets::{Asset, handle::AssetHandle};
+    use concerto_mesh::ReflectSkeletonSource;
 
     let mut app = App::new();
     app.insert_resource(AssetServer::new());
     app.register_plugin(AnimationPlugin);
 
+    assert!(
+        app.get_resource::<InspectedAssets>()
+            .unwrap()
+            .iter()
+            .any(|record| record.kind == BoneMask::name())
+    );
+    assert!(
+        app.get_resource::<AssetServer>()
+            .unwrap()
+            .is_registered::<BoneMask>()
+    );
     let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
     let has_node_data = |id: TypeId| registry.get_type_data::<ReflectAnimationNode>(id).is_some();
 
@@ -87,6 +101,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(has_node_data(TypeId::of::<AnimationStateMachine>()));
     assert!(has_node_data(TypeId::of::<PlaceholderNode>()));
     assert!(has_node_data(TypeId::of::<TwoBoneIkNode>()));
+    assert!(has_node_data(TypeId::of::<LayerNode>()));
     assert!(
         registry
             .get(TypeId::of::<AssetHandle<AnimationClip>>())
@@ -95,6 +110,21 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(
         registry
             .get(TypeId::of::<AssetHandle<AnimationGraph>>())
+            .is_some()
+    );
+    assert!(
+        registry
+            .get(TypeId::of::<AssetHandle<BoneMask>>())
+            .is_some()
+    );
+    assert!(
+        registry
+            .get(TypeId::of::<AssetHandle<Skeleton>>())
+            .is_some()
+    );
+    assert!(
+        registry
+            .get_type_data::<ReflectSkeletonSource>(TypeId::of::<BoneMask>())
             .is_some()
     );
 }

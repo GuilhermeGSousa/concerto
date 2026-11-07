@@ -8,9 +8,11 @@ use crate::{
     clip::AnimationClip,
     event::{AnimationEvent, ClipEvent},
     graph::AnimationGraph,
+    mask::BoneMask,
     node::{
-        AnimationClipNode, AnimationNode, BlendNode, PlaceholderNode, ResultNode, TwoBoneIkNode,
-        blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
+        AnimationClipNode, AnimationNode, BlendNode, LayerNode, PlaceholderNode, ResultNode,
+        TwoBoneIkNode, blend_space::BlendSpace2DNode, register_node_inputs,
+        state_machine::AnimationStateMachine,
     },
     target::{
         animate_targets, initialize_animation_players, initialize_skeletons,
@@ -23,6 +25,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<ResultNode>();
     registry.register::<BlendNode>();
     registry.register::<TwoBoneIkNode>();
+    registry.register::<LayerNode>();
     registry.register::<AnimationClipNode>();
     registry.register::<BlendSpace2DNode>();
     registry.register::<AnimationStateMachine>();
@@ -30,6 +33,8 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<AnimationEvent>();
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
+    registry.register::<AssetHandle<BoneMask>>();
+    registry.register::<AssetHandle<Skeleton>>();
 }
 
 /// Registers the inputs of the built-in animation nodes with the graph walks of `world`.
@@ -37,6 +42,7 @@ pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<ResultNode>(world);
     register_node_inputs::<BlendNode>(world);
     register_node_inputs::<TwoBoneIkNode>(world);
+    register_node_inputs::<LayerNode>(world);
     register_node_inputs::<AnimationClipNode>(world);
     register_node_inputs::<BlendSpace2DNode>(world);
     register_node_inputs::<AnimationStateMachine>(world);
@@ -72,6 +78,7 @@ impl Plugin for AnimationPlugin {
         app.register_derived_asset::<AnimationClip>();
         app.register_asset::<AnimationGraph>();
         app.register_asset::<Skeleton>();
+        app.register_inspected_asset::<BoneMask>();
 
         if let Some(registry) = app.get_resource::<AppTypeRegistry>() {
             register_animation_types(&mut registry.write());

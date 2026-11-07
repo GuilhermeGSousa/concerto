@@ -6,6 +6,7 @@ pub mod graph;
 pub mod ik;
 pub mod inertialization;
 pub mod look_at;
+pub mod mask;
 pub mod mirror;
 pub mod node;
 pub mod player;

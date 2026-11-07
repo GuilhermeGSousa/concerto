@@ -20,8 +20,8 @@ use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
-        AnimationNode, ErasedAnimationNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
-        blend_space::BlendSpace2DBuilderContext,
+        AnimationNode, ErasedAnimationNode, LayerNode, PlaceholderNode, ReflectAnimationNode,
+        ResultNode, blend_space::BlendSpace2DBuilderContext,
     },
     player::ActiveNodeState,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
@@ -371,6 +371,37 @@ impl<'a> AnimationNodeContext<'a> {
 
         self
     }
+
+    /// Adds `node` as an input, its base through `base` and then its overlay through `overlay`; panics unless each closure adds exactly one input.
+    pub fn with_layer_input(
+        &mut self,
+        node: LayerNode,
+        base: impl FnOnce(AnimationNodeContext<'_>),
+        overlay: impl FnOnce(AnimationNodeContext<'_>),
+    ) -> &mut Self {
+        let layer = self.graph.add_node(node, self.node_index).index();
+        self.add_layer_input(layer, "base", base);
+        self.add_layer_input(layer, "overlay", overlay);
+        self
+    }
+
+    fn add_layer_input(
+        &mut self,
+        layer: AnimationNodeIndex,
+        closure: &str,
+        f: impl FnOnce(AnimationNodeContext<'_>),
+    ) {
+        let before = self.graph.get_node_inputs(layer).count();
+        f(AnimationNodeContext {
+            graph: self.graph,
+            node_index: layer,
+        });
+        let added = self.graph.get_node_inputs(layer).count() - before;
+        assert!(
+            added == 1,
+            "with_layer_input: the {closure} closure added {added} inputs to the layer node, and must add exactly one"
+        );
+    }
 }
 
 #[derive(Default)]
@@ -633,4 +664,198 @@ pub(crate) fn made_live(mut graph: AnimationGraph) -> AnimationGraph {
     crate::plugin::register_animation_types(&mut registry);
     graph.make_live(&registry, None).unwrap();
     graph
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
+    use concerto_mesh::Skeleton;
+    use glam::Mat4;
+    use uuid::Uuid;
+
+    use super::{AnimationGraph, AnimationGraphState, made_live};
+    use crate::{
+        blackboard::AnimationBlackboard,
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        mask::{BoneMask, BoneMaskBranch},
+        node::{AnimationClipNode, BlendNode, LayerNode, LayerSpace},
+        pose::{FramePool, JointPose},
+        test_walks::Walks,
+    };
+
+    const HIP: Uuid = Uuid::from_u128(1);
+    const ARM: Uuid = Uuid::from_u128(2);
+    const BASE_X: f32 = 1.0;
+    const OVERLAY_X: f32 = 2.0;
+
+    fn skeleton() -> Skeleton {
+        Skeleton::new(
+            vec![Mat4::IDENTITY; 2],
+            vec![None, Some(0)],
+            vec!["hip".into(), "arm".into()],
+            vec![JointPose::IDENTITY; 2],
+            vec![HIP, ARM],
+        )
+        .unwrap()
+    }
+
+    fn held_at(x: f32) -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        for bone in [HIP, ARM] {
+            clip.add_channel(
+                bone,
+                AnimationChannel::new(
+                    vec![0.0, 1.0],
+                    AnimationChanelOutput::from_translation([[x, 0.0, 0.0]; 2].into_iter()),
+                ),
+            );
+        }
+        clip
+    }
+
+    struct Layered {
+        walks: Walks,
+        base: AssetHandle<AnimationClip>,
+        overlay: AssetHandle<AnimationClip>,
+        mask: AssetHandle<BoneMask>,
+    }
+
+    impl Layered {
+        fn new() -> Self {
+            let mut walks = Walks::new(AssetStore::new(), AssetStore::new());
+            let base = AssetId::from_path("layer_order_base");
+            let overlay = AssetId::from_path("layer_order_overlay");
+            let mask = AssetId::from_path("layer_order_arm");
+            walks.clips_mut().insert(base, held_at(BASE_X));
+            walks.clips_mut().insert(overlay, held_at(OVERLAY_X));
+            walks.masks_mut().insert(
+                mask,
+                BoneMask::new().with_branch(BoneMaskBranch::new("arm")),
+            );
+            Self {
+                walks,
+                base: AssetHandle::weak(base),
+                overlay: AssetHandle::weak(overlay),
+                mask: AssetHandle::weak(mask),
+            }
+        }
+
+        fn graph(&self) -> AnimationGraph {
+            let mut graph = AnimationGraph::new();
+            graph.result_node().with_layer_input(
+                LayerNode::new(self.mask.clone()).with_space(LayerSpace::Local),
+                |mut base| {
+                    base.with_input(AnimationClipNode::new(self.base.clone()), |_| {});
+                },
+                |mut overlay| {
+                    overlay.with_input(AnimationClipNode::new(self.overlay.clone()), |_| {});
+                },
+            );
+            graph
+        }
+
+        fn evaluate(&mut self, graph: AnimationGraph) -> Vec<f32> {
+            let id = AssetId::from_path("layer_order_graph");
+            self.walks.graphs_mut().insert(id, made_live(graph));
+            let walks = &self.walks;
+            let blackboard = AnimationBlackboard::default();
+            let skeleton = skeleton();
+            let mut state = AnimationGraphState::default();
+            walks.create(&blackboard, |context| {
+                state.initialize(AssetHandle::weak(id), walks.graphs(), context)
+            });
+            let mut pool = FramePool::new(skeleton.bone_count());
+            pool.set_rest(&skeleton.rest_pose);
+            let mut output = pool.acquire();
+            let evaluated = walks.evaluate_with(&blackboard, None, Some(&skeleton), |context| {
+                state.evaluate(
+                    walks.graphs(),
+                    context,
+                    &skeleton.bone_ids,
+                    &mut pool,
+                    &mut output,
+                )
+            });
+            assert!(evaluated, "the graph evaluated");
+            output
+                .joints()
+                .iter()
+                .map(|joint| joint.translation.x)
+                .collect()
+        }
+    }
+
+    fn assert_base_then_overlay(x: &[f32]) {
+        assert_eq!(x.len(), 2);
+        assert!(
+            (x[0] - BASE_X).abs() < 1e-6,
+            "the unmasked hip is the base's, got {}",
+            x[0]
+        );
+        assert!(
+            (x[1] - OVERLAY_X).abs() < 1e-6,
+            "the masked arm is the overlay's, got {}",
+            x[1]
+        );
+    }
+
+    #[test]
+    fn with_layer_input_hands_the_layer_its_base_first_and_its_overlay_second() {
+        let mut layered = Layered::new();
+        let graph = layered.graph();
+
+        assert_base_then_overlay(&layered.evaluate(graph));
+    }
+
+    #[test]
+    fn a_saved_and_loaded_layer_keeps_its_base_first_and_its_overlay_second() {
+        let mut layered = Layered::new();
+        let bytes = bincode::serialize(&layered.graph()).unwrap();
+        let loaded: AnimationGraph = bincode::deserialize(&bytes).unwrap();
+
+        assert_base_then_overlay(&layered.evaluate(loaded));
+    }
+
+    #[test]
+    #[should_panic(expected = "the base closure added 0 inputs")]
+    fn with_layer_input_panics_when_the_base_adds_no_input() {
+        let mut graph = AnimationGraph::new();
+        graph.result_node().with_layer_input(
+            LayerNode::default(),
+            |_| {},
+            |mut overlay| {
+                overlay.with_input(BlendNode {}, |_| {});
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the overlay closure added 0 inputs")]
+    fn with_layer_input_panics_when_the_overlay_adds_no_input() {
+        let mut graph = AnimationGraph::new();
+        graph.result_node().with_layer_input(
+            LayerNode::default(),
+            |mut base| {
+                base.with_input(BlendNode {}, |_| {});
+            },
+            |_| {},
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the overlay closure added 2 inputs")]
+    fn with_layer_input_panics_when_the_overlay_adds_two_inputs() {
+        let mut graph = AnimationGraph::new();
+        graph.result_node().with_layer_input(
+            LayerNode::default(),
+            |mut base| {
+                base.with_input(BlendNode {}, |_| {});
+            },
+            |mut overlay| {
+                overlay
+                    .with_input(BlendNode {}, |_| {})
+                    .with_input(BlendNode {}, |_| {});
+            },
+        );
+    }
 }
