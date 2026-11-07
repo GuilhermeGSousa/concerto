@@ -1362,6 +1362,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-procedural-animation-gizmos"
+version = "0.1.0"
+dependencies = [
+ "concerto-animation",
+ "concerto-app",
+ "concerto-color",
+ "concerto-debug-gizmos",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-procedural-animation",
+ "concerto-reflect",
+ "concerto-render",
+ "glam 0.30.10",
+ "uuid",
+]
+
+[[package]]
 name = "concerto-project"
 version = "0.1.0"
 dependencies = [

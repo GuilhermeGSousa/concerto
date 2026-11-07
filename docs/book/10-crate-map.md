@@ -26,6 +26,7 @@ game adds itself when it needs them.
 | | `world-grid` | the ground grid | `world_grid` |
 | | `debug-gizmos` | immediate-mode debug lines and shapes | add `concerto-debug-gizmos` |
 | | `motion-matching-gizmos` | `MotionMatchingGizmos`, which draws a running character's motion matching, and the drawing the database preview shares | add `concerto-motion-matching-gizmos` |
+| | `procedural-animation-gizmos` | `FootLockGizmos`, which draws each foot lock of a running player's `FootLockNode` | add `concerto-procedural-animation-gizmos` |
 | | `terminal-renderer` | a renderer that draws into a terminal | |
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
 | | `jolt-ffi` | the bindings to Jolt, built from the submodule | |

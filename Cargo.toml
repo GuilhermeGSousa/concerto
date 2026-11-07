@@ -69,6 +69,7 @@ concerto-noise = { path = "crates/noise", version = "0.1.0" }
 concerto-obj = { path = "crates/obj", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }
 concerto-procedural-animation = { path = "crates/procedural-animation", version = "0.1.0" }
+concerto-procedural-animation-gizmos = { path = "crates/procedural-animation-gizmos", version = "0.1.0" }
 concerto-render = { path = "crates/render", version = "0.1.0" }
 concerto-render-macros = { path = "crates/render/macros", version = "0.1.0" }
 concerto-scene = { path = "crates/scene", version = "0.1.0" }
