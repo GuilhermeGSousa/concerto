@@ -265,7 +265,7 @@ fn unit_normal(normal: Vec3) -> Option<Vec3> {
         .map(Vec3::normalize)
 }
 
-fn elapsed_after(elapsed: f32, delta_time: f32) -> f32 {
+pub(crate) fn elapsed_after(elapsed: f32, delta_time: f32) -> f32 {
     if delta_time.is_finite() && delta_time > 0.0 {
         elapsed + delta_time
     } else {
@@ -452,7 +452,12 @@ fn limit_angle(tilt: Quat, max_angle: f32) -> Quat {
     }
 }
 
-fn ease<T: SpringValue>(spring: &mut Spring<T>, target: T, halflife: f32, elapsed: f32) -> T {
+pub(crate) fn ease<T: SpringValue>(
+    spring: &mut Spring<T>,
+    target: T,
+    halflife: f32,
+    elapsed: f32,
+) -> T {
     spring.set_halflife(halflife);
     if halflife > 0.0 {
         spring.update(target, elapsed)
