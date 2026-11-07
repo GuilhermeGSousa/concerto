@@ -19,7 +19,7 @@ pub struct MainCamera;
 pub struct NoMainCamera;
 
 /// Spawns the main camera plus a lowest-priority fallback virtual camera, so the
-/// stack is never empty and the window always has a view.
+/// stack is never empty and the window always has a view, unless [`NoMainCamera`] is present.
 pub(crate) fn spawn_main_camera(
     mut cmd: CommandQueue,
     mut director: ResMut<CameraDirector>,

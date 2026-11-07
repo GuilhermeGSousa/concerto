@@ -9,7 +9,10 @@ use concerto_foundation::{assets::asset_server::AssetServer, transform::Transfor
 use concerto_mesh::{primitives::cuboid, MeshComponent};
 use concerto_render::{
     assets::material::StandardMaterial,
-    components::camera::{Camera, Viewport},
+    components::{
+        camera::{Camera, Viewport},
+        camera_environment::CameraEnvironment,
+    },
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
@@ -145,7 +148,14 @@ fn draws_stay_inside_their_camera_rect() {
         return;
     };
     let mut hosted = Hosted::new(&gpu);
-    hosted.camera(blue(), left_half());
+    let camera = hosted.camera(blue(), left_half());
+    hosted.app.main_mut().world_mut().insert(
+        CameraEnvironment {
+            fog: None,
+            ambient: Color::rgba(1.0, 1.0, 1.0, 1.0),
+        },
+        camera,
+    );
     let (mesh, material) = {
         let server = hosted.app.get_resource::<AssetServer>().unwrap();
         (
