@@ -187,7 +187,6 @@ pub(crate) struct CharacterAssets {
 }
 
 impl CharacterAssets {
-    /// LAFAN1's character, playing motion matching on its own database.
     fn lafan1(asset_server: &AssetServer) -> Self {
         Self {
             scene: asset_server.load(CHARACTER_SCENE),
@@ -665,7 +664,7 @@ pub(crate) fn cycle_displacement(characters: Query<&mut CharacterDisplacement>, 
 mod tests {
     use concerto::animation::graph::{AnimationGraph, AnimationNodeIndex};
     use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
-    use concerto::animation::retarget::{RetargetNode, RetargetRig};
+    use concerto::animation::retarget::{PoseRetarget, RetargetNode, RetargetRig};
     use concerto::app::{
         App,
         schedule_groups::{LateFixedUpdate, LateUpdate},
@@ -1444,6 +1443,27 @@ mod tests {
                 .iter()
                 .any(|node| node.name == "Plane" && holds::<MeshCollider>(node))
         );
+    }
+
+    fn committed_skeleton(path: &str) -> Skeleton {
+        let bytes =
+            std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
+        decode_content_asset::<Skeleton>(&bytes).unwrap().1
+    }
+
+    #[test]
+    fn the_lafan1_and_ual1_rigs_resolve_against_their_committed_skeletons_and_retarget() {
+        let lafan1 = committed_skeleton("content/lafan1/model_skeleton/skeleton_0.gasset");
+        let ual1 = committed_skeleton("content/UAL1/skeleton_0.gasset");
+
+        let source = lafan1_rig(AssetHandle::weak(LAFAN1_SKELETON))
+            .resolve(&lafan1, None)
+            .unwrap();
+        let target = ual1_rig(AssetHandle::weak(UAL1_SKELETON))
+            .resolve(&ual1, None)
+            .unwrap();
+
+        assert!(PoseRetarget::new(&source, &lafan1, &target, &ual1).is_ok());
     }
 
     fn stored<A: Asset + 'static>(world: &mut World, server: &mut AssetServer) {
