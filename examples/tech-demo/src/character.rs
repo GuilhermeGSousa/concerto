@@ -612,6 +612,7 @@ mod tests {
         schedule_groups::{LateFixedUpdate, LateUpdate},
     };
     use concerto::ecs::component::scene::SceneEntityRef;
+    use concerto::ecs::entity::hierarchy::{ChildOf, Children};
     use concerto::ecs::system::{
         executor::single_thread::SingleThreadedExecutor, schedule::Schedules,
     };
@@ -1274,6 +1275,8 @@ mod tests {
 
     fn world_with_spawner() -> (World, Vec3) {
         let mut world = World::new();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
         world.insert_resource(PhysicsState::new());
         let mut server = AssetServer::new();
         stored::<Scene>(&mut world, &mut server);
