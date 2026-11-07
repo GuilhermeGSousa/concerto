@@ -45,6 +45,44 @@ Inserting `NoMainCamera` from a plugin's `build`, with
 `app.insert_resource(NoMainCamera)`, keeps the director from spawning its main
 camera, so the game's own cameras draw to the window.
 
+### Split screen
+
+A `Camera` draws to the whole of its target unless it has a `viewport`: a rect
+given as `min` and `max` in fractions of the target's size, from its top-left
+corner. It follows a window resize with no game code. Two players side by side:
+
+```rust
+use concerto::director::NoMainCamera;
+use concerto::render::components::camera::{Camera, Viewport};
+
+app.insert_resource(NoMainCamera);
+
+cmd.spawn((
+    Camera::default().with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))),
+    Transform::from_translation(Vec3::new(-2.0, 2.0, 8.0)),
+));
+cmd.spawn((
+    Camera::default().with_viewport(Viewport::new(Vec2::new(0.5, 0.0), Vec2::ONE)),
+    Transform::from_translation(Vec3::new(2.0, 2.0, 8.0)),
+));
+```
+
+- A window camera's aspect follows its viewport, so each half stays
+  undistorted.
+- Each camera clears only its own rect, to its `clear_color`. The window
+  outside every viewport is black.
+- Window cameras must not overlap: where two do, which one shows is undefined.
+  A camera without a viewport covers the whole window and overlaps every other
+  one, so split screen either inserts `NoMainCamera` or gives the director's
+  main camera a viewport too. The renderer warns once when it sees both kinds.
+- A camera that renders to a texture keeps the `aspect` you give it, with a
+  viewport or without one; setting it is yours.
+- Culling is per camera, and shadow maps are per light and shared by every
+  camera.
+- With `NoMainCamera`, the director drives no camera: virtual cameras still
+  stack, but nothing follows them. Move your cameras' `Transform`s yourself,
+  from your own controllers.
+
 ## Lights
 
 ```rust

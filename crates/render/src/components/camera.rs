@@ -262,11 +262,28 @@ pub struct RenderCamera {
     pub camera_buffer: wgpu::Buffer,
     pub(crate) depth_texture: RenderTexture,
     pub render_target: Option<RenderTexture>,
+    pub(crate) viewport: Option<Viewport>,
 }
 
 impl RenderCamera {
     pub fn depth_texture(&self) -> &RenderTexture {
         &self.depth_texture
+    }
+
+    /// The size of the target this camera draws to: its texture, or the window's surface.
+    pub fn target_size(&self, context: &RenderContext) -> UVec2 {
+        match &self.render_target {
+            Some(target) => {
+                let size = target.texture.size();
+                UVec2::new(size.width, size.height)
+            }
+            None => UVec2::new(context.surface_config.width, context.surface_config.height),
+        }
+    }
+
+    /// The pixels this camera covers on a target of `target` size.
+    pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
+        viewport_rect(self.viewport.as_ref(), target)
     }
 
     pub fn resize_render_target(
@@ -336,6 +353,7 @@ pub(crate) fn extract_cameras(
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;
             render_camera.clear_color = camera.clear_color.to_linear();
+            render_camera.viewport = camera.viewport;
 
             if let RenderTarget::Texture(handle) = &camera.render_target {
                 if let Some(texture) = texture_assets.get(handle) {
@@ -419,6 +437,7 @@ pub(crate) fn extract_cameras(
             depth_texture,
             clear_color: camera.clear_color.to_linear(),
             render_target,
+            viewport: camera.viewport,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);
 

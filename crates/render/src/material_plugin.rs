@@ -5,12 +5,14 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, Render},
 };
+use concerto_color::LinearRgba;
 use concerto_ecs::{
     command::CommandQueue,
     entity::EntityHashMap,
     query::Query,
     resource::{Res, ResMut, Resource},
-    system::input::SystemInputData,
+    system::input::{SystemInputData, SystemLocal},
+    world::{FromWorld, World},
     Entity, IntoSystemConfig,
 };
 use concerto_foundation::assets::AssetId;
@@ -42,6 +44,7 @@ use crate::{
     resources::RenderContext,
     sets::RenderSet,
     shader::create_shader_module,
+    viewport_clear::ViewportClearPipeline,
     Material,
 };
 
@@ -201,18 +204,75 @@ pub(crate) fn extract_materials<M: Material>(
     }
 }
 
-// Clears color and depth for all cameras at the start of each frame.
-//
-// Runs before all `material_renderpass<M>` systems so every material pass can
-// use `LoadOp::Load` without clobbering the previous pass's output.
+pub(crate) struct WindowOverlapWarned {
+    warned: bool,
+}
+
+impl FromWorld for WindowOverlapWarned {
+    fn from_world(_: &World) -> Self {
+        Self { warned: false }
+    }
+}
+
+fn wgpu_color(color: LinearRgba) -> wgpu::Color {
+    wgpu::Color {
+        r: color.r as f64,
+        g: color.g as f64,
+        b: color.b as f64,
+        a: color.a as f64,
+    }
+}
+
+fn clear_window(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("Window Clear Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    });
+}
+
 pub(crate) fn clear_cameras(
     mut device: ResMut<RenderDevice>,
     render_cameras: Query<&RenderCamera>,
     render_window: Res<RenderWindow>,
+    context: Res<RenderContext>,
+    viewport_clear: Res<ViewportClearPipeline>,
+    mut overlap: SystemLocal<WindowOverlapWarned>,
 ) {
+    let window_cameras = || {
+        render_cameras
+            .iter()
+            .filter(|render_camera| render_camera.render_target.is_none())
+    };
+    let any_with_viewport = window_cameras().any(|camera| camera.viewport.is_some());
+    let any_without_viewport = window_cameras().any(|camera| camera.viewport.is_none());
+    if any_with_viewport && any_without_viewport && !overlap.warned {
+        overlap.warned = true;
+        log::warn!(
+            "a camera without a viewport draws to the window beside cameras with one, so they \
+             overlap and which one shows is undefined; insert NoMainCamera or give every window \
+             camera a viewport"
+        );
+    }
+
+    let swapchain_view = render_window.get_view();
     let encoder = device.command_encoder();
     for render_camera in render_cameras.iter() {
-        let swapchain_view = render_window.get_view();
+        if render_camera
+            .viewport_rect(render_camera.target_size(&context))
+            .is_empty()
+        {
+            continue;
+        }
         let color_view: &wgpu::TextureView = match &render_camera.render_target {
             Some(rt) => &rt.view,
             None => match swapchain_view {
@@ -220,32 +280,57 @@ pub(crate) fn clear_cameras(
                 None => continue,
             },
         };
+        let depth_stencil_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &render_camera.depth_texture.view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(1.0),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
+        let color_attachment = wgpu::RenderPassColorAttachment {
+            view: color_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu_color(render_camera.clear_color)),
+                store: wgpu::StoreOp::Store,
+            },
+        };
+        let in_window_viewport =
+            render_camera.render_target.is_none() && render_camera.viewport.is_some();
+        let color_attachments = [Some(color_attachment)];
+        let color_attachments = if in_window_viewport {
+            &color_attachments[..0]
+        } else {
+            &color_attachments[..]
+        };
         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Clear Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: render_camera.clear_color.r as f64,
-                        g: render_camera.clear_color.g as f64,
-                        b: render_camera.clear_color.b as f64,
-                        a: render_camera.clear_color.a as f64,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &render_camera.depth_texture.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
+            color_attachments,
+            depth_stencil_attachment,
             occlusion_query_set: None,
             timestamp_writes: None,
         });
+    }
+
+    let Some(window_view) = swapchain_view else {
+        return;
+    };
+    if any_with_viewport && !any_without_viewport {
+        clear_window(encoder, window_view);
+    }
+
+    for render_camera in window_cameras() {
+        let rect = render_camera.viewport_rect(render_camera.target_size(&context));
+        if render_camera.viewport.is_none() || rect.is_empty() {
+            continue;
+        }
+        viewport_clear.fill(
+            encoder,
+            window_view,
+            rect,
+            wgpu_color(render_camera.clear_color),
+        );
     }
 }
 
@@ -320,10 +405,15 @@ pub(crate) fn material_renderpass<M: Material>(
     render_lighting: Res<RenderLighting>,
     skins: Res<SkinUniforms>,
     view_batches: Res<MaterialViewBatches<M>>,
+    context: Res<RenderContext>,
 ) {
     let encoder = device.command_encoder();
 
     for (camera, render_camera) in render_cameras.iter() {
+        let rect = render_camera.viewport_rect(render_camera.target_size(&context));
+        if rect.is_empty() {
+            continue;
+        }
         let depth_load = if M::clear_depth() {
             wgpu::LoadOp::Clear(1.0)
         } else {
@@ -363,6 +453,7 @@ pub(crate) fn material_renderpass<M: Material>(
             occlusion_query_set: None,
             timestamp_writes: None,
         });
+        rect.apply(&mut render_pass);
 
         let Some(batches) = view_batches
             .views
