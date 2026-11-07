@@ -187,6 +187,36 @@ A graph is a tree of nodes under a result node:
   with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
   at 1.0, so inputs mix equally; an input at weight 0 is left out, and with
   none left the node gives the rest pose.
+- **Additive** (`AdditiveNode`) plays an additive clip's delta (see
+  [Additive clips](#additive-clips)) over its one input, the base; with no
+  input it goes over the rest pose, and inputs after the first are ignored
+  with a warning. The node owns its clip and a clock over the delta, in delta
+  time: seconds from the start of the clip's `range`, so `start_time` is where
+  the delta starts and where `Loop` returns to, and `PlayOnce` holds at its
+  end. The rate is `play_rate` times the float under `play_rate_param`, as on
+  **Clip**. The weight is `weight` times the float under `weight_param`, with
+  NaN as 0, clamped to [0, 1]; a missing param leaves `weight` alone, and the
+  input's node weight is ignored. Nothing eases it, so smooth the param in the
+  game. The clock runs at weight 0 too, so an overlay fading in doesn't start
+  over, and at weight 0 the output is the base exactly. On the player's root
+  bone the delta adds no twist about up and no horizontal move, so a lean
+  stays but the heading and the ground position are the base's. Root motion
+  is always the base's. The base's events keep their weights, and the clip's
+  are added at the node's weight. A plain clip passes the base through with
+  one warning; an additive clip whose delta isn't built, such as one added in
+  code, passes it through with none. `AnimationPlayer::play(node)` restarts
+  the delta, and the node never holds back `OnAnimationEnd`: it always counts
+  as finished. The node has no mask: it layers the delta on every bone the
+  delta covers. `AdditiveNode::new(clip)` starts at weight 1, looping from 0
+  at rate 1, and every other field has a `with_<field>`:
+  ```rust
+  graph.result_node().with_input(
+      AdditiveNode::new(cold).with_weight_param(name!("cold")),
+      |mut base| {
+          base.with_input(AnimationClipNode::new(walk), |_| {});
+      },
+  );
+  ```
 - **Layer** (`LayerNode`) lays its second input, the overlay, over its first,
   the base, on the bones a `BoneMask` asset names. Build it with
   `with_layer_input(node, base, overlay)`, which adds the base through the
@@ -264,6 +294,75 @@ A graph is a tree of nodes under a result node:
   `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space.
+- **Aim offset** (`AimOffsetNode`) lays captured aim poses over its first
+  input, chosen by where a target is. Each `AimPoint` is an additive clip and
+  the yaw and pitch, in radians, it aims at. The target is a world-space
+  `Vec3` the game set under `target_param`; the node measures its yaw and
+  pitch from `frame_bone`, under bone 0, along `forward` with `up`, model-space
+  axes read in that bone's rest pose, +Z and +Y by default. A yaw toward the
+  side `up × forward` is positive, and a pitch toward `up`. The angles ease
+  toward the target over `angle_halflife` (0 snaps), and a target crossing
+  behind the character turns the short way. The first evaluate after the node
+  starts, resets, or has eased its weight out to 0 takes the target's angles
+  at once. The points are weighed
+  by those angles: one point takes everything, points on one line, such as a
+  pitch-only set of aim up, level and down, interpolate along it and clamp at
+  its ends, and any other set is triangulated as a 2D blend space is. A point
+  closer than 1e-4 rad to an earlier one is left out. The chosen deltas
+  combine bone by bone and are applied with `apply_additive` at the node's
+  weight, root bone included, so a captured lean of the whole body comes
+  through; root motion and events pass through. Every clip plays on one
+  clock, each looping over its own delta, so a held pose and a breathing aim
+  loop both work. `weight`, times the float under `weight_param`, eases in
+  and out over `weight_halflife`; a missing target eases it out, and at
+  weight 0 the input passes through untouched. A clip not loaded yet counts
+  as no change, as does a plain clip, which warns once. Wire it after the
+  base and the layers, and before `AimNode` and look-at.
+  `AimOffsetNode::new(target_param, frame_bone)` starts from the defaults,
+  `with_point` adds a point, and each other field has a `with_<field>`:
+  ```rust
+  AimOffsetNode::new(name!("aim_target"), "Spine2")
+      .with_point(AimPoint::new(aim_down, 0.0, -0.8))
+      .with_point(AimPoint::new(aim_level, 0.0, 0.0))
+      .with_point(AimPoint::new(aim_up, 0.0, 0.8))
+      .with_weight_param(name!("aim_weight"))
+  ```
+- **Aim** (`AimNode`, in `concerto::procedural_animation`, registered by
+  `ProceduralAnimationPlugin`) closes what an aim offset misses: it turns a
+  chain of bones so a weapon's barrel points at a world-space `Vec3` the game
+  set under `target_param`. The `chain` lists `AimBone`s from the root up,
+  each under the one before, all under bone 0; the root bone may be one. The
+  `Muzzle` is a point (`offset`) and a direction (`direction`, +Z by default)
+  in its bone's space, and its bone is the last chain bone or under it. Each
+  bone turns by its `share` of the angle left to it, within its `yaw_limit`
+  and `pitch_limit` in radians, about the model-space `up`. The solve runs
+  three passes over the chain, each reading the barrel afresh, so the parallax
+  of a muzzle in front of the spine is taken out: a target four or more
+  muzzle-distances away is hit within millimetres. A target behind the
+  muzzle, or nearer the first chain bone than the muzzle is, holds the last
+  turn. Each bone eases from its turn to a new solve over
+  `reacquire_halflife`, times the float under `reacquire_param` (0, the
+  default, applies the solve at once). `weight`, times the float under
+  `weight_param`, eases in and out over `weight_halflife`; a missing target
+  eases it out holding the last turn, and at weight 0 the input passes
+  through untouched. Root motion and events pass through. Wire a character
+  that aims as base, layers, `AimOffsetNode`, `AimNode`, look-at, sway and
+  tremor, then two-bone IK for the support hand. Where a shot's additive
+  clip goes picks the recoil: before `AimNode` the kick is corrected away at
+  a `reacquire_halflife` of 0, or recovers over that halflife above 0; after
+  it, through an **Additive** node, the kick plays as captured over a
+  barrel that stays on the target. `AimNode::new(target_param, muzzle)`
+  starts from the defaults, `with_bone` adds a bone, and each other field has
+  a `with_<field>`:
+  ```rust
+  AimNode::new(
+      name!("aim_target"),
+      Muzzle::new("RightHand").with_offset(Vec3::new(0.0, 0.05, 0.25)),
+  )
+  .with_bone(AimBone::new("Spine1").with_share(1.0))
+  .with_bone(AimBone::new("Spine2").with_share(2.0).with_limits(0.8, 0.5))
+  .with_reacquire_halflife(0.12)
+  ```
 - **Look-at** (`LookAtNode`, in `concerto::procedural_animation`, registered
   by `ProceduralAnimationPlugin`) turns a character's spine, neck, head and eyes
   toward a point while the body plays its input. The `chain` lists
@@ -283,6 +382,53 @@ A graph is a tree of nodes under a result node:
   resets. Wire it after the nodes whose pose it turns, and before two-bone
   IK. The yaw and pitch maths are `concerto_animation::look_at` for code
   outside a graph.
+- **Procedural motion** (`ProceduralMotionNode`, in
+  `concerto::procedural_animation`, registered by `ProceduralAnimationPlugin`)
+  adds small rotations that wave or wander over time to its input's pose: aim
+  sway, hand tremor, breathing in the chest. Each of its `channels`, a
+  `ProceduralMotionChannel`, moves the bones of its `BoneMask`, each by its
+  mask weight, so a `depth` ramp turns the spine by a third, the chest by two
+  thirds and the bones above by the full amount. A masked bone turns about the
+  skeleton's model axes at its own pivot, from where its input put it, so a
+  bone covered at its parent's weight simply follows the parent; +X is the
+  character's side, +Y up and +Z forward, the same on every skeleton. The
+  `waveform` is `Waveform::Sine`, one sine shared by the three axes, for
+  breathing, or `Waveform::Noise { octaves }`, fractal gradient noise of its
+  own on each axis, for sway and tremor. `frequency` is in hertz and
+  `amplitude` is the peak rotation in radians about each model axis. The
+  rotation is scaled by the float under `magnitude_param`, 1 when there is
+  none or the param is missing or holds another type, 0 when it is negative
+  or not finite; the scale eases toward that value with
+  `magnitude_halflife`, and snaps to it when the node starts or resets, so a
+  character spawned wounded sways at full strength from its first frame.
+  Channels compose in list order, a later one's on the left. Root motion,
+  events, translations, scales and every bone outside the masks are the
+  input's, and a mask may name the root bone, for hip sway. The presets
+  `ProceduralMotionChannel::breathing`, `sway` and `tremor` start from
+  numbers that suit those uses. Each channel's phase and noise come from the
+  node's `seed` mixed with the seed the game set on the blackboard under
+  `seed_param`, a `u64` or an int param, 0 when there is none: players with
+  the same seeds move in step, so set each character's from something stable
+  across runs, such as its spawn index. Resetting the node keeps its
+  phases, so re-entering a state does not replay the same stretch of motion.
+  Wire it after aim and look-at and before hand IK, so the off hand stays on
+  a swaying gun. `ProceduralMotionNode::new()` has no channels, `with_channel`
+  adds one, and each channel field has a `with_<field>`:
+  ```rust
+  ProceduralMotionNode::new()
+      .with_channel(ProceduralMotionChannel::breathing(chest_mask))
+      .with_channel(
+          ProceduralMotionChannel::sway(arms_mask)
+              .with_magnitude_param(name!("wounded"))
+              .with_magnitude_halflife(0.5),
+      )
+      .with_channel(
+          ProceduralMotionChannel::tremor(hands_mask)
+              .with_magnitude_param(name!("fear")),
+      )
+      .with_seed(7)
+      .with_seed_param(name!("character_seed"))
+  ```
 - **Foot placement** (`FootPlacementNode`, in
   `concerto::procedural_animation`, registered by `ProceduralAnimationPlugin`)
   puts each foot on the ground under it. Each `FootPlacementLeg` names a foot
@@ -530,8 +676,9 @@ marked `.at_preview_time()`, as above. The clip editor's preview samples the
 clip directly and fires nothing.
 
 Every playing source fires, with its effective weight: a blend gives each input
-its share, a blend space each corner its barycentric weight, and a cross-fade
-the fading states theirs. A state entered with `CrossFade` fires its start
+its share, a blend space each corner its barycentric weight, a cross-fade
+the fading states theirs, and an **Additive** node its clip's events at the
+node's weight. A state entered with `CrossFade` fires its start
 event on the first frame of the fade, at that frame's weight, about
 `dt / blend_time`: 0.07 for a 0.25 s blend at 60 Hz. With `Inertialization` the
 new state plays alone, so its start event fires at weight 1.
@@ -594,11 +741,13 @@ taken at the clip's frame rate, its detected rate when it has none stored, or
 A delta exists only for a bone and component that both clips animate; any other
 reads as identity. The bones in `roots`, the roots of the skeleton the source
 emits, keep their rotation delta but no translation, so an overlay adds a lean
-of the whole body but no root motion. Scale is never layered, nor are a clip's
-events: they stay on the clip.
+of the whole body but no root motion. Scale is never layered, and a clip's
+events stay on the clip, fired by the **Additive** node at its weight.
 
-Mesh-space deltas, a single-frame or rest-pose base, and the graph node that
-plays an additive clip over a pose are not there yet.
+The graph node that plays an additive clip over a pose is **Additive**, in the
+node list under [Animation](#animation), and **Aim offset** plays additive aim
+clips chosen by a target's yaw and pitch. Mesh-space deltas and a single-frame
+or rest-pose base are not there yet.
 
 ## Gameplay helpers
 

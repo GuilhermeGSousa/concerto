@@ -1,9 +1,12 @@
 use concerto_animation::graph::AnimationGraph;
+use concerto_animation::mask::BoneMask;
 use concerto_animation::node::{AnimationNode, ErasedAnimationNode};
 use concerto_animation::plugin::register_animation_types;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_name::name;
 use concerto_procedural_animation::{
-    FootPlacementLeg, FootPlacementNode, LookAtBone, LookAtEye, LookAtNode,
+    AimBone, AimNode, FootPlacementLeg, FootPlacementNode, LookAtBone, LookAtEye, LookAtNode,
+    Muzzle, ProceduralMotionChannel, ProceduralMotionNode, Waveform,
 };
 use concerto_reflect::TypeRegistry;
 
@@ -12,6 +15,8 @@ fn registry() -> TypeRegistry {
     register_animation_types(&mut registry);
     registry.register::<FootPlacementNode>();
     registry.register::<LookAtNode>();
+    registry.register::<AimNode>();
+    registry.register::<ProceduralMotionNode>();
     registry
 }
 
@@ -123,4 +128,105 @@ fn a_look_at_node_keeps_every_field_through_a_round_trip() {
         restored.load_warnings()
     );
     assert_eq!(live_node::<LookAtNode>(&restored), Some(&node));
+}
+
+#[test]
+fn an_aim_node_keeps_every_field_through_a_round_trip() {
+    let node = AimNode::new(
+        name!("aim_target"),
+        Muzzle::new("hand_r")
+            .with_offset(glam::Vec3::new(0.02, 0.05, 0.3))
+            .with_direction(glam::Vec3::new(0.0, 0.1, 1.0)),
+    )
+    .with_bone(
+        AimBone::new("spine_02")
+            .with_share(0.4)
+            .with_limits(0.6, 0.3),
+    )
+    .with_bone(
+        AimBone::new("spine_03")
+            .with_share(0.6)
+            .with_limits(0.5, 0.35),
+    )
+    .with_up(glam::Vec3::new(0.1, 1.0, 0.0))
+    .with_weight(0.8)
+    .with_weight_param(name!("aim_weight"))
+    .with_weight_halflife(0.35)
+    .with_reacquire_halflife(0.15)
+    .with_reacquire_param(name!("aim_reacquire"));
+    let defaults = AimNode::default();
+    assert_ne!(node.muzzle, Muzzle::default());
+    assert_ne!(node.chain[0], AimBone::default());
+    assert_ne!(node.up, defaults.up);
+    assert_ne!(node.target_param, defaults.target_param);
+    assert_ne!(node.weight, defaults.weight);
+    assert_ne!(node.weight_halflife, defaults.weight_halflife);
+    assert_ne!(node.reacquire_halflife, defaults.reacquire_halflife);
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<AimNode>(&restored), Some(&node));
+}
+
+#[test]
+fn a_procedural_motion_node_keeps_every_field_through_a_round_trip() {
+    let mask = |path: &str| AssetHandle::<BoneMask>::weak(AssetId::from_path(path));
+    let changed = |channel: ProceduralMotionChannel, path: &str, waveform: Waveform| {
+        let changed = channel
+            .clone()
+            .with_waveform(waveform)
+            .with_frequency(channel.frequency * 1.5)
+            .with_amplitude(channel.amplitude + glam::Vec3::new(0.01, 0.02, 0.03))
+            .with_magnitude_param(name!("wounded"))
+            .with_magnitude_halflife(0.3);
+        let changed = ProceduralMotionChannel {
+            mask: mask(path),
+            ..changed
+        };
+        assert_ne!(changed.mask, channel.mask);
+        assert_ne!(changed.waveform, channel.waveform);
+        assert_ne!(changed.frequency, channel.frequency);
+        assert_ne!(changed.amplitude, channel.amplitude);
+        assert_ne!(changed.magnitude_param, channel.magnitude_param);
+        assert_ne!(changed.magnitude_halflife, channel.magnitude_halflife);
+        changed
+    };
+    let node = ProceduralMotionNode::new()
+        .with_channel(changed(
+            ProceduralMotionChannel::breathing(mask("chest")),
+            "spine",
+            Waveform::Noise { octaves: 3 },
+        ))
+        .with_channel(changed(
+            ProceduralMotionChannel::sway(mask("arms")),
+            "upper_body",
+            Waveform::Sine,
+        ))
+        .with_channel(changed(
+            ProceduralMotionChannel::tremor(mask("hands")),
+            "fingers",
+            Waveform::Noise { octaves: 5 },
+        ))
+        .with_seed(7)
+        .with_seed_param(name!("character_seed"));
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<ProceduralMotionNode>(&restored), Some(&node));
 }

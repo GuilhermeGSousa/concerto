@@ -365,6 +365,20 @@ mod tests {
     }
 
     #[test]
+    fn a_quat_spring_settles_onto_a_goal_milliradians_away() {
+        let start = Quat::from_rotation_x(0.3) * Quat::from_rotation_y(0.05);
+        let goal = Quat::from_rotation_z(0.002) * start;
+        let mut spring = Spring::critically_damped_with_halflife(start, 0.1);
+
+        for _ in 0..300 {
+            spring.update(goal, 1.0 / 60.0);
+        }
+
+        let left = (spring.value.inverse() * goal).xyz().length() * 2.0;
+        assert!(left < 1.0e-5, "stopped {left} rad short of the goal");
+    }
+
+    #[test]
     fn quat_velocity_is_a_scaled_angle_axis() {
         let mut spring = Spring::critically_damped(Quat::IDENTITY, 10.0);
 

@@ -47,7 +47,7 @@ pub fn to_scaled_angle_axis(q: Quat) -> Vec3 {
     if length < 1.0e-8 {
         return axis * 2.0;
     }
-    2.0 * q.w.clamp(-1.0, 1.0).acos() * axis / length
+    2.0 * length.atan2(q.w) * axis / length
 }
 
 /// The rotation about `v / |v|` by `|v|` radians.
@@ -118,6 +118,17 @@ mod tests {
         );
         assert_eq!(to_scaled_angle_axis(Quat::IDENTITY), Vec3::ZERO);
         assert!(from_scaled_angle_axis(Vec3::ZERO).abs_diff_eq(Quat::IDENTITY, 1.0e-6));
+    }
+
+    #[test]
+    fn a_rotation_of_a_milliradian_keeps_its_angle() {
+        for angle in [1.0e-3_f32, 3.0e-4, 2.0e-5] {
+            assert_close(
+                to_scaled_angle_axis(Quat::from_rotation_y(angle)),
+                Vec3::new(0.0, angle, 0.0),
+                angle * 1.0e-3,
+            );
+        }
     }
 
     #[test]

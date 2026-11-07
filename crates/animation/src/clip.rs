@@ -700,6 +700,13 @@ impl AnimationClip {
         Ok(hash.finish())
     }
 
+    #[cfg(test)]
+    pub(crate) fn build_delta_against(&mut self, base: &AnimationClip) -> anyhow::Result<()> {
+        let delta = self.delta_against(base)?;
+        let blob = bincode::serialize(&delta).context("failed to encode an additive delta")?;
+        self.apply_derived(&blob)
+    }
+
     fn delta_against(&self, base: &AnimationClip) -> anyhow::Result<AdditiveDelta> {
         let additive = self.additive_base()?;
         let range = checked_range(additive.range, self.duration, "range")?;
@@ -1000,6 +1007,17 @@ impl DerivedData for AnimationClip {
         delta.bones.sort_by_key(|bone| bone.bone);
         self.delta = Some(delta);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl AnimationClip {
+    pub(crate) fn with_delta_against(mut self, base: &AnimationClip) -> Self {
+        let delta = self
+            .delta_against(base)
+            .expect("a test clip has a delta against its base");
+        self.delta = Some(delta);
+        self
     }
 }
 

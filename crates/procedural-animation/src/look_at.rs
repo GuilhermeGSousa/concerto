@@ -270,7 +270,7 @@ impl LookAtNode {
     }
 }
 
-fn share(share: f32) -> f32 {
+pub(crate) fn share(share: f32) -> f32 {
     if share.is_finite() && share > 0.0 {
         share
     } else {
@@ -278,7 +278,7 @@ fn share(share: f32) -> f32 {
     }
 }
 
-fn halflife(halflife: f32) -> f32 {
+pub(crate) fn halflife(halflife: f32) -> f32 {
     if halflife.is_finite() && halflife > 0.0 {
         halflife
     } else {
@@ -286,7 +286,7 @@ fn halflife(halflife: f32) -> f32 {
     }
 }
 
-fn limits(yaw: f32, pitch: f32) -> YawPitch {
+pub(crate) fn limits(yaw: f32, pitch: f32) -> YawPitch {
     let limit = |limit: f32| if limit > 0.0 { limit } else { 0.0 };
     YawPitch {
         yaw: limit(yaw),
@@ -302,7 +302,7 @@ fn unique_bone(skeleton: &Skeleton, taken: &[LookBone], name: JointName) -> Resu
     Ok(bone)
 }
 
-fn descends(skeleton: &Skeleton, bone: usize, ancestor: usize) -> bool {
+pub(crate) fn descends(skeleton: &Skeleton, bone: usize, ancestor: usize) -> bool {
     let mut current = bone;
     while let Some(up) = parent(skeleton, current) {
         if up == ancestor {
