@@ -35,7 +35,8 @@ Check:
 4. **Repository rules.** New comments beyond a one-line `///` on public items;
    a system that takes `&World` or `&mut World`; a game crate that depends on
    the editor; a render-world system added with `add_system`; changes under
-   `examples/*/content` that the spec does not call for.
+   `examples/*/content` that the spec does not call for; an editor feature an
+   agent cannot reach over MCP, or one that is not its own plugin.
 5. **Leftovers.** `SELFTEST` code, debug prints, `todo!()`, dependencies no
    longer used, files added and never referenced.
 6. **Documentation.** Every change in behaviour is reflected in the document

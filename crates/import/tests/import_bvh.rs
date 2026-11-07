@@ -1,8 +1,13 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
+use concerto_animation::clip::AnimationClip;
+use concerto_foundation::assets::content::{decode_content_asset, resave_content_asset};
+use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_import::config::ContentConfig;
 use concerto_import::metadata::{sidecar_path, SourceMetadata};
 use concerto_import::{import_source_into, supported_extension};
+use concerto_reflect::ReflectedValue;
 
 const WALK: &str = "HIERARCHY
 ROOT Hips
@@ -133,4 +138,60 @@ fn an_invalid_scale_in_the_sidecar_fails_the_import_and_writes_nothing() {
     let error = import(&source(scratch.path()), project.path()).expect_err("negative scale fails");
     assert!(format!("{error:?}").contains("scale"), "{error:?}");
     assert!(!project.path().join("content").exists());
+}
+
+#[derive(Debug, PartialEq)]
+struct StoredEvent {
+    time: f32,
+    type_name: String,
+    value: ReflectedValue,
+}
+
+fn stored_events(clip: &AnimationClip) -> Vec<StoredEvent> {
+    clip.events()
+        .iter()
+        .map(|key| StoredEvent {
+            time: key.time,
+            type_name: key.event.type_name().to_string(),
+            value: key.event.value().unwrap().into_owned(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_re_import_overwrites_a_resaved_clip_and_rebuilds_its_events_from_the_sidecar() {
+    let scratch = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    import(&source(scratch.path()), project.path()).expect("first import");
+    let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
+    let mut metadata = SourceMetadata::load(&sidecar).unwrap();
+    metadata.settings.insert(
+        "events".to_string(),
+        toml::Value::Table(toml::from_str("walk = { step = [0.03] }").unwrap()),
+    );
+    std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
+    import(&source(scratch.path()), project.path()).expect("import with events");
+    let address = "content/walk/animation_walk.gasset";
+    let (_, imported) = decode_content_asset::<AnimationClip>(&read(project.path(), address))
+        .expect("the clip decodes");
+    let imported_events = stored_events(&imported);
+    assert_eq!(imported_events.len(), 1);
+
+    let mut edited = imported;
+    edited
+        .add_animation_events(&BTreeMap::from([("edited".to_string(), vec![0.05])]))
+        .unwrap();
+    resave_content_asset(&edited, project.path(), address, &mut AssetRegistry::new())
+        .expect("resave");
+    let (_, resaved) = decode_content_asset::<AnimationClip>(&read(project.path(), address))
+        .expect("the resaved clip decodes");
+    assert_eq!(resaved.events().len(), 2);
+
+    import(&source(scratch.path()), project.path()).expect("re-import");
+
+    let (header, reimported) =
+        decode_content_asset::<AnimationClip>(&read(project.path(), address))
+            .expect("the re-imported clip decodes");
+    assert!(header.provenance.is_some());
+    assert_eq!(stored_events(&reimported), imported_events);
 }

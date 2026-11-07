@@ -119,6 +119,46 @@ pub fn save_content_asset_into<A: Asset>(
     Ok(asset_id)
 }
 
+/// Writes `value` over the content asset at `address`, keeping its id and import provenance, and upserts its registry entry.
+pub fn resave_content_asset<A: Asset>(
+    value: &A,
+    project_root: &Path,
+    address: &str,
+    registry: &mut AssetRegistry,
+) -> anyhow::Result<AssetId> {
+    let path = project_root.join(address);
+    let existing = read_content_asset_header(&path)
+        .with_context(|| format!("no content asset to resave at '{address}'"))?;
+    if existing.kind != A::name() {
+        anyhow::bail!(
+            "'{address}' holds a {} but a {} was resaved",
+            existing.kind,
+            A::name()
+        );
+    }
+    let header = ContentAssetHeader {
+        asset_id: existing.asset_id,
+        references: value.referenced_sub_assets(),
+        kind: A::name().to_string(),
+        kind_version: A::FORMAT_VERSION,
+        provenance: existing.provenance,
+        derived: None,
+    };
+    let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;
+    let bytes = write_content_asset(&header, &payload)?;
+    std::fs::write(&path, bytes)
+        .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
+
+    registry.insert(AssetEntry {
+        id: header.asset_id,
+        address: address.to_owned(),
+        kind: header.kind,
+        kind_version: Some(header.kind_version),
+        provenance: header.provenance,
+    });
+    Ok(header.asset_id)
+}
+
 /// The id to write at `path`: the one already in the file's header if a
 /// content asset is there, otherwise a freshly minted one. Identity is
 /// assigned once and then belongs to the asset, not to its location.

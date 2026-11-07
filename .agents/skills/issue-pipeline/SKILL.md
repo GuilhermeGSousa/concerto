@@ -8,8 +8,9 @@ description: Use when running the Concerto issue pipeline, as the hourly cloud s
 Issues labelled `agent` are taken by a runner, in the cloud or on the owner's
 machine. The runner's session becomes the issue's driver: it opens one PR and
 carries it through implementation and review, and first through questions,
-spec and plan when the issue is labelled `agent:spec`. The owner approves those
-stages in the PR and merges. `docs/agent-pipeline.md` is the owner's view of
+spec and plan when the issue is labelled `agent:spec`. The owner answers the
+questions and approves the spec in the PR, and merges. The plan needs no
+approval. `docs/agent-pipeline.md` is the owner's view of
 the same procedure.
 
 Use the GitHub tools you have: the GitHub MCP server in the cloud, the GitHub
@@ -36,7 +37,7 @@ is `master`.
 |---|---|
 | `agent` | Agents may take this issue. |
 | `agent:local` | Only the local runner takes it: the change needs a look at the running program. |
-| `agent:spec` | Questions, spec and plan, each approved by the owner. |
+| `agent:spec` | Questions and a spec approved by the owner, then a plan. Only for large tasks that change foundational work. |
 | `agent:priority` | Runners take it before issues without it. |
 | `documentation`, `lint` | Sorting only; no effect on the path. |
 | `agent:filed` | An agent opened this issue. |
@@ -189,7 +190,7 @@ assume an earlier copy still exists.
 ### Waiting on the owner
 
 Before a wait on the owner, add `agent:needs-owner` to the PR. When the wait is
-spec discussion (questions, spec approval, plan approval), also send a push
+spec discussion (questions, spec approval), also send a push
 notification that names the issue and links the PR. Remove the label when the
 owner next comments or reviews.
 
@@ -222,21 +223,24 @@ other issue takes the short path, "Without `agent:spec`".
   path from its step 2: the owner's removal settles whether it needs design, so
   do not add the label back. A draft `## Spec` stays in the description as
   notes, and `branch-reviewer` reviews against the issue body. After the spec
-  is approved, the issue finishes the full path, plan approval included.
+  is approved, the issue finishes the full path.
 - A label change takes effect at your next wake or tick. A cloud driver does
   not wake on one; the owner comments after changing a label.
 
 ### Without `agent:spec`
 
-1. Read the issue, `AGENTS.md` and the code. If the change needs design (an
-   open decision only the owner can make, or more than a small fix, size medium
-   or more), add `agent:spec` to the issue, comment on the PR why, and continue
-   on the other path from its step 1.
+1. Read the issue, `AGENTS.md` and the code. If the change is a large task
+   that changes foundational work (the ECS, scheduling, the frame loop, the
+   render architecture, the asset pipeline, or a public API that several crates
+   or games build on), add `agent:spec` to the issue, comment on the PR why,
+   and continue on the other path from its step 1. Any other open decision only
+   the owner can make goes in one PR comment; wait on the owner, then go on
+   here.
 2. Make the change yourself, test-first where code changes, and run the
-   checks. No `implementer` runs: that role works from an approved plan. If a
-   design decision comes up while you work, escalate as in step 1, unless the
-   owner removed `agent:spec`; then ask the question in a PR comment and wait
-   on the owner.
+   checks. No `implementer` runs: that role works from a plan. If a design
+   decision comes up while you work, handle it as in step 1, unless the owner
+   removed `agent:spec`; then ask the question in a PR comment and wait on the
+   owner.
 3. Commit and push.
 4. Review. The issue body stands in for the spec.
 
@@ -250,7 +254,9 @@ other issue takes the short path, "Without `agent:spec`".
    whose only line is `/approve` approves; any other owner comment is
    feedback: revise and ask again.
 3. **Plan.** Write the plan into the PR description under `## Plan`, as
-   numbered tasks, and ask for `/approve` the same way.
+   numbered tasks, and go on to implement without waiting on the owner. An
+   owner comment on the plan is feedback: revise the plan and the tasks not yet
+   done.
 4. **Implement.** Run one `implementer` per task, giving it the plan copy's
    path and the task, and telling it whether it runs in a cloud or local
    session. Push after each task.

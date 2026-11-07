@@ -18,6 +18,7 @@ use concerto_animation::node::{
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
+use concerto_animation::retarget::{BoneCorrection, ReferencePose, RetargetChain, RetargetRig};
 use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_ecs::world::World;
 use concerto_foundation::assets::AssetId;
@@ -753,4 +754,26 @@ fn bone_mask_encoding_matches_its_fixture() {
         );
 
     check_encoding(&mask, encoding_dir());
+}
+
+#[test]
+fn retarget_rig_encoding_matches_its_fixture() {
+    let rig = RetargetRig::new()
+        .with_skeleton(AssetHandle::weak(AssetId::from_bytes(
+            Uuid::from_u128(13).into_bytes(),
+        )))
+        .with_root("pelvis")
+        .with_motion_root("root")
+        .with_chain(RetargetChain::new("spine", "spine_01", "spine_03"))
+        .with_chain(RetargetChain::new("head", "Head", "Head"))
+        .with_reference(ReferencePose::ClipFrame {
+            clip: AssetHandle::weak(AssetId::from_bytes(Uuid::from_u128(14).into_bytes())),
+            time: 0.25,
+        })
+        .with_correction(BoneCorrection::new(
+            "upperarm_l",
+            glam::Quat::from_xyzw(0.0, 0.0, 0.5, 0.75),
+        ));
+
+    check_encoding(&rig, encoding_dir());
 }

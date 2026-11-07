@@ -30,7 +30,7 @@ game adds itself when it needs them.
 | | `terminal-renderer` | a renderer that draws into a terminal | |
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
 | | `jolt-ffi` | the bindings to Jolt, built from the submodule | |
-| | `animation` | clips, skeletons, animation graphs, the animation player | `animation` |
+| | `animation` | clips, skeletons, animation graphs, the animation player, retarget rigs | `animation` |
 | | `procedural-animation` | procedural animation graph nodes: `FootPlacementNode`, which reads physics to put a character's feet on the ground, `FootLockNode`, which holds a planted foot where it was planted so it does not slide, `LookAtNode`, which turns its spine, head and eyes toward a point, `AimNode`, which turns its spine so a weapon's barrel points at a target, and `ProceduralMotionNode`, which adds seeded sway, tremor and breathing rotations to masked bones | `procedural_animation` |
 | | `scene` | scenes: spawning and capturing | `scene` |
 | | `director` | the virtual-camera stack | `director` |
