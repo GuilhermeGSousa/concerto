@@ -21,6 +21,9 @@ Check, in this order:
    Look hardest for a game crate depending on the editor, a system that takes
    `&World` or `&mut World`, a render-world system added with `add_system`, and
    a render-visible entity that neither has nor requires `SyncWithRenderWorld`.
+   For an editor change, check the editor rules too: a feature an agent cannot
+   reach over MCP, a feature that is not its own plugin, and a new element
+   where an existing one could be extended.
 3. **Gotchas.** The design does not rely on behaviour that
    `.agents/reference/gotchas.md` says does not hold: a `Changed<T>` filter that
    can never fire, a lifecycle hook on a component nothing queries, a

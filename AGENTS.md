@@ -203,6 +203,33 @@ do not test what an external library does on its own. Engine maths, a value's
 persisted encoding, and a test that is the only cover for a behaviour stay
 however simple they look.
 
+## Editor rules
+
+These bind every change to `concerto-editor`, its extension crates, and the
+editor's MCP tools.
+
+- **Agents reach every feature.** A new editor feature is reachable over MCP in
+  the same change, through an existing tool or a new one, without clicking at
+  positions read off a screenshot. The panel and the tool run the same code, so
+  they cannot drift apart. The Agents (MCP) section of
+  [crates/editor/README.md](crates/editor/README.md) describes it.
+- **Modular, like the engine.** Each feature is a plugin that brings its
+  panels, systems, signals and MCP tools, and the editor works without it.
+  Features talk through components, events and signals, not through each
+  other's internals. The extension crates, such as
+  `concerto-animation-editor`, are the model.
+- **Simple and functional first.** Build the smallest thing that does the job
+  for a person and for an agent alike, and make it work before making it
+  elaborate. A panel shows what it holds and what it does in plain labels, with
+  defaults that need no setup. A tool takes few parameters, defaults the rest,
+  answers in short text an agent can read without a screenshot, and says in its
+  errors what to do next.
+- **Built for reuse.** An element another panel or extension crate could use is
+  a public widget with its own plugin, configured by its owner through
+  components and signals, as the inspector's `PropertyEditor<T>` and the
+  `Timeline` are. Look for an existing element to extend before writing a new
+  one.
+
 ## Constraints
 
 - A game crate never depends on `concerto-editor`. The editor hosts the game;
@@ -248,8 +275,9 @@ however simple they look.
      task, and a `branch-reviewer` pass over the whole branch at the end.
 
 An issue labelled `agent` follows the issue pipeline instead. With
-`agent:spec`, questions, spec and plan happen in its PR and the owner approves
-each with a `/approve` comment; without it, the agent goes straight to an
+`agent:spec`, questions and spec happen in its PR and the owner approves the
+spec with a `/approve` comment; the agent then writes its plan and implements it
+without waiting. Without the label, the agent goes straight to an
 implementation PR. See [docs/agent-pipeline.md](docs/agent-pipeline.md).
 
 When a design question has a known answer in Bevy, say how Bevy does it and
@@ -274,8 +302,11 @@ work in the current task.
   where it was found (the PR, or the session link).
 - Label it `agent` and `agent:filed`, plus `documentation` or `lint` when the
   change is only that, `agent:local` when it needs a look at the running
-  program, and `agent:spec` when it needs design: an open decision for the
-  owner, or a size of medium or more.
+  program, and `agent:spec` only for a large task that changes foundational
+  work: the ECS, scheduling, the frame loop, the render architecture, the asset
+  pipeline, or a public API that several crates or games build on. An open
+  decision on anything smaller goes in the body as a question for the owner,
+  without the label.
 - Only the top-level session files. The `implementer`, `spec-reviewer` and
   `branch-reviewer` roles report such findings to their caller.
 
