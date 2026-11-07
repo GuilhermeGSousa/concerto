@@ -10,6 +10,8 @@ use concerto_gameplay::GameplayPlugin;
 pub use concerto_mesh as mesh;
 pub use concerto_motion_matching as motion_matching;
 pub use concerto_name as name;
+pub use concerto_navigation as navigation;
+use concerto_navigation::NavigationPlugin;
 pub use concerto_noise as noise;
 pub use concerto_physics as physics;
 pub use concerto_procedural_animation as procedural_animation;
@@ -206,6 +208,7 @@ impl Plugin for DefaultPlugins {
             .register_plugin(AnimationPlugin)
             .register_plugin(ScenePlugin)
             .register_plugin(WorldGridPlugin)
+            .register_plugin(NavigationPlugin)
             .register_plugin(GameplayPlugin)
             .register_plugin(UIPlugin);
     }
