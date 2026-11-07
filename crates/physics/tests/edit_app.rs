@@ -1,8 +1,10 @@
 use concerto_app::App;
 use concerto_physics::{
-    physics_pipeline::PhysicsPipeline, physics_state::PhysicsState, plugin::PhysicsPlugin,
+    collider::BoxCollider, physics_pipeline::PhysicsPipeline, physics_state::PhysicsState,
+    plugin::PhysicsPlugin, sensor::Sensor,
 };
 use concerto_scene::capture::capture_subtree;
+use glam::Vec3;
 
 #[test]
 fn an_edit_app_has_the_physics_world_and_no_stepper() {
@@ -37,4 +39,53 @@ fn an_edit_app_opens_and_saves_a_mesh_collider() {
         .map(|component| component.type_name.as_str())
         .collect();
     assert_eq!(names, ["concerto_physics::shape::MeshCollider"]);
+}
+
+#[test]
+fn an_edit_app_opens_and_saves_a_box_collider() {
+    let mut app = App::for_editing();
+    app.register_plugin(PhysicsPlugin);
+    let world = app.main_mut().world_mut();
+    let entity = world.spawn(());
+
+    let authored = BoxCollider {
+        half_extents: Vec3::new(2.0, 0.5, 3.0),
+    };
+    let stored = concerto_reflect::to_value(&authored).unwrap();
+    assert!(world.apply_scene_component("BoxCollider", &stored, entity, &[entity]));
+    assert_eq!(
+        world
+            .get_component_for_entity::<BoxCollider>(entity)
+            .unwrap()
+            .half_extents,
+        authored.half_extents
+    );
+
+    let scene = capture_subtree(world, entity).unwrap();
+    let names: Vec<&str> = scene.nodes[0]
+        .components
+        .iter()
+        .map(|component| component.type_name.as_str())
+        .collect();
+    assert_eq!(names, ["concerto_physics::collider::BoxCollider"]);
+}
+
+#[test]
+fn an_edit_app_opens_and_saves_a_sensor() {
+    let mut app = App::for_editing();
+    app.register_plugin(PhysicsPlugin);
+    let world = app.main_mut().world_mut();
+    let entity = world.spawn(());
+
+    let stored = concerto_reflect::to_value(&Sensor).unwrap();
+    assert!(world.apply_scene_component("Sensor", &stored, entity, &[entity]));
+    assert!(world.get_component_for_entity::<Sensor>(entity).is_some());
+
+    let scene = capture_subtree(world, entity).unwrap();
+    let names: Vec<&str> = scene.nodes[0]
+        .components
+        .iter()
+        .map(|component| component.type_name.as_str())
+        .collect();
+    assert_eq!(names, ["concerto_physics::sensor::Sensor"]);
 }

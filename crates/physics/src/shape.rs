@@ -13,7 +13,7 @@ use log::warn;
 use crate::{
     aabb::Aabb,
     backend::{MeshShapeCreationError, PhysicsBackend},
-    collider::Collider,
+    collider::{BoxCollider, Collider},
     ActiveBackend,
 };
 
@@ -75,7 +75,10 @@ impl PhysicsMeshShapes {
 pub struct MeshCollider;
 
 pub(crate) fn generate_mesh_shapes(
-    meshes_to_generate: Query<(Entity, &MeshComponent), (With<MeshCollider>, Without<Collider>)>,
+    meshes_to_generate: Query<
+        (Entity, &MeshComponent),
+        (With<MeshCollider>, Without<Collider>, Without<BoxCollider>),
+    >,
     meshes: Res<AssetStore<Mesh>>,
     mut mesh_shapes: ResMut<PhysicsMeshShapes>,
     mut cmd: CommandQueue,

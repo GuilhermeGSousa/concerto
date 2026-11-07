@@ -32,6 +32,7 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 | Box | `Collider::cuboid(half_x, half_y, half_z)`, half extents |
 | Capsule | `Collider::capsule(half_height, radius)` |
 | The entity's own mesh, static | `MeshCollider`, next to a `MeshComponent` |
+| A box collider authored in a scene | `BoxCollider { half_extents }`, half extents, `0.5` on each axis by default |
 
 `RigidBody` has a `density`, a `motion_type` (`Dynamic` by default) and
 `allowed_dofs`, which can lock rotation: a character uses
@@ -39,6 +40,67 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 `ColliderOffset` moves the shape relative to the entity;
 `ColliderOffset::bottom_origin(&collider)` puts the entity's origin at the
 bottom of a capsule, where a character's feet are.
+
+The body is built from the `Collider` once. Inserting a new `Collider` on the
+entity rebuilds its body from the new shape, which is how editing a
+`BoxCollider` in the inspector or over MCP takes effect. A `BoxCollider` on an
+entity that also has a `MeshCollider` wins over the mesh.
+
+### Sensors
+
+A `Sensor` next to a `Collider` makes it a trigger volume. A sensor detects the
+bodies that enter and leave it but never collides with them. It tells its own
+entity through two signals, `SensorEnter` and `SensorExit`, each carrying the
+`other` entity: the one holding the other body's `Collider`. React to them with
+listeners on the sensor:
+
+```rust
+use concerto::ecs::signal::{listener::{IntoListener, Listener}, On};
+use concerto::physics::sensor::{Sensor, SensorEnter};
+
+fn enter_room(room: RoomId) -> Listener<SensorEnter> {
+    (move |on: On<SensorEnter>, players: Query<&Player>, mut warmth: ResMut<Warmth>| {
+        if players.get_entity(on.signal().other).is_some() {
+            warmth.room = room;
+        }
+    })
+    .into_listener()
+}
+
+cmd.spawn((
+    Transform::from_translation(room_centre),
+    Collider::cuboid(4.0, 1.5, 3.0),
+    Sensor,
+    enter_room(RoomId::Lodge),
+));
+```
+
+An entity carries one listener per signal type, so two features that react to
+one sensor share its `Listener<SensorEnter>`. A sensor placed in a scene, as a
+`BoxCollider` with a `Sensor`, carries no listener: the game adds one, for
+example from an `On<Add<Sensor>>` listener.
+
+- **What it detects:** dynamic and kinematic bodies, awake or asleep. It does
+  not detect static colliders or other sensors. A body that falls asleep inside
+  a sensor stays inside: it gets no `SensorExit`.
+- **Static or kinematic:** a `Sensor` alone is static and stays where it spawned.
+  With `RigidBody { motion_type: MotionType::Kinematic, .. }` it moves by
+  `set_linear_velocity`, like any kinematic body. On a dynamic `RigidBody` it is
+  made kinematic, with a warning.
+- **When a body goes away:** when a body inside a sensor is despawned or loses its
+  `Collider`, the sensor gets a `SensorExit` naming it. By then the entity may
+  no longer exist. A despawned sensor hears nothing, since its listeners go
+  with it. Rebuilding either body of a pair, by inserting a new `Collider` or
+  by editing a sensor's `BoxCollider` while playing, sends `SensorExit` then
+  `SensorEnter`.
+- **Shapes:** a sensor is a sphere, box or capsule. A triangle mesh has no
+  inside, so a `Sensor` on a `MeshCollider` without a `BoxCollider` is ignored,
+  with a warning; a `BoxCollider` beside it wins, and the box is the sensor.
+- **Queries:** `cast_ray`, `cast_sphere` and the ground probe never hit a
+  sensor.
+
+Signals are sent once per body pair, from `LateFixedUpdate`, right after the
+physics step.
 
 ### Queries and forces
 

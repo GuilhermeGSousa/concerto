@@ -55,6 +55,12 @@ extern "C"
 		settings->settings.mAllowedDOFs = static_cast<JPH::EAllowedDOFs>(allowed_dofs);
 	}
 
+	void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
+												   bool is_sensor)
+	{
+		settings->settings.mIsSensor = is_sensor;
+	}
+
 	void jolt_body_creation_settings_set_shape(JoltBodyCreationSettings *settings,
 											   const JoltShape *shape)
 	{
@@ -97,7 +103,16 @@ extern "C"
 		JPH::EActivation activation = creation.mMotionType == JPH::EMotionType::Static
 										  ? JPH::EActivation::DontActivate
 										  : JPH::EActivation::Activate;
+		if (creation.mIsSensor)
+		{
+			creation.mMotionType = JPH::EMotionType::Kinematic;
+			creation.mObjectLayer = Layers::SENSOR;
+			creation.mAllowSleeping = false;
+			activation = JPH::EActivation::Activate;
+		}
 		JPH::BodyID id = world->system.GetBodyInterface().CreateAndAddBody(creation, activation);
+		if (creation.mIsSensor && !id.IsInvalid())
+			world->sensors.insert(id);
 		return id.GetIndexAndSequenceNumber();
 	}
 
@@ -126,6 +141,15 @@ extern "C"
 									 JPH::ObjectLayerFilter());
 		}
 		bi.DestroyBody(id);
+		world->sensors.erase(id);
+		world->sensor_contact_listener.Forget(id);
+	}
+
+	uint32_t jolt_world_drain_sensor_contacts(JoltWorld *world,
+											  JoltSensorContact *out,
+											  uint32_t capacity)
+	{
+		return world->sensor_contact_listener.Drain(out, capacity);
 	}
 
 	// Transcribed from JPH::Character::PostSimulation / CheckCollision, which
@@ -194,9 +218,11 @@ extern "C"
 
 		JPH::RMat44 center_of_mass = JPH::RMat44::sRotationTranslation(rotation, position)
 										 .PreTranslated(shape->GetCenterOfMass());
-		JPH::DefaultBroadPhaseLayerFilter broadphase_filter =
+		JPH::DefaultBroadPhaseLayerFilter default_broadphase_filter =
 			system.GetDefaultBroadPhaseLayerFilter(layer);
-		JPH::DefaultObjectLayerFilter object_filter = system.GetDefaultLayerFilter(layer);
+		JPH::DefaultObjectLayerFilter default_object_filter = system.GetDefaultLayerFilter(layer);
+		NonSensorBroadPhaseLayerFilter broadphase_filter(default_broadphase_filter);
+		NonSensorObjectLayerFilter object_filter(default_object_filter);
 		JPH::IgnoreSingleBodyFilter body_filter(id);
 
 		Collector collector(position);

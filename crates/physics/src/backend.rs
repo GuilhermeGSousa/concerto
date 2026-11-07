@@ -63,6 +63,20 @@ pub struct RawGroundHit<Handle> {
     pub velocity: Vec3,
 }
 
+/// Whether a sensor pair began or stopped overlapping.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SensorContactKind {
+    Enter,
+    Exit,
+}
+
+/// A sensor pair that began or stopped overlapping, in backend terms.
+pub struct RawSensorContact<Handle> {
+    pub sensor: Handle,
+    pub other: Handle,
+    pub kind: SensorContactKind,
+}
+
 /// Raw simulation operations a physics backend must provide.
 ///
 /// Mutating operations take `&mut self` even where the underlying engine
@@ -95,18 +109,26 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// kinematic per its [`MotionType`](crate::rigid_body::MotionType), with
     /// its density and allowed degrees of freedom. `offset` displaces the
     /// shape's geometry relative to the body origin; it must not leak into
-    /// [`body_transform`](Self::body_transform).
+    /// [`body_transform`](Self::body_transform). A `sensor` body detects
+    /// bodies without colliding with them, is never dynamic, and is skipped
+    /// by [`cast_ray`](Self::cast_ray), [`cast_sphere`](Self::cast_sphere)
+    /// and [`probe_ground`](Self::probe_ground).
     fn create_body(
         &mut self,
         collider: &Collider,
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies
-    /// that were touching it. The handle is invalid afterwards.
+    /// that were touching it. The handle is invalid afterwards. Sensor pairs
+    /// holding the body are forgotten and report nothing more.
     fn destroy_body(&mut self, body: Self::BodyHandle);
+
+    /// Moves the sensor pair begins and ends seen since the last drain into `out`, in order, keeping only a sensor against a dynamic or kinematic body.
+    fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>);
 
     /// A body's current world-space pose (translation and rotation).
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;
