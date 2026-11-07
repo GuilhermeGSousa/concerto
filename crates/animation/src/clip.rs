@@ -700,6 +700,13 @@ impl AnimationClip {
         Ok(hash.finish())
     }
 
+    #[cfg(test)]
+    pub(crate) fn build_delta_against(&mut self, base: &AnimationClip) -> anyhow::Result<()> {
+        let delta = self.delta_against(base)?;
+        let blob = bincode::serialize(&delta).context("failed to encode an additive delta")?;
+        self.apply_derived(&blob)
+    }
+
     fn delta_against(&self, base: &AnimationClip) -> anyhow::Result<AdditiveDelta> {
         let additive = self.additive_base()?;
         let range = checked_range(additive.range, self.duration, "range")?;
