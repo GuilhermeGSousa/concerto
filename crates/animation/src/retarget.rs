@@ -2543,7 +2543,9 @@ mod tests {
         }
 
         fn log(&self, record: &log::Record) {
-            if record.level() == log::Level::Warn {
+            if record.level() == log::Level::Warn
+                && record.target() == "concerto_animation::retarget"
+            {
                 WARNINGS.lock().unwrap().push(Warning {
                     thread: std::thread::current().id(),
                     message: record.args().to_string(),
