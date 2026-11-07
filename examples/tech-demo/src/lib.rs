@@ -8,6 +8,7 @@ use concerto::{
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
+use concerto_navigation_gizmos::NavigationGizmosPlugin;
 use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 
 use crate::{
@@ -31,6 +32,7 @@ pub fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(MotionMatchingGizmosPlugin)
         .register_plugin(ProceduralAnimationGizmosPlugin)
+        .register_plugin(NavigationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))

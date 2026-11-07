@@ -5,21 +5,28 @@ use concerto::{
         schedule_groups::{Startup, Update},
     },
     color::Color,
-    ecs::CommandQueue,
-    foundation::transform::Transform,
+    ecs::{
+        CommandQueue, Component, Entity, Query, Ref, Res, component::scene::SceneEntityRef,
+        events::event_reader::EventReader, query::change_detection::DetectChanges,
+    },
+    foundation::{time::Time, transform::Transform},
+    name::Name,
+    navigation::{NavAgent, NavArrived, NavDestination, NavLink, NavLinks, NavPoint},
     physics::collider::Collider,
     render::components::light::Light,
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
     world_grid::WorldGrid,
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
+use concerto_navigation_gizmos::NavigationGizmosPlugin;
 use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 use glam::{Quat, Vec3};
 
 use crate::{
     character::{
-        CharacterConfig, PlayerSpawner, cycle_displacement, debug_keys, feed_foot_placement,
-        setup_character_animations, spawn_character, update_movement,
+        CharacterConfig, NpcSpawner, PlayerSpawner, cycle_displacement, debug_keys,
+        feed_foot_placement, setup_character_animations, spawn_character, spawn_npc,
+        update_movement,
     },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
@@ -34,17 +41,55 @@ const SUN_INTENSITY: f32 = 2.0;
 const SUN_YAW: f32 = 0.6;
 const SUN_PITCH: f32 = -0.7;
 
-/// Builds the grid level: the character and its gizmos on an empty floor under the world grid.
+const NPC_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 8.0);
+const PATROL_WAIT: f32 = 1.0;
+
+/// A patrol point: the anchor that names it and where it stands.
+pub(crate) struct PatrolPoint {
+    pub(crate) anchor: &'static str,
+    pub(crate) position: Vec3,
+}
+
+pub(crate) const PATROL: [PatrolPoint; 4] = [
+    PatrolPoint {
+        anchor: "patrol_a",
+        position: Vec3::new(-4.0, 0.0, 4.0),
+    },
+    PatrolPoint {
+        anchor: "patrol_b",
+        position: Vec3::new(4.0, 0.0, 4.0),
+    },
+    PatrolPoint {
+        anchor: "patrol_c",
+        position: Vec3::new(4.0, 0.0, 12.0),
+    },
+    PatrolPoint {
+        anchor: "patrol_d",
+        position: Vec3::new(-4.0, 0.0, 12.0),
+    },
+];
+
+/// An NPC walking the patrol loop: the index of the point it heads to next, and the seconds it still waits before setting off.
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub(crate) struct Patrol {
+    pub(crate) next: usize,
+    pub(crate) wait: f32,
+}
+
+/// Builds the grid level: the character and its gizmos on an empty floor under the world grid, and an NPC patrolling a square of nav points.
 pub fn grid(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(MotionMatchingGizmosPlugin)
         .register_plugin(ProceduralAnimationGizmosPlugin)
+        .register_plugin(NavigationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.insert_resource(CharacterConfig::forest());
 
     app.add_system(Startup, spawn_grid_level)
         .add_system(Update, spawn_character)
+        .add_system(Update, spawn_npc)
+        .add_system(Update, patrol)
         .add_system(Startup, spawn_grounded_overlay)
         .add_system(Update, setup_character_animations)
         .add_system(Update, feed_foot_placement)
@@ -73,13 +118,92 @@ fn spawn_grid_level(mut cmd: CommandQueue) {
         ),
     ));
     cmd.spawn((Transform::default(), PlayerSpawner::ready()));
+    spawn_patrol_points(&mut cmd);
+    cmd.spawn((Transform::from_translation(NPC_SPAWN), NpcSpawner::ready()));
+}
+
+fn spawn_patrol_points(cmd: &mut CommandQueue) {
+    let points: Vec<Entity> = PATROL
+        .iter()
+        .enumerate()
+        .map(|(index, corner)| {
+            let toward_next = PATROL[(index + 1) % PATROL.len()].position - corner.position;
+            cmd.spawn((
+                NavPoint {
+                    anchor: Name::new(corner.anchor),
+                    enabled: true,
+                },
+                Transform::from_translation_rotation(
+                    corner.position,
+                    Quat::from_rotation_y(toward_next.x.atan2(toward_next.z)),
+                ),
+            ))
+            .entity()
+        })
+        .collect();
+    for (index, point) in points.iter().enumerate() {
+        let mut links = vec![NavLink {
+            to: SceneEntityRef::Entity(points[(index + 1) % points.len()]),
+            one_way: false,
+        }];
+        if index == 0 {
+            links.push(NavLink {
+                to: SceneEntityRef::Entity(points[2]),
+                one_way: true,
+            });
+        }
+        cmd.insert(NavLinks { links }, *point);
+    }
+}
+
+fn patrol_destination(patrol: &Patrol) -> NavDestination {
+    NavDestination::to_anchor(Name::new(PATROL[patrol.next].anchor))
+}
+
+/// Sends each new NPC to the first patrol point, and on each arrival waits, then sends it on to the next point in the loop.
+pub(crate) fn patrol(
+    npcs: Query<(Entity, Ref<NavAgent>, &mut Patrol, Option<&NavDestination>)>,
+    mut arrived: EventReader<NavArrived>,
+    time: Res<Time>,
+    mut cmd: CommandQueue,
+) {
+    let arrivals: Vec<Entity> = arrived.read().map(|arrival| arrival.agent).collect();
+    let delta = time.delta().as_secs_f32();
+    for (npc, agent, mut patrol, destination) in npcs.iter() {
+        if agent.is_added() && destination.is_none() {
+            cmd.insert(patrol_destination(&patrol), npc);
+            continue;
+        }
+        if arrivals.contains(&npc) {
+            patrol.next = (patrol.next + 1) % PATROL.len();
+            patrol.wait = PATROL_WAIT;
+        }
+        if patrol.wait <= 0.0 {
+            continue;
+        }
+        patrol.wait -= delta;
+        if patrol.wait <= 0.0 {
+            patrol.wait = 0.0;
+            cmd.insert(patrol_destination(&patrol), npc);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
     use concerto::{
-        ecs::{With, Without},
-        foundation::transform::Transform,
+        ecs::{
+            Entity, IntoSystem, System, With, Without, World,
+            events::{event_channel::EventChannel, event_cursor::EventCursor},
+        },
+        foundation::{time::Time, transform::Transform},
+        name::Name,
+        navigation::{NavAgent, NavArrived, NavDestination, NavGraph, NavPoint},
         physics::{collider::Collider, rigid_body::RigidBody},
         render::components::light::Light,
         world_grid::WorldGrid,
@@ -89,7 +213,7 @@ mod tests {
 
     use crate::character::{CharacterConfig, Player};
 
-    use super::grid;
+    use super::{PATROL, Patrol, grid, patrol};
 
     #[test]
     fn the_grid_level_spawns_the_character_with_every_gizmo_on_a_grid_floor_under_a_sun() {
@@ -124,6 +248,127 @@ mod tests {
             .iter(world)
             .map(|g| [g.simulation, g.query, g.matched, g.history])
             .collect();
-        assert_eq!(gizmos, vec![[true; 4]]);
+        assert_eq!(gizmos, vec![[true; 4]; 2]);
+        let npcs: Vec<Vec3> = world
+            .query::<&Transform, (With<NavAgent>, With<Patrol>, Without<Player>)>()
+            .iter(world)
+            .map(|transform| transform.translation)
+            .collect();
+        assert_eq!(npcs, vec![Vec3::new(0.0, 0.0, 8.0)]);
+        assert_eq!(world.query::<&NavPoint, ()>().iter(world).count(), 4);
+    }
+
+    fn anchor(graph: &NavGraph, index: usize) -> Entity {
+        graph
+            .anchor(Name::new(PATROL[index].anchor))
+            .expect("the patrol point is in the graph")
+    }
+
+    #[test]
+    fn the_patrol_points_make_a_square_with_a_one_way_diagonal_each_facing_the_next_corner() {
+        let Some(mut app) = concerto::headless(grid) else {
+            return;
+        };
+        app.update();
+        app.update();
+
+        let graph = app.get_resource::<NavGraph>().unwrap();
+        assert_eq!(graph.points().count(), PATROL.len());
+        for (index, corner) in PATROL.iter().enumerate() {
+            let point = graph.point(anchor(graph, index)).unwrap();
+            assert_eq!(point.position, corner.position);
+            let next = PATROL[(index + 1) % PATROL.len()].position;
+            let toward_next = (next - corner.position).normalize();
+            assert!((point.facing * Vec3::Z - toward_next).length() < 1e-4);
+        }
+        let across = graph.path(anchor(graph, 0), anchor(graph, 2)).unwrap();
+        assert!((across.length - 8.0 * 2.0_f32.sqrt()).abs() < 1e-3);
+        let back = graph.path(anchor(graph, 2), anchor(graph, 0)).unwrap();
+        assert!((back.length - 16.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_npc_walks_to_the_first_patrol_point() {
+        let Some(mut app) = concerto::headless(grid) else {
+            return;
+        };
+        let started = Instant::now();
+        let mut cursor = EventCursor::<NavArrived>::default();
+        loop {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "the NPC did not reach patrol_a"
+            );
+            app.update();
+            let first = app
+                .get_resource::<NavGraph>()
+                .and_then(|graph| graph.anchor(Name::new(PATROL[0].anchor)));
+            let reached = app
+                .get_resource::<EventChannel<NavArrived>>()
+                .unwrap()
+                .read_from(&mut cursor)
+                .any(|arrival| first == Some(arrival.point));
+            if reached {
+                break;
+            }
+        }
+    }
+
+    fn tick(world: &mut World) {
+        thread::sleep(Duration::from_millis(5));
+        world.get_resource_mut::<Time>().unwrap().update();
+    }
+
+    fn destination(world: &World, npc: Entity) -> Option<NavDestination> {
+        world
+            .get_component_for_entity::<NavDestination>(npc)
+            .cloned()
+    }
+
+    #[test]
+    fn the_patrol_starts_at_patrol_a_and_moves_on_to_the_next_corner_after_a_wait() {
+        let mut world = World::new();
+        world.insert_resource(Time::new());
+        world.insert_resource(EventChannel::<NavArrived>::new());
+        let npc = world.spawn((NavAgent::new(), Patrol::default()));
+        let mut system = patrol.into_system();
+        system.initialize(&mut world);
+
+        tick(&mut world);
+        system.run_and_apply((), &mut world);
+        assert_eq!(
+            destination(&world, npc),
+            Some(NavDestination::to_anchor(Name::new("patrol_a")))
+        );
+
+        world.remove_component::<NavDestination>(npc);
+        world
+            .get_resource_mut::<EventChannel<NavArrived>>()
+            .unwrap()
+            .push_event(NavArrived {
+                agent: npc,
+                point: npc,
+            });
+        tick(&mut world);
+        system.run_and_apply((), &mut world);
+        assert_eq!(destination(&world, npc), None);
+        assert_eq!(
+            world.get_component_for_entity::<Patrol>(npc).unwrap().next,
+            1
+        );
+
+        world.insert(
+            Patrol {
+                next: 1,
+                wait: 0.001,
+            },
+            npc,
+        );
+        tick(&mut world);
+        system.run_and_apply((), &mut world);
+        assert_eq!(
+            destination(&world, npc),
+            Some(NavDestination::to_anchor(Name::new("patrol_b")))
+        );
     }
 }

@@ -21,6 +21,7 @@ use concerto::motion_matching::{
     MotionDatabase, MotionMatchingNode, Synchronization,
 };
 use concerto::name::{Name, name};
+use concerto::navigation::NavAgent;
 use concerto::physics::body::BodyId;
 use concerto::physics::collider::{Collider, ColliderOffset};
 use concerto::physics::ground::GroundProbe;
@@ -41,6 +42,8 @@ use concerto::{
 use concerto_motion_matching_gizmos::MotionMatchingGizmos;
 use concerto_procedural_animation_gizmos::FootLockGizmos;
 use glam::{EulerRot, Quat, Vec2, Vec3};
+
+use crate::grid::Patrol;
 
 const CHARACTER_SCENE: AssetId = asset_id!("content/lafan1/model_skeleton/scene.gasset");
 const DATABASE: AssetId = asset_id!("content/lafan_database.gasset");
@@ -126,6 +129,52 @@ impl PlayerSpawner {
     }
 }
 
+#[derive(Component, Default, Debug, PartialEq)]
+pub(crate) struct NpcSpawner {
+    should_spawn: bool,
+}
+
+impl NpcSpawner {
+    /// A spawner that places a patrolling NPC on the next run.
+    pub(crate) fn ready() -> Self {
+        Self { should_spawn: true }
+    }
+}
+
+fn spawn_capsule(
+    placement: Transform,
+    config: &CharacterConfig,
+    asset_server: &AssetServer,
+    cmd: &mut CommandQueue,
+) -> Entity {
+    let collider = Collider::capsule(config.height * 0.5 - config.radius, config.radius);
+    let offset = ColliderOffset::bottom_origin(&collider);
+    let capsule = cmd
+        .spawn((
+            RigidBody {
+                density: 1000.0,
+                allowed_dofs: AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y,
+                motion_type: Dynamic,
+            },
+            CharacterSimulation::default(),
+            collider,
+            offset,
+            placement.clone(),
+            GroundProbe::default(),
+        ))
+        .entity();
+
+    let graph = asset_server.add(character_graph(asset_server.load(DATABASE)));
+    cmd.spawn((
+        placement,
+        config.displacement.clone(),
+        MotionMatchingGizmos::default(),
+        SceneSpawnerComponent(asset_server.load::<Scene>(CHARACTER_SCENE)),
+        PendingLink { capsule, graph },
+    ));
+    capsule
+}
+
 /// Spawns the capsule and the visible character at the spawner, once the ground has its collider.
 pub(crate) fn spawn_character(
     spawners: Query<(&Transform, &mut PlayerSpawner)>,
@@ -145,32 +194,8 @@ pub(crate) fn spawn_character(
 
         let placement =
             Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation);
-        let collider = Collider::capsule(config.height * 0.5 - config.radius, config.radius);
-        let offset = ColliderOffset::bottom_origin(&collider);
-        let capsule = cmd
-            .spawn((
-                Player::default(),
-                RigidBody {
-                    density: 1000.0,
-                    allowed_dofs: AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y,
-                    motion_type: Dynamic,
-                },
-                CharacterSimulation::default(),
-                collider,
-                offset,
-                placement.clone(),
-                GroundProbe::default(),
-            ))
-            .entity();
-
-        let graph = asset_server.add(character_graph(asset_server.load(DATABASE)));
-        cmd.spawn((
-            placement,
-            config.displacement.clone(),
-            MotionMatchingGizmos::default(),
-            SceneSpawnerComponent(asset_server.load::<Scene>(CHARACTER_SCENE)),
-            PendingLink { capsule, graph },
-        ));
+        let capsule = spawn_capsule(placement, &config, &asset_server, &mut cmd);
+        cmd.insert(Player::default(), capsule);
 
         let (yaw, _, _) = spawn_point.rotation.to_euler(EulerRot::YXZ);
         let mut pivot = cmd.spawn((
@@ -205,6 +230,30 @@ pub(crate) fn spawn_character(
             },
         );
 
+        spawner.should_spawn = false;
+    }
+}
+
+/// Spawns a patrolling NPC's capsule and visible character at each ready NPC spawner, once the ground has its collider.
+pub(crate) fn spawn_npc(
+    spawners: Query<(&Transform, &mut NpcSpawner)>,
+    pending_ground: Query<Entity, (With<MeshCollider>, With<MeshComponent>, Without<Collider>)>,
+    asset_server: Res<AssetServer>,
+    config: Res<CharacterConfig>,
+    mut cmd: CommandQueue,
+) {
+    if pending_ground.iter().next().is_some() {
+        return;
+    }
+
+    for (spawn_point, mut spawner) in spawners.iter() {
+        if !spawner.should_spawn {
+            continue;
+        }
+        let placement =
+            Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation);
+        let capsule = spawn_capsule(placement, &config, &asset_server, &mut cmd);
+        cmd.insert((NavAgent::new(), Patrol::default()), capsule);
         spawner.should_spawn = false;
     }
 }
