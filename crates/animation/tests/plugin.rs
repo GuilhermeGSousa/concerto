@@ -72,6 +72,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
         AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, BlendNode, LayerNode,
         PlaceholderNode, ReflectAnimationNode, ResultNode, TwoBoneIkNode,
     };
+    use concerto_animation::retarget::RetargetRig;
     use concerto_app::InspectedAssets;
     use concerto_ecs::reflect::AppTypeRegistry;
     use concerto_foundation::assets::{Asset, handle::AssetHandle};
@@ -91,6 +92,17 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
         app.get_resource::<AssetServer>()
             .unwrap()
             .is_registered::<BoneMask>()
+    );
+    assert!(
+        app.get_resource::<InspectedAssets>()
+            .unwrap()
+            .iter()
+            .any(|record| record.kind == RetargetRig::name())
+    );
+    assert!(
+        app.get_resource::<AssetServer>()
+            .unwrap()
+            .is_registered::<RetargetRig>()
     );
     let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
     let has_node_data = |id: TypeId| registry.get_type_data::<ReflectAnimationNode>(id).is_some();
@@ -128,7 +140,17 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     );
     assert!(
         registry
+            .get(TypeId::of::<AssetHandle<RetargetRig>>())
+            .is_some()
+    );
+    assert!(
+        registry
             .get_type_data::<ReflectSkeletonSource>(TypeId::of::<BoneMask>())
+            .is_some()
+    );
+    assert!(
+        registry
+            .get_type_data::<ReflectSkeletonSource>(TypeId::of::<RetargetRig>())
             .is_some()
     );
 }

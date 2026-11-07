@@ -12,6 +12,7 @@ pub mod node;
 pub mod player;
 pub mod plugin;
 pub mod pose;
+pub mod retarget;
 pub mod root;
 pub mod target;
 pub mod transition;

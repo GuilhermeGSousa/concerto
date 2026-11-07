@@ -124,12 +124,25 @@ impl Skeleton {
         rest_pose: Vec<JointPose>,
         bone_ids: Vec<Uuid>,
     ) -> Result<Skeleton, SkeletonError> {
-        let expected = inverse_bindposes.len();
+        let skeleton = Skeleton {
+            inverse_bindposes: inverse_bindposes.into_boxed_slice(),
+            parents: parents.into_boxed_slice(),
+            names: names.into_boxed_slice(),
+            rest_pose: rest_pose.into_boxed_slice(),
+            bone_ids: bone_ids.into_boxed_slice(),
+        };
+        skeleton.validate()?;
+        Ok(skeleton)
+    }
+
+    /// Checks that every slice has one entry per inverse bind pose and that each parent precedes its child.
+    pub fn validate(&self) -> Result<(), SkeletonError> {
+        let expected = self.inverse_bindposes.len();
         for (field, actual) in [
-            ("parents", parents.len()),
-            ("names", names.len()),
-            ("rest_pose", rest_pose.len()),
-            ("bone_ids", bone_ids.len()),
+            ("parents", self.parents.len()),
+            ("names", self.names.len()),
+            ("rest_pose", self.rest_pose.len()),
+            ("bone_ids", self.bone_ids.len()),
         ] {
             if actual != expected {
                 return Err(SkeletonError::LengthMismatch {
@@ -139,7 +152,7 @@ impl Skeleton {
                 });
             }
         }
-        for (bone, parent) in parents.iter().enumerate() {
+        for (bone, parent) in self.parents.iter().enumerate() {
             if let Some(parent) = parent {
                 if usize::from(*parent) >= bone {
                     return Err(SkeletonError::ParentNotBefore {
@@ -149,13 +162,7 @@ impl Skeleton {
                 }
             }
         }
-        Ok(Skeleton {
-            inverse_bindposes: inverse_bindposes.into_boxed_slice(),
-            parents: parents.into_boxed_slice(),
-            names: names.into_boxed_slice(),
-            rest_pose: rest_pose.into_boxed_slice(),
-            bone_ids: bone_ids.into_boxed_slice(),
-        })
+        Ok(())
     }
 
     pub fn bone_count(&self) -> usize {

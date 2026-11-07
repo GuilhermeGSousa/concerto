@@ -14,6 +14,7 @@ use crate::{
         PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
         register_node_inputs, state_machine::AnimationStateMachine,
     },
+    retarget::RetargetRig,
     target::{
         animate_targets, initialize_animation_players, initialize_skeletons,
         update_animation_players,
@@ -36,6 +37,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
     registry.register::<AssetHandle<BoneMask>>();
+    registry.register::<AssetHandle<RetargetRig>>();
     registry.register::<AssetHandle<Skeleton>>();
 }
 
@@ -83,6 +85,7 @@ impl Plugin for AnimationPlugin {
         app.register_asset::<AnimationGraph>();
         app.register_asset::<Skeleton>();
         app.register_inspected_asset::<BoneMask>();
+        app.register_inspected_asset::<RetargetRig>();
 
         if let Some(registry) = app.get_resource::<AppTypeRegistry>() {
             register_animation_types(&mut registry.write());

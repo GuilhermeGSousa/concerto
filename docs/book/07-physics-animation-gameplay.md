@@ -749,6 +749,75 @@ node list under [Animation](#animation), and **Aim offset** plays additive aim
 clips chosen by a target's yaw and pitch. Mesh-space deltas and a single-frame
 or rest-pose base are not there yet.
 
+### Retarget rigs
+
+A `RetargetRig` (`concerto::animation::retarget`) describes one skeleton in
+terms another skeleton's rig can match, so that motion recorded on one can be
+played on the other. It holds:
+
+- `skeleton`, the skeleton it describes;
+- `root`, the retarget root: the pelvis, `Hips` on LAFAN1 and `pelvis` on UAL1;
+- `motion_root`, optional, a bone above the root that carries the character's
+  ground motion, such as UAL1's `root`. Without one the retarget root carries
+  it, as on LAFAN1;
+- `chains`, named runs of bones;
+- `reference`, the pose the rig is aligned in, and `corrections` on top of it.
+
+A `RetargetChain` is a `name`, a `start` bone and an `end` bone below it, and
+its bones run from `start` down to `end`; a single-bone chain has
+`start == end`. Chains are matched across rigs by name alone. Names are free
+text, but rigs written apart match only when they agree, so use these:
+
+| Chain | From | To |
+|---|---|---|
+| `spine` | first spine bone | last spine bone |
+| `neck` | first neck bone | last neck bone |
+| `head` | head | head |
+| `clavicle_l`, `clavicle_r` | clavicle / shoulder | clavicle / shoulder |
+| `arm_l`, `arm_r` | upper arm | hand |
+| `leg_l`, `leg_r` | thigh | foot or ball |
+| `thumb_l` … `pinky_l`, `thumb_r` … `pinky_r` | first finger bone | last finger bone |
+
+Nothing checks a rig's names against the table, and chains may share bones.
+
+The reference pose is `ReferencePose::Rest`, the skeleton's rest pose, or
+`ReferencePose::ClipFrame { clip, time }`, the rest pose with every channel of
+the clip sampled at `time`; a bone the clip has no channels for keeps its rest
+pose, and a one-key channel writes nothing, as in the player. Each
+`BoneCorrection` then turns its `bone` by `rotation` in the bone's own space,
+after the pose's rotation: the local rotation becomes `rotation * correction`.
+Two corrections on one bone both apply, in list order. There is no absolute
+per-bone override.
+
+A rig is made from the content browser's New menu and edited in the inspector,
+whose bone fields pick from the named skeleton's bones, or in code:
+
+```rust
+use concerto::animation::retarget::{BoneCorrection, RetargetChain, RetargetRig};
+
+let rig = RetargetRig::new()
+    .with_skeleton(skeleton)
+    .with_root("pelvis")
+    .with_motion_root("root")
+    .with_chain(RetargetChain::new("spine", "spine_01", "spine_03"))
+    .with_chain(RetargetChain::new("head", "Head", "Head"))
+    .with_correction(BoneCorrection::new("upperarm_l", Quat::from_rotation_z(0.5)));
+```
+
+`rig.resolve(&skeleton, clip)` turns it into a `ResolvedRig`: the bone indices
+of the root, the motion root and each chain (`chain(name)` finds one), the
+reference pose in local and model space, and `root_height`, the root's height
+above the model origin with model +Y up. It takes the skeleton and, for a
+`ClipFrame`, the clip, which the caller loads through the rig's own handles. It
+fails with a `RigError` naming the bone or chain: an invalid skeleton, an empty
+or unknown bone, a motion root that is not above the root, an unnamed or
+duplicate chain, a chain end not below its start, a missing clip, a time that
+is not finite, a clip with no channels for the skeleton, or a root height that
+is not finite or not above 0.1 mm.
+
+The solve that plays one rig's motion on another, the clips derived from it and
+the graph node that runs it are coming (#588, #589, #590).
+
 ## Gameplay helpers
 
 `concerto::gameplay` has pieces most character games need:
