@@ -66,6 +66,7 @@ concerto-motion-matching = { path = "crates/motion-matching", version = "0.1.0" 
 concerto-motion-matching-gizmos = { path = "crates/motion-matching-gizmos", version = "0.1.0" }
 concerto-name = { path = "crates/name", version = "0.1.0" }
 concerto-navigation = { path = "crates/navigation", version = "0.1.0" }
+concerto-navigation-gizmos = { path = "crates/navigation-gizmos", version = "0.1.0" }
 concerto-noise = { path = "crates/noise", version = "0.1.0" }
 concerto-obj = { path = "crates/obj", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }

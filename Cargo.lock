@@ -1321,6 +1321,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-navigation-gizmos"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-color",
+ "concerto-debug-gizmos",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-navigation",
+ "concerto-render",
+ "glam 0.30.10",
+]
+
+[[package]]
 name = "concerto-noise"
 version = "0.1.0"
 
