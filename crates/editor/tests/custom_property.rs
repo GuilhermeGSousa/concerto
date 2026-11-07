@@ -197,7 +197,7 @@ fn commit(row: &PropertyRow, edit: SettingEdit) -> PropertyCommit {
 }
 
 #[test]
-fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
+fn registered_composite_is_one_row_and_fallback_lists_its_fields() {
     let registry = InspectorRegistry::default();
     let value = Container {
         setting: setting(),
@@ -212,9 +212,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
             PropertyPath::new(["gain"])
         ]
     );
-    assert!(fallback[0].value().is_none());
-    assert!(fallback[1].value().is_some());
-    assert!(fallback[2].value().is_some());
+    assert!(fallback.iter().all(|row| row.value().is_some()));
 
     let mut registry = registry;
     registry.register_property_editor::<Setting, SettingEditor>();

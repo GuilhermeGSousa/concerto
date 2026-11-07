@@ -51,7 +51,8 @@ pub fn game(app: &mut App) {
 
 `game` is the **recipe**: one function that says what the game is made of.
 `src/main.rs` hands it to `concerto::run`, which opens a window and runs it
-with the asset registry `build.rs` wrote, embedded by `content_registry!()`;
+with the asset registry `build.rs` wrote and the project root it recorded,
+both embedded by `content_registry!()`;
 the editor calls the same function to build the worlds it edits. Chapter 2
 explains why that matters.
 

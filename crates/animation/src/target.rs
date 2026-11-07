@@ -10,17 +10,19 @@ use concerto_ecs::{
     system::input::InputSet,
 };
 use concerto_foundation::{
-    assets::asset_store::AssetStore,
+    assets::{asset_store::AssetStore, handle::AssetHandle},
     time::Time,
     transform::{GlobalTransform, Transform},
 };
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 
 use crate::{
+    clip::{AnimationClip, ClipEventData},
+    event::Fired,
     graph::AnimationGraph,
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
     player::{AnimationHandleComponent, AnimationPlayer},
-    pose::RootMotion,
+    pose::{FiredEvent, RootMotion},
     root::AnimationRootBone,
 };
 
@@ -38,16 +40,18 @@ pub(crate) fn initialize_skeletons(
 }
 
 pub fn animate_targets(
-    animation_players: Query<(&mut AnimationPlayer, &SkeletonComponent)>,
+    animation_players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,
     transforms: Query<&mut Transform>,
     root_bones: Query<&mut AnimationRootBone>,
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
+    clips: Res<AssetStore<AnimationClip>>,
     skeletons: Res<AssetStore<Skeleton>>,
     inputs: InputSet<EvaluateNodeInputs>,
+    mut cmd: CommandQueue,
 ) {
-    for (mut animation_player, skeleton_component) in animation_players.iter() {
+    for (entity, mut animation_player, skeleton_component) in animation_players.iter() {
         let evaluated = !animation_player.is_paused()
             && skeletons
                 .get(skeleton_component.skeleton())
@@ -64,7 +68,13 @@ pub fn animate_targets(
                     )
                 });
         if evaluated {
+            for event in animation_player.fired.drain(..) {
+                trigger(&clips, event, entity, &mut cmd);
+            }
             continue;
+        }
+        if !animation_player.fired.is_empty() {
+            animation_player.fired.clear();
         }
         for bone in skeleton_component.bones() {
             if let Some(mut root_bone) = bone.entity().and_then(|bone| root_bones.get_entity(bone))
@@ -72,6 +82,28 @@ pub fn animate_targets(
                 root_bone.root_motion = RootMotion::IDENTITY;
             }
         }
+    }
+}
+
+fn trigger(
+    clips: &AssetStore<AnimationClip>,
+    event: FiredEvent,
+    entity: Entity,
+    cmd: &mut CommandQueue,
+) {
+    let Some(key) = clips
+        .get(&AssetHandle::weak(event.clip))
+        .and_then(|clip| clip.events().get(event.key as usize))
+    else {
+        return;
+    };
+    if let ClipEventData::Live { value, data, .. } = &key.event {
+        let fired = Fired {
+            weight: event.weight,
+            time: event.time,
+            mirrored: event.mirrored,
+        };
+        (data.trigger)(&**value, fired, entity, cmd);
     }
 }
 
@@ -108,8 +140,14 @@ pub(crate) fn initialize_animation_players(
 #[cfg(test)]
 mod tests {
     use concerto_ecs::{
-        Entity, IntoSystem, System, World, component::scene::SceneEntityRef,
+        Entity, IntoSystem, System, World,
+        component::scene::SceneEntityRef,
         entity::hierarchy::ChildOf,
+        resource::{ResMut, Resource},
+        signal::{
+            On,
+            listener::{IntoListener, Listener},
+        },
     };
     use concerto_foundation::{
         assets::{
@@ -118,16 +156,24 @@ mod tests {
         transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
-    use glam::{Mat4, Quat, Vec2, Vec3};
+    use concerto_name::{Name, name};
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
     use super::{animate_targets, initialize_animation_players, initialize_skeletons};
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        graph::{AnimationGraph, made_live},
-        node::{AnimationClipNode, state_machine::AnimationStateMachine},
+        evaluation::AnimationGraphContext,
+        event::{AnimationEvent, AnimationSignal},
+        graph::{AnimationGraph, AnimationNodeIndex, made_live},
+        node::{
+            AnimationClipNode, AnimationNode, BlendNode, IkGoal, IkTarget, ReflectAnimationNode,
+            TwoBoneIkNode, register_node_inputs, state_machine::AnimationStateMachine,
+        },
         player::{AnimationHandleComponent, AnimationPlayer},
-        pose::RootMotion,
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, RootMotion},
         root::AnimationRootBone,
         test_walks::Walks,
     };
@@ -162,7 +208,7 @@ mod tests {
         Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
-            vec!["bone".to_string()],
+            vec!["bone".into()],
             vec![JointPose::IDENTITY],
             vec![bone_id],
         )
@@ -260,6 +306,14 @@ mod tests {
 
     impl Rig {
         fn new(rest_rotation: Quat) -> Self {
+            Self::registering(rest_rotation, |_| {})
+        }
+
+        fn probing() -> Self {
+            Self::registering(Quat::IDENTITY, register_node_inputs::<Probe>)
+        }
+
+        fn registering(rest_rotation: Quat, register: impl FnOnce(&mut World)) -> Self {
             let mut server = AssetServer::new();
             let clips = AssetStore::<AnimationClip>::new();
             let graphs = AssetStore::<AnimationGraph>::new();
@@ -274,7 +328,7 @@ mod tests {
             let skeleton = server.add(one_bone_skeleton(ROOT_ID));
             Self {
                 server,
-                walks: Walks::new(clips, graphs),
+                walks: Walks::with(clips, graphs, register),
                 skeletons,
                 skeleton,
                 rest,
@@ -302,7 +356,7 @@ mod tests {
             let skeleton = Skeleton::new(
                 vec![Mat4::IDENTITY],
                 vec![None],
-                vec!["root".to_string()],
+                vec!["root".into()],
                 vec![self.rest.clone()],
                 vec![ROOT_ID],
             )
@@ -315,7 +369,7 @@ mod tests {
             let skeleton = Skeleton::new(
                 vec![Mat4::IDENTITY; 2],
                 vec![None, Some(0)],
-                vec!["root".to_string(), "child".to_string()],
+                vec!["root".into(), "child".into()],
                 vec![
                     self.rest.clone(),
                     JointPose {
@@ -361,6 +415,17 @@ mod tests {
             self.walks
                 .graphs_mut()
                 .insert(handle.id(), made_live(graph));
+            handle
+        }
+
+        fn probe_graph(&mut self) -> AssetHandle<AnimationGraph> {
+            let mut registry = TypeRegistry::default();
+            register_animation_types(&mut registry);
+            registry.register::<Probe>();
+            let mut graph = AnimationGraph::from_node(Probe {});
+            graph.make_live(&registry, None).unwrap();
+            let handle = self.server.add(AnimationGraph::default());
+            self.walks.graphs_mut().insert(handle.id(), graph);
             handle
         }
 
@@ -411,6 +476,82 @@ mod tests {
                 .root_motion
         }
 
+        fn firing_clip(&mut self, time: f32, name: &str) -> AssetHandle<AnimationClip> {
+            let mut clip = AnimationClip::default();
+            clip.add_channel(ROOT_ID, moving_channel(Vec3::X));
+            clip.add_event(
+                time,
+                AnimationEvent {
+                    name: Name::new(name),
+                },
+            );
+            let handle = self.server.add(AnimationClip::default());
+            self.walks.clips_mut().insert(handle.id(), clip);
+            handle
+        }
+
+        fn blending_left_and_right(&mut self) -> AnimationPlayer {
+            let left = self.firing_clip(0.25, "left");
+            let right = self.firing_clip(0.25, "right");
+            let mut left_index = None;
+            let mut right_index = None;
+            let mut graph = AnimationGraph::new();
+            graph.result_node().with_input(BlendNode {}, |mut blend| {
+                blend
+                    .with_input(AnimationClipNode::new(left), |node| {
+                        left_index = Some(node.index())
+                    })
+                    .with_input(AnimationClipNode::new(right), |node| {
+                        right_index = Some(node.index())
+                    });
+            });
+            let graph = self.graph(graph);
+            let mut player = self.player(graph);
+            let weight = |index: Option<AnimationNodeIndex>| index.expect("the input was added");
+            player.set_node_weight(&weight(left_index), 0.25);
+            player.set_node_weight(&weight(right_index), 0.75);
+            player
+        }
+
+        fn deliver(self, player: AnimationPlayer) -> Delivery {
+            let mut world = self.walks.into_world();
+            world.insert_resource(Heard::default());
+            world.insert_resource(HeardGlobally::default());
+            world.register_component::<Listener<AnimationSignal<AnimationEvent>>>();
+            world.add_listener(
+                |_: On<AnimationSignal<AnimationEvent>>, mut heard: ResMut<HeardGlobally>| {
+                    heard.0 += 1;
+                },
+            );
+            let root = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
+            let owner = world.spawn((
+                player,
+                SkeletonComponent {
+                    skeleton: self.skeleton,
+                    bones: vec![SceneEntityRef::Entity(root)],
+                    root: Some(SceneEntityRef::Entity(root)),
+                },
+                hear().into_listener(),
+            ));
+            world.insert_resource(self.skeletons);
+
+            let mut system = animate_targets.into_system();
+            system.initialize(&mut world);
+            system.run_and_apply((), &mut world);
+
+            let mut heard = std::mem::take(&mut world.get_resource_mut::<Heard>().unwrap().0);
+            heard.sort_by_key(|event| event.name.as_str().to_owned());
+            Delivery {
+                heard,
+                heard_globally: world.get_resource::<HeardGlobally>().unwrap().0,
+                still_fired: world
+                    .get_component_for_entity::<AnimationPlayer>(owner)
+                    .unwrap()
+                    .fired
+                    .len(),
+            }
+        }
+
         fn spawn_two_bones(self, player: AnimationPlayer) -> TwoBones {
             let mut world = self.walks.into_world();
             let root = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
@@ -440,6 +581,39 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq)]
+    struct HeardEvent {
+        name: Name,
+        weight: f32,
+        time: f32,
+    }
+
+    fn heard_event(name: Name, weight: f32, time: f32) -> HeardEvent {
+        HeardEvent { name, weight, time }
+    }
+
+    #[derive(Resource, Default)]
+    struct Heard(Vec<HeardEvent>);
+
+    #[derive(Resource, Default)]
+    struct HeardGlobally(usize);
+
+    struct Delivery {
+        heard: Vec<HeardEvent>,
+        heard_globally: usize,
+        still_fired: usize,
+    }
+
+    fn hear() -> Listener<AnimationSignal<AnimationEvent>> {
+        (|on: On<AnimationSignal<AnimationEvent>>, mut heard: ResMut<Heard>| {
+            let fired = on.signal();
+            heard
+                .0
+                .push(heard_event(fired.signal.name, fired.weight, fired.time));
+        })
+        .into_listener()
+    }
+
     struct TwoBones {
         world: World,
         owner: Entity,
@@ -467,6 +641,25 @@ mod tests {
             self.world.insert(ChildOf::new(parent), self.root);
         }
 
+        fn put_root_under_a_parent_with_no_global(&mut self) {
+            let parent = self.world.spawn(());
+            self.world.insert(ChildOf::new(parent), self.root);
+        }
+
+        fn model_to_world_seen(mut self) -> Option<Affine3A> {
+            let graphs = self
+                .world
+                .remove_resource::<AssetStore<AnimationGraph>>()
+                .unwrap();
+            let player = self
+                .world
+                .get_component_for_entity_mut::<AnimationPlayer>(self.owner)
+                .unwrap();
+            let mut seen = None;
+            player.for_each_state_mut::<Probe>(&graphs, |_, state, _| seen = *state);
+            seen
+        }
+
         fn root(&self) -> &Transform {
             self.world
                 .get_component_for_entity::<Transform>(self.root)
@@ -478,6 +671,45 @@ mod tests {
                 .get_component_for_entity::<Transform>(self.child)
                 .unwrap()
         }
+    }
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct Probe {}
+
+    impl AnimationNode for Probe {
+        type State = Option<Affine3A>;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
+            None
+        }
+
+        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            seen: &mut Option<Affine3A>,
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+            *seen = context.model_to_world();
+        }
+
+        fn reset(&self, _: &mut Option<Affine3A>) {}
+    }
+
+    fn probed_bones() -> TwoBones {
+        let mut rig = Rig::probing().loaded_two_bone_skeleton();
+        let graph = rig.probe_graph();
+        let player = rig.player(graph);
+        rig.spawn_two_bones(player)
     }
 
     fn stale_motion() -> RootMotion {
@@ -645,7 +877,7 @@ mod tests {
         let mut graph = AnimationGraph::new();
         graph
             .result_node()
-            .with_blend_space_2d_input("at", |space| {
+            .with_blend_space_2d_input(name!("at"), |space| {
                 space
                     .animation_clip_input(along_x, Vec2::ZERO)
                     .animation_clip_input(along_y, Vec2::X)
@@ -653,7 +885,7 @@ mod tests {
             });
         let graph = rig.graph(graph);
         let mut player = rig.player(graph);
-        player.set_vec2_param("at", Vec2::new(0.25, 0.25));
+        player.set_vec2_param(name!("at"), Vec2::new(0.25, 0.25));
         rig.update(&mut player, 0.5);
 
         let motion = rig.root_motion_after_animating(player);
@@ -679,7 +911,8 @@ mod tests {
             ),
         ]);
         let inner = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
-        let machine = AnimationStateMachine::from_initial_state("only", inner, |_| {}).build();
+        let machine =
+            AnimationStateMachine::from_initial_state(name!("only"), inner, |_| {}).build();
         let outer = rig.graph(AnimationGraph::from_node(machine));
         let mut player = rig.player(outer);
         rig.update(&mut player, 0.5);
@@ -774,5 +1007,205 @@ mod tests {
             rig.root_motion_after_animating(player),
             RootMotion::IDENTITY
         );
+    }
+
+    #[test]
+    fn a_crossed_event_reaches_the_listener_on_the_player_with_its_weight_and_time() {
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
+        let mut player = rig.blending_left_and_right();
+        rig.update(&mut player, 0.5);
+
+        let delivery = rig.deliver(player);
+
+        assert_eq!(
+            delivery.heard,
+            [
+                heard_event(name!("left"), 0.25, 0.25),
+                heard_event(name!("right"), 0.75, 0.25)
+            ]
+        );
+        assert_eq!(delivery.still_fired, 0);
+        assert_eq!(
+            delivery.heard_globally, 0,
+            "a global listener never hears a signal triggered on an entity"
+        );
+    }
+
+    #[test]
+    fn a_graph_sees_the_global_of_bone_zeros_parent_as_model_to_world() {
+        let space = Mat4::from_scale_rotation_translation(
+            Vec3::new(2.0, 1.0, 0.5),
+            Quat::from_rotation_y(0.7),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let mut bones = probed_bones();
+        bones.put_root_under(space);
+
+        bones.animate();
+
+        let seen = bones.model_to_world_seen().unwrap();
+        assert!(
+            seen.abs_diff_eq(Affine3A::from_mat4(space), 1e-5),
+            "got {seen:?}"
+        );
+    }
+
+    #[test]
+    fn a_threshold_drops_the_sources_at_or_below_it() {
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
+        let mut player = rig.blending_left_and_right();
+        player.set_event_threshold(0.25);
+        rig.update(&mut player, 0.5);
+
+        assert_eq!(
+            rig.deliver(player).heard,
+            [heard_event(name!("right"), 0.75, 0.25)]
+        );
+    }
+
+    fn left_fired(clip: AssetId) -> FiredEvent {
+        FiredEvent {
+            clip,
+            key: 0,
+            time: 0.25,
+            weight: 1.0,
+            mirrored: false,
+        }
+    }
+
+    #[test]
+    fn a_paused_player_clears_what_it_fired_and_triggers_nothing() {
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
+        let clip = rig.firing_clip(0.25, "left");
+        let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(
+            clip.clone(),
+        )));
+        let mut player = rig.player(graph);
+        player.fired.push(left_fired(clip.id()));
+        player.set_paused(true);
+
+        let delivery = rig.deliver(player);
+
+        assert!(delivery.heard.is_empty());
+        assert_eq!(delivery.still_fired, 0);
+    }
+
+    #[test]
+    fn a_player_whose_graph_is_not_loaded_clears_what_it_fired_and_triggers_nothing() {
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
+        let clip = rig.firing_clip(0.25, "left");
+        let mut player = rig.player(AssetHandle::weak(AssetId::new()));
+        player.fired.push(left_fired(clip.id()));
+
+        let delivery = rig.deliver(player);
+
+        assert!(delivery.heard.is_empty());
+        assert_eq!(delivery.still_fired, 0);
+    }
+
+    #[test]
+    fn a_graph_sees_identity_as_model_to_world_when_bone_zero_has_no_parent() {
+        let mut bones = probed_bones();
+
+        bones.animate();
+
+        assert_eq!(bones.model_to_world_seen(), Some(Affine3A::IDENTITY));
+    }
+
+    #[test]
+    fn a_graph_sees_identity_as_model_to_world_when_bone_zeros_parent_has_no_global() {
+        let mut bones = probed_bones();
+        bones.put_root_under_a_parent_with_no_global();
+
+        bones.animate();
+
+        assert_eq!(bones.model_to_world_seen(), Some(Affine3A::IDENTITY));
+    }
+
+    #[test]
+    fn a_two_bone_ik_graph_puts_the_hand_on_a_world_target_under_the_skeletons_parent() {
+        let mut server = AssetServer::new();
+        let clips = AssetStore::<AnimationClip>::new();
+        let graphs = AssetStore::<AnimationGraph>::new();
+        let mut skeletons = AssetStore::<Skeleton>::new();
+        server.register_asset(&clips);
+        server.register_asset(&graphs);
+        server.register_asset(&skeletons);
+        let arm = || {
+            Skeleton::new(
+                vec![Mat4::IDENTITY; 3],
+                vec![None, Some(0), Some(1)],
+                vec!["upper".into(), "lower".into(), "hand".into()],
+                vec![
+                    JointPose::IDENTITY,
+                    JointPose {
+                        translation: Vec3::new(0.0, -1.0, 0.0),
+                        ..JointPose::IDENTITY
+                    },
+                    JointPose {
+                        translation: Vec3::new(0.3, -0.8, 0.0),
+                        ..JointPose::IDENTITY
+                    },
+                ],
+                vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)],
+            )
+            .unwrap()
+        };
+        let skeleton = server.add(arm());
+        skeletons.insert(skeleton.id(), arm());
+
+        let mut walks = Walks::new(clips, graphs);
+        let graph = server.add(AnimationGraph::default());
+        walks.graphs_mut().insert(
+            graph.id(),
+            made_live(AnimationGraph::from_node(TwoBoneIkNode {
+                tip: "hand".into(),
+                target: IkGoal::Param {
+                    param: name!("hand_target"),
+                },
+                ..TwoBoneIkNode::default()
+            })),
+        );
+        let space = Affine3A::from_rotation_translation(
+            Quat::from_rotation_y(0.7),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let target = space.transform_point3(Vec3::new(0.6, -1.2, 0.4));
+        let mut player = AnimationPlayer::new(3);
+        walks.initialize(&mut player, graph);
+        player.set_param(
+            name!("hand_target"),
+            IkTarget {
+                position: target,
+                rotation: None,
+            },
+        );
+
+        let mut world = walks.into_world();
+        let parent = world.spawn(GlobalTransform::new(Mat4::from(space)));
+        let bones: Vec<Entity> = (0..3).map(|_| world.spawn(Transform::IDENTITY)).collect();
+        world.insert(ChildOf::new(parent), bones[0]);
+        world.spawn((
+            player,
+            SkeletonComponent {
+                skeleton,
+                bones: bones.iter().copied().map(SceneEntityRef::Entity).collect(),
+                root: None,
+            },
+        ));
+        world.insert_resource(skeletons);
+        let mut system = animate_targets.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let model = bones.iter().fold(Mat4::IDENTITY, |model, bone| {
+            model
+                * world
+                    .get_component_for_entity::<Transform>(*bone)
+                    .unwrap()
+                    .compute_matrix()
+        });
+        let hand = space.transform_point3(model.w_axis.truncate());
+        assert!(hand.distance(target) < 1e-4, "hand {hand}, target {target}");
     }
 }

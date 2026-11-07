@@ -42,11 +42,35 @@ collisions, which the springs do not know.
 
 ## Motion database
 
-`MotionDatabaseDefinition` says what to bake; `bake` turns it into a
-`MotionDatabase`. Both are assets, and the definition is a `CreatableAsset`
-whose `new_asset()` is its `Default`. The database stores no poses: it stores
-features, the simulation bone and, per frame, which clip and time the frame
-plays. `MotionDatabase::pose` samples the pose from the clip.
+`MotionDatabase` is one asset: the definition it persists, the fields below,
+and a runtime part, `baked: Option<BakedDatabase>`, that is never saved. It is
+a `CreatableAsset` whose `new_asset()` is its `Default`, which is unbaked.
+The baked part stores no poses: it stores features, the simulation bone and,
+per frame, which clip and time the frame plays. `MotionDatabase::pose` samples
+the pose from the clip.
+
+The baked part is derived data (see "Derived data" in
+[docs/asset-importing.md](../../docs/asset-importing.md)). The plugin registers
+the type with `register_derived_asset`, so a load through the `AssetServer`
+bakes it from the skeleton and clips the definition names, or takes the blob
+cached under the same key, before the handle reads as loaded:
+
+- `derived_inputs()`: the skeleton and each entry's clip. A derived asset
+  can't be an input, so an entry naming an additive clip fails the database's
+  load, and its derive in the motion database editor, with an error naming the
+  clip. Plain clips load as before.
+- `derived_key(&inputs)`: `weightless_hash` of the definition and the inputs'
+  file bytes; see [Derived key](#derived-key).
+- `derive(&inputs, progress)`: decodes the skeleton and clips, calls
+  `bake_with_progress`, and encodes the `BakedDatabase` with bincode.
+- `apply_derived(&blob)`: decodes it into `baked`, refusing a blob whose
+  channel or entry count differs from the definition's.
+- `DERIVED_VERSION` is 1.
+
+`is_baked()` says whether the part is there. Code that bakes inline, such as a
+test or an `AssetServer::add` caller, attaches it with
+`database.with_baked(bake(&database, &skeleton, &clips)?)`; `add` derives
+nothing.
 
 A database loaded through the `AssetServer`, or added with
 `AssetServer::add`, loads its skeleton and clips in `on_load` and holds them
@@ -77,9 +101,9 @@ ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
 fits the range; a range too short for a window above 3 is left unsmoothed.
 
-`JointName`, from `concerto-mesh`, is a `String` newtype that reflects as a
-leaf, with `Deref<Target = str>`, `From<&str>` and a JSON form. Stored, it is
-the bytes of its text.
+`JointName`, from `concerto-mesh`, is a `Copy` newtype over `Name` (from
+`concerto-name`) that reflects as a leaf, with `Deref<Target = str>`,
+`From<&str>` and a JSON form. Stored, it is the bytes of its text.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -89,11 +113,12 @@ end of an entry's range is clamped to the range's last frame.
 ### Bake
 
 ```rust
-let database = bake(&definition, &skeleton, &clips)?;
+let baked: BakedDatabase = bake(&database, &skeleton, &clips)?;
 ```
 
-`clips` holds one resolved clip per entry, in order. The definition's channels
-must be loaded. Each entry is baked on its own, so no frame blends across two
+`bake` reads the persisted fields of a `MotionDatabase` and returns only the
+computed part. `clips` holds one resolved clip per entry, in order. The
+channels must be loaded. Each entry is baked on its own, so no frame blends across two
 entries.
 
 `bake_with_progress` takes one more argument, `on_entry(finished, total)`,
@@ -106,20 +131,21 @@ definition that is refused before the first entry.
 |---|---|
 | `MissingJoint` | a simulation joint name the skeleton lacks |
 | `ClipHasNoBones` | the clip animates none of the skeleton's bones |
-| `ClipCountMismatch` | `clips.len()` differs from `entries.len()`, or from the database's clip count in `pose` |
+| `ClipCountMismatch` | `clips.len()` differs from `entries.len()`, in `bake` or `pose` |
 | `BoneCountMismatch` | `pose` was given a skeleton whose bone count differs from the baked one |
 | `FrameOutOfRange` | `pose` was given a frame the database did not bake |
 | `UnregisteredChannel` | loading a channel whose type name is not in the registry, or lacks `ReflectFeatureChannel` |
 | `UnloadedChannel` | a channel still `Stored`, read where a live one is needed |
 | `ChannelValue` | the stored value does not apply to the channel, or the channel's `validate` failed |
-| `InvalidWeight` | a channel weight, at bake or `reweigh`, that is not finite and positive |
-| `ChannelCountMismatch` | a `FeatureQuery` was used with, or `reweigh` was given, a different channel count |
+| `InvalidWeight` | a channel weight, from `check_weights`, that is not finite and positive |
+| `ChannelCountMismatch` | a `FeatureQuery` was used with a database of a different channel count |
 | `TrajectoryTooShort` | `FeatureQuery::build` was given fewer trajectory samples than the database's `sample_count` |
 | `RangeTooShort` | an entry bakes fewer than 2 frames |
 | `InvalidRange` | a range outside its clip, or with `start >= end` |
 | `InvalidWindow` | a window that is even or at most 3 |
 | `InvalidRate`, `InvalidSpeed`, `InvalidSampleDt` | `rate`, `speed` or `trajectory.sample_dt` not finite and positive |
 | `Mirror` | a `MirrorError`: the skeleton cannot be mirrored across `mirror_axis`, in `bake` or `pose` |
+| `NotBaked` | `pose` or a `FeatureQuery` was given a database with no baked part, or one whose channels can't normalise |
 
 ### Mirroring
 
@@ -145,11 +171,13 @@ simulation bone is a Y-up ground projection with a yaw. LAFAN1's BVH skeleton
 needs `MirrorAxis::Z`. A mirrored entry's simulation bone faces the mirror of the
 original's forward only when the facing joint's rest axis, its model-space rest
 rotation times `facing_axis`, lies in the plane; the bake does not check this.
-With no mirrored entry no mirror is built and the axis is not stored.
+With no mirrored entry no mirror is built.
 
-Both assets are at version 2, with no migration: a version-1 definition or
-database fails to load, and the definition has to be re-created in the editor
-and baked again.
+`MotionDatabase` is at version 3, and implements `Asset` by hand. A
+`MotionDatabase` file at version 1 or 2 is an old bake and fails to load with
+"a baked motion database is now derived from its definition; delete this
+file". A file of the old `MotionDatabaseDefinition` kind is not read: re-create
+it in the editor as a `MotionDatabase`.
 
 ### Feature channels
 
@@ -219,18 +247,22 @@ decoding always gives `Stored`. `FeatureChannelData::live(channel)` makes a live
 one under the type's short name, which is how code builds a definition.
 
 `load(&registry)` turns a `Stored` channel `Live`, returning
-`UnregisteredChannel` or `ChannelValue` when it can't. A definition's and a
-database's `on_load` load their channels with the asset server's type registry
-and log a warning for each that fails, leaving it `Stored`; outside the asset
-server, call `load_channels(&registry)`. After that nothing needs the registry:
-`bake`, `FeatureQuery::new`, `weights_of` and `is_stale` read the live channels,
-and a channel still `Stored` there is `UnloadedChannel`.
+`UnregisteredChannel` or `ChannelValue` when it can't. A database's
+`on_load` loads its channels with the asset server's type registry and logs a
+warning for each that fails, leaving it `Stored`; outside the asset server,
+call `load_channels(&registry)`. After that nothing needs the registry: `bake`,
+`FeatureQuery::new`, `weights_of` and the normalisation read the live channels,
+and a channel still `Stored` there is `UnloadedChannel`, or no normalisation.
 
 A channel may also override four methods:
 
 - `weight()` (default 1.0): how much its group counts in the search. It must be
-  finite and positive, or `bake` returns `InvalidWeight`. A top-level field
-  named `weight` means this and nothing else: see [Stale databases](#stale-databases).
+  finite and positive, or the search finds nothing. `bake` does not read it,
+  so a cache hit and a miss give the same database whatever the weight.
+  `check_weights()` returns `InvalidWeight` for the first loaded channel whose
+  weight is not; `on_load` logs it as a warning, and the editor shows it as the
+  derive failing. A top-level field named `weight` means this and nothing
+  else: see [Derived key](#derived-key).
 - `source()` (default `ChannelSource::Pose`): a `Trajectory` channel reads only
   `simulation` and `trajectory` from its `FrameContext`, so the runtime query
   can compute it from a predicted trajectory.
@@ -291,42 +323,42 @@ deviation. A group's scale is `max(deviation, 1e-6) / weight`, and
 normalising equals its weight and the group keeps its geometry. A group whose
 deviation is below `1e-6` normalises to 0. `features(frame)` stays raw.
 
+The weight is read from the live channel in `channels` each time the scales
+are computed, not stored in the bake, so changing a channel's weight takes
+effect in the next search with no re-bake. `scales()`, `normalise` and the
+search give `None` while a channel is not live, a weight is not finite and
+positive, or the channel count differs from the bake's.
+
 - `offset()`, `scales()`: per feature dimension.
 - `normalise(&mut features)`, `normalised_features(frame)`.
-- `reweigh(&definition)`: takes the definition's live channels and their
-  weights, keeping each span's offset; changes the scales only, with no
-  re-bake. It is for a definition that hashes as the database's source, so only
-  weights differ.
 
-### Stale databases
-
-A `MotionDatabase` stores `source_hash()`, the hash of what it was baked from.
-`bake` leaves it at 0; the caller sets it with `with_source_hash`.
+### Derived key
 
 ```rust
-let hash = weightless_hash(&definition, &skeleton_bytes, &clip_bytes);
-let database = bake(&definition, &skeleton, &clips)?.with_source_hash(hash);
+let key = weightless_hash(&database, &skeleton_bytes, &clip_bytes);
 ```
 
-`clip_bytes` holds the stored bytes of one clip per entry. The hash is FNV-1a,
+`clip_bytes` holds the stored bytes of one clip per entry. `derived_key` passes
+the whole files of the skeleton and clips, read from the content root. The hash is FNV-1a,
 so it is stable across Rust versions. It covers the skeleton's asset id, the
 skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
 `trajectory`, `mirror_axis` when some entry is mirrored, and each channel's type
 name and value with its top-level `weight` field left out.
 
-- `weights_of(&definition)`: each live channel's `weight()`, in order.
-- `is_stale(&database, &definition, hash)`: the hash differs from
-  `source_hash()`, or a `ChannelSpan` weight differs from `weights_of`, or a
-  channel is not loaded.
-- `weights_changed_only(&database, &definition, hash)`: the same test with the
-  hash equal, the case `reweigh(&definition)` fixes with no re-bake.
+`weights_of(&database)` gives each live channel's `weight()`, in order.
 
 A stored and a live channel with the same value hash the same.
 
+The key covers the definition and the inputs' bytes, not the code of a
+channel. Changing the `extract` of a channel a game registers changes no key,
+so a load reuses the blob derived by the old code; delete the project's
+`derived-cache/` to derive again. A change to the engine's bake raises
+`DERIVED_VERSION` instead.
+
 A channel's top-level `weight` field means the search weight and nothing else.
-A field called `weight` that feeds `extract` changes no hash, so features baked
-from its old value read as current. A weight stored under another name, or
-nested deeper, just changes the hash and asks for a full bake.
+A field called `weight` that feeds `extract` changes no key, so a cached blob
+baked from its old value is reused. A weight stored under another name, or
+nested deeper, just changes the key and derives again.
 
 ### FeatureQuery
 
@@ -340,55 +372,49 @@ units `preview` reads: `Pose` channels are copied from database frame
 `pose_frame`, as the reference does, and `Trajectory` channels are extracted
 from `trajectory` expressed in `simulation` (the character's world transform).
 `build` is `raw` followed by `database.normalise`, the form the search compares.
-Both return `FrameOutOfRange`, `BoneCountMismatch`, `ChannelCountMismatch` or
-`TrajectoryTooShort` instead of panicking.
+Both return `FrameOutOfRange`, `BoneCountMismatch`, `ChannelCountMismatch`,
+`TrajectoryTooShort` or `NotBaked` instead of panicking.
 
 `new` copies the database's live channels; `channels()` returns them in the
 database's order, which is what `preview_features` takes.
 
 ### Layout
 
-`MotionDatabase` fields are private; read it through accessors. Frames are
-dense and frame-major. Nothing is indexed by a database-only bone numbering:
-every bone index is a skeleton joint index.
+The persisted fields of `MotionDatabase` are public. The baked part is read
+through accessors on the database, which combine it with the persisted
+settings and return `None` (or, for `pose`, `Err(NotBaked)`) while the
+database is not baked. Frames are dense and frame-major. Nothing is indexed by
+a database-only bone numbering: every bone index is a skeleton joint index.
 
-- `skeleton()`, `bone_count()`, `clips()`: the skeleton handle, its bone count
-  at bake time and one clip handle per entry, in entry order.
-- `rate()`, `speed()`, `trajectory()`: the sampling the bake used.
-- `mirrored()`: whether each entry plays mirrored, in entry order;
-  `mirror_axis()`: the definition's `mirror_axis` when some entry is mirrored,
-  `None` otherwise. A clip listed twice, once mirrored, has the same handle in
-  `clips()` at both indices.
-- `source_hash()`: see [Stale databases](#stale-databases).
+- `clips()`: one clip handle per entry, in entry order.
+- `bone_count()`: the skeleton's bone count at bake time.
 - `frame_count()`; `entry_of(frame)`, `range_of(frame)`: the entry holding a
-  frame and its half-open frame range; `frames_of_entry(index)`: the frames an
-  entry baked, or `None` past the last entry.
+  frame and its half-open frame range; `ranges()`: every entry's range;
+  `frames_of_entry(index)`: the frames an entry baked, or `None` past the last
+  entry.
 - `clip_time(frame)`: the entry and the clip time in seconds the frame plays,
   `clip_start + (frame - range_start) * speed / rate`.
 - `trajectory_samples(frame)`: the trajectory samples of `frame` as the bake saw
-  them, clamped to its range's last frame; empty for a frame the database did not
-  bake. `TrajectorySettings::frame_offset(sample, rate)` is the rounded offset the
-  bake and this share.
+  them, clamped to its range's last frame. `TrajectorySettings::frame_offset(sample, rate)`
+  is the rounded offset the bake and this share.
 - `body_motion(frame)`: the simulation bone's velocities at `frame`.
-- `live_channels()`: the spans' live channels, in order; `UnloadedChannel` before
+- `live_channels()`: the live channels, in order; `UnloadedChannel` before
   `load_channels`.
-- `simulation(frame)`: the simulation bone, a `Transform` in model space.
-- `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
-  per frame; `channels()` lists each `ChannelSpan` (`type_name()`, `offset()`,
-  `dims()`, `range()`, `weight()`, `source()`, `channel()`).
+- `simulation_bone(frame)`: the simulation bone, a `Transform` in model space.
+- `features(frame)`, `feature_dims()`: `feature_dims()` values per frame;
+  `channel_range(index)`: the feature indices channel `index` wrote.
 - `deviations()`: each channel's mean standard deviation, in channel order.
 - `size_in_bytes()`: the bytes held by the feature, simulation and range arrays.
 
-`simulation(frame)` and `features(frame)` panic on a frame outside
-`0..frame_count()`. `entry_of`, `range_of` and `clip_time` return `None` for
-it, and `pose` returns `Err(FrameOutOfRange)`.
+The frame accessors return `None` for a frame outside `0..frame_count()`, and
+`pose` returns `Err(FrameOutOfRange)`.
 
 `pose(frame, &skeleton, &clips)` samples the frame's local pose from
 `clips[entry]` at `clip_time`, passes it through the mirror if the entry is
 mirrored, and re-expresses each parentless joint relative to the simulation
 bone. `clips` is one clip per entry, as given to `bake`. It returns
-`Err(BoneCountMismatch)`, `Err(ClipCountMismatch)`, `Err(FrameOutOfRange)` or
-`Err(Mirror)` instead of panicking.
+`Err(NotBaked)`, `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)`,
+`Err(FrameOutOfRange)` or `Err(Mirror)` instead of panicking.
 
 ## Systems
 
@@ -453,6 +479,31 @@ graph that holds the node.
 | `ignore_surrounding` | a search returns no other frame fewer than this many frames from the playhead, though the playhead's own frame stays when nothing beats it; at the last frame of a range nothing is excluded around the playhead | 20 |
 | `ignore_range_end` | a search never returns the last this many frames of a range; at 0 the playhead can hold the last frame of a range, and a small value can loop it over the last few | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
+| `play_rate` | how fast the playhead advances, as a multiple of the database `rate` | 1 |
+| `play_rate_param` | the `Name` of a blackboard float param that multiplies `play_rate`; `None` (unset), a missing key or a value that isn't an `f32` leaves `play_rate` alone | `None` |
+
+The node plays at `r = effective_play_rate(play_rate, play_rate_param,
+blackboard)` from `concerto_animation::node`: the product, or 0 when it is
+negative, NaN or infinite. With `dt` the frame's delta, the playhead and the
+root motion advance by `dt * r`. The search timer, the forced-search timer and
+the change per second that forces a search run on `dt`, in real time, as do the
+inertializer's decay and the blended pose's velocity. A database pose velocity
+is per animation second, so it is multiplied by `r` before it is handed to
+`Inertializer::transition`, both for the frame jumped to and for the source when
+there is no previous blended pose to take the velocity from.
+
+A database frame's future trajectory samples are reached after `1 / r` of
+their authored time, so before a search the published samples are rescaled
+into animation time: each sample's position relative to the simulation
+translation, and its velocity, are divided by `r`, and its rotation is kept.
+This is exact for a constant velocity and an approximation while the path
+curves. At `r == 1` the samples are used as published. The forced-search check
+reads the published trajectory, in real time. At `r == 0` the playhead holds,
+the root delta is `RootMotion::IDENTITY`, and no search runs: a search that
+comes due, from the timer, a settled change or the range end, is dropped, the
+timer restarts and the forced-search cooldown is spent as usual, and the next
+search is the next one due while `r` is above 0. The held pose still settles
+through the inertializer.
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
 the blackboard of its `AnimationPlayer`, where only this crate reads it. A
@@ -462,7 +513,7 @@ entity. A player no link names, or a preview `App`, has no trajectory; the node
 then plays the database without searching.
 
 Each frame the graph walk reaches it, the node's `update` advances the playhead
-at the database `rate`,
+at the database `rate` times `r`,
 searches when the timer runs out, when a settled change in the trajectory asks
 for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
@@ -479,9 +530,20 @@ The step runs inside `update_animation_players`, where the graph is walked, so
 a node the walk does not reach, such as one in a state machine state that is
 not playing, does not advance. Its `UpdateInput` reads the stores of motion
 databases, skeletons and clips, and the player's skeleton comes from the graph
-context; when any of them is missing the node does not step and its root motion
-is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
+context; when any of them is missing, or the database is not baked yet, the
+node does not step and its root motion is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
 left. No other system declares the `MotionDatabase` store.
+
+Clip events fire from the clip time crossed within an entry. A step whose
+playhead advances, with no search jump, fires the events of the entry's clip in
+`(clip_time(previous), clip_time(advanced)]`, each as a `FiredEvent` naming that
+clip and key at weight 1. A search jump fires nothing, whether it lands in the
+same entry or another, and so do a held frame and the first step. A mirrored
+entry fires its events as authored, with `mirrored: true`; the game decides what
+a mirrored event means, such as swapping a left footstep for a right one. The
+node's `update` clears what it fired before anything else, so a frame with a
+missing asset or a stopped node fires nothing, and its `evaluate` adds the
+events to the `AnimationFrame` after copying the state's frame into it.
 
 `MotionMatchingState` is the node's per-player state. Its fields are
 private: the step that advances it is its own method, which the node's `update`
@@ -491,7 +553,9 @@ through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
 
 `MotionMatchingState::last_query()` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
-`Pose` channels from, `simulation` and `trajectory` what it was built with, and
+`Pose` channels from, `simulation` and `trajectory` what it was built with
+(`trajectory` holds the samples rescaled by the rate, as the features read
+them), and
 `best_cost` the squared distance to the frame the search found, or `None` when it
 found none: a query that holds a NaN or an infinity, or a search at a range's
 last frame when every range is no longer than `ignore_range_end`. All five come from one moment, so a
@@ -503,9 +567,9 @@ query is not drawn. A frame with no search due keeps the last one.
 The state keeps the simulation bone's velocity and angular velocity at the
 playhead, in model space. Each step turns them back by
 the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
-scales them by the frame's time into a `RootMotion` on `state.output`:
-`translation = q⁻¹ * (velocity * dt)` and `rotation =
-from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
+scales them by the frame's animation time into a `RootMotion` on `state.output`:
+`translation = q⁻¹ * (velocity * dt * r)` and `rotation =
+from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt * r))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
 the same way. The root joint is the database skeleton's first without a parent,
 and `rest` is that bone's rest on the skeleton playing it, so a database baked on

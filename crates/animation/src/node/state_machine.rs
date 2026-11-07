@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
-use crate::pose::{EvaluatedPose, Pose, PosePool};
+use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use crate::transition::{
     AnimationTransitionBlender, TransitionBlender, blend_stack::BlendStack,
     inertialization_blender::InertializationBlender,
@@ -13,18 +13,19 @@ use crate::{
 
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use derive_more::Deref;
 use uuid::Uuid;
 
-pub struct AnimationFSMStateDefinition<'a> {
-    pub name: &'a str,
+pub struct AnimationFSMStateDefinition {
+    pub name: Name,
     pub graph: AssetHandle<AnimationGraph>,
 }
 
 #[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnimationFSMState {
-    name: String,
+    name: Name,
     graph: AssetHandle<AnimationGraph>,
 }
 
@@ -34,31 +35,26 @@ pub enum AnimationFSMTrigger {
     Instant,
     OnAnimationEnd,
     BoolEquals {
-        param: String,
+        param: Name,
         value: bool,
     },
     Vec2NonZero {
-        param: String,
+        param: Name,
     },
 }
 
 impl AnimationFSMTrigger {
-    pub fn on_bool(param_name: impl Into<String>, cond: bool) -> Self {
-        Self::BoolEquals {
-            param: param_name.into(),
-            value: cond,
-        }
+    pub fn on_bool(param: Name, cond: bool) -> Self {
+        Self::BoolEquals { param, value: cond }
     }
 
-    pub fn on_non_zero_vec(param_name: impl Into<String>) -> Self {
-        Self::Vec2NonZero {
-            param: param_name.into(),
-        }
+    pub fn on_non_zero_vec(param: Name) -> Self {
+        Self::Vec2NonZero { param }
     }
 }
 
-pub struct AnimationStateMachineTransitionDefinition<'a> {
-    pub target_state: &'a str,
+pub struct AnimationStateMachineTransitionDefinition {
+    pub target_state: Name,
     pub trigger: AnimationFSMTrigger,
     pub blend_time: f32,
 }
@@ -97,11 +93,11 @@ pub struct AnimationStateMachine {
 
 impl AnimationStateMachine {
     pub fn new(
-        initial_state: &str,
+        initial_state: Name,
         states_definition: Vec<AnimationFSMStateDefinition>,
-        transitions_definition: HashMap<&str, Vec<AnimationStateMachineTransitionDefinition>>,
+        transitions_definition: HashMap<Name, Vec<AnimationStateMachineTransitionDefinition>>,
     ) -> Self {
-        let mut name_to_index: HashMap<&str, StateId> = HashMap::new();
+        let mut name_to_index: HashMap<Name, StateId> = HashMap::new();
         let mut transitions = Vec::new();
         let states = states_definition
             .into_iter()
@@ -110,7 +106,7 @@ impl AnimationStateMachine {
                 name_to_index.insert(state_def.name, index.into());
                 transitions.push(Vec::new());
                 AnimationFSMState {
-                    name: state_def.name.to_string(),
+                    name: state_def.name,
                     graph: state_def.graph,
                 }
             })
@@ -119,14 +115,14 @@ impl AnimationStateMachine {
         transitions_definition
             .into_iter()
             .for_each(|(from, transition_defs)| {
-                let Some(from_index) = name_to_index.get(from) else {
+                let Some(from_index) = name_to_index.get(&from) else {
                     return;
                 };
 
                 transition_defs.into_iter().for_each(|transition_def| {
                     transitions[**from_index].push(AnimationStateMachineTransition {
                         next_state: *name_to_index
-                            .get(transition_def.target_state)
+                            .get(&transition_def.target_state)
                             .unwrap_or(&0.into()),
                         trigger: transition_def.trigger,
                         blend_time: transition_def.blend_time,
@@ -135,7 +131,7 @@ impl AnimationStateMachine {
             });
 
         Self {
-            initial_state: *name_to_index.get(initial_state).unwrap_or(&0.into()),
+            initial_state: *name_to_index.get(&initial_state).unwrap_or(&0.into()),
             states,
             transitions,
             blender: TransitionBlender::default(),
@@ -143,14 +139,14 @@ impl AnimationStateMachine {
     }
 
     pub fn from_initial_state(
-        state_name: &str,
+        state_name: Name,
         state_graph: AssetHandle<AnimationGraph>,
         f: impl FnOnce(&mut TransitionBuilder),
     ) -> AnimationStateMachineBuilder {
         let mut builder = AnimationStateMachineBuilder {
-            initial_state: state_name.to_string(),
+            initial_state: state_name,
             states: vec![FSMStateEntry {
-                name: state_name.to_string(),
+                name: state_name,
                 graph: state_graph,
             }],
             transitions: Vec::new(),
@@ -158,7 +154,7 @@ impl AnimationStateMachine {
         };
         let mut tb = TransitionBuilder {
             builder: &mut builder,
-            from: state_name.to_string(),
+            from: state_name,
         };
         f(&mut tb);
         builder
@@ -197,7 +193,7 @@ impl AnimationStateMachine {
 pub struct AnimationStateMachineState {
     state_graphs: AnimationGraphStates,
     current_state: StateId,
-    state_names: Vec<String>,
+    state_names: Vec<Name>,
     blender: Box<dyn AnimationTransitionBlender>,
 }
 
@@ -205,7 +201,7 @@ impl AnimationStateMachineState {
     pub(crate) fn new(
         initial_state: StateId,
         state_graphs: Vec<AnimationGraphState>,
-        state_names: Vec<String>,
+        state_names: Vec<Name>,
         blender: TransitionBlender,
     ) -> Self {
         let initial_graph = initial_state.as_graph_id();
@@ -223,11 +219,8 @@ impl AnimationStateMachineState {
         }
     }
 
-    pub fn current_state_name(&self) -> &str {
-        self.state_names
-            .get(*self.current_state)
-            .map(String::as_str)
-            .unwrap_or("")
+    pub fn current_state_name(&self) -> Option<Name> {
+        self.state_names.get(*self.current_state).copied()
     }
 
     fn transition(
@@ -270,7 +263,7 @@ impl AnimationNode for AnimationStateMachine {
             let mut state_graph = AnimationGraphState::default();
             state_graph.initialize(fsm_state.graph.clone(), graphs, context);
             state_graphs.push(state_graph);
-            state_names.push(fsm_state.name.clone());
+            state_names.push(fsm_state.name);
         }
 
         AnimationStateMachineState::new(self.initial_state, state_graphs, state_names, self.blender)
@@ -296,7 +289,7 @@ impl AnimationNode for AnimationStateMachine {
                 AnimationFSMTrigger::BoolEquals { param, value } => {
                     if context
                         .blackboard()
-                        .get_bool(param)
+                        .get_bool(*param)
                         .is_some_and(|v| v == *value)
                     {
                         state.transition(graphs, transition);
@@ -306,7 +299,7 @@ impl AnimationNode for AnimationStateMachine {
                 AnimationFSMTrigger::Vec2NonZero { param } => {
                     if context
                         .blackboard()
-                        .get_vec2(param)
+                        .get_vec2(*param)
                         .is_some_and(|v| v.length_squared() > f32::EPSILON)
                     {
                         state.transition(graphs, transition);
@@ -337,9 +330,9 @@ impl AnimationNode for AnimationStateMachine {
         graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
-        _evaluated_inputs: &[EvaluatedPose],
-        pool: &mut PosePool,
-        output: &mut Pose,
+        _evaluated_inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         state.blender.sample(
             bone_ids,
@@ -355,19 +348,19 @@ impl AnimationNode for AnimationStateMachine {
 }
 
 struct FSMStateEntry {
-    name: String,
+    name: Name,
     graph: AssetHandle<AnimationGraph>,
 }
 
 struct FSMTransitionEntry {
-    from: String,
-    to: String,
+    from: Name,
+    to: Name,
     trigger: AnimationFSMTrigger,
     blend_time: f32,
 }
 
 pub struct AnimationStateMachineBuilder {
-    initial_state: String,
+    initial_state: Name,
     states: Vec<FSMStateEntry>,
     transitions: Vec<FSMTransitionEntry>,
     blender: TransitionBlender,
@@ -382,30 +375,30 @@ impl AnimationStateMachineBuilder {
 
     pub fn state(
         mut self,
-        state_name: &str,
+        state_name: Name,
         state_graph: AssetHandle<AnimationGraph>,
         f: impl FnOnce(&mut TransitionBuilder),
     ) -> Self {
         self.states.push(FSMStateEntry {
-            name: state_name.to_string(),
+            name: state_name,
             graph: state_graph,
         });
         let mut tb = TransitionBuilder {
             builder: &mut self,
-            from: state_name.to_string(),
+            from: state_name,
         };
         f(&mut tb);
         self
     }
 
     pub fn build(self) -> AnimationStateMachine {
-        let mut name_to_index: HashMap<String, StateId> = HashMap::new();
+        let mut name_to_index: HashMap<Name, StateId> = HashMap::new();
         let mut states = Vec::new();
         let mut transitions: Vec<Vec<AnimationStateMachineTransition>> = Vec::new();
 
         for (index, entry) in self.states.into_iter().enumerate() {
             states.push(AnimationFSMState {
-                name: entry.name.clone(),
+                name: entry.name,
                 graph: entry.graph,
             });
             name_to_index.insert(entry.name, index.into());
@@ -440,19 +433,19 @@ impl AnimationStateMachineBuilder {
 
 pub struct TransitionBuilder<'a> {
     builder: &'a mut AnimationStateMachineBuilder,
-    from: String,
+    from: Name,
 }
 
 impl TransitionBuilder<'_> {
     pub fn to(
         &mut self,
-        state_name: &str,
+        state_name: Name,
         trigger: AnimationFSMTrigger,
         blend_time: f32,
     ) -> &mut Self {
         self.builder.transitions.push(FSMTransitionEntry {
-            from: self.from.clone(),
-            to: state_name.to_string(),
+            from: self.from,
+            to: state_name,
             trigger,
             blend_time,
         });
@@ -463,6 +456,7 @@ impl TransitionBuilder<'_> {
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+    use concerto_name::name;
     use concerto_reflect::{Reflect, TypeRegistry};
     use uuid::Uuid;
 
@@ -473,7 +467,7 @@ mod tests {
         graph::{AnimationGraph, GraphId},
         node::{AnimationNode, ErasedAnimationNode, ReflectAnimationNode, register_node_inputs},
         plugin::register_animation_types,
-        pose::{EvaluatedPose, Pose, PosePool},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
         test_walks::Walks,
     };
 
@@ -501,9 +495,9 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            _: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
         ) {
         }
 
@@ -548,11 +542,16 @@ mod tests {
         };
         let first = add(counting_graph());
         let second = add(counting_graph());
-        let machine = AnimationStateMachine::from_initial_state("first", first, |transition| {
-            transition.to("second", AnimationFSMTrigger::on_bool("go", true), 0.1);
-        })
-        .state("second", second, |_| {})
-        .build();
+        let machine =
+            AnimationStateMachine::from_initial_state(name!("first"), first, |transition| {
+                transition.to(
+                    name!("second"),
+                    AnimationFSMTrigger::on_bool(name!("go"), true),
+                    0.1,
+                );
+            })
+            .state(name!("second"), second, |_| {})
+            .build();
         let machine: Box<dyn ErasedAnimationNode> = Box::new(machine);
         let walks = Walks::with(AssetStore::new(), graphs, register_node_inputs::<Counter>);
         let blackboard = AnimationBlackboard::default();

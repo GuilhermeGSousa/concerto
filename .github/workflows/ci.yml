@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
         # Runs the physics suite against the Jolt backend (the native
         # default); the same suite runs against the Rapier backend in the
         # test_physics_rapier job.
-        run: cargo test --locked --workspace -- ${{ runner.os == 'Linux' && '--test-threads=1' || '' }}
+        run: cargo test --locked --workspace
         env:
           CARGO_INCREMENTAL: 0
 

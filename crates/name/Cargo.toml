@@ -1,0 +1,15 @@
+[package]
+name = "concerto-name"
+version.workspace = true
+edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-reflect.workspace = true
+serde = "1"
+serde_json = "1"
+
+[dev-dependencies]
+bincode = "1.3"

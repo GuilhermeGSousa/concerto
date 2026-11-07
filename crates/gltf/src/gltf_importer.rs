@@ -6,12 +6,14 @@
 //!
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation::clip::{
+    AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
+};
 use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names, hash_file_contents};
 use concerto_color::Color;
 use concerto_ecs::component::scene::SceneEntityRef;
@@ -20,6 +22,7 @@ use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
@@ -31,6 +34,7 @@ use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
 use image::ImageBuffer;
 use log::warn;
+use serde::Deserialize;
 use uuid::Uuid;
 
 // glTF (KHR_lights_punctual) stores light intensity in photometric units: lux
@@ -42,6 +46,18 @@ use uuid::Uuid;
 const LUMINOUS_EFFICACY: f32 = 683.0;
 
 pub struct GltfImporter;
+
+/// Importer settings read from the `[settings]` table of a glTF source's sidecar.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GltfSettings {
+    /// Per emitted clip name, the clip times in seconds of each named event.
+    #[serde(default)]
+    pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
+    /// Per emitted clip name, the base the clip is additive against.
+    #[serde(default)]
+    pub additive: BTreeMap<String, AdditiveSetting>,
+}
 
 /// One emitted primitive of a glTF mesh: the sub-asset indices of its imported
 /// `mesh/*` geometry and the `material/*` it draws with.
@@ -79,6 +95,15 @@ impl Importer for GltfImporter {
     }
 
     fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
+        let malformed_settings = |message: String| ImportError::MalformedSource {
+            source_path: source_path.to_path_buf(),
+            message,
+        };
+        let settings: GltfSettings = ctx
+            .settings()
+            .clone()
+            .try_into()
+            .map_err(|err: toml::de::Error| malformed_settings(err.to_string()))?;
         let (document, buffers, images) =
             gltf::import(source_path).map_err(|e| ImportError::MalformedSource {
                 source_path: source_path.to_path_buf(),
@@ -241,6 +266,7 @@ impl Importer for GltfImporter {
         // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
         // vector position, so a skipped skin cannot misalign the rest.
         let mut skins: Vec<SkinInfo> = Vec::new();
+        let mut roots: BTreeSet<Uuid> = BTreeSet::new();
         for (skin_index, skin) in document.skins().enumerate() {
             let Some(inverse_bind_matrices) = skin
                 .reader(|buffer| Some(&buffers[buffer.index()]))
@@ -283,7 +309,7 @@ impl Importer for GltfImporter {
                 joint_positions.entry(joint.index()).or_insert(position);
             }
             let mut parents: Vec<Option<u16>> = Vec::with_capacity(bones.len());
-            let mut names: Vec<String> = Vec::with_capacity(bones.len());
+            let mut names: Vec<Name> = Vec::with_capacity(bones.len());
             let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bones.len());
             for (position, joint) in skin.joints().enumerate() {
                 let parent_position = node_parents
@@ -316,8 +342,8 @@ impl Importer for GltfImporter {
                 names.push(
                     joint
                         .name()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| format!("joint_{}", joint.index())),
+                        .map(Name::new)
+                        .unwrap_or_else(|| Name::new(&format!("joint_{}", joint.index()))),
                 );
                 let (translation, rotation, scale) = joint.transform().decomposed();
                 rest_pose.push(JointPose {
@@ -335,6 +361,14 @@ impl Importer for GltfImporter {
                     },
                 )?;
             ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
+            roots.extend(
+                skeleton
+                    .parents
+                    .iter()
+                    .zip(skeleton.bone_ids.iter())
+                    .filter(|(parent, _)| parent.is_none())
+                    .map(|(_, id)| *id),
+            );
 
             skins.push(SkinInfo {
                 skeleton_index: skin_index,
@@ -351,6 +385,25 @@ impl Importer for GltfImporter {
         let requested_clip_names: Vec<Option<&str>> =
             document.animations().map(|a| a.name()).collect();
         let animation_names = clip_names(&requested_clip_names);
+        if let Some(name) = settings
+            .events
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(malformed_settings(format!(
+                "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
+        if let Some(name) = settings
+            .additive
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(malformed_settings(format!(
+                "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
+        let roots: Vec<Uuid> = roots.into_iter().collect();
         for (animation_index, (animation, animation_name)) in
             document.animations().zip(&animation_names).enumerate()
         {
@@ -404,6 +457,23 @@ impl Importer for GltfImporter {
                 } else {
                     warn!("Missing an node name for node {}.", target_node_idx);
                 }
+            }
+
+            if let Some(events) = settings.events.get(animation_name) {
+                animation_clip
+                    .add_animation_events(events)
+                    .map_err(|message| {
+                        malformed_settings(format!("clip `{animation_name}`: {message}"))
+                    })?;
+            }
+
+            if let Some(additive) = settings.additive.get(animation_name) {
+                let additive = additive
+                    .additive(animation_clip.duration(), roots.clone())
+                    .map_err(|message| {
+                        malformed_settings(format!("clip `{animation_name}`: {message}"))
+                    })?;
+                animation_clip.set_additive(additive);
             }
 
             let index_name = animation_index.to_string();

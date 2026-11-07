@@ -17,7 +17,8 @@ resources, events, component types, and the scene it starts in. It never runs
 anything itself. Whoever calls it, the **host**, decides when frames happen:
 
 - `concerto::run(game, concerto::content_registry!())` opens a window and runs
-  the game with the asset registry its `build.rs` wrote.
+  the game with the asset registry its `build.rs` wrote and, natively, keeps
+  derived data under the project root it recorded.
 - The editor calls `game` for every scene it opens, and again when you press
   Play. The scenes you edit therefore run your own components and systems.
 - `concerto::headless(game)` builds an `App` with a GPU and no window, which is
@@ -49,8 +50,9 @@ which runs once every plugin is ready.
 
 `DefaultPlugins` registers the engine's standard plugins in a fixed order:
 schedules, assets, time, window, transforms, the camera director, rendering,
-the skybox, shadows, the standard material, physics, animation, scenes, the
-world grid, gameplay helpers and the UI. Most games start with it. Plugin order
+the skybox, shadows, the standard material, physics, motion matching,
+procedural animation, animation, scenes, the world grid, gameplay helpers and
+the UI. Most games start with it. Plugin order
 is also the order systems were registered in, which decides how systems with
 no explicit ordering run.
 

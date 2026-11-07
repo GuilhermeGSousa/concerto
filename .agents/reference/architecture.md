@@ -6,10 +6,10 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 
 | Layer | Crates | What they hold |
 |---|---|---|
-| Core | `ecs`, `tasks`, `app`, `foundation` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math |
+| Core | `ecs`, `tasks`, `app`, `foundation`, `name` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math; interned names |
 | Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj`, `bvh` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF, OBJ and BVH importers |
 | Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `motion-matching-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; extra passes; the debug drawing of motion matching, in the running game and the database preview; a renderer that draws to a terminal |
-| Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database bake; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
+| Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `procedural-animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database derived from its clips; animation graphs; procedural animation graph nodes, foot placement and look-at, kept out of `animation` so it has no physics dependency; scene spawn and capture; the virtual-camera stack; player and movement helpers |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
 | Tooling | `editor`, `animation-editor`, `motion-matching-editor`, `reflect`, `project`, `mcp` | the editor; its extension crates for animation clips and motion databases; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry`, a shared `Arc<RwLock<TypeRegistry>>` that the inspector, scenes and the `AssetServer`'s asset loads read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
 
@@ -49,7 +49,11 @@ Draw work in the render world is ordered with `RenderSet`
 
 An `App` does not run itself. A host builds it, feeds it, and steps it:
 
-1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`.
+1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`. The
+   cook is the exception: it inserts none of them before applying the recipe
+   (`WindowPlugin::build` still inserts a default `Window`), never polls
+   `plugin_state()`, never calls `finish_plugin_build()`, and never runs a schedule, so a plugin's `build` must not need the device;
+   device work goes in `finish`.
 2. Apply the recipe, a function that registers plugins and systems.
 3. Poll `plugin_state()` until `Ready`, then call `finish_plugin_build()`.
    A host may run `finish_plugin_build()` on another thread, as the editor
@@ -113,8 +117,10 @@ time. The running game never reads them.
   at compile time. The runtime finds files by UUID through the registry.
 - No registry file exists, committed or at runtime. A game's `build.rs` calls
   `concerto_asset_build::track_assets`, which scans `content/` and writes the
-  registry to `OUT_DIR`. `concerto::content_registry!()` embeds it, and
-  `concerto::run` installs it. A `.gasset` moved or added in a file explorer
+  registry to `OUT_DIR` and records the package directory as
+  `CONCERTO_PROJECT_ROOT`. `concerto::content_registry!()` embeds both, and
+  `concerto::run` installs the registry and, natively, keeps derived data under
+  that root's `derived-cache/`. A `.gasset` moved or added in a file explorer
   or by git is picked up at the next build.
 - `AssetRegistry` is the one catalogue of content on disk: id, address, kind.
   It is a resource; `registry.of_type::<T>()` lists assets without loading
@@ -133,7 +139,7 @@ time. The running game never reads them.
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
 - An asset that holds trait objects by type name (`AnimationGraph`'s nodes,
-  the feature channels of a `MotionDatabaseDefinition` and a `MotionDatabase`)
+  the feature channels of a `MotionDatabase`)
   keeps each one as a data enum: `Stored { type_name, value }` as decoded and
   `Live { type_name, <boxed value> }` once built (`AnimationNodeData`,
   `FeatureChannelData`). Serde writes the type name and the reflected value for
@@ -145,6 +151,31 @@ time. The running game never reads them.
   loses nothing. Do not keep a parallel `#[serde(skip)]` list of live values,
   rebuild them from the registry at each use, or pass a registry into runtime
   code to do it.
+- An asset whose runtime part is computed from other content assets
+  implements `DerivedData` and is registered with `register_derived_asset`
+  (`MotionDatabase` and its `BakedDatabase`). Whether an asset derives is
+  decided per asset by `is_derived()`, `true` by default: one that doesn't
+  loads as it is, is accepted as another derived asset's input, and isn't
+  cooked; `DerivedInputs::read` asks a derived kind's `file_is_derived` and
+  refuses an input that derives. Its file holds only the
+  definition; a load of one that derives derives the blob from the inputs it names, or reads it
+  from the project's `derived-cache/` under the key the type computes, and
+  applies it before `Loaded`. The blob holds computed data only: values a user
+  can tune without re-deriving, such as a channel's weight, are read from the
+  live definition at use.
+- A packaged build can carry the blob in the file. Every `concerto::run`
+  binary run as `<game> --cook <out>` calls `concerto::cook`: it builds the
+  recipe headless (see Hosts), publishes the embedded registry with the
+  project root as the content root and the project's `derived-cache/`, empties
+  `<out>` (refusing a non-empty directory that holds no `.concerto-cook` marker
+  from an earlier cook), and has `AssetServer::cook` write each registry entry of a
+  registered derived kind whose asset derives to `<out>/<address>`, skipping
+  and leaving out of the report one that doesn't: the committed header and
+  payload byte for byte, plus a trailing derived section with the blob. It
+  prints each address and a total, or the error, and exits 0 or 1. A load that
+  finds a section of the type's current `DERIVED_VERSION` applies it without
+  reading the inputs; any other section falls back to deriving. Committed
+  content never carries a section.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor and is not rewritten.
 
@@ -201,7 +232,8 @@ while it runs:
   open scene's saved file as its startup scene. While it builds it is a
   `PendingPlayApp` beside the edit `App`. Once built, it is stepped hidden,
   with no input, until its loads, scene spawns and render uploads settle, or
-  for at most `WARM_UP_LIMIT` (10 s). Then the edit `App` moves to
+  for at most `WARM_UP_LIMIT` (10 s), or the editor's `WarmUpLimit` resource
+  when it has one. Then the edit `App` moves to
   `ParkedEditApp`, where it is not stepped, and the play `App` becomes the
   document's `HostedApp`, so the stepping, the viewport, input, and the panels
   follow it. Stop drops it and puts the parked edit `App` back. The document's

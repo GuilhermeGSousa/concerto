@@ -82,10 +82,12 @@ shows up.
 ## Rules
 
 - **Never point a saving or importing flow at `examples/*`.** Copy
-  `examples/tech-demo/content` to `<scratch>/td/content` and pass
+  `examples/tech-demo/content` to `<scratch>/td/content` and
+  `examples/tech-demo/content.toml` to `<scratch>/td/content.toml`, and pass
   `--project <scratch>/td`: `--project` takes the directory that contains
   `content/`, and given the `content` directory itself the editor opens an
-  empty project without an error.
+  empty project without an error. Without `content.toml` the editor opens the
+  project's first scene instead of its `default_scene`, the forest.
 - **Expect the owner's pointer.** Real pointer input reaches the window, and a
   stray click changes the selection. Have the selftest re-trigger `Select` for
   the entity it wants whenever `Selection` differs, send `CursorMoved` on every

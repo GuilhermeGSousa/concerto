@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
-    pose::{Pose, PosePool},
+    pose::{AnimationFrame, FramePool},
     transition::AnimationTransitionBlender,
 };
 
@@ -55,8 +55,8 @@ impl AnimationTransitionBlender for BlendStack {
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
-        pool: &mut PosePool,
-        output: &mut Pose,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         let Some((base, fading_in)) = self.entries.split_first() else {
             return;
@@ -69,14 +69,14 @@ impl AnimationTransitionBlender for BlendStack {
 
         // ...then each newer graph is cross-faded on top by its current weight.
         for entry in fading_in {
-            let mut layer_pose = pool.acquire();
+            let mut layer = pool.acquire();
 
             if let Some(graph_state) = graph_states.get_mut(entry.graph_id) {
-                graph_state.evaluate(graphs, context, bone_ids, pool, &mut layer_pose);
+                graph_state.evaluate(graphs, context, bone_ids, pool, &mut layer);
             }
 
-            output.blend(&layer_pose, entry.weight);
-            pool.release(layer_pose);
+            output.blend(&layer, entry.weight);
+            pool.release(layer);
         }
     }
 

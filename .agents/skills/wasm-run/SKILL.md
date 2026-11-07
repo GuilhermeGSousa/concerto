@@ -19,6 +19,18 @@ It serves at `http://127.0.0.1:8080`. `tech-demo` has a
 `Trunk.toml` and an `index.html`; an example without them does not run on the
 web yet.
 
+`trunk serve` is uncooked: the motion database is derived in the browser, on
+the main thread, so the page stalls at startup. The cooked build carries the
+derived blob and doesn't:
+
+```sh
+cargo concerto build examples/tech-demo --cook --target wasm32-unknown-unknown --dist <dir>
+```
+
+It runs `trunk build` into `<dir>` and stages the cooked files over it; serve
+`<dir>` with any static file server. See Cooking in
+[asset-importing.md](../../../docs/asset-importing.md).
+
 The CI check is only that it builds:
 
 ```sh
@@ -40,7 +52,7 @@ by loading the page and reading the console.
 | Physics | Rapier. Jolt is not compiled |
 | Threads | None. The multithreaded executor is native only |
 | Fonts | No system fonts; the UI embeds DejaVu Sans Mono for every family |
-| Assets | Fetched over HTTP from the page's origin; `index.html` copies what the game loads into `dist/content/` with `copy-dir` and `copy-file` links |
+| Assets | Fetched over HTTP from the page's origin; `index.html` copies what the game loads into `dist/content/` with `copy-dir` and `copy-file` links, and a cooked build overlays the cooked files there |
 | File system | None. Anything that opens a path must fetch bytes instead |
 
 ## Common mistakes

@@ -4,9 +4,11 @@
 //! through serialized component payloads.
 use std::path::Path;
 
+use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
+use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportOutputs, Importer};
 use concerto_ecs::component::Component;
-use concerto_foundation::assets::AssetId;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_gltf::gltf_importer::GltfImporter;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
 use concerto_reflect::{Reflect, apply_value};
@@ -373,7 +375,7 @@ fn skeleton_asset_carries_names_parents_rest_pose_and_ids() {
         skeleton.rest_pose[1].translation,
         glam::Vec3::new(0.0, 1.0, 0.0)
     );
-    assert_eq!(skeleton.bone_index("Joint"), Some(1));
+    assert_eq!(skeleton.bone_index("Joint".into()), Some(1));
     assert_ne!(skeleton.bone_ids[0], skeleton.bone_ids[1]);
 }
 
@@ -443,4 +445,177 @@ fn import_names_animation_clips_after_the_gltf() {
         clips,
         vec!["animation/1", "animation/Wiggle", "animation/Wiggle_2"]
     );
+}
+
+fn import_named_animations(
+    settings: &str,
+) -> Result<ImportOutputs, concerto_asset_import::ImportError> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/animations_named.gltf");
+    let mut ctx = ImportContext::new(std::path::PathBuf::from("animations_named.gltf"))
+        .with_settings(settings.parse().unwrap());
+    GltfImporter.import(&fixture, &mut ctx)?;
+    Ok(ctx.into_parts())
+}
+
+#[derive(Debug, PartialEq)]
+struct NamedKey {
+    time: f32,
+    name: String,
+}
+
+fn named_key(time: f32, name: &str) -> NamedKey {
+    NamedKey {
+        time,
+        name: name.to_string(),
+    }
+}
+
+fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<NamedKey> {
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
+    let clip: AnimationClip = bincode::deserialize(&entry.bytes).unwrap();
+    clip.events()
+        .iter()
+        .map(|key| {
+            assert_eq!(
+                key.event.type_name(),
+                std::any::type_name::<AnimationEvent>()
+            );
+            let mut event = AnimationEvent::default();
+            let warnings = apply_value(&mut event, &key.event.value().unwrap());
+            assert!(warnings.is_empty(), "{warnings:?}");
+            named_key(key.time, event.name.as_str())
+        })
+        .collect()
+}
+
+fn assert_import_fails(settings: &str, expected: &str) {
+    match import_named_animations(settings) {
+        Err(error) => {
+            let message = format!("{error:?}");
+            assert!(
+                message.contains(expected),
+                "expected {expected:?} in {message}"
+            );
+        }
+        Ok(_) => panic!("expected the import to fail for settings {settings:?}"),
+    }
+}
+
+#[test]
+fn event_settings_add_sorted_animation_events_to_the_named_clip() {
+    let outputs = import_named_animations(
+        "[events.Wiggle_2]\nhit = [0.75, 0.25, 0.75]\nstart = [0.0]\n[events.1]\nend = [1.0]\n",
+    )
+    .expect("the import should succeed");
+    assert_eq!(
+        event_keys(&outputs, "animation/Wiggle_2"),
+        [
+            named_key(0.0, "start"),
+            named_key(0.25, "hit"),
+            named_key(0.75, "hit"),
+        ]
+    );
+    assert_eq!(event_keys(&outputs, "animation/1"), [named_key(1.0, "end")]);
+    assert!(event_keys(&outputs, "animation/Wiggle").is_empty());
+}
+
+#[test]
+fn invalid_event_settings_fail_the_import() {
+    assert_import_fails("[events.Wobble]\nhit = [0.5]\n", "Wobble");
+    for time in ["-0.5", "nan", "inf", "1.5"] {
+        assert_import_fails(&format!("[events.Wiggle]\nhit = [{time}]\n"), "hit");
+    }
+}
+
+#[test]
+fn an_unknown_settings_key_fails_the_import() {
+    assert_import_fails("scale = 0.01\n", "scale");
+}
+
+const BASE_ID: &str = "d6e76e64-a888-49cd-bc16-61f0566f36ab";
+
+fn emitted_clip(outputs: &ImportOutputs, name: &str) -> AnimationClip {
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
+    bincode::deserialize(&entry.bytes).expect("the clip sub-asset must decode")
+}
+
+#[test]
+fn an_additive_table_makes_the_named_clip_additive_against_its_base() {
+    let outputs = import_named_animations(&format!(
+        "[additive.Wiggle_2]\nbase = \"{BASE_ID}\"\nbase_range = [0.5, 1.5]\nrange = {{ start = 0.25, end = 0.75 }}\n"
+    ))
+    .expect("the import should succeed");
+    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
+    let mut expected = AdditiveBase::new(AssetHandle::weak(
+        AssetId::from_simple_hex(BASE_ID).unwrap(),
+    ))
+    .with_base_range(ClipRange::new(0.5, 1.5))
+    .with_range(ClipRange::new(0.25, 0.75));
+    for (parent, id) in skeleton.parents.iter().zip(skeleton.bone_ids.iter()) {
+        if parent.is_none() {
+            expected = expected.with_root(*id);
+        }
+    }
+    assert!(!expected.roots.is_empty());
+    assert_eq!(
+        emitted_clip(&outputs, "animation/Wiggle_2").additive(),
+        &Additive::LocalSpace(expected)
+    );
+    assert_eq!(
+        emitted_clip(&outputs, "animation/Wiggle").additive(),
+        &Additive::None
+    );
+    assert_eq!(
+        emitted_clip(&outputs, "animation/1").additive(),
+        &Additive::None
+    );
+}
+
+#[test]
+fn a_sidecar_without_an_additive_table_imports_plain_clips() {
+    let outputs = import_named_animations("").expect("the import should succeed");
+    for name in ["animation/1", "animation/Wiggle", "animation/Wiggle_2"] {
+        assert_eq!(emitted_clip(&outputs, name).additive(), &Additive::None);
+    }
+}
+
+#[test]
+fn invalid_additive_settings_fail_the_import() {
+    assert_import_fails(
+        &format!("[additive.Wobble]\nbase = \"{BASE_ID}\"\n"),
+        "Wobble",
+    );
+    assert_import_fails("[additive.Wiggle]\nbase = \"not-an-id\"\n", "UUID");
+    assert_import_fails(
+        &format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\nweight = 1.0\n"),
+        "weight",
+    );
+    assert_import_fails(
+        &format!(
+            "[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = {{ start = 0.0, end = 0.5, step = 0.1 }}\n"
+        ),
+        "step",
+    );
+    for range in [
+        "[0.0, 1.5]",
+        "[0.5, 0.5]",
+        "[0.75, 0.25]",
+        "[-0.25, 0.5]",
+        "[nan, 0.5]",
+        "[0.0, inf]",
+    ] {
+        assert_import_fails(
+            &format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = {range}\n"),
+            "range",
+        );
+    }
 }

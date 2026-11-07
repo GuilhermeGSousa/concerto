@@ -252,7 +252,9 @@ mod tests {
         let skeleton = Skeleton::new(
             vec![Mat4::IDENTITY; bone_count],
             vec![None; bone_count],
-            (0..bone_count).map(|bone| format!("bone{bone}")).collect(),
+            (0..bone_count)
+                .map(|bone| format!("bone{bone}").into())
+                .collect(),
             vec![JointPose::IDENTITY; bone_count],
             vec![Default::default(); bone_count],
         )

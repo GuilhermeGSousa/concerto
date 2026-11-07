@@ -23,10 +23,9 @@ pub use channel::{
     extract_features, preview_features, BodyMotion, ChannelSource, DynCloneChannel, FeatureChannel,
     FeatureChannelData, FeatureShape, FrameContext, ReflectFeatureChannel,
 };
-pub use database::{BakeError, ChannelSpan, MotionDatabase};
+pub use database::{BakeError, BakedDatabase, MotionDatabase};
 pub use definition::{
-    JointAxis, MirrorAxis, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
-    TimeRange, TrajectorySettings,
+    JointAxis, MirrorAxis, MotionEntry, SimulationBoneSettings, TimeRange, TrajectorySettings,
 };
 pub use displacement::{Adjustment, CharacterDisplacement, CharacterLink, Clamp, Synchronization};
 pub use features::{
@@ -37,5 +36,5 @@ pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
 pub use search::{cost_of, search};
 pub use simulation::{CharacterSimulation, DesiredMotion, TrajectorySample};
-pub use staleness::{is_stale, weightless_hash, weights_changed_only, weights_of};
+pub use staleness::{weightless_hash, weights_of};
 pub use state::{LastQuery, MotionMatchingState};

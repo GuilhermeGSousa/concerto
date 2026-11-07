@@ -9,7 +9,7 @@ use concerto_ecs::{
     command::CommandQueue,
     component::removed::RemovedComponents,
     entity::hierarchy::ChildOf,
-    events::event_reader::EventReader,
+    events::{event_reader::EventReader, event_writer::EventWriter},
     query::{
         change_detection::DetectChanges,
         filter::{Added, Changed, Or, With},
@@ -46,7 +46,7 @@ use taffy::FlexDirection;
 use crate::asset_editor::{AssetEditorRegistry, MAX_NEW_NUMBER, new_asset_name, valid_asset_name};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark};
-use crate::project::{EditorCommand, EditorCommands, ProjectOpened, ProjectState};
+use crate::project::{AssetsWritten, EditorCommand, EditorCommands, ProjectOpened, ProjectState};
 use crate::tree_items::{OrderItems, despawn_outermost, order_items};
 use concerto_foundation::assets::{
     Asset, AssetId,
@@ -188,7 +188,8 @@ impl Plugin for ContentPlugin {
                     .after(update_filter)
                     .before(UiSet::Project),
             )
-            .add_system(LateUpdate, sync_new_items)
+            .add_system(LateUpdate, rebuild_new_rows)
+            .add_system(LateUpdate, sync_new_items.after(rebuild_new_rows))
             .add_system(
                 LateUpdate,
                 sync_content_items
@@ -329,16 +330,39 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
             CountLabel,
         ));
 
-    let mut menu = cmd.spawn((
-        theme
-            .dropdown(new_button)
-            .anchor_align(UIAnchorAlign::End)
-            .width(UIValue::Px(MENU_WIDTH))
-            .padding(theme.spacing_xs),
-        NewMenu,
-    ));
-    for &kind in creatable {
-        menu.add_child_with(
+    let menu = cmd
+        .spawn((
+            theme
+                .dropdown(new_button)
+                .anchor_align(UIAnchorAlign::End)
+                .width(UIValue::Px(MENU_WIDTH))
+                .padding(theme.spacing_xs),
+            NewMenu,
+        ))
+        .entity();
+    let context_menu = cmd
+        .spawn((
+            theme
+                .context_menu()
+                .width(UIValue::Px(MENU_WIDTH))
+                .padding(theme.spacing_xs),
+            ContentMenu {
+                folder: String::new(),
+            },
+        ))
+        .entity();
+    spawn_new_rows(cmd, menu, context_menu, theme, creatable);
+}
+
+fn spawn_new_rows(
+    cmd: &mut CommandQueue,
+    menu: Entity,
+    context_menu: Entity,
+    theme: &UITheme,
+    kinds: &[&'static str],
+) {
+    for &kind in kinds {
+        cmd.entity(menu).add_child_with(
             (
                 theme
                     .pressable()
@@ -351,19 +375,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
                 entry.add_child(theme.label(format!("New {kind}")).font_size(12.5).no_wrap());
             },
         );
-    }
-
-    let mut context_menu = cmd.spawn((
-        theme
-            .context_menu()
-            .width(UIValue::Px(MENU_WIDTH))
-            .padding(theme.spacing_xs),
-        ContentMenu {
-            folder: String::new(),
-        },
-    ));
-    for &kind in creatable {
-        context_menu.add_child_with(
+        cmd.entity(context_menu).add_child_with(
             (
                 theme
                     .pressable()
@@ -660,6 +672,7 @@ fn commit_pending_asset(
     mut focused: ResMut<FocusedWidget>,
     mut commands: ResMut<EditorCommands>,
     highlighted: Query<(Entity, &ContentItem), With<UISelected>>,
+    mut written: EventWriter<AssetsWritten>,
     mut cmd: CommandQueue,
 ) {
     let field = fields.iter().next();
@@ -743,6 +756,7 @@ fn commit_pending_asset(
             state.selected_folder = None;
             state.reveal = Some(ContentKey::Asset(id));
             project.status = format!("Created {address}");
+            written.write(AssetsWritten { ids: vec![id] });
             commands.0.push_back(EditorCommand::OpenAsset(id));
         }
         Err(error) => {
@@ -755,6 +769,28 @@ fn commit_pending_asset(
             }
         }
     }
+}
+
+fn rebuild_new_rows(
+    editors: Res<AssetEditorRegistry>,
+    theme: Res<UITheme>,
+    menus: Query<Entity, With<NewMenu>>,
+    context_menus: Query<Entity, With<ContentMenu>>,
+    rows: Query<Entity, Or<(With<NewRow>, With<ContentMenuRow>)>>,
+    mut cmd: CommandQueue,
+) {
+    if !editors.is_changed() {
+        return;
+    }
+    let (Some(menu), Some(context_menu)) = (menus.iter().next(), context_menus.iter().next())
+    else {
+        return;
+    };
+    for row in rows.iter() {
+        cmd.despawn(row);
+    }
+    let kinds: Vec<&'static str> = editors.creatable().map(|(kind, _)| kind).collect();
+    spawn_new_rows(&mut cmd, menu, context_menu, &theme, &kinds);
 }
 
 fn sync_new_items(
@@ -1198,7 +1234,7 @@ mod tests {
     use crate::{
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::testing::SceneFixture,
-        project::{Project, ProjectOpened, discover_project},
+        project::{AssetsWritten, Project, ProjectOpened, discover_project},
         scene::SceneEditor,
     };
     use concerto_ecs::{
@@ -1251,6 +1287,7 @@ mod tests {
         channel::<UITextInputCancelled>(world);
         channel::<UIFocusLost>(world);
         channel::<ProjectOpened>(world);
+        channel::<AssetsWritten>(world);
         world.track_removals::<UISelected>();
         install_listeners(world);
         run(world, build);
@@ -1260,6 +1297,7 @@ mod tests {
             reconcile_content_tree.into_boxed_system(),
             update_trees_system(),
             sync_content_items.into_boxed_system(),
+            rebuild_new_rows.into_boxed_system(),
             sync_new_items.into_boxed_system(),
         ];
         for system in &mut systems {
@@ -1378,6 +1416,7 @@ mod tests {
         project.project = Some(Project {
             root: root.path().to_path_buf(),
             content_root: content_root.into(),
+            default_scene: None,
         });
         world.insert_resource(project);
         let mut registry = AssetRegistry::default();
@@ -2375,6 +2414,24 @@ mod tests {
     }
 
     #[test]
+    fn a_created_asset_is_sent_as_written() {
+        let mut f = level_and_forest();
+        f.new_scene();
+
+        f.submit("Meadow");
+
+        let id = f.asset("content/Meadow.gasset");
+        let written: Vec<AssetsWritten> = f
+            .world
+            .get_resource::<EventChannel<AssetsWritten>>()
+            .unwrap()
+            .read_from(&mut concerto_ecs::events::event_cursor::EventCursor::default())
+            .cloned()
+            .collect();
+        assert_eq!(written, [AssetsWritten { ids: vec![id] }]);
+    }
+
+    #[test]
     fn new_creates_in_the_root_when_nothing_or_an_asset_is_selected() {
         let mut f = level_and_forest();
         f.new_scene();
@@ -2671,6 +2728,7 @@ mod tests {
         project.project = Some(Project {
             root: other.path().to_path_buf(),
             content_root: "game/content".into(),
+            default_scene: None,
         });
         f.world.insert_resource(project);
         f.world.insert_resource(AssetRegistry::default());
@@ -2773,6 +2831,57 @@ mod tests {
 
         assert!(!f.menu_panel(menu).open);
         assert!(f.state().pending.is_none());
+    }
+
+    fn menu_labels(world: &World, row: Entity) -> Vec<String> {
+        world
+            .get_component_for_entity::<Children>(parent(world, row))
+            .unwrap()
+            .iter()
+            .map(|row| {
+                let label = *world
+                    .get_component_for_entity::<Children>(*row)
+                    .unwrap()
+                    .iter()
+                    .next()
+                    .unwrap();
+                world
+                    .get_component_for_entity::<UIText>(label)
+                    .unwrap()
+                    .text
+                    .clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn both_new_menus_gain_a_row_when_a_kind_becomes_creatable() {
+        let mut f = fixture(&[("content/level.gasset", "Scene")]);
+        f.world
+            .get_resource_mut::<AssetEditorRegistry>()
+            .unwrap()
+            .register_inspected(concerto_app::InspectedAsset {
+                kind: "Dialogue",
+                create: |_, _, _| anyhow::bail!("unused"),
+                decode: |_| anyhow::bail!("unused"),
+                save: |_, _, _, _| anyhow::bail!("unused"),
+            });
+
+        f.refresh();
+
+        let rows = new_rows(&mut f.world);
+        let menu = menu_rows(&mut f.world);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(menu.len(), 2);
+        assert_eq!(
+            menu_labels(&f.world, rows[0]),
+            ["New Dialogue", "New Scene"]
+        );
+        assert_eq!(
+            menu_labels(&f.world, menu[0]),
+            ["New Dialogue", "New Scene"]
+        );
+        assert!(rows.iter().chain(&menu).all(|row| !f.disabled(*row)));
     }
 
     #[test]

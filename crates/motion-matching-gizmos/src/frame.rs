@@ -39,7 +39,7 @@ pub struct BakedFrame {
 }
 
 impl BakedFrame {
-    /// `frame` of the database, as it was baked; `None` when its clips can't be sampled.
+    /// `frame` of the database, as it was baked; `None` when its clips can't be sampled or it is not derived.
     pub fn new(
         database: &MotionDatabase,
         skeleton: &Skeleton,
@@ -49,8 +49,8 @@ impl BakedFrame {
         Some(Self::placed(
             skeleton,
             local_pose(database, skeleton, clips, frame)?,
-            database.simulation(frame),
-            database.trajectory_samples(frame),
+            database.simulation_bone(frame)?,
+            database.trajectory_samples(frame)?,
         ))
     }
 

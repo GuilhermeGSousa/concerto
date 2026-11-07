@@ -6,10 +6,13 @@ use concerto_reflect::{GetTypeRegistration, TypeRegistry};
 
 use crate::{
     clip::AnimationClip,
+    event::{AnimationEvent, ClipEvent},
     graph::AnimationGraph,
+    mask::BoneMask,
     node::{
-        AnimationClipNode, AnimationNode, BlendNode, PlaceholderNode, ResultNode,
-        blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
+        AnimationClipNode, AnimationNode, BlendNode, LayerNode, PlaceholderNode, ResultNode,
+        TwoBoneIkNode, blend_space::BlendSpace2DNode, register_node_inputs,
+        state_machine::AnimationStateMachine,
     },
     target::{
         animate_targets, initialize_animation_players, initialize_skeletons,
@@ -17,22 +20,29 @@ use crate::{
     },
 };
 
-/// Registers the built-in animation nodes and the handle types a graph stores.
+/// Registers the built-in animation nodes, the built-in clip event, and the handle types a graph stores.
 pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<ResultNode>();
     registry.register::<BlendNode>();
+    registry.register::<TwoBoneIkNode>();
+    registry.register::<LayerNode>();
     registry.register::<AnimationClipNode>();
     registry.register::<BlendSpace2DNode>();
     registry.register::<AnimationStateMachine>();
     registry.register::<PlaceholderNode>();
+    registry.register::<AnimationEvent>();
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
+    registry.register::<AssetHandle<BoneMask>>();
+    registry.register::<AssetHandle<Skeleton>>();
 }
 
 /// Registers the inputs of the built-in animation nodes with the graph walks of `world`.
 pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<ResultNode>(world);
     register_node_inputs::<BlendNode>(world);
+    register_node_inputs::<TwoBoneIkNode>(world);
+    register_node_inputs::<LayerNode>(world);
     register_node_inputs::<AnimationClipNode>(world);
     register_node_inputs::<BlendSpace2DNode>(world);
     register_node_inputs::<AnimationStateMachine>(world);
@@ -43,6 +53,9 @@ pub fn register_animation_node_inputs(world: &mut World) {
 pub trait AnimationAppExt {
     /// Registers `N` with the type registry and its inputs with the graph walks; call it in a plugin's `build`.
     fn register_animation_node<N: AnimationNode + GetTypeRegistration>(&mut self) -> &mut Self;
+
+    /// Registers `S` with the type registry, so clips that store it make it live on load.
+    fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self;
 }
 
 impl AnimationAppExt for App {
@@ -51,15 +64,21 @@ impl AnimationAppExt for App {
         register_node_inputs::<N>(self.main_mut().world_mut());
         self
     }
+
+    fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self {
+        self.register_type::<S>();
+        self
+    }
 }
 
 pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.register_asset::<AnimationClip>();
+        app.register_derived_asset::<AnimationClip>();
         app.register_asset::<AnimationGraph>();
         app.register_asset::<Skeleton>();
+        app.register_inspected_asset::<BoneMask>();
 
         if let Some(registry) = app.get_resource::<AppTypeRegistry>() {
             register_animation_types(&mut registry.write());
@@ -109,7 +128,7 @@ mod tests {
         graph::AnimationGraph,
         node::{AnimationNode, CreateNodeInputs, ReflectAnimationNode},
         player::AnimationPlayer,
-        pose::{EvaluatedPose, Pose, PosePool},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
         target::{animate_targets, initialize_animation_players, update_animation_players},
     };
 
@@ -137,11 +156,11 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            output: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            output: &mut AnimationFrame,
         ) {
-            if let Some(joint) = output.get_joint_pose_mut(0) {
+            if let Some(joint) = output.joint_mut(0) {
                 joint.translation.x = if *state { 1.0 } else { 0.0 };
             }
         }
@@ -165,7 +184,7 @@ mod tests {
         let skeleton = Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
-            vec!["bone".to_string()],
+            vec!["bone".into()],
             vec![JointPose::IDENTITY],
             vec![bone_id],
         )
@@ -242,9 +261,9 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            _: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
         ) {
         }
 

@@ -1,5 +1,5 @@
 use concerto_app::{
-    plugins::{install_content_registry, PluginsState},
+    plugins::{install_content_registry, ContentSettings, PluginsState},
     App,
 };
 use concerto_render::{draw_target::DrawTarget, gpu::Gpu};
@@ -7,14 +7,14 @@ use ratatui::crossterm::event;
 
 use crate::TerminalInput;
 
-/// Builds an `App` with `build` and `registry` installed, and drives it from the terminal until Esc is pressed.
-pub fn run(build: impl FnOnce(&mut App), registry: &'static str) {
+/// Builds an `App` with `build` and `content` installed, and drives it from the terminal until Esc is pressed.
+pub fn run(build: impl FnOnce(&mut App), content: ContentSettings<'static>) {
     let gpu = pollster::block_on(Gpu::request(&Gpu::instance(), None))
         .expect("no GPU adapter is available");
     let mut app = App::new();
     app.insert_resource(gpu).insert_resource(DrawTarget::None);
     build(&mut app);
-    install_content_registry(&mut app, registry);
+    install_content_registry(&mut app, content);
 
     while app.plugin_state() != PluginsState::Ready {}
     app.finish_plugin_build();

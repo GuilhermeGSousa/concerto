@@ -12,10 +12,7 @@ use concerto_physics::step_simulation;
 
 use crate::{
     database::MotionDatabase,
-    definition::{
-        MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
-        TrajectorySettings,
-    },
+    definition::{MotionEntry, SimulationBoneSettings, TimeRange, TrajectorySettings},
     displacement::{CharacterDisplacement, CharacterLink},
     features::{BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions},
     node::{MotionMatchingNode, MotionMatchingTrajectory},
@@ -27,8 +24,7 @@ pub struct MotionMatchingPlugin;
 
 impl Plugin for MotionMatchingPlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.register_asset::<MotionDatabaseDefinition>()
-            .register_asset::<MotionDatabase>()
+        app.register_derived_asset::<MotionDatabase>()
             .register_type::<TimeRange>()
             .register_type::<MotionEntry>()
             .register_type::<SimulationBoneSettings>()

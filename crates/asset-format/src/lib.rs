@@ -72,7 +72,7 @@ impl Default for AssetId {
 pub const CONTENT_ASSET_MAGIC: [u8; 4] = *b"GRDY";
 
 /// The version of the framing and `ContentAssetHeader`, written before the header; it changes only when they change, never for a payload.
-pub const CONTENT_FORMAT_VERSION: u32 = 5;
+pub const CONTENT_FORMAT_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentAssetHeader {
@@ -90,6 +90,50 @@ pub struct ContentAssetHeader {
     /// Where this content asset came from, if `import` produced it from a
     /// DCC source rather than an editor saving it directly.
     pub provenance: Option<ImportProvenance>,
+    /// The cooked derived data trailing the payload, if any.
+    pub derived: Option<DerivedSection>,
+}
+
+/// Describes the derived blob a cook appended after a content asset's payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DerivedSection {
+    /// The derived type's `DERIVED_VERSION` at cook time.
+    pub derived_version: u32,
+    /// The `derived_key` of the inputs the blob was derived from.
+    pub key: u64,
+    /// The blob's length in bytes.
+    pub len: u64,
+}
+
+/// The derived blob and its description, for [`write_cooked_content_asset`].
+#[derive(Debug, Clone, Copy)]
+pub struct CookedSection<'a> {
+    /// The derived type's `DERIVED_VERSION` at cook time.
+    pub derived_version: u32,
+    /// The `derived_key` of the inputs the blob was derived from.
+    pub key: u64,
+    /// The derived bytes, written after the payload.
+    pub blob: &'a [u8],
+}
+
+/// A content asset split into its header, payload and optional derived blob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentAssetParts<'a> {
+    /// The decoded header.
+    pub header: ContentAssetHeader,
+    /// The payload, without the derived blob.
+    pub payload: &'a [u8],
+    /// The derived blob the header's `derived` section describes, if any.
+    pub derived_blob: Option<&'a [u8]>,
+}
+
+#[derive(Deserialize)]
+struct HeaderV5 {
+    asset_id: AssetId,
+    references: Vec<AssetId>,
+    kind: String,
+    kind_version: u32,
+    provenance: Option<ImportProvenance>,
 }
 
 #[derive(Deserialize)]
@@ -105,7 +149,19 @@ fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
     let version: u32 = bincode::deserialize_from(&mut rest)
         .context("failed to deserialize content asset header")?;
     match version {
-        5 => bincode::deserialize(rest).context("failed to deserialize content asset header"),
+        6 => bincode::deserialize(rest).context("failed to deserialize content asset header"),
+        5 => {
+            let header: HeaderV5 = bincode::deserialize(rest)
+                .context("failed to deserialize version 5 content asset header")?;
+            Ok(ContentAssetHeader {
+                asset_id: header.asset_id,
+                references: header.references,
+                kind: header.kind,
+                kind_version: header.kind_version,
+                provenance: header.provenance,
+                derived: None,
+            })
+        }
         4 => {
             let header: HeaderV4 = bincode::deserialize(rest)
                 .context("failed to deserialize version 4 content asset header")?;
@@ -115,10 +171,11 @@ fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
                 kind: header.kind,
                 kind_version: 1,
                 provenance: header.provenance,
+                derived: None,
             })
         }
         other => bail!(
-            "unsupported content asset format version {other} (this build reads versions 4 and 5)"
+            "unsupported content asset format version {other} (this build reads versions 4 to 6)"
         ),
     }
 }
@@ -136,21 +193,56 @@ pub struct ImportProvenance {
 }
 
 pub fn write_content_asset(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+    if header.derived.is_some() {
+        bail!("a content asset header with a derived section needs its blob; write it with write_cooked_content_asset");
+    }
+    frame_content_asset(header, payload, &[])
+}
+
+/// Writes a content asset whose header describes `section` and whose payload is followed by its blob.
+pub fn write_cooked_content_asset(
+    header: &ContentAssetHeader,
+    payload: &[u8],
+    section: CookedSection<'_>,
+) -> anyhow::Result<Vec<u8>> {
+    let header = ContentAssetHeader {
+        derived: Some(DerivedSection {
+            derived_version: section.derived_version,
+            key: section.key,
+            len: section.blob.len() as u64,
+        }),
+        ..header.clone()
+    };
+    frame_content_asset(&header, payload, section.blob)
+}
+
+fn frame_content_asset(
+    header: &ContentAssetHeader,
+    payload: &[u8],
+    blob: &[u8],
+) -> anyhow::Result<Vec<u8>> {
     let header_bytes = bincode::serialize(&(CONTENT_FORMAT_VERSION, header))
         .context("failed to serialize content asset header")?;
 
     let header_len =
         u32::try_from(header_bytes.len()).context("content asset header exceeds 4 GiB")?;
 
-    let mut out = Vec::with_capacity(8 + header_bytes.len() + payload.len());
+    let mut out = Vec::with_capacity(8 + header_bytes.len() + payload.len() + blob.len());
     out.extend_from_slice(&CONTENT_ASSET_MAGIC);
     out.extend_from_slice(&header_len.to_le_bytes());
     out.extend_from_slice(&header_bytes);
     out.extend_from_slice(payload);
+    out.extend_from_slice(blob);
     Ok(out)
 }
 
 pub fn read_content_asset(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &[u8])> {
+    let parts = read_content_asset_parts(bytes)?;
+    Ok((parts.header, parts.payload))
+}
+
+/// Reads a content asset's header, its payload and the derived blob trailing it, if any.
+pub fn read_content_asset_parts(bytes: &[u8]) -> anyhow::Result<ContentAssetParts<'_>> {
     if bytes.len() < 8 || bytes[..4] != CONTENT_ASSET_MAGIC {
         bail!("not a content asset: missing the GRDY magic prefix");
     }
@@ -171,7 +263,30 @@ pub fn read_content_asset(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &
     }
 
     let header = decode_header(&bytes[8..header_end])?;
-    Ok((header, &bytes[header_end..]))
+    let rest = &bytes[header_end..];
+    let Some(section) = header.derived else {
+        return Ok(ContentAssetParts {
+            header,
+            payload: rest,
+            derived_blob: None,
+        });
+    };
+    let blob_start = usize::try_from(section.len)
+        .ok()
+        .and_then(|len| rest.len().checked_sub(len))
+        .with_context(|| {
+            format!(
+                "content asset truncated: derived section claims {} bytes, only {} follow the header",
+                section.len,
+                rest.len()
+            )
+        })?;
+    let (payload, blob) = rest.split_at(blob_start);
+    Ok(ContentAssetParts {
+        header,
+        payload,
+        derived_blob: Some(blob),
+    })
 }
 
 /// Reads just the header of the content asset at `path`, never the payload.
@@ -397,6 +512,8 @@ pub struct ContentConfig {
     pub extension: String,
     /// Content tree root, relative to the project root; must be `content` for now.
     pub root: String,
+    /// The address of the scene the editor opens with the project, such as `content/levels/forest.gasset`.
+    pub default_scene: Option<String>,
 }
 
 impl Default for ContentConfig {
@@ -404,6 +521,7 @@ impl Default for ContentConfig {
         Self {
             extension: "gasset".to_string(),
             root: "content".to_string(),
+            default_scene: None,
         }
     }
 }

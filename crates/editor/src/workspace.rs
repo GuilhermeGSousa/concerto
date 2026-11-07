@@ -834,6 +834,7 @@ mod tests {
             .project = Some(crate::project::Project {
             root: std::path::PathBuf::from("project"),
             content_root: "content".into(),
+            default_scene: None,
         });
         world
             .get_resource_mut::<AssetEditorCommands>()

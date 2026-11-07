@@ -6,14 +6,8 @@ use concerto_ecs::{
         listener::{IntoListener, Listener},
     },
 };
-use concerto_editor::{
-    asset_editor::ActiveEditor,
-    asset_picker::{picker_button, picker_caret, picker_label},
-    inspector::{
-        EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
-    },
-};
 use concerto_mesh::JointName;
+use concerto_name::Name;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::UIAnchoredPanel,
@@ -24,8 +18,13 @@ use concerto_ui::{
 use concerto_window::input::MouseButton;
 
 use crate::{
-    document::DefinitionDocument,
-    menu::{NameMenu, close_menu, open_name_menu},
+    asset_editor::ActiveEditor,
+    asset_picker::{picker_button, picker_caret, picker_label},
+    inspector::{
+        EditContext, EditError, InspectorRegistry, PropertyCommits, PropertyEditor, PropertyRow,
+        PropertyRowValue,
+    },
+    name_menu::{NameMenu, close_menu, open_name_menu},
 };
 
 const NO_NAME: &str = "None";
@@ -34,10 +33,18 @@ const NO_NAME: &str = "None";
 #[derive(Default)]
 pub struct JointNameEditor;
 
+/// The bones of the skeleton a document's value names, or `None` while it names none that can be read.
+#[derive(Component, Debug, Default, PartialEq)]
+pub struct DocumentBones(pub Option<Vec<Name>>);
+
 #[derive(Component)]
 pub(crate) struct JointNameLabel {
     row: Entity,
     button: Entity,
+}
+
+pub(crate) fn register_defaults(registry: &mut InspectorRegistry) {
+    registry.register_property_editor::<JointName, JointNameEditor>();
 }
 
 impl PropertyEditor<JointName> for JointNameEditor {
@@ -45,7 +52,7 @@ impl PropertyEditor<JointName> for JointNameEditor {
     type Edit = JointName;
 
     fn snapshot(&self, value: &JointName) -> JointName {
-        value.clone()
+        *value
     }
 
     fn build(&self, row: &mut EntityCommandQueue, _: &JointName, theme: &UITheme) {
@@ -70,12 +77,12 @@ impl PropertyEditor<JointName> for JointNameEditor {
         edit: &JointName,
         _: &EditContext,
     ) -> Result<(), EditError> {
-        *value = edit.clone();
+        *value = *edit;
         Ok(())
     }
 
     fn edit_to(&self, value: &JointName) -> Option<JointName> {
-        Some(value.clone())
+        Some(*value)
     }
 
     fn follows_snapshot(&self) -> bool {
@@ -87,20 +94,20 @@ fn joint_of(values: &Query<&PropertyRowValue>, row: Entity) -> Option<JointName>
     values
         .get_entity(row)?
         .snapshot::<JointName, JointNameEditor>()
-        .cloned()
+        .copied()
 }
 
 fn front_bones<'a>(
     active: &ActiveEditor,
-    documents: &'a Query<&DefinitionDocument>,
-) -> Option<&'a [String]> {
-    documents.get_entity(active.0?)?.bones.as_deref()
+    documents: &'a Query<&DocumentBones>,
+) -> Option<&'a [Name]> {
+    documents.get_entity(active.0?)?.0.as_deref()
 }
 
 fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            active: Res<ActiveEditor>,
-           documents: Query<&DefinitionDocument>,
+           documents: Query<&DocumentBones>,
            values: Query<&PropertyRowValue>,
            menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
@@ -141,7 +148,7 @@ fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
         if joint_of(&values, row).as_ref() == Some(&name) {
             return;
         }
-        if let Err(error) = commits.push::<JointName, JointNameEditor>(target, name.clone()) {
+        if let Err(error) = commits.push::<JointName, JointNameEditor>(target, name) {
             log::warn!("Joint pick dropped: {error}");
         }
     })
@@ -150,7 +157,7 @@ fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
 
 pub(crate) fn refresh_joint_rows(
     active: Res<ActiveEditor>,
-    documents: Query<&DefinitionDocument>,
+    documents: Query<&DocumentBones>,
     values: Query<&PropertyRowValue>,
     labels: Query<(&JointNameLabel, &mut UIText)>,
     disabled: Query<&UIDisabled>,
@@ -168,7 +175,7 @@ pub(crate) fn refresh_joint_rows(
         }
         let color = match bones {
             None => theme.text_muted,
-            Some(bones) if bones.iter().any(|bone| *bone == *name) => theme.text,
+            Some(bones) if bones.contains(&name.0) => theme.text,
             Some(_) => theme.warning,
         };
         if text.color != color {
@@ -183,4 +190,4 @@ pub(crate) fn refresh_joint_rows(
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

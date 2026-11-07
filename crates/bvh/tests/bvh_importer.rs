@@ -2,11 +2,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
+use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
 use concerto_bvh::bvh_importer::BvhImporter;
 use concerto_ecs::component::scene::SceneEntityRef;
-use concerto_foundation::assets::AssetId;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
 use concerto_reflect::{Reflect, apply_value};
@@ -548,4 +549,169 @@ fn the_clip_is_named_after_the_source_file_stem() {
             .map(|asset| asset.name.as_str())
             .collect::<Vec<_>>()
     );
+}
+
+#[derive(Debug, PartialEq)]
+struct NamedKey {
+    time: f32,
+    name: String,
+}
+
+fn named_key(time: f32, name: &str) -> NamedKey {
+    NamedKey {
+        time,
+        name: name.to_string(),
+    }
+}
+
+fn event_keys(clip: &AnimationClip) -> Vec<NamedKey> {
+    clip.events()
+        .iter()
+        .map(|key| {
+            assert_eq!(
+                key.event.type_name(),
+                std::any::type_name::<AnimationEvent>()
+            );
+            let mut event = AnimationEvent::default();
+            let warnings = apply_value(&mut event, &key.event.value().unwrap());
+            assert!(warnings.is_empty(), "{warnings:?}");
+            named_key(key.time, event.name.as_str())
+        })
+        .collect()
+}
+
+#[test]
+fn event_settings_add_sorted_animation_events_to_the_clip() {
+    let settings = "[events.walk]\nfootstep_right = [0.05, 0.01, 0.05]\nfootstep_left = [0.02]\n";
+    let (_, clip) = import_ok("walk.bvh", TWO_JOINTS, settings);
+    assert_eq!(
+        event_keys(&clip),
+        [
+            named_key(0.01, "footstep_right"),
+            named_key(0.02, "footstep_left"),
+            named_key(0.05, "footstep_right"),
+        ]
+    );
+}
+
+#[test]
+fn event_times_count_from_the_first_kept_frame() {
+    let settings = "frame_range = [1, 3]\n[events.trim_events]\nland = [0.0, 0.03]\n";
+    let (_, clip) = import_ok("trim_events.bvh", TWO_JOINTS, settings);
+    assert_eq!(
+        event_keys(&clip),
+        [named_key(0.0, "land"), named_key(0.03, "land")]
+    );
+}
+
+#[test]
+fn event_settings_are_keyed_by_the_sanitised_clip_name() {
+    let settings = "[events.\"Walk_Cycle\"]\nstep = [0.0]\n";
+    let outputs = run("Walk#Cycle.bvh", TWO_JOINTS, settings).expect("the import should succeed");
+    let clip: AnimationClip = bincode::deserialize(
+        &outputs
+            .sub_assets
+            .iter()
+            .find(|asset| asset.name == "animation/Walk_Cycle")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert_eq!(event_keys(&clip), [named_key(0.0, "step")]);
+}
+
+#[test]
+fn invalid_event_settings_are_rejected() {
+    assert_malformed_with(
+        "events.bvh",
+        TWO_JOINTS,
+        "[events.run]\nstep = [0.0]\n",
+        "run",
+    );
+    for time in ["-0.01", "nan", "inf", "0.07"] {
+        assert_malformed_with(
+            "events.bvh",
+            TWO_JOINTS,
+            &format!("[events.events]\nstep = [{time}]\n"),
+            "step",
+        );
+    }
+    assert_malformed_with(
+        "events.bvh",
+        TWO_JOINTS,
+        "frame_range = [1, 3]\n[events.events]\nstep = [0.05]\n",
+        "step",
+    );
+}
+
+const BASE_ID: &str = "d6e76e64-a888-49cd-bc16-61f0566f36ab";
+
+#[test]
+fn an_additive_table_makes_the_clip_additive_against_its_base() {
+    let settings = format!(
+        "[additive.cold_walk]\nbase = \"{BASE_ID}\"\nbase_range = [0.5, 1.5]\nrange = {{ start = 0.01, end = 0.05 }}\n"
+    );
+    let (skeleton, clip) = import_ok("cold_walk.bvh", TWO_JOINTS, &settings);
+    assert_eq!(
+        clip.additive(),
+        &Additive::LocalSpace(
+            AdditiveBase::new(AssetHandle::weak(
+                AssetId::from_simple_hex(BASE_ID).unwrap()
+            ))
+            .with_base_range(ClipRange::new(0.5, 1.5))
+            .with_range(ClipRange::new(0.01, 0.05))
+            .with_root(skeleton.bone_ids[0])
+        )
+    );
+}
+
+#[test]
+fn a_sidecar_without_an_additive_table_imports_a_plain_clip() {
+    let (_, clip) = import_ok("plain.bvh", TWO_JOINTS, "");
+    assert_eq!(clip.additive(), &Additive::None);
+}
+
+#[test]
+fn invalid_additive_settings_are_rejected() {
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        &format!("[additive.run]\nbase = \"{BASE_ID}\"\n"),
+        "run",
+    );
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        "[additive.additive]\nbase = \"not-an-id\"\n",
+        "UUID",
+    );
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        &format!("[additive.additive]\nbase = \"{BASE_ID}\"\nweight = 1.0\n"),
+        "weight",
+    );
+    assert_malformed_with(
+        "additive.bvh",
+        TWO_JOINTS,
+        &format!(
+            "[additive.additive]\nbase = \"{BASE_ID}\"\nrange = {{ start = 0.0, end = 0.05, step = 0.01 }}\n"
+        ),
+        "step",
+    );
+    for range in [
+        "[0.0, 0.07]",
+        "[0.02, 0.02]",
+        "[0.05, 0.01]",
+        "[-0.01, 0.05]",
+        "[nan, 0.05]",
+        "[0.0, inf]",
+    ] {
+        assert_malformed_with(
+            "additive.bvh",
+            TWO_JOINTS,
+            &format!("[additive.additive]\nbase = \"{BASE_ID}\"\nrange = {range}\n"),
+            "range",
+        );
+    }
 }
