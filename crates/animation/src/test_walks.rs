@@ -13,6 +13,7 @@ use crate::{
     clip::AnimationClip,
     evaluation::{AnimationGraphContext, RootBone},
     graph::AnimationGraph,
+    mask::BoneMask,
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
     player::AnimationPlayer,
     plugin::register_animation_node_inputs,
@@ -43,6 +44,7 @@ impl Walks {
         let mut world = World::new();
         world.insert_resource(clips);
         world.insert_resource(graphs);
+        world.insert_resource(AssetStore::<BoneMask>::new());
         register_animation_node_inputs(&mut world);
         register(&mut world);
         Self {
@@ -69,6 +71,12 @@ impl Walks {
         self.world
             .get_resource_mut()
             .expect("a test walk holds the graphs")
+    }
+
+    pub(crate) fn masks_mut(&mut self) -> &mut AssetStore<BoneMask> {
+        self.world
+            .get_resource_mut()
+            .expect("a test walk holds the masks")
     }
 
     pub(crate) fn into_world(self) -> World {
@@ -118,6 +126,24 @@ impl Walks {
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
         walk(&self.world, &self.evaluate, blackboard, root, None, None, f)
+    }
+
+    pub(crate) fn evaluate_with<R>(
+        &self,
+        blackboard: &AnimationBlackboard,
+        root: Option<RootBone>,
+        skeleton: Option<&Skeleton>,
+        f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
+    ) -> R {
+        walk(
+            &self.world,
+            &self.evaluate,
+            blackboard,
+            root,
+            skeleton,
+            None,
+            f,
+        )
     }
 
     pub(crate) fn evaluate_posed<R>(

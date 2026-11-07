@@ -345,7 +345,7 @@ crate's serialization test, with the fixtures in its `tests/encoding/`:
 |---|---|
 | `crates/mesh/tests/mesh_serialization.rs` | `Mesh`, `Skeleton` |
 | `crates/render/tests/material_serialization.rs` | `Texture`, `StandardMaterial` |
-| `crates/animation/tests/graph_serialization.rs` | `AnimationClip`, `AnimationGraph` |
+| `crates/animation/tests/graph_serialization.rs` | `AnimationClip`, `AnimationGraph`, `BoneMask` |
 | `crates/scene/tests/scene_serialization.rs` | `Scene` |
 | `crates/motion-matching/tests/serialization.rs` | `MotionDatabase` |
 
