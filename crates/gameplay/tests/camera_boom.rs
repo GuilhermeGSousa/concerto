@@ -7,9 +7,10 @@ use concerto_foundation::transform::Transform;
 use concerto_gameplay::camera::{CameraBoom, EntityFollow, update_camera_booms};
 use concerto_physics::collider::{Collider, register_colliders};
 use concerto_physics::physics_state::PhysicsState;
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 const PIVOT: Vec3 = Vec3::new(0.0, 1.0, 0.0);
+const BOOM_SKIN: f32 = 0.02;
 
 fn world() -> World {
     let mut world = World::new();
@@ -23,18 +24,26 @@ fn world() -> World {
 }
 
 fn rig(world: &mut World, target_at: Vec3) -> Entity {
+    rig_with(
+        world,
+        target_at,
+        Transform::from_translation(PIVOT),
+        CameraBoom::default(),
+    )
+}
+
+fn rig_with(world: &mut World, target_at: Vec3, pivot: Transform, boom: CameraBoom) -> Entity {
     let target = world.spawn((
         Collider::capsule(0.5, 0.3),
         Transform::from_translation(target_at),
     ));
     let pivot = world.spawn((
-        Transform::from_translation(PIVOT),
+        pivot,
         EntityFollow {
             target,
             offset: Vec3::ZERO,
         },
     ));
-    let boom = CameraBoom::default();
     world.spawn((
         ChildOf::new(pivot),
         Transform::from_translation(boom.offset),
@@ -113,4 +122,80 @@ fn wall_closer_than_min_distance_holds_the_camera_at_min_distance() {
 
     let boom = CameraBoom::default();
     assert_near(translation, Vec3::NEG_Z * boom.min_distance);
+}
+
+#[test]
+fn sideways_shoulder_with_nothing_in_the_way_puts_the_camera_at_shoulder_plus_offset() {
+    let mut world = world();
+    let boom = CameraBoom::default().with_shoulder(Vec3::X * 0.5);
+    let camera = rig_with(
+        &mut world,
+        Vec3::new(10.0, 1.0, 0.0),
+        Transform::from_translation(PIVOT),
+        boom.clone(),
+    );
+
+    let translation = run_boom(&mut world, camera);
+
+    assert_near(translation, boom.shoulder + boom.offset);
+}
+
+#[test]
+fn wall_beside_the_pivot_stops_the_shoulder_short_and_keeps_the_full_offset() {
+    let mut world = world();
+    let boom = CameraBoom::default().with_shoulder(Vec3::X * 1.0);
+    let camera = rig_with(
+        &mut world,
+        Vec3::new(-10.0, 1.0, 0.0),
+        Transform::from_translation(PIVOT),
+        boom.clone(),
+    );
+    let near_face_x = 0.6;
+    let half_thickness = 0.1;
+    world.spawn((
+        Collider::cuboid(half_thickness, 5.0, 5.0),
+        Transform::from_translation(PIVOT + Vec3::new(near_face_x + half_thickness, 0.0, 0.0)),
+    ));
+
+    let translation = run_boom(&mut world, camera);
+
+    let shoulder = Vec3::X * (near_face_x - boom.probe_radius - BOOM_SKIN);
+    assert_near(translation, shoulder + boom.offset);
+}
+
+#[test]
+fn shoulder_stays_level_when_the_pivot_pitches() {
+    let mut world = world();
+    let boom = CameraBoom::default().with_shoulder(Vec3::Y * -0.5);
+    let rotation = Quat::from_rotation_x(30f32.to_radians());
+    let camera = rig_with(
+        &mut world,
+        Vec3::new(10.0, 1.0, 0.0),
+        Transform::from_translation_rotation(PIVOT, rotation),
+        boom.clone(),
+    );
+
+    let translation = run_boom(&mut world, camera);
+
+    assert_near(
+        translation,
+        rotation.inverse() * (Vec3::Y * -0.5) + boom.offset,
+    );
+}
+
+#[test]
+fn shoulder_turns_with_the_pivots_yaw() {
+    let mut world = world();
+    let boom = CameraBoom::default().with_shoulder(Vec3::X * 0.5);
+    let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    let camera = rig_with(
+        &mut world,
+        Vec3::new(10.0, 1.0, 10.0),
+        Transform::from_translation_rotation(PIVOT, rotation),
+        boom.clone(),
+    );
+
+    let translation = run_boom(&mut world, camera);
+
+    assert_near(translation, boom.shoulder + boom.offset);
 }
