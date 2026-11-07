@@ -1,3 +1,4 @@
+pub mod aim;
 pub mod foot_placement;
 pub mod look_at;
 pub mod plugin;
