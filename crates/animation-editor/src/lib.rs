@@ -566,22 +566,42 @@ mod tests {
         f.frames_until("the pause never came back", |f| !state(f, document).playing);
     }
 
+    fn report_until(
+        f: &mut SceneFixture,
+        document: Entity,
+        report: ClipPreviewBones,
+        what: &str,
+        landed: impl Fn(&ClipDocument) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            f.scene_world_mut(document)
+                .get_resource_mut::<EventChannel<ClipPreviewBones>>()
+                .unwrap()
+                .push_event(report.clone());
+            f.frame();
+            f.frame();
+            if landed(state(f, document)) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     pub(super) fn report_bones(
         f: &mut SceneFixture,
         document: Entity,
         bones: usize,
         driven: usize,
     ) {
-        f.scene_world_mut(document)
-            .get_resource_mut::<EventChannel<ClipPreviewBones>>()
-            .unwrap()
-            .push_event(ClipPreviewBones {
-                bones,
-                driven,
-                skeleton: Vec::new(),
-            });
-        f.frames_until("the bones never came back", |f| {
-            state(f, document).facts.skeleton_bones == bones
+        let report = ClipPreviewBones {
+            bones,
+            driven,
+            skeleton: Vec::new(),
+        };
+        report_until(f, document, report, "the bones never came back", |state| {
+            state.facts.skeleton_bones == bones && state.facts.driven == driven
         });
     }
 
@@ -593,17 +613,18 @@ mod tests {
     }
 
     pub(super) fn report_skeleton(f: &mut SceneFixture, document: Entity, skeleton: &[ShownBone]) {
-        f.scene_world_mut(document)
-            .get_resource_mut::<EventChannel<ClipPreviewBones>>()
-            .unwrap()
-            .push_event(ClipPreviewBones {
-                bones: skeleton.len(),
-                driven: 0,
-                skeleton: skeleton.to_vec(),
-            });
-        f.frames_until("the skeleton never came back", |f| {
-            state(f, document).skeleton == skeleton
-        });
+        let report = ClipPreviewBones {
+            bones: skeleton.len(),
+            driven: 0,
+            skeleton: skeleton.to_vec(),
+        };
+        report_until(
+            f,
+            document,
+            report,
+            "the skeleton never came back",
+            |state| state.skeleton == skeleton,
+        );
     }
 
     pub(super) const UNNAMED: Uuid = Uuid::from_u128(0xabcdef01 << 96);
