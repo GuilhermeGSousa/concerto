@@ -1,12 +1,12 @@
-//! The read-only editor of an animation clip.
+//! The editor of an animation clip: it plays the clip on a skeleton, shows its bones, and edits and saves its events.
 pub mod events;
 mod panels;
 pub mod preview;
 mod save;
 
-use std::{path::Path, sync::Arc};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::clip::{AnimationChannel, AnimationClip};
 use concerto_app::{
     App,
     schedule_groups::{LateUpdate, Startup, Update},
@@ -25,7 +25,7 @@ use concerto_editor::{
     preview::PreviewSignals,
     project::ProjectState,
     scene::load_scene,
-    timeline::frame_count,
+    timeline::{TimelineTrack, frame_count},
 };
 use concerto_foundation::assets::{
     AssetId,
@@ -34,6 +34,7 @@ use concerto_foundation::assets::{
 };
 use concerto_scene::scene::Scene;
 use concerto_window::{define_action, define_context};
+use uuid::Uuid;
 
 use events::{TabEvent, read_events};
 use panels::{
@@ -41,7 +42,8 @@ use panels::{
     sync_clip_event_context, sync_clip_events, sync_clip_panels,
 };
 use preview::{
-    ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
+    ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, ShownBone,
+    clip_preview,
 };
 use save::{restore_clip_events, save_clip};
 
@@ -70,6 +72,8 @@ pub struct ClipDocument {
     pub scene_error: Option<String>,
     pub events: Vec<TabEvent>,
     pub selected_event: Option<usize>,
+    pub skeleton: Vec<ShownBone>,
+    pub rows: Vec<TimelineTrack>,
 }
 
 impl Default for ClipDocument {
@@ -88,8 +92,54 @@ impl Default for ClipDocument {
             scene_error: None,
             events: Vec::new(),
             selected_event: None,
+            skeleton: Vec::new(),
+            rows: Vec::new(),
         }
     }
+}
+
+impl ClipDocument {
+    pub(crate) fn rebuild_rows(&mut self) {
+        self.rows = self
+            .clip
+            .as_ref()
+            .map_or_else(Vec::new, |clip| bone_rows(clip, &self.skeleton));
+    }
+}
+
+fn track_keys(channels: &[AnimationChannel]) -> Vec<f32> {
+    let mut keys: Vec<f32> = channels
+        .iter()
+        .flat_map(|channel| channel.key_times().iter().copied())
+        .collect();
+    keys.sort_by(f32::total_cmp);
+    keys.dedup();
+    keys
+}
+
+pub(crate) fn bone_rows(clip: &AnimationClip, skeleton: &[ShownBone]) -> Vec<TimelineTrack> {
+    let named: HashSet<Uuid> = skeleton.iter().map(|bone| bone.id).collect();
+    let mut unmatched: Vec<Uuid> = clip
+        .target_ids()
+        .copied()
+        .filter(|id| !named.contains(id))
+        .collect();
+    unmatched.sort();
+    let shown = skeleton.iter().filter_map(|bone| {
+        Some(TimelineTrack {
+            label: bone.name.as_str().to_owned(),
+            warning: false,
+            keys: track_keys(clip.get_channels(&bone.id)?),
+        })
+    });
+    let missing = unmatched.into_iter().filter_map(|id| {
+        Some(TimelineTrack {
+            label: format!("? {}", &id.simple().to_string()[..8]),
+            warning: true,
+            keys: track_keys(clip.get_channels(&id)?),
+        })
+    });
+    shown.chain(missing).collect()
 }
 
 /// What a clip holds, and how much of it the shown skeleton uses.
@@ -157,6 +207,10 @@ pub(crate) fn sync_clip_preview(
         if let Some(mut state) = documents.get_entity(*document) {
             state.facts.skeleton_bones = event.bones;
             state.facts.driven = event.driven;
+            if state.skeleton != event.skeleton {
+                state.skeleton = event.skeleton.clone();
+                state.rebuild_rows();
+            }
         }
     }
 }
@@ -267,6 +321,7 @@ pub(crate) fn load_clip(
             ..ClipFacts::of(&clip)
         };
         state.clip = Some(Arc::clone(&clip));
+        state.rebuild_rows();
         state.time = 0.0;
         state.playing = true;
         previews.trigger(entity, ShowClip(clip));
@@ -520,10 +575,103 @@ mod tests {
         f.scene_world_mut(document)
             .get_resource_mut::<EventChannel<ClipPreviewBones>>()
             .unwrap()
-            .push_event(ClipPreviewBones { bones, driven });
+            .push_event(ClipPreviewBones {
+                bones,
+                driven,
+                skeleton: Vec::new(),
+            });
         f.frames_until("the bones never came back", |f| {
             state(f, document).facts.skeleton_bones == bones
         });
+    }
+
+    pub(super) fn bone(id: Uuid, name: &str) -> ShownBone {
+        ShownBone {
+            id,
+            name: Name::new(name),
+        }
+    }
+
+    pub(super) fn report_skeleton(f: &mut SceneFixture, document: Entity, skeleton: &[ShownBone]) {
+        f.scene_world_mut(document)
+            .get_resource_mut::<EventChannel<ClipPreviewBones>>()
+            .unwrap()
+            .push_event(ClipPreviewBones {
+                bones: skeleton.len(),
+                driven: 0,
+                skeleton: skeleton.to_vec(),
+            });
+        f.frames_until("the skeleton never came back", |f| {
+            state(f, document).skeleton == skeleton
+        });
+    }
+
+    pub(super) const UNNAMED: Uuid = Uuid::from_u128(0xabcdef01 << 96);
+    const FIRST_UNNAMED: Uuid = Uuid::from_u128(0x12345678 << 96);
+
+    fn channel(times: Vec<f32>) -> AnimationChannel {
+        let translations = vec![[0.0; 3]; times.len()];
+        AnimationChannel::new(
+            times,
+            AnimationChanelOutput::from_translation(translations.into_iter()),
+        )
+    }
+
+    fn rotations(times: Vec<f32>) -> AnimationChannel {
+        let rotations = vec![[0.0, 0.0, 0.0, 1.0]; times.len()];
+        AnimationChannel::new(
+            times,
+            AnimationChanelOutput::from_rotation(rotations.into_iter()),
+        )
+    }
+
+    fn many_bones_clip() -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(UNNAMED, channel(vec![0.0, 2.0]));
+        clip.add_channel(Uuid::from_u128(3), channel(vec![0.0, 1.0]));
+        clip.add_channel(FIRST_UNNAMED, channel(vec![1.0]));
+        clip.add_channel(Uuid::from_u128(1), channel(vec![0.0, 1.0]));
+        clip.add_channel(Uuid::from_u128(1), rotations(vec![0.5, 1.0]));
+        clip
+    }
+
+    fn track(label: &str, warning: bool, keys: Vec<f32>) -> TimelineTrack {
+        TimelineTrack {
+            label: label.to_owned(),
+            warning,
+            keys,
+        }
+    }
+
+    #[test]
+    fn bone_rows_list_the_driven_bones_in_skeleton_order_then_the_unmatched_ids() {
+        let skeleton = [
+            bone(Uuid::from_u128(3), "spine"),
+            bone(Uuid::from_u128(2), "still"),
+            bone(Uuid::from_u128(1), "hips"),
+        ];
+
+        assert_eq!(
+            bone_rows(&many_bones_clip(), &skeleton),
+            vec![
+                track("spine", false, vec![0.0, 1.0]),
+                track("hips", false, vec![0.0, 0.5, 1.0]),
+                track("? 12345678", true, vec![1.0]),
+                track("? abcdef01", true, vec![0.0, 2.0]),
+            ]
+        );
+    }
+
+    #[test]
+    fn with_no_skeleton_every_bone_row_is_an_id() {
+        let rows = bone_rows(&many_bones_clip(), &[]);
+
+        assert!(rows.iter().all(|row| row.warning));
+        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["? 00000000", "? 00000000", "? 12345678", "? abcdef01"]
+        );
     }
 
     #[test]
@@ -542,6 +690,8 @@ mod tests {
         assert_eq!(document.scene_error, None);
         assert!(document.events.is_empty());
         assert_eq!(document.selected_event, None);
+        assert!(document.skeleton.is_empty());
+        assert!(document.rows.is_empty());
     }
 
     #[test]
@@ -839,6 +989,34 @@ mod tests {
         let reset = state(&f, document);
         assert!(reset.events.is_empty());
         assert_eq!(reset.selected_event, None);
+    }
+
+    #[test]
+    fn a_second_clip_keeps_the_skeleton_and_rebuilds_the_bone_rows() {
+        let mut f = clip_fixture();
+        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(10));
+        let mut wider = clip_of(1);
+        wider.add_channel(UNNAMED, channel(vec![0.5]));
+        let run = write_clip(&mut f, "content/run.gasset", &wider);
+        let skeleton = [bone(Uuid::from_u128(1), "hips")];
+
+        let document = open_clip(&mut f, &walk);
+        assert_eq!(state(&f, document).rows[0].label, "? 00000000");
+        report_skeleton(&mut f, document, &skeleton);
+
+        let named = &state(&f, document).rows;
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0].label, "hips");
+        assert!(!named[0].warning);
+        assert_eq!(named[0].keys.len(), 301);
+
+        open_clip(&mut f, &run);
+
+        let rebuilt = state(&f, document);
+        assert_eq!(rebuilt.skeleton, skeleton);
+        assert_eq!(rebuilt.rows, bone_rows(&wider, &skeleton));
+        assert_eq!(rebuilt.rows[0].keys.len(), 31);
+        assert_eq!(rebuilt.rows[1], track("? abcdef01", true, vec![0.5]));
     }
 
     #[test]

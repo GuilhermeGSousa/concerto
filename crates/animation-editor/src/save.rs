@@ -66,6 +66,7 @@ fn save_clip_document(
         ..ClipFacts::of(&clip)
     };
     state.clip = Some(Arc::new(clip));
+    state.rebuild_rows();
     Ok(saved)
 }
 
@@ -153,10 +154,10 @@ pub(crate) fn restore_clip_events(
 mod tests {
     use super::*;
     use crate::tests::{
-        FOOTSTEP, clip_fixture, clip_of, footstep_value, named_key, open_clip, report_bones, state,
-        state_mut, typed_key, write_clip,
+        FOOTSTEP, UNNAMED, bone, clip_fixture, clip_of, footstep_value, named_key, open_clip,
+        report_bones, report_skeleton, state, state_mut, typed_key, write_clip,
     };
-    use concerto_animation::clip::AnimationClip;
+    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use concerto_ecs::IntoSystem;
     use concerto_editor::hosted::testing::SceneFixture;
     use concerto_foundation::assets::{
@@ -300,6 +301,37 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(state(&f, document).facts.duration, 2.0);
+    }
+
+    #[test]
+    fn a_save_rebuilds_the_bone_rows_from_the_clip_it_wrote() {
+        let mut f = save_fixture();
+        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(2));
+        let document = open_clip(&mut f, &walk);
+        let skeleton = [bone(uuid::Uuid::from_u128(1), "hips")];
+        report_skeleton(&mut f, document, &skeleton);
+        let mut reimported = clip_of(2);
+        reimported.add_channel(
+            UNNAMED,
+            AnimationChannel::new(
+                vec![1.0],
+                AnimationChanelOutput::from_translation([[0.0; 3]].into_iter()),
+            ),
+        );
+        write_clip(&mut f, "content/walk.gasset", &reimported);
+        state_mut(&mut f, document)
+            .add_event("footstep", 0.5)
+            .unwrap();
+        f.world.insert(Unsaved, document);
+
+        save(&mut f, document);
+
+        let saved = state(&f, document);
+        assert_eq!(f.status(document), "Saved content/walk.gasset");
+        assert_eq!(saved.rows.len(), 2);
+        assert_eq!(saved.rows[0].label, "hips");
+        assert_eq!(saved.rows[1].label, "? abcdef01");
+        assert!(saved.rows[1].warning);
     }
 
     #[test]

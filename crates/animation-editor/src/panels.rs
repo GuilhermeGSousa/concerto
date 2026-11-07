@@ -582,25 +582,29 @@ pub(crate) fn sync_clip_panels(
         let inspector = &panels.inspector;
 
         if let Some(mut timeline) = timelines.get_entity(panels.timeline) {
-            let settled = timeline.duration == facts.duration
-                && timeline.rate == facts.rate
-                && timeline.time == state.time
-                && timeline.selection.is_none()
-                && !timeline.selectable
-                && timeline.selected_marker == state.selected_event
-                && timeline.tracks.is_empty()
-                && shows_events(&timeline.markers, &state.events);
-            if !settled {
-                **timeline = Timeline {
-                    duration: facts.duration,
-                    rate: facts.rate,
-                    time: state.time,
-                    selection: None,
-                    selectable: false,
-                    markers: state.events.iter().map(marker_of).collect(),
-                    selected_marker: state.selected_event,
-                    tracks: Vec::new(),
-                };
+            if timeline.duration != facts.duration {
+                timeline.duration = facts.duration;
+            }
+            if timeline.rate != facts.rate {
+                timeline.rate = facts.rate;
+            }
+            if timeline.time != state.time {
+                timeline.time = state.time;
+            }
+            if timeline.selection.is_some() {
+                timeline.selection = None;
+            }
+            if timeline.selectable {
+                timeline.selectable = false;
+            }
+            if timeline.selected_marker != state.selected_event {
+                timeline.selected_marker = state.selected_event;
+            }
+            if !shows_events(&timeline.markers, &state.events) {
+                timeline.markers = state.events.iter().map(marker_of).collect();
+            }
+            if timeline.tracks != state.rows {
+                timeline.tracks = state.rows.clone();
             }
         }
 
@@ -665,8 +669,8 @@ mod tests {
     use super::super::{
         preview::ClipPreview,
         tests::{
-            clip_fixture, clip_of, named_key, open_clip, report_bones, state, typed_key,
-            write_broken_scene, write_clip, write_scene,
+            bone, clip_fixture, clip_of, named_key, open_clip, report_bones, report_skeleton,
+            state, typed_key, write_broken_scene, write_clip, write_scene,
         },
     };
     use super::*;
@@ -1457,6 +1461,44 @@ mod tests {
 
         assert_eq!(tab.timeline().markers.len(), 3);
         assert_eq!(tab.world().get_resource::<Writes>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn a_settled_panel_with_bone_rows_writes_nothing() {
+        let mut f = panels_fixture();
+        f.world.insert_resource(Writes::default());
+        f.add_delivery(count_writes.into_boxed_system());
+        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
+        let mut tab = tab_of(f, &walk);
+        let document = tab.document;
+        report_skeleton(&mut tab.f, document, &[bone(Uuid::from_u128(1), "hips")]);
+        tab.paused_at(4.0);
+        tab.f.frame();
+        tab.f.frame();
+        tab.f.frame();
+
+        assert_eq!(tab.timeline().tracks[0].label, "hips");
+        assert_eq!(tab.world().get_resource::<Writes>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn the_timeline_shows_the_bone_rows_and_follows_the_skeleton() {
+        let mut tab = walking_tab();
+        let document = tab.document;
+
+        assert_eq!(tab.timeline().tracks, tab.state().rows);
+        assert_eq!(tab.timeline().tracks[0].label, "? 00000000");
+        assert!(tab.timeline().tracks[0].warning);
+
+        report_skeleton(&mut tab.f, document, &[bone(Uuid::from_u128(1), "hips")]);
+        tab.f.frame();
+
+        let tracks = &tab.timeline().tracks;
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].label, "hips");
+        assert!(!tracks[0].warning);
+        assert_eq!(tracks[0].keys.len(), 301);
+        assert!(tab.clean());
     }
 
     #[test]

@@ -27,9 +27,11 @@ use concerto_mesh::{
     SkeletonGizmo,
     skeleton::{Skeleton, SkeletonComponent},
 };
+use concerto_name::Name;
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{scene::Scene, spawner::spawn_scene};
 use glam::Vec3;
+use uuid::Uuid;
 
 #[derive(Resource)]
 pub(super) struct ClipPreview {
@@ -98,11 +100,44 @@ pub struct ClipPreviewProgress {
     pub playing: bool,
 }
 
-/// How many bones the shown skeleton has and how many of them the clip drives; written when either changes.
+/// A bone of the shown skeleton: the id a clip's channels target and the bone's name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShownBone {
+    pub id: Uuid,
+    pub name: Name,
+}
+
+/// How many bones the shown skeleton has, how many of them the clip drives, and its bones in order; written when any changes.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ClipPreviewBones {
     pub bones: usize,
     pub driven: usize,
+    pub skeleton: Vec<ShownBone>,
+}
+
+fn shows_skeleton(reported: &[ShownBone], skeleton: Option<&Skeleton>) -> bool {
+    let Some(skeleton) = skeleton else {
+        return reported.is_empty();
+    };
+    reported.len() == skeleton.bone_ids.len()
+        && reported
+            .iter()
+            .zip(skeleton.bone_ids.iter().zip(skeleton.names.iter()))
+            .all(|(bone, (id, name))| bone.id == *id && bone.name == *name)
+}
+
+fn shown_bones(skeleton: Option<&Skeleton>) -> Vec<ShownBone> {
+    skeleton.map_or_else(Vec::new, |skeleton| {
+        skeleton
+            .bone_ids
+            .iter()
+            .zip(skeleton.names.iter())
+            .map(|(id, name)| ShownBone {
+                id: *id,
+                name: *name,
+            })
+            .collect()
+    })
 }
 
 fn advanced(time: f32, delta: f32, rate: f32, duration: f32, looping: bool) -> (f32, bool) {
@@ -296,11 +331,16 @@ fn report_clip(
                 .filter(|id| clip.get_channels(id).is_some())
                 .count()
         });
-    let bones = ClipPreviewBones {
-        bones: shown.map_or(0, |component| component.bones().len()),
-        driven,
-    };
-    if reported.bones.as_ref() != Some(&bones) {
+    let count = shown.map_or(0, |component| component.bones().len());
+    let unchanged = reported.bones.as_ref().is_some_and(|last| {
+        last.bones == count && last.driven == driven && shows_skeleton(&last.skeleton, skeleton)
+    });
+    if !unchanged {
+        let bones = ClipPreviewBones {
+            bones: count,
+            driven,
+            skeleton: shown_bones(skeleton),
+        };
         reported.bones = Some(bones.clone());
         bones_events.write(bones);
     }
@@ -976,13 +1016,26 @@ mod tests {
             stage.written::<ClipPreviewBones>(),
             [ClipPreviewBones {
                 bones: 0,
-                driven: 0
+                driven: 0,
+                skeleton: Vec::new(),
             }]
         );
     }
 
+    fn rig_bones() -> Vec<ShownBone> {
+        let bone = |id, name: &str| ShownBone {
+            id,
+            name: name.into(),
+        };
+        vec![
+            bone(ROOT, "root"),
+            bone(DRIVEN, "driven"),
+            bone(STILL, "still"),
+        ]
+    }
+
     #[test]
-    fn the_bones_are_reported_once_with_the_driven_count_of_the_first_rooted_skeleton() {
+    fn the_first_rooted_skeleton_is_reported_once_with_its_counts_and_names() {
         let mut stage = Stage::new();
         spawn_rig(&mut stage.world, Transform::IDENTITY, false);
         stage.frame();
@@ -996,11 +1049,13 @@ mod tests {
             [
                 ClipPreviewBones {
                     bones: 0,
-                    driven: 0
+                    driven: 0,
+                    skeleton: Vec::new(),
                 },
                 ClipPreviewBones {
                     bones: 3,
-                    driven: 2
+                    driven: 2,
+                    skeleton: rig_bones(),
                 }
             ]
         );
@@ -1154,7 +1209,8 @@ mod tests {
         assert!(orbit.target.abs_diff_eq(BONES_MIDDLE, 0.1));
         assert!(bones.contains(&ClipPreviewBones {
             bones: 3,
-            driven: 2
+            driven: 2,
+            skeleton: rig_bones(),
         }));
     }
 }
