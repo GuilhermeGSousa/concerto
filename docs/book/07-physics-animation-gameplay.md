@@ -102,11 +102,15 @@ cmd.spawn((
     Transform::from_translation(spawn_point),
 ));
 
-fn walk(input: Res<Input>, players: Query<(&mut DesiredMotion, &GroundProbe), With<Player>>) {
-    let forward = if input.is_held(PhysicalKey::Code(KeyCode::KeyW)) { 1.0 } else { 0.0 };
+fn walk(
+    input: Res<Input>,
+    actions: Res<ActionMap>,
+    players: Query<(&mut DesiredMotion, &GroundProbe), With<Player>>,
+) {
+    let push = actions.axis2d(Move, &input);
     for (mut desired, ground) in players.iter() {
         if ground.is_grounded() {
-            desired.velocity = Vec3::new(0.0, 0.0, -forward * 5.0);
+            desired.velocity = Vec3::new(push.x, 0.0, -push.y) * 5.0;
         }
     }
 }
@@ -125,8 +129,17 @@ The default halflife changed from 0.1 s, the old `CharacterMovement` value, to
 
 `ground.ground()` says more: `InAir`, `OnGround` or `OnSteepGround`. Input
 comes from the `Input` resource in `concerto::window::input`, with
-`is_held`, `is_just_pressed` and `is_just_released` for keys and the matching
-`is_mouse_button_*` methods for the mouse.
+`is_held`, `is_just_pressed` and `is_just_released` for keys, the matching
+`is_mouse_button_*` methods for the mouse, and `gamepads()`, `gamepad(id)` and
+`any_gamepad()` for connected pads, whose sticks read with the dead zone
+applied; `GamepadConnection` events say when a pad comes and goes. Gameplay
+code reads actions rather than keys: the `ActionMap` resource binds an action
+to several keys, mouse buttons and pad buttons, and a 2D action to key sets and
+sticks. `is_held`, `is_just_pressed` and `is_just_released` read a button
+action and `axis2d` a 2D one, each against `Input`. `GameplayPlugin` binds
+`Move` (WASD, the arrows and the left stick) and `Look` (the right stick) in
+`concerto::gameplay::actions`; the `walk` system above reads `Move`, so a
+half-pushed stick walks at half speed.
 
 The physics step runs in `LateFixedUpdate`, at a fixed rate; transforms of
 simulated bodies are interpolated between steps for display.

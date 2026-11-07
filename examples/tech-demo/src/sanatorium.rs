@@ -20,7 +20,7 @@ use concerto::{
     render::{MaterialComponent, components::light::Light},
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
-    window::input::{Input, KeyCode, PhysicalKey},
+    window::input::{Input, KeyCode, PhysicalKey, actions::ActionMap},
 };
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
@@ -28,8 +28,8 @@ use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 use glam::{Quat, Vec3};
 
 use crate::character::{
-    CharacterConfig, PlayerSpawner, debug_keys, feed_foot_placement, setup_character_animations,
-    spawn_character, update_camera_stance, update_movement,
+    CharacterConfig, PlayerSpawner, bind_controls, debug_keys, feed_foot_placement,
+    setup_character_animations, spawn_character, update_camera_stance, update_movement,
 };
 
 const MARKERS: AssetId = asset_id!("content/sanatorium/MARKERS/scene.gasset");
@@ -59,6 +59,10 @@ pub fn sanatorium(app: &mut App) {
         .register_plugin(MotionMatchingGizmosPlugin)
         .register_plugin(ProceduralAnimationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
+    bind_controls(
+        app.get_resource_mut::<ActionMap>()
+            .expect("DefaultPlugins inserts the ActionMap"),
+    );
 
     app.set_startup_scene(MARKERS)
         .register_type::<PlayerSpawner>()
