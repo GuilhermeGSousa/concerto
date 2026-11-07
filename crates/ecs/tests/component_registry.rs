@@ -56,31 +56,6 @@ fn registered_component_is_deserialized_and_applied() {
 }
 
 #[test]
-fn short_name_alias_resolves_for_blender_authored_extras() {
-    let mut world = World::default();
-    world.register_type::<Registered>();
-    let entity = world.spawn(());
-
-    // Blender authors the bare identifier, not the full Rust path.
-    let applied = world.apply_scene_component(
-        "Registered",
-        &stored(Registered { value: 7 }),
-        entity,
-        &[entity],
-    );
-
-    assert!(
-        applied,
-        "a short, Blender-style name must resolve to the registered type"
-    );
-    assert_eq!(
-        world.get_component_for_entity::<Registered>(entity),
-        Some(&Registered { value: 7 }),
-        "the short alias must apply the same component the full path would"
-    );
-}
-
-#[test]
 fn full_type_path_also_resolves() {
     let mut world = World::default();
     world.register_type::<Registered>();

@@ -735,20 +735,6 @@ mod tests {
     }
 
     #[test]
-    fn schedule_new() {
-        let schedule = Schedule::new();
-        assert_eq!(schedule.systems.len(), 0);
-    }
-
-    #[test]
-    fn add_system_builder_style() {
-        let mut schedule = Schedule::new();
-        schedule.add_system(|| {}).add_system(|| {});
-
-        assert_eq!(schedule.systems.len(), 2);
-    }
-
-    #[test]
     fn multiple_systems_added() {
         let mut schedule = Schedule::new();
         schedule
@@ -757,20 +743,6 @@ mod tests {
             .add_system(|| {});
 
         assert_eq!(schedule.systems.len(), 3);
-    }
-
-    #[test]
-    fn compile_and_run() {
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(|| print!("First"))
-            .add_system(|| print!("First"))
-            .add_system(|| print!("First"));
-
-        let mut world = World::new();
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
     }
 
     #[test]

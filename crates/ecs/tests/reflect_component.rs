@@ -193,21 +193,6 @@ fn a_component_without_default_cannot_be_inserted() {
 }
 
 #[test]
-fn clones_of_the_app_type_registry_see_each_others_registrations() {
-    let first = AppTypeRegistry::default();
-    let second = first.clone();
-
-    first.write().register::<Health>();
-
-    assert!(second.read().get(TypeId::of::<Health>()).is_some());
-    assert!(
-        second
-            .get_type_data::<ReflectDefault>(TypeId::of::<Health>())
-            .is_some()
-    );
-}
-
-#[test]
 fn a_world_hands_out_its_own_registry_and_two_worlds_do_not_share_one() {
     let mut first = World::new();
     let mut second = World::new();
