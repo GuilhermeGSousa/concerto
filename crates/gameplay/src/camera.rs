@@ -9,6 +9,8 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_window::input::Input;
 use glam::{EulerRot, Quat, Vec3};
 
+use crate::third_person::ThirdPersonCamera;
+
 #[derive(Resource)]
 pub struct CameraSettings {
     pub sensitivity: f32,
@@ -41,17 +43,21 @@ impl CameraPivot {
     }
 }
 
+/// Turns each pivot by the mouse; a pivot with a `ThirdPersonCamera` scales the sensitivity and takes its pitch limit from the rig's framing.
 pub fn move_camera_pivot(
-    pivots: Query<(&mut Transform, &mut CameraPivot)>,
+    pivots: Query<(&mut Transform, &mut CameraPivot, Option<&ThirdPersonCamera>)>,
     input: Res<Input>,
     settings: Res<CameraSettings>,
 ) {
     let mouse_delta = input.mouse_delta();
 
-    for (mut transform, mut pivot) in pivots.iter() {
-        pivot.yaw -= mouse_delta.x * settings.sensitivity;
-        pivot.pitch = (pivot.pitch - mouse_delta.y * settings.sensitivity)
-            .clamp(-settings.pitch_limit, settings.pitch_limit);
+    for (mut transform, mut pivot, rig) in pivots.iter() {
+        let framing = rig.map(ThirdPersonCamera::current);
+        let sensitivity =
+            settings.sensitivity * framing.map_or(1.0, |framing| framing.sensitivity_scale);
+        let pitch_limit = framing.map_or(settings.pitch_limit, |framing| framing.pitch_limit);
+        pivot.yaw -= mouse_delta.x * sensitivity;
+        pivot.pitch = (pivot.pitch - mouse_delta.y * sensitivity).clamp(-pitch_limit, pitch_limit);
 
         transform.rotation = Quat::from_rotation_y(pivot.yaw) * Quat::from_rotation_x(pivot.pitch);
     }
