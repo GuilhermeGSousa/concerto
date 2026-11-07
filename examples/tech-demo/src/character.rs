@@ -686,7 +686,7 @@ mod tests {
         },
         transform::Transform,
     };
-    use concerto::mesh::{Mesh, MeshComponent};
+    use concerto::mesh::{Mesh, MeshComponent, Skeleton};
     use concerto::motion_matching::{
         Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp,
         DesiredMotion, MotionDatabase, MotionMatchingNode, Synchronization,
@@ -1464,6 +1464,7 @@ mod tests {
         stored::<AnimationGraph>(&mut world, &mut server);
         stored::<MotionDatabase>(&mut world, &mut server);
         stored::<RetargetRig>(&mut world, &mut server);
+        stored::<Skeleton>(&mut world, &mut server);
         world.insert_resource(server);
         world.insert_resource(CharacterConfig::forest());
         let spawn_point = Vec3::new(3.0, 1.5, -7.0);
