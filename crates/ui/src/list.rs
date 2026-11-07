@@ -368,9 +368,7 @@ pub(crate) mod tests {
             self.world
                 .get_resource_mut::<EventChannel<ActionFired>>()
                 .unwrap()
-                .push_event(ActionFired {
-                    action: action.intern(),
-                });
+                .push_event(ActionFired::new(action));
             self.frame();
         }
 

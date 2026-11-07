@@ -14,7 +14,7 @@ use concerto_window::{
     InputGate,
     events::WindowEvent,
     input::{
-        Input, KeyCode, MouseButton, PhysicalKey,
+        Gamepad, GamepadAxis, GamepadButton, GamepadId, Input, KeyCode, MouseButton, PhysicalKey,
         actions::{Modifiers, Shortcut},
     },
     plugin::{CursorMode, Window},
@@ -46,12 +46,32 @@ pub struct Routing {
     pointer_on_picture: Option<bool>,
     keys: HashSet<KeyCode>,
     playing: bool,
+    pad_target: Option<Entity>,
+    told_pads: HashSet<GamepadId>,
+    sent_pads: HashSet<GamepadId>,
 }
 
 impl Routing {
     /// The keys the editor window holds down, as the host has seen them pressed and not released.
     pub fn held_keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
         self.keys.iter().copied()
+    }
+
+    /// The pads MCP `send_input` connected and has not disconnected, as opposed to real gamepads.
+    pub fn sent_pads(&self) -> impl Iterator<Item = GamepadId> + '_ {
+        self.sent_pads.iter().copied()
+    }
+
+    pub(crate) fn note_sent(&mut self, event: &WindowEvent) {
+        match event {
+            WindowEvent::GamepadConnected { id, .. } => {
+                self.sent_pads.insert(*id);
+            }
+            WindowEvent::GamepadDisconnected { id } => {
+                self.sent_pads.remove(id);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -87,10 +107,20 @@ fn forget_routing(routing: &mut Routing) {
 pub(crate) fn focus_shown_app(
     on: On<Add<InViewport>>,
     hosted: Query<&mut HostedApp>,
+    input: Res<Input>,
     mut routing: ResMut<Routing>,
 ) {
-    if let Some(mut app) = hosted.get_entity(on.signal().entity) {
+    let document = on.signal().entity;
+    if let Some(mut app) = hosted.get_entity(document) {
         app.push(WindowEvent::Focused(true));
+        if routing.pad_target == Some(document) {
+            for pad in input
+                .gamepads()
+                .filter(|pad| routing.told_pads.contains(&pad.id()))
+            {
+                push_pad_state(pad, &mut app);
+            }
+        }
     }
     forget_routing(&mut routing);
 }
@@ -219,23 +249,102 @@ fn release(owner: &mut InputOwner, app: &mut HostedApp) {
     app.push(WindowEvent::Focused(false));
 }
 
+fn hand_over(
+    owner: &mut InputOwner,
+    app: &mut HostedApp,
+    held: Option<&Input>,
+    pads_since: &[WindowEvent],
+) {
+    release(owner, app);
+    for pad in held.into_iter().flat_map(Input::gamepads) {
+        push_pad_state(pad, app);
+    }
+    for event in pads_since {
+        app.push(event.clone());
+    }
+}
+
 pub(crate) fn release_input(
     on: On<ReleaseInput>,
     owners: Query<&mut InputOwner>,
     hosted: Query<&mut HostedApp>,
+    input: Res<Input>,
 ) {
     let document = on.signal().0;
     if let Some(mut owner) = owners.get_entity(document)
         && **owner == InputOwner::Game
         && let Some(mut app) = hosted.get_entity(document)
     {
-        release(&mut owner, &mut app);
+        hand_over(&mut owner, &mut app, Some(&input), &[]);
+    }
+}
+
+fn forward_pad(event: &WindowEvent, told: &mut HashSet<GamepadId>, app: &mut HostedApp) {
+    match event {
+        WindowEvent::GamepadConnected { id, .. } => {
+            told.insert(*id);
+        }
+        WindowEvent::GamepadDisconnected { id } => {
+            told.remove(id);
+        }
+        _ => {}
+    }
+    app.push(event.clone());
+}
+
+fn is_pad(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::GamepadConnected { .. }
+            | WindowEvent::GamepadDisconnected { .. }
+            | WindowEvent::GamepadButton { .. }
+            | WindowEvent::GamepadAxis { .. }
+    )
+}
+
+fn catch_up_pads(input: &Input, told: &mut HashSet<GamepadId>, app: &mut HostedApp) {
+    let gone: Vec<GamepadId> = told
+        .iter()
+        .copied()
+        .filter(|id| input.gamepad(*id).is_none())
+        .collect();
+    for id in gone {
+        told.remove(&id);
+        app.push(WindowEvent::GamepadDisconnected { id });
+    }
+    for pad in input.gamepads() {
+        let id = pad.id();
+        if !told.insert(id) {
+            continue;
+        }
+        app.push(WindowEvent::GamepadConnected {
+            id,
+            name: pad.name().to_string(),
+        });
+        push_pad_state(pad, app);
+    }
+}
+
+fn push_pad_state(pad: &Gamepad, app: &mut HostedApp) {
+    let id = pad.id();
+    for button in GamepadButton::ALL {
+        let value = pad.button_value(button);
+        if value != 0.0 {
+            app.push(WindowEvent::GamepadButton { id, button, value });
+        }
+    }
+    for axis in GamepadAxis::ALL {
+        let value = pad.raw_axis(axis);
+        if value != 0.0 {
+            app.push(WindowEvent::GamepadAxis { id, axis, value });
+        }
     }
 }
 
 pub(crate) fn route_play_input(
     _: NonSendMarker,
     targets: Query<Entity, (With<ViewportTarget>, With<InViewport>)>,
+    viewport_targets: Query<Entity, With<ViewportTarget>>,
     shown: Res<ViewportShown>,
     mut events: EventReader<WindowEvent>,
     hosted: Query<&mut HostedApp>,
@@ -245,6 +354,14 @@ pub(crate) fn route_play_input(
     mut gate: ResMut<InputGate>,
     mut cmd: CommandQueue,
 ) {
+    let player = viewport_targets
+        .iter()
+        .next()
+        .filter(|document| owners.get_entity(*document).is_some());
+    if routing.pad_target != player {
+        routing.pad_target = player;
+        routing.told_pads.clear();
+    }
     let target = targets
         .iter()
         .next()
@@ -265,9 +382,12 @@ pub(crate) fn route_play_input(
         return;
     };
 
+    catch_up_pads(&input, &mut routing.told_pads, &mut app);
     let mut pointer = input.mouse_position();
     let mut current = **owner;
     let mut stopping = false;
+    let mut held = Some(&*input);
+    let mut pads_since = Vec::new();
     for event in events.read() {
         let pressed = shortcut(event, &mut routing.keys);
         if let WindowEvent::CursorMoved { position } = event {
@@ -276,15 +396,24 @@ pub(crate) fn route_play_input(
         if stopping {
             continue;
         }
+        if matches!(event, WindowEvent::Focused(false)) {
+            held = None;
+            pads_since.clear();
+        }
+        if is_pad(event) {
+            pads_since.push(event.clone());
+        }
         match current {
             InputOwner::Game => match event {
                 _ if pressed == Some(STOP) => {
                     stopping = true;
                     cmd.trigger(StopPlay(document));
                 }
-                _ if pressed == Some(RELEASE) => release(&mut current, &mut app),
+                _ if pressed == Some(RELEASE) => {
+                    hand_over(&mut current, &mut app, held, &pads_since)
+                }
                 WindowEvent::MouseButton { pressed: true, .. } if !on_picture(&view, pointer) => {
-                    release(&mut current, &mut app);
+                    hand_over(&mut current, &mut app, held, &pads_since);
                 }
                 WindowEvent::Focused(false) => release(&mut current, &mut app),
                 WindowEvent::CursorMoved { position } => app.push(WindowEvent::CursorMoved {
@@ -295,22 +424,34 @@ pub(crate) fn route_play_input(
                 | WindowEvent::MouseMotion { .. }
                 | WindowEvent::MouseWheel { .. }
                 | WindowEvent::Focused(true) => app.push(event.clone()),
+                WindowEvent::GamepadConnected { .. }
+                | WindowEvent::GamepadDisconnected { .. }
+                | WindowEvent::GamepadButton { .. }
+                | WindowEvent::GamepadAxis { .. } => {
+                    forward_pad(event, &mut routing.told_pads, &mut app)
+                }
                 WindowEvent::Resized { .. }
                 | WindowEvent::ScaleFactorChanged(_)
                 | WindowEvent::Maximised(_)
                 | WindowEvent::CloseRequested => {}
             },
-            InputOwner::Editor => {
-                if matches!(event, WindowEvent::MouseButton { pressed: true, .. })
-                    && on_picture(&view, pointer)
-                {
+            InputOwner::Editor => match event {
+                WindowEvent::GamepadConnected { .. }
+                | WindowEvent::GamepadDisconnected { .. }
+                | WindowEvent::GamepadButton { .. }
+                | WindowEvent::GamepadAxis { .. } => {
+                    forward_pad(event, &mut routing.told_pads, &mut app)
+                }
+                WindowEvent::Focused(false) => app.push(event.clone()),
+                WindowEvent::MouseButton { pressed: true, .. } if on_picture(&view, pointer) => {
                     current = InputOwner::Game;
                     app.push(WindowEvent::Focused(true));
                     app.push(WindowEvent::CursorMoved {
                         position: pointer - view.origin,
                     });
                 }
-            }
+                _ => {}
+            },
         }
     }
     if **owner != current {
@@ -373,7 +514,11 @@ pub fn route(
         WindowEvent::Resized { .. }
         | WindowEvent::ScaleFactorChanged(_)
         | WindowEvent::Maximised(_)
-        | WindowEvent::CloseRequested => None,
+        | WindowEvent::CloseRequested
+        | WindowEvent::GamepadConnected { .. }
+        | WindowEvent::GamepadDisconnected { .. }
+        | WindowEvent::GamepadButton { .. }
+        | WindowEvent::GamepadAxis { .. } => None,
     }
 }
 
@@ -712,7 +857,10 @@ mod tests {
         };
         use concerto_window::{
             InputGate,
-            input::actions::{ActionFired, ActionMap},
+            input::{
+                Gamepad,
+                actions::{ActionFired, ActionMap},
+            },
             plugin::WindowPlugin,
         };
 
@@ -744,6 +892,13 @@ mod tests {
             recipe: fn(&mut App),
             setup: impl FnOnce(&mut App),
         ) -> (App, Entity) {
+            let (mut app, document) = editor_editing(setup);
+            play_now(app.main_mut().world_mut(), document, recipe, |_| {});
+            app.update();
+            (app, document)
+        }
+
+        fn editor_editing(setup: impl FnOnce(&mut App)) -> (App, Entity) {
             let mut app = App::new();
             app.register_plugin(MainSchedulePlugin)
                 .register_plugin(TimePlugin)
@@ -770,8 +925,6 @@ mod tests {
                 .bind_global(TogglePlay, Shortcut::ctrl(KeyCode::KeyP));
             setup(&mut app);
             app.finish_plugin_build();
-            app.update();
-            play_now(app.main_mut().world_mut(), document, recipe, |_| {});
             app.update();
             (app, document)
         }
@@ -1162,6 +1315,184 @@ mod tests {
             send(&mut app, press(MouseButton::Left));
             app.update();
             assert!(grabbed(&app));
+        }
+
+        const PAD: GamepadId = GamepadId::new(0);
+
+        fn connect_pad(app: &mut App) {
+            send(
+                app,
+                WindowEvent::GamepadConnected {
+                    id: PAD,
+                    name: "Test pad".to_string(),
+                },
+            );
+        }
+
+        fn game_pad(app: &App, document: Entity) -> Option<&Gamepad> {
+            game_input(app, document).gamepad(PAD)
+        }
+
+        fn show(app: &mut App, shown: bool) {
+            app.get_resource_mut::<ViewportShown>().unwrap().0 = shown.then_some(ViewportView {
+                origin: ORIGIN,
+                size: (640, 480),
+                over: true,
+                typing: false,
+            });
+        }
+
+        #[test]
+        fn a_pad_event_reaches_the_game_while_the_editor_has_input() {
+            let (mut app, document) = editor_playing(plain_recipe);
+            release_with_shift_f1(&mut app);
+
+            connect_pad(&mut app);
+            send(
+                &mut app,
+                WindowEvent::GamepadButton {
+                    id: PAD,
+                    button: GamepadButton::South,
+                    value: 1.0,
+                },
+            );
+            app.update();
+
+            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
+            assert!(game_pad(&app, document).is_some_and(|pad| pad.is_held(GamepadButton::South)));
+        }
+
+        #[test]
+        fn a_new_play_target_is_told_about_the_pads_already_connected() {
+            let (mut app, document) = editor_editing(|_| {});
+            connect_pad(&mut app);
+            send(
+                &mut app,
+                WindowEvent::GamepadButton {
+                    id: PAD,
+                    button: GamepadButton::South,
+                    value: 1.0,
+                },
+            );
+            send(
+                &mut app,
+                WindowEvent::GamepadAxis {
+                    id: PAD,
+                    axis: GamepadAxis::LeftStickX,
+                    value: 0.5,
+                },
+            );
+            app.update();
+
+            play_now(app.main_mut().world_mut(), document, plain_recipe, |_| {});
+            app.update();
+            app.update();
+
+            let editor_pad = editor_input(&app).gamepad(PAD).unwrap();
+            let pad = game_pad(&app, document).unwrap();
+            assert_eq!(pad.name(), "Test pad");
+            assert!(pad.is_held(GamepadButton::South));
+            assert_eq!(
+                pad.axis(GamepadAxis::LeftStickX),
+                editor_pad.axis(GamepadAxis::LeftStickX)
+            );
+            assert!(pad.axis(GamepadAxis::LeftStickX) > 0.0);
+        }
+
+        #[test]
+        fn a_pad_that_left_while_the_viewport_was_hidden_is_disconnected_when_it_is_shown() {
+            let (mut app, document) = editor_playing(plain_recipe);
+            connect_pad(&mut app);
+            app.update();
+            assert!(game_pad(&app, document).is_some());
+
+            show(&mut app, false);
+            app.update();
+            send(&mut app, WindowEvent::GamepadDisconnected { id: PAD });
+            app.update();
+            assert!(editor_input(&app).gamepad(PAD).is_none());
+
+            show(&mut app, true);
+            app.update();
+            app.update();
+
+            assert!(game_pad(&app, document).is_none());
+        }
+
+        fn hold_stick(app: &mut App, value: f32) {
+            send(
+                app,
+                WindowEvent::GamepadAxis {
+                    id: PAD,
+                    axis: GamepadAxis::LeftStickX,
+                    value,
+                },
+            );
+        }
+
+        fn game_stick(app: &App, document: Entity) -> f32 {
+            game_pad(app, document).map_or(0.0, |pad| pad.axis(GamepadAxis::LeftStickX))
+        }
+
+        #[test]
+        fn losing_the_windows_focus_while_the_editor_has_input_zeroes_the_games_pads() {
+            let (mut app, document) = editor_playing(plain_recipe);
+            release_with_shift_f1(&mut app);
+            connect_pad(&mut app);
+            hold_stick(&mut app, 1.0);
+            app.update();
+            assert!(game_stick(&app, document) > 0.0);
+
+            send(&mut app, WindowEvent::Focused(false));
+            app.update();
+            assert_eq!(game_stick(&app, document), 0.0);
+
+            send(&mut app, WindowEvent::Focused(true));
+            hold_stick(&mut app, 1.0);
+            app.update();
+            assert!(game_stick(&app, document) > 0.0);
+            assert!(!game_focused(&app, document));
+            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
+        }
+
+        #[test]
+        fn a_stick_held_when_the_editor_takes_input_keeps_driving_the_game() {
+            let (mut app, document) = editor_playing(plain_recipe);
+            connect_pad(&mut app);
+            hold_stick(&mut app, 1.0);
+            app.update();
+            assert!(game_stick(&app, document) > 0.0);
+
+            release_with_shift_f1(&mut app);
+
+            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
+            assert!(!game_focused(&app, document));
+            assert!(game_stick(&app, document) > 0.0);
+            assert_eq!(
+                game_stick(&app, document),
+                editor_input(&app)
+                    .gamepad(PAD)
+                    .unwrap()
+                    .axis(GamepadAxis::LeftStickX)
+            );
+        }
+
+        #[test]
+        fn a_stick_held_while_the_viewport_was_hidden_reads_in_the_game_when_it_is_shown() {
+            let (mut app, document) = editor_playing(plain_recipe);
+            connect_pad(&mut app);
+            hold_stick(&mut app, 1.0);
+            app.update();
+
+            show(&mut app, false);
+            app.update();
+            assert_eq!(game_stick(&app, document), 0.0);
+
+            show(&mut app, true);
+            app.update();
+            app.update();
+
+            assert!(game_stick(&app, document) > 0.0);
         }
 
         #[test]

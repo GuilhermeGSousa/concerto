@@ -14,7 +14,7 @@ use concerto_ui::{
     text_input::{UITextInput, UITextInputChanged},
     theme::UITheme,
 };
-use concerto_window::input::actions::{ActionFired, ActionLabel, ActionMap};
+use concerto_window::input::actions::{ActionFired, ActionMap};
 
 fn staged(sources: &[&str]) -> ImportStaging {
     ImportStaging {
@@ -204,9 +204,7 @@ fn the_confirm_key_queues_the_batch_once_and_releases_the_key_context() {
 
     app.get_resource_mut::<EventChannel<ActionFired>>()
         .expect("channel")
-        .push_event(ActionFired {
-            action: ConfirmImport.intern(),
-        });
+        .push_event(ActionFired::new(ConfirmImport));
     frame(&mut app);
     frame(&mut app);
 

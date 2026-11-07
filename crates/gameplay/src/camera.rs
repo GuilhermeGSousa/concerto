@@ -6,15 +6,18 @@ use concerto_ecs::{
 use concerto_foundation::{time::Time, transform::Transform};
 use concerto_physics::{body::BodyId, physics_state::PhysicsState, query::QueryFilter};
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_window::input::Input;
+use concerto_window::input::{Input, actions::ActionMap};
 use glam::{EulerRot, Quat, Vec3};
 
+use crate::actions::Look;
 use crate::third_person::ThirdPersonCamera;
 
 #[derive(Resource)]
 pub struct CameraSettings {
     pub sensitivity: f32,
     pub pitch_limit: f32,
+    /// Radians per second the camera turns with the `Look` stick at full deflection.
+    pub stick_turn_rate: f32,
 }
 
 impl Default for CameraSettings {
@@ -22,7 +25,15 @@ impl Default for CameraSettings {
         Self {
             sensitivity: 0.001,
             pitch_limit: 30f32.to_radians(),
+            stick_turn_rate: 3.0,
         }
+    }
+}
+
+impl CameraSettings {
+    pub fn with_stick_turn_rate(mut self, stick_turn_rate: f32) -> Self {
+        self.stick_turn_rate = stick_turn_rate;
+        self
     }
 }
 
@@ -43,21 +54,26 @@ impl CameraPivot {
     }
 }
 
-/// Turns each pivot by the mouse; a pivot with a `ThirdPersonCamera` scales the sensitivity and takes its pitch limit from the rig's framing.
+/// Turns each pivot by the mouse and the `Look` stick; a pivot with a `ThirdPersonCamera` scales the sensitivity and takes its pitch limit from the rig's framing.
 pub fn move_camera_pivot(
     pivots: Query<(&mut Transform, &mut CameraPivot, Option<&ThirdPersonCamera>)>,
     input: Res<Input>,
+    actions: Res<ActionMap>,
+    time: Res<Time>,
     settings: Res<CameraSettings>,
 ) {
     let mouse_delta = input.mouse_delta();
+    let stick_turn =
+        actions.axis2d(Look, &input) * settings.stick_turn_rate * time.delta().as_secs_f32();
 
     for (mut transform, mut pivot, rig) in pivots.iter() {
         let framing = rig.map(ThirdPersonCamera::current);
-        let sensitivity =
-            settings.sensitivity * framing.map_or(1.0, |framing| framing.sensitivity_scale);
+        let scale = framing.map_or(1.0, |framing| framing.sensitivity_scale);
+        let sensitivity = settings.sensitivity * scale;
         let pitch_limit = framing.map_or(settings.pitch_limit, |framing| framing.pitch_limit);
-        pivot.yaw -= mouse_delta.x * sensitivity;
-        pivot.pitch = (pivot.pitch - mouse_delta.y * sensitivity).clamp(-pitch_limit, pitch_limit);
+        pivot.yaw -= mouse_delta.x * sensitivity + stick_turn.x * scale;
+        pivot.pitch = (pivot.pitch - mouse_delta.y * sensitivity + stick_turn.y * scale)
+            .clamp(-pitch_limit, pitch_limit);
 
         transform.rotation = Quat::from_rotation_y(pivot.yaw) * Quat::from_rotation_x(pivot.pitch);
     }

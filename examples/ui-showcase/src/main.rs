@@ -35,7 +35,7 @@ use concerto::{
         widgets::{UITabBody, UITabChanged, UITabStrip, select_tab},
     },
     window::{
-        input::MouseButton,
+        input::{GamepadButton, GamepadStick, Input, MouseButton},
         plugin::{Window, WindowCommand},
     },
 };
@@ -46,6 +46,9 @@ struct Diagnostics;
 
 #[derive(Component)]
 struct ContextMenu;
+
+#[derive(Component)]
+struct GamepadReadout;
 
 #[derive(Component)]
 struct ShowcaseTabs;
@@ -60,6 +63,8 @@ const STRESS_LABELS: usize = 300;
 const STRESS_TICK: f32 = 0.1;
 const DIAGNOSTICS_REFRESH: f32 = 0.25;
 const DIAGNOSTICS_WIDTH: f32 = 1040.0;
+const GAMEPAD_WIDTH: f32 = 206.0;
+const GAMEPAD_LINES: f32 = 10.0;
 
 #[derive(Resource, Default)]
 struct StressTicker {
@@ -376,6 +381,20 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
             .gap(8.0)
             .padding(12.0),
     )
+    .add_child(section_title(theme, "GAMEPADS"))
+    .add_child((
+        theme
+            .label(gamepad_readout(&Input::new()))
+            .mono()
+            .font_size(11.0)
+            .size(
+                UIValue::Px(GAMEPAD_WIDTH),
+                UIValue::Px(theme.line_height(11.0) * GAMEPAD_LINES),
+            )
+            .fixed()
+            .clipped(),
+        GamepadReadout,
+    ))
     .add_child_with(
         (
             theme.canvas().grow().column().gap(0.0),
@@ -747,15 +766,94 @@ fn update_diagnostics(
     }
 }
 
+fn gamepad_readout(input: &Input) -> String {
+    let pads: Vec<String> = input
+        .gamepads()
+        .map(|pad| {
+            let left = pad.stick(GamepadStick::Left);
+            let right = pad.stick(GamepadStick::Right);
+            let held: Vec<String> = GamepadButton::ALL
+                .into_iter()
+                .filter(|&button| pad.is_held(button))
+                .map(|button| format!("{button:?}"))
+                .collect();
+            let held = if held.is_empty() {
+                String::from("none")
+            } else {
+                held.join(" ")
+            };
+            format!(
+                "{}\nL {:+.2} {:+.2}  R {:+.2} {:+.2}\nLT {:.2}  RT {:.2}\nheld {}",
+                pad.name(),
+                left.x,
+                left.y,
+                right.x,
+                right.y,
+                pad.button_value(GamepadButton::LeftTrigger),
+                pad.button_value(GamepadButton::RightTrigger),
+                held,
+            )
+        })
+        .collect();
+    if pads.is_empty() {
+        String::from("No gamepad connected")
+    } else {
+        pads.join("\n\n")
+    }
+}
+
+fn update_gamepads(input: Res<Input>, text: Query<&mut UIText, With<GamepadReadout>>) {
+    let value = gamepad_readout(&input);
+    for mut text in text.iter() {
+        if text.text != value {
+            text.text = value.clone();
+        }
+    }
+}
+
 fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .insert_resource(StressTicker::default())
         .insert_resource(DiagnosticsTimer::default())
         .add_system(Startup, spawn_showcase)
-        .add_system(Update, (tick_stress_labels, update_diagnostics));
+        .add_system(
+            Update,
+            (tick_stress_labels, update_diagnostics, update_gamepads),
+        );
 }
 
 fn main() {
     env_logger::init();
     concerto::run(game, concerto::content_registry!());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concerto::window::input::{GamepadAxis, GamepadId};
+
+    #[test]
+    fn the_readout_says_when_no_gamepad_is_connected() {
+        assert_eq!(gamepad_readout(&Input::new()), "No gamepad connected");
+    }
+
+    #[test]
+    fn the_readout_lists_each_pad_with_its_sticks_triggers_and_held_buttons() {
+        let mut input = Input::new();
+        let first = GamepadId::new(0);
+        let second = GamepadId::new(1);
+        input.connect_gamepad(first, "Pad A");
+        input.connect_gamepad(second, "Pad B");
+        input.update_gamepad_axis(first, GamepadAxis::LeftStickX, 1.0);
+        input.update_gamepad_axis(first, GamepadAxis::RightStickY, -1.0);
+        input.update_gamepad_button(first, GamepadButton::RightTrigger, 0.75);
+        input.update_gamepad_button(first, GamepadButton::LeftTrigger, 0.25);
+        input.update_gamepad_button(first, GamepadButton::South, 1.0);
+
+        assert_eq!(
+            gamepad_readout(&input),
+            "Pad A\nL +1.00 +0.00  R +0.00 -1.00\nLT 0.25  RT 0.75\nheld South RightTrigger\n\n\
+             Pad B\nL +0.00 +0.00  R +0.00 +0.00\nLT 0.00  RT 0.00\nheld none"
+        );
+    }
 }

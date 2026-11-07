@@ -6,14 +6,16 @@ use concerto::{
     },
     asset_id,
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
+    window::input::actions::ActionMap,
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 
 use crate::{
     character::{
-        CharacterConfig, PlayerSpawner, cycle_displacement, debug_keys, feed_foot_placement,
-        setup_character_animations, spawn_character, spawn_forest_walls, update_movement,
+        CharacterConfig, PlayerSpawner, bind_controls, cycle_displacement, debug_keys,
+        feed_foot_placement, setup_character_animations, spawn_character, spawn_forest_walls,
+        update_movement,
     },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
@@ -32,6 +34,10 @@ pub fn game(app: &mut App) {
         .register_plugin(MotionMatchingGizmosPlugin)
         .register_plugin(ProceduralAnimationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
+    bind_controls(
+        app.get_resource_mut::<ActionMap>()
+            .expect("DefaultPlugins inserts the ActionMap"),
+    );
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
         .register_type::<PlayerSpawner>()

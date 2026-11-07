@@ -5,12 +5,15 @@ use concerto_ecs::system::schedule::Schedule;
 use concerto_ecs::{Changed, Entity, IntoSystemConfig, Query, ResMut, Resource, World};
 use concerto_foundation::time::Time;
 use concerto_foundation::transform::Transform;
+use concerto_gameplay::actions::bind_gameplay_actions;
 use concerto_gameplay::camera::{CameraBoom, CameraPivot, CameraSettings, move_camera_pivot};
 use concerto_gameplay::third_person::{
     CameraStance, ShoulderSide, ThirdPersonCamera, update_third_person_cameras,
 };
-use concerto_window::input::Input;
+use concerto_window::input::actions::ActionMap;
+use concerto_window::input::{GamepadAxis, GamepadId, Input};
 use glam::{EulerRot, Vec3};
+use std::time::Duration;
 
 const LARGE_MOUSE_DELTA_X: f64 = 100.0;
 const LARGE_MOUSE_DELTA_Y: f64 = -100_000.0;
@@ -27,6 +30,9 @@ fn world() -> World {
     world.register_component::<Children>();
     world.insert_resource(Time::new());
     world.insert_resource(Input::new());
+    let mut actions = ActionMap::default();
+    bind_gameplay_actions(&mut actions);
+    world.insert_resource(actions);
     world.insert_resource(CameraSettings::default());
     world
 }
@@ -241,4 +247,27 @@ fn leaving_aim_eases_the_pitch_back_into_range() {
     run_pivots(&mut world);
 
     assert_near(pitch(&world, rig.pivot), 45f32.to_radians());
+}
+
+#[test]
+fn full_right_stick_turns_the_pivot_by_the_stick_turn_rate() {
+    let mut world = world();
+    let pivot = world.spawn((CameraPivot::default(), Transform::default()));
+    let pad = GamepadId::new(0);
+    let input = world.get_resource_mut::<Input>().unwrap();
+    input.connect_gamepad(pad, "pad");
+    input.update_gamepad_axis(pad, GamepadAxis::RightStickX, 1.0);
+    std::thread::sleep(Duration::from_millis(5));
+    world.get_resource_mut::<Time>().unwrap().update();
+    let dt = world.get_resource::<Time>().unwrap().delta().as_secs_f32();
+    let rate = world
+        .get_resource::<CameraSettings>()
+        .unwrap()
+        .stick_turn_rate;
+
+    run_pivots(&mut world);
+
+    assert!(dt > 0.0);
+    assert_near(yaw(&world, pivot), -rate * dt);
+    assert_near(pitch(&world, pivot), 0.0);
 }

@@ -380,7 +380,7 @@ pub(crate) mod tests {
     use concerto_name::Name;
     use concerto_reflect::Reflect;
     use concerto_ui::{node::UINode, theme::UITheme};
-    use concerto_window::input::actions::{ActionFired, ActionLabel};
+    use concerto_window::input::actions::ActionFired;
     use std::any::TypeId;
 
     #[derive(serde::Serialize, serde::Deserialize, Reflect, Clone, PartialEq, Debug)]
@@ -872,9 +872,7 @@ pub(crate) mod tests {
 
     pub(crate) fn press_save(f: &mut SceneFixture) {
         let mut fired = EventChannel::<ActionFired>::default();
-        fired.push_event(ActionFired {
-            action: crate::actions::Save.intern(),
-        });
+        fired.push_event(ActionFired::new(crate::actions::Save));
         f.world.insert_resource(fired);
         let mut system = crate::asset_editor::request_save.into_system();
         system.initialize(&mut f.world);
