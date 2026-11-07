@@ -1,4 +1,8 @@
-use concerto_app::{App, Plugin, edit_time::AtEditTime, schedule_groups::LateUpdate};
+use concerto_app::{
+    App, Plugin,
+    edit_time::AtEditTime,
+    schedule_groups::{LateUpdate, Update},
+};
 use concerto_ecs::{
     Changed, Entity, IntoSystemConfig, Or, Query, ResMut, With,
     component::{removed::RemovedComponents, scene::SceneEntityRef},
@@ -9,11 +13,12 @@ use concerto_foundation::transform::{
 };
 
 use crate::{
+    agent::{NavAgent, NavArrived, NavSteering, NavUnreachable, plan_nav_routes, steer_nav_agents},
     graph::{NavGraph, NavPointRecord},
     point::{NavLink, NavLinks, NavPoint},
 };
 
-/// Registers the navigation components and keeps `NavGraph` in step with them.
+/// Registers the navigation components, keeps `NavGraph` in step with them, and steers agents.
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
@@ -21,6 +26,10 @@ impl Plugin for NavigationPlugin {
         app.register_type::<NavPoint>()
             .register_type::<NavLinks>()
             .register_type::<NavLink>()
+            .register_type::<NavAgent>()
+            .register_type::<NavSteering>()
+            .register_event::<NavArrived>()
+            .register_event::<NavUnreachable>()
             .insert_resource(NavGraph::default())
             .track_removals::<NavPoint>()
             .track_removals::<NavLinks>();
@@ -31,6 +40,8 @@ impl Plugin for NavigationPlugin {
                 .after(propagate_global_transforms)
                 .at_edit_time(),
         );
+        app.add_system(Update, plan_nav_routes);
+        app.add_system(Update, steer_nav_agents.after(plan_nav_routes));
     }
 }
 

@@ -244,7 +244,7 @@ impl NavGraph {
             if point == goal {
                 break;
             }
-            if estimate - self.points[point].position.distance(goal_position) > cost[point] {
+            if estimate > cost[point] + self.points[point].position.distance(goal_position) {
                 continue;
             }
             for step in &self.adjacency[point] {
@@ -302,12 +302,12 @@ impl NavGraph {
     }
 }
 
-fn yaw_facing(rotation: Quat) -> Quat {
+pub(crate) fn yaw_facing(rotation: Quat) -> Quat {
     let forward = rotation * Vec3::Z;
     Quat::from_rotation_y(forward.x.atan2(forward.z))
 }
 
-fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
+pub(crate) fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
 }
 
@@ -448,6 +448,20 @@ mod tests {
             ]
         );
         assert!((path.length - 2.0 * 2f32.sqrt()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_route_whose_costs_round_is_still_found() {
+        let [start, middle, goal] = [entity(1), entity(2), entity(3)];
+        let graph = NavGraph::build([
+            NavPointRecord::new(start, Vec3::ZERO).with_link(link(middle)),
+            NavPointRecord::new(middle, Vec3::new(4.0, 0.0, -1.0)).with_link(link(goal)),
+            NavPointRecord::new(goal, Vec3::new(4.0, 0.0, 4.0)),
+        ]);
+        assert_eq!(
+            graph.path(start, goal).map(|path| path.points),
+            Some(vec![start, middle, goal])
+        );
     }
 
     #[test]
