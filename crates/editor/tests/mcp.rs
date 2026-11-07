@@ -71,7 +71,7 @@ use concerto_ui::{
     node::UILayoutDiagnostics, text::UIText, text_input::UITextInput, theme::UITheme,
 };
 use concerto_window::{
-    input::{Input, KeyCode, MouseButton, PhysicalKey},
+    input::{GamepadButton, Input, KeyCode, MouseButton, PhysicalKey},
     plugin::WindowPlugin,
 };
 use glam::{Vec2, Vec3};
@@ -258,6 +258,7 @@ struct Received {
     w_presses: u32,
     f1_presses: u32,
     clicks: u32,
+    pad_presses: u32,
     pointer: Vec2,
 }
 
@@ -275,6 +276,12 @@ fn count_input(input: Res<Input>, counters: Query<&mut Received>) {
         }
         if input.is_mouse_button_just_pressed(MouseButton::Left) {
             received.clicks += 1;
+        }
+        if input
+            .gamepads()
+            .any(|pad| pad.is_just_pressed(GamepadButton::South))
+        {
+            received.pad_presses += 1;
         }
         if received.pointer != input.mouse_position() {
             received.pointer = input.mouse_position();
@@ -3980,6 +3987,88 @@ fn when_the_editor_takes_input_partway_the_lists_releases_still_reach_it() {
     );
     assert_eq!(after["f1_presses"], 1, "{after}");
     assert_eq!(after["w_presses"], 0, "{after}");
+}
+
+#[test]
+fn send_input_connects_a_pad_whose_events_reach_the_game_under_either_owner() {
+    let fixture = Fixture::new();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        counting_game,
+        |_| {},
+        |client| async move {
+            open(&client).await;
+            ok(&client, "play").await;
+            let status = ok(&client, "status").await;
+            let document = document_id(&status);
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let counter = scene_id(&ids, "Counter");
+            let send = |events: Value| {
+                let client = &client;
+                async move { ok_with(client, "send_input", json!({ "events": events })).await }
+            };
+            let unplugged = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "pad": 0, "button": "south", "value": 1.0 }] }),
+            )
+            .await;
+            let pressed = send(json!([
+                { "pad": 0, "connect": true, "name": "Test pad" },
+                { "pad": 0, "button": "south", "value": 1.0 },
+                { "pad": 0, "axis": "left_stick_x", "value": 0.5 },
+            ]))
+            .await;
+            send(json!([
+                { "key": "ShiftLeft", "pressed": true },
+                { "key": "F1", "pressed": true },
+            ]))
+            .await;
+            let under_editor = send(json!([
+                { "pad": 0, "button": "south", "value": 0.0 },
+                { "pad": 0, "button": "south", "value": 1.0 },
+            ]))
+            .await;
+            let after = received(&ok_with(&client, "inspect", json!({ "entity": counter })).await);
+            let unplug = send(json!([
+                { "pad": 0, "button": "south", "value": 0.0 },
+                { "pad": 0, "connect": false },
+            ]))
+            .await;
+            client.cancel().await.unwrap();
+            (document, unplugged, pressed, under_editor, after, unplug)
+        },
+    ) else {
+        return;
+    };
+
+    let (document, unplugged, pressed, under_editor, after, unplug) = served.result;
+    assert_eq!(unplugged["code"], "invalid_arguments", "{unplugged}");
+    assert_eq!(
+        unplugged["message"],
+        "events[0]: pad 0 is not connected; send { \"pad\": 0, \"connect\": true } first.",
+        "{unplugged}"
+    );
+    assert_eq!(
+        pressed,
+        format!(
+            "Sent 3 window events to the game in document {document}; pads connected: 0 (Test pad, from send_input); pad buttons held: 0 south."
+        )
+    );
+    assert_eq!(
+        under_editor,
+        format!(
+            "Sent 2 window events to the game in document {document}; held in the editor: F1, ShiftLeft; pads connected: 0 (Test pad, from send_input); pad buttons held: 0 south. The editor has input now."
+        )
+    );
+    assert_eq!(after["pad_presses"], 2, "{after}");
+    assert_eq!(
+        unplug,
+        format!(
+            "Sent 2 window events to the game in document {document}; held in the editor: F1, ShiftLeft. The editor has input now."
+        )
+    );
 }
 
 #[derive(Reflect, Default)]

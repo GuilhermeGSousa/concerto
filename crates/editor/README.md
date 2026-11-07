@@ -255,7 +255,9 @@ and `stop` a game starting or playing.
 window passes on a person's input, one window event per frame in order, and
 answers once the game has had the last: `Sent <n> window events to the game in
 document <id>.`, naming the keys still held in the game and those held in the
-editor, which a later call should release. An event is
+editor, which a later call should release, then the pads connected, those
+`send_input` connected marked `from send_input`, and the pad buttons held. An
+event is
 `{ "key", "pressed", "text"? }`, a key named as the window crate's `KeyCode`
 names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`; the logo keys, Super
 or Windows or Command, are `MetaLeft` and `MetaRight`), ignoring case, with the
@@ -263,21 +265,39 @@ text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
 `right`, `middle`, `back` and `forward`, moving the pointer to `at` first;
 `{ "move": [x, y] }`, which moves the pointer there and, as a mouse does, adds
 the mouse motion that takes it there, a second window event; or
-`{ "wheel": [x, y] }`, in lines. Points are pixels of the viewport's picture
-from its top-left corner at its full size, the `viewport` size `status`
-reports; on a screenshot scaled down by `max_edge`, multiply a point by the
-full size over the PNG's size. A point off the picture, or a key name
-`KeyCode` lacks, answers `invalid_arguments`, the latter with close names, and
-sends nothing. The events then take the path real input takes: Ctrl+P stops
-the game, and Shift+F1 or a press off the viewport's picture gives input to the
+`{ "wheel": [x, y] }`, in lines; or a gamepad event: `{ "pad": 0, "connect":
+true, "name"? }` plugs pad 0 in, named `Pad 0` when `name` is left out, and
+`"connect": false` unplugs it; `{ "pad": 0, "button": "south", "value": 1.0 }`
+sets a button, 0 up to 1 fully down, the triggers in between; and
+`{ "pad": 0, "axis": "left_stick_x", "value": 0.5 }` sets a stick axis, -1 to 1
+with Y up. Buttons and axes are named in snake case, ignoring case: `south`,
+`east`, `north`, `west`, `left_bumper`, `right_bumper`, `left_trigger`,
+`right_trigger`, `select`, `start`, `mode`, `left_thumb`, `right_thumb`,
+`d_pad_up`, `d_pad_down`, `d_pad_left`, `d_pad_right`, and `left_stick_x`,
+`left_stick_y`, `right_stick_x`, `right_stick_y`. A pad's buttons and axes need
+it connected first, by `send_input` or as a real gamepad; the editor's window
+sees the pads `send_input` connects as it sees real ones, and they stay
+connected, across calls, until a later call unplugs them. Points are pixels
+of the viewport's picture from its top-left corner at its full size, the
+`viewport` size `status` reports; on a screenshot scaled down by `max_edge`, multiply a point by the
+full size over the PNG's size. These answer `invalid_arguments` and send
+nothing: a point off the picture; a key name `KeyCode` lacks, or an unknown pad
+button or axis, with close names; a button or axis for a pad not connected,
+saying to send `{ "pad": n, "connect": true }` first; `"connect": true` for a
+number a real gamepad has, listing the numbers in use, so pick another (a pad
+`send_input` already connected is left as it is); and a pad event with none, or
+more than one, of `connect`, `button` and `axis`, or a button or axis without
+`value`, showing the three shapes. The events then take the path real input
+takes: Ctrl+P stops the game, and Shift+F1 or a press off the viewport's picture gives input to the
 editor. A key left pressed stays held in the game, across calls, until a later
 call releases it. `send_input` needs a game playing. While the editor has
 input, a list that starts with a press `at` a point on the picture goes
 through: that press gives the game input back, as a person's click on the
 viewport does, without reaching the game as a click, and the rest of the list
-follows. In any other list only key and button releases go through, to the
-editor, so a key pressed before the editor took input is not left held; a list
-that holds anything else answers `input_released` once its releases are sent.
+follows. Pad events go through whoever has input, to the game. In any other
+list only key and button releases and pad events go through, the releases to
+the editor, so a key pressed before the editor took input is not left held; a
+list that holds anything else answers `input_released` once those are sent.
 After an event that gives the editor input, or stops the game, the same holds
 for the rest of the list: its releases are sent, and if anything else was left
 out the call answers `input_released` or `not_playing`, saying how many were
@@ -308,7 +328,7 @@ A failed call is a tool result marked `isError` whose text is
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
 | `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
 | `play_failed` | The game did not start; the message is the editor's status |
-| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture and holds more than key and button releases; the releases were sent |
+| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture and holds more than key and button releases and pad events; the releases and pad events, which always go through, were sent |
 | `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |

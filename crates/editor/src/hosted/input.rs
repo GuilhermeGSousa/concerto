@@ -48,12 +48,30 @@ pub struct Routing {
     playing: bool,
     pad_target: Option<Entity>,
     told_pads: HashSet<GamepadId>,
+    sent_pads: HashSet<GamepadId>,
 }
 
 impl Routing {
     /// The keys the editor window holds down, as the host has seen them pressed and not released.
     pub fn held_keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
         self.keys.iter().copied()
+    }
+
+    /// The pads MCP `send_input` connected and has not disconnected, as opposed to real gamepads.
+    pub fn sent_pads(&self) -> impl Iterator<Item = GamepadId> + '_ {
+        self.sent_pads.iter().copied()
+    }
+
+    pub(crate) fn note_sent(&mut self, event: &WindowEvent) {
+        match event {
+            WindowEvent::GamepadConnected { id, .. } => {
+                self.sent_pads.insert(*id);
+            }
+            WindowEvent::GamepadDisconnected { id } => {
+                self.sent_pads.remove(id);
+            }
+            _ => {}
+        }
     }
 }
 
