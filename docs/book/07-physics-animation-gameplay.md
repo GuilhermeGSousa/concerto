@@ -187,6 +187,36 @@ A graph is a tree of nodes under a result node:
   with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
   at 1.0, so inputs mix equally; an input at weight 0 is left out, and with
   none left the node gives the rest pose.
+- **Additive** (`AdditiveNode`) plays an additive clip's delta (see
+  [Additive clips](#additive-clips)) over its one input, the base; with no
+  input it goes over the rest pose, and inputs after the first are ignored
+  with a warning. The node owns its clip and a clock over the delta, in delta
+  time: seconds from the start of the clip's `range`, so `start_time` is where
+  the delta starts and where `Loop` returns to, and `PlayOnce` holds at its
+  end. The rate is `play_rate` times the float under `play_rate_param`, as on
+  **Clip**. The weight is `weight` times the float under `weight_param`, with
+  NaN as 0, clamped to [0, 1]; a missing param leaves `weight` alone, and the
+  input's node weight is ignored. Nothing eases it, so smooth the param in the
+  game. The clock runs at weight 0 too, so an overlay fading in doesn't start
+  over, and at weight 0 the output is the base exactly. On the player's root
+  bone the delta adds no twist about up and no horizontal move, so a lean
+  stays but the heading and the ground position are the base's. Root motion
+  is always the base's. The base's events keep their weights, and the clip's
+  are added at the node's weight. A plain clip passes the base through with
+  one warning; an additive clip whose delta isn't built, such as one added in
+  code, passes it through with none. `AnimationPlayer::play(node)` restarts
+  the delta, and the node never holds back `OnAnimationEnd`: it always counts
+  as finished. To mask an overlay, chain it under a **Layer** node.
+  `AdditiveNode::new(clip)` starts at weight 1, looping from 0 at rate 1, and
+  each field has a `with_<field>`:
+  ```rust
+  graph.result_node().with_input(
+      AdditiveNode::new(cold).with_weight_param(name!("cold")),
+      |mut base| {
+          base.with_input(AnimationClipNode::new(walk), |_| {});
+      },
+  );
+  ```
 - **Layer** (`LayerNode`) lays its second input, the overlay, over its first,
   the base, on the bones a `BoneMask` asset names. Build it with
   `with_layer_input(node, base, overlay)`, which adds the base through the
@@ -594,11 +624,12 @@ taken at the clip's frame rate, its detected rate when it has none stored, or
 A delta exists only for a bone and component that both clips animate; any other
 reads as identity. The bones in `roots`, the roots of the skeleton the source
 emits, keep their rotation delta but no translation, so an overlay adds a lean
-of the whole body but no root motion. Scale is never layered, nor are a clip's
-events: they stay on the clip.
+of the whole body but no root motion. Scale is never layered, and a clip's
+events stay on the clip, fired by the **Additive** node at its weight.
 
-Mesh-space deltas, a single-frame or rest-pose base, and the graph node that
-plays an additive clip over a pose are not there yet.
+The graph node that plays an additive clip over a pose is **Additive**, in the
+node list under [Animation](#animation). Mesh-space deltas and a single-frame or
+rest-pose base are not there yet.
 
 ## Gameplay helpers
 
