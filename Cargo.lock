@@ -1121,6 +1121,8 @@ dependencies = [
  "concerto-director",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-motion-matching",
+ "concerto-navigation",
  "concerto-physics",
  "concerto-reflect",
  "concerto-render",
