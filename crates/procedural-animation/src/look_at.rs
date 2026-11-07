@@ -278,7 +278,7 @@ pub(crate) fn share(share: f32) -> f32 {
     }
 }
 
-fn halflife(halflife: f32) -> f32 {
+pub(crate) fn halflife(halflife: f32) -> f32 {
     if halflife.is_finite() && halflife > 0.0 {
         halflife
     } else {

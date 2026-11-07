@@ -3,7 +3,8 @@ use concerto_animation::node::{AnimationNode, ErasedAnimationNode};
 use concerto_animation::plugin::register_animation_types;
 use concerto_name::name;
 use concerto_procedural_animation::{
-    FootPlacementLeg, FootPlacementNode, LookAtBone, LookAtEye, LookAtNode,
+    AimBone, AimNode, FootPlacementLeg, FootPlacementNode, LookAtBone, LookAtEye, LookAtNode,
+    Muzzle,
 };
 use concerto_reflect::TypeRegistry;
 
@@ -12,6 +13,7 @@ fn registry() -> TypeRegistry {
     register_animation_types(&mut registry);
     registry.register::<FootPlacementNode>();
     registry.register::<LookAtNode>();
+    registry.register::<AimNode>();
     registry
 }
 
@@ -123,4 +125,50 @@ fn a_look_at_node_keeps_every_field_through_a_round_trip() {
         restored.load_warnings()
     );
     assert_eq!(live_node::<LookAtNode>(&restored), Some(&node));
+}
+
+#[test]
+fn an_aim_node_keeps_every_field_through_a_round_trip() {
+    let node = AimNode::new(
+        name!("aim_target"),
+        Muzzle::new("hand_r")
+            .with_offset(glam::Vec3::new(0.02, 0.05, 0.3))
+            .with_direction(glam::Vec3::new(0.0, 0.1, 1.0)),
+    )
+    .with_bone(
+        AimBone::new("spine_02")
+            .with_share(0.4)
+            .with_limits(0.6, 0.3),
+    )
+    .with_bone(
+        AimBone::new("spine_03")
+            .with_share(0.6)
+            .with_limits(0.5, 0.35),
+    )
+    .with_up(glam::Vec3::new(0.1, 1.0, 0.0))
+    .with_weight(0.8)
+    .with_weight_param(name!("aim_weight"))
+    .with_weight_halflife(0.35)
+    .with_reacquire_halflife(0.15)
+    .with_reacquire_param(name!("aim_reacquire"));
+    let defaults = AimNode::default();
+    assert_ne!(node.muzzle, Muzzle::default());
+    assert_ne!(node.chain[0], AimBone::default());
+    assert_ne!(node.up, defaults.up);
+    assert_ne!(node.target_param, defaults.target_param);
+    assert_ne!(node.weight, defaults.weight);
+    assert_ne!(node.weight_halflife, defaults.weight_halflife);
+    assert_ne!(node.reacquire_halflife, defaults.reacquire_halflife);
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<AimNode>(&restored), Some(&node));
 }

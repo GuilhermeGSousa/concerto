@@ -1,4 +1,5 @@
 use concerto_animation::{
+    blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
     look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
     node::{
@@ -7,6 +8,7 @@ use concerto_animation::{
     },
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
+use concerto_foundation::math::{Spring, SpringValue};
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::Name;
 use concerto_reflect::Reflect;
@@ -14,9 +16,10 @@ use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
 
-use crate::look_at::{descends, limits, share};
+use crate::look_at::{descends, halflife, limits, share};
 
 const AIM_PASSES: usize = 3;
+const SNAP_WEIGHT: f32 = 1.0e-4;
 
 /// Turns a chain of bones so a muzzle's barrel points at a world-space point; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
@@ -185,12 +188,60 @@ impl Muzzle {
     }
 }
 
-/// The turn each chain bone of an [`AimNode`] last solved to, the pose it solves on, and whether it has warned about bones it cannot resolve.
+/// The time an [`AimNode`] owes since its last evaluate, its eased weight and the eased turn of each chain bone, the pose it solves on, and whether it has warned about bones it cannot resolve.
 #[derive(Debug)]
 pub struct AimState {
-    offsets: Vec<Quat>,
+    elapsed: f32,
+    fresh: bool,
+    weight: Spring<f32>,
+    offsets: Vec<Spring<Quat>>,
     working: Vec<JointPose>,
     warned: bool,
+}
+
+impl AimState {
+    fn take_time(&mut self) -> f32 {
+        let elapsed = std::mem::take(&mut self.elapsed);
+        if std::mem::take(&mut self.fresh) {
+            0.0
+        } else {
+            elapsed
+        }
+    }
+
+    fn offsets_to_rest(&mut self) {
+        for offset in &mut self.offsets {
+            offset.reset_to(Quat::IDENTITY);
+        }
+    }
+
+    fn hold_offsets(&mut self) {
+        for offset in &mut self.offsets {
+            let held = offset.value;
+            offset.reset_to(held);
+        }
+    }
+}
+
+fn identity_offsets(count: usize) -> Vec<Spring<Quat>> {
+    vec![Spring::critically_damped(Quat::IDENTITY, 0.0); count]
+}
+
+fn ease<T: SpringValue>(spring: &mut Spring<T>, goal: T, halflife: f32, delta_time: f32) -> T {
+    if halflife > 0.0 {
+        spring.set_halflife(halflife);
+        spring.update(goal, delta_time)
+    } else {
+        spring.reset_to(goal);
+        goal
+    }
+}
+
+fn scaled(value: f32, param: Option<Name>, blackboard: &AnimationBlackboard) -> f32 {
+    value
+        * param
+            .and_then(|param| blackboard.get_float(param))
+            .unwrap_or(1.0)
 }
 
 struct AimLink {
@@ -284,6 +335,23 @@ impl AimNode {
         })
     }
 
+    fn effective_weight(&self, blackboard: &AnimationBlackboard) -> f32 {
+        let weight = scaled(self.weight, self.weight_param, blackboard);
+        if weight.is_nan() {
+            0.0
+        } else {
+            weight.clamp(0.0, 1.0)
+        }
+    }
+
+    fn reacquire_halflife(&self, blackboard: &AnimationBlackboard) -> f32 {
+        halflife(scaled(
+            self.reacquire_halflife,
+            self.reacquire_param,
+            blackboard,
+        ))
+    }
+
     fn target(&self, context: &AnimationGraphContext<'_>) -> Option<Vec3> {
         let target = *context.blackboard().get::<Vec3>(self.target_param)?;
         let world_to_model = WorldToModel::new(context.model_to_world().unwrap_or_default());
@@ -349,13 +417,20 @@ impl AnimationNode for AimNode {
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimState {
         AimState {
-            offsets: vec![Quat::IDENTITY; self.chain.len()],
+            elapsed: 0.0,
+            fresh: true,
+            weight: Spring::critically_damped(0.0, 0.0),
+            offsets: identity_offsets(self.chain.len()),
             working: Vec::new(),
             warned: false,
         }
     }
 
-    fn update(&self, _: &mut AimState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, state: &mut AimState, delta_time: f32, _: &(), _: &AnimationGraphContext<'_>) {
+        if delta_time.is_finite() && delta_time > 0.0 {
+            state.elapsed += delta_time;
+        }
+    }
 
     fn evaluate(
         &self,
@@ -370,6 +445,7 @@ impl AnimationNode for AimNode {
         if let Some(input) = evaluated_inputs.first() {
             output.copy_from(&input.frame);
         }
+        let delta_time = state.take_time();
         if self.chain.is_empty() {
             return;
         }
@@ -387,30 +463,57 @@ impl AnimationNode for AimNode {
             }
         };
         if state.offsets.len() != aim.links.len() {
-            state.offsets = vec![Quat::IDENTITY; aim.links.len()];
+            state.offsets = identity_offsets(aim.links.len());
         }
-        let Some(target) = self.target(context) else {
-            state.offsets.fill(Quat::IDENTITY);
+        let blackboard = context.blackboard();
+        let target = self.target(context);
+        let goal = target.map_or(0.0, |_| self.effective_weight(blackboard));
+        let weight = ease(
+            &mut state.weight,
+            goal,
+            halflife(self.weight_halflife),
+            delta_time,
+        )
+        .clamp(0.0, 1.0);
+        state.weight.value = weight;
+        if goal <= 0.0 && weight < SNAP_WEIGHT {
+            state.weight.reset_to(0.0);
+            state.offsets_to_rest();
             return;
-        };
-        if let Some(offsets) = self.solve(
-            &aim,
-            output.joints(),
-            target,
-            AIM_PASSES,
-            &mut state.working,
-        ) {
-            state.offsets = offsets;
+        }
+        let solved = target.and_then(|target| {
+            self.solve(
+                &aim,
+                output.joints(),
+                target,
+                AIM_PASSES,
+                &mut state.working,
+            )
+        });
+        match solved {
+            Some(solved) => {
+                let reacquire = self.reacquire_halflife(blackboard);
+                for (offset, goal) in state.offsets.iter_mut().zip(solved) {
+                    ease(offset, goal, reacquire, delta_time);
+                }
+            }
+            None => state.hold_offsets(),
+        }
+        if weight <= 0.0 {
+            return;
         }
         for (link, offset) in aim.links.iter().zip(&state.offsets) {
             if let Some(joint) = output.joint_mut(link.bone) {
-                joint.rotation *= *offset;
+                joint.rotation *= Quat::IDENTITY.slerp(offset.value, weight);
             }
         }
     }
 
     fn reset(&self, state: &mut AimState) {
-        state.offsets.fill(Quat::IDENTITY);
+        state.elapsed = 0.0;
+        state.fresh = true;
+        state.weight.reset_to(0.0);
+        state.offsets_to_rest();
     }
 }
 
@@ -455,6 +558,9 @@ mod tests {
     const HIGH: usize = 2;
     const GUN: usize = 3;
     const MISS: f32 = 0.005;
+    const DT: f32 = 1.0 / 60.0;
+    const SETTLE_STEPS: usize = 300;
+    const KICK: f32 = 0.05;
 
     struct RigBone {
         name: &'static str,
@@ -758,7 +864,13 @@ mod tests {
         }
 
         fn solve(&self, node: &AimNode) -> Frame {
-            Stage::new(self, node.clone()).step()
+            Stage::new(self, node.clone()).step(DT)
+        }
+
+        fn kicked(&self) -> Vec<Quat> {
+            let mut rotations = self.rotations();
+            rotations[SPINE] *= Quat::from_rotation_x(-KICK);
+            rotations
         }
 
         fn solve_directly(&self, node: &AimNode, passes: usize, target: Vec3) -> Vec<JointPose> {
@@ -777,6 +889,8 @@ mod tests {
 
     struct Stage {
         app: App,
+        node: AimNode,
+        graph: AssetId,
         player: Entity,
     }
 
@@ -799,10 +913,11 @@ mod tests {
                 .unwrap()
                 .insert(skeleton_handle.id(), (rig.shape)());
             let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
+            let graph = graph_handle.id();
             world
                 .get_resource_mut::<AssetStore<AnimationGraph>>()
                 .unwrap()
-                .insert(graph_handle.id(), graph_of(node, &rig.rotations()));
+                .insert(graph, graph_of(node.clone(), &rig.rotations()));
             let bones: Vec<Entity> = (0..bone_count)
                 .map(|_| world.spawn(Transform::IDENTITY))
                 .collect();
@@ -834,7 +949,12 @@ mod tests {
                 .unwrap()
                 .set_paused(false);
 
-            Self { app, player }
+            Self {
+                app,
+                node,
+                graph,
+                player,
+            }
         }
 
         fn world(&mut self) -> &mut World {
@@ -847,6 +967,19 @@ mod tests {
                 .get_component_for_entity_mut::<AnimationPlayer>(player)
                 .unwrap()
                 .set_param(key, value);
+        }
+
+        fn forget_target(&mut self) {
+            self.set_param(name!("aim_target"), 1.0_f32);
+        }
+
+        fn kick(&mut self, rotations: &[Quat]) {
+            let graph = graph_of(self.node.clone(), rotations);
+            let id = self.graph;
+            self.world()
+                .get_resource_mut::<AssetStore<AnimationGraph>>()
+                .unwrap()
+                .insert(id, graph);
         }
 
         fn state_of<N: AnimationNode, R>(
@@ -875,11 +1008,28 @@ mod tests {
                 .expect("the graph holds an aim node")
         }
 
-        fn step(&mut self) -> Frame {
+        fn step(&mut self, delta_time: f32) -> Frame {
+            self.with_state(|state| state.elapsed += delta_time);
             self.world().run_schedule(LateUpdate);
             self.state_of::<Capture, _>(|state: &mut Option<Frame>| state.take())
                 .flatten()
                 .expect("the aim node was evaluated")
+        }
+
+        fn settle(&mut self) -> Frame {
+            let mut frame = self.step(DT);
+            for _ in 1..SETTLE_STEPS {
+                frame = self.step(DT);
+            }
+            frame
+        }
+
+        fn weight(&mut self) -> f32 {
+            self.with_state(|state| state.weight.value)
+        }
+
+        fn offsets(&mut self) -> Vec<Quat> {
+            self.with_state(|state| state.offsets.iter().map(|offset| offset.value).collect())
         }
     }
 
@@ -887,6 +1037,7 @@ mod tests {
         AimNode::new(name!("aim_target"), Rig::new().muzzle)
             .with_bone(AimBone::new("spine"))
             .with_bone(AimBone::new("chest"))
+            .with_weight_halflife(0.0)
     }
 
     fn straight_aim(low: AimBone) -> AimNode {
@@ -894,6 +1045,7 @@ mod tests {
         AimNode::new(name!("aim_target"), Rig::straight().muzzle)
             .with_bone(low.with_share(1.0))
             .with_bone(AimBone::new("high").with_share(3.0).with_limits(wide, wide))
+            .with_weight_halflife(0.0)
     }
 
     fn assert_near(actual: f32, expected: f32, tolerance: f32) {
@@ -1079,12 +1231,12 @@ mod tests {
 
         for target in unsolvable(&rig) {
             let mut stage = Stage::new(&rig, aim());
-            let solved = stage.step();
+            let solved = stage.step(DT);
             let offsets = stage.with_state(|state| state.offsets.clone());
             assert_ne!(solved.joints, rig.input());
             stage.set_param(name!("aim_target"), target);
 
-            let held = stage.step();
+            let held = stage.step(DT);
 
             assert_eq!(held.joints, solved.joints);
             assert_eq!(stage.with_state(|state| state.offsets.clone()), offsets);
@@ -1144,8 +1296,8 @@ mod tests {
 
         for node in unresolvable {
             let mut stage = Stage::new(&rig, node.clone());
-            let first = stage.step();
-            let second = stage.step();
+            let first = stage.step(DT);
+            let second = stage.step(DT);
 
             assert_unchanged(&rig, &first);
             assert_unchanged(&rig, &second);
@@ -1159,7 +1311,7 @@ mod tests {
         rig.target = Some(rig.toward(0.3, 0.1, 2.0));
         let mut stage = Stage::new(&rig, aim());
 
-        stage.step();
+        stage.step(DT);
 
         assert!(!stage.with_state(|state| state.warned));
     }
@@ -1200,5 +1352,167 @@ mod tests {
                 "bone {bone} did not turn"
             );
         }
+    }
+
+    fn angle(from: Quat, to: Quat) -> f32 {
+        let between = from.inverse() * to;
+        2.0 * between.xyz().length().atan2(between.w.abs())
+    }
+
+    fn assert_recovers_at(stage: &mut Stage, rig: &Rig, target: Vec3, halflife: f32) {
+        stage.settle();
+        stage.kick(&rig.kicked());
+
+        let struck = stage.step(0.0);
+        let recovering = stage.step(halflife);
+        let recovered = stage.settle();
+
+        assert!(
+            rig.miss(&struck.joints, target) > MISS,
+            "the kick did not move the barrel"
+        );
+        assert!(rig.miss(&recovered.joints, target) < MISS);
+        for bone in [SPINE, CHEST] {
+            let solved = recovered.joints[bone].rotation;
+            let before = angle(struck.joints[bone].rotation, solved);
+            let after = angle(recovering.joints[bone].rotation, solved);
+            assert!(before > 5e-3, "bone {bone} was {before} rad off the solve");
+            assert_near(after / before, 0.5, 0.01);
+        }
+    }
+
+    #[test]
+    fn a_kick_between_frames_recovers_at_the_reacquire_halflife() {
+        let halflife = 0.1;
+        let mut rig = Rig::new();
+        let target = rig.toward(0.3, 0.1, 2.0);
+        rig.target = Some(target);
+        let mut stage = Stage::new(&rig, aim().with_reacquire_halflife(halflife));
+
+        assert_recovers_at(&mut stage, &rig, target, halflife);
+    }
+
+    #[test]
+    fn the_reacquire_param_scales_the_halflife() {
+        let mut rig = Rig::new();
+        let target = rig.toward(0.3, 0.1, 2.0);
+        rig.target = Some(target);
+        let node = aim()
+            .with_reacquire_halflife(0.05)
+            .with_reacquire_param(name!("reacquire_scale"));
+        let mut stage = Stage::new(&rig, node);
+        stage.set_param(name!("reacquire_scale"), 2.0_f32);
+
+        assert_recovers_at(&mut stage, &rig, target, 0.1);
+    }
+
+    #[test]
+    fn at_a_reacquire_halflife_of_zero_the_barrel_stays_on_the_target_through_a_kick() {
+        let mut rig = Rig::new();
+        let target = rig.toward(0.3, 0.1, 2.0);
+        rig.target = Some(target);
+        let mut stage = Stage::new(&rig, aim());
+        stage.settle();
+        stage.kick(&rig.kicked());
+
+        let struck = stage.step(DT);
+
+        assert_ne!(struck.joints[SPINE], rig.solve(&aim()).joints[SPINE]);
+        let miss = rig.miss(&struck.joints, target);
+        assert!(miss < MISS, "missed by {miss} m through the kick");
+    }
+
+    #[test]
+    fn the_weight_eases_in_and_out_at_its_halflife() {
+        let halflife = 0.1;
+        let rig = Rig::new();
+        let target = rig.toward(0.3, 0.1, 2.0);
+        let mut stage = Stage::new(&rig, aim().with_weight_halflife(halflife));
+        stage.settle();
+        assert_eq!(stage.weight(), 0.0);
+
+        stage.set_param(name!("aim_target"), target);
+        stage.step(halflife);
+        assert_near(stage.weight(), 0.5, 1e-3);
+
+        stage.settle();
+        let held = stage.offsets();
+        stage.forget_target();
+        let easing = stage.step(halflife);
+        let weight = stage.weight();
+        assert_near(weight, 0.5, 1e-3);
+        assert_eq!(stage.offsets(), held);
+        let input = rig.input();
+        for (bone, offset) in [SPINE, CHEST].into_iter().zip(&held) {
+            let expected = input[bone].rotation * Quat::IDENTITY.slerp(*offset, weight);
+            assert!(
+                easing.joints[bone].rotation.abs_diff_eq(expected, 1e-6),
+                "bone {bone}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_weight_param_scales_the_weight_within_zero_and_one() {
+        let mut rig = Rig::new();
+        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+        let node = aim()
+            .with_weight(0.8)
+            .with_weight_param(name!("aim_weight"));
+
+        for scale in [0.5_f32, 3.0] {
+            let mut stage = Stage::new(&rig, node.clone());
+            stage.set_param(name!("aim_weight"), scale);
+            stage.step(DT);
+
+            assert_near(stage.weight(), (0.8 * scale).min(1.0), 1e-6);
+        }
+    }
+
+    #[test]
+    fn weight_zero_leaves_the_input_bit_for_bit() {
+        let mut rig = Rig::new();
+        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+        let mut stage = Stage::new(&rig, aim().with_weight(0.0));
+
+        let first = stage.step(DT);
+        let settled = stage.settle();
+
+        assert_unchanged(&rig, &first);
+        assert_unchanged(&rig, &settled);
+    }
+
+    #[test]
+    fn a_target_gone_missing_eases_the_aim_out_then_leaves_the_input_bit_for_bit() {
+        let mut rig = Rig::new();
+        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+        let mut stage = Stage::new(&rig, aim().with_weight_halflife(0.05));
+        let aimed = stage.settle();
+        assert_ne!(aimed.joints, rig.input());
+        stage.forget_target();
+
+        let easing = stage.step(DT);
+        let settled = stage.settle();
+
+        assert_ne!(easing.joints, rig.input());
+        assert_unchanged(&rig, &settled);
+        assert_eq!(stage.weight(), 0.0);
+        assert_eq!(stage.offsets(), [Quat::IDENTITY; 2]);
+    }
+
+    #[test]
+    fn a_reset_aim_starts_again_from_the_input_pose() {
+        let mut rig = Rig::new();
+        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+        let node = aim().with_weight_halflife(0.1);
+        let mut stage = Stage::new(&rig, node.clone());
+        stage.settle();
+
+        stage.with_state(|state| node.reset(state));
+
+        assert_eq!(stage.weight(), 0.0);
+        assert_eq!(stage.offsets(), [Quat::IDENTITY; 2]);
+        assert_unchanged(&rig, &stage.step(DT));
+        assert_ne!(stage.step(DT).joints, rig.input());
     }
 }

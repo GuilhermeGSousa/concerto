@@ -296,6 +296,42 @@ A graph is a tree of nodes under a result node:
       .with_point(AimPoint::new(aim_up, 0.0, 0.8))
       .with_weight_param(name!("aim_weight"))
   ```
+- **Aim** (`AimNode`, in `concerto::procedural_animation`, registered by
+  `ProceduralAnimationPlugin`) closes what an aim offset misses: it turns a
+  chain of bones so a weapon's barrel points at a world-space `Vec3` the game
+  set under `target_param`. The `chain` lists `AimBone`s from the root up,
+  each under the one before, all under bone 0; the root bone may be one. The
+  `Muzzle` is a point (`offset`) and a direction (`direction`, +Z by default)
+  in its bone's space, and its bone is the last chain bone or under it. Each
+  bone turns by its `share` of the angle left to it, within its `yaw_limit`
+  and `pitch_limit` in radians, about the model-space `up`. The solve runs
+  three passes over the chain, each reading the barrel afresh, so the parallax
+  of a muzzle in front of the spine is taken out: a target four or more
+  muzzle-distances away is hit within millimetres. A target behind the
+  muzzle, or nearer the first chain bone than the muzzle is, holds the last
+  turn. Each bone eases from its turn to a new solve over
+  `reacquire_halflife`, times the float under `reacquire_param` (0, the
+  default, applies the solve at once). `weight`, times the float under
+  `weight_param`, eases in and out over `weight_halflife`; a missing target
+  eases it out holding the last turn, and at weight 0 the input passes
+  through untouched. Root motion and events pass through. Wire a character
+  that aims as base, layers, `AimOffsetNode`, `AimNode`, look-at, sway and
+  tremor, then two-bone IK for the support hand. Where a shot's additive
+  clip goes picks the recoil: before `AimNode` the kick is corrected away at
+  a `reacquire_halflife` of 0, or recovers over that halflife above 0; after
+  it, through an additive node (#405), the kick plays as captured over a
+  barrel that stays on the target. `AimNode::new(target_param, muzzle)`
+  starts from the defaults, `with_bone` adds a bone, and each other field has
+  a `with_<field>`:
+  ```rust
+  AimNode::new(
+      name!("aim_target"),
+      Muzzle::new("RightHand").with_offset(Vec3::new(0.0, 0.05, 0.25)),
+  )
+  .with_bone(AimBone::new("Spine1").with_share(1.0))
+  .with_bone(AimBone::new("Spine2").with_share(2.0).with_limits(0.8, 0.5))
+  .with_reacquire_halflife(0.12)
+  ```
 - **Look-at** (`LookAtNode`, in `concerto::procedural_animation`, registered
   by `ProceduralAnimationPlugin`) turns a character's spine, neck, head and eyes
   toward a point while the body plays its input. The `chain` lists
