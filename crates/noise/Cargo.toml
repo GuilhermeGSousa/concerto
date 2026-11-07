@@ -1,0 +1,8 @@
+[package]
+name = "concerto-noise"
+version.workspace = true
+edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+

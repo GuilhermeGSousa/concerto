@@ -382,6 +382,53 @@ A graph is a tree of nodes under a result node:
   resets. Wire it after the nodes whose pose it turns, and before two-bone
   IK. The yaw and pitch maths are `concerto_animation::look_at` for code
   outside a graph.
+- **Procedural motion** (`ProceduralMotionNode`, in
+  `concerto::procedural_animation`, registered by `ProceduralAnimationPlugin`)
+  adds small rotations that wave or wander over time to its input's pose: aim
+  sway, hand tremor, breathing in the chest. Each of its `channels`, a
+  `ProceduralMotionChannel`, moves the bones of its `BoneMask`, each by its
+  mask weight, so a `depth` ramp turns the spine by a third, the chest by two
+  thirds and the bones above by the full amount. A masked bone turns about the
+  skeleton's model axes at its own pivot, from where its input put it, so a
+  bone covered at its parent's weight simply follows the parent; +X is the
+  character's side, +Y up and +Z forward, the same on every skeleton. The
+  `waveform` is `Waveform::Sine`, one sine shared by the three axes, for
+  breathing, or `Waveform::Noise { octaves }`, fractal gradient noise of its
+  own on each axis, for sway and tremor. `frequency` is in hertz and
+  `amplitude` is the peak rotation in radians about each model axis. The
+  rotation is scaled by the float under `magnitude_param`, 1 when there is
+  none or the param is missing or holds another type, 0 when it is negative
+  or not finite; the scale eases toward that value with
+  `magnitude_halflife`, and snaps to it when the node starts or resets, so a
+  character spawned wounded sways at full strength from its first frame.
+  Channels compose in list order, a later one's on the left. Root motion,
+  events, translations, scales and every bone outside the masks are the
+  input's, and a mask may name the root bone, for hip sway. The presets
+  `ProceduralMotionChannel::breathing`, `sway` and `tremor` start from
+  numbers that suit those uses. Each channel's phase and noise come from the
+  node's `seed` mixed with the seed the game set on the blackboard under
+  `seed_param`, a `u64` or an int param, 0 when there is none: players with
+  the same seeds move in step, so set each character's from something stable
+  across runs, such as its spawn index. Resetting the node keeps its
+  phases, so re-entering a state does not replay the same stretch of motion.
+  Wire it after aim and look-at and before hand IK, so the off hand stays on
+  a swaying gun. `ProceduralMotionNode::new()` has no channels, `with_channel`
+  adds one, and each channel field has a `with_<field>`:
+  ```rust
+  ProceduralMotionNode::new()
+      .with_channel(ProceduralMotionChannel::breathing(chest_mask))
+      .with_channel(
+          ProceduralMotionChannel::sway(arms_mask)
+              .with_magnitude_param(name!("wounded"))
+              .with_magnitude_halflife(0.5),
+      )
+      .with_channel(
+          ProceduralMotionChannel::tremor(hands_mask)
+              .with_magnitude_param(name!("fear")),
+      )
+      .with_seed(7)
+      .with_seed_param(name!("character_seed"))
+  ```
 - **Foot placement** (`FootPlacementNode`, in
   `concerto::procedural_animation`, registered by `ProceduralAnimationPlugin`)
   puts each foot on the ground under it. Each `FootPlacementLeg` names a foot

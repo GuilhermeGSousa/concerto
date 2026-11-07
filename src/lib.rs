@@ -10,6 +10,7 @@ use concerto_gameplay::GameplayPlugin;
 pub use concerto_mesh as mesh;
 pub use concerto_motion_matching as motion_matching;
 pub use concerto_name as name;
+pub use concerto_noise as noise;
 pub use concerto_physics as physics;
 pub use concerto_procedural_animation as procedural_animation;
 pub use concerto_reflect as reflect;

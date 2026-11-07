@@ -14,6 +14,7 @@ game adds itself when it needs them.
 | | `color` | colors | `color` |
 | | `reflect` | reflection: field access by path, the type registry | `reflect` |
 | | `name` | `Name`, an interned string that compares as one integer and persists as its text, and `name!` | `name` |
+| | `noise` | seeded hashes and 1D gradient and fractal noise, pure functions of their arguments | `noise` |
 | Assets | `asset-format` | `AssetId` and the `.gasset` framing | |
 | | `asset-import` | the `Importer` trait | |
 | | `asset-build` | `track_assets` for build scripts, which also writes the registry a game embeds | |
@@ -29,7 +30,7 @@ game adds itself when it needs them.
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
 | | `jolt-ffi` | the bindings to Jolt, built from the submodule | |
 | | `animation` | clips, skeletons, animation graphs, the animation player | `animation` |
-| | `procedural-animation` | procedural animation graph nodes: `FootPlacementNode`, which reads physics to put a character's feet on the ground, `LookAtNode`, which turns its spine, head and eyes toward a point, and `AimNode`, which turns its spine so a weapon's barrel points at a target | `procedural_animation` |
+| | `procedural-animation` | procedural animation graph nodes: `FootPlacementNode`, which reads physics to put a character's feet on the ground, `LookAtNode`, which turns its spine, head and eyes toward a point, `AimNode`, which turns its spine so a weapon's barrel points at a target, and `ProceduralMotionNode`, which adds seeded sway, tremor and breathing rotations to masked bones | `procedural_animation` |
 | | `scene` | scenes: spawning and capturing | `scene` |
 | | `director` | the virtual-camera stack | `director` |
 | | `gameplay` | camera rigs and player helpers | `gameplay` |
