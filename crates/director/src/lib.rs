@@ -1,9 +1,10 @@
 //! Camera control as a stack.
 //!
 //! One [`MainCamera`] entity owns the window's render resources for the whole
-//! run. Everything that wants to control the view spawns a [`VirtualCamera`] —
-//! a pose with a priority — and the [`CameraDirector`] stacks them by priority.
-//! Whatever is on top drives the main camera, blending on takeover.
+//! run, unless [`NoMainCamera`] is present at startup. Everything that wants to
+//! control the view spawns a [`VirtualCamera`] — a pose with a priority — and
+//! the [`CameraDirector`] stacks them by priority. Whatever is on top drives the
+//! main camera, blending on takeover.
 //!
 //! Having the component is being in the stack: a camera enters and leaves by
 //! the component being added and removed. `priority` and `enabled` are read from
@@ -39,7 +40,7 @@ use concerto_app::{
 use concerto_ecs::IntoSystemConfig;
 
 pub use director::CameraDirector;
-pub use main_camera::MainCamera;
+pub use main_camera::{MainCamera, NoMainCamera};
 pub use virtual_camera::{BlendIn, CameraPose, Ease, Lens, VirtualCamera};
 
 /// Registers the main camera and the virtual-camera director.

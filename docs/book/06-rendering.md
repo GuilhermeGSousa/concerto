@@ -25,7 +25,7 @@ exception: removing `MeshComponent` stops the mesh drawing.
 ## Cameras
 
 Spawn a `VirtualCamera` with a `Transform`. The **camera director** keeps a
-stack of virtual cameras and drives the one real camera from the live one, the
+stack of virtual cameras and drives the main camera from the live one, the
 highest priority that is enabled:
 
 ```rust
@@ -40,6 +40,10 @@ cmd.spawn((VirtualCamera::new(10), Transform::default()));
 
 `VirtualCamera::new(priority)` sets its priority; with several, the director
 switches to the highest. A camera looks down its local −Z axis.
+
+Inserting `NoMainCamera` from a plugin's `build`, with
+`app.insert_resource(NoMainCamera)`, keeps the director from spawning its main
+camera, so the game's own cameras draw to the window.
 
 ## Lights
 
