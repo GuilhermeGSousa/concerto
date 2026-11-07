@@ -272,8 +272,9 @@ A graph is a tree of nodes under a result node:
   axes read in that bone's rest pose, +Z and +Y by default. A yaw toward the
   side `up × forward` is positive, and a pitch toward `up`. The angles ease
   toward the target over `angle_halflife` (0 snaps), and a target crossing
-  behind the character turns the short way; the first evaluate after the node
-  starts or resets takes the target's angles at once. The points are weighed
+  behind the character turns the short way. The first evaluate after the node
+  starts, resets, or has eased its weight out to 0 takes the target's angles
+  at once. The points are weighed
   by those angles: one point takes everything, points on one line, such as a
   pitch-only set of aim up, level and down, interpolate along it and clamp at
   its ends, and any other set is triangulated as a 2D blend space is. A point
@@ -286,7 +287,7 @@ A graph is a tree of nodes under a result node:
   and out over `weight_halflife`; a missing target eases it out, and at
   weight 0 the input passes through untouched. A clip not loaded yet counts
   as no change, as does a plain clip, which warns once. Wire it after the
-  base and the layers and before look-at.
+  base and the layers, and before `AimNode` and look-at.
   `AimOffsetNode::new(target_param, frame_bone)` starts from the defaults,
   `with_point` adds a point, and each other field has a `with_<field>`:
   ```rust

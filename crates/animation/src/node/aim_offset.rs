@@ -421,6 +421,7 @@ impl AnimationNode for AimOffsetNode {
         state.weight.value = weight;
         if goal <= 0.0 && weight < SNAP_WEIGHT {
             state.weight.reset_to(0.0);
+            state.snap_angles = true;
             return;
         }
         if weight <= 0.0 {
@@ -1359,6 +1360,35 @@ mod tests {
 
         assert_eq!(state.weight.value, 0.0);
         assert_unchanged(&rig, &frame);
+    }
+
+    #[test]
+    fn a_target_back_after_the_weight_settled_at_zero_snaps_to_its_angles() {
+        let mut rig = Rig::new();
+        let level = rig.add_aim("level", &level());
+        let node = with_points(&[AimPoint::new(level, 0.0, 0.0)])
+            .with_angle_halflife(0.5)
+            .with_weight_halflife(0.05);
+        rig.aim_at(0.6, 0.1);
+        let mut state = rig.start(&node);
+        for _ in 0..60 {
+            rig.step(&node, &mut state, DT);
+        }
+
+        rig.forget_target();
+        for _ in 0..300 {
+            rig.step(&node, &mut state, DT);
+        }
+        assert_eq!(state.weight.value, 0.0);
+
+        rig.aim_at(-0.6, -0.1);
+        rig.step(&node, &mut state, DT);
+
+        assert!(
+            state.angles.value.abs_diff_eq(Vec2::new(-0.6, -0.1), 1e-4),
+            "{}",
+            state.angles.value
+        );
     }
 
     #[test]
