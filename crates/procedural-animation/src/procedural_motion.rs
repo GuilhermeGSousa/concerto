@@ -8,7 +8,10 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
-use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_foundation::{
+    assets::{asset_store::AssetStore, handle::AssetHandle},
+    math::Spring,
+};
 use concerto_mesh::Skeleton;
 use concerto_name::Name;
 use concerto_noise::{fractal_noise, mix_seed, unit_from_seed};
@@ -148,6 +151,14 @@ impl ProceduralMotionChannel {
         }
     }
 
+    fn halflife(&self) -> f32 {
+        if self.magnitude_halflife.is_finite() && self.magnitude_halflife > 0.0 {
+            self.magnitude_halflife
+        } else {
+            0.0
+        }
+    }
+
     fn moves(&self) -> bool {
         self.frequency.is_finite() && self.frequency > 0.0
     }
@@ -196,23 +207,62 @@ impl Waveform {
 #[derive(Default)]
 pub struct ProceduralMotionState {
     elapsed: f32,
+    started: bool,
     channels: Vec<ChannelState>,
     offsets: Vec<Option<Quat>>,
     input_model: Vec<Quat>,
     output_model: Vec<Quat>,
 }
 
-#[derive(Default)]
 struct ChannelState {
     phase: f64,
+    fresh: bool,
+    magnitude: Spring<f32>,
     mask: MaskResolution,
     warned_missing: bool,
+}
+
+impl ChannelState {
+    fn new() -> Self {
+        Self {
+            phase: 0.0,
+            fresh: true,
+            magnitude: Spring::critically_damped_with_halflife(0.0, 0.0),
+            mask: MaskResolution::default(),
+            warned_missing: false,
+        }
+    }
+
+    fn ease(&mut self, channel: &ProceduralMotionChannel, goal: f32, elapsed: f32) -> f32 {
+        if self.fresh {
+            self.fresh = false;
+            self.magnitude.reset_to(goal);
+            return goal;
+        }
+        self.magnitude.set_halflife(channel.halflife());
+        let eased = self.magnitude.update(goal, elapsed);
+        if goal == 0.0 && eased < 1e-4 {
+            self.magnitude.reset_to(0.0);
+            return 0.0;
+        }
+        eased
+    }
 }
 
 impl ProceduralMotionState {
     fn keep_up(&mut self, node: &ProceduralMotionNode) {
         self.channels
-            .resize_with(node.channels.len(), ChannelState::default);
+            .resize_with(node.channels.len(), ChannelState::new);
+    }
+
+    fn take_elapsed(&mut self) -> f32 {
+        let elapsed = std::mem::take(&mut self.elapsed);
+        if self.started {
+            elapsed
+        } else {
+            self.started = true;
+            0.0
+        }
     }
 
     /// Adds `delta_time` to the time to ease over and advances each channel's phase by it times the channel's frequency.
@@ -241,6 +291,7 @@ impl ProceduralMotionNode {
         masks: &AssetStore<BoneMask>,
         context: &AnimationGraphContext<'_>,
         skeleton: &Skeleton,
+        elapsed: f32,
     ) -> bool {
         state.offsets.clear();
         state.offsets.resize(skeleton.bone_count(), None);
@@ -249,7 +300,8 @@ impl ProceduralMotionNode {
         for (index, (channel, channel_state)) in
             self.channels.iter().zip(&mut state.channels).enumerate()
         {
-            let magnitude = channel.goal_magnitude(context.blackboard());
+            let goal = channel.goal_magnitude(context.blackboard());
+            let magnitude = channel_state.ease(channel, goal, elapsed);
             if magnitude <= 0.0 || !channel.moves() {
                 continue;
             }
@@ -354,7 +406,7 @@ impl AnimationNode for ProceduralMotionNode {
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
-        state.elapsed = 0.0;
+        let elapsed = state.take_elapsed();
         state.keep_up(self);
         let Some(input) = evaluated_inputs.first() else {
             return;
@@ -363,13 +415,17 @@ impl AnimationNode for ProceduralMotionNode {
         let Some(skeleton) = context.skeleton() else {
             return;
         };
-        if self.gather_offsets(state, masks, context, skeleton) {
+        if self.gather_offsets(state, masks, context, skeleton, elapsed) {
             apply_offsets(state, skeleton, output);
         }
     }
 
     fn reset(&self, state: &mut ProceduralMotionState) {
         state.elapsed = 0.0;
+        state.started = false;
+        for channel in &mut state.channels {
+            channel.fresh = true;
+        }
     }
 }
 
@@ -673,6 +729,7 @@ mod tests {
     struct Stage {
         app: App,
         node: ProceduralMotionNode,
+        graph: AssetHandle<AnimationGraph>,
         players: Vec<Entity>,
     }
 
@@ -740,7 +797,12 @@ mod tests {
                     .set_paused(false);
             }
 
-            Self { app, node, players }
+            Self {
+                app,
+                node,
+                graph: graph_handle,
+                players,
+            }
         }
 
         fn one(node: ProceduralMotionNode) -> Self {
@@ -749,6 +811,23 @@ mod tests {
 
         fn world(&mut self) -> &mut World {
             self.app.main_mut().world_mut()
+        }
+
+        fn edit(&mut self, node: ProceduralMotionNode) {
+            let id = self.graph.id();
+            self.world()
+                .get_resource_mut::<AssetStore<AnimationGraph>>()
+                .unwrap()
+                .insert(id, graph_of(node.clone()));
+            self.node = node;
+        }
+
+        fn magnitude(&mut self, channel: usize) -> f32 {
+            let player = self.players[0];
+            self.state_of::<ProceduralMotionNode, _>(player, |_, state| {
+                state.channels[channel].magnitude.value
+            })
+            .unwrap()
         }
 
         fn set_param<T: Reflect + Clone>(&mut self, key: Name, value: T) {
@@ -1107,5 +1186,116 @@ mod tests {
                 assert_eq!(state.channels[0].phase, 0.25);
             })
             .unwrap();
+    }
+
+    fn eased(halflife: f32) -> ProceduralMotionNode {
+        single(
+            sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0))
+                .with_magnitude_param(name!("strength"))
+                .with_magnitude_halflife(halflife),
+        )
+    }
+
+    #[test]
+    fn the_magnitude_eases_toward_the_param_over_its_halflife() {
+        let mut stage = Stage::one(eased(0.2));
+        stage.set_param(name!("strength"), 0.0_f32);
+        assert_input(&stage.step(0.1));
+        assert_eq!(stage.magnitude(0), 0.0);
+
+        stage.set_param(name!("strength"), 1.0_f32);
+        stage.step(0.2);
+        let magnitude = stage.magnitude(0);
+        assert!(
+            (magnitude - 0.5).abs() < 0.01,
+            "expected about half the goal one halflife later, got {magnitude}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_channel_applies_its_goal_on_the_first_evaluate() {
+        let mut stage = Stage::one(eased(0.2));
+        stage.set_param(name!("strength"), 1.0_f32);
+        let player = stage.players[0];
+        stage
+            .state_of::<ProceduralMotionNode, _>(player, |node, state| {
+                state.advance(node, 0.5);
+                state.advance(node, 0.5);
+            })
+            .unwrap();
+
+        let frame = stage.step(0.3);
+
+        assert_eq!(stage.magnitude(0), 1.0);
+        assert_turned(&frame, CHEST, breathing_turn(1.0));
+    }
+
+    #[test]
+    fn easing_back_to_zero_ends_on_the_input_pose() {
+        let mut stage = Stage::one(eased(0.2));
+        stage.set_param(name!("strength"), 1.0_f32);
+        stage.run(5, 0.2);
+        stage.set_param(name!("strength"), 0.0_f32);
+
+        let mut settled = false;
+        for _ in 0..100 {
+            let frame = stage.step(0.2);
+            let magnitude = stage.magnitude(0);
+            if magnitude == 0.0 {
+                assert_input(&frame);
+                settled = true;
+                break;
+            }
+            assert!(
+                magnitude >= 1e-4,
+                "a magnitude of {magnitude} was not snapped"
+            );
+            assert_ne!(frame.joints[CHEST], input_joints()[CHEST]);
+        }
+        assert!(settled, "the magnitude never reached 0");
+    }
+
+    #[test]
+    fn a_channel_added_live_starts_fresh_and_the_others_carry_on() {
+        let first = sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0)).with_magnitude_halflife(0.2);
+        let added = sine("prop", 0.6, Vec3::new(0.1, 0.2, 0.0)).with_magnitude_halflife(0.2);
+        let original = single(first.clone());
+        let mut edited = Stage::one(original.clone());
+        let mut untouched = Stage::one(original.clone());
+        for stage in [&mut edited, &mut untouched] {
+            stage.step(0.5);
+            stage.step(0.5);
+        }
+
+        edited.edit(original.with_channel(added));
+        let frame = edited.step(0.3);
+        let reference = untouched.step(0.3);
+
+        assert_eq!(frame.joints[CHEST], reference.joints[CHEST]);
+        assert_eq!(edited.magnitude(1), 1.0);
+        let turn =
+            Quat::from_scaled_axis(Vec3::new(0.1, 0.2, 0.0) * sine_value(0, 0, 1, 0.6 * 0.3));
+        assert!(turn.angle_between(Quat::IDENTITY) > 0.01);
+        assert_turned(&frame, PROP, turn);
+    }
+
+    #[test]
+    fn reset_keeps_the_phase_and_snaps_the_magnitude_to_its_goal() {
+        let mut stage = Stage::one(eased(0.2));
+        stage.set_param(name!("strength"), 1.0_f32);
+        stage.step(0.5);
+        stage.step(0.5);
+        let player = stage.players[0];
+        stage
+            .state_of::<ProceduralMotionNode, _>(player, |node, state| {
+                node.reset(state);
+                state.advance(node, 0.2);
+            })
+            .unwrap();
+        stage.set_param(name!("strength"), 0.5_f32);
+
+        let frame = stage.step(0.1);
+
+        assert_turned(&frame, CHEST, breathing_turn(0.5));
     }
 }
