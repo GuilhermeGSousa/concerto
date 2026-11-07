@@ -10,9 +10,9 @@ use crate::{
     graph::AnimationGraph,
     mask::BoneMask,
     node::{
-        AdditiveNode, AnimationClipNode, AnimationNode, BlendNode, LayerNode, PlaceholderNode,
-        ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode, register_node_inputs,
-        state_machine::AnimationStateMachine,
+        AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, LayerNode,
+        PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
+        register_node_inputs, state_machine::AnimationStateMachine,
     },
     target::{
         animate_targets, initialize_animation_players, initialize_skeletons,
@@ -27,6 +27,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<TwoBoneIkNode>();
     registry.register::<LayerNode>();
     registry.register::<AdditiveNode>();
+    registry.register::<AimOffsetNode>();
     registry.register::<AnimationClipNode>();
     registry.register::<BlendSpace2DNode>();
     registry.register::<AnimationStateMachine>();
@@ -45,6 +46,7 @@ pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<TwoBoneIkNode>(world);
     register_node_inputs::<LayerNode>(world);
     register_node_inputs::<AdditiveNode>(world);
+    register_node_inputs::<AimOffsetNode>(world);
     register_node_inputs::<AnimationClipNode>(world);
     register_node_inputs::<BlendSpace2DNode>(world);
     register_node_inputs::<AnimationStateMachine>(world);

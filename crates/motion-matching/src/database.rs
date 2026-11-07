@@ -480,7 +480,7 @@ impl LoadableAsset for MotionDatabase {
 }
 
 impl DerivedData for MotionDatabase {
-    const DERIVED_VERSION: u32 = 1;
+    const DERIVED_VERSION: u32 = 2;
 
     fn derived_inputs(&self) -> Vec<AssetId> {
         std::iter::once(self.skeleton.id())

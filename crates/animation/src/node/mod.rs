@@ -14,6 +14,7 @@ use crate::{
 };
 
 pub mod additive;
+mod aim_offset;
 pub mod blend_space;
 pub mod definition;
 pub mod layer;
@@ -22,6 +23,7 @@ pub mod state_machine;
 pub mod two_bone_ik;
 
 pub use additive::{AdditiveNode, AdditiveNodeState};
+pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
     AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, NodeState,
     PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,

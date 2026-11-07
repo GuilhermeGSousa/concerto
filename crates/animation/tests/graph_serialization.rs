@@ -12,8 +12,9 @@ use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
-    AdditiveNode, AnimationClipNode, AnimationNode, AnimationPlayMode, ErasedAnimationNode, IkGoal,
-    LayerNode, LayerSpace, ReflectAnimationNode, TipRotation, TwoBoneIkNode,
+    AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, AnimationNode, AnimationPlayMode,
+    ErasedAnimationNode, IkGoal, LayerNode, LayerSpace, ReflectAnimationNode, TipRotation,
+    TwoBoneIkNode,
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
@@ -350,6 +351,32 @@ fn a_layer_node_keeps_every_field_and_its_inputs_through_a_round_trip() {
         graph.nodes().collect::<Vec<_>>(),
         restored.nodes().collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn an_aim_offset_node_keeps_every_field_and_its_points_through_a_round_trip() {
+    let node = AimOffsetNode::new(name!("aim_target"), "Spine2")
+        .with_point(AimPoint::new(clip("aim_up"), 0.0, 0.6))
+        .with_point(AimPoint::new(clip("aim_left"), -0.8, 0.1))
+        .with_forward(glam::Vec3::X)
+        .with_up(glam::Vec3::Z)
+        .with_weight(0.7)
+        .with_weight_param(name!("aim_weight"))
+        .with_weight_halflife(0.3)
+        .with_angle_halflife(0.05);
+    assert_ne!(node, AimOffsetNode::default());
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(false), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(false), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<AimOffsetNode>(&restored), Some(&node));
 }
 
 #[test]

@@ -1011,6 +1011,17 @@ impl DerivedData for AnimationClip {
 }
 
 #[cfg(test)]
+impl AnimationClip {
+    pub(crate) fn with_delta_against(mut self, base: &AnimationClip) -> Self {
+        let delta = self
+            .delta_against(base)
+            .expect("a test clip has a delta against its base");
+        self.delta = Some(delta);
+        self
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use concerto_name::Name;
 

@@ -274,7 +274,10 @@ impl Project {
     }
 
     fn blobs(&self) -> Vec<std::path::PathBuf> {
-        let dir = self.root.join("derived-cache/MotionDatabase/v1");
+        let dir = self.root.join(format!(
+            "derived-cache/MotionDatabase/v{}",
+            MotionDatabase::DERIVED_VERSION
+        ));
         let mut blobs: Vec<_> = std::fs::read_dir(dir)
             .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
             .unwrap_or_default();
