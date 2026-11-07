@@ -15,7 +15,7 @@ use concerto_editor::{
     fonts::{MEDIUM, glyph, icon},
     preview::PreviewSignals,
     project::ProjectState,
-    timeline::{Timeline, TimelineScrubbed, TimelineSelected, frame_at, time_of_frame},
+    timeline::{Timeline, TimelineScrubbed, frame_at, time_of_frame},
 };
 use concerto_foundation::assets::{Asset, AssetId, registry::AssetRegistry};
 use concerto_scene::scene::Scene;
@@ -196,15 +196,6 @@ fn scrub_clip(document: Entity) -> Listener<TimelineScrubbed> {
            mut previews: PreviewSignals| {
         if let Some(state) = documents.get_entity(document) {
             pause_at(state, document, on.signal().time, &mut previews);
-        }
-    })
-    .into_listener()
-}
-
-fn select_frames(document: Entity) -> Listener<TimelineSelected> {
-    (move |on: On<TimelineSelected>, documents: Query<&mut ClipDocument>| {
-        if let Some(mut state) = documents.get_entity(document) {
-            state.selection = on.signal().range;
         }
     })
     .into_listener()
@@ -430,9 +421,12 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
             rate: None,
             time: 0.0,
             selection: None,
+            selectable: false,
+            markers: Vec::new(),
+            selected_marker: None,
+            tracks: Vec::new(),
         },
         scrub_clip(document),
-        select_frames(document),
     ))
     .entity()
 }
@@ -522,7 +516,11 @@ pub(crate) fn sync_clip_panels(
                 duration: facts.duration,
                 rate: facts.rate,
                 time: state.time,
-                selection: state.selection,
+                selection: None,
+                selectable: false,
+                markers: Vec::new(),
+                selected_marker: None,
+                tracks: Vec::new(),
             };
             if **timeline != shown {
                 **timeline = shown;
@@ -717,14 +715,6 @@ mod tests {
         fn scrub(&mut self, time: f32) {
             let timeline = self.panels().timeline;
             self.f.world.trigger_on(timeline, TimelineScrubbed { time });
-        }
-
-        fn select(&mut self, range: Option<(u32, u32)>) {
-            let timeline = self.panels().timeline;
-            self.f
-                .world
-                .trigger_on(timeline, TimelineSelected { range });
-            self.f.frame();
         }
 
         fn until(&mut self, what: &str, done: impl Fn(&ClipDocument) -> bool) {
@@ -1062,25 +1052,6 @@ mod tests {
     }
 
     #[test]
-    fn a_selection_is_written_back_to_the_timeline_and_stays_in_memory() {
-        let mut tab = walking_tab();
-        let on_disk = tab.clip_bytes();
-
-        tab.select(Some((3, 9)));
-
-        assert_eq!(tab.state().selection, Some((3, 9)));
-        assert_eq!(tab.timeline().selection, Some((3, 9)));
-        assert!(tab.clean());
-        assert_eq!(tab.clip_bytes(), on_disk);
-
-        tab.select(None);
-
-        assert_eq!(tab.state().selection, None);
-        assert_eq!(tab.timeline().selection, None);
-        assert!(tab.clean());
-    }
-
-    #[test]
     fn the_timeline_follows_the_clip_and_the_preview() {
         let mut tab = walking_tab();
 
@@ -1282,21 +1253,6 @@ mod tests {
     }
 
     #[test]
-    fn a_second_clip_clears_the_timelines_selection() {
-        let mut f = panels_fixture();
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let run = write_clip(&mut f, "content/hero/run.gasset", &clip_of(20));
-        let mut tab = tab_of(f, &walk);
-        tab.select(Some((3, 9)));
-
-        open_clip(&mut tab.f, &run);
-        tab.f.frame();
-
-        assert_eq!(tab.timeline().selection, None);
-        assert_eq!(tab.timeline().duration, 20.0);
-    }
-
-    #[test]
     fn the_tab_stays_clean_through_every_control() {
         let mut f = panels_fixture();
         write_scene(&mut f, "content/world/level.gasset", "level");
@@ -1325,7 +1281,6 @@ mod tests {
         let item = tab.menu_item("level");
         tab.click(item);
         tab.scrub(3.0);
-        tab.select(Some((1, 2)));
         tab.f.frame();
 
         assert!(tab.clean());

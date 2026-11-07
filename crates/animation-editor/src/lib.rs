@@ -46,7 +46,6 @@ pub struct ClipDocument {
     pub picked_scene: Option<AssetId>,
     pub shown_scene: Option<AssetId>,
     pub scene_error: Option<String>,
-    pub selection: Option<(u32, u32)>,
 }
 
 impl Default for ClipDocument {
@@ -63,7 +62,6 @@ impl Default for ClipDocument {
             picked_scene: None,
             shown_scene: None,
             scene_error: None,
-            selection: None,
         }
     }
 }
@@ -214,7 +212,6 @@ pub(crate) fn load_clip(
         };
         state.clip = Some(Arc::clone(&clip));
         state.time = 0.0;
-        state.selection = None;
         state.playing = true;
         previews.trigger(entity, ShowClip(clip));
         previews.trigger(
@@ -429,7 +426,6 @@ mod tests {
         assert_eq!(document.picked_scene, None);
         assert_eq!(document.shown_scene, None);
         assert_eq!(document.scene_error, None);
-        assert_eq!(document.selection, None);
     }
 
     #[test]
@@ -636,14 +632,12 @@ mod tests {
         f.frames_until("the head never moved", |f| state(f, document).time > 0.0);
         pause(&mut f, document);
         let paused_at = state(&f, document).time;
-        state_mut(&mut f, document).selection = Some((1, 2));
         open_clip(&mut f, &broken);
 
         assert_ne!(f.status(document), "");
         assert_eq!(f.document(document).current, Some(walk));
         let kept = state(&f, document);
         assert_eq!(kept.time, paused_at);
-        assert_eq!(kept.selection, Some((1, 2)));
         assert!(!kept.playing);
         assert_eq!(kept.facts, ClipFacts::of(&clip_of(10)));
     }
@@ -663,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_clip_resets_time_and_selection_plays_and_keeps_the_rest() {
+    fn a_second_clip_resets_time_plays_and_keeps_the_rest() {
         let mut f = clip_fixture();
         write_scene(&mut f, "content/hero/scene.gasset", "sibling");
         let level = write_scene(&mut f, "content/world/level.gasset", "level");
@@ -676,7 +670,6 @@ mod tests {
         report_bones(&mut f, document, 65, 60);
         let chosen = state_mut(&mut f, document);
         chosen.picked_scene = Some(level.id);
-        chosen.selection = Some((3, 9));
         chosen.rate = 2.0;
         chosen.looping = false;
         chosen.root_motion = true;
@@ -686,7 +679,6 @@ mod tests {
 
         let reset = state(&f, document);
         assert_eq!(reset.time, 0.0);
-        assert_eq!(reset.selection, None);
         assert!(reset.playing);
         assert_eq!(reset.picked_scene, Some(level.id));
         assert_eq!(reset.shown_scene, Some(level.id));

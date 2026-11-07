@@ -60,10 +60,9 @@ The `inspector` host, titled Clip, has:
   a clip that failed to load and `Preview failed: …`.
 
 The `bottom` host holds a timeline. Scrubbing it pauses the clip, which stays
-paused after release. A drag on its track selects frames and a click clears the
-selection, which stays in memory: nothing saves it. Opening another clip reuses
-the document, so it resets the time and the selection and starts playing, and
-keeps the scene pick, the rate, the toggles and the loop flag.
+paused after release. Its track selects no frames. Opening another clip reuses
+the document, so it resets the time and starts playing, and keeps the scene
+pick, the rate, the toggles and the loop flag.
 
 The widgets follow what the preview reports, `ClipPreviewProgress` and
 `ClipPreviewBones`, so the head moves a frame after the pointer, and it does not

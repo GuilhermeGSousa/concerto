@@ -1,4 +1,5 @@
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
+use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res,
     command::CommandQueue,
@@ -29,14 +30,35 @@ const TICK_WIDTH: f32 = 1.0;
 const MIN_TICK_GAP: f32 = 64.0;
 const TICK_LABEL_OFFSET: f32 = 4.0;
 const WHOLE_TICK_TOLERANCE: f32 = 1e-3;
+const MARKER_ROW_HEIGHT: f32 = 16.0;
 
-/// A ruler and a track over a clip's length, drawn on the UI node that holds it.
+/// A ruler, a track and a marker lane over a clip's length, drawn on the UI node that holds it.
 #[derive(Component, PartialEq)]
 pub struct Timeline {
     pub duration: f32,
     pub rate: Option<f32>,
     pub time: f32,
     pub selection: Option<(u32, u32)>,
+    pub selectable: bool,
+    pub markers: Vec<TimelineMarker>,
+    pub selected_marker: Option<usize>,
+    pub tracks: Vec<TimelineTrack>,
+}
+
+/// A labelled mark at a time on a timeline's marker lane.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelineMarker {
+    pub time: f32,
+    pub label: String,
+    pub locked: bool,
+}
+
+/// A read-only row under the marker lane: a label and the times it has keys at.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelineTrack {
+    pub label: String,
+    pub warning: bool,
+    pub keys: Vec<f32>,
 }
 
 impl Timeline {
@@ -49,6 +71,9 @@ impl Timeline {
     }
 
     fn selection_span(&self) -> Option<(f32, f32)> {
+        if !self.selectable {
+            return None;
+        }
         let rate = self.rate?;
         let (first, last) = self.selection?;
         let left = fraction(time_of_frame(first, rate), self.duration);
@@ -85,6 +110,23 @@ pub struct TimelineSelected {
 impl Signal for TimelineSelected {}
 impl EntitySignal for TimelineSelected {}
 
+/// Sent when a marker is pressed (`Some`) or the track or the lane's empty space is clicked (`None`).
+pub struct TimelineMarkerSelected {
+    pub index: Option<usize>,
+}
+
+impl Signal for TimelineMarkerSelected {}
+impl EntitySignal for TimelineMarkerSelected {}
+
+/// Sent while an unlocked marker is dragged, with the time under the pointer, snapped to a frame when there is a rate.
+pub struct TimelineMarkerMoved {
+    pub index: usize,
+    pub time: f32,
+}
+
+impl Signal for TimelineMarkerMoved {}
+impl EntitySignal for TimelineMarkerMoved {}
+
 /// The frame nearest to `time`.
 pub fn frame_at(time: f32, rate: f32) -> u32 {
     (time * rate).round() as u32
@@ -109,7 +151,31 @@ struct TimelineParts {
     readout: Entity,
     ruler: Entity,
     selection: Entity,
+    lane: Entity,
     head: Entity,
+}
+
+#[derive(Component, Default)]
+struct TimelineMarkersBuilt {
+    markers: Vec<BuiltMarker>,
+}
+
+struct BuiltMarker {
+    label: String,
+    locked: bool,
+    node: Entity,
+    line: Entity,
+}
+
+impl TimelineMarkersBuilt {
+    fn holds(&self, markers: &[TimelineMarker]) -> bool {
+        self.markers.len() == markers.len()
+            && self
+                .markers
+                .iter()
+                .zip(markers)
+                .all(|(built, marker)| built.label == marker.label && built.locked == marker.locked)
+    }
 }
 
 #[derive(Component, Debug, Default, PartialEq)]
@@ -241,6 +307,9 @@ fn frame_under(
     layouts: &Query<&UILayout>,
 ) -> Option<u32> {
     let view = timelines.get_entity(timeline)?;
+    if !view.selectable {
+        return None;
+    }
     let rate = view.rate?;
     let layout = layouts.get_entity(track)?;
     Some(frame_at(view.time_at(position.x, layout.rect), rate))
@@ -290,15 +359,83 @@ fn drag_track(timeline: Entity) -> Listener<UIDrag> {
 
 fn click_track(timeline: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>, timelines: Query<&Timeline>, mut cmd: CommandQueue| {
-        let has_frames = timelines
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let selects = timelines
             .get_entity(timeline)
-            .is_some_and(|view| view.rate.is_some());
-        if on.signal().button == MouseButton::Left && has_frames {
-            cmd.entity(timeline)
-                .trigger(TimelineSelected { range: None });
+            .is_some_and(|view| view.selectable && view.rate.is_some());
+        let mut target = cmd.entity(timeline);
+        target.trigger(TimelineMarkerSelected { index: None });
+        if selects {
+            target.trigger(TimelineSelected { range: None });
         }
     })
     .into_listener()
+}
+
+fn press_marker(timeline: Entity, index: usize) -> Listener<UIPointerDown> {
+    (move |on: On<UIPointerDown>, mut cmd: CommandQueue| {
+        if on.signal().button == MouseButton::Left {
+            cmd.entity(timeline)
+                .trigger(TimelineMarkerSelected { index: Some(index) });
+        }
+    })
+    .into_listener()
+}
+
+fn drag_marker(timeline: Entity, lane: Entity, index: usize) -> Listener<UIDrag> {
+    (move |on: On<UIDrag>,
+           timelines: Query<&Timeline>,
+           layouts: Query<&UILayout>,
+           mut cmd: CommandQueue| {
+        let signal = on.signal();
+        if signal.button != MouseButton::Left || signal.delta == Vec2::ZERO {
+            return;
+        }
+        let (Some(view), Some(layout)) = (timelines.get_entity(timeline), layouts.get_entity(lane))
+        else {
+            return;
+        };
+        if view.markers.get(index).is_none_or(|marker| marker.locked) {
+            return;
+        }
+        let time = view.time_at(signal.position.x, layout.rect);
+        cmd.entity(timeline)
+            .trigger(TimelineMarkerMoved { index, time });
+    })
+    .into_listener()
+}
+
+fn marker_rows(markers: &[TimelineMarker]) -> Vec<u32> {
+    markers
+        .iter()
+        .enumerate()
+        .map(|(index, marker)| {
+            markers[..index]
+                .iter()
+                .filter(|earlier| earlier.time == marker.time)
+                .count() as u32
+        })
+        .collect()
+}
+
+fn marker_color(marker: &TimelineMarker, selected: bool, theme: &UITheme) -> Color {
+    if selected {
+        theme.selection()
+    } else if marker.locked {
+        theme.text_muted
+    } else {
+        theme.accent
+    }
+}
+
+fn marker_inset(timeline: &Timeline, marker: &TimelineMarker, row: u32) -> UIInset {
+    UIInset {
+        left: UIValue::Percent(fraction(marker.time, timeline.duration) * 100.0),
+        top: UIValue::Px(row as f32 * MARKER_ROW_HEIGHT),
+        ..Default::default()
+    }
 }
 
 fn across_the_band() -> UIInset {
@@ -367,7 +504,27 @@ fn setup_timeline(
                 UIMaterial::flat(theme.selection()),
             ))
             .entity();
-        let head = bands
+        let lane = bands
+            .spawn_child((
+                UINode::default()
+                    .with_height(UIValue::Px(0.0))
+                    .with_flex_shrink(0.0)
+                    .with_visible(false)
+                    .clipped(),
+                Interactable,
+                click_track(timeline),
+            ))
+            .entity();
+        let mut overlay = bands.spawn_child(
+            UINode::default()
+                .with_position(Position::Absolute)
+                .with_inset(UIInset {
+                    left: UIValue::Px(0.0),
+                    right: UIValue::Px(0.0),
+                    ..across_the_band()
+                }),
+        );
+        let head = overlay
             .spawn_child((
                 UINode::default()
                     .with_position(Position::Absolute)
@@ -385,9 +542,11 @@ fn setup_timeline(
                 readout,
                 ruler,
                 selection,
+                lane,
                 head,
             },
             TimelineTicks::default(),
+            TimelineMarkersBuilt::default(),
         ));
     }
 }
@@ -423,6 +582,98 @@ fn sync_timeline_parts(
                 }
                 if selection.width != width {
                     selection.width = width;
+                }
+            }
+        }
+    }
+}
+
+fn sync_timeline_markers(
+    timelines: Query<
+        (Entity, &Timeline, &TimelineParts, &mut TimelineMarkersBuilt),
+        Or<(Changed<Timeline>, Changed<TimelineParts>)>,
+    >,
+    nodes: Query<&mut UINode>,
+    materials: Query<&mut UIMaterial>,
+    theme: Res<UITheme>,
+    mut cmd: CommandQueue,
+) {
+    for (entity, timeline, parts, mut built) in timelines.iter() {
+        let rows = marker_rows(&timeline.markers);
+        if let Some(mut lane) = nodes.get_entity(parts.lane) {
+            let shown = !timeline.markers.is_empty();
+            if lane.visible != shown {
+                lane.visible = shown;
+            }
+            let height = rows.iter().max().map_or(0, |row| row + 1);
+            let height = UIValue::Px(height as f32 * MARKER_ROW_HEIGHT);
+            if lane.height != height {
+                lane.height = height;
+            }
+        }
+        if !built.holds(&timeline.markers) {
+            let mut lane = cmd.entity(parts.lane).despawn_children();
+            let markers: Vec<BuiltMarker> = timeline
+                .markers
+                .iter()
+                .zip(&rows)
+                .enumerate()
+                .map(|(index, (marker, &row))| {
+                    let selected = timeline.selected_marker == Some(index);
+                    let mut node = lane.spawn_child((
+                        UINode::default()
+                            .with_position(Position::Absolute)
+                            .with_inset(marker_inset(timeline, marker, row))
+                            .with_height(UIValue::Px(MARKER_ROW_HEIGHT))
+                            .with_flex_direction(FlexDirection::Row)
+                            .with_gap(Vec2::new(theme.spacing_xs, 0.0))
+                            .with_margin(UIRect {
+                                left: -HEAD_WIDTH / 2.0,
+                                ..Default::default()
+                            }),
+                        Interactable,
+                        press_marker(entity, index),
+                        drag_marker(entity, parts.lane, index),
+                    ));
+                    let line = node
+                        .spawn_child((
+                            UINode::default()
+                                .with_width(UIValue::Px(HEAD_WIDTH))
+                                .with_height(UIValue::Px(MARKER_ROW_HEIGHT))
+                                .with_flex_shrink(0.0),
+                            UIMaterial::flat(marker_color(marker, selected, &theme)),
+                        ))
+                        .entity();
+                    node.add_child(theme.label(marker.label.clone()).small().no_wrap().fixed());
+                    BuiltMarker {
+                        label: marker.label.clone(),
+                        locked: marker.locked,
+                        node: node.entity(),
+                        line,
+                    }
+                })
+                .collect();
+            built.markers = markers;
+            continue;
+        }
+        for (index, ((marker, &row), shown)) in timeline
+            .markers
+            .iter()
+            .zip(&rows)
+            .zip(&built.markers)
+            .enumerate()
+        {
+            if let Some(mut node) = nodes.get_entity(shown.node) {
+                let inset = marker_inset(timeline, marker, row);
+                if node.inset != inset {
+                    node.inset = inset;
+                }
+            }
+            if let Some(mut material) = materials.get_entity(shown.line) {
+                let selected = timeline.selected_marker == Some(index);
+                let color = marker_color(marker, selected, &theme).to_linear();
+                if material.color != color {
+                    material.color = color;
                 }
             }
         }
@@ -496,7 +747,12 @@ impl Plugin for TimelinePlugin {
         app.add_system(LateUpdate, setup_timeline.in_set(UiSet::Setup))
             .add_system(
                 LateUpdate,
-                (sync_timeline_parts, sync_timeline_ticks).in_set(UiSet::Project),
+                (
+                    sync_timeline_parts,
+                    sync_timeline_markers,
+                    sync_timeline_ticks,
+                )
+                    .in_set(UiSet::Project),
             );
     }
 }
@@ -505,8 +761,9 @@ impl Plugin for TimelinePlugin {
 mod tests {
     use super::*;
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
+    use concerto_color::LinearRgba;
     use concerto_ecs::{
-        IntoSystem, ResMut, Resource, System, With, World,
+        IntoSystem, ResMut, Resource, System, World,
         entity::hierarchy::{ChildOf, Children},
         system::BoxedSystem,
     };
@@ -519,6 +776,8 @@ mod tests {
     struct Heard {
         scrubbed: Vec<f32>,
         selected: Vec<Option<(u32, u32)>>,
+        picked: Vec<Option<usize>>,
+        moved: Vec<TimelineMarkerMoved>,
     }
 
     fn at_30_fps() -> Timeline {
@@ -527,6 +786,25 @@ mod tests {
             rate: Some(30.0),
             time: 0.0,
             selection: None,
+            selectable: true,
+            markers: Vec::new(),
+            selected_marker: None,
+            tracks: Vec::new(),
+        }
+    }
+
+    fn marker(time: f32, label: &str) -> TimelineMarker {
+        TimelineMarker {
+            time,
+            label: label.to_owned(),
+            locked: false,
+        }
+    }
+
+    fn with_markers(markers: Vec<TimelineMarker>) -> Timeline {
+        Timeline {
+            markers,
+            ..at_30_fps()
         }
     }
 
@@ -541,6 +819,7 @@ mod tests {
         world: World,
         setup: BoxedSystem,
         parts: BoxedSystem,
+        markers: BoxedSystem,
         ticks: BoxedSystem,
         timeline: Entity,
     }
@@ -563,17 +842,32 @@ mod tests {
                     heard.selected.push(on.signal().range);
                 })
                 .into_listener(),
+                (|on: On<TimelineMarkerSelected>, mut heard: ResMut<Heard>| {
+                    heard.picked.push(on.signal().index);
+                })
+                .into_listener(),
+                (|on: On<TimelineMarkerMoved>, mut heard: ResMut<Heard>| {
+                    let signal = on.signal();
+                    heard.moved.push(TimelineMarkerMoved {
+                        index: signal.index,
+                        time: signal.time,
+                    });
+                })
+                .into_listener(),
             ));
             let mut setup = setup_timeline.into_boxed_system();
             let mut parts = sync_timeline_parts.into_boxed_system();
+            let mut markers = sync_timeline_markers.into_boxed_system();
             let mut ticks = sync_timeline_ticks.into_boxed_system();
             setup.initialize(&mut world);
             parts.initialize(&mut world);
+            markers.initialize(&mut world);
             ticks.initialize(&mut world);
             let mut fixture = Self {
                 world,
                 setup,
                 parts,
+                markers,
                 ticks,
                 timeline,
             };
@@ -591,6 +885,7 @@ mod tests {
         fn frame(&mut self) {
             self.setup.run_and_apply((), &mut self.world);
             self.parts.run_and_apply((), &mut self.world);
+            self.markers.run_and_apply((), &mut self.world);
             self.ticks.run_and_apply((), &mut self.world);
         }
 
@@ -605,9 +900,10 @@ mod tests {
                 clip_rect: rect,
                 paint_order: 0,
             };
-            let (ruler, track) = (self.parts().ruler, self.track());
+            let (ruler, track, lane) = (self.parts().ruler, self.track(), self.parts().lane);
             self.world.insert(layout.clone(), ruler);
-            self.world.insert(layout, track);
+            self.world.insert(layout.clone(), track);
+            self.world.insert(layout, lane);
         }
 
         fn parts(&self) -> &TimelineParts {
@@ -616,12 +912,38 @@ mod tests {
                 .unwrap()
         }
 
-        fn track(&mut self) -> Entity {
-            self.world
-                .query::<Entity, With<Listener<UIClick>>>()
-                .iter(&mut self.world)
-                .next()
+        fn parent(&self, entity: Entity) -> Entity {
+            **self
+                .world
+                .get_component_for_entity::<ChildOf>(entity)
                 .unwrap()
+        }
+
+        fn track(&self) -> Entity {
+            self.parent(self.parts().selection)
+        }
+
+        fn overlay(&self) -> Entity {
+            self.parent(self.parts().head)
+        }
+
+        fn children(&self, entity: Entity) -> Vec<Entity> {
+            self.world
+                .get_component_for_entity::<Children>(entity)
+                .map(|children| children.iter().copied().collect())
+                .unwrap_or_default()
+        }
+
+        fn marker_nodes(&self) -> Vec<Entity> {
+            self.children(self.parts().lane)
+        }
+
+        fn line_color(&self, marker: Entity) -> LinearRgba {
+            let line = self.children(marker)[0];
+            self.world
+                .get_component_for_entity::<UIMaterial>(line)
+                .unwrap()
+                .color
         }
 
         fn edit(&mut self, edit: impl FnOnce(&mut Timeline)) {
@@ -682,10 +1004,7 @@ mod tests {
         }
 
         fn ruler_children(&self) -> Vec<Entity> {
-            self.world
-                .get_component_for_entity::<Children>(self.parts().ruler)
-                .map(|children| children.iter().copied().collect())
-                .unwrap_or_default()
+            self.children(self.parts().ruler)
         }
 
         fn changed_nodes(&mut self) -> usize {
@@ -698,6 +1017,13 @@ mod tests {
         fn changed_texts(&mut self) -> usize {
             self.world
                 .query::<Entity, Changed<UIText>>()
+                .iter(&mut self.world)
+                .count()
+        }
+
+        fn changed_materials(&mut self) -> usize {
+            self.world
+                .query::<Entity, Changed<UIMaterial>>()
                 .iter(&mut self.world)
                 .count()
         }
@@ -1065,16 +1391,30 @@ mod tests {
     }
 
     #[test]
-    fn the_timeline_is_a_column_of_a_readout_and_two_bands() {
+    fn the_timeline_is_a_column_of_a_readout_and_three_bands_under_an_overlay() {
         let f = Fixture::new(at_30_fps());
         let parts = f.parts();
 
         assert_eq!(f.node(f.timeline).flex_direction, FlexDirection::Column);
         assert_eq!(f.node(parts.ruler).height, UIValue::Px(24.0));
         assert_eq!(f.node(parts.ruler).flex_shrink, 0.0);
-        let parent = |entity| **f.world.get_component_for_entity::<ChildOf>(entity).unwrap();
-        assert_eq!(parent(parts.readout), f.timeline);
-        assert_eq!(parent(parts.ruler), parent(parts.head));
+        assert_eq!(f.parent(parts.readout), f.timeline);
+        let bands = f.parent(parts.ruler);
+        assert_eq!(
+            f.children(bands),
+            [parts.ruler, f.track(), parts.lane, f.overlay()]
+        );
+        let overlay = f.node(f.overlay());
+        assert_eq!(overlay.position, Position::Absolute);
+        assert_eq!(
+            overlay.inset,
+            UIInset {
+                top: UIValue::Px(0.0),
+                right: UIValue::Px(0.0),
+                bottom: UIValue::Px(0.0),
+                left: UIValue::Px(0.0),
+            }
+        );
     }
 
     #[test]
@@ -1194,5 +1534,177 @@ mod tests {
         f.frame();
 
         assert_eq!(f.changed_texts(), 0);
+    }
+
+    #[test]
+    fn markers_sit_at_their_times_and_the_lane_hides_without_any() {
+        let mut f = Fixture::new(with_markers(vec![
+            marker(2.5, "footstep"),
+            marker(5.0, "land"),
+        ]));
+
+        let lane = f.node(f.parts().lane);
+        assert!(lane.visible);
+        assert_eq!(lane.height, UIValue::Px(MARKER_ROW_HEIGHT));
+        let markers = f.marker_nodes();
+        assert_eq!(markers.len(), 2);
+        assert!((percent(f.node(markers[0]).inset.left) - 25.0).abs() < NEAR);
+        assert!((percent(f.node(markers[1]).inset.left) - 50.0).abs() < NEAR);
+        assert_eq!(f.node(markers[0]).inset.top, UIValue::Px(0.0));
+
+        f.edit(|timeline| timeline.markers.clear());
+        f.frame();
+
+        assert!(!f.node(f.parts().lane).visible);
+        assert!(f.marker_nodes().is_empty());
+    }
+
+    #[test]
+    fn markers_at_the_same_time_take_rows_of_their_own() {
+        let f = Fixture::new(with_markers(vec![
+            marker(1.0, "left"),
+            marker(2.0, "breath"),
+            marker(1.0, "right"),
+        ]));
+
+        let markers = f.marker_nodes();
+        assert_eq!(f.node(markers[0]).inset.top, UIValue::Px(0.0));
+        assert_eq!(f.node(markers[1]).inset.top, UIValue::Px(0.0));
+        assert_eq!(f.node(markers[2]).inset.top, UIValue::Px(MARKER_ROW_HEIGHT));
+        assert_eq!(
+            f.node(f.parts().lane).height,
+            UIValue::Px(2.0 * MARKER_ROW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn a_pressed_marker_is_picked_and_a_click_on_the_track_or_the_lane_picks_none() {
+        let mut f = Fixture::laid_out(with_markers(vec![
+            marker(1.0, "footstep"),
+            marker(2.0, "land"),
+        ]));
+        let (second, track, lane) = (f.marker_nodes()[1], f.track(), f.parts().lane);
+
+        f.press(second, frame_x(60));
+        f.click(track, frame_x(10));
+        f.click(lane, frame_x(10));
+
+        assert_eq!(f.heard().picked, [Some(1), None, None]);
+        assert_eq!(f.heard().selected, [None, None]);
+    }
+
+    #[test]
+    fn a_dragged_marker_moves_to_a_frame_unless_it_is_locked() {
+        let mut f = Fixture::laid_out(with_markers(vec![
+            marker(1.0, "footstep"),
+            TimelineMarker {
+                locked: true,
+                ..marker(2.0, "Impact")
+            },
+        ]));
+        let markers = f.marker_nodes();
+
+        f.drag(markers[0], frame_x(90), 0.0);
+        assert!(f.heard().moved.is_empty());
+
+        f.drag(markers[0], frame_x(90) + 0.25, 3.0);
+        f.drag(markers[1], frame_x(120), 3.0);
+
+        let moved = &f.heard().moved;
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].index, 0);
+        assert!((moved[0].time - 3.0).abs() < NEAR, "{}", moved[0].time);
+    }
+
+    #[test]
+    fn markers_are_coloured_by_their_lock_and_the_selection() {
+        let theme = UITheme::default();
+        let f = Fixture::new(Timeline {
+            selected_marker: Some(2),
+            ..with_markers(vec![
+                marker(1.0, "footstep"),
+                TimelineMarker {
+                    locked: true,
+                    ..marker(2.0, "Impact")
+                },
+                marker(3.0, "land"),
+            ])
+        });
+        let markers = f.marker_nodes();
+
+        assert_eq!(f.line_color(markers[0]), theme.accent.to_linear());
+        assert_eq!(f.line_color(markers[1]), theme.text_muted.to_linear());
+        assert_eq!(f.line_color(markers[2]), theme.selection().to_linear());
+    }
+
+    #[test]
+    fn a_moved_or_selected_marker_keeps_its_node() {
+        let mut f = Fixture::new(with_markers(vec![
+            marker(1.0, "footstep"),
+            marker(2.0, "land"),
+        ]));
+        let built = f.marker_nodes();
+
+        f.edit(|timeline| timeline.markers[0].time = 5.0);
+        f.frame();
+        assert_eq!(f.marker_nodes(), built);
+        assert!((percent(f.node(built[0]).inset.left) - 50.0).abs() < NEAR);
+
+        f.edit(|timeline| timeline.selected_marker = Some(0));
+        f.frame();
+        assert_eq!(f.marker_nodes(), built);
+        assert_eq!(
+            f.line_color(built[0]),
+            UITheme::default().selection().to_linear()
+        );
+    }
+
+    #[test]
+    fn a_renamed_or_locked_marker_rebuilds_the_lane() {
+        let mut f = Fixture::new(with_markers(vec![marker(1.0, "footstep")]));
+        let built = f.marker_nodes();
+
+        f.edit(|timeline| timeline.markers[0].label = "land".to_owned());
+        f.frame();
+        assert_ne!(f.marker_nodes(), built);
+
+        let built = f.marker_nodes();
+        f.edit(|timeline| timeline.markers[0].locked = true);
+        f.frame();
+        assert_ne!(f.marker_nodes(), built);
+    }
+
+    #[test]
+    fn a_settled_timeline_with_markers_writes_nothing() {
+        let mut f = Fixture::laid_out(Timeline {
+            selected_marker: Some(0),
+            ..with_markers(vec![marker(1.0, "footstep"), marker(1.0, "land")])
+        });
+        f.frame();
+
+        f.world.tick();
+        f.frame();
+
+        assert_eq!(f.changed_nodes(), 0);
+        assert_eq!(f.changed_texts(), 0);
+        assert_eq!(f.changed_materials(), 0);
+    }
+
+    #[test]
+    fn a_timeline_that_cannot_select_ignores_drags_and_hides_its_selection() {
+        let mut f = Fixture::laid_out(Timeline {
+            selectable: false,
+            selection: Some((75, 150)),
+            ..at_30_fps()
+        });
+        let track = f.track();
+
+        f.press(track, frame_x(10));
+        f.drag(track, frame_x(20), 10.0);
+        f.click(track, frame_x(20));
+
+        assert!(f.heard().selected.is_empty());
+        assert_eq!(f.heard().picked, [None]);
+        assert!(!f.node(f.parts().selection).visible);
     }
 }
