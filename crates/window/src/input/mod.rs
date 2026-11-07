@@ -1,8 +1,10 @@
 pub mod actions;
+mod gamepad;
 use concerto_ecs::resource::Resource;
 use glam::Vec2;
 use std::collections::HashMap;
 
+pub use gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadId, GamepadSettings, GamepadStick};
 pub use winit::event::MouseButton;
 pub use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -73,6 +75,8 @@ pub struct Input {
     mouse_delta: Vec2,
     mouse_position: Vec2,
     typed_chars: Vec<char>,
+    gamepads: Vec<Gamepad>,
+    gamepad_settings: GamepadSettings,
 }
 
 impl Input {
@@ -83,6 +87,8 @@ impl Input {
             mouse_delta: Vec2::ZERO,
             mouse_position: Vec2::ZERO,
             typed_chars: Vec::new(),
+            gamepads: Vec::new(),
+            gamepad_settings: GamepadSettings::default(),
         }
     }
 
@@ -170,14 +176,82 @@ impl Input {
             .for_each(ButtonState::end_frame);
         self.mouse_delta = Vec2::ZERO;
         self.typed_chars.clear();
+        self.gamepads.iter_mut().for_each(Gamepad::end_frame);
     }
 
-    /// Releases every held key and mouse button, as when the window loses focus.
+    /// Releases every held key, mouse button and pad button and zeroes every pad axis, as when the window loses focus.
     pub fn release_all(&mut self) {
+        self.release_keys_and_buttons();
+        self.gamepads.iter_mut().for_each(Gamepad::release);
+    }
+
+    /// Releases every held key and mouse button and leaves pads alone.
+    pub fn release_keys_and_buttons(&mut self) {
         self.input_map.values_mut().for_each(ButtonState::release);
         self.mouse_button_map
             .values_mut()
             .for_each(ButtonState::release);
+    }
+
+    /// The connected pads, in connection order.
+    pub fn gamepads(&self) -> impl Iterator<Item = &Gamepad> {
+        self.gamepads.iter()
+    }
+
+    pub fn gamepad(&self, id: GamepadId) -> Option<&Gamepad> {
+        self.gamepads.iter().find(|pad| pad.id() == id)
+    }
+
+    /// The first connected pad.
+    pub fn any_gamepad(&self) -> Option<&Gamepad> {
+        self.gamepads.first()
+    }
+
+    pub fn gamepad_settings(&self) -> GamepadSettings {
+        self.gamepad_settings
+    }
+
+    /// Applies `settings` to every pad, and to pads connected later.
+    pub fn set_gamepad_settings(&mut self, settings: GamepadSettings) {
+        self.gamepad_settings = settings;
+        self.gamepads
+            .iter_mut()
+            .for_each(|pad| pad.set_settings(settings));
+    }
+
+    /// Adds a pad; returns false, changing nothing, when `id` is already connected.
+    pub fn connect_gamepad(&mut self, id: GamepadId, name: impl Into<String>) -> bool {
+        if self.gamepad(id).is_some() {
+            return false;
+        }
+        self.gamepads
+            .push(Gamepad::new(id, name.into(), self.gamepad_settings));
+        true
+    }
+
+    /// Removes a pad; returns false when `id` was not connected.
+    pub fn disconnect_gamepad(&mut self, id: GamepadId) -> bool {
+        let before = self.gamepads.len();
+        self.gamepads.retain(|pad| pad.id() != id);
+        self.gamepads.len() != before
+    }
+
+    /// Sets a pad button's raw value; ignored for a pad that is not connected.
+    pub fn update_gamepad_button(&mut self, id: GamepadId, button: GamepadButton, value: f32) {
+        if let Some(pad) = self.gamepad_mut(id) {
+            pad.update_button(button, value);
+        }
+    }
+
+    /// Sets a pad axis's raw value in -1..1; ignored for a pad that is not connected.
+    pub fn update_gamepad_axis(&mut self, id: GamepadId, axis: GamepadAxis, value: f32) {
+        if let Some(pad) = self.gamepad_mut(id) {
+            pad.update_axis(axis, value);
+        }
+    }
+
+    fn gamepad_mut(&mut self, id: GamepadId) -> Option<&mut Gamepad> {
+        self.gamepads.iter_mut().find(|pad| pad.id() == id)
     }
 
     pub fn update_key_input(&mut self, key: PhysicalKey, pressed: bool) {

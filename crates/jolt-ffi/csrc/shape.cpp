@@ -9,6 +9,8 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
+#include <algorithm>
+
 extern "C"
 {
     JoltShape *jolt_create_sphere_shape(float radius, float density)
@@ -20,8 +22,9 @@ extern "C"
 
     JoltShape *jolt_create_box_shape(const float half_extents[3], float density)
     {
-        JPH::BoxShape *shape =
-            new JPH::BoxShape(JPH::Vec3(half_extents[0], half_extents[1], half_extents[2]));
+        JPH::Vec3 extents(half_extents[0], half_extents[1], half_extents[2]);
+        float convex_radius = std::min(JPH::cDefaultConvexRadius, extents.ReduceMin());
+        JPH::BoxShape *shape = new JPH::BoxShape(extents, convex_radius);
         shape->SetDensity(density);
         return new JoltShape(shape);
     }

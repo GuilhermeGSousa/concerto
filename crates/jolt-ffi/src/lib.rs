@@ -108,6 +108,15 @@ pub struct JoltShapeHit {
     pub normal: [f32; 3],
 }
 
+/// A sensor pair that began (`entered` = 1) or ended (`entered` = 0) overlapping (mirrors `JoltSensorContact` in `body.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltSensorContact {
+    pub sensor: JoltBodyId,
+    pub other: JoltBodyId,
+    pub entered: u8,
+}
+
 extern "C" {
     /// Process-global one-time Jolt setup. Thread-safe and idempotent;
     /// `jolt_world_create` calls it implicitly.
@@ -204,6 +213,12 @@ extern "C" {
         out_max: *mut f32,
     );
 
+    /// Makes the body a kinematic, always active sensor on the sensor layer.
+    pub fn jolt_body_creation_settings_set_is_sensor(
+        settings: *mut JoltBodyCreationSettings,
+        is_sensor: bool,
+    );
+
     /// Sets the shape the body is built from. The settings take their own
     /// reference, so `shape` may be destroyed straight afterwards or reused
     /// for any number of other bodies.
@@ -233,17 +248,24 @@ extern "C" {
     );
 
     /// Creates a body from `settings` and adds it to the simulation, active
-    /// unless static. The settings remain owned by the caller and can be
-    /// reused.
+    /// unless static; a sensor is always kinematic and active. The settings
+    /// remain owned by the caller and can be reused.
     pub fn jolt_body_create(
         world: *mut JoltWorld,
         settings: *const JoltBodyCreationSettings,
     ) -> JoltBodyId;
 
     /// Removes a body from the simulation and destroys it, waking any bodies
-    /// that were touching it (they would otherwise sleep in mid-air). The id
-    /// is invalid afterwards.
+    /// that were touching it (they would otherwise sleep in mid-air) and
+    /// forgetting its sensor pairs. The id is invalid afterwards.
     pub fn jolt_body_destroy(world: *mut JoltWorld, body: JoltBodyId);
+
+    /// Moves up to `capacity` queued sensor contacts, oldest first, into `out` and returns how many it wrote.
+    pub fn jolt_world_drain_sensor_contacts(
+        world: *mut JoltWorld,
+        out: *mut JoltSensorContact,
+        capacity: u32,
+    ) -> u32;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself) and
     /// reports the most upward-facing contact within `max_separation` below

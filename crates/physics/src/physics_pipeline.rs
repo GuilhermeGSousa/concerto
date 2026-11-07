@@ -26,6 +26,7 @@ impl PhysicsPipeline {
         state
             .backend_mut()
             .step(&mut self.stepper, Time::fixed_delta_time().as_secs_f32());
+        state.gather_sensor_contacts();
     }
 }
 

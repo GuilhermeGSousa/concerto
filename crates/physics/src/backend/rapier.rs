@@ -7,7 +7,7 @@
 //! engine↔Rapier math conversions go through arrays at this boundary, the
 //! same way the Jolt backend converts at the FFI boundary.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use concerto_foundation::transform::Transform;
 use concerto_mesh::Mesh;
@@ -19,14 +19,17 @@ use rapier3d::parry::query::{
     ShapeCastOptions,
 };
 use rapier3d::parry::shape::Ball;
+use rapier3d::pipeline::EventHandler;
 use rapier3d::prelude::{
-    BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet, ImpulseJointSet, IntegrationParameters,
+    ActiveCollisionTypes, ActiveEvents, BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet,
+    CollisionEvent, CollisionEventFlags, ContactPair, ImpulseJointSet, IntegrationParameters,
     IslandManager, LockedAxes, MultibodyJointSet, NarrowPhase, Ray, RigidBodyBuilder,
     RigidBodyHandle, RigidBodySet, SharedShape,
 };
 
 use crate::backend::{
-    Aabb, MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit, RawShapeHit,
+    Aabb, MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit, RawSensorContact,
+    RawShapeHit, SensorContactKind,
 };
 use crate::collider::{Collider, ColliderOffset};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
@@ -94,6 +97,36 @@ fn to_locked_axes(dofs: AllowedDofs) -> LockedAxes {
     locked
 }
 
+#[derive(Default)]
+struct CollisionEventCollector {
+    events: Mutex<Vec<CollisionEvent>>,
+}
+
+impl EventHandler for CollisionEventCollector {
+    fn handle_collision_event(
+        &self,
+        _bodies: &RigidBodySet,
+        _colliders: &ColliderSet,
+        event: CollisionEvent,
+        _contact_pair: Option<&ContactPair>,
+    ) {
+        self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event);
+    }
+
+    fn handle_contact_force_event(
+        &self,
+        _dt: f32,
+        _bodies: &RigidBodySet,
+        _colliders: &ColliderSet,
+        _contact_pair: &ContactPair,
+        _total_force_magnitude: f32,
+    ) {
+    }
+}
+
 /// Owns the Rapier physics world: the body and collider sets plus the
 /// broad/narrow phases, islands, joints, and CCD state stepping needs.
 pub struct RapierBackend {
@@ -105,6 +138,7 @@ pub struct RapierBackend {
     impulse_joints: ImpulseJointSet,
     multibody_joints: MultibodyJointSet,
     ccd_solver: CCDSolver,
+    collision_events: CollisionEventCollector,
 }
 
 /// Per-step scratch: Rapier's execution pipeline and the integration
@@ -140,6 +174,7 @@ impl PhysicsBackend for RapierBackend {
             impulse_joints: ImpulseJointSet::new(),
             multibody_joints: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
+            collision_events: CollisionEventCollector::default(),
         }
     }
 
@@ -164,7 +199,7 @@ impl PhysicsBackend for RapierBackend {
             &mut self.multibody_joints,
             &mut self.ccd_solver,
             &(),
-            &(),
+            &self.collision_events,
         );
     }
 
@@ -174,9 +209,11 @@ impl PhysicsBackend for RapierBackend {
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> Self::BodyHandle {
         let mut body_builder = match rigid_body {
             None => RigidBodyBuilder::fixed(),
+            Some(_) if sensor => RigidBodyBuilder::kinematic_velocity_based(),
             Some(rb) => match rb.motion_type {
                 MotionType::Dynamic => RigidBodyBuilder::dynamic(),
                 MotionType::Kinematic => RigidBodyBuilder::kinematic_velocity_based(),
@@ -198,6 +235,16 @@ impl PhysicsBackend for RapierBackend {
             // The offset is the collider's pose relative to the body, so it
             // shifts the geometry without showing up in `body_transform`.
             collider_builder = collider_builder.translation(to_rapier_vec(offset.0));
+        }
+        if sensor {
+            collider_builder = collider_builder
+                .sensor(true)
+                .active_events(ActiveEvents::COLLISION_EVENTS)
+                .active_collision_types(
+                    ActiveCollisionTypes::default()
+                        | ActiveCollisionTypes::KINEMATIC_FIXED
+                        | ActiveCollisionTypes::KINEMATIC_KINEMATIC,
+                );
         }
         self.colliders
             .insert_with_parent(collider_builder, handle, &mut self.bodies);
@@ -253,6 +300,53 @@ impl PhysicsBackend for RapierBackend {
         );
     }
 
+    fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>) {
+        let events = std::mem::take(
+            self.collision_events
+                .events
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        for event in events {
+            let (handle1, handle2, flags, kind) = match event {
+                CollisionEvent::Started(handle1, handle2, flags) => {
+                    (handle1, handle2, flags, SensorContactKind::Enter)
+                }
+                CollisionEvent::Stopped(handle1, handle2, flags) => {
+                    (handle1, handle2, flags, SensorContactKind::Exit)
+                }
+            };
+            if !flags.contains(CollisionEventFlags::SENSOR) {
+                continue;
+            }
+            let (Some(collider1), Some(collider2)) =
+                (self.colliders.get(handle1), self.colliders.get(handle2))
+            else {
+                continue;
+            };
+            let (sensor, other) = match (collider1.is_sensor(), collider2.is_sensor()) {
+                (true, false) => (collider1, collider2),
+                (false, true) => (collider2, collider1),
+                _ => continue,
+            };
+            let (Some(sensor_body), Some(other_body)) = (sensor.parent(), other.parent()) else {
+                continue;
+            };
+            if self
+                .bodies
+                .get(other_body)
+                .is_none_or(|body| body.is_fixed())
+            {
+                continue;
+            }
+            out.push(RawSensorContact {
+                sensor: sensor_body,
+                other: other_body,
+                kind,
+            });
+        }
+    }
+
     fn body_transform(&self, body: Self::BodyHandle) -> Transform {
         let pose = self.bodies[body].position();
 
@@ -306,7 +400,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if ignore.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) {
                 continue;
             }
             let Some(intersection) =
@@ -352,7 +446,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if ignore.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) {
                 continue;
             }
             let pose = collider.position();
@@ -409,6 +503,7 @@ impl PhysicsBackend for RapierBackend {
 
             for (_, ground_collider) in self.colliders.iter() {
                 if ground_collider.parent() == Some(body)
+                    || ground_collider.is_sensor()
                     || !candidates.intersects(&ground_collider.compute_aabb())
                 {
                     continue;

@@ -467,9 +467,7 @@ mod tests {
                 .world
                 .get_resource_mut::<EventChannel<ActionFired>>()
                 .unwrap()
-                .push_event(ActionFired {
-                    action: RemoveClipEvent.intern(),
-                });
+                .push_event(ActionFired::new(RemoveClipEvent));
             self.f.frame();
         }
 

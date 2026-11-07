@@ -386,9 +386,11 @@ fix the entry in the same commit as the change that made it false.
   since `pending` is then empty: it compares `current` with the captured entry
   and requires `pending` to be empty, as `finish_build` does.
 - **A closed `InputGate` hides input from that `App`.** Its `Input` sees no
-  keys, buttons, wheel, or raw motion, and closing the gate releases whatever
-  was held; the cursor position is still folded. The editor closes its own
-  gate while a game has input.
+  keys, mouse buttons, wheel, or raw motion, and closing the gate releases the
+  keys and mouse buttons held; the cursor position and pad events are still
+  folded, and pads keep their state. The editor closes its own gate while a
+  game has input, so its UI and `ActionMap` see no keys or mouse, but pads
+  reach the playing game under either owner.
 - **While a game has input, Esc and every other key go to the game.** The
   editor's UI and `ActionMap` see nothing until input is released by a click
   anywhere but the viewport's picture, Shift+F1, or the window losing focus.

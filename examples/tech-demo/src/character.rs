@@ -11,6 +11,7 @@ use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto::ecs::{Entity, Query, With, Without};
 use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto::foundation::transform::Transform;
+use concerto::gameplay::actions::Move;
 use concerto::gameplay::camera::{CameraBoom, CameraPivot, EntityFollow};
 use concerto::gameplay::third_person::{
     CameraFraming, CameraStance, ShoulderSide, ThirdPersonCamera,
@@ -33,7 +34,9 @@ use concerto::procedural_animation::{
 };
 use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
-use concerto::window::input::{Input, KeyCode, MouseButton, PhysicalKey};
+use concerto::window::define_action;
+use concerto::window::input::actions::{ActionMap, Shortcut};
+use concerto::window::input::{GamepadButton, Input, KeyCode, MouseButton, PhysicalKey};
 use concerto::{
     ecs::{CommandQueue, Component, Res, Resource},
     foundation::assets::asset_server::AssetServer,
@@ -41,7 +44,7 @@ use concerto::{
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmos;
 use concerto_procedural_animation_gizmos::FootLockGizmos;
-use glam::{EulerRot, Quat, Vec2, Vec3};
+use glam::{EulerRot, Quat, Vec3};
 
 use crate::grid::Patrol;
 
@@ -55,6 +58,41 @@ const WALLS: [(Vec3, Vec3); 2] = [
 const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 const CAMERA_HEIGHT: f32 = 1.4;
+
+define_action!(
+    /// Runs while held: either Shift, or the left stick button.
+    Run
+);
+define_action!(
+    /// Aims while held: the right mouse button, or the left trigger.
+    Aim
+);
+define_action!(
+    /// Toggles crouching: C, or the east face button.
+    Crouch
+);
+define_action!(
+    /// Swaps the camera's shoulder: Q, or the right bumper.
+    SwapShoulder
+);
+define_action!(
+    /// Toggles facing the camera: F.
+    FaceCamera
+);
+
+/// Binds the demo's character actions globally; movement and look are gameplay's `Move` and `Look`.
+pub(crate) fn bind_controls(actions: &mut ActionMap) {
+    actions.bind_global(Run, Shortcut::key(KeyCode::ShiftLeft));
+    actions.bind_global(Run, Shortcut::key(KeyCode::ShiftRight));
+    actions.bind_global(Run, GamepadButton::LeftThumb);
+    actions.bind_global(Aim, MouseButton::Right);
+    actions.bind_global(Aim, GamepadButton::LeftTrigger);
+    actions.bind_global(Crouch, Shortcut::key(KeyCode::KeyC));
+    actions.bind_global(Crouch, GamepadButton::East);
+    actions.bind_global(SwapShoulder, Shortcut::key(KeyCode::KeyQ));
+    actions.bind_global(SwapShoulder, GamepadButton::RightBumper);
+    actions.bind_global(FaceCamera, Shortcut::key(KeyCode::KeyF));
+}
 
 /// The player capsule's size, how far behind it the camera sits and whether walls pull it in and it has stances, and how the visible character follows it.
 #[derive(Resource, Clone, Debug, PartialEq)]
@@ -438,34 +476,22 @@ const RUN: Speeds = Speeds {
     back: 2.5,
 };
 
-const MOVEMENT_KEYS: [(KeyCode, Vec2); 8] = [
-    (KeyCode::KeyW, Vec2::Y),
-    (KeyCode::ArrowUp, Vec2::Y),
-    (KeyCode::KeyS, Vec2::NEG_Y),
-    (KeyCode::ArrowDown, Vec2::NEG_Y),
-    (KeyCode::KeyA, Vec2::X),
-    (KeyCode::ArrowLeft, Vec2::X),
-    (KeyCode::KeyD, Vec2::NEG_X),
-    (KeyCode::ArrowRight, Vec2::NEG_X),
-];
-
-fn held(input: &Input, key: KeyCode) -> bool {
-    input.is_held(PhysicalKey::Code(key))
-}
-
-fn movement(input: &Input, yaw: f32, faces_camera: bool, current: Quat) -> (Vec3, Quat) {
-    let keys: Vec2 = MOVEMENT_KEYS
-        .iter()
-        .filter(|(key, _)| held(input, *key))
-        .map(|(_, direction)| *direction)
-        .sum();
-    let direction = Quat::from_rotation_y(yaw) * Vec3::new(keys.x, 0.0, keys.y).normalize_or_zero();
+fn movement(
+    actions: &ActionMap,
+    input: &Input,
+    yaw: f32,
+    faces_camera: bool,
+    current: Quat,
+) -> (Vec3, Quat) {
+    let push = actions.axis2d(Move, input);
+    let direction =
+        Quat::from_rotation_y(yaw) * Vec3::new(-push.x, 0.0, push.y).normalize_or_zero();
     let rotation = if faces_camera {
         Quat::from_rotation_y(yaw)
     } else {
         facing(direction, current)
     };
-    let speeds = if held(input, KeyCode::ShiftLeft) || held(input, KeyCode::ShiftRight) {
+    let speeds = if actions.is_held(Run, input) {
         &RUN
     } else {
         &WALK
@@ -476,7 +502,8 @@ fn movement(input: &Input, yaw: f32, faces_camera: bool, current: Quat) -> (Vec3
     } else {
         speeds.back
     };
-    let velocity = rotation * Vec3::new(local.x * speeds.side, 0.0, local.z * along);
+    let velocity =
+        rotation * Vec3::new(local.x * speeds.side, 0.0, local.z * along) * push.length();
     (velocity, rotation)
 }
 
@@ -492,13 +519,14 @@ pub(crate) fn update_movement(
     players: Query<(&mut Player, &mut DesiredMotion, &GroundProbe)>,
     pivots: Query<(&CameraPivot, Option<&ThirdPersonCamera>)>,
     input: Res<Input>,
+    actions: Res<ActionMap>,
 ) {
     let yaw = pivots.iter().next().map_or(0.0, |(pivot, _)| pivot.yaw());
     let aiming = pivots
         .iter()
         .find_map(|(_, rig)| rig)
         .is_some_and(|rig| rig.stance == CameraStance::Aim);
-    let toggled = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyF));
+    let toggled = actions.is_just_pressed(FaceCamera, &input);
     let locking_toggled = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyL));
 
     for (mut player, mut desired, ground) in players.iter() {
@@ -509,7 +537,7 @@ pub(crate) fn update_movement(
             player.foot_locking = !player.foot_locking;
         }
         let faces_camera = player.faces_camera || aiming;
-        let (velocity, rotation) = movement(&input, yaw, faces_camera, desired.rotation);
+        let (velocity, rotation) = movement(&actions, &input, yaw, faces_camera, desired.rotation);
         if ground.is_grounded() {
             desired.velocity = velocity;
         }
@@ -517,27 +545,27 @@ pub(crate) fn update_movement(
     }
 }
 
-/// Toggles crouching on C and swaps shoulders on Q, and aims every rig while the right mouse button is held, else crouches it while the player is crouched.
+/// Toggles crouching on `Crouch` and swaps shoulders on `SwapShoulder`, and aims every rig while `Aim` is held, else crouches it while the player is crouched.
 pub(crate) fn update_camera_stance(
     players: Query<&mut Player>,
     rigs: Query<&mut ThirdPersonCamera>,
     input: Res<Input>,
+    actions: Res<ActionMap>,
 ) {
-    let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
-    if pressed(KeyCode::KeyC) {
+    if actions.is_just_pressed(Crouch, &input) {
         for mut player in players.iter() {
             player.crouched = !player.crouched;
         }
     }
     let crouched = players.iter().next().is_some_and(|player| player.crouched);
-    let stance = if input.is_mouse_button_held(MouseButton::Right) {
+    let stance = if actions.is_held(Aim, &input) {
         CameraStance::Aim
     } else if crouched {
         CameraStance::Crouch
     } else {
         CameraStance::Follow
     };
-    let swapped = pressed(KeyCode::KeyQ);
+    let swapped = actions.is_just_pressed(SwapShoulder, &input);
 
     for mut rig in rigs.iter() {
         if rig.stance != stance {
@@ -653,21 +681,25 @@ mod tests {
         scene::{Scene, SceneNode},
         spawner::SceneSpawnerComponent,
     };
-    use concerto::window::input::{Input, KeyCode, MouseButton, PhysicalKey};
+    use concerto::window::input::actions::ActionMap;
+    use concerto::window::input::{
+        GamepadAxis, GamepadId, GamepadSettings, Input, KeyCode, MouseButton, PhysicalKey,
+    };
     use concerto_motion_matching_gizmos::MotionMatchingGizmos;
     use concerto_procedural_animation_gizmos::FootLockGizmos;
     use glam::{Quat, Vec3};
 
     use concerto::director::VirtualCamera;
+    use concerto::gameplay::actions::bind_gameplay_actions;
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
     use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, PendingLink, Player, PlayerSpawner, RUN, WALK,
-        character_graph, cycle_displacement, debug_keys, facing, feed_foot_placement,
-        foot_lock_weight, foot_placement_ignore, foot_placement_weight, movement,
-        setup_character_animations, spawn_character, spawn_forest_walls, update_camera_stance,
-        update_movement,
+        bind_controls, character_graph, cycle_displacement, debug_keys, facing,
+        feed_foot_placement, foot_lock_weight, foot_placement_ignore, foot_placement_weight,
+        movement, setup_character_animations, spawn_character, spawn_forest_walls,
+        update_camera_stance, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -1343,7 +1375,15 @@ mod tests {
             desired,
             GroundProbe::default(),
         ));
+        world.insert_resource(controls());
         world
+    }
+
+    fn controls() -> ActionMap {
+        let mut actions = ActionMap::default();
+        bind_gameplay_actions(&mut actions);
+        bind_controls(&mut actions);
+        actions
     }
 
     fn holding(keys: &[KeyCode]) -> Input {
@@ -1355,7 +1395,36 @@ mod tests {
     }
 
     fn walk(input: &Input, yaw: f32) -> Vec3 {
-        movement(input, yaw, false, Quat::IDENTITY).0
+        movement(&controls(), input, yaw, false, Quat::IDENTITY).0
+    }
+
+    fn pushing_the_left_stick_forward(length: f32) -> Input {
+        let mut input = Input::new();
+        input.set_gamepad_settings(
+            GamepadSettings::default()
+                .with_dead_zone(0.0)
+                .with_live_zone(1.0),
+        );
+        let pad = GamepadId::new(0);
+        input.connect_gamepad(pad, "pad");
+        input.update_gamepad_axis(pad, GamepadAxis::LeftStickY, length);
+        input
+    }
+
+    #[test]
+    fn a_half_pushed_stick_walks_at_half_the_speed_of_a_full_one() {
+        let full = walk(&pushing_the_left_stick_forward(1.0), 0.0);
+        let half = walk(&pushing_the_left_stick_forward(0.5), 0.0);
+
+        assert!(full.abs_diff_eq(Vec3::Z * WALK.forward, 1e-5));
+        assert!(half.abs_diff_eq(full * 0.5, 1e-5));
+    }
+
+    #[test]
+    fn w_with_the_left_arrow_stays_a_diagonal() {
+        let velocity = walk(&holding(&[KeyCode::KeyW, KeyCode::ArrowLeft]), 0.0);
+
+        assert!(velocity.abs_diff_eq(Vec3::new(1.0, 0.0, 1.0).normalize() * WALK.forward, 1e-5));
     }
 
     #[test]
@@ -1364,7 +1433,7 @@ mod tests {
         let held = Quat::from_rotation_y(-1.2);
         let inputs: [&[KeyCode]; 3] = [&[], &[KeyCode::KeyD], &[KeyCode::KeyS, KeyCode::ShiftLeft]];
         for keys in inputs {
-            let (_, rotation) = movement(&holding(keys), yaw, true, held);
+            let (_, rotation) = movement(&controls(), &holding(keys), yaw, true, held);
             assert!(
                 rotation.abs_diff_eq(Quat::from_rotation_y(yaw), 1e-5),
                 "{keys:?}"
@@ -1390,7 +1459,7 @@ mod tests {
             ),
         ];
         for (keys, local) in cases {
-            let (velocity, _) = movement(&holding(&keys), yaw, true, Quat::IDENTITY);
+            let (velocity, _) = movement(&controls(), &holding(&keys), yaw, true, Quat::IDENTITY);
             assert!(velocity.abs_diff_eq(camera * local, 1e-5), "{keys:?}");
         }
     }
@@ -1471,6 +1540,7 @@ mod tests {
         let mut world = World::new();
         world.spawn(Player::default());
         world.spawn(ThirdPersonCamera::default());
+        world.insert_resource(controls());
         world
     }
 
@@ -1515,6 +1585,16 @@ mod tests {
         assert_eq!(
             rig_after(&mut world, holding(&[KeyCode::KeyC])).stance,
             CameraStance::Follow
+        );
+    }
+
+    #[test]
+    fn shift_and_c_crouches() {
+        let mut world = world_with_rig();
+
+        assert_eq!(
+            rig_after(&mut world, holding(&[KeyCode::ShiftLeft, KeyCode::KeyC])).stance,
+            CameraStance::Crouch
         );
     }
 

@@ -54,6 +54,7 @@ extern "C"
 						   world->broad_phase_layer_interface,
 						   world->object_vs_broad_phase_layer_filter,
 						   world->object_layer_pair_filter);
+		world->system.SetContactListener(&world->sensor_contact_listener);
 		return world;
 	}
 

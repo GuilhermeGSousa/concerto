@@ -22,6 +22,7 @@ use winit::{
 
 use crate::{
     apply::{self, WindowAction},
+    gamepad::Pads,
     translate::{self, Waiting},
 };
 
@@ -37,6 +38,9 @@ pub(crate) struct Handler {
     cursor: Vec2,
     applied: Option<WindowSettings>,
     maximised: bool,
+    pads: Option<Pads>,
+    focused: bool,
+    refocused: bool,
     /// The last press that started a move, for spotting a double press.
     #[cfg(not(target_arch = "wasm32"))]
     last_move_press: Option<Instant>,
@@ -52,6 +56,9 @@ impl Handler {
             cursor: Vec2::ZERO,
             applied: None,
             maximised: false,
+            pads: None,
+            focused: true,
+            refocused: false,
             #[cfg(not(target_arch = "wasm32"))]
             last_move_press: None,
         }
@@ -76,6 +83,13 @@ impl Handler {
             apply::size_correction(app.get_resource::<Window>(), (actual.width, actual.height))
         {
             self.pending.push(resized);
+        }
+        let refocused = std::mem::take(&mut self.refocused);
+        if let Some(pads) = self.pads.as_mut() {
+            pads.drain(self.focused, &mut self.pending);
+            if refocused {
+                pads.send_state(&mut self.pending);
+            }
         }
         apply::deliver(app, &mut self.pending);
 
@@ -255,6 +269,7 @@ impl ApplicationHandler for Handler {
         );
         window.set_cursor_visible(true);
         self.handle = Some(Arc::clone(&window));
+        self.pads = Pads::new();
 
         let Some(build) = self.build.take() else {
             return;
@@ -300,8 +315,13 @@ impl ApplicationHandler for Handler {
         }
 
         if let Some(translated) = translate::translate(&event) {
-            if let WindowEvent::CursorMoved { position } = &translated {
-                self.cursor = *position;
+            match &translated {
+                WindowEvent::CursorMoved { position } => self.cursor = *position,
+                WindowEvent::Focused(focused) => {
+                    self.refocused |= *focused && !self.focused;
+                    self.focused = *focused;
+                }
+                _ => (),
             }
             self.pending.push(translated);
         }

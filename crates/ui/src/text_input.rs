@@ -1141,7 +1141,7 @@ mod tests {
             self.world
                 .get_resource_mut::<EventChannel<ActionFired>>()
                 .unwrap()
-                .push_event(ActionFired { action });
+                .push_event(ActionFired::new(action));
             if previous {
                 self.keys(&[KeyCode::ShiftLeft, KeyCode::Tab]);
             } else {

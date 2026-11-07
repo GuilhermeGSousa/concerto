@@ -25,8 +25,13 @@ extern "C"
 		for (uint32_t i = 0; i < ignore_count; ++i)
 			body_filter.IgnoreBody(JPH::BodyID(ignore[i]));
 
+		JPH::BroadPhaseLayerFilter all_broad_phase_layers;
+		JPH::ObjectLayerFilter all_object_layers;
+		NonSensorBroadPhaseLayerFilter broad_phase_filter(all_broad_phase_layers);
+		NonSensorObjectLayerFilter object_filter(all_object_layers);
+
 		JPH::RayCastResult hit;
-		if (!world->system.GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, body_filter))
+		if (!world->system.GetNarrowPhaseQuery().CastRay(ray, hit, broad_phase_filter, object_filter, body_filter))
 			return false;
 
 		out_hit->body = hit.mBodyID.GetIndexAndSequenceNumber();

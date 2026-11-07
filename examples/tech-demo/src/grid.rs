@@ -15,6 +15,7 @@ use concerto::{
     physics::collider::Collider,
     render::components::light::Light,
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
+    window::input::actions::ActionMap,
     world_grid::WorldGrid,
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
@@ -24,7 +25,7 @@ use glam::{Quat, Vec3};
 
 use crate::{
     character::{
-        CharacterConfig, NpcSpawner, PlayerSpawner, cycle_displacement, debug_keys,
+        CharacterConfig, NpcSpawner, PlayerSpawner, bind_controls, cycle_displacement, debug_keys,
         feed_foot_placement, setup_character_animations, spawn_character, spawn_npc,
         update_movement,
     },
@@ -83,6 +84,10 @@ pub fn grid(app: &mut App) {
         .register_plugin(ProceduralAnimationGizmosPlugin)
         .register_plugin(NavigationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
+    bind_controls(
+        app.get_resource_mut::<ActionMap>()
+            .expect("DefaultPlugins inserts the ActionMap"),
+    );
 
     app.insert_resource(CharacterConfig::forest());
 

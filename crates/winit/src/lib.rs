@@ -11,6 +11,7 @@ use winit::{
 };
 
 mod apply;
+mod gamepad;
 mod handler;
 mod translate;
 
