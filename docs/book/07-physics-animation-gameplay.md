@@ -206,9 +206,9 @@ A graph is a tree of nodes under a result node:
   one warning; an additive clip whose delta isn't built, such as one added in
   code, passes it through with none. `AnimationPlayer::play(node)` restarts
   the delta, and the node never holds back `OnAnimationEnd`: it always counts
-  as finished. To mask an overlay, chain it under a **Layer** node.
-  `AdditiveNode::new(clip)` starts at weight 1, looping from 0 at rate 1, and
-  each field has a `with_<field>`:
+  as finished. The node has no mask: it layers the delta on every bone the
+  clip animates. `AdditiveNode::new(clip)` starts at weight 1, looping from 0
+  at rate 1, and every other field has a `with_<field>`:
   ```rust
   graph.result_node().with_input(
       AdditiveNode::new(cold).with_weight_param(name!("cold")),
@@ -560,8 +560,9 @@ marked `.at_preview_time()`, as above. The clip editor's preview samples the
 clip directly and fires nothing.
 
 Every playing source fires, with its effective weight: a blend gives each input
-its share, a blend space each corner its barycentric weight, and a cross-fade
-the fading states theirs. A state entered with `CrossFade` fires its start
+its share, a blend space each corner its barycentric weight, a cross-fade
+the fading states theirs, and an **Additive** node its clip's the node's
+weight. A state entered with `CrossFade` fires its start
 event on the first frame of the fade, at that frame's weight, about
 `dt / blend_time`: 0.07 for a 0.25 s blend at 60 Hz. With `Inertialization` the
 new state plays alone, so its start event fires at weight 1.

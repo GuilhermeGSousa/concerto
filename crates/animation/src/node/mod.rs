@@ -274,9 +274,7 @@ impl AnimationClipNodeState {
     }
 
     pub fn with_start_time(mut self, start_time: f32) -> Self {
-        self.clock.start_time = start_time;
-        self.clock.time = start_time;
-        self.clock.previous_time = start_time;
+        self.clock = ClipClock::new(start_time);
         self
     }
 
