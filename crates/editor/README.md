@@ -1230,8 +1230,9 @@ opening one opens no tab.
 track rows.
 The node's owner sizes it and writes its `duration`, `rate`, `time`,
 `selection`, `selectable`, `markers`, `selected_marker` and `tracks`; the
-widget never writes them. `Timeline` has no builders: an owner writes the whole
-value each frame and assigns it only when it differs from what is shown.
+widget never writes them. `Timeline` has no builders: an owner compares what it
+wants with what is shown each frame and writes only what differs, field by
+field when a field such as `tracks` is costly to clone.
 
 - Pressing or dragging on the ruler sends `TimelineScrubbed { time }` to the
   `Timeline` entity. The time snaps to a frame when there is a rate.
