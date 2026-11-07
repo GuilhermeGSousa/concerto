@@ -1,18 +1,20 @@
 //! The read-only editor of an animation clip.
+pub mod events;
 mod panels;
 pub mod preview;
 
-use std::{path::Path, sync::Arc};
+use std::{ops::DerefMut, path::Path, sync::Arc};
 
 use concerto_animation::clip::AnimationClip;
 use concerto_app::{App, schedule_groups::Update};
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, command::EntityCommandQueue,
+    Component, Entity, IntoSystemConfig, Query, Res,
+    command::{CommandQueue, EntityCommandQueue},
     events::event_reader::EventReader,
 };
 use concerto_editor::{
     asset_editor::{
-        AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, finish_asset_request,
+        AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved, finish_asset_request,
     },
     hosted::{Hosted, HostedEventsAppExt},
     preview::PreviewSignals,
@@ -27,6 +29,7 @@ use concerto_foundation::assets::{
 };
 use concerto_scene::scene::Scene;
 
+use events::{TabEvent, read_events};
 use panels::{build_clip_panels, sync_clip_panels};
 use preview::{
     ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
@@ -46,6 +49,8 @@ pub struct ClipDocument {
     pub picked_scene: Option<AssetId>,
     pub shown_scene: Option<AssetId>,
     pub scene_error: Option<String>,
+    pub events: Vec<TabEvent>,
+    pub selected_event: Option<usize>,
 }
 
 impl Default for ClipDocument {
@@ -62,6 +67,8 @@ impl Default for ClipDocument {
             picked_scene: None,
             shown_scene: None,
             scene_error: None,
+            events: Vec::new(),
+            selected_event: None,
         }
     }
 }
@@ -143,6 +150,27 @@ pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationCli
     Ok(clip)
 }
 
+pub(crate) fn settle_edit(
+    result: Result<(), String>,
+    document: Entity,
+    editor: &mut impl DerefMut<Target = EditorDocument>,
+    cmd: &mut CommandQueue,
+) {
+    match result {
+        Ok(()) => {
+            if !editor.status.is_empty() {
+                editor.status.clear();
+            }
+            cmd.insert(Unsaved, document);
+        }
+        Err(message) => {
+            if editor.status != message {
+                editor.status = message;
+            }
+        }
+    }
+}
+
 fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
     assets
         .of_type::<Scene>()
@@ -205,6 +233,15 @@ pub(crate) fn load_clip(
                 continue;
             }
         };
+        let events = match read_events(&clip) {
+            Ok(events) => events,
+            Err(error) => {
+                finish_asset_request(&mut document, &asset, Err(anyhow::anyhow!(error)));
+                continue;
+            }
+        };
+        state.events = events;
+        state.selected_event = None;
         state.facts = ClipFacts {
             skeleton_bones: state.facts.skeleton_bones,
             driven: state.facts.driven,
@@ -251,7 +288,10 @@ pub fn install(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
+    use concerto_animation::{
+        clip::{AnimationChanelOutput, AnimationChannel, ClipEventData, ClipEventKey},
+        event::AnimationEvent,
+    };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin},
@@ -271,6 +311,8 @@ mod tests {
     };
     use concerto_foundation::assets::{Asset, content::save_content_asset_into};
     use concerto_mesh::skeleton::SkeletonComponent;
+    use concerto_name::Name;
+    use concerto_reflect::{ReflectedValue, to_value};
     use concerto_render::ExclusiveCamera;
     use concerto_ui::theme::UITheme;
     use concerto_window::plugin::{Window, WindowPlugin};
@@ -302,6 +344,40 @@ mod tests {
         let mut clip = AnimationClip::default();
         clip.add_channel(Uuid::from_u128(1), keys(seconds));
         clip
+    }
+
+    pub(super) const FOOTSTEP: &str = "game::events::Footstep";
+
+    pub(super) fn stored_key(time: f32, type_name: &str, value: ReflectedValue) -> ClipEventKey {
+        ClipEventKey {
+            time,
+            event: ClipEventData::Stored {
+                type_name: type_name.to_owned(),
+                value,
+            },
+        }
+    }
+
+    pub(super) fn named_key(time: f32, name: &str) -> ClipEventKey {
+        let event = AnimationEvent {
+            name: Name::new(name),
+        };
+        stored_key(
+            time,
+            std::any::type_name::<AnimationEvent>(),
+            to_value(&event).unwrap(),
+        )
+    }
+
+    pub(super) fn footstep_value() -> ReflectedValue {
+        ReflectedValue::Struct(vec![(
+            "strength".to_owned(),
+            ReflectedValue::Leaf(vec![0, 0, 32, 64]),
+        )])
+    }
+
+    pub(super) fn typed_key(time: f32) -> ClipEventKey {
+        stored_key(time, FOOTSTEP, footstep_value())
     }
 
     pub(super) fn clip_fixture() -> SceneFixture {
@@ -426,6 +502,8 @@ mod tests {
         assert_eq!(document.picked_scene, None);
         assert_eq!(document.shown_scene, None);
         assert_eq!(document.scene_error, None);
+        assert!(document.events.is_empty());
+        assert_eq!(document.selected_event, None);
     }
 
     #[test]
@@ -697,6 +775,32 @@ mod tests {
         assert!(state(&f, document).playing);
         assert!(f.scene_names(document).contains(&"level".to_owned()));
         assert!(!f.unsaved(document));
+    }
+
+    #[test]
+    fn a_clip_opens_with_its_events_and_a_second_clip_replaces_them() {
+        let mut f = clip_fixture();
+        let mut eventful = clip_of(10);
+        eventful
+            .replace_events(vec![typed_key(0.25), named_key(0.5, "footstep")])
+            .unwrap();
+        let walk = write_clip(&mut f, "content/walk.gasset", &eventful);
+        let run = write_clip(&mut f, "content/run.gasset", &clip_of(10));
+
+        let document = open_clip(&mut f, &walk);
+
+        let opened = state(&f, document);
+        assert_eq!(opened.events.len(), 2);
+        assert_eq!(opened.events[0].label(), "Footstep");
+        assert_eq!(opened.events[1].label(), "footstep");
+        assert_eq!(opened.selected_event, None);
+
+        state_mut(&mut f, document).selected_event = Some(1);
+        open_clip(&mut f, &run);
+
+        let reset = state(&f, document);
+        assert!(reset.events.is_empty());
+        assert_eq!(reset.selected_event, None);
     }
 
     #[test]

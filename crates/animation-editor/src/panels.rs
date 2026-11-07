@@ -15,7 +15,10 @@ use concerto_editor::{
     fonts::{MEDIUM, glyph, icon},
     preview::PreviewSignals,
     project::ProjectState,
-    timeline::{Timeline, TimelineScrubbed, frame_at, time_of_frame},
+    timeline::{
+        Timeline, TimelineMarker, TimelineMarkerMoved, TimelineMarkerSelected, TimelineScrubbed,
+        frame_at, time_of_frame,
+    },
 };
 use concerto_foundation::assets::{Asset, AssetId, registry::AssetRegistry};
 use concerto_scene::scene::Scene;
@@ -33,8 +36,9 @@ use concerto_window::input::MouseButton;
 
 use super::{
     ClipDocument,
+    events::TabEvent,
     preview::{SeekClip, SetClipTransport, SetRootMotion, SetSkeletonGizmo},
-    scene_signal,
+    scene_signal, settle_edit,
 };
 
 const TITLE_HEIGHT: f32 = 16.0;
@@ -197,6 +201,44 @@ fn scrub_clip(document: Entity) -> Listener<TimelineScrubbed> {
         if let Some(state) = documents.get_entity(document) {
             pause_at(state, document, on.signal().time, &mut previews);
         }
+    })
+    .into_listener()
+}
+
+fn select_event(document: Entity) -> Listener<TimelineMarkerSelected> {
+    (move |on: On<TimelineMarkerSelected>, documents: Query<&mut ClipDocument>| {
+        let Some(mut state) = documents.get_entity(document) else {
+            return;
+        };
+        let index = on
+            .signal()
+            .index
+            .filter(|index| *index < state.events.len());
+        if state.selected_event != index {
+            state.selected_event = index;
+        }
+    })
+    .into_listener()
+}
+
+fn move_event(document: Entity) -> Listener<TimelineMarkerMoved> {
+    (move |on: On<TimelineMarkerMoved>,
+           documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
+           mut cmd: CommandQueue| {
+        let index = on.signal().index;
+        let time = on.signal().time;
+        let Some((mut editor, mut state)) = documents.get_entity(document) else {
+            return;
+        };
+        if state
+            .events
+            .get(index)
+            .is_some_and(|event| event.time == time)
+        {
+            return;
+        }
+        let result = state.move_event(index, time);
+        settle_edit(result, document, &mut editor, &mut cmd);
     })
     .into_listener()
 }
@@ -427,6 +469,8 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
             tracks: Vec::new(),
         },
         scrub_clip(document),
+        select_event(document),
+        move_event(document),
     ))
     .entity()
 }
@@ -449,6 +493,23 @@ pub(crate) fn build_clip_panels(
         };
         cmd.insert(panels, document);
     }
+}
+
+fn marker_of(event: &TabEvent) -> TimelineMarker {
+    TimelineMarker {
+        time: event.time,
+        label: event.label().to_owned(),
+        locked: event.is_typed(),
+    }
+}
+
+fn shows_events(markers: &[TimelineMarker], events: &[TabEvent]) -> bool {
+    markers.len() == events.len()
+        && markers.iter().zip(events).all(|(marker, event)| {
+            marker.time == event.time
+                && marker.label == event.label()
+                && marker.locked == event.is_typed()
+        })
 }
 
 fn rate_fact(rate: f32, stored: bool) -> String {
@@ -512,18 +573,25 @@ pub(crate) fn sync_clip_panels(
         let inspector = &panels.inspector;
 
         if let Some(mut timeline) = timelines.get_entity(panels.timeline) {
-            let shown = Timeline {
-                duration: facts.duration,
-                rate: facts.rate,
-                time: state.time,
-                selection: None,
-                selectable: false,
-                markers: Vec::new(),
-                selected_marker: None,
-                tracks: Vec::new(),
-            };
-            if **timeline != shown {
-                **timeline = shown;
+            let settled = timeline.duration == facts.duration
+                && timeline.rate == facts.rate
+                && timeline.time == state.time
+                && timeline.selection.is_none()
+                && !timeline.selectable
+                && timeline.selected_marker == state.selected_event
+                && timeline.tracks.is_empty()
+                && shows_events(&timeline.markers, &state.events);
+            if !settled {
+                **timeline = Timeline {
+                    duration: facts.duration,
+                    rate: facts.rate,
+                    time: state.time,
+                    selection: None,
+                    selectable: false,
+                    markers: state.events.iter().map(marker_of).collect(),
+                    selected_marker: state.selected_event,
+                    tracks: Vec::new(),
+                };
             }
         }
 
@@ -588,8 +656,8 @@ mod tests {
     use super::super::{
         preview::ClipPreview,
         tests::{
-            clip_fixture, clip_of, open_clip, report_bones, state, write_broken_scene, write_clip,
-            write_scene,
+            clip_fixture, clip_of, named_key, open_clip, report_bones, state, typed_key,
+            write_broken_scene, write_clip, write_scene,
         },
     };
     use super::*;
@@ -785,6 +853,39 @@ mod tests {
         fn clean(&mut self) -> bool {
             !self.f.unsaved(self.document)
         }
+
+        fn select_marker(&mut self, index: Option<usize>) {
+            let timeline = self.panels().timeline;
+            self.f
+                .world
+                .trigger_on(timeline, TimelineMarkerSelected { index });
+        }
+
+        fn move_marker(&mut self, index: usize, time: f32) {
+            let timeline = self.panels().timeline;
+            self.f
+                .world
+                .trigger_on(timeline, TimelineMarkerMoved { index, time });
+        }
+
+        fn status(&self) -> String {
+            self.f.status(self.document)
+        }
+
+        fn event_times(&self) -> Vec<f32> {
+            self.state().events.iter().map(|event| event.time).collect()
+        }
+    }
+
+    fn eventful_clip() -> AnimationClip {
+        let mut clip = clip_of(10);
+        clip.replace_events(vec![
+            typed_key(0.25),
+            named_key(0.5, "footstep"),
+            named_key(1.0, "footstep"),
+        ])
+        .unwrap();
+        clip
     }
 
     fn single_key_clip() -> AnimationClip {
@@ -1312,5 +1413,121 @@ mod tests {
         tab.f.frame();
 
         assert_eq!(tab.world().get_resource::<Writes>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn a_settled_panel_with_markers_writes_nothing() {
+        let mut f = panels_fixture();
+        f.world.insert_resource(Writes::default());
+        f.add_delivery(count_writes.into_boxed_system());
+        let walk = write_clip(&mut f, "content/hero/walk.gasset", &eventful_clip());
+        let mut tab = tab_of(f, &walk);
+        tab.select_marker(Some(1));
+        tab.paused_at(4.0);
+        tab.f.frame();
+        tab.f.frame();
+        tab.f.frame();
+
+        assert_eq!(tab.timeline().markers.len(), 3);
+        assert_eq!(tab.world().get_resource::<Writes>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn markers_follow_the_events_with_typed_ones_locked() {
+        let mut tab = tab_of_clip(&eventful_clip());
+        tab.f.frame();
+
+        assert_eq!(
+            tab.timeline().markers,
+            vec![
+                TimelineMarker {
+                    time: 0.25,
+                    label: "Footstep".into(),
+                    locked: true,
+                },
+                TimelineMarker {
+                    time: 0.5,
+                    label: "footstep".into(),
+                    locked: false,
+                },
+                TimelineMarker {
+                    time: 1.0,
+                    label: "footstep".into(),
+                    locked: false,
+                },
+            ]
+        );
+        assert_eq!(tab.timeline().selected_marker, None);
+    }
+
+    #[test]
+    fn the_selected_marker_follows_the_selection() {
+        let mut tab = tab_of_clip(&eventful_clip());
+
+        tab.select_marker(Some(1));
+        tab.f.frame();
+        assert_eq!(tab.state().selected_event, Some(1));
+        assert_eq!(tab.timeline().selected_marker, Some(1));
+
+        tab.select_marker(Some(9));
+        tab.f.frame();
+        assert_eq!(tab.state().selected_event, None);
+
+        tab.select_marker(Some(0));
+        tab.select_marker(None);
+        tab.f.frame();
+        assert_eq!(tab.state().selected_event, None);
+        assert_eq!(tab.timeline().selected_marker, None);
+        assert!(tab.clean());
+    }
+
+    #[test]
+    fn a_marker_drag_moves_its_event_marks_the_tab_unsaved_and_clears_the_status() {
+        let mut tab = tab_of_clip(&eventful_clip());
+        let document = tab.document;
+        tab.f
+            .world
+            .get_component_for_entity_mut::<EditorDocument>(document)
+            .unwrap()
+            .status = "an earlier refusal".into();
+
+        tab.move_marker(1, time_of_frame(60, 30.0));
+        tab.f.frame();
+
+        assert_eq!(tab.event_times(), vec![0.25, 2.0, 1.0]);
+        assert_eq!(tab.timeline().markers[1].time, 2.0);
+        assert_eq!(tab.status(), "");
+        assert!(!tab.clean());
+    }
+
+    #[test]
+    fn a_refused_marker_drag_sets_the_status_and_leaves_the_events_and_the_tab_alone() {
+        let mut tab = tab_of_clip(&eventful_clip());
+
+        tab.move_marker(2, 0.5);
+        tab.f.frame();
+
+        assert_eq!(tab.status(), "`footstep` is already at frame 15");
+        assert_eq!(tab.event_times(), vec![0.25, 0.5, 1.0]);
+        assert_eq!(tab.timeline().markers[2].time, 1.0);
+        assert!(tab.clean());
+
+        tab.move_marker(0, 2.0);
+        tab.f.frame();
+
+        assert_eq!(tab.status(), "Typed events are read-only in the editor");
+        assert_eq!(tab.event_times(), vec![0.25, 0.5, 1.0]);
+        assert!(tab.clean());
+    }
+
+    #[test]
+    fn the_tab_stays_clean_while_a_marker_is_dragged_onto_its_own_time() {
+        let mut tab = tab_of_clip(&eventful_clip());
+
+        tab.move_marker(1, 0.5);
+        tab.f.frame();
+
+        assert!(tab.clean());
+        assert_eq!(tab.status(), "");
     }
 }
