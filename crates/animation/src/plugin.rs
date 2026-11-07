@@ -14,7 +14,7 @@ use crate::{
         PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
         register_node_inputs, state_machine::AnimationStateMachine,
     },
-    retarget::RetargetRig,
+    retarget::{RetargetNode, RetargetRig},
     target::{
         animate_targets, initialize_animation_players, initialize_skeletons,
         update_animation_players,
@@ -32,6 +32,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<AnimationClipNode>();
     registry.register::<BlendSpace2DNode>();
     registry.register::<AnimationStateMachine>();
+    registry.register::<RetargetNode>();
     registry.register::<PlaceholderNode>();
     registry.register::<AnimationEvent>();
     registry.register::<AssetHandle<AnimationClip>>();
@@ -52,6 +53,7 @@ pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<AnimationClipNode>(world);
     register_node_inputs::<BlendSpace2DNode>(world);
     register_node_inputs::<AnimationStateMachine>(world);
+    register_node_inputs::<RetargetNode>(world);
     register_node_inputs::<PlaceholderNode>(world);
 }
 

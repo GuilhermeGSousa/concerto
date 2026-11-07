@@ -93,6 +93,11 @@ impl Pose {
         &self.joints
     }
 
+    /// The joints of this pose, in bone order, to change.
+    pub fn joints_mut(&mut self) -> &mut [JointPose] {
+        &mut self.joints
+    }
+
     /// The joint of the bone at `bone_index`.
     pub fn joint(&self, bone_index: usize) -> Option<&JointPose> {
         self.joints.get(bone_index)

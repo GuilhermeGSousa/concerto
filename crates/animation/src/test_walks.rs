@@ -17,6 +17,7 @@ use crate::{
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
     player::AnimationPlayer,
     plugin::register_animation_node_inputs,
+    retarget::RetargetRig,
 };
 
 type Walk<K> = RefCell<InputState<InputSet<'static, 'static, K>>>;
@@ -45,6 +46,8 @@ impl Walks {
         world.insert_resource(clips);
         world.insert_resource(graphs);
         world.insert_resource(AssetStore::<BoneMask>::new());
+        world.insert_resource(AssetStore::<Skeleton>::new());
+        world.insert_resource(AssetStore::<RetargetRig>::new());
         register_animation_node_inputs(&mut world);
         register(&mut world);
         Self {
@@ -79,6 +82,18 @@ impl Walks {
             .expect("a test walk holds the masks")
     }
 
+    pub(crate) fn skeletons_mut(&mut self) -> &mut AssetStore<Skeleton> {
+        self.world
+            .get_resource_mut()
+            .expect("a test walk holds the skeletons")
+    }
+
+    pub(crate) fn rigs_mut(&mut self) -> &mut AssetStore<RetargetRig> {
+        self.world
+            .get_resource_mut()
+            .expect("a test walk holds the retarget rigs")
+    }
+
     pub(crate) fn into_world(self) -> World {
         self.world
     }
@@ -101,6 +116,19 @@ impl Walks {
             .get(&self.world)
             .expect("a test walk fetches its inputs");
         player.update(delta_time, self.graphs(), None, &inputs);
+    }
+
+    pub(crate) fn advance_with(
+        &self,
+        player: &mut AnimationPlayer,
+        delta_time: f32,
+        skeleton: &Skeleton,
+    ) {
+        let mut state = self.update.borrow_mut();
+        let inputs = state
+            .get(&self.world)
+            .expect("a test walk fetches its inputs");
+        player.update(delta_time, self.graphs(), Some(skeleton), &inputs);
     }
 
     pub(crate) fn create<R>(
