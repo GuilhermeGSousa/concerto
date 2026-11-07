@@ -946,7 +946,8 @@ entity picker sets each link's `to`.
 There is one graph: the `NavGraph` resource, built from every `NavPoint` in
 the world. It is rebuilt in `LateUpdate`, at edit time too, whenever a point
 or its links are added, changed, moved or removed. Two points sharing an
-anchor log a warning, and the one with the lower entity index keeps it.
+anchor log a warning, and the one with the lower entity index keeps it; the
+other is listed with no anchor.
 
 `NavGraph` answers questions about the graph:
 
@@ -960,7 +961,7 @@ anchor log a warning, and the one with the lower entity index keeps it.
 
 A `NavPath` holds the points it passes, their positions and its length in
 metres. `path.travel_time(speed)` is the time to walk it at that speed, or
-`None` for a speed that is not above zero.
+`None` for a speed that is not finite and above zero.
 
 Nearness and arrival are measured on the horizontal plane, X and Z: a point a
 step up or down a stair is as near as one on the floor. Path lengths count the
@@ -976,7 +977,9 @@ Insert a `NavDestination` to send it somewhere: `NavDestination::to_point(entity
 or `NavDestination::to_anchor(name)`, at the agent's speed, or at another with
 `.with_speed(speed)` for that request alone. The agent plans from the enabled
 point nearest it, and plans again when the destination changes or the graph is
-rebuilt under its route. Remove the destination to stop it.
+rebuilt under its route. Remove the destination, or the `NavAgent`, to stop
+it mid-route: its velocity drops to zero, it keeps its facing, and its route is
+dropped.
 
 Navigation decides how an agent wants to move and nothing more. Each frame it
 writes `NavSteering { velocity, facing }`, a horizontal velocity toward the

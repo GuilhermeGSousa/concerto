@@ -36,7 +36,7 @@ game adds itself when it needs them.
 | | `navigation` | hand-placed nav points and their links, the `NavGraph` built from them with nearest-point and shortest-path queries, and `NavAgent`s that steer toward a `NavDestination` and report `NavArrived` or `NavUnreachable` | `navigation` |
 | | `scene` | scenes: spawning and capturing | `scene` |
 | | `director` | the virtual-camera stack | `director` |
-| | `gameplay` | camera rigs and player helpers | `gameplay` |
+| | `gameplay` | camera rigs and player helpers, and the copy of nav steering into `DesiredMotion` | `gameplay` |
 | Interface | `window` | the window, input and their events as plain data, the clipboard | `window` |
 | | `winit` | the winit host behind `concerto::run` | |
 | | `ui` | the UI: layout, text, theme, widgets | `ui` |
