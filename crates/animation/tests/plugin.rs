@@ -7,7 +7,7 @@ use std::{
 use concerto_animation::{
     clip::{Additive, AdditiveBase, AnimationChanelOutput, AnimationChannel, AnimationClip},
     graph::AnimationGraph,
-    node::AnimationClipNode,
+    node::{AimOffsetNode, AimPoint, AnimationClipNode, ErasedAnimationNode},
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::AnimationPlugin,
 };
@@ -26,6 +26,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
+use concerto_name::name;
 use glam::Mat4;
 use uuid::Uuid;
 
@@ -68,8 +69,8 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     use concerto_animation::node::blend_space::BlendSpace2DNode;
     use concerto_animation::node::state_machine::AnimationStateMachine;
     use concerto_animation::node::{
-        AnimationClipNode, BlendNode, LayerNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
-        TwoBoneIkNode,
+        AimOffsetNode, AimPoint, AnimationClipNode, BlendNode, LayerNode, PlaceholderNode,
+        ReflectAnimationNode, ResultNode, TwoBoneIkNode,
     };
     use concerto_app::InspectedAssets;
     use concerto_ecs::reflect::AppTypeRegistry;
@@ -102,6 +103,8 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(has_node_data(TypeId::of::<PlaceholderNode>()));
     assert!(has_node_data(TypeId::of::<TwoBoneIkNode>()));
     assert!(has_node_data(TypeId::of::<LayerNode>()));
+    assert!(has_node_data(TypeId::of::<AimOffsetNode>()));
+    assert!(registry.get(TypeId::of::<AimPoint>()).is_some());
     assert!(
         registry
             .get(TypeId::of::<AssetHandle<AnimationClip>>())
@@ -127,6 +130,41 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
             .get_type_data::<ReflectSkeletonSource>(TypeId::of::<BoneMask>())
             .is_some()
     );
+}
+
+#[test]
+fn an_aim_offset_graph_loaded_through_the_asset_server_finds_the_clips_of_its_points() {
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(AnimationPlugin);
+    app.finish_plugin_build();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let clip = server.add(AnimationClip::default());
+    let graph = server.add(AnimationGraph::from_node(
+        AimOffsetNode::new(name!("aim_target"), "bone").with_point(AimPoint::new(
+            AssetHandle::weak(clip.id()),
+            0.0,
+            0.3,
+        )),
+    ));
+    app.update();
+
+    let world = app.main().world();
+    let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+    let loaded = graphs.get(&graph).expect("the graph loaded");
+    let node = loaded
+        .live_nodes()
+        .find_map(|node: &dyn ErasedAnimationNode| {
+            node.as_reflect().downcast_ref::<AimOffsetNode>()
+        })
+        .expect("the aim offset node is live");
+    let point = &node.points[0];
+    assert!(matches!(point.clip, AssetHandle::Strong(..)));
+    assert_eq!(point.clip.id(), clip.id());
+    let clips = world.get_resource::<AssetStore<AnimationClip>>().unwrap();
+    assert!(clips.get(&point.clip).is_some());
 }
 
 fn bone_x_after_a_few_frames(mut app: App) -> f32 {

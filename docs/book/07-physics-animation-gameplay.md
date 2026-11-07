@@ -264,6 +264,38 @@ A graph is a tree of nodes under a result node:
   `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space.
+- **Aim offset** (`AimOffsetNode`) lays captured aim poses over its first
+  input, chosen by where a target is. Each `AimPoint` is an additive clip and
+  the yaw and pitch, in radians, it aims at. The target is a world-space
+  `Vec3` the game set under `target_param`; the node measures its yaw and
+  pitch from `frame_bone`, under bone 0, along `forward` with `up`, model-space
+  axes read in that bone's rest pose, +Z and +Y by default. A yaw toward the
+  side `up × forward` is positive, and a pitch toward `up`. The angles ease
+  toward the target over `angle_halflife` (0 snaps), and a target crossing
+  behind the character turns the short way; the first evaluate after the node
+  starts or resets takes the target's angles at once. The points are weighed
+  by those angles: one point takes everything, points on one line, such as a
+  pitch-only set of aim up, level and down, interpolate along it and clamp at
+  its ends, and any other set is triangulated as a 2D blend space is. A point
+  closer than 1e-4 rad to an earlier one is left out. The chosen deltas
+  combine bone by bone and are applied with `apply_additive` at the node's
+  weight, root bone included, so a captured lean of the whole body comes
+  through; root motion and events pass through. Every clip plays on one
+  clock, each looping over its own delta, so a held pose and a breathing aim
+  loop both work. `weight`, times the float under `weight_param`, eases in
+  and out over `weight_halflife`; a missing target eases it out, and at
+  weight 0 the input passes through untouched. A clip not loaded yet counts
+  as no change, as does a plain clip, which warns once. Wire it after the
+  base and the layers and before look-at.
+  `AimOffsetNode::new(target_param, frame_bone)` starts from the defaults,
+  `with_point` adds a point, and each other field has a `with_<field>`:
+  ```rust
+  AimOffsetNode::new(name!("aim_target"), "Spine2")
+      .with_point(AimPoint::new(aim_down, 0.0, -0.8))
+      .with_point(AimPoint::new(aim_level, 0.0, 0.0))
+      .with_point(AimPoint::new(aim_up, 0.0, 0.8))
+      .with_weight_param(name!("aim_weight"))
+  ```
 - **Look-at** (`LookAtNode`, in `concerto::procedural_animation`, registered
   by `ProceduralAnimationPlugin`) turns a character's spine, neck, head and eyes
   toward a point while the body plays its input. The `chain` lists
@@ -597,8 +629,9 @@ emits, keep their rotation delta but no translation, so an overlay adds a lean
 of the whole body but no root motion. Scale is never layered, nor are a clip's
 events: they stay on the clip.
 
-Mesh-space deltas, a single-frame or rest-pose base, and the graph node that
-plays an additive clip over a pose are not there yet.
+`AimOffsetNode` plays additive aim clips over a pose, chosen by a target's
+yaw and pitch. Mesh-space deltas, a single-frame or rest-pose base, and a
+graph node that plays any additive clip over a pose are not there yet.
 
 ## Gameplay helpers
 
