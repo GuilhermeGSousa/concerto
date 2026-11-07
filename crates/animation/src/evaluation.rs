@@ -55,7 +55,6 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) root: Option<RootBone>,
     pub(crate) skeleton: Option<&'a Skeleton>,
     pub(crate) model_to_world: Option<Affine3A>,
-    pub(crate) seed: u64,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
 }
 
@@ -77,10 +76,5 @@ impl<'a> AnimationGraphContext<'a> {
     /// In `evaluate`, the world transform of the skeleton's model space: the `GlobalTransform` of bone 0's parent, or identity when it has none.
     pub fn model_to_world(&self) -> Option<Affine3A> {
         self.model_to_world
-    }
-
-    /// The seed of the player being walked, for nodes that vary per character.
-    pub fn seed(&self) -> u64 {
-        self.seed
     }
 }

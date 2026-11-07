@@ -307,9 +307,10 @@ A graph is a tree of nodes under a result node:
   input's, and a mask may name the root bone, for hip sway. The presets
   `ProceduralMotionChannel::breathing`, `sway` and `tremor` start from
   numbers that suit those uses. Each channel's phase and noise come from the
-  node's `seed` mixed with the player's, `AnimationPlayer::set_seed`: players
-  with the same seeds move in step, so give each character a seed that is
-  stable across runs, such as its spawn index. Resetting the node keeps its
+  node's `seed` mixed with the seed the game set on the blackboard under
+  `seed_param`, a `u64` or an int param, 0 when there is none: players with
+  the same seeds move in step, so set each character's from something stable
+  across runs, such as its spawn index. Resetting the node keeps its
   phases, so re-entering a state does not replay the same stretch of motion.
   Wire it after aim and look-at and before hand IK, so the off hand stays on
   a swaying gun. `ProceduralMotionNode::new()` has no channels, `with_channel`
@@ -327,6 +328,7 @@ A graph is a tree of nodes under a result node:
               .with_magnitude_param(name!("fear")),
       )
       .with_seed(7)
+      .with_seed_param(name!("character_seed"))
   ```
 - **Foot placement** (`FootPlacementNode`, in
   `concerto::procedural_animation`, registered by `ProceduralAnimationPlugin`)
@@ -419,13 +421,7 @@ clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
-or identity when it has none. It also carries the player's seed, `seed()`, for
-nodes whose motion varies per character. It is 0 until the game calls
-`AnimationPlayer::set_seed(seed)`, which takes effect on the next frame; pick
-it from something stable across runs, such as a spawn index, since entity ids
-are not. A `SkeletonComponent` with a root bone gets a fresh `AnimationPlayer`
-when it is added, so set the seed, like params, once that player exists rather
-than on a player spawned beside the component.
+or identity when it has none.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the root motion and the clip events its sources gave this frame. Its inputs

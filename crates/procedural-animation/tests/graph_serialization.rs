@@ -168,7 +168,8 @@ fn a_procedural_motion_node_keeps_every_field_through_a_round_trip() {
             "fingers",
             Waveform::Noise { octaves: 5 },
         ))
-        .with_seed(7);
+        .with_seed(7)
+        .with_seed_param(name!("character_seed"));
     let mut graph = AnimationGraph::from_node(node.clone());
     graph.make_live(&registry(), None).unwrap();
 

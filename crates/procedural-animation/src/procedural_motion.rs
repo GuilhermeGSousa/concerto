@@ -27,10 +27,11 @@ use uuid::Uuid;
 pub struct ProceduralMotionNode {
     pub channels: Vec<ProceduralMotionChannel>,
     pub seed: u64,
+    pub seed_param: Option<Name>,
 }
 
 impl ProceduralMotionNode {
-    /// A node with no channels and seed 0.
+    /// A node with no channels, seed 0 and no seed param.
     pub fn new() -> Self {
         Self::default()
     }
@@ -41,10 +42,27 @@ impl ProceduralMotionNode {
         self
     }
 
-    /// Sets the seed mixed with the player's to pick each channel's phase and noise.
+    /// Sets the seed mixed with the param's to pick each channel's phase and noise.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
+    }
+
+    /// Mixes in the `u64` or `u32` blackboard param named `param`, so each character can move out of step.
+    pub fn with_seed_param(mut self, param: Name) -> Self {
+        self.seed_param = Some(param);
+        self
+    }
+
+    fn param_seed(&self, blackboard: &AnimationBlackboard) -> u64 {
+        let Some(param) = self.seed_param else {
+            return 0;
+        };
+        blackboard
+            .get::<u64>(param)
+            .copied()
+            .or_else(|| blackboard.get_int(param).map(u64::from))
+            .unwrap_or(0)
     }
 }
 
@@ -295,7 +313,7 @@ impl ProceduralMotionNode {
     ) -> bool {
         state.offsets.clear();
         state.offsets.resize(skeleton.bone_count(), None);
-        let base = mix_seed(context.seed(), self.seed);
+        let base = mix_seed(self.param_seed(context.blackboard()), self.seed);
         let mut contributed = false;
         for (index, (channel, channel_state)) in
             self.channels.iter().zip(&mut state.channels).enumerate()
@@ -771,7 +789,7 @@ mod tests {
                     world.insert(AnimationRootBone::default(), bones[HIPS]);
                     let mut player = AnimationPlayer::new(bone_count);
                     player.set_paused(true);
-                    player.set_seed(*seed);
+                    player.set_param(name!("seed"), *seed);
                     world.spawn((
                         player,
                         AnimationHandleComponent::new(graph_handle.clone()),
@@ -1036,7 +1054,7 @@ mod tests {
 
     #[test]
     fn players_with_the_same_seeds_move_alike_and_other_seeds_differ() {
-        let node = single(noise("chest"));
+        let node = single(noise("chest")).with_seed_param(name!("seed"));
 
         let same = Stage::new(node.clone(), &[0, 0]).step_all(1.3);
         assert_eq!(same[0], same[1]);
@@ -1047,6 +1065,37 @@ mod tests {
         let unseeded = Stage::one(node.clone()).step(1.3);
         let node_seeded = Stage::one(node.with_seed(1)).step(1.3);
         assert_ne!(unseeded.joints, node_seeded.joints);
+    }
+
+    #[test]
+    fn the_seed_param_reads_a_u64_or_an_int_and_anything_else_as_zero() {
+        let node = single(noise("chest")).with_seed_param(name!("character_seed"));
+        let with = |value: Option<Box<dyn Fn(&mut Stage)>>| {
+            let mut stage = Stage::one(node.clone());
+            if let Some(set) = value {
+                set(&mut stage);
+            }
+            stage.step(1.3)
+        };
+
+        let wide = with(Some(Box::new(|stage| {
+            stage.set_param(name!("character_seed"), 5_u64)
+        })));
+        let int = with(Some(Box::new(|stage| {
+            stage.set_param(name!("character_seed"), 5_u32)
+        })));
+        let float = with(Some(Box::new(|stage| {
+            stage.set_param(name!("character_seed"), 5.0_f32)
+        })));
+        let missing = with(None);
+
+        assert_eq!(wide.joints, int.joints);
+        assert_ne!(wide.joints, missing.joints);
+        assert_eq!(float.joints, missing.joints);
+        assert_eq!(
+            missing.joints,
+            Stage::one(single(noise("chest"))).step(1.3).joints
+        );
     }
 
     #[test]
