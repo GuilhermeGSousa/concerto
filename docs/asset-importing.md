@@ -245,6 +245,16 @@ footstep_right = [0.37, 0.87]
 - A table for a clip the source does not emit, or a time that is negative,
   not finite, or past the clip's duration, fails the import.
 
+A clip's `AnimationEvent`s can also be added, moved, renamed and removed in the
+editor's clip tab (see `crates/animation-editor/README.md`), and Save writes
+them into the clip's `.gasset` with `resave_content_asset`. Other event types
+show there read-only and are saved as they are. The save keeps the clip's
+import provenance, so the clip stays owned by its source: the next re-import
+of the source rebuilds the clip and its events from `[settings.events]`, and
+the edits saved from the editor are lost. To keep an event across re-imports,
+put it in `[settings.events]`. An authored clip, with no provenance, keeps its
+saved events.
+
 ## Additive clips
 
 The `gltf` and `bvh` importers make a clip additive against a base clip, its
@@ -307,7 +317,7 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `6`; it changes only w
 | `references`     | the `AssetId`s this asset points at, so a tree can be integrity-checked by scanning headers alone |
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
 | `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
-| `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, `None` for editor-authored assets |
+| `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, kept when `resave_content_asset` writes over it; `None` for editor-authored assets and for an imported asset saved with `save_content_asset_into` |
 | `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
 The header can be read without touching the payload, which is what lets a
@@ -770,6 +780,22 @@ importing and does not create a source sidecar. The `project_root` is the
 source tree under version control — deliberately *not* the exe-relative
 runtime root, so a save is not overwritten by the next build.
 
+A file written with `provenance: None` belongs to the editor: a re-import of
+the source it came from leaves it untouched, and pruning keeps it. To save an
+edit to an imported asset and leave it owned by its source,
+`resave_content_asset` writes over the existing file instead:
+
+```rust
+use concerto_foundation::assets::content::resave_content_asset;
+
+let id = resave_content_asset(&clip, project_root, "content/walk/animation_walk.gasset", &mut registry)?;
+```
+
+It fails when there is no file at the address or the file holds another kind,
+keeps the header's id and provenance, writes the references and
+`kind_version` of `value`, and upserts the entry in `registry` with the same
+provenance. The next re-import of the source then overwrites the saved edit.
+
 ## Writing a new importer
 
 An importer lives in whatever crate owns the asset types it produces and
@@ -833,8 +859,10 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
   mean. Matching across such changes is deferred.
 - **Pruning skips editor-saved outputs.** Re-import deletes the `.gasset` and
   the metadata key of every output the importer stopped emitting, and removes
-  it from the editor's registry. An output saved from the editor (its header
-  has no provenance) is kept with its key. Pruning an output that another asset
+  it from the editor's registry. An output saved from the editor with
+  `save_content_asset_into` (its header has no provenance) is kept with its
+  key; one saved with `resave_content_asset` keeps its provenance and is
+  pruned like any other output. Pruning an output that another asset
   still references logs a warning naming the output and the referrer.
 - **A renamed output keeps its id only with a hint.** An importer that renames a
   sub-asset calls `ctx.renamed_from(new_name, old_name)` before it first calls

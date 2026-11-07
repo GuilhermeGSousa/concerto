@@ -875,6 +875,8 @@ dependencies = [
  "concerto-editor",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-name",
+ "concerto-reflect",
  "concerto-render",
  "concerto-scene",
  "concerto-ui",
@@ -1158,6 +1160,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "concerto-animation",
  "concerto-asset-format",
  "concerto-asset-import",
  "concerto-bvh",

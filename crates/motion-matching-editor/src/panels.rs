@@ -714,6 +714,10 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
             rate: None,
             time: 0.0,
             selection: None,
+            selectable: true,
+            markers: Vec::new(),
+            selected_marker: None,
+            tracks: Vec::new(),
         },
         select_range(document),
         scrub_entry(document),
@@ -1048,6 +1052,10 @@ pub(crate) fn sync_definition_panels(
                 rate,
                 time: state.time,
                 selection: entry_selection(entry, rate),
+                selectable: true,
+                markers: Vec::new(),
+                selected_marker: None,
+                tracks: Vec::new(),
             };
             if **timeline != shown {
                 **timeline = shown;
