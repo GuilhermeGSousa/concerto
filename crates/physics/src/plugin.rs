@@ -4,7 +4,7 @@ use concerto_app::{
 };
 
 use crate::{
-    collider::register_colliders,
+    collider::{build_box_colliders, register_colliders, BoxCollider},
     ground::probe_ground,
     interpolation::interpolate_body_transforms,
     physics_pipeline::PhysicsPipeline,
@@ -20,6 +20,7 @@ pub struct PhysicsPlugin;
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.register_type::<MeshCollider>();
+        app.register_type::<BoxCollider>();
         if !app.is_editing() {
             app.insert_resource(PhysicsPipeline::new());
         }
@@ -28,6 +29,7 @@ impl Plugin for PhysicsPlugin {
             .add_system(LateFixedUpdate, step_simulation)
             .add_system(LateFixedUpdate, probe_ground)
             .add_system(Update, generate_mesh_shapes)
+            .add_system(Update, build_box_colliders)
             // LateUpdate, so `TransformPlugin` has already propagated global
             // transforms this frame: bodies are placed from world space, and
             // a collider on a nested entity inherits its parent's scale.

@@ -32,6 +32,7 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 | Box | `Collider::cuboid(half_x, half_y, half_z)`, half extents |
 | Capsule | `Collider::capsule(half_height, radius)` |
 | The entity's own mesh, static | `MeshCollider`, next to a `MeshComponent` |
+| A box collider authored in a scene | `BoxCollider { half_extents }`, half extents, `0.5` on each axis by default |
 
 `RigidBody` has a `density`, a `motion_type` (`Dynamic` by default) and
 `allowed_dofs`, which can lock rotation: a character uses
@@ -39,6 +40,11 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 `ColliderOffset` moves the shape relative to the entity;
 `ColliderOffset::bottom_origin(&collider)` puts the entity's origin at the
 bottom of a capsule, where a character's feet are.
+
+The body is built from the `Collider` once. Inserting a new `Collider` on the
+entity rebuilds its body from the new shape, which is how editing a
+`BoxCollider` in the inspector or over MCP takes effect. A `BoxCollider` on an
+entity that also has a `MeshCollider` wins over the mesh.
 
 ### Queries and forces
 

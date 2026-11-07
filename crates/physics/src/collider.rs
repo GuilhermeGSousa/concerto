@@ -1,7 +1,10 @@
-use concerto_ecs::component::{Component, ComponentLifecycleCallback};
-use concerto_ecs::{CommandQueue, Entity, Query, ResMut, Without};
+use concerto_ecs::component::{Component, ComponentLifecycleCallback, ComponentLifecycleContext};
+use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
+use concerto_ecs::world::RestrictedWorld;
+use concerto_ecs::{Changed, CommandQueue, Entity, Query, ResMut, Without};
 
 use concerto_foundation::transform::GlobalTransform;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Vec3;
 
 use crate::body::BodyId;
@@ -76,28 +79,61 @@ impl Component for Collider {
         None
     }
 
-    fn on_remove() -> Option<ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            // Both removal and despawn run cleanup before the Collider is
-            // dropped; its backend body is tracked by the companion `BodyId`.
-            if let Some(&body) = world.get_component_for_entity::<BodyId>(context.entity) {
-                if let Some(state) = world.get_resource_mut::<PhysicsState>() {
-                    state.destroy_body(body);
-                    state.unregister_body_entity(body);
-                }
+    fn on_replace() -> Option<ComponentLifecycleCallback> {
+        Some(destroy_collider_body)
+    }
 
-                world.remove_component::<BodyId>(context.entity);
-                // Without a body there are no more fixed-step poses; left in
-                // place the interpolator would keep rewriting the Transform
-                // from stale history.
-                if world
-                    .get_component_for_entity::<TransformInterpolation>(context.entity)
-                    .is_some()
-                {
-                    world.remove_component::<TransformInterpolation>(context.entity);
-                }
-            }
-        })
+    fn on_remove() -> Option<ComponentLifecycleCallback> {
+        Some(destroy_collider_body)
+    }
+}
+
+fn destroy_collider_body(mut world: RestrictedWorld, context: ComponentLifecycleContext) {
+    if let Some(&body) = world.get_component_for_entity::<BodyId>(context.entity) {
+        if let Some(state) = world.get_resource_mut::<PhysicsState>() {
+            state.destroy_body(body);
+            state.unregister_body_entity(body);
+        }
+
+        world.remove_component::<BodyId>(context.entity);
+        // Without a body there are no more fixed-step poses; left in
+        // place the interpolator would keep rewriting the Transform
+        // from stale history.
+        if world
+            .get_component_for_entity::<TransformInterpolation>(context.entity)
+            .is_some()
+        {
+            world.remove_component::<TransformInterpolation>(context.entity);
+        }
+    }
+}
+
+/// A box collider authored in a scene: `Collider::cuboid` of these half extents.
+#[derive(Component, Reflect, Clone, Copy, Debug)]
+#[reflect(Component, Default, SceneComponent)]
+pub struct BoxCollider {
+    pub half_extents: Vec3,
+}
+
+impl Default for BoxCollider {
+    fn default() -> Self {
+        Self {
+            half_extents: Vec3::splat(0.5),
+        }
+    }
+}
+
+/// Inserts a `Collider::cuboid` for every new or edited `BoxCollider`, with each half extent at least 0.001.
+pub fn build_box_colliders(
+    boxes: Query<(Entity, &BoxCollider), Changed<BoxCollider>>,
+    mut cmd: CommandQueue,
+) {
+    for (entity, box_collider) in boxes.iter() {
+        let half_extents = box_collider.half_extents.abs().max(Vec3::splat(0.001));
+        cmd.insert(
+            Collider::cuboid(half_extents.x, half_extents.y, half_extents.z),
+            entity,
+        );
     }
 }
 
