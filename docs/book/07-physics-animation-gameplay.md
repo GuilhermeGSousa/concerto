@@ -374,7 +374,11 @@ clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
-or identity when it has none.
+or identity when it has none. It also carries the player's seed, `seed()`, for
+nodes whose motion varies per character. It is 0 until the game calls
+`AnimationPlayer::set_seed(seed)`, which takes effect on the next frame; pick
+it from something stable across runs, such as a spawn index, since entity ids
+are not.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the root motion and the clip events its sources gave this frame. Its inputs

@@ -181,6 +181,7 @@ fn walk<K: 'static, R>(
         root,
         skeleton,
         model_to_world,
+        seed: 0,
         inputs: &inputs,
     };
     f(&context)

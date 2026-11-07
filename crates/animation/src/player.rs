@@ -51,6 +51,7 @@ pub struct AnimationPlayer {
     frame_pool: FramePool,
     paused: bool,
     event_threshold: f32,
+    seed: u64,
     pub(crate) fired: Vec<FiredEvent>,
 }
 
@@ -62,6 +63,7 @@ impl AnimationPlayer {
             frame_pool: FramePool::new(bone_count),
             paused: false,
             event_threshold: 0.0,
+            seed: 0,
             fired: Vec::new(),
         }
     }
@@ -79,6 +81,16 @@ impl AnimationPlayer {
 
     pub fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    /// Sets the seed nodes read to vary their motion per character; 0 by default.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.seed = seed;
+    }
+
+    /// The seed nodes read to vary their motion per character.
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     pub fn play(&mut self, node_index: &AnimationNodeIndex) {
@@ -162,6 +174,7 @@ impl AnimationPlayer {
             root: None,
             skeleton: None,
             model_to_world: None,
+            seed: self.seed,
             inputs,
         };
         self.graph_state
@@ -180,6 +193,7 @@ impl AnimationPlayer {
             root: None,
             skeleton,
             model_to_world: None,
+            seed: self.seed,
             inputs,
         };
         self.graph_state.update(delta_time, graphs, &context);
@@ -220,6 +234,7 @@ impl AnimationPlayer {
             root,
             skeleton: Some(skeleton),
             model_to_world: Some(model_to_world_of(bones, parents, globals)),
+            seed: self.seed,
             inputs,
         };
 
@@ -315,14 +330,29 @@ impl Deref for AnimationHandleComponent {
 
 #[cfg(test)]
 mod tests {
-    use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+    use concerto_ecs::{IntoSystem, System, component::scene::SceneEntityRef};
+    use concerto_foundation::{
+        assets::{asset_server::AssetServer, asset_store::AssetStore},
+        transform::Transform,
+    };
+    use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
     use concerto_name::name;
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use glam::Mat4;
+    use uuid::Uuid;
 
     use super::AnimationPlayer;
     use crate::{
         clip::AnimationClip,
+        evaluation::AnimationGraphContext,
         graph::{AnimationGraph, made_live},
-        node::{AnimationClipNode, BlendNode, ResultNode},
+        node::{
+            AnimationClipNode, AnimationNode, BlendNode, ReflectAnimationNode, ResultNode,
+            register_node_inputs,
+        },
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
+        target::animate_targets,
         test_walks::Walks,
     };
 
@@ -422,5 +452,120 @@ mod tests {
         });
 
         assert_eq!(visits, 0);
+    }
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct SeedProbe {}
+
+    #[derive(Default)]
+    struct SeenSeeds {
+        update: Option<u64>,
+        evaluate: Option<u64>,
+    }
+
+    impl AnimationNode for SeedProbe {
+        type State = SeenSeeds;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> SeenSeeds {
+            SeenSeeds::default()
+        }
+
+        fn update(
+            &self,
+            seen: &mut SeenSeeds,
+            _: f32,
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+        ) {
+            seen.update = Some(context.seed());
+        }
+
+        fn evaluate(
+            &self,
+            seen: &mut SeenSeeds,
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+            seen.evaluate = Some(context.seed());
+        }
+
+        fn reset(&self, _: &mut SeenSeeds) {}
+    }
+
+    fn one_bone_skeleton(bone_id: Uuid) -> Skeleton {
+        Skeleton::new(
+            vec![Mat4::IDENTITY],
+            vec![None],
+            vec!["bone".into()],
+            vec![JointPose::IDENTITY],
+            vec![bone_id],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn nodes_read_the_seed_set_on_their_player_in_update_and_evaluate() {
+        let bone_id = Uuid::from_u128(3);
+        let mut server = AssetServer::new();
+        let clips = AssetStore::<AnimationClip>::new();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        let mut skeletons = AssetStore::<Skeleton>::new();
+        server.register_asset(&clips);
+        server.register_asset(&graphs);
+        server.register_asset(&skeletons);
+
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<SeedProbe>();
+        let mut graph = AnimationGraph::from_node(SeedProbe {});
+        graph.make_live(&registry, None).unwrap();
+        let graph_handle = server.add(AnimationGraph::default());
+        graphs.insert(graph_handle.id(), graph);
+        let skeleton = server.add(one_bone_skeleton(bone_id));
+        skeletons.insert(skeleton.id(), one_bone_skeleton(bone_id));
+
+        let walks = Walks::with(clips, graphs, register_node_inputs::<SeedProbe>);
+        let mut player = AnimationPlayer::new(1);
+        walks.initialize(&mut player, graph_handle);
+        player.set_seed(42);
+        walks.advance(&mut player, 0.1);
+
+        let mut world = walks.into_world();
+        let bone = world.spawn(Transform::IDENTITY);
+        let owner = world.spawn((
+            player,
+            SkeletonComponent {
+                skeleton,
+                bones: vec![SceneEntityRef::Entity(bone)],
+                root: None,
+            },
+        ));
+        world.insert_resource(skeletons);
+        let mut system = animate_targets.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let graphs = world
+            .remove_resource::<AssetStore<AnimationGraph>>()
+            .unwrap();
+        let player = world
+            .get_component_for_entity_mut::<AnimationPlayer>(owner)
+            .unwrap();
+        let mut update = None;
+        let mut evaluate = None;
+        player.for_each_state_mut::<SeedProbe>(&graphs, |_, seen, _| {
+            update = seen.update;
+            evaluate = seen.evaluate;
+        });
+        assert_eq!(update, Some(42));
+        assert_eq!(evaluate, Some(42));
     }
 }
