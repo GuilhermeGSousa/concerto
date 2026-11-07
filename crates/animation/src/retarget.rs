@@ -367,7 +367,7 @@ impl fmt::Display for RigError {
             ),
             RigError::RootHeight { height } => write!(
                 f,
-                "the root is {height} above the model origin in the reference pose, which is not above 0"
+                "the root is {height} above the model origin in the reference pose, which is not above 0.1 mm"
             ),
             RigError::Skeleton(error) => write!(f, "the skeleton is invalid: {error}"),
         }
