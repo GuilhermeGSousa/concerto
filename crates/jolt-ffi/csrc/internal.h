@@ -12,6 +12,8 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
+#include <unordered_set>
+
 JPH_SUPPRESS_WARNINGS
 
 // Object layers: statics only collide with dynamics; dynamics collide with
@@ -20,14 +22,16 @@ namespace Layers
 {
 	constexpr JPH::ObjectLayer NON_MOVING = 0;
 	constexpr JPH::ObjectLayer MOVING = 1;
-	constexpr JPH::uint NUM_LAYERS = 2;
+	constexpr JPH::ObjectLayer SENSOR = 2;
+	constexpr JPH::uint NUM_LAYERS = 3;
 } // namespace Layers
 
 namespace BroadPhaseLayers
 {
 	constexpr JPH::BroadPhaseLayer NON_MOVING(0);
 	constexpr JPH::BroadPhaseLayer MOVING(1);
-	constexpr JPH::uint NUM_LAYERS = 2;
+	constexpr JPH::BroadPhaseLayer SENSOR(2);
+	constexpr JPH::uint NUM_LAYERS = 3;
 } // namespace BroadPhaseLayers
 
 class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter
@@ -41,6 +45,8 @@ public:
 			return inObject2 == Layers::MOVING;
 		case Layers::MOVING:
 			return true;
+		case Layers::SENSOR:
+			return inObject2 == Layers::MOVING;
 		default:
 			JPH_ASSERT(false);
 			return false;
@@ -55,6 +61,7 @@ public:
 	{
 		mObjectToBroadPhase[Layers::NON_MOVING] = BroadPhaseLayers::NON_MOVING;
 		mObjectToBroadPhase[Layers::MOVING] = BroadPhaseLayers::MOVING;
+		mObjectToBroadPhase[Layers::SENSOR] = BroadPhaseLayers::SENSOR;
 	}
 
 	JPH::uint GetNumBroadPhaseLayers() const override
@@ -77,6 +84,8 @@ public:
 			return "NON_MOVING";
 		case (JPH::BroadPhaseLayer::Type)BroadPhaseLayers::MOVING:
 			return "MOVING";
+		case (JPH::BroadPhaseLayer::Type)BroadPhaseLayers::SENSOR:
+			return "SENSOR";
 		default:
 			JPH_ASSERT(false);
 			return "INVALID";
@@ -99,11 +108,41 @@ public:
 			return inLayer2 == BroadPhaseLayers::MOVING;
 		case Layers::MOVING:
 			return true;
+		case Layers::SENSOR:
+			return inLayer2 == BroadPhaseLayers::MOVING;
 		default:
 			JPH_ASSERT(false);
 			return false;
 		}
 	}
+};
+
+class NonSensorBroadPhaseLayerFilter final : public JPH::BroadPhaseLayerFilter
+{
+public:
+	explicit NonSensorBroadPhaseLayerFilter(const JPH::BroadPhaseLayerFilter &inner) : inner(inner) {}
+
+	bool ShouldCollide(JPH::BroadPhaseLayer inLayer) const override
+	{
+		return inLayer != BroadPhaseLayers::SENSOR && inner.ShouldCollide(inLayer);
+	}
+
+private:
+	const JPH::BroadPhaseLayerFilter &inner;
+};
+
+class NonSensorObjectLayerFilter final : public JPH::ObjectLayerFilter
+{
+public:
+	explicit NonSensorObjectLayerFilter(const JPH::ObjectLayerFilter &inner) : inner(inner) {}
+
+	bool ShouldCollide(JPH::ObjectLayer inLayer) const override
+	{
+		return inLayer != Layers::SENSOR && inner.ShouldCollide(inLayer);
+	}
+
+private:
+	const JPH::ObjectLayerFilter &inner;
 };
 
 // The layer interfaces are declared before the system: PhysicsSystem::Init
@@ -114,6 +153,7 @@ struct JoltWorld
 	BPLayerInterfaceImpl broad_phase_layer_interface;
 	ObjectVsBroadPhaseLayerFilterImpl object_vs_broad_phase_layer_filter;
 	ObjectLayerPairFilterImpl object_layer_pair_filter;
+	std::unordered_set<JPH::BodyID> sensors;
 	JPH::PhysicsSystem system;
 };
 

@@ -204,6 +204,14 @@ extern "C" {
         out_max: *mut f32,
     );
 
+    /// Makes the body a sensor: [`jolt_body_create`] builds it kinematic, on
+    /// the sensor layer, never sleeping and active, whatever the other
+    /// settings say.
+    pub fn jolt_body_creation_settings_set_is_sensor(
+        settings: *mut JoltBodyCreationSettings,
+        is_sensor: bool,
+    );
+
     /// Sets the shape the body is built from. The settings take their own
     /// reference, so `shape` may be destroyed straight afterwards or reused
     /// for any number of other bodies.

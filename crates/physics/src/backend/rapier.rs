@@ -20,9 +20,9 @@ use rapier3d::parry::query::{
 };
 use rapier3d::parry::shape::Ball;
 use rapier3d::prelude::{
-    BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet, ImpulseJointSet, IntegrationParameters,
-    IslandManager, LockedAxes, MultibodyJointSet, NarrowPhase, Ray, RigidBodyBuilder,
-    RigidBodyHandle, RigidBodySet, SharedShape,
+    ActiveCollisionTypes, ActiveEvents, BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet,
+    ImpulseJointSet, IntegrationParameters, IslandManager, LockedAxes, MultibodyJointSet,
+    NarrowPhase, Ray, RigidBodyBuilder, RigidBodyHandle, RigidBodySet, SharedShape,
 };
 
 use crate::backend::{
@@ -174,9 +174,11 @@ impl PhysicsBackend for RapierBackend {
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> Self::BodyHandle {
         let mut body_builder = match rigid_body {
             None => RigidBodyBuilder::fixed(),
+            Some(_) if sensor => RigidBodyBuilder::kinematic_velocity_based(),
             Some(rb) => match rb.motion_type {
                 MotionType::Dynamic => RigidBodyBuilder::dynamic(),
                 MotionType::Kinematic => RigidBodyBuilder::kinematic_velocity_based(),
@@ -198,6 +200,16 @@ impl PhysicsBackend for RapierBackend {
             // The offset is the collider's pose relative to the body, so it
             // shifts the geometry without showing up in `body_transform`.
             collider_builder = collider_builder.translation(to_rapier_vec(offset.0));
+        }
+        if sensor {
+            collider_builder = collider_builder
+                .sensor(true)
+                .active_events(ActiveEvents::COLLISION_EVENTS)
+                .active_collision_types(
+                    ActiveCollisionTypes::default()
+                        | ActiveCollisionTypes::KINEMATIC_FIXED
+                        | ActiveCollisionTypes::KINEMATIC_KINEMATIC,
+                );
         }
         self.colliders
             .insert_with_parent(collider_builder, handle, &mut self.bodies);
@@ -306,7 +318,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if ignore.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) {
                 continue;
             }
             let Some(intersection) =
@@ -352,7 +364,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if ignore.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) {
                 continue;
             }
             let pose = collider.position();
@@ -409,6 +421,7 @@ impl PhysicsBackend for RapierBackend {
 
             for (_, ground_collider) in self.colliders.iter() {
                 if ground_collider.parent() == Some(body)
+                    || ground_collider.is_sensor()
                     || !candidates.intersects(&ground_collider.compute_aabb())
                 {
                     continue;

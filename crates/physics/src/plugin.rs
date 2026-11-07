@@ -9,6 +9,7 @@ use crate::{
     interpolation::interpolate_body_transforms,
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
+    sensor::Sensor,
     shape::{
         clean_shapes_for_dropped_meshes, generate_mesh_shapes, MeshCollider, PhysicsMeshShapes,
     },
@@ -21,6 +22,7 @@ impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.register_type::<MeshCollider>();
         app.register_type::<BoxCollider>();
+        app.register_type::<Sensor>();
         if !app.is_editing() {
             app.insert_resource(PhysicsPipeline::new());
         }

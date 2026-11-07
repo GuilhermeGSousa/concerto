@@ -36,8 +36,13 @@ extern "C"
 		for (uint32_t i = 0; i < ignore_count; ++i)
 			body_filter.IgnoreBody(JPH::BodyID(ignore[i]));
 
+		JPH::BroadPhaseLayerFilter all_broad_phase_layers;
+		JPH::ObjectLayerFilter all_object_layers;
+		NonSensorBroadPhaseLayerFilter broad_phase_filter(all_broad_phase_layers);
+		NonSensorObjectLayerFilter object_filter(all_object_layers);
+
 		JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
-		world->system.GetNarrowPhaseQuery().CastShape(cast, settings, base_offset, collector, {}, {}, body_filter);
+		world->system.GetNarrowPhaseQuery().CastShape(cast, settings, base_offset, collector, broad_phase_filter, object_filter, body_filter);
 		if (!collector.HadHit())
 			return false;
 

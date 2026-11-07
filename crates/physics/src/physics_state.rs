@@ -68,10 +68,11 @@ impl PhysicsState {
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> BodyId {
         BodyId(
             self.backend
-                .create_body(collider, transform, rigid_body, offset),
+                .create_body(collider, transform, rigid_body, offset, sensor),
         )
     }
 

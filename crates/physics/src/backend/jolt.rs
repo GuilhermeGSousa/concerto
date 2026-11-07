@@ -3,6 +3,8 @@
 //! (it requires thread primitives the toolchains do not provide), so web
 //! builds use the Rapier backend instead.
 
+use std::collections::HashSet;
+
 use concerto_foundation::transform::Transform;
 use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
@@ -29,6 +31,7 @@ const SHAPE_DENSITY: f32 = 1000.0; // water
 /// the C++ side of the `jolt-ffi` shim).
 pub struct JoltBackend {
     world: *mut concerto_jolt_ffi::JoltWorld,
+    static_sensors: HashSet<concerto_jolt_ffi::JoltBodyId>,
 }
 
 // SAFETY: `JoltBackend` holds a raw pointer into Jolt, which is not inherently
@@ -134,7 +137,10 @@ impl PhysicsBackend for JoltBackend {
             )
         };
 
-        Self { world }
+        Self {
+            world,
+            static_sensors: HashSet::new(),
+        }
     }
 
     fn new_stepper() -> Stepper {
@@ -162,6 +168,7 @@ impl PhysicsBackend for JoltBackend {
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> Self::BodyHandle {
         let position = transform.translation.to_array();
         let rotation = transform.rotation.to_array();
@@ -177,7 +184,7 @@ impl PhysicsBackend for JoltBackend {
         // arrays are valid xyz triples and the rotation a valid xyzw
         // quaternion. The settings are created, used, and destroyed within
         // this call.
-        unsafe {
+        let id = unsafe {
             let settings = concerto_jolt_ffi::jolt_body_creation_settings_create();
             concerto_jolt_ffi::jolt_body_creation_settings_set_position(
                 settings,
@@ -213,10 +220,15 @@ impl PhysicsBackend for JoltBackend {
                 settings,
                 collider.shape().0.as_ptr(),
             );
+            concerto_jolt_ffi::jolt_body_creation_settings_set_is_sensor(settings, sensor);
             let id = concerto_jolt_ffi::jolt_body_create(self.world, settings);
             concerto_jolt_ffi::jolt_body_creation_settings_destroy(settings);
             id
+        };
+        if sensor && rigid_body.is_none() {
+            self.static_sensors.insert(id);
         }
+        id
     }
 
     fn destroy_body(&mut self, body: Self::BodyHandle) {
@@ -226,6 +238,7 @@ impl PhysicsBackend for JoltBackend {
         unsafe {
             concerto_jolt_ffi::jolt_body_destroy(self.world, body);
         }
+        self.static_sensors.remove(&body);
     }
 
     fn body_transform(&self, body: Self::BodyHandle) -> Transform {
@@ -260,6 +273,9 @@ impl PhysicsBackend for JoltBackend {
     }
 
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3) {
+        if self.static_sensors.contains(&body) {
+            return;
+        }
         let velocity = velocity.to_array();
         // SAFETY: `body` is a body in this world; `velocity` is a valid xyz
         // triple.

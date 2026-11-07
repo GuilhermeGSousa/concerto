@@ -6,12 +6,14 @@ use concerto_ecs::{Changed, CommandQueue, Entity, Query, ResMut, Without};
 use concerto_foundation::transform::GlobalTransform;
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Vec3;
+use log::warn;
 
 use crate::body::BodyId;
 use crate::interpolation::TransformInterpolation;
 use crate::physics_state::PhysicsState;
-use crate::rigid_body::RigidBody;
-use crate::shape::{PhysicsShape, SharedPhysicsShape};
+use crate::rigid_body::{MotionType, RigidBody};
+use crate::sensor::Sensor;
+use crate::shape::{MeshCollider, PhysicsShape, SharedPhysicsShape};
 
 #[derive(Clone)]
 pub struct Collider {
@@ -145,15 +147,34 @@ pub fn register_colliders(
             &Collider,
             Option<&RigidBody>,
             Option<&ColliderOffset>,
+            Option<&Sensor>,
+            Option<&MeshCollider>,
         ),
         Without<BodyId>,
     >,
     mut physics_state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, global_transform, collider, rigid_body, offset) in colliders.iter() {
+    for (entity, global_transform, collider, rigid_body, offset, sensor, mesh_collider) in
+        colliders.iter()
+    {
+        let sensor = match (sensor, mesh_collider) {
+            (Some(_), Some(_)) => {
+                warn!("Ignoring Sensor on entity {entity:?}: a mesh collider cannot be a sensor");
+                false
+            }
+            (Some(_), None) => {
+                if rigid_body
+                    .is_some_and(|rigid_body| matches!(rigid_body.motion_type, MotionType::Dynamic))
+                {
+                    warn!("Sensor on entity {entity:?} has a dynamic RigidBody: creating it kinematic");
+                }
+                true
+            }
+            (None, _) => false,
+        };
         let transform = global_transform.to_transform();
-        let body_id = physics_state.create_body(collider, &transform, rigid_body, offset);
+        let body_id = physics_state.create_body(collider, &transform, rigid_body, offset, sensor);
         physics_state.register_body_entity(body_id, entity);
         cmd.insert(body_id, entity);
 

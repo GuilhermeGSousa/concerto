@@ -95,13 +95,17 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// kinematic per its [`MotionType`](crate::rigid_body::MotionType), with
     /// its density and allowed degrees of freedom. `offset` displaces the
     /// shape's geometry relative to the body origin; it must not leak into
-    /// [`body_transform`](Self::body_transform).
+    /// [`body_transform`](Self::body_transform). A `sensor` body detects
+    /// bodies without colliding with them, is never dynamic, and is skipped
+    /// by [`cast_ray`](Self::cast_ray), [`cast_sphere`](Self::cast_sphere)
+    /// and [`probe_ground`](Self::probe_ground).
     fn create_body(
         &mut self,
         collider: &Collider,
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies

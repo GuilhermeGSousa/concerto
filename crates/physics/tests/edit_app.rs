@@ -1,7 +1,7 @@
 use concerto_app::App;
 use concerto_physics::{
     collider::BoxCollider, physics_pipeline::PhysicsPipeline, physics_state::PhysicsState,
-    plugin::PhysicsPlugin,
+    plugin::PhysicsPlugin, sensor::Sensor,
 };
 use concerto_scene::capture::capture_subtree;
 use glam::Vec3;
@@ -68,4 +68,24 @@ fn an_edit_app_opens_and_saves_a_box_collider() {
         .map(|component| component.type_name.as_str())
         .collect();
     assert_eq!(names, ["concerto_physics::collider::BoxCollider"]);
+}
+
+#[test]
+fn an_edit_app_opens_and_saves_a_sensor() {
+    let mut app = App::for_editing();
+    app.register_plugin(PhysicsPlugin);
+    let world = app.main_mut().world_mut();
+    let entity = world.spawn(());
+
+    let stored = concerto_reflect::to_value(&Sensor).unwrap();
+    assert!(world.apply_scene_component("Sensor", &stored, entity, &[entity]));
+    assert!(world.get_component_for_entity::<Sensor>(entity).is_some());
+
+    let scene = capture_subtree(world, entity).unwrap();
+    let names: Vec<&str> = scene.nodes[0]
+        .components
+        .iter()
+        .map(|component| component.type_name.as_str())
+        .collect();
+    assert_eq!(names, ["concerto_physics::sensor::Sensor"]);
 }

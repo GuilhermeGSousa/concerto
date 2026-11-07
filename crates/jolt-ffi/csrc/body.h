@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "shape.h"
@@ -61,6 +62,12 @@ extern "C"
      * a player capsule upright). Defaults to all. */
     void jolt_body_creation_settings_set_allowed_dofs(JoltBodyCreationSettings *settings,
                                                       JoltAllowedDofs allowed_dofs);
+
+    /* Makes the body a sensor: jolt_body_create builds it kinematic, on the
+     * SENSOR layer, never sleeping and active, whatever the other settings
+     * say. */
+    void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
+                                                   bool is_sensor);
 
     /* Sets the shape the body is built from (see shape.h). The settings take
      * their own reference, so `shape` may be destroyed straight afterwards or
