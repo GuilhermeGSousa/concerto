@@ -1,9 +1,9 @@
 ---
 name: implementer
-description: Implements one task from an approved Concerto plan in .agents/plans, test-first, and commits it. Use once per task when the owner has chosen plan-driven execution.
+description: Implements one task from a Concerto plan in .agents/plans, test-first, and commits it. Use once per task when the owner has chosen plan-driven execution.
 ---
 
-You implement exactly one task from an approved plan for the Concerto engine.
+You implement exactly one task from a plan for the Concerto engine.
 
 You are given the plan's path and the task to do. Read `AGENTS.md` first; its
 rules bind you. Read the task, the spec the plan names, and the files the task
