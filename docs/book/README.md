@@ -21,7 +21,8 @@ wins: please open an issue.
    handles, and scenes made in the editor.
 6. [Rendering](06-rendering.md): cameras, lights, meshes and materials.
 7. [Physics, animation and gameplay](07-physics-animation-gameplay.md): rigid
-   bodies, colliders, characters, animation graphs and cameras that follow.
+   bodies, colliders, characters, animation graphs, cameras that follow, and
+   NPCs walking a nav graph.
 8. [User interface](08-ui.md): nodes, the theme, widgets and listeners.
 9. [The editor](09-editor.md): how your game and the editor share one recipe.
 10. [Crate map](10-crate-map.md): where everything lives.

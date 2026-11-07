@@ -821,6 +821,7 @@ dependencies = [
  "concerto-mesh",
  "concerto-motion-matching",
  "concerto-name",
+ "concerto-navigation",
  "concerto-noise",
  "concerto-physics",
  "concerto-procedural-animation",
@@ -1120,6 +1121,8 @@ dependencies = [
  "concerto-director",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-motion-matching",
+ "concerto-navigation",
  "concerto-physics",
  "concerto-reflect",
  "concerto-render",
@@ -1301,6 +1304,34 @@ dependencies = [
  "concerto-reflect",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "concerto-navigation"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-name",
+ "concerto-reflect",
+ "concerto-scene",
+ "glam 0.30.10",
+ "log",
+]
+
+[[package]]
+name = "concerto-navigation-gizmos"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-color",
+ "concerto-debug-gizmos",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-navigation",
+ "concerto-render",
+ "glam 0.30.10",
 ]
 
 [[package]]
@@ -6042,6 +6073,7 @@ dependencies = [
  "concerto-asset-build",
  "concerto-debug-gizmos",
  "concerto-motion-matching-gizmos",
+ "concerto-navigation-gizmos",
  "concerto-procedural-animation-gizmos",
  "derive_more",
  "fs_extra",

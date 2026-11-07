@@ -1003,4 +1003,137 @@ fn aim(rigs: Query<&mut ThirdPersonCamera>, input: Res<Input>) {
 }
 ```
 
+## Navigation
+
+`NavigationPlugin`, in `DefaultPlugins`, walks characters between points you
+place by hand. `concerto::navigation` holds it.
+
+### Points and links
+
+A `NavPoint` marks a place an NPC can walk to and through. Its `anchor` is a
+`Name` that game data uses to find it, such as `"guard_post"`; leave it empty
+for a point that is only a waypoint. Its `enabled` flag, on by default, says
+whether a route may enter it: a disabled point is never a start, a stop or an
+end. The point's +Z axis is its facing, the way an agent turns when it arrives
+there.
+
+`NavLinks` on a point lists the points it connects to. Each `NavLink` names
+its `to` point and is walkable both ways; `one_way: true` lets agents walk it
+only from the point that owns it. Links to an entity that has no `NavPoint`,
+and links from a point to itself, are ignored. Both components are scene
+components, so points are placed and linked in the editor's inspector, whose
+entity picker sets each link's `to`.
+
+There is one graph: the `NavGraph` resource, built from every `NavPoint` in
+the world. It is rebuilt in `LateUpdate`, at edit time too, whenever a point
+or its links are added, changed, moved or removed. Two points sharing an
+anchor log a warning, and the one with the lower entity index keeps it; the
+other is listed with no anchor.
+
+`NavGraph` answers questions about the graph:
+
+| Method | Answer |
+|---|---|
+| `anchor(name)` | the point with that anchor |
+| `nearest(position)` | the enabled point nearest a position |
+| `path(from, to)` | the shortest `NavPath` between two points, through enabled points |
+| `path_from(position, to)` | the path from the enabled point nearest a position, its length counting the leg to that point |
+| `point(entity)`, `points()`, `edges()` | the points, with their positions, facings and anchors, and one edge per link |
+
+A `NavPath` holds the points it passes, their positions and its length in
+metres. `path.travel_time(speed)` is the time to walk it at that speed, or
+`None` for a speed that is not finite and above zero.
+
+Nearness and arrival are measured on the horizontal plane, X and Z: a point a
+step up or down a stair is as near as one on the floor. Path lengths count the
+height between points.
+
+### Agents
+
+A `NavAgent` walks the graph. `NavAgent::new()` walks at 1.4 m/s, counts a
+waypoint reached within 0.25 m and slows down within 1.5 m of the last one;
+`with_speed`, `with_arrival_radius` and `with_slow_radius` change those.
+
+Insert a `NavDestination` to send it somewhere: `NavDestination::to_point(entity)`
+or `NavDestination::to_anchor(name)`, at the agent's speed, or at another with
+`.with_speed(speed)` for that request alone. The agent plans from the enabled
+point nearest it, and plans again when the destination changes or the graph is
+rebuilt under its route. Remove the destination, or the `NavAgent`, to stop
+it mid-route: its velocity drops to zero, it keeps its facing, and its route is
+dropped.
+
+Navigation decides how an agent wants to move and nothing more. Each frame it
+writes `NavSteering { velocity, facing }`, a horizontal velocity toward the
+next waypoint and a yaw facing along it. When the agent reaches its last point,
+the velocity drops to zero, the facing becomes the point's, the destination is
+removed, and a `NavArrived { agent, point }` event is sent. When no route leads
+to the target, or the anchor names no point, the destination is removed and a
+`NavUnreachable { agent, target }` event is sent instead.
+
+`GameplayPlugin`'s `follow_nav_steering` copies a changed `NavSteering` into the
+agent's `DesiredMotion`, so an agent that is a character, with a
+`CharacterSimulation`, walks with motion matching like the player does. An
+agent without a `DesiredMotion` gets its steering and nothing moves it; read
+`NavSteering` yourself to move it some other way.
+
+```rust
+use concerto::name::Name;
+use concerto::navigation::{NavAgent, NavArrived, NavDestination, NavLink, NavLinks, NavPoint};
+
+let post = cmd
+    .spawn((
+        NavPoint { anchor: Name::new("guard_post"), enabled: true },
+        Transform::from_translation(Vec3::new(4.0, 0.0, 0.0)),
+    ))
+    .entity();
+cmd.spawn((
+    NavPoint::default(),
+    NavLinks { links: vec![NavLink { to: SceneEntityRef::Entity(post), one_way: false }] },
+    Transform::default(),
+));
+
+cmd.spawn((
+    Guard,
+    NavAgent::new(),
+    NavDestination::to_anchor(Name::new("guard_post")).with_speed(2.5),
+    CharacterSimulation::default(),
+    Transform::default(),
+));
+
+fn on_post(mut arrived: EventReader<NavArrived>, guards: Query<&mut Guard>) {
+    for arrival in arrived.read() {
+        if let Some(mut guard) = guards.get_entity(arrival.agent) {
+            guard.on_duty = true;
+        }
+    }
+}
+```
+
+The character's body, collider and animation come from the same set-up as the
+player's, under [Characters](#characters). The tech demo's grid level has an
+NPC that patrols a square of four points this way.
+
+### Drawing the graph
+
+The `concerto-navigation-gizmos` crate, which a game adds itself, draws each
+point as a ring with a line along its facing, green when enabled and grey when
+not, each link as a line with an arrowhead on a one-way link, and the route
+each agent has left. Register `NavigationGizmosPlugin` after `DefaultPlugins`;
+the `NavigationGizmos` resource turns the graph and routes layers off. The
+graph is drawn in the editor's scene view as well, while points are placed.
+Its [README](../../crates/navigation-gizmos/README.md) says more.
+
+### Limits
+
+Navigation is a graph of hand-placed points, and only that:
+
+- Agents do not avoid each other or the player. Their capsules collide in
+  physics, and that is all.
+- A route is planned over the graph alone. A physics body standing on it is not
+  walked around, and a blocked agent does not plan again.
+- The nearest point an agent starts from is found by distance, without a check
+  that it can be seen or reached in a straight line.
+- Links are walked, nothing else: no doors, ladders or vaults.
+- There is no navmesh yet; it is tracked in #678.
+
 Next: [User interface](08-ui.md).

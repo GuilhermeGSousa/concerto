@@ -1,7 +1,7 @@
 use concerto::{
     animation::{graph::AnimationGraph, player::AnimationPlayer},
     color::Color,
-    ecs::{CommandQueue, Component, Query, Res, With},
+    ecs::{CommandQueue, Component, Entity, Query, Res, With},
     foundation::assets::asset_store::AssetStore,
     motion_matching::{CharacterDisplacement, CharacterLink, MotionDatabase, MotionMatchingNode},
     physics::ground::{GroundProbe, GroundState},
@@ -13,7 +13,7 @@ use concerto::{
     },
 };
 
-use crate::character::Player;
+use crate::character::{PendingLink, Player};
 
 const PANEL_WIDTH: f32 = 230.0;
 const PANEL_PADDING: UIRect = UIRect {
@@ -135,19 +135,36 @@ pub(crate) fn spawn_grounded_overlay(mut cmd: CommandQueue) {
         );
 }
 
+fn belongs_to(
+    capsule: Entity,
+    link: Option<&CharacterLink>,
+    pending: Option<&PendingLink>,
+) -> bool {
+    link.and_then(|link| link.capsule.entity())
+        .or(pending.map(|pending| pending.capsule))
+        == Some(capsule)
+}
+
 pub(crate) fn update_grounded_overlay(
-    probes: Query<(&GroundProbe, &Player)>,
-    characters: Query<(&CharacterDisplacement, Option<&CharacterLink>)>,
+    probes: Query<(Entity, &GroundProbe, &Player)>,
+    characters: Query<(
+        &CharacterDisplacement,
+        Option<&CharacterLink>,
+        Option<&PendingLink>,
+    )>,
     players: Query<&mut AnimationPlayer>,
     graphs: Res<AssetStore<AnimationGraph>>,
     databases: Res<AssetStore<MotionDatabase>>,
     texts: Query<&mut UIText, With<GroundedText>>,
     panels: Query<&mut UIMaterial, With<GroundedPanel>>,
 ) {
-    let Some((probe, player_state)) = probes.iter().next() else {
+    let Some((capsule, probe, player_state)) = probes.iter().next() else {
         return;
     };
-    let Some((method, link)) = characters.iter().next() else {
+    let Some((method, link, _)) = characters
+        .iter()
+        .find(|(_, link, pending)| belongs_to(capsule, *link, *pending))
+    else {
         return;
     };
 
@@ -201,9 +218,29 @@ pub(crate) fn update_grounded_overlay(
 
 #[cfg(test)]
 mod tests {
-    use concerto::motion_matching::{Adjustment, CharacterDisplacement, Clamp, Synchronization};
+    use concerto::{
+        ecs::{World, component::scene::SceneEntityRef},
+        foundation::transform::Transform,
+        motion_matching::{
+            Adjustment, CharacterDisplacement, CharacterLink, Clamp, Synchronization,
+        },
+    };
 
-    use super::{Matching, method_name, readout};
+    use super::{Matching, belongs_to, method_name, readout};
+
+    #[test]
+    fn the_readout_follows_the_character_linked_to_the_player_capsule() {
+        let mut world = World::new();
+        let [player, npc, skeleton] = [(); 3].map(|_| world.spawn(Transform::default()));
+        let link = |capsule| CharacterLink {
+            capsule: SceneEntityRef::Entity(capsule),
+            skeleton: SceneEntityRef::Entity(skeleton),
+        };
+
+        assert!(belongs_to(player, Some(&link(player)), None));
+        assert!(!belongs_to(player, Some(&link(npc)), None));
+        assert!(!belongs_to(player, None, None));
+    }
 
     #[test]
     fn the_readout_shows_the_entry_frame_and_cost_of_the_last_search() {

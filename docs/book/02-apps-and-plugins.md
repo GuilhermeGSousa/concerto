@@ -51,8 +51,8 @@ which runs once every plugin is ready.
 `DefaultPlugins` registers the engine's standard plugins in a fixed order:
 schedules, assets, time, window, transforms, the camera director, rendering,
 the skybox, shadows, the standard material, physics, motion matching,
-procedural animation, animation, scenes, the world grid, gameplay helpers and
-the UI. Most games start with it. Plugin order
+procedural animation, animation, scenes, the world grid, navigation, gameplay
+helpers and the UI. Most games start with it. Plugin order
 is also the order systems were registered in, which decides how systems with
 no explicit ordering run.
 
