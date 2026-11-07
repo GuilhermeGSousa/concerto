@@ -921,8 +921,9 @@ duplicate chain, a chain end not below its start, a missing clip, a time that
 is not finite, a clip with no channels for the skeleton, or a root height that
 is not finite or not above 0.1 mm.
 
-The solve that plays one rig's motion on another is `PoseRetarget`, below. The
-clips derived from it and the graph node that runs it are coming (#589, #590).
+The solve that plays one rig's motion on another is `PoseRetarget`, below, and
+`RetargetNode` runs it in a graph every frame. Clips derived from it are coming
+(#589).
 
 ### Retargeting a pose
 
@@ -944,8 +945,11 @@ retarget.retarget_into(&source_pose, &mut pose)?;
 
 `retarget_into(source, out)` takes a full pose of the source skeleton, in bone
 order, and writes a full pose of the target into `out`. Full means with the
-root motion still in it, as a clip holds it; a graph pose, net of root motion,
-is not one.
+root motion still in it, as a clip holds it. A graph pose, net of root motion,
+is not one, with one exception: the root is measured from the source rig's
+reference, so a pose netted against the source reference's root joint gives a
+target pose netted against the target reference, with no ground offset. That
+is the pose `RetargetNode`, below, hands the solve.
 
 Each target bone in a chain the source also has turns in model space as the
 source chain turns: its model rotation's change from the target's reference
@@ -984,6 +988,64 @@ Bone scale is assumed uniform: rotations are composed without it, so under a
 non-uniform scale a chain bone's turn and the root's position are solved in
 slightly different frames. A source pose with non-finite values gives
 non-finite values in `out`.
+
+### The retarget node
+
+`RetargetNode` (`concerto::animation::retarget`) plays motion made for one
+skeleton on another, every frame. It owns an inner graph, evaluated on the
+source rig's skeleton, and retargets each frame of it onto the player's
+skeleton with a `PoseRetarget`. `RetargetNode::new(graph, source, target)`
+takes the inner graph and the two rigs; the target rig's skeleton must be the
+player's. The node is a leaf, with no inputs, and anything can sit above it:
+
+```rust
+use concerto::animation::retarget::RetargetNode;
+
+let inner = assets.add(AnimationGraph::from_node(AnimationClipNode::new(walk)));
+let lafan_rig = assets.add(lafan_rig);
+let ual_rig = assets.add(ual_rig);
+
+let mut graph = AnimationGraph::new();
+graph
+    .result_node()
+    .with_input(RetargetNode::new(inner, lafan_rig, ual_rig), |_| {});
+cmd.insert(AnimationHandleComponent::new(assets.add(graph)), entity);
+```
+
+The inner graph shares the player's blackboard, so its parameters are the
+player's, and the player's `AnimationRootBone` reaches it as the source
+skeleton's root, netted against the source rig's reference root joint (see
+[Retargeting a pose](#retargeting-a-pose)). The output pose is then net of
+root motion against the target reference, and the frame's root motion is the
+inner graph's, with its translation multiplied by `scale()` and its rotation
+unchanged. Clip events fired in the inner graph reach the player as its own,
+and the node is finished when the inner graph is, so a state machine's
+`OnAnimationEnd` follows it. `AnimationPlayer::for_each_state_mut` also visits
+the nodes inside the inner graph, which is how motion matching's gizmos find a
+matcher under a retarget node.
+
+Until the player's skeleton, both rigs, their skeletons, a `ClipFrame`
+reference clip and the inner graph have loaded, the node gives the rest pose,
+and its `is_finished` is false. The inner graph also sees the player's
+`model_to_world`, but at the source's scale, so nodes that read the world, such
+as foot placement, IK and look-at, go above the retarget node, on the target
+skeleton, not inside its inner graph.
+
+The node refuses:
+
+- a rig that does not resolve, or a target rig whose skeleton is not the
+  player's, and gives the player's rest pose;
+- a retarget node in its inner graph, directly or in any state of a state
+  machine there, a solve that `PoseRetarget::new` refuses, or an inner node
+  whose `CreateInput` is not also an update input, which would get no state
+  inside the node's update, and gives the target rig's reference pose.
+
+Each refusal logs one warning naming it, and the node then counts as
+finished. It stays refused until the player's graph changes: fixing or
+reloading the inner graph or a rig does not bring it back. A player skeleton
+whose bones change while the node plays fails it the same way, at the rest
+pose. A pose the solve rejects while playing gives the rest pose with no root
+motion, still passes the events, and warns once.
 
 ## Gameplay helpers
 
