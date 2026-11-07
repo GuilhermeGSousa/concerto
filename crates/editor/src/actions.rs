@@ -1,6 +1,6 @@
 //! The editor's named actions and their default bindings.
 use concerto_app::{App, Plugin, schedule_groups::Startup};
-use concerto_ecs::ResMut;
+use concerto_ecs::{ResMut, SystemSet};
 use concerto_window::input::KeyCode;
 use concerto_window::input::actions::{ActionMap, Shortcut};
 use concerto_window::{define_action, define_context};
@@ -74,6 +74,10 @@ define_context!(
     /// Active while keyboard focus is inside the entity tree.
     TreeContext
 );
+
+/// The `LateUpdate` systems that push and pop the viewport's and the tree's contexts; a context pushed after this set wins their keys.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct EditorContextSet;
 
 pub struct ActionsPlugin;
 

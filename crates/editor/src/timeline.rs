@@ -1,8 +1,12 @@
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
+use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res,
+    Component, Entity, IntoSystemConfig, Query, Ref, Res,
     command::CommandQueue,
-    query::filter::{Added, Changed, Or},
+    query::{
+        change_detection::DetectChanges,
+        filter::{Added, Changed, Or},
+    },
     signal::{
         EntitySignal, On, Signal,
         listener::{IntoListener, Listener},
@@ -13,6 +17,7 @@ use concerto_ui::{
     interaction::{Interactable, UIClick, UIDrag, UIPointerDown},
     material::UIMaterial,
     node::{FlexDirection, Position, UIBox, UIInset, UILayout, UINode, UIRect},
+    scroll::{SCROLLBAR_WIDTH, UIScrollArea},
     sets::UiSet,
     text::UIText,
     theme::UITheme,
@@ -29,14 +34,39 @@ const TICK_WIDTH: f32 = 1.0;
 const MIN_TICK_GAP: f32 = 64.0;
 const TICK_LABEL_OFFSET: f32 = 4.0;
 const WHOLE_TICK_TOLERANCE: f32 = 1e-3;
+const MARKER_ROW_HEIGHT: f32 = 16.0;
+const TRACK_LABEL_WIDTH: f32 = 160.0;
+const TRACK_ROW_HEIGHT: f32 = 18.0;
+const KEY_MERGE_PX: f32 = 3.0;
+const KEY_INSET: f32 = 4.0;
 
-/// A ruler and a track over a clip's length, drawn on the UI node that holds it.
+/// A ruler, a track, a marker lane and track rows over a clip's length, drawn on the UI node that holds it.
 #[derive(Component, PartialEq)]
 pub struct Timeline {
     pub duration: f32,
     pub rate: Option<f32>,
     pub time: f32,
     pub selection: Option<(u32, u32)>,
+    pub selectable: bool,
+    pub markers: Vec<TimelineMarker>,
+    pub selected_marker: Option<usize>,
+    pub tracks: Vec<TimelineTrack>,
+}
+
+/// A labelled mark at a time on a timeline's marker lane.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelineMarker {
+    pub time: f32,
+    pub label: String,
+    pub locked: bool,
+}
+
+/// A read-only row under the marker lane: a label and the times it has keys at.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelineTrack {
+    pub label: String,
+    pub warning: bool,
+    pub keys: Vec<f32>,
 }
 
 impl Timeline {
@@ -49,6 +79,9 @@ impl Timeline {
     }
 
     fn selection_span(&self) -> Option<(f32, f32)> {
+        if !self.selectable {
+            return None;
+        }
         let rate = self.rate?;
         let (first, last) = self.selection?;
         let left = fraction(time_of_frame(first, rate), self.duration);
@@ -85,6 +118,23 @@ pub struct TimelineSelected {
 impl Signal for TimelineSelected {}
 impl EntitySignal for TimelineSelected {}
 
+/// Sent when a marker is pressed (`Some`) or the track or the lane's empty space is clicked (`None`).
+pub struct TimelineMarkerSelected {
+    pub index: Option<usize>,
+}
+
+impl Signal for TimelineMarkerSelected {}
+impl EntitySignal for TimelineMarkerSelected {}
+
+/// Sent while an unlocked marker is dragged, with the time under the pointer, snapped to a frame when there is a rate.
+pub struct TimelineMarkerMoved {
+    pub index: usize,
+    pub time: f32,
+}
+
+impl Signal for TimelineMarkerMoved {}
+impl EntitySignal for TimelineMarkerMoved {}
+
 /// The frame nearest to `time`.
 pub fn frame_at(time: f32, rate: f32) -> u32 {
     (time * rate).round() as u32
@@ -108,8 +158,38 @@ pub(crate) struct TimelineReadout;
 struct TimelineParts {
     readout: Entity,
     ruler: Entity,
+    track: Entity,
     selection: Entity,
+    lane_band: Entity,
+    events_label: Entity,
+    lane: Entity,
+    rows: Entity,
+    rows_content: Entity,
+    overlay: Entity,
     head: Entity,
+}
+
+#[derive(Component, Default)]
+struct TimelineMarkersBuilt {
+    markers: Vec<BuiltMarker>,
+}
+
+struct BuiltMarker {
+    label: String,
+    locked: bool,
+    node: Entity,
+    line: Entity,
+}
+
+impl TimelineMarkersBuilt {
+    fn holds(&self, markers: &[TimelineMarker]) -> bool {
+        self.markers.len() == markers.len()
+            && self
+                .markers
+                .iter()
+                .zip(markers)
+                .all(|(built, marker)| built.label == marker.label && built.locked == marker.locked)
+    }
 }
 
 #[derive(Component, Debug, Default, PartialEq)]
@@ -119,8 +199,20 @@ struct TimelineTicks {
     rate: Option<f32>,
 }
 
+#[derive(Component, Default)]
+struct TimelineRows {
+    width: f32,
+    tracks: Vec<TimelineTrack>,
+}
+
 #[derive(Component)]
 struct TimelineSelectionStart(u32);
+
+#[derive(Debug, PartialEq)]
+struct KeySpan {
+    start: f32,
+    end: f32,
+}
 
 struct Tick {
     fraction: f32,
@@ -132,6 +224,62 @@ fn fraction(value: f32, span: f32) -> f32 {
         (value / span).clamp(0.0, 1.0)
     } else {
         0.0
+    }
+}
+
+fn key_spans(keys: &[f32], duration: f32, width: f32) -> Vec<KeySpan> {
+    let mut spans: Vec<KeySpan> = Vec::new();
+    for &key in keys {
+        let at = fraction(key, duration);
+        match spans.last_mut() {
+            Some(span) if (at - span.end) * width <= KEY_MERGE_PX => span.end = span.end.max(at),
+            _ => spans.push(KeySpan { start: at, end: at }),
+        }
+    }
+    spans
+}
+
+fn band_margin(columns: bool) -> UIRect {
+    if columns {
+        UIRect {
+            left: TRACK_LABEL_WIDTH,
+            right: SCROLLBAR_WIDTH,
+            ..Default::default()
+        }
+    } else {
+        UIRect::default()
+    }
+}
+
+fn beside_the_column(columns: bool) -> UIRect {
+    UIRect {
+        left: 0.0,
+        ..band_margin(columns)
+    }
+}
+
+fn overlay_inset(columns: bool) -> UIInset {
+    let margin = band_margin(columns);
+    UIInset {
+        left: UIValue::Px(margin.left),
+        right: UIValue::Px(margin.right),
+        ..across_the_band()
+    }
+}
+
+fn set_margin(nodes: &Query<&mut UINode>, entity: Entity, margin: UIRect) {
+    if let Some(mut node) = nodes.get_entity(entity)
+        && node.margin != margin
+    {
+        node.margin = margin;
+    }
+}
+
+fn set_visible(nodes: &Query<&mut UINode>, entity: Entity, visible: bool) {
+    if let Some(mut node) = nodes.get_entity(entity)
+        && node.visible != visible
+    {
+        node.visible = visible;
     }
 }
 
@@ -241,6 +389,9 @@ fn frame_under(
     layouts: &Query<&UILayout>,
 ) -> Option<u32> {
     let view = timelines.get_entity(timeline)?;
+    if !view.selectable {
+        return None;
+    }
     let rate = view.rate?;
     let layout = layouts.get_entity(track)?;
     Some(frame_at(view.time_at(position.x, layout.rect), rate))
@@ -290,15 +441,83 @@ fn drag_track(timeline: Entity) -> Listener<UIDrag> {
 
 fn click_track(timeline: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>, timelines: Query<&Timeline>, mut cmd: CommandQueue| {
-        let has_frames = timelines
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let selects = timelines
             .get_entity(timeline)
-            .is_some_and(|view| view.rate.is_some());
-        if on.signal().button == MouseButton::Left && has_frames {
-            cmd.entity(timeline)
-                .trigger(TimelineSelected { range: None });
+            .is_some_and(|view| view.selectable && view.rate.is_some());
+        let mut target = cmd.entity(timeline);
+        target.trigger(TimelineMarkerSelected { index: None });
+        if selects {
+            target.trigger(TimelineSelected { range: None });
         }
     })
     .into_listener()
+}
+
+fn press_marker(timeline: Entity, index: usize) -> Listener<UIPointerDown> {
+    (move |on: On<UIPointerDown>, mut cmd: CommandQueue| {
+        if on.signal().button == MouseButton::Left {
+            cmd.entity(timeline)
+                .trigger(TimelineMarkerSelected { index: Some(index) });
+        }
+    })
+    .into_listener()
+}
+
+fn drag_marker(timeline: Entity, lane: Entity, index: usize) -> Listener<UIDrag> {
+    (move |on: On<UIDrag>,
+           timelines: Query<&Timeline>,
+           layouts: Query<&UILayout>,
+           mut cmd: CommandQueue| {
+        let signal = on.signal();
+        if signal.button != MouseButton::Left || signal.delta == Vec2::ZERO {
+            return;
+        }
+        let (Some(view), Some(layout)) = (timelines.get_entity(timeline), layouts.get_entity(lane))
+        else {
+            return;
+        };
+        if view.markers.get(index).is_none_or(|marker| marker.locked) {
+            return;
+        }
+        let time = view.time_at(signal.position.x, layout.rect);
+        cmd.entity(timeline)
+            .trigger(TimelineMarkerMoved { index, time });
+    })
+    .into_listener()
+}
+
+fn marker_rows(markers: &[TimelineMarker]) -> Vec<u32> {
+    markers
+        .iter()
+        .enumerate()
+        .map(|(index, marker)| {
+            markers[..index]
+                .iter()
+                .filter(|earlier| earlier.time == marker.time)
+                .count() as u32
+        })
+        .collect()
+}
+
+fn marker_color(marker: &TimelineMarker, selected: bool, theme: &UITheme) -> Color {
+    if selected {
+        theme.selection()
+    } else if marker.locked {
+        theme.text_muted
+    } else {
+        theme.accent
+    }
+}
+
+fn marker_inset(timeline: &Timeline, marker: &TimelineMarker, row: u32) -> UIInset {
+    UIInset {
+        left: UIValue::Percent(fraction(marker.time, timeline.duration) * 100.0),
+        top: UIValue::Px(row as f32 * MARKER_ROW_HEIGHT),
+        ..Default::default()
+    }
 }
 
 fn across_the_band() -> UIInset {
@@ -367,7 +586,59 @@ fn setup_timeline(
                 UIMaterial::flat(theme.selection()),
             ))
             .entity();
-        let head = bands
+        let track = track.entity();
+        let mut lane_band = bands.spawn_child(
+            UINode::default()
+                .with_flex_direction(FlexDirection::Row)
+                .with_height(UIValue::Px(0.0))
+                .with_flex_shrink(0.0)
+                .with_visible(false),
+        );
+        let events_label = lane_band
+            .spawn_child(
+                theme
+                    .label("Events")
+                    .small()
+                    .muted()
+                    .single_line()
+                    .size(
+                        UIValue::Px(TRACK_LABEL_WIDTH),
+                        UIValue::Px(MARKER_ROW_HEIGHT),
+                    )
+                    .fixed()
+                    .clipped()
+                    .hidden(),
+            )
+            .entity();
+        let lane = lane_band
+            .spawn_child((
+                UINode::default().with_flex_grow(1.0).clipped(),
+                Interactable,
+                click_track(timeline),
+            ))
+            .entity();
+        let lane_band = lane_band.entity();
+        let mut rows = bands.spawn_child((
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_visible(false)
+                .clipped(),
+            Interactable,
+        ));
+        let rows_content = rows
+            .spawn_child(UINode::default().with_flex_direction(FlexDirection::Column))
+            .entity();
+        rows.insert(UIScrollArea {
+            content: Some(rows_content),
+            ..Default::default()
+        });
+        let rows = rows.entity();
+        let mut overlay = bands.spawn_child(
+            UINode::default()
+                .with_position(Position::Absolute)
+                .with_inset(overlay_inset(false)),
+        );
+        let head = overlay
             .spawn_child((
                 UINode::default()
                     .with_position(Position::Absolute)
@@ -380,14 +651,24 @@ fn setup_timeline(
                 UIMaterial::flat(theme.accent),
             ))
             .entity();
+        let overlay = overlay.entity();
         root.insert((
             TimelineParts {
                 readout,
                 ruler,
+                track,
                 selection,
+                lane_band,
+                events_label,
+                lane,
+                rows,
+                rows_content,
+                overlay,
                 head,
             },
             TimelineTicks::default(),
+            TimelineMarkersBuilt::default(),
+            TimelineRows::default(),
         ));
     }
 }
@@ -402,6 +683,31 @@ fn sync_timeline_parts(
             let readout = timeline.readout();
             if text.text != readout {
                 text.text = readout;
+            }
+        }
+        let columns = !timeline.tracks.is_empty();
+        set_margin(&nodes, parts.ruler, band_margin(columns));
+        set_margin(&nodes, parts.track, band_margin(columns));
+        set_margin(&nodes, parts.lane_band, beside_the_column(columns));
+        set_visible(&nodes, parts.events_label, columns);
+        set_visible(&nodes, parts.rows, columns);
+        if let Some(mut track) = nodes.get_entity(parts.track) {
+            let (grow, height) = if columns {
+                (0.0, UIValue::Px(TRACK_ROW_HEIGHT))
+            } else {
+                (1.0, UIValue::Auto)
+            };
+            if track.flex_grow != grow {
+                track.flex_grow = grow;
+            }
+            if track.height != height {
+                track.height = height;
+            }
+        }
+        if let Some(mut overlay) = nodes.get_entity(parts.overlay) {
+            let inset = overlay_inset(columns);
+            if overlay.inset != inset {
+                overlay.inset = inset;
             }
         }
         if let Some(mut head) = nodes.get_entity(parts.head) {
@@ -423,6 +729,98 @@ fn sync_timeline_parts(
                 }
                 if selection.width != width {
                     selection.width = width;
+                }
+            }
+        }
+    }
+}
+
+fn sync_timeline_markers(
+    timelines: Query<
+        (Entity, &Timeline, &TimelineParts, &mut TimelineMarkersBuilt),
+        Or<(Changed<Timeline>, Changed<TimelineParts>)>,
+    >,
+    nodes: Query<&mut UINode>,
+    materials: Query<&mut UIMaterial>,
+    theme: Res<UITheme>,
+    mut cmd: CommandQueue,
+) {
+    for (entity, timeline, parts, mut built) in timelines.iter() {
+        let rows = marker_rows(&timeline.markers);
+        if let Some(mut lane) = nodes.get_entity(parts.lane_band) {
+            let shown = !timeline.markers.is_empty();
+            if lane.visible != shown {
+                lane.visible = shown;
+            }
+            let height = rows.iter().max().map_or(0, |row| row + 1);
+            let height = UIValue::Px(height as f32 * MARKER_ROW_HEIGHT);
+            if lane.height != height {
+                lane.height = height;
+            }
+        }
+        if !built.holds(&timeline.markers) {
+            let mut lane = cmd.entity(parts.lane).despawn_children();
+            let markers: Vec<BuiltMarker> = timeline
+                .markers
+                .iter()
+                .zip(&rows)
+                .enumerate()
+                .map(|(index, (marker, &row))| {
+                    let selected = timeline.selected_marker == Some(index);
+                    let mut node = lane.spawn_child((
+                        UINode::default()
+                            .with_position(Position::Absolute)
+                            .with_inset(marker_inset(timeline, marker, row))
+                            .with_height(UIValue::Px(MARKER_ROW_HEIGHT))
+                            .with_flex_direction(FlexDirection::Row)
+                            .with_gap(Vec2::new(theme.spacing_xs, 0.0))
+                            .with_margin(UIRect {
+                                left: -HEAD_WIDTH / 2.0,
+                                ..Default::default()
+                            }),
+                        Interactable,
+                        press_marker(entity, index),
+                        drag_marker(entity, parts.lane, index),
+                    ));
+                    let line = node
+                        .spawn_child((
+                            UINode::default()
+                                .with_width(UIValue::Px(HEAD_WIDTH))
+                                .with_height(UIValue::Px(MARKER_ROW_HEIGHT))
+                                .with_flex_shrink(0.0),
+                            UIMaterial::flat(marker_color(marker, selected, &theme)),
+                        ))
+                        .entity();
+                    node.add_child(theme.label(marker.label.clone()).small().no_wrap().fixed());
+                    BuiltMarker {
+                        label: marker.label.clone(),
+                        locked: marker.locked,
+                        node: node.entity(),
+                        line,
+                    }
+                })
+                .collect();
+            built.markers = markers;
+            continue;
+        }
+        for (index, ((marker, &row), shown)) in timeline
+            .markers
+            .iter()
+            .zip(&rows)
+            .zip(&built.markers)
+            .enumerate()
+        {
+            if let Some(mut node) = nodes.get_entity(shown.node) {
+                let inset = marker_inset(timeline, marker, row);
+                if node.inset != inset {
+                    node.inset = inset;
+                }
+            }
+            if let Some(mut material) = materials.get_entity(shown.line) {
+                let selected = timeline.selected_marker == Some(index);
+                let color = marker_color(marker, selected, &theme).to_linear();
+                if material.color != color {
+                    material.color = color;
                 }
             }
         }
@@ -488,6 +886,90 @@ fn sync_timeline_ticks(
     }
 }
 
+fn sync_timeline_rows(
+    timelines: Query<(Ref<Timeline>, &TimelineParts, &mut TimelineRows)>,
+    layouts: Query<&UILayout>,
+    areas: Query<&mut UIScrollArea>,
+    theme: Res<UITheme>,
+    mut cmd: CommandQueue,
+) {
+    for (timeline, parts, mut built) in timelines.iter() {
+        let width = layouts
+            .get_entity(parts.ruler)
+            .map_or(0.0, |layout| layout.rect.size.x);
+        let differs = timeline.is_changed() && timeline.tracks != built.tracks;
+        let resized = width > 0.0 && width != built.width && !timeline.tracks.is_empty();
+        if !differs && !resized {
+            continue;
+        }
+        let mut content = cmd.entity(parts.rows_content).despawn_children();
+        for track in &timeline.tracks {
+            let color = if track.warning {
+                theme.warning
+            } else {
+                theme.text
+            };
+            let mut row = content.spawn_child(
+                UINode::default()
+                    .with_flex_direction(FlexDirection::Row)
+                    .with_height(UIValue::Px(TRACK_ROW_HEIGHT))
+                    .with_flex_shrink(0.0)
+                    .with_margin(beside_the_column(true)),
+            );
+            row.add_child(
+                theme
+                    .label(track.label.clone())
+                    .small()
+                    .color(color)
+                    .single_line()
+                    .size(
+                        UIValue::Px(TRACK_LABEL_WIDTH),
+                        UIValue::Px(TRACK_ROW_HEIGHT),
+                    )
+                    .fixed()
+                    .clipped(),
+            );
+            let mut keys = row.spawn_child(UINode::default().with_flex_grow(1.0).clipped());
+            for span in key_spans(&track.keys, timeline.duration, width) {
+                let span_width = if span.end > span.start {
+                    UIValue::Percent((span.end - span.start) * 100.0)
+                } else {
+                    UIValue::Px(TICK_WIDTH)
+                };
+                keys.add_child((
+                    UINode::default()
+                        .with_position(Position::Absolute)
+                        .with_inset(UIInset {
+                            left: UIValue::Percent(span.start * 100.0),
+                            top: UIValue::Px(KEY_INSET),
+                            bottom: UIValue::Px(KEY_INSET),
+                            ..Default::default()
+                        })
+                        .with_width(span_width)
+                        .with_min_width(UIValue::Px(TICK_WIDTH)),
+                    UIMaterial::flat(theme.text_muted),
+                ));
+            }
+        }
+        built.width = width;
+        built.tracks = timeline.tracks.clone();
+        let Some(mut area) = areas.get_entity(parts.rows) else {
+            continue;
+        };
+        let extent = timeline.tracks.len() as f32 * TRACK_ROW_HEIGHT;
+        let offset = layouts
+            .get_entity(parts.rows)
+            .map_or(area.offset, |layout| {
+                area.offset
+                    .min((extent - layout.content_rect.size.y).max(0.0))
+            });
+        if area.content_extent != extent || area.offset != offset {
+            area.content_extent = extent;
+            area.offset = offset;
+        }
+    }
+}
+
 /// Builds and keeps every [`Timeline`] drawn; `EditorPlugin` registers it.
 pub struct TimelinePlugin;
 
@@ -496,7 +978,13 @@ impl Plugin for TimelinePlugin {
         app.add_system(LateUpdate, setup_timeline.in_set(UiSet::Setup))
             .add_system(
                 LateUpdate,
-                (sync_timeline_parts, sync_timeline_ticks).in_set(UiSet::Project),
+                (
+                    sync_timeline_parts,
+                    sync_timeline_markers,
+                    sync_timeline_ticks,
+                    sync_timeline_rows,
+                )
+                    .in_set(UiSet::Project),
             );
     }
 }
@@ -505,8 +993,9 @@ impl Plugin for TimelinePlugin {
 mod tests {
     use super::*;
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
+    use concerto_color::LinearRgba;
     use concerto_ecs::{
-        IntoSystem, ResMut, Resource, System, With, World,
+        IntoSystem, ResMut, Resource, System, World,
         entity::hierarchy::{ChildOf, Children},
         system::BoxedSystem,
     };
@@ -519,6 +1008,8 @@ mod tests {
     struct Heard {
         scrubbed: Vec<f32>,
         selected: Vec<Option<(u32, u32)>>,
+        picked: Vec<Option<usize>>,
+        moved: Vec<TimelineMarkerMoved>,
     }
 
     fn at_30_fps() -> Timeline {
@@ -527,6 +1018,40 @@ mod tests {
             rate: Some(30.0),
             time: 0.0,
             selection: None,
+            selectable: true,
+            markers: Vec::new(),
+            selected_marker: None,
+            tracks: Vec::new(),
+        }
+    }
+
+    fn marker(time: f32, label: &str) -> TimelineMarker {
+        TimelineMarker {
+            time,
+            label: label.to_owned(),
+            locked: false,
+        }
+    }
+
+    fn with_markers(markers: Vec<TimelineMarker>) -> Timeline {
+        Timeline {
+            markers,
+            ..at_30_fps()
+        }
+    }
+
+    fn bone(label: &str, keys: &[f32]) -> TimelineTrack {
+        TimelineTrack {
+            label: label.to_owned(),
+            warning: false,
+            keys: keys.to_vec(),
+        }
+    }
+
+    fn with_tracks(tracks: Vec<TimelineTrack>) -> Timeline {
+        Timeline {
+            tracks,
+            ..at_30_fps()
         }
     }
 
@@ -541,7 +1066,9 @@ mod tests {
         world: World,
         setup: BoxedSystem,
         parts: BoxedSystem,
+        markers: BoxedSystem,
         ticks: BoxedSystem,
+        rows: BoxedSystem,
         timeline: Entity,
     }
 
@@ -563,18 +1090,36 @@ mod tests {
                     heard.selected.push(on.signal().range);
                 })
                 .into_listener(),
+                (|on: On<TimelineMarkerSelected>, mut heard: ResMut<Heard>| {
+                    heard.picked.push(on.signal().index);
+                })
+                .into_listener(),
+                (|on: On<TimelineMarkerMoved>, mut heard: ResMut<Heard>| {
+                    let signal = on.signal();
+                    heard.moved.push(TimelineMarkerMoved {
+                        index: signal.index,
+                        time: signal.time,
+                    });
+                })
+                .into_listener(),
             ));
             let mut setup = setup_timeline.into_boxed_system();
             let mut parts = sync_timeline_parts.into_boxed_system();
+            let mut markers = sync_timeline_markers.into_boxed_system();
             let mut ticks = sync_timeline_ticks.into_boxed_system();
+            let mut rows = sync_timeline_rows.into_boxed_system();
             setup.initialize(&mut world);
             parts.initialize(&mut world);
+            markers.initialize(&mut world);
             ticks.initialize(&mut world);
+            rows.initialize(&mut world);
             let mut fixture = Self {
                 world,
                 setup,
                 parts,
+                markers,
                 ticks,
+                rows,
                 timeline,
             };
             fixture.frame();
@@ -591,7 +1136,9 @@ mod tests {
         fn frame(&mut self) {
             self.setup.run_and_apply((), &mut self.world);
             self.parts.run_and_apply((), &mut self.world);
+            self.markers.run_and_apply((), &mut self.world);
             self.ticks.run_and_apply((), &mut self.world);
+            self.rows.run_and_apply((), &mut self.world);
         }
 
         fn lay_out(&mut self, width: f32) {
@@ -605,9 +1152,10 @@ mod tests {
                 clip_rect: rect,
                 paint_order: 0,
             };
-            let (ruler, track) = (self.parts().ruler, self.track());
+            let (ruler, track, lane) = (self.parts().ruler, self.track(), self.parts().lane);
             self.world.insert(layout.clone(), ruler);
-            self.world.insert(layout, track);
+            self.world.insert(layout.clone(), track);
+            self.world.insert(layout, lane);
         }
 
         fn parts(&self) -> &TimelineParts {
@@ -616,12 +1164,58 @@ mod tests {
                 .unwrap()
         }
 
-        fn track(&mut self) -> Entity {
-            self.world
-                .query::<Entity, With<Listener<UIClick>>>()
-                .iter(&mut self.world)
-                .next()
+        fn parent(&self, entity: Entity) -> Entity {
+            **self
+                .world
+                .get_component_for_entity::<ChildOf>(entity)
                 .unwrap()
+        }
+
+        fn track(&self) -> Entity {
+            self.parent(self.parts().selection)
+        }
+
+        fn overlay(&self) -> Entity {
+            self.parent(self.parts().head)
+        }
+
+        fn children(&self, entity: Entity) -> Vec<Entity> {
+            self.world
+                .get_component_for_entity::<Children>(entity)
+                .map(|children| children.iter().copied().collect())
+                .unwrap_or_default()
+        }
+
+        fn marker_nodes(&self) -> Vec<Entity> {
+            self.children(self.parts().lane)
+        }
+
+        fn row_nodes(&self) -> Vec<Entity> {
+            self.children(self.parts().rows_content)
+        }
+
+        fn row_keys(&self, row: Entity) -> Vec<Entity> {
+            self.children(self.children(row)[1])
+        }
+
+        fn row_label(&self, row: Entity) -> &UIText {
+            self.world
+                .get_component_for_entity::<UIText>(self.children(row)[0])
+                .unwrap()
+        }
+
+        fn rows_area(&self) -> &UIScrollArea {
+            self.world
+                .get_component_for_entity::<UIScrollArea>(self.parts().rows)
+                .unwrap()
+        }
+
+        fn line_color(&self, marker: Entity) -> LinearRgba {
+            let line = self.children(marker)[0];
+            self.world
+                .get_component_for_entity::<UIMaterial>(line)
+                .unwrap()
+                .color
         }
 
         fn edit(&mut self, edit: impl FnOnce(&mut Timeline)) {
@@ -682,10 +1276,7 @@ mod tests {
         }
 
         fn ruler_children(&self) -> Vec<Entity> {
-            self.world
-                .get_component_for_entity::<Children>(self.parts().ruler)
-                .map(|children| children.iter().copied().collect())
-                .unwrap_or_default()
+            self.children(self.parts().ruler)
         }
 
         fn changed_nodes(&mut self) -> usize {
@@ -698,6 +1289,20 @@ mod tests {
         fn changed_texts(&mut self) -> usize {
             self.world
                 .query::<Entity, Changed<UIText>>()
+                .iter(&mut self.world)
+                .count()
+        }
+
+        fn changed_areas(&mut self) -> usize {
+            self.world
+                .query::<Entity, Changed<UIScrollArea>>()
+                .iter(&mut self.world)
+                .count()
+        }
+
+        fn changed_materials(&mut self) -> usize {
+            self.world
+                .query::<Entity, Changed<UIMaterial>>()
                 .iter(&mut self.world)
                 .count()
         }
@@ -1065,16 +1670,36 @@ mod tests {
     }
 
     #[test]
-    fn the_timeline_is_a_column_of_a_readout_and_two_bands() {
+    fn the_timeline_is_a_column_of_a_readout_and_four_bands_under_an_overlay() {
         let f = Fixture::new(at_30_fps());
         let parts = f.parts();
 
         assert_eq!(f.node(f.timeline).flex_direction, FlexDirection::Column);
         assert_eq!(f.node(parts.ruler).height, UIValue::Px(24.0));
         assert_eq!(f.node(parts.ruler).flex_shrink, 0.0);
-        let parent = |entity| **f.world.get_component_for_entity::<ChildOf>(entity).unwrap();
-        assert_eq!(parent(parts.readout), f.timeline);
-        assert_eq!(parent(parts.ruler), parent(parts.head));
+        assert_eq!(f.parent(parts.readout), f.timeline);
+        let bands = f.parent(parts.ruler);
+        assert_eq!(
+            f.children(bands),
+            [
+                parts.ruler,
+                f.track(),
+                parts.lane_band,
+                parts.rows,
+                f.overlay()
+            ]
+        );
+        let overlay = f.node(f.overlay());
+        assert_eq!(overlay.position, Position::Absolute);
+        assert_eq!(
+            overlay.inset,
+            UIInset {
+                top: UIValue::Px(0.0),
+                right: UIValue::Px(0.0),
+                bottom: UIValue::Px(0.0),
+                left: UIValue::Px(0.0),
+            }
+        );
     }
 
     #[test]
@@ -1194,5 +1819,380 @@ mod tests {
         f.frame();
 
         assert_eq!(f.changed_texts(), 0);
+    }
+
+    #[test]
+    fn markers_sit_at_their_times_and_the_lane_hides_without_any() {
+        let mut f = Fixture::new(with_markers(vec![
+            marker(2.5, "footstep"),
+            marker(5.0, "land"),
+        ]));
+
+        let lane = f.node(f.parts().lane_band);
+        assert!(lane.visible);
+        assert_eq!(lane.height, UIValue::Px(MARKER_ROW_HEIGHT));
+        let markers = f.marker_nodes();
+        assert_eq!(markers.len(), 2);
+        assert!((percent(f.node(markers[0]).inset.left) - 25.0).abs() < NEAR);
+        assert!((percent(f.node(markers[1]).inset.left) - 50.0).abs() < NEAR);
+        assert_eq!(f.node(markers[0]).inset.top, UIValue::Px(0.0));
+
+        f.edit(|timeline| timeline.markers.clear());
+        f.frame();
+
+        assert!(!f.node(f.parts().lane_band).visible);
+        assert!(f.marker_nodes().is_empty());
+    }
+
+    #[test]
+    fn markers_at_the_same_time_take_rows_of_their_own() {
+        let f = Fixture::new(with_markers(vec![
+            marker(1.0, "left"),
+            marker(2.0, "breath"),
+            marker(1.0, "right"),
+        ]));
+
+        let markers = f.marker_nodes();
+        assert_eq!(f.node(markers[0]).inset.top, UIValue::Px(0.0));
+        assert_eq!(f.node(markers[1]).inset.top, UIValue::Px(0.0));
+        assert_eq!(f.node(markers[2]).inset.top, UIValue::Px(MARKER_ROW_HEIGHT));
+        assert_eq!(
+            f.node(f.parts().lane_band).height,
+            UIValue::Px(2.0 * MARKER_ROW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn a_pressed_marker_is_picked_and_a_click_on_the_track_or_the_lane_picks_none() {
+        let mut f = Fixture::laid_out(with_markers(vec![
+            marker(1.0, "footstep"),
+            marker(2.0, "land"),
+        ]));
+        let (second, track, lane) = (f.marker_nodes()[1], f.track(), f.parts().lane);
+
+        f.press(second, frame_x(60));
+        f.click(track, frame_x(10));
+        f.click(lane, frame_x(10));
+
+        assert_eq!(f.heard().picked, [Some(1), None, None]);
+        assert_eq!(f.heard().selected, [None, None]);
+    }
+
+    #[test]
+    fn a_dragged_marker_moves_to_a_frame_unless_it_is_locked() {
+        let mut f = Fixture::laid_out(with_markers(vec![
+            marker(1.0, "footstep"),
+            TimelineMarker {
+                locked: true,
+                ..marker(2.0, "Impact")
+            },
+        ]));
+        let markers = f.marker_nodes();
+
+        f.drag(markers[0], frame_x(90), 0.0);
+        assert!(f.heard().moved.is_empty());
+
+        f.drag(markers[0], frame_x(90) + 0.25, 3.0);
+        f.drag(markers[1], frame_x(120), 3.0);
+
+        let moved = &f.heard().moved;
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].index, 0);
+        assert!((moved[0].time - 3.0).abs() < NEAR, "{}", moved[0].time);
+    }
+
+    #[test]
+    fn markers_are_coloured_by_their_lock_and_the_selection() {
+        let theme = UITheme::default();
+        let f = Fixture::new(Timeline {
+            selected_marker: Some(2),
+            ..with_markers(vec![
+                marker(1.0, "footstep"),
+                TimelineMarker {
+                    locked: true,
+                    ..marker(2.0, "Impact")
+                },
+                marker(3.0, "land"),
+            ])
+        });
+        let markers = f.marker_nodes();
+
+        assert_eq!(f.line_color(markers[0]), theme.accent.to_linear());
+        assert_eq!(f.line_color(markers[1]), theme.text_muted.to_linear());
+        assert_eq!(f.line_color(markers[2]), theme.selection().to_linear());
+    }
+
+    #[test]
+    fn a_moved_or_selected_marker_keeps_its_node() {
+        let mut f = Fixture::new(with_markers(vec![
+            marker(1.0, "footstep"),
+            marker(2.0, "land"),
+        ]));
+        let built = f.marker_nodes();
+
+        f.edit(|timeline| timeline.markers[0].time = 5.0);
+        f.frame();
+        assert_eq!(f.marker_nodes(), built);
+        assert!((percent(f.node(built[0]).inset.left) - 50.0).abs() < NEAR);
+
+        f.edit(|timeline| timeline.selected_marker = Some(0));
+        f.frame();
+        assert_eq!(f.marker_nodes(), built);
+        assert_eq!(
+            f.line_color(built[0]),
+            UITheme::default().selection().to_linear()
+        );
+    }
+
+    #[test]
+    fn a_renamed_or_locked_marker_rebuilds_the_lane() {
+        let mut f = Fixture::new(with_markers(vec![marker(1.0, "footstep")]));
+        let built = f.marker_nodes();
+
+        f.edit(|timeline| timeline.markers[0].label = "land".to_owned());
+        f.frame();
+        assert_ne!(f.marker_nodes(), built);
+
+        let built = f.marker_nodes();
+        f.edit(|timeline| timeline.markers[0].locked = true);
+        f.frame();
+        assert_ne!(f.marker_nodes(), built);
+    }
+
+    #[test]
+    fn a_settled_timeline_with_markers_writes_nothing() {
+        let mut f = Fixture::laid_out(Timeline {
+            selected_marker: Some(0),
+            ..with_markers(vec![marker(1.0, "footstep"), marker(1.0, "land")])
+        });
+        f.frame();
+
+        f.world.tick();
+        f.frame();
+
+        assert_eq!(f.changed_nodes(), 0);
+        assert_eq!(f.changed_texts(), 0);
+        assert_eq!(f.changed_materials(), 0);
+    }
+
+    #[test]
+    fn a_timeline_that_cannot_select_ignores_drags_and_hides_its_selection() {
+        let mut f = Fixture::laid_out(Timeline {
+            selectable: false,
+            selection: Some((75, 150)),
+            ..at_30_fps()
+        });
+        let track = f.track();
+
+        f.press(track, frame_x(10));
+        f.drag(track, frame_x(20), 10.0);
+        f.click(track, frame_x(20));
+
+        assert!(f.heard().selected.is_empty());
+        assert_eq!(f.heard().picked, [None]);
+        assert!(!f.node(f.parts().selection).visible);
+    }
+
+    #[test]
+    fn without_tracks_there_is_no_label_column() {
+        let f = Fixture::laid_out(with_markers(vec![marker(1.0, "footstep")]));
+        let parts = f.parts();
+
+        assert_eq!(f.node(parts.ruler).margin, UIRect::default());
+        assert_eq!(f.node(f.track()).margin, UIRect::default());
+        assert_eq!(f.node(f.track()).flex_grow, 1.0);
+        assert_eq!(f.node(parts.lane_band).margin, UIRect::default());
+        assert!(!f.node(parts.events_label).visible);
+        assert!(!f.node(parts.rows).visible);
+        assert_eq!(f.node(f.overlay()).inset.left, UIValue::Px(0.0));
+        assert_eq!(f.node(f.overlay()).inset.right, UIValue::Px(0.0));
+        assert!(f.row_nodes().is_empty());
+    }
+
+    #[test]
+    fn with_tracks_every_band_starts_after_the_label_column_and_the_head_lines_up() {
+        let mut f = Fixture::laid_out(Timeline {
+            markers: vec![marker(1.0, "footstep")],
+            ..with_tracks(vec![bone("hips", &[0.0]), bone("spine", &[0.0])])
+        });
+        let parts = f.parts();
+        let column = UIRect {
+            left: TRACK_LABEL_WIDTH,
+            right: SCROLLBAR_WIDTH,
+            ..Default::default()
+        };
+
+        assert_eq!(f.node(parts.ruler).margin, column);
+        assert_eq!(f.node(f.track()).margin, column);
+        assert_eq!(f.node(f.track()).flex_grow, 0.0);
+        assert_eq!(
+            f.node(parts.lane_band).margin,
+            UIRect {
+                left: 0.0,
+                ..column
+            }
+        );
+        assert_eq!(f.parent(parts.lane), parts.lane_band);
+        assert_eq!(f.parent(parts.events_label), parts.lane_band);
+        let events = f.node(parts.events_label);
+        assert!(events.visible);
+        assert_eq!(events.width, UIValue::Px(TRACK_LABEL_WIDTH));
+        assert_eq!(
+            f.world
+                .get_component_for_entity::<UIText>(parts.events_label)
+                .unwrap()
+                .text,
+            "Events"
+        );
+        assert!(f.node(parts.rows).visible);
+        let rows = f.row_nodes();
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(
+                f.node(row).margin,
+                UIRect {
+                    left: 0.0,
+                    ..column
+                }
+            );
+            assert_eq!(
+                f.node(f.children(row)[0]).width,
+                UIValue::Px(TRACK_LABEL_WIDTH)
+            );
+        }
+        let overlay = f.node(f.overlay());
+        assert_eq!(overlay.inset.left, UIValue::Px(column.left));
+        assert_eq!(overlay.inset.right, UIValue::Px(column.right));
+
+        f.edit(|timeline| timeline.tracks.clear());
+        f.frame();
+
+        assert_eq!(f.node(f.parts().ruler).margin, UIRect::default());
+        assert_eq!(f.node(f.track()).margin, UIRect::default());
+        assert_eq!(f.node(f.overlay()).inset.left, UIValue::Px(0.0));
+        assert!(!f.node(f.parts().events_label).visible);
+        assert!(!f.node(f.parts().rows).visible);
+        assert!(f.row_nodes().is_empty());
+    }
+
+    #[test]
+    fn keys_closer_than_the_merge_distance_join_into_a_bar() {
+        let baked: Vec<f32> = (0..=300).map(|frame| time_of_frame(frame, 30.0)).collect();
+        assert_eq!(
+            key_spans(&baked, 10.0, WIDTH),
+            [KeySpan {
+                start: 0.0,
+                end: 1.0
+            }]
+        );
+
+        let spans = key_spans(&[1.0, 1.05, 5.0], 10.0, WIDTH);
+        assert_eq!(spans.len(), 2);
+        assert!((spans[0].start - 0.1).abs() < NEAR);
+        assert!((spans[0].end - 0.105).abs() < NEAR);
+        assert!((spans[1].start - 0.5).abs() < NEAR);
+        assert_eq!(spans[1].start, spans[1].end);
+    }
+
+    #[test]
+    fn a_row_draws_merged_keys_as_a_bar_and_a_lone_key_as_a_tick() {
+        let f = Fixture::laid_out(with_tracks(vec![bone("hips", &[1.0, 1.05, 5.0])]));
+        let rows = f.row_nodes();
+        assert_eq!(rows.len(), 1);
+
+        let keys = f.row_keys(rows[0]);
+        assert_eq!(keys.len(), 2);
+        let bar = f.node(keys[0]);
+        assert!((percent(bar.inset.left) - 10.0).abs() < NEAR);
+        assert!((percent(bar.width) - 0.5).abs() < NEAR);
+        assert_eq!(bar.min_width, UIValue::Px(TICK_WIDTH));
+        let tick = f.node(keys[1]);
+        assert!((percent(tick.inset.left) - 50.0).abs() < NEAR);
+        assert_eq!(tick.width, UIValue::Px(TICK_WIDTH));
+    }
+
+    #[test]
+    fn rows_are_rebuilt_on_a_resize_or_new_tracks_and_not_while_only_the_time_changes() {
+        let mut f = Fixture::laid_out(with_tracks(vec![bone("hips", &[1.0, 5.0])]));
+        let built = f.row_nodes();
+        assert_eq!(f.row_keys(built[0]).len(), 2);
+
+        f.edit(|timeline| timeline.time = 2.0);
+        f.frame();
+        assert_eq!(f.row_nodes(), built);
+
+        f.lay_out(0.0);
+        f.frame();
+        f.lay_out(WIDTH);
+        f.frame();
+        assert_eq!(f.row_nodes(), built);
+
+        f.lay_out(WIDTH / 100.0);
+        f.frame();
+        assert_ne!(f.row_nodes(), built);
+        assert_eq!(f.row_keys(f.row_nodes()[0]).len(), 1);
+
+        let built = f.row_nodes();
+        f.edit(|timeline| timeline.tracks[0].label = "pelvis".to_owned());
+        f.frame();
+        assert_ne!(f.row_nodes(), built);
+    }
+
+    #[test]
+    fn a_warning_track_is_labelled_in_the_warning_colour() {
+        let theme = UITheme::default();
+        let f = Fixture::laid_out(with_tracks(vec![
+            bone("hips", &[0.0]),
+            TimelineTrack {
+                warning: true,
+                ..bone("7", &[0.0])
+            },
+        ]));
+        let rows = f.row_nodes();
+
+        assert_eq!(f.row_label(rows[0]).text, "hips");
+        assert_eq!(f.row_label(rows[0]).color, theme.text);
+        assert_eq!(f.row_label(rows[1]).text, "7");
+        assert_eq!(f.row_label(rows[1]).color, theme.warning);
+    }
+
+    #[test]
+    fn the_rows_scroll_area_takes_the_wheel_and_its_extent_follows_the_track_count() {
+        let mut f = Fixture::laid_out(with_tracks(vec![bone("hips", &[0.0]); 3]));
+        let parts = f.parts();
+
+        assert!(
+            f.world
+                .get_component_for_entity::<Interactable>(parts.rows)
+                .is_some()
+        );
+        assert_eq!(f.rows_area().content, Some(parts.rows_content));
+        assert_eq!(f.rows_area().content_extent, 3.0 * TRACK_ROW_HEIGHT);
+
+        f.world.tick();
+        f.lay_out(WIDTH * 2.0);
+        f.frame();
+        assert_eq!(f.changed_areas(), 0);
+
+        f.edit(|timeline| timeline.tracks.push(bone("head", &[0.0])));
+        f.frame();
+        assert_eq!(f.rows_area().content_extent, 4.0 * TRACK_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn a_settled_timeline_with_tracks_writes_nothing() {
+        let mut f = Fixture::laid_out(Timeline {
+            markers: vec![marker(1.0, "footstep")],
+            ..with_tracks(vec![bone("hips", &[0.0, 1.0]), bone("spine", &[2.0])])
+        });
+        f.frame();
+
+        f.world.tick();
+        f.frame();
+
+        assert_eq!(f.changed_nodes(), 0);
+        assert_eq!(f.changed_texts(), 0);
+        assert_eq!(f.changed_materials(), 0);
+        assert_eq!(f.changed_areas(), 0);
     }
 }

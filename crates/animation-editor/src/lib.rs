@@ -1,24 +1,31 @@
-//! The read-only editor of an animation clip.
+//! The editor of an animation clip: it plays the clip on a skeleton, shows its bones, and edits and saves its events.
+pub mod events;
 mod panels;
 pub mod preview;
+mod save;
 
-use std::{path::Path, sync::Arc};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
-use concerto_animation::clip::AnimationClip;
-use concerto_app::{App, schedule_groups::Update};
+use concerto_animation::clip::{AnimationChannel, AnimationClip};
+use concerto_app::{
+    App,
+    schedule_groups::{LateUpdate, Startup, Update},
+};
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, command::EntityCommandQueue,
+    Component, Entity, IntoSystemConfig, Query, Res,
+    command::{CommandQueue, EntityCommandQueue},
     events::event_reader::EventReader,
 };
 use concerto_editor::{
+    actions::EditorContextSet,
     asset_editor::{
-        AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, finish_asset_request,
+        AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved, finish_asset_request,
     },
     hosted::{Hosted, HostedEventsAppExt},
     preview::PreviewSignals,
     project::ProjectState,
     scene::load_scene,
-    timeline::frame_count,
+    timeline::{TimelineTrack, frame_count},
 };
 use concerto_foundation::assets::{
     AssetId,
@@ -26,11 +33,28 @@ use concerto_foundation::assets::{
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_scene::scene::Scene;
+use concerto_window::{define_action, define_context};
+use uuid::Uuid;
 
-use panels::{build_clip_panels, sync_clip_panels};
-use preview::{
-    ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
+use events::{TabEvent, read_events};
+use panels::{
+    apply_clip_event_fields, bind_clip_keys, build_clip_panels, remove_clip_event,
+    sync_clip_event_context, sync_clip_events, sync_clip_panels,
 };
+use preview::{
+    ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, ShownBone,
+    clip_preview,
+};
+use save::{restore_clip_events, save_clip};
+
+define_action!(
+    /// Remove the event selected in the active clip tab.
+    RemoveClipEvent
+);
+define_context!(
+    /// Active while the active tab is a clip's with an `AnimationEvent` selected and no text field focused.
+    ClipEventContext
+);
 
 /// What a clip's tab shows and how its preview plays, kept on the document.
 #[derive(Component)]
@@ -46,7 +70,10 @@ pub struct ClipDocument {
     pub picked_scene: Option<AssetId>,
     pub shown_scene: Option<AssetId>,
     pub scene_error: Option<String>,
-    pub selection: Option<(u32, u32)>,
+    pub events: Vec<TabEvent>,
+    pub selected_event: Option<usize>,
+    pub skeleton: Vec<ShownBone>,
+    pub rows: Vec<TimelineTrack>,
 }
 
 impl Default for ClipDocument {
@@ -63,9 +90,56 @@ impl Default for ClipDocument {
             picked_scene: None,
             shown_scene: None,
             scene_error: None,
-            selection: None,
+            events: Vec::new(),
+            selected_event: None,
+            skeleton: Vec::new(),
+            rows: Vec::new(),
         }
     }
+}
+
+impl ClipDocument {
+    pub(crate) fn rebuild_rows(&mut self) {
+        self.rows = self
+            .clip
+            .as_ref()
+            .map_or_else(Vec::new, |clip| bone_rows(clip, &self.skeleton));
+    }
+}
+
+fn track_keys(channels: &[AnimationChannel]) -> Vec<f32> {
+    let mut keys: Vec<f32> = channels
+        .iter()
+        .flat_map(|channel| channel.key_times().iter().copied())
+        .collect();
+    keys.sort_by(f32::total_cmp);
+    keys.dedup();
+    keys
+}
+
+pub(crate) fn bone_rows(clip: &AnimationClip, skeleton: &[ShownBone]) -> Vec<TimelineTrack> {
+    let named: HashSet<Uuid> = skeleton.iter().map(|bone| bone.id).collect();
+    let mut unmatched: Vec<Uuid> = clip
+        .target_ids()
+        .copied()
+        .filter(|id| !named.contains(id))
+        .collect();
+    unmatched.sort();
+    let shown = skeleton.iter().filter_map(|bone| {
+        Some(TimelineTrack {
+            label: bone.name.as_str().to_owned(),
+            warning: false,
+            keys: track_keys(clip.get_channels(&bone.id)?),
+        })
+    });
+    let missing = unmatched.into_iter().filter_map(|id| {
+        Some(TimelineTrack {
+            label: format!("? {}", &id.simple().to_string()[..8]),
+            warning: true,
+            keys: track_keys(clip.get_channels(&id)?),
+        })
+    });
+    shown.chain(missing).collect()
 }
 
 /// What a clip holds, and how much of it the shown skeleton uses.
@@ -133,6 +207,10 @@ pub(crate) fn sync_clip_preview(
         if let Some(mut state) = documents.get_entity(*document) {
             state.facts.skeleton_bones = event.bones;
             state.facts.driven = event.driven;
+            if state.skeleton != event.skeleton {
+                state.skeleton = event.skeleton.clone();
+                state.rebuild_rows();
+            }
         }
     }
 }
@@ -143,6 +221,27 @@ pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationCli
     let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
     anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
     Ok(clip)
+}
+
+pub(crate) fn settle_edit(
+    result: Result<(), String>,
+    document: Entity,
+    editor: &mut EditorDocument,
+    cmd: &mut CommandQueue,
+) {
+    match result {
+        Ok(()) => {
+            if !editor.status.is_empty() {
+                editor.status.clear();
+            }
+            cmd.insert(Unsaved, document);
+        }
+        Err(message) => {
+            if editor.status != message {
+                editor.status = message;
+            }
+        }
+    }
 }
 
 fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
@@ -207,14 +306,23 @@ pub(crate) fn load_clip(
                 continue;
             }
         };
+        let events = match read_events(&clip) {
+            Ok(events) => events,
+            Err(error) => {
+                finish_asset_request(&mut document, &asset, Err(anyhow::anyhow!(error)));
+                continue;
+            }
+        };
+        state.events = events;
+        state.selected_event = None;
         state.facts = ClipFacts {
             skeleton_bones: state.facts.skeleton_bones,
             driven: state.facts.driven,
             ..ClipFacts::of(&clip)
         };
         state.clip = Some(Arc::clone(&clip));
+        state.rebuild_rows();
         state.time = 0.0;
-        state.selection = None;
         state.playing = true;
         previews.trigger(entity, ShowClip(clip));
         previews.trigger(
@@ -245,23 +353,39 @@ pub fn install(app: &mut App) {
                 sync_clip_preview,
                 load_clip,
                 build_clip_panels,
+                apply_clip_event_fields,
+                remove_clip_event,
+                save_clip,
                 sync_clip_panels,
+                sync_clip_events,
             )
                 .chain(),
-        );
+        )
+        .add_listener(restore_clip_events);
+    install_event_keys(app);
+}
+
+fn install_event_keys(app: &mut App) {
+    app.add_system(Startup, bind_clip_keys)
+        .add_system(LateUpdate, sync_clip_event_context.after(EditorContextSet));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
+    use crate::events::TabEventKind;
+    use concerto_animation::{
+        clip::{AnimationChanelOutput, AnimationChannel, ClipEventData, ClipEventKey},
+        event::AnimationEvent,
+    };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin},
     };
-    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
+    use concerto_ecs::{IntoSystem, ResMut, System, events::event_channel::EventChannel};
     use concerto_editor::{
         EditorPlugin,
+        actions::{DeleteEntity, ViewportContext},
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::{
             HostRole, Hosted, HostedApp, HostedPlugin,
@@ -274,9 +398,17 @@ mod tests {
     };
     use concerto_foundation::assets::{Asset, content::save_content_asset_into};
     use concerto_mesh::skeleton::SkeletonComponent;
+    use concerto_name::Name;
+    use concerto_reflect::{ReflectedValue, to_value};
     use concerto_render::ExclusiveCamera;
-    use concerto_ui::theme::UITheme;
-    use concerto_window::plugin::{Window, WindowPlugin};
+    use concerto_ui::{focus::FocusedWidget, theme::UITheme};
+    use concerto_window::{
+        input::{
+            KeyCode,
+            actions::{ActionLabel, ActionMap, Shortcut},
+        },
+        plugin::{Window, WindowPlugin},
+    };
     use glam::Vec2;
     use preview::SetClipTransport;
     use std::time::{Duration, Instant};
@@ -305,6 +437,40 @@ mod tests {
         let mut clip = AnimationClip::default();
         clip.add_channel(Uuid::from_u128(1), keys(seconds));
         clip
+    }
+
+    pub(super) const FOOTSTEP: &str = "game::events::Footstep";
+
+    pub(super) fn stored_key(time: f32, type_name: &str, value: ReflectedValue) -> ClipEventKey {
+        ClipEventKey {
+            time,
+            event: ClipEventData::Stored {
+                type_name: type_name.to_owned(),
+                value,
+            },
+        }
+    }
+
+    pub(super) fn named_key(time: f32, name: &str) -> ClipEventKey {
+        let event = AnimationEvent {
+            name: Name::new(name),
+        };
+        stored_key(
+            time,
+            std::any::type_name::<AnimationEvent>(),
+            to_value(&event).unwrap(),
+        )
+    }
+
+    pub(super) fn footstep_value() -> ReflectedValue {
+        ReflectedValue::Struct(vec![(
+            "strength".to_owned(),
+            ReflectedValue::Leaf(vec![0, 0, 32, 64]),
+        )])
+    }
+
+    pub(super) fn typed_key(time: f32) -> ClipEventKey {
+        stored_key(time, FOOTSTEP, footstep_value())
     }
 
     pub(super) fn clip_fixture() -> SceneFixture {
@@ -377,7 +543,7 @@ mod tests {
             .expect("the document is a clip's")
     }
 
-    fn state_mut(f: &mut SceneFixture, document: Entity) -> &mut ClipDocument {
+    pub(super) fn state_mut(f: &mut SceneFixture, document: Entity) -> &mut ClipDocument {
         f.world
             .get_component_for_entity_mut::<ClipDocument>(document)
             .expect("the document is a clip's")
@@ -400,19 +566,133 @@ mod tests {
         f.frames_until("the pause never came back", |f| !state(f, document).playing);
     }
 
+    fn report_until(
+        f: &mut SceneFixture,
+        document: Entity,
+        report: ClipPreviewBones,
+        what: &str,
+        landed: impl Fn(&ClipDocument) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            f.scene_world_mut(document)
+                .get_resource_mut::<EventChannel<ClipPreviewBones>>()
+                .unwrap()
+                .push_event(report.clone());
+            f.frame();
+            f.frame();
+            if landed(state(f, document)) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     pub(super) fn report_bones(
         f: &mut SceneFixture,
         document: Entity,
         bones: usize,
         driven: usize,
     ) {
-        f.scene_world_mut(document)
-            .get_resource_mut::<EventChannel<ClipPreviewBones>>()
-            .unwrap()
-            .push_event(ClipPreviewBones { bones, driven });
-        f.frames_until("the bones never came back", |f| {
-            state(f, document).facts.skeleton_bones == bones
+        let report = ClipPreviewBones {
+            bones,
+            driven,
+            skeleton: Vec::new(),
+        };
+        report_until(f, document, report, "the bones never came back", |state| {
+            state.facts.skeleton_bones == bones && state.facts.driven == driven
         });
+    }
+
+    pub(super) fn bone(id: Uuid, name: &str) -> ShownBone {
+        ShownBone {
+            id,
+            name: Name::new(name),
+        }
+    }
+
+    pub(super) fn report_skeleton(f: &mut SceneFixture, document: Entity, skeleton: &[ShownBone]) {
+        let report = ClipPreviewBones {
+            bones: skeleton.len(),
+            driven: 0,
+            skeleton: skeleton.to_vec(),
+        };
+        report_until(
+            f,
+            document,
+            report,
+            "the skeleton never came back",
+            |state| state.skeleton == skeleton,
+        );
+    }
+
+    pub(super) const UNNAMED: Uuid = Uuid::from_u128(0xabcdef01 << 96);
+    const FIRST_UNNAMED: Uuid = Uuid::from_u128(0x12345678 << 96);
+
+    fn channel(times: Vec<f32>) -> AnimationChannel {
+        let translations = vec![[0.0; 3]; times.len()];
+        AnimationChannel::new(
+            times,
+            AnimationChanelOutput::from_translation(translations.into_iter()),
+        )
+    }
+
+    fn rotations(times: Vec<f32>) -> AnimationChannel {
+        let rotations = vec![[0.0, 0.0, 0.0, 1.0]; times.len()];
+        AnimationChannel::new(
+            times,
+            AnimationChanelOutput::from_rotation(rotations.into_iter()),
+        )
+    }
+
+    fn many_bones_clip() -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(UNNAMED, channel(vec![0.0, 2.0]));
+        clip.add_channel(Uuid::from_u128(3), channel(vec![0.0, 1.0]));
+        clip.add_channel(FIRST_UNNAMED, channel(vec![1.0]));
+        clip.add_channel(Uuid::from_u128(1), channel(vec![0.0, 1.0]));
+        clip.add_channel(Uuid::from_u128(1), rotations(vec![0.5, 1.0]));
+        clip
+    }
+
+    fn track(label: &str, warning: bool, keys: Vec<f32>) -> TimelineTrack {
+        TimelineTrack {
+            label: label.to_owned(),
+            warning,
+            keys,
+        }
+    }
+
+    #[test]
+    fn bone_rows_list_the_driven_bones_in_skeleton_order_then_the_unmatched_ids() {
+        let skeleton = [
+            bone(Uuid::from_u128(3), "spine"),
+            bone(Uuid::from_u128(2), "still"),
+            bone(Uuid::from_u128(1), "hips"),
+        ];
+
+        assert_eq!(
+            bone_rows(&many_bones_clip(), &skeleton),
+            vec![
+                track("spine", false, vec![0.0, 1.0]),
+                track("hips", false, vec![0.0, 0.5, 1.0]),
+                track("? 12345678", true, vec![1.0]),
+                track("? abcdef01", true, vec![0.0, 2.0]),
+            ]
+        );
+    }
+
+    #[test]
+    fn with_no_skeleton_every_bone_row_is_an_id() {
+        let rows = bone_rows(&many_bones_clip(), &[]);
+
+        assert!(rows.iter().all(|row| row.warning));
+        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["? 00000000", "? 00000000", "? 12345678", "? abcdef01"]
+        );
     }
 
     #[test]
@@ -429,7 +709,10 @@ mod tests {
         assert_eq!(document.picked_scene, None);
         assert_eq!(document.shown_scene, None);
         assert_eq!(document.scene_error, None);
-        assert_eq!(document.selection, None);
+        assert!(document.events.is_empty());
+        assert_eq!(document.selected_event, None);
+        assert!(document.skeleton.is_empty());
+        assert!(document.rows.is_empty());
     }
 
     #[test]
@@ -636,14 +919,12 @@ mod tests {
         f.frames_until("the head never moved", |f| state(f, document).time > 0.0);
         pause(&mut f, document);
         let paused_at = state(&f, document).time;
-        state_mut(&mut f, document).selection = Some((1, 2));
         open_clip(&mut f, &broken);
 
         assert_ne!(f.status(document), "");
         assert_eq!(f.document(document).current, Some(walk));
         let kept = state(&f, document);
         assert_eq!(kept.time, paused_at);
-        assert_eq!(kept.selection, Some((1, 2)));
         assert!(!kept.playing);
         assert_eq!(kept.facts, ClipFacts::of(&clip_of(10)));
     }
@@ -663,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_clip_resets_time_and_selection_plays_and_keeps_the_rest() {
+    fn a_second_clip_resets_time_plays_and_keeps_the_rest() {
         let mut f = clip_fixture();
         write_scene(&mut f, "content/hero/scene.gasset", "sibling");
         let level = write_scene(&mut f, "content/world/level.gasset", "level");
@@ -676,7 +957,6 @@ mod tests {
         report_bones(&mut f, document, 65, 60);
         let chosen = state_mut(&mut f, document);
         chosen.picked_scene = Some(level.id);
-        chosen.selection = Some((3, 9));
         chosen.rate = 2.0;
         chosen.looping = false;
         chosen.root_motion = true;
@@ -686,7 +966,6 @@ mod tests {
 
         let reset = state(&f, document);
         assert_eq!(reset.time, 0.0);
-        assert_eq!(reset.selection, None);
         assert!(reset.playing);
         assert_eq!(reset.picked_scene, Some(level.id));
         assert_eq!(reset.shown_scene, Some(level.id));
@@ -705,6 +984,60 @@ mod tests {
         assert!(state(&f, document).playing);
         assert!(f.scene_names(document).contains(&"level".to_owned()));
         assert!(!f.unsaved(document));
+    }
+
+    #[test]
+    fn a_clip_opens_with_its_events_and_a_second_clip_replaces_them() {
+        let mut f = clip_fixture();
+        let mut eventful = clip_of(10);
+        eventful
+            .replace_events(vec![typed_key(0.25), named_key(0.5, "footstep")])
+            .unwrap();
+        let walk = write_clip(&mut f, "content/walk.gasset", &eventful);
+        let run = write_clip(&mut f, "content/run.gasset", &clip_of(10));
+
+        let document = open_clip(&mut f, &walk);
+
+        let opened = state(&f, document);
+        assert_eq!(opened.events.len(), 2);
+        assert_eq!(opened.events[0].label(), "Footstep");
+        assert_eq!(opened.events[1].label(), "footstep");
+        assert_eq!(opened.selected_event, None);
+
+        state_mut(&mut f, document).selected_event = Some(1);
+        open_clip(&mut f, &run);
+
+        let reset = state(&f, document);
+        assert!(reset.events.is_empty());
+        assert_eq!(reset.selected_event, None);
+    }
+
+    #[test]
+    fn a_second_clip_keeps_the_skeleton_and_rebuilds_the_bone_rows() {
+        let mut f = clip_fixture();
+        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(10));
+        let mut wider = clip_of(1);
+        wider.add_channel(UNNAMED, channel(vec![0.5]));
+        let run = write_clip(&mut f, "content/run.gasset", &wider);
+        let skeleton = [bone(Uuid::from_u128(1), "hips")];
+
+        let document = open_clip(&mut f, &walk);
+        assert_eq!(state(&f, document).rows[0].label, "? 00000000");
+        report_skeleton(&mut f, document, &skeleton);
+
+        let named = &state(&f, document).rows;
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0].label, "hips");
+        assert!(!named[0].warning);
+        assert_eq!(named[0].keys.len(), 301);
+
+        open_clip(&mut f, &run);
+
+        let rebuilt = state(&f, document);
+        assert_eq!(rebuilt.skeleton, skeleton);
+        assert_eq!(rebuilt.rows, bone_rows(&wider, &skeleton));
+        assert_eq!(rebuilt.rows[0].keys.len(), 31);
+        assert_eq!(rebuilt.rows[1], track("? abcdef01", true, vec![0.5]));
     }
 
     #[test]
@@ -779,6 +1112,48 @@ mod tests {
             assert!(Instant::now() < deadline, "the head never moved");
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    fn push_viewport_context(mut actions: ResMut<ActionMap>) {
+        actions.bind(
+            DeleteEntity,
+            Shortcut::key(KeyCode::Delete),
+            ViewportContext,
+        );
+        actions.push_context(ViewportContext);
+    }
+
+    #[test]
+    fn delete_means_remove_clip_event_over_the_contexts_the_editor_pushes() {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .insert_resource(ActiveEditor::default())
+            .insert_resource(FocusedWidget::default());
+        install_event_keys(&mut app);
+        app.add_system(LateUpdate, push_viewport_context.in_set(EditorContextSet));
+        app.finish_plugin_build();
+        let world = app.main_mut().world_mut();
+        let document = world.spawn(ClipDocument {
+            events: vec![TabEvent {
+                time: 0.5,
+                kind: TabEventKind::Named(Name::new("footstep")),
+            }],
+            selected_event: Some(0),
+            ..ClipDocument::default()
+        });
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+
+        app.update();
+        app.update();
+
+        let actions = app.get_resource::<ActionMap>().unwrap();
+        assert!(actions.is_active(ViewportContext));
+        assert_eq!(
+            actions.resolve(Shortcut::key(KeyCode::Delete)),
+            Some(RemoveClipEvent.intern())
+        );
     }
 
     #[test]

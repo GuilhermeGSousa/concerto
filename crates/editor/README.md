@@ -1104,6 +1104,16 @@ visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
 input. Loading and saving belong to the custom editor.
 
+A custom editor can bind a key in a context of its own with
+`ActionMap::bind`, and push that context while its keys apply. Delete, for
+one, is bound to `DeleteEntity` in `ViewportContext` and `TreeContext`, and
+`ActionMap::resolve` searches from the last pushed context. The systems that
+push those two run in `LateUpdate` in the public `EditorContextSet`, each
+frame, so a system that pushes a context over them runs in `LateUpdate`
+`.after(EditorContextSet)`; its key then wins while the pointer is over the
+viewport or focus is in the tree. Read the fired action with
+`EventReader<ActionFired>` and `ActionFired::is`, as the editor reads `Save`.
+
 ### Inspected assets
 
 A game marks a reflectable content asset type as inspected with
@@ -1216,17 +1226,51 @@ opening one opens no tab.
 ### The timeline
 
 `concerto_editor::timeline::Timeline` is a component on a UI node, which
-`TimelinePlugin` turns into a readout over a ruler and a track. The node's owner
-sizes it and writes its `duration`, `rate`, `time` and `selection`; the widget
-never writes them.
+`TimelinePlugin` turns into a readout over a ruler, a track, a marker lane and
+track rows.
+The node's owner sizes it and writes its `duration`, `rate`, `time`,
+`selection`, `selectable`, `markers`, `selected_marker` and `tracks`; the
+widget never writes them. `Timeline` has no builders: an owner compares what it
+wants with what is shown each frame and writes only what differs, field by
+field when a field such as `tracks` is costly to clone.
 
 - Pressing or dragging on the ruler sends `TimelineScrubbed { time }` to the
   `Timeline` entity. The time snaps to a frame when there is a rate.
-- A drag on the track sends `TimelineSelected { range: Some((first, last)) }`,
-  in frames, inclusive, either way round, and a click sends `range: None`.
-  Without a rate there are no frames, so the track sends nothing.
+- With `selectable` set, a drag on the track sends
+  `TimelineSelected { range: Some((first, last)) }`, in frames, inclusive,
+  either way round, and a click sends `range: None`. Without a rate there are
+  no frames, so the track selects nothing. With `selectable` false the track
+  never sends `TimelineSelected` and the selection band stays hidden.
+- The marker lane sits under the track and is hidden while `markers` is
+  empty. Each `TimelineMarker { time, label, locked }` is a line with its label
+  beside it, in the accent colour, the muted text colour when `locked`, and the
+  selection colour when its index is `selected_marker`. Markers at the same
+  time stack one row each, and the lane grows to the most rows.
+- Pressing a marker sends `TimelineMarkerSelected { index: Some(index) }`. A
+  click on the track or on the lane outside a marker sends `index: None`, along
+  with `TimelineSelected { range: None }` when the track would send it.
+- Dragging an unlocked marker sends `TimelineMarkerMoved { index, time }`, the
+  time under the pointer snapped to a frame when there is a rate. A locked
+  marker sends nothing when dragged.
+- Each `TimelineTrack { label, warning, keys }` in `tracks` is a read-only row
+  under the marker lane, in a scroll area that takes the wheel and fills the
+  space left below the lane. A row draws a tick at each key, and keys within
+  3 px of the one before join into a bar, so a clip keyed on every frame draws
+  one bar. Rows take no clicks.
+- While `tracks` is not empty, a label column runs down the left of every
+  band: the marker lane's reads `Events` and each row's its `label`, in the
+  warning colour when `warning` is set. The ruler, track, lane, rows and head
+  all start after the column and stop short of the scrollbar, so times line
+  up, and the track shrinks to one row's height. With no tracks there is no
+  column and the track fills the space under the ruler.
 
-Put the listeners for both signals on the `Timeline` entity, and write back
-what they decide: a `Timeline` nobody writes to does not move. `frame_at`,
+The lane is rebuilt only when the markers' labels or lock flags change; a
+moved or newly selected marker keeps its node. The rows are rebuilt only when
+`tracks` or the ruler's width change. The head is drawn in an overlay
+over every band, so it crosses the lane.
+
+Put the listeners for these signals on the `Timeline` entity, and write back
+what they decide: a `Timeline` nobody writes to does not move, and a marker
+nobody moves stays where it was. `frame_at`,
 `time_of_frame` and `frame_count` are the widget's conversions. Ticks keep at
 least 64 px between labels. There is no zoom.
