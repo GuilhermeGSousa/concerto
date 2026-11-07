@@ -42,7 +42,18 @@ pub fn effective_play_rate(
     }
 }
 
-#[derive(Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
+/// The weight a node applies: `weight` times the `f32` under `param`, or `weight` alone when `param` is `None` or holds no `f32`; clamped to [0, 1], and 0 when NaN.
+pub fn effective_weight(weight: f32, param: Option<Name>, blackboard: &AnimationBlackboard) -> f32 {
+    let scale = param.and_then(|param| blackboard.get_float(param));
+    let weight = weight * scale.unwrap_or(1.0);
+    if weight.is_nan() {
+        0.0
+    } else {
+        weight.clamp(0.0, 1.0)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationPlayMode {
     #[default]
     Loop,
@@ -126,7 +137,7 @@ impl AnimationNode for BlendNode {
     fn reset(&self, _: &mut ()) {}
 }
 
-pub struct AnimationClipNodeState {
+pub(crate) struct ClipClock {
     time: f32,
     previous_time: f32,
     wrapped: bool,
@@ -142,13 +153,18 @@ struct CrossedKey {
     time: f32,
 }
 
-impl AnimationClipNodeState {
-    pub fn new() -> Self {
+pub(crate) struct ClockSpan {
+    pub(crate) length: f32,
+    pub(crate) offset: f32,
+}
+
+impl ClipClock {
+    pub(crate) fn new(start_time: f32) -> Self {
         Self {
-            time: 0.0,
-            previous_time: 0.0,
+            time: start_time,
+            previous_time: start_time,
             wrapped: false,
-            start_time: 0.0,
+            start_time,
             is_paused: false,
             is_finished: false,
             fresh: true,
@@ -156,28 +172,63 @@ impl AnimationClipNodeState {
         }
     }
 
-    pub fn with_start_time(mut self, start_time: f32) -> Self {
-        self.start_time = start_time;
-        self.time = start_time;
-        self.previous_time = start_time;
-        self
-    }
-
-    pub fn play(&mut self) {
-        self.restart();
-        self.is_paused = false;
-        self.is_finished = false;
-    }
-
-    fn restart(&mut self) {
-        self.time = self.start_time;
-        self.previous_time = self.start_time;
+    pub(crate) fn begin_step(&mut self) -> bool {
+        self.fired.clear();
+        self.previous_time = self.time;
         self.wrapped = false;
-        self.fresh = true;
+        self.is_finished = false;
+        self.is_paused
     }
 
-    fn fire(&mut self, clip: &AnimationClip, from: f32, to: f32, include_from: bool) {
-        for key in clip.events_in(from, to, include_from) {
+    pub(crate) fn advance(
+        &mut self,
+        clip: &AnimationClip,
+        span: ClockSpan,
+        delta_time: f32,
+        rate: f32,
+        play_mode: &AnimationPlayMode,
+    ) {
+        self.time += delta_time * rate;
+
+        match play_mode {
+            AnimationPlayMode::Loop => {
+                if self.time > span.length {
+                    self.time = self.start_time;
+                    self.wrapped = true;
+                    self.is_finished = true;
+                }
+            }
+            AnimationPlayMode::PlayOnce => {
+                if self.time > span.length {
+                    self.is_paused = true;
+                    self.is_finished = true;
+                }
+            }
+        }
+
+        if rate == 0.0 {
+            return;
+        }
+        let fresh = std::mem::take(&mut self.fresh);
+        if self.wrapped {
+            let start_fired = fresh && self.previous_time <= self.start_time;
+            self.fire(clip, &span, self.previous_time, span.length, fresh);
+            self.fire(clip, &span, self.start_time, self.time, !start_fired);
+        } else {
+            let to = self.time.min(span.length);
+            self.fire(clip, &span, self.previous_time, to, fresh);
+        }
+    }
+
+    fn fire(
+        &mut self,
+        clip: &AnimationClip,
+        span: &ClockSpan,
+        from: f32,
+        to: f32,
+        include_from: bool,
+    ) {
+        for key in clip.events_in(span.offset + from, span.offset + to, include_from) {
             self.fired.push(CrossedKey {
                 key: key as u32,
                 time: clip.events()[key].time,
@@ -185,8 +236,54 @@ impl AnimationClipNodeState {
         }
     }
 
-    pub fn current_time(&self) -> f32 {
+    pub(crate) fn play(&mut self) {
+        self.restart();
+        self.is_paused = false;
+        self.is_finished = false;
+    }
+
+    pub(crate) fn restart(&mut self) {
+        self.time = self.start_time;
+        self.previous_time = self.start_time;
+        self.wrapped = false;
+        self.fresh = true;
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.restart();
+        self.is_finished = false;
+        self.is_paused = false;
+    }
+
+    pub(crate) fn current_time(&self) -> f32 {
         self.time
+    }
+}
+
+pub struct AnimationClipNodeState {
+    clock: ClipClock,
+}
+
+impl AnimationClipNodeState {
+    pub fn new() -> Self {
+        Self {
+            clock: ClipClock::new(0.0),
+        }
+    }
+
+    pub fn with_start_time(mut self, start_time: f32) -> Self {
+        self.clock.start_time = start_time;
+        self.clock.time = start_time;
+        self.clock.previous_time = start_time;
+        self
+    }
+
+    pub fn play(&mut self) {
+        self.clock.play();
+    }
+
+    pub fn current_time(&self) -> f32 {
+        self.clock.current_time()
     }
 }
 
@@ -213,15 +310,7 @@ impl AnimationNode for AnimationClipNode {
         clips: &Res<AssetStore<AnimationClip>>,
         context: &AnimationGraphContext<'_>,
     ) {
-        state.fired.clear();
-        state.previous_time = state.time;
-        state.wrapped = false;
-
-        if state.is_finished {
-            state.is_finished = false;
-        }
-
-        if state.is_paused {
+        if state.clock.begin_step() {
             return;
         }
 
@@ -230,36 +319,13 @@ impl AnimationNode for AnimationClipNode {
         };
 
         let rate = effective_play_rate(self.play_rate, self.play_rate_param, context.blackboard());
-        state.time += delta_time * rate;
-
-        match self.play_mode {
-            AnimationPlayMode::Loop => {
-                if state.time > clip.duration() {
-                    state.time = state.start_time;
-                    state.wrapped = true;
-                    state.is_finished = true;
-                }
-            }
-            AnimationPlayMode::PlayOnce => {
-                if state.time > clip.duration() {
-                    state.is_paused = true;
-                    state.is_finished = true;
-                }
-            }
-        }
-
-        if rate == 0.0 {
-            return;
-        }
-        let fresh = std::mem::take(&mut state.fresh);
-        if state.wrapped {
-            let start_fired = fresh && state.previous_time <= state.start_time;
-            state.fire(clip, state.previous_time, clip.duration(), fresh);
-            state.fire(clip, state.start_time, state.time, !start_fired);
-        } else {
-            let to = state.time.min(clip.duration());
-            state.fire(clip, state.previous_time, to, fresh);
-        }
+        let span = ClockSpan {
+            length: clip.duration(),
+            offset: 0.0,
+        };
+        state
+            .clock
+            .advance(clip, span, delta_time, rate, &self.play_mode);
     }
 
     fn evaluate(
@@ -272,7 +338,7 @@ impl AnimationNode for AnimationClipNode {
         _pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
-        for crossed in &state.fired {
+        for crossed in &state.clock.fired {
             output.push_event(FiredEvent {
                 clip: self.clip.id(),
                 key: crossed.key,
@@ -308,17 +374,20 @@ impl AnimationNode for AnimationClipNode {
                 }
             });
 
-        output.set_root_motion(root_motion(state, animation_clip, context.root(), bone_ids));
+        output.set_root_motion(root_motion(
+            &state.clock,
+            animation_clip,
+            context.root(),
+            bone_ids,
+        ));
     }
 
     fn reset(&self, state: &mut AnimationClipNodeState) {
-        state.restart();
-        state.is_finished = false;
-        state.is_paused = false;
+        state.clock.reset();
     }
 
     fn is_finished(&self, state: &AnimationClipNodeState) -> bool {
-        state.is_finished
+        state.clock.is_finished
     }
 }
 
@@ -330,7 +399,7 @@ fn net_of_root_motion(joint: &mut JointPose, root: &RootBone) {
 }
 
 fn root_motion(
-    state: &AnimationClipNodeState,
+    clock: &ClipClock,
     clip: &AnimationClip,
     root: Option<&RootBone>,
     bone_ids: &[Uuid],
@@ -350,10 +419,10 @@ fn root_motion(
         )
     };
 
-    if state.wrapped {
-        stretch(state.previous_time, clip.duration()).then(stretch(state.start_time, state.time))
+    if clock.wrapped {
+        stretch(clock.previous_time, clip.duration()).then(stretch(clock.start_time, clock.time))
     } else {
-        stretch(state.previous_time, state.time)
+        stretch(clock.previous_time, clock.time)
     }
 }
 
@@ -432,7 +501,7 @@ mod tests {
 
     use super::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, AnimationPlayMode, BlendNode,
-        effective_play_rate,
+        effective_play_rate, effective_weight,
     };
     use crate::{
         blackboard::AnimationBlackboard,
@@ -690,7 +759,7 @@ mod tests {
         rig.walks.update(&rig.blackboard, |context| {
             node.update(&mut state, 0.2, clips(context), context)
         });
-        state.is_paused = true;
+        state.clock.is_paused = true;
 
         assert!(rig.fire(&node, &mut state, 0.2).is_empty());
     }
@@ -714,7 +783,22 @@ mod tests {
         let mut state = rig.create(&node);
         rig.fire(&node, &mut state, 0.1);
 
-        assert!(state.fresh);
+        assert!(state.clock.fresh);
+    }
+
+    #[test]
+    fn a_clip_that_stops_resolving_fires_nothing_on_the_next_update() {
+        let rig = events_rig(&[0.1]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+        assert_eq!(rig.fire(&node, &mut state, 0.2), [0.1]);
+
+        let unresolved = AnimationClipNode {
+            clip: AssetHandle::weak(AssetId::new()),
+            ..node
+        };
+
+        assert!(rig.fire(&unresolved, &mut state, 0.2).is_empty());
     }
 
     #[test]
@@ -1108,6 +1192,46 @@ mod tests {
         assert_eq!(
             effective_play_rate(0.0, Some(name!("infinite")), &blackboard),
             0.0
+        );
+    }
+
+    #[test]
+    fn the_effective_weight_is_the_weight_times_the_param_clamped_to_0_and_1() {
+        let mut blackboard = AnimationBlackboard::default();
+        blackboard.set(name!("half"), 0.5_f32);
+        blackboard.set(name!("triple"), 3.0_f32);
+        blackboard.set(name!("negative"), -1.0_f32);
+        blackboard.set(name!("nan"), f32::NAN);
+
+        assert_eq!(
+            effective_weight(0.5, Some(name!("half")), &blackboard),
+            0.25
+        );
+        assert_eq!(
+            effective_weight(0.5, Some(name!("triple")), &blackboard),
+            1.0
+        );
+        assert_eq!(
+            effective_weight(0.5, Some(name!("negative")), &blackboard),
+            0.0
+        );
+        assert_eq!(effective_weight(0.5, Some(name!("nan")), &blackboard), 0.0);
+        assert_eq!(effective_weight(f32::NAN, None, &blackboard), 0.0);
+    }
+
+    #[test]
+    fn no_param_or_one_that_is_missing_or_not_a_float_leaves_the_weight_alone() {
+        let mut blackboard = AnimationBlackboard::default();
+        blackboard.set(name!("crouched"), true);
+
+        assert_eq!(effective_weight(0.5, None, &blackboard), 0.5);
+        assert_eq!(
+            effective_weight(0.5, Some(name!("missing")), &blackboard),
+            0.5
+        );
+        assert_eq!(
+            effective_weight(0.5, Some(name!("crouched")), &blackboard),
+            0.5
         );
     }
 
