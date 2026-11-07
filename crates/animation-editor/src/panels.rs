@@ -246,7 +246,7 @@ fn move_event(document: Entity) -> Listener<TimelineMarkerMoved> {
             return;
         }
         let result = state.move_event(index, time);
-        settle_edit(result, document, &mut **editor, &mut cmd);
+        settle_edit(result, document, &mut editor, &mut cmd);
     })
     .into_listener()
 }

@@ -77,7 +77,7 @@ fn add_event_at_head(document: Entity) -> Listener<UIClick> {
         };
         let time = state.time;
         let result = state.add_event(NEW_EVENT, time);
-        settle_edit(result, document, &mut **editor, &mut cmd);
+        settle_edit(result, document, &mut editor, &mut cmd);
     })
     .into_listener()
 }
@@ -96,7 +96,7 @@ fn remove_selected(document: Entity) -> Listener<UIClick> {
             return;
         };
         let result = state.remove_event(index);
-        settle_edit(result, document, &mut **editor, &mut cmd);
+        settle_edit(result, document, &mut editor, &mut cmd);
     })
     .into_listener()
 }
@@ -249,10 +249,10 @@ pub(crate) fn apply_clip_event_fields(
             let Some(field) = panels.inspector.events.field(event.entity) else {
                 continue;
             };
-            if let Some(result) = submitted_edit(&mut **state, field, &event.value) {
-                settle_edit(result, document, &mut **editor, &mut cmd);
+            if let Some(result) = submitted_edit(&mut state, field, &event.value) {
+                settle_edit(result, document, &mut editor, &mut cmd);
             }
-            if let Some(value) = field_text(&**state, field) {
+            if let Some(value) = field_text(&state, field) {
                 write_value(&fields, event.entity, &value);
             }
         }
@@ -262,7 +262,7 @@ pub(crate) fn apply_clip_event_fields(
             let Some(field) = panels.inspector.events.field(event.entity) else {
                 continue;
             };
-            if let Some(value) = field_text(&**state, field) {
+            if let Some(value) = field_text(&state, field) {
                 write_value(&fields, event.entity, &value);
             }
         }
@@ -342,11 +342,11 @@ pub(crate) fn remove_clip_event(
     let Some((mut editor, mut state)) = documents.get_entity(document) else {
         return;
     };
-    let Some(index) = selected_named(&**state).and(state.selected_event) else {
+    let Some(index) = selected_named(&state).and(state.selected_event) else {
         return;
     };
     let result = state.remove_event(index);
-    settle_edit(result, document, &mut **editor, &mut cmd);
+    settle_edit(result, document, &mut editor, &mut cmd);
 }
 
 pub(crate) fn sync_clip_event_context(
