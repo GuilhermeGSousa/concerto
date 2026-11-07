@@ -1,4 +1,6 @@
-use concerto_app::{App, main_schedule::MainSchedulePlugin, schedule_groups::Update};
+use concerto_app::{
+    App, main_schedule::MainSchedulePlugin, plugins::TimePlugin, schedule_groups::Update,
+};
 use concerto_ecs::{Entity, World};
 use concerto_gameplay::navigation::follow_nav_steering;
 use concerto_motion_matching::DesiredMotion;
@@ -7,7 +9,8 @@ use glam::{Quat, Vec3};
 
 fn app() -> App {
     let mut app = App::new();
-    app.register_plugin(MainSchedulePlugin);
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin);
     app.add_system(Update, follow_nav_steering);
     app.finish_plugin_build();
     app
