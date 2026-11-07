@@ -112,7 +112,7 @@ impl Default for Player {
 /// The capsule a visible character links to once its skeleton spawns, and the graph that skeleton plays.
 #[derive(Component)]
 pub(crate) struct PendingLink {
-    capsule: Entity,
+    pub(crate) capsule: Entity,
     graph: AssetHandle<AnimationGraph>,
 }
 
