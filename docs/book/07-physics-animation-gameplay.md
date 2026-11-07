@@ -951,7 +951,10 @@ Each target bone in a chain the source also has turns in model space as the
 source chain turns: its model rotation's change from the target's reference
 pose is the source bone's change from the source's reference pose. The rigs'
 reference poses are what is compared, so each bone's local axes do not matter,
-and LAFAN1's `Hips` and UAL1's `root` need no correction for theirs. Chains
+and LAFAN1's `Hips` and UAL1's `root` need no correction for theirs. What
+does matter is that the two reference poses are the same pose in model space:
+the same up, the same facing and the same stance, such as both in a T-pose. When
+they differ, align them with a `ClipFrame` reference or `BoneCorrection`s. Chains
 with different bone counts are mapped by normalised length along the chain, the
 source's change slerped between the two source bones around each target bone;
 a single-bone target chain takes the source chain's start.

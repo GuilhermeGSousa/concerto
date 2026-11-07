@@ -377,7 +377,7 @@ impl fmt::Display for RigError {
 impl std::error::Error for RigError {}
 
 /// How to play a pose of one skeleton on another, built from the two skeletons' retarget rigs.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct PoseRetarget {
     source_parents: Box<[Option<u16>]>,
     source_reference_inverse: Box<[Quat]>,
@@ -447,9 +447,6 @@ impl PoseRetarget {
             let Some(source_chain) = source.chain(target_chain.name) else {
                 continue;
             };
-            if source_chain.bones.is_empty() {
-                continue;
-            }
             let source_parameters = chain_parameters(&source_chain.bones, &source.reference_model);
             let target_parameters = chain_parameters(&target_chain.bones, &target.reference_model);
             for (bone, t) in target_chain.bones.iter().zip(target_parameters) {
@@ -679,7 +676,7 @@ fn rig_fits(rig: &ResolvedRig, skeleton: &Skeleton) -> bool {
         && rig
             .chains
             .iter()
-            .all(|chain| chain.bones.iter().all(|bone| *bone < count))
+            .all(|chain| !chain.bones.is_empty() && chain.bones.iter().all(|bone| *bone < count))
         && rig.motion_root.is_none_or(|motion_root| {
             motion_root < count && is_strict_ancestor(skeleton, motion_root, rig.root)
         })
@@ -1598,18 +1595,6 @@ mod tests {
     }
 
     #[test]
-    fn a_retarget_pairs_the_source_and_target_rigs() {
-        let retarget = PoseRetarget::new(
-            &source_rig(),
-            &source_skeleton(),
-            &target_rig(),
-            &target_skeleton(),
-        );
-
-        assert!(retarget.is_ok(), "{retarget:?}");
-    }
-
-    #[test]
     fn rigs_sharing_no_chain_name_share_no_chain() {
         let source_skeleton = source_skeleton();
         let source = RetargetRig::new()
@@ -1668,6 +1653,25 @@ mod tests {
                 .unwrap_err(),
             RetargetError::RigNotForSkeleton {
                 side: RetargetSide::Target,
+            }
+        );
+    }
+
+    #[test]
+    fn a_rig_with_an_empty_chain_is_not_for_its_skeleton() {
+        let mut source = source_rig();
+        source.chains[0].bones.clear();
+
+        assert_eq!(
+            PoseRetarget::new(
+                &source,
+                &source_skeleton(),
+                &target_rig(),
+                &target_skeleton()
+            )
+            .unwrap_err(),
+            RetargetError::RigNotForSkeleton {
+                side: RetargetSide::Source,
             }
         );
     }
@@ -2058,6 +2062,8 @@ mod tests {
         let mut source = source_skeleton.rest_pose.to_vec();
         source[root].rotation = turn_then_tilt() * source[root].rotation;
         source[root].translation += Vec3::new(1.0, 0.2, 0.5);
+        let pelvis = bone(&source_skeleton, "pelvis");
+        source[pelvis].rotation = Quat::from_rotation_y(0.6) * source[pelvis].rotation;
         let mut pose_retarget = PoseRetarget::new(
             &target_rig(),
             &source_skeleton,
