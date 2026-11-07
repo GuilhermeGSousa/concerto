@@ -3,7 +3,7 @@ pub mod events;
 mod panels;
 pub mod preview;
 
-use std::{ops::DerefMut, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use concerto_animation::clip::AnimationClip;
 use concerto_app::{App, schedule_groups::Update};
@@ -153,7 +153,7 @@ pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationCli
 pub(crate) fn settle_edit(
     result: Result<(), String>,
     document: Entity,
-    editor: &mut impl DerefMut<Target = EditorDocument>,
+    editor: &mut EditorDocument,
     cmd: &mut CommandQueue,
 ) {
     match result {
