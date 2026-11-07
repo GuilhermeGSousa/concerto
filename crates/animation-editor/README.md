@@ -108,8 +108,9 @@ The Events section edits the clip's `AnimationEvent`s:
   read-only in the editor and a save keeps them as they are.
 - With nothing selected, only Add event.
 
-Delete removes the selected `AnimationEvent` while the clip tab is active and no
-text field has focus, even with the pointer over the preview. The crate binds
+Delete removes the selected `AnimationEvent` while the clip tab is active, no
+text field has focus and the unsaved-changes prompt is closed, even with the
+pointer over the preview. The crate binds
 it to `RemoveClipEvent` in its `ClipEventContext`.
 
 An edit is refused, with the reason in the status, when it targets a typed

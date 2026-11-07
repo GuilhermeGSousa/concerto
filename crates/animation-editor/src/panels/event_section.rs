@@ -9,6 +9,7 @@ use concerto_ecs::{
     },
 };
 use concerto_editor::{
+    actions::PromptContext,
     asset_editor::{ActiveEditor, EditorDocument},
     timeline::{frame_at, time_of_frame},
 };
@@ -362,7 +363,8 @@ pub(crate) fn sync_clip_event_context(
         .and_then(selected_named)
         .is_some();
     let typing = (**focus).is_some_and(|entity| inputs.get_entity(entity).is_some());
-    if named && !typing {
+    let prompted = actions.is_active(PromptContext);
+    if named && !typing && !prompted {
         actions.push_context(ClipEventContext);
     } else if actions.is_active(ClipEventContext) {
         actions.pop_context(ClipEventContext);
@@ -693,6 +695,23 @@ mod tests {
         assert_eq!(tab.delete_means(), None);
 
         tab.focus(None);
+        tab.f.frame();
+        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
+    }
+
+    #[test]
+    fn the_unsaved_changes_prompt_keeps_the_context_off() {
+        let mut tab = event_tab();
+        tab.select(1);
+        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
+
+        let actions = tab.f.world.get_resource_mut::<ActionMap>().unwrap();
+        actions.push_context(PromptContext);
+        tab.f.frame();
+        assert_eq!(tab.delete_means(), None);
+
+        let actions = tab.f.world.get_resource_mut::<ActionMap>().unwrap();
+        actions.pop_context(PromptContext);
         tab.f.frame();
         assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
     }
