@@ -423,7 +423,9 @@ or identity when it has none. It also carries the player's seed, `seed()`, for
 nodes whose motion varies per character. It is 0 until the game calls
 `AnimationPlayer::set_seed(seed)`, which takes effect on the next frame; pick
 it from something stable across runs, such as a spawn index, since entity ids
-are not.
+are not. A `SkeletonComponent` with a root bone gets a fresh `AnimationPlayer`
+when it is added, so set the seed, like params, once that player exists rather
+than on a player spawned beside the component.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the root motion and the clip events its sources gave this frame. Its inputs
