@@ -6,10 +6,10 @@ use concerto_mesh::{
 };
 use concerto_name::Name;
 use concerto_reflect::Reflect;
-use glam::{Mat4, Quat};
+use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::clip::AnimationClip;
+use crate::{clip::AnimationClip, pose::twist_about};
 
 /// A skeleton described for retargeting: its named bone chains, its retarget root and motion root, and the pose it is aligned in.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
@@ -376,6 +376,383 @@ impl fmt::Display for RigError {
 
 impl std::error::Error for RigError {}
 
+/// How to play a pose of one skeleton on another, built from the two skeletons' retarget rigs.
+#[derive(Clone, Debug)]
+pub struct PoseRetarget {
+    source_parents: Box<[Option<u16>]>,
+    source_reference_inverse: Box<[Quat]>,
+    source_root: usize,
+    source_root_reference: Vec3,
+    source_motion_root: Option<usize>,
+    source_motion_root_reference: Vec3,
+    target_parents: Box<[Option<u16>]>,
+    target_reference_local: Box<[JointPose]>,
+    target_reference_rotation: Box<[Quat]>,
+    target_root_reference: Vec3,
+    target_motion_root_reference: Vec3,
+    rules: Box<[BoneRule]>,
+    scale: f32,
+    source_rotation: Box<[Quat]>,
+    source_model: Box<[Mat4]>,
+    target_rotation: Box<[Quat]>,
+    target_model: Box<[Mat4]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BoneRule {
+    Reference,
+    Chain(ChainSample),
+    MotionRoot,
+    Root,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ChainSample {
+    lower: usize,
+    upper: usize,
+    alpha: f32,
+}
+
+impl PoseRetarget {
+    /// Pairs `source` and `target`, each resolved against the skeleton given beside it.
+    pub fn new(
+        source: &ResolvedRig,
+        source_skeleton: &Skeleton,
+        target: &ResolvedRig,
+        target_skeleton: &Skeleton,
+    ) -> Result<PoseRetarget, RetargetError> {
+        if !rig_fits(source, source_skeleton) {
+            return Err(RetargetError::RigNotForSkeleton {
+                side: RetargetSide::Source,
+            });
+        }
+        if !rig_fits(target, target_skeleton) {
+            return Err(RetargetError::RigNotForSkeleton {
+                side: RetargetSide::Target,
+            });
+        }
+        if !target
+            .chains
+            .iter()
+            .any(|chain| source.chain(chain.name).is_some())
+        {
+            return Err(RetargetError::NoSharedChain);
+        }
+
+        let source_reference = model_rotations(&source_skeleton.parents, &source.reference_local);
+        let target_reference = model_rotations(&target_skeleton.parents, &target.reference_local);
+
+        let mut rules = vec![BoneRule::Reference; target_skeleton.bone_count()];
+        for target_chain in &target.chains {
+            let Some(source_chain) = source.chain(target_chain.name) else {
+                continue;
+            };
+            let source_parameters = chain_parameters(&source_chain.bones, &source.reference_model);
+            let target_parameters = chain_parameters(&target_chain.bones, &target.reference_model);
+            for (bone, t) in target_chain.bones.iter().zip(target_parameters) {
+                rules[*bone] =
+                    BoneRule::Chain(chain_sample(&source_chain.bones, &source_parameters, t));
+            }
+        }
+        if let Some(motion_root) = target.motion_root {
+            rules[motion_root] = BoneRule::MotionRoot;
+        }
+        rules[target.root] = BoneRule::Root;
+
+        Ok(PoseRetarget {
+            source_parents: source_skeleton.parents.clone(),
+            source_reference_inverse: source_reference
+                .iter()
+                .map(|rotation| rotation.inverse())
+                .collect(),
+            source_root: source.root,
+            source_root_reference: source.reference_model[source.root].w_axis.truncate(),
+            source_motion_root: source.motion_root,
+            source_motion_root_reference: reference_position(
+                source.motion_root,
+                &source.reference_model,
+            ),
+            target_parents: target_skeleton.parents.clone(),
+            target_reference_local: target.reference_local.clone().into_boxed_slice(),
+            target_reference_rotation: target_reference.into_boxed_slice(),
+            target_root_reference: target.reference_model[target.root].w_axis.truncate(),
+            target_motion_root_reference: reference_position(
+                target.motion_root,
+                &target.reference_model,
+            ),
+            rules: rules.into_boxed_slice(),
+            scale: target.root_height / source.root_height,
+            source_rotation: vec![Quat::IDENTITY; source_skeleton.bone_count()].into_boxed_slice(),
+            source_model: vec![Mat4::IDENTITY; source_skeleton.bone_count()].into_boxed_slice(),
+            target_rotation: vec![Quat::IDENTITY; target_skeleton.bone_count()].into_boxed_slice(),
+            target_model: vec![Mat4::IDENTITY; target_skeleton.bone_count()].into_boxed_slice(),
+        })
+    }
+
+    /// Writes `source`, a pose of the source skeleton in bone order, retargeted onto the target skeleton into `out`.
+    pub fn retarget_into(
+        &mut self,
+        source: &[JointPose],
+        out: &mut [JointPose],
+    ) -> Result<(), RetargetError> {
+        if source.len() != self.source_parents.len() {
+            return Err(RetargetError::PoseLength {
+                side: RetargetSide::Source,
+                expected: self.source_parents.len(),
+                actual: source.len(),
+            });
+        }
+        if out.len() != self.target_parents.len() {
+            return Err(RetargetError::PoseLength {
+                side: RetargetSide::Target,
+                expected: self.target_parents.len(),
+                actual: out.len(),
+            });
+        }
+
+        for (bone, pose) in source.iter().enumerate() {
+            match self.source_parents[bone] {
+                Some(parent) => {
+                    let parent = usize::from(parent);
+                    self.source_rotation[bone] =
+                        (self.source_rotation[parent] * pose.rotation).normalize();
+                    self.source_model[bone] = self.source_model[parent] * pose.to_mat4();
+                }
+                None => {
+                    self.source_rotation[bone] = pose.rotation.normalize();
+                    self.source_model[bone] = pose.to_mat4();
+                }
+            }
+        }
+
+        for (bone, target) in out.iter_mut().enumerate() {
+            let parent = self.target_parents[bone].map(usize::from);
+            let mut pose = self.target_reference_local[bone].clone();
+            match self.rules[bone] {
+                BoneRule::Reference => {}
+                BoneRule::Chain(sample) => {
+                    let delta = self
+                        .source_delta(sample.lower)
+                        .slerp(self.source_delta(sample.upper), sample.alpha);
+                    pose.rotation =
+                        self.local_rotation(parent, delta * self.target_reference_rotation[bone]);
+                }
+                BoneRule::MotionRoot => match self.source_motion_root {
+                    Some(motion_root) => {
+                        let desired =
+                            self.source_delta(motion_root) * self.target_reference_rotation[bone];
+                        let offset =
+                            self.source_position(motion_root) - self.source_motion_root_reference;
+                        let position = self.target_motion_root_reference + offset * self.scale;
+                        self.place(parent, &mut pose, desired, position);
+                    }
+                    None => {
+                        let desired = twist_about(self.source_delta(self.source_root), Vec3::Y)
+                            * self.target_reference_rotation[bone];
+                        let offset = (self.source_position(self.source_root)
+                            - self.source_root_reference)
+                            * self.scale;
+                        let position =
+                            self.target_motion_root_reference + Vec3::new(offset.x, 0.0, offset.z);
+                        self.place(parent, &mut pose, desired, position);
+                    }
+                },
+                BoneRule::Root => {
+                    let desired =
+                        self.source_delta(self.source_root) * self.target_reference_rotation[bone];
+                    let offset =
+                        self.source_position(self.source_root) - self.source_root_reference;
+                    let position = self.target_root_reference + offset * self.scale;
+                    self.place(parent, &mut pose, desired, position);
+                }
+            }
+            match parent {
+                Some(parent) => {
+                    self.target_rotation[bone] =
+                        (self.target_rotation[parent] * pose.rotation).normalize();
+                    self.target_model[bone] = self.target_model[parent] * pose.to_mat4();
+                }
+                None => {
+                    self.target_rotation[bone] = pose.rotation.normalize();
+                    self.target_model[bone] = pose.to_mat4();
+                }
+            }
+            *target = pose;
+        }
+        Ok(())
+    }
+
+    /// The scale from source to target root motion: the target root's reference height over the source's.
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    fn source_delta(&self, bone: usize) -> Quat {
+        self.source_rotation[bone] * self.source_reference_inverse[bone]
+    }
+
+    fn source_position(&self, bone: usize) -> Vec3 {
+        self.source_model[bone].w_axis.truncate()
+    }
+
+    fn local_rotation(&self, parent: Option<usize>, desired: Quat) -> Quat {
+        match parent {
+            Some(parent) => (self.target_rotation[parent].inverse() * desired).normalize(),
+            None => desired.normalize(),
+        }
+    }
+
+    fn place(&self, parent: Option<usize>, pose: &mut JointPose, desired: Quat, position: Vec3) {
+        pose.rotation = self.local_rotation(parent, desired);
+        pose.translation = match parent {
+            Some(parent) => self.target_model[parent]
+                .inverse()
+                .transform_point3(position),
+            None => position,
+        };
+    }
+}
+
+/// Which side of a retarget a skeleton, rig or pose is on, for errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetargetSide {
+    Source,
+    Target,
+}
+
+impl fmt::Display for RetargetSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RetargetSide::Source => write!(f, "source"),
+            RetargetSide::Target => write!(f, "target"),
+        }
+    }
+}
+
+/// Why a retarget could not be built or applied.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RetargetError {
+    RigNotForSkeleton {
+        side: RetargetSide,
+    },
+    NoSharedChain,
+    PoseLength {
+        side: RetargetSide,
+        expected: usize,
+        actual: usize,
+    },
+}
+
+impl fmt::Display for RetargetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RetargetError::RigNotForSkeleton { side } => write!(
+                f,
+                "the {side} rig does not fit the {side} skeleton it was given"
+            ),
+            RetargetError::NoSharedChain => {
+                write!(f, "the source and target rigs share no chain name")
+            }
+            RetargetError::PoseLength {
+                side,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "the {side} pose has {actual} bones, but the {side} skeleton has {expected}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RetargetError {}
+
+fn rig_fits(rig: &ResolvedRig, skeleton: &Skeleton) -> bool {
+    let count = skeleton.bone_count();
+    skeleton.validate().is_ok()
+        && rig.reference_local.len() == count
+        && rig.reference_model.len() == count
+        && rig.root < count
+        && rig
+            .chains
+            .iter()
+            .all(|chain| !chain.bones.is_empty() && chain.bones.iter().all(|bone| *bone < count))
+        && rig.motion_root.is_none_or(|motion_root| {
+            motion_root < count && is_strict_ancestor(skeleton, motion_root, rig.root)
+        })
+        && rig.root_height.is_finite()
+        && rig.root_height > 1e-4
+}
+
+fn model_rotations(parents: &[Option<u16>], local: &[JointPose]) -> Vec<Quat> {
+    let mut rotations: Vec<Quat> = Vec::with_capacity(local.len());
+    for (pose, parent) in local.iter().zip(parents.iter()) {
+        let rotation = match parent {
+            Some(parent) => rotations[usize::from(*parent)] * pose.rotation,
+            None => pose.rotation,
+        };
+        rotations.push(rotation.normalize());
+    }
+    rotations
+}
+
+fn reference_position(bone: Option<usize>, reference_model: &[Mat4]) -> Vec3 {
+    bone.map_or(Vec3::ZERO, |bone| reference_model[bone].w_axis.truncate())
+}
+
+fn chain_parameters(bones: &[usize], reference_model: &[Mat4]) -> Vec<f32> {
+    if bones.len() < 2 {
+        return vec![0.0; bones.len()];
+    }
+    let last = bones.len() - 1;
+    let lengths: Vec<f32> = bones
+        .windows(2)
+        .map(|pair| {
+            reference_model[pair[1]]
+                .w_axis
+                .truncate()
+                .distance(reference_model[pair[0]].w_axis.truncate())
+        })
+        .collect();
+    let total: f32 = lengths.iter().sum();
+    if total < 1e-6 {
+        return (0..=last).map(|i| i as f32 / last as f32).collect();
+    }
+    let mut parameters: Vec<f32> = Vec::with_capacity(bones.len());
+    parameters.push(0.0);
+    let mut along: f32 = 0.0;
+    for length in &lengths[..last - 1] {
+        along += *length;
+        parameters.push(along / total);
+    }
+    parameters.push(1.0);
+    parameters
+}
+
+fn chain_sample(bones: &[usize], parameters: &[f32], t: f32) -> ChainSample {
+    let lower = parameters
+        .iter()
+        .rposition(|parameter| *parameter <= t)
+        .unwrap_or(0);
+    let at = |index: usize| ChainSample {
+        lower: bones[index],
+        upper: bones[index],
+        alpha: 0.0,
+    };
+    if lower + 1 >= bones.len() {
+        return at(lower);
+    }
+    let alpha = (t - parameters[lower]) / (parameters[lower + 1] - parameters[lower]);
+    if alpha <= 0.0 {
+        return at(lower);
+    }
+    ChainSample {
+        lower: bones[lower],
+        upper: bones[lower + 1],
+        alpha,
+    }
+}
+
 fn find_bone(skeleton: &Skeleton, bone: JointName, used_as: BoneUse) -> Result<usize, RigError> {
     if bone.is_empty() {
         return Err(RigError::UnknownBone { bone, used_as });
@@ -416,7 +793,10 @@ mod tests {
     use glam::{Mat4, Quat, Vec3};
     use uuid::Uuid;
 
-    use super::{BoneCorrection, BoneUse, ReferencePose, RetargetChain, RetargetRig, RigError};
+    use super::{
+        BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedRig, RetargetChain,
+        RetargetError, RetargetRig, RetargetSide, RigError,
+    };
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 
     const NAMES: [&str; 14] = [
@@ -915,5 +1295,848 @@ mod tests {
             resolve_error(&RetargetRig::new().with_root("root")),
             RigError::RootHeight { height: 0.0 }
         );
+    }
+
+    struct FixtureBone {
+        name: &'static str,
+        parent: Option<&'static str>,
+        rotation: Quat,
+        position: Vec3,
+    }
+
+    fn fixture_bone(
+        name: &'static str,
+        parent: Option<&'static str>,
+        rotation: Quat,
+        position: Vec3,
+    ) -> FixtureBone {
+        FixtureBone {
+            name,
+            parent,
+            rotation,
+            position,
+        }
+    }
+
+    fn fixture_skeleton(bones: &[FixtureBone], first_id: u128) -> Skeleton {
+        let parent_index = |bone: &FixtureBone| {
+            bone.parent
+                .map(|parent| bones.iter().position(|other| other.name == parent).unwrap())
+        };
+        let rest_pose = bones
+            .iter()
+            .map(|bone| match parent_index(bone) {
+                Some(parent) => {
+                    let inverse = bones[parent].rotation.inverse();
+                    JointPose {
+                        translation: inverse * (bone.position - bones[parent].position),
+                        rotation: (inverse * bone.rotation).normalize(),
+                        scale: Vec3::ONE,
+                    }
+                }
+                None => JointPose {
+                    translation: bone.position,
+                    rotation: bone.rotation,
+                    scale: Vec3::ONE,
+                },
+            })
+            .collect();
+        Skeleton::new(
+            vec![Mat4::IDENTITY; bones.len()],
+            bones
+                .iter()
+                .map(|bone| parent_index(bone).map(|parent| parent as u16))
+                .collect(),
+            bones.iter().map(|bone| Name::new(bone.name)).collect(),
+            rest_pose,
+            (0..bones.len() as u128)
+                .map(|bone| Uuid::from_u128(first_id + bone))
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    fn source_rotation(index: usize) -> Quat {
+        Quat::from_euler(glam::EulerRot::XYZ, 0.3, 0.05 + 0.1 * index as f32, -0.2)
+    }
+
+    fn target_rotation(index: usize) -> Quat {
+        Quat::from_euler(glam::EulerRot::YXZ, 0.25 * index as f32, 0.4, -0.1)
+    }
+
+    fn source_skeleton() -> Skeleton {
+        let bones = [
+            fixture_bone("hips", None, source_rotation(0), Vec3::new(0.0, 1.0, 0.0)),
+            fixture_bone(
+                "spine_1",
+                Some("hips"),
+                source_rotation(1),
+                Vec3::new(0.0, 1.1, 0.0),
+            ),
+            fixture_bone(
+                "spine_2",
+                Some("spine_1"),
+                source_rotation(2),
+                Vec3::new(0.0, 1.3, 0.0),
+            ),
+            fixture_bone(
+                "spine_3",
+                Some("spine_2"),
+                source_rotation(3),
+                Vec3::new(0.0, 1.5, 0.0),
+            ),
+            fixture_bone(
+                "neck_1",
+                Some("spine_3"),
+                source_rotation(4),
+                Vec3::new(0.0, 1.6, 0.0),
+            ),
+            fixture_bone(
+                "neck_2",
+                Some("neck_1"),
+                source_rotation(5),
+                Vec3::new(0.0, 1.7, 0.0),
+            ),
+            fixture_bone(
+                "head",
+                Some("neck_2"),
+                source_rotation(6),
+                Vec3::new(0.0, 1.8, 0.0),
+            ),
+            fixture_bone(
+                "upper_l",
+                Some("spine_3"),
+                source_rotation(7),
+                Vec3::new(0.2, 1.5, 0.0),
+            ),
+            fixture_bone(
+                "lower_l",
+                Some("upper_l"),
+                source_rotation(8),
+                Vec3::new(0.5, 1.5, 0.0),
+            ),
+            fixture_bone(
+                "hand_l",
+                Some("lower_l"),
+                source_rotation(9),
+                Vec3::new(0.8, 1.5, 0.0),
+            ),
+            fixture_bone(
+                "fin_l",
+                Some("hand_l"),
+                source_rotation(10),
+                Vec3::new(0.9, 1.5, 0.0),
+            ),
+            fixture_bone(
+                "thigh_l",
+                Some("hips"),
+                source_rotation(11),
+                Vec3::new(0.1, 0.95, 0.0),
+            ),
+            fixture_bone(
+                "shin_l",
+                Some("thigh_l"),
+                source_rotation(12),
+                Vec3::new(0.1, 0.5, 0.0),
+            ),
+            fixture_bone(
+                "foot_l",
+                Some("shin_l"),
+                source_rotation(13),
+                Vec3::new(0.1, 0.05, 0.0),
+            ),
+        ];
+        fixture_skeleton(&bones, 1000)
+    }
+
+    fn target_skeleton() -> Skeleton {
+        let bones = [
+            fixture_bone(
+                "root",
+                None,
+                Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+                Vec3::ZERO,
+            ),
+            fixture_bone(
+                "pelvis",
+                Some("root"),
+                target_rotation(1),
+                Vec3::new(0.0, 0.5, 0.0),
+            ),
+            fixture_bone(
+                "spine_01",
+                Some("pelvis"),
+                target_rotation(2),
+                Vec3::new(0.0, 0.55, 0.0),
+            ),
+            fixture_bone(
+                "spine_02",
+                Some("spine_01"),
+                target_rotation(3),
+                Vec3::new(0.0, 0.6, 0.0),
+            ),
+            fixture_bone(
+                "spine_03",
+                Some("spine_02"),
+                target_rotation(4),
+                Vec3::new(0.0, 0.7, 0.0),
+            ),
+            fixture_bone(
+                "spine_04",
+                Some("spine_03"),
+                target_rotation(5),
+                Vec3::new(0.0, 0.75, 0.0),
+            ),
+            fixture_bone(
+                "neck_01",
+                Some("spine_04"),
+                target_rotation(6),
+                Vec3::new(0.0, 0.8, 0.0),
+            ),
+            fixture_bone(
+                "head",
+                Some("neck_01"),
+                target_rotation(7),
+                Vec3::new(0.0, 0.9, 0.0),
+            ),
+            fixture_bone(
+                "clavicle_l",
+                Some("spine_04"),
+                target_rotation(8),
+                Vec3::new(0.05, 0.75, 0.0),
+            ),
+            fixture_bone(
+                "upperarm_l",
+                Some("clavicle_l"),
+                target_rotation(9),
+                Vec3::new(0.1, 0.75, 0.0),
+            ),
+            fixture_bone(
+                "lowerarm_l",
+                Some("upperarm_l"),
+                target_rotation(10),
+                Vec3::new(0.25, 0.75, 0.0),
+            ),
+            fixture_bone(
+                "hand_l",
+                Some("lowerarm_l"),
+                target_rotation(11),
+                Vec3::new(0.4, 0.75, 0.0),
+            ),
+            fixture_bone(
+                "thigh_l",
+                Some("pelvis"),
+                target_rotation(12),
+                Vec3::new(0.05, 0.47, 0.0),
+            ),
+            fixture_bone(
+                "calf_l",
+                Some("thigh_l"),
+                target_rotation(13),
+                Vec3::new(0.05, 0.25, 0.0),
+            ),
+            fixture_bone(
+                "foot_l",
+                Some("calf_l"),
+                target_rotation(14),
+                Vec3::new(0.05, 0.03, 0.0),
+            ),
+            fixture_bone(
+                "tail",
+                Some("pelvis"),
+                target_rotation(15),
+                Vec3::new(0.0, 0.45, -0.1),
+            ),
+        ];
+        fixture_skeleton(&bones, 2000)
+    }
+
+    fn source_rig() -> ResolvedRig {
+        RetargetRig::new()
+            .with_root("hips")
+            .with_chain(RetargetChain::new("spine", "spine_1", "spine_3"))
+            .with_chain(RetargetChain::new("neck", "neck_1", "neck_2"))
+            .with_chain(RetargetChain::new("head", "head", "head"))
+            .with_chain(RetargetChain::new("arm_l", "upper_l", "hand_l"))
+            .with_chain(RetargetChain::new("leg_l", "thigh_l", "foot_l"))
+            .with_chain(RetargetChain::new("fin_l", "fin_l", "fin_l"))
+            .resolve(&source_skeleton(), None)
+            .unwrap()
+    }
+
+    fn doubled_target_skeleton() -> Skeleton {
+        let mut skeleton = target_skeleton();
+        for joint in skeleton.rest_pose.iter_mut() {
+            joint.translation *= 2.0;
+        }
+        skeleton
+    }
+
+    fn target_rig() -> ResolvedRig {
+        target_rig_on(&target_skeleton())
+    }
+
+    fn doubled_target_rig() -> ResolvedRig {
+        target_rig_on(&doubled_target_skeleton())
+    }
+
+    fn target_rig_on(skeleton: &Skeleton) -> ResolvedRig {
+        RetargetRig::new()
+            .with_motion_root("root")
+            .with_root("pelvis")
+            .with_chain(RetargetChain::new("spine", "spine_01", "spine_04"))
+            .with_chain(RetargetChain::new("neck", "neck_01", "neck_01"))
+            .with_chain(RetargetChain::new("head", "head", "head"))
+            .with_chain(RetargetChain::new("arm_l", "upperarm_l", "hand_l"))
+            .with_chain(RetargetChain::new("leg_l", "thigh_l", "foot_l"))
+            .with_chain(RetargetChain::new("tail", "tail", "tail"))
+            .resolve(skeleton, None)
+            .unwrap()
+    }
+
+    #[test]
+    fn rigs_sharing_no_chain_name_share_no_chain() {
+        let source_skeleton = source_skeleton();
+        let source = RetargetRig::new()
+            .with_root("hips")
+            .with_chain(RetargetChain::new("fin_l", "fin_l", "fin_l"))
+            .resolve(&source_skeleton, None)
+            .unwrap();
+
+        assert_eq!(
+            PoseRetarget::new(&source, &source_skeleton, &target_rig(), &target_skeleton())
+                .unwrap_err(),
+            RetargetError::NoSharedChain
+        );
+    }
+
+    #[test]
+    fn a_source_rig_beside_the_target_skeleton_is_not_for_it() {
+        assert_eq!(
+            PoseRetarget::new(
+                &source_rig(),
+                &target_skeleton(),
+                &target_rig(),
+                &target_skeleton()
+            )
+            .unwrap_err(),
+            RetargetError::RigNotForSkeleton {
+                side: RetargetSide::Source,
+            }
+        );
+    }
+
+    #[test]
+    fn a_target_rig_beside_the_source_skeleton_is_not_for_it() {
+        assert_eq!(
+            PoseRetarget::new(
+                &source_rig(),
+                &source_skeleton(),
+                &target_rig(),
+                &source_skeleton()
+            )
+            .unwrap_err(),
+            RetargetError::RigNotForSkeleton {
+                side: RetargetSide::Target,
+            }
+        );
+    }
+
+    #[test]
+    fn a_rig_whose_root_is_past_the_last_bone_is_not_for_its_skeleton() {
+        let target_skeleton = target_skeleton();
+        let mut target = target_rig();
+        target.root = target_skeleton.bone_count();
+
+        assert_eq!(
+            PoseRetarget::new(&source_rig(), &source_skeleton(), &target, &target_skeleton)
+                .unwrap_err(),
+            RetargetError::RigNotForSkeleton {
+                side: RetargetSide::Target,
+            }
+        );
+    }
+
+    #[test]
+    fn a_rig_with_an_empty_chain_is_not_for_its_skeleton() {
+        let mut source = source_rig();
+        source.chains[0].bones.clear();
+
+        assert_eq!(
+            PoseRetarget::new(
+                &source,
+                &source_skeleton(),
+                &target_rig(),
+                &target_skeleton()
+            )
+            .unwrap_err(),
+            RetargetError::RigNotForSkeleton {
+                side: RetargetSide::Source,
+            }
+        );
+    }
+
+    fn bone(skeleton: &Skeleton, name: &str) -> usize {
+        skeleton.bone_index(Name::new(name)).unwrap()
+    }
+
+    fn model_rotations(skeleton: &Skeleton, pose: &[JointPose]) -> Vec<Quat> {
+        let mut rotations: Vec<Quat> = Vec::with_capacity(pose.len());
+        for (joint, parent) in pose.iter().zip(skeleton.parents.iter()) {
+            let rotation = match parent {
+                Some(parent) => rotations[usize::from(*parent)] * joint.rotation,
+                None => joint.rotation,
+            };
+            rotations.push(rotation.normalize());
+        }
+        rotations
+    }
+
+    fn posed(skeleton: &Skeleton, deltas: &[Quat]) -> Vec<JointPose> {
+        let desired: Vec<Quat> = model_rotations(skeleton, &skeleton.rest_pose)
+            .iter()
+            .zip(deltas.iter())
+            .map(|(rest, delta)| *delta * *rest)
+            .collect();
+        skeleton
+            .rest_pose
+            .iter()
+            .zip(skeleton.parents.iter())
+            .enumerate()
+            .map(|(bone, (joint, parent))| JointPose {
+                rotation: match parent {
+                    Some(parent) => {
+                        (desired[usize::from(*parent)].inverse() * desired[bone]).normalize()
+                    }
+                    None => desired[bone],
+                },
+                ..joint.clone()
+            })
+            .collect()
+    }
+
+    fn model_deltas(skeleton: &Skeleton, pose: &[JointPose]) -> Vec<Quat> {
+        model_rotations(skeleton, pose)
+            .iter()
+            .zip(model_rotations(skeleton, &skeleton.rest_pose).iter())
+            .map(|(rotation, rest)| *rotation * rest.inverse())
+            .collect()
+    }
+
+    fn model_position(model: &[Mat4], bone: usize) -> Vec3 {
+        model[bone].w_axis.truncate()
+    }
+
+    fn source_to_target() -> PoseRetarget {
+        PoseRetarget::new(
+            &source_rig(),
+            &source_skeleton(),
+            &target_rig(),
+            &target_skeleton(),
+        )
+        .unwrap()
+    }
+
+    fn target_to_source() -> PoseRetarget {
+        PoseRetarget::new(
+            &target_rig(),
+            &target_skeleton(),
+            &source_rig(),
+            &source_skeleton(),
+        )
+        .unwrap()
+    }
+
+    fn retarget(
+        pose_retarget: &mut PoseRetarget,
+        source: &[JointPose],
+        count: usize,
+    ) -> Vec<JointPose> {
+        let mut out = vec![JointPose::IDENTITY; count];
+        pose_retarget.retarget_into(source, &mut out).unwrap();
+        out
+    }
+
+    fn assert_pose(actual: &JointPose, expected: &JointPose) {
+        assert_vec3(actual.translation, expected.translation);
+        assert_quat(actual.rotation, expected.rotation);
+        assert_vec3(actual.scale, expected.scale);
+    }
+
+    fn about_x(degrees: f32) -> Quat {
+        Quat::from_rotation_x(degrees.to_radians())
+    }
+
+    #[test]
+    fn the_source_reference_gives_the_target_reference() {
+        let target = target_skeleton();
+        let out = retarget(
+            &mut source_to_target(),
+            &source_skeleton().rest_pose,
+            target.bone_count(),
+        );
+
+        for (actual, expected) in out.iter().zip(target.rest_pose.iter()) {
+            assert_pose(actual, expected);
+        }
+    }
+
+    #[test]
+    fn the_target_reference_gives_the_source_reference() {
+        let source = source_skeleton();
+        let out = retarget(
+            &mut target_to_source(),
+            &target_skeleton().rest_pose,
+            source.bone_count(),
+        );
+
+        for (actual, expected) in out.iter().zip(source.rest_pose.iter()) {
+            assert_pose(actual, expected);
+        }
+    }
+
+    #[test]
+    fn equal_chains_turn_as_the_source_turns() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let mut deltas = vec![Quat::IDENTITY; source_skeleton.bone_count()];
+        deltas[bone(&source_skeleton, "upper_l")] =
+            Quat::from_euler(glam::EulerRot::XYZ, 0.2, -0.4, 0.6);
+        deltas[bone(&source_skeleton, "lower_l")] =
+            Quat::from_euler(glam::EulerRot::XYZ, -0.3, 0.5, 1.1);
+        let source = posed(&source_skeleton, &deltas);
+
+        let out = retarget(
+            &mut source_to_target(),
+            &source,
+            target_skeleton.bone_count(),
+        );
+
+        let source_deltas = model_deltas(&source_skeleton, &source);
+        let target_deltas = model_deltas(&target_skeleton, &out);
+        for pair in [
+            ["upper_l", "upperarm_l"],
+            ["lower_l", "lowerarm_l"],
+            ["hand_l", "hand_l"],
+        ] {
+            assert_quat(
+                target_deltas[bone(&target_skeleton, pair[1])],
+                source_deltas[bone(&source_skeleton, pair[0])],
+            );
+        }
+        let source_model = source_skeleton.forward_kinematics(&source).unwrap();
+        let target_model = target_skeleton.forward_kinematics(&out).unwrap();
+        assert_vec3(
+            (model_position(&target_model, bone(&target_skeleton, "hand_l"))
+                - model_position(&target_model, bone(&target_skeleton, "upperarm_l")))
+            .normalize(),
+            (model_position(&source_model, bone(&source_skeleton, "hand_l"))
+                - model_position(&source_model, bone(&source_skeleton, "upper_l")))
+            .normalize(),
+        );
+    }
+
+    #[test]
+    fn a_longer_target_chain_samples_between_the_source_bones() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let mut deltas = vec![Quat::IDENTITY; source_skeleton.bone_count()];
+        for (name, degrees) in ["spine_1", "spine_2", "spine_3"]
+            .into_iter()
+            .zip([20.0, 40.0, 60.0])
+        {
+            deltas[bone(&source_skeleton, name)] = about_x(degrees);
+        }
+
+        let out = retarget(
+            &mut source_to_target(),
+            &posed(&source_skeleton, &deltas),
+            target_skeleton.bone_count(),
+        );
+
+        let target_deltas = model_deltas(&target_skeleton, &out);
+        for (name, degrees) in ["spine_01", "spine_02", "spine_03", "spine_04"]
+            .into_iter()
+            .zip([20.0, 30.0, 50.0, 60.0])
+        {
+            assert_quat(
+                target_deltas[bone(&target_skeleton, name)],
+                about_x(degrees),
+            );
+        }
+    }
+
+    #[test]
+    fn a_shorter_target_chain_samples_between_the_source_bones() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let mut deltas = vec![Quat::IDENTITY; target_skeleton.bone_count()];
+        for (name, degrees) in ["spine_01", "spine_02", "spine_03", "spine_04"]
+            .into_iter()
+            .zip([20.0, 30.0, 50.0, 60.0])
+        {
+            deltas[bone(&target_skeleton, name)] = about_x(degrees);
+        }
+
+        let out = retarget(
+            &mut target_to_source(),
+            &posed(&target_skeleton, &deltas),
+            source_skeleton.bone_count(),
+        );
+
+        let source_deltas = model_deltas(&source_skeleton, &out);
+        for (name, degrees) in ["spine_1", "spine_2", "spine_3"]
+            .into_iter()
+            .zip([20.0, 40.0, 60.0])
+        {
+            assert_quat(
+                source_deltas[bone(&source_skeleton, name)],
+                about_x(degrees),
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_bone_target_chain_takes_the_source_start() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let mut deltas = vec![Quat::IDENTITY; source_skeleton.bone_count()];
+        deltas[bone(&source_skeleton, "neck_1")] = about_x(25.0);
+        deltas[bone(&source_skeleton, "neck_2")] = Quat::from_rotation_z(-0.5);
+        deltas[bone(&source_skeleton, "head")] = Quat::from_rotation_y(0.7);
+        let source = posed(&source_skeleton, &deltas);
+
+        let out = retarget(
+            &mut source_to_target(),
+            &source,
+            target_skeleton.bone_count(),
+        );
+
+        let source_deltas = model_deltas(&source_skeleton, &source);
+        let target_deltas = model_deltas(&target_skeleton, &out);
+        assert_quat(
+            target_deltas[bone(&target_skeleton, "neck_01")],
+            source_deltas[bone(&source_skeleton, "neck_1")],
+        );
+        assert_quat(
+            target_deltas[bone(&target_skeleton, "head")],
+            source_deltas[bone(&source_skeleton, "head")],
+        );
+    }
+
+    #[test]
+    fn unpaired_bones_and_chains_keep_the_reference() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let deltas: Vec<Quat> = (0..source_skeleton.bone_count())
+            .map(|bone| {
+                Quat::from_euler(
+                    glam::EulerRot::XYZ,
+                    0.1 + 0.05 * bone as f32,
+                    -0.2 + 0.03 * bone as f32,
+                    0.15,
+                )
+            })
+            .collect();
+        let source = posed(&source_skeleton, &deltas);
+        let mut retarget_pose = source_to_target();
+
+        let out = retarget(&mut retarget_pose, &source, target_skeleton.bone_count());
+
+        for name in ["clavicle_l", "tail"] {
+            let index = bone(&target_skeleton, name);
+            assert_pose(&out[index], &target_skeleton.rest_pose[index]);
+        }
+        let pelvis = bone(&target_skeleton, "pelvis");
+        let root = bone(&target_skeleton, "root");
+        for (index, (actual, expected)) in
+            out.iter().zip(target_skeleton.rest_pose.iter()).enumerate()
+        {
+            if index == pelvis || index == root {
+                continue;
+            }
+            assert_vec3(actual.translation, expected.translation);
+            assert_vec3(actual.scale, expected.scale);
+        }
+
+        let mut turned = source;
+        let fin = bone(&source_skeleton, "fin_l");
+        turned[fin].rotation = Quat::from_rotation_z(1.0) * turned[fin].rotation;
+        assert_eq!(
+            retarget(&mut retarget_pose, &turned, target_skeleton.bone_count()),
+            out
+        );
+    }
+
+    #[test]
+    fn the_root_moves_by_the_scaled_source_root_offset() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let mut source = source_skeleton.rest_pose.to_vec();
+        source[bone(&source_skeleton, "hips")].translation += Vec3::new(0.2, -0.1, 0.4);
+
+        let out = retarget(
+            &mut source_to_target(),
+            &source,
+            target_skeleton.bone_count(),
+        );
+
+        let pelvis = bone(&target_skeleton, "pelvis");
+        let rest_model = target_skeleton
+            .forward_kinematics(&target_skeleton.rest_pose)
+            .unwrap();
+        let model = target_skeleton.forward_kinematics(&out).unwrap();
+        assert_vec3(
+            model_position(&model, pelvis),
+            model_position(&rest_model, pelvis) + Vec3::new(0.1, -0.05, 0.2),
+        );
+    }
+
+    #[test]
+    fn the_root_turns_as_the_source_root_turns() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let mut source = source_skeleton.rest_pose.to_vec();
+        let hips = bone(&source_skeleton, "hips");
+        source[hips].rotation = Quat::from_rotation_y(0.7) * source[hips].rotation;
+
+        let out = retarget(
+            &mut source_to_target(),
+            &source,
+            target_skeleton.bone_count(),
+        );
+
+        assert_quat(
+            model_deltas(&target_skeleton, &out)[bone(&target_skeleton, "pelvis")],
+            Quat::from_rotation_y(0.7),
+        );
+    }
+
+    fn turn_then_tilt() -> Quat {
+        about_x(10.0) * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
+    }
+
+    #[test]
+    fn a_generated_motion_root_takes_the_ground_part_of_the_root_motion() {
+        let source_skeleton = source_skeleton();
+        let target_skeleton = target_skeleton();
+        let hips = bone(&source_skeleton, "hips");
+        let mut deltas = vec![Quat::IDENTITY; source_skeleton.bone_count()];
+        deltas[hips] = turn_then_tilt();
+        let mut source = posed(&source_skeleton, &deltas);
+        source[hips].translation += Vec3::new(1.0, -0.1, 2.0);
+
+        let out = retarget(
+            &mut source_to_target(),
+            &source,
+            target_skeleton.bone_count(),
+        );
+
+        let root = bone(&target_skeleton, "root");
+        let pelvis = bone(&target_skeleton, "pelvis");
+        let rest_model = target_skeleton
+            .forward_kinematics(&target_skeleton.rest_pose)
+            .unwrap();
+        let model = target_skeleton.forward_kinematics(&out).unwrap();
+        let target_deltas = model_deltas(&target_skeleton, &out);
+        assert_vec3(
+            model_position(&model, root),
+            model_position(&rest_model, root) + Vec3::new(0.5, 0.0, 1.0),
+        );
+        assert_quat(
+            target_deltas[root],
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+        );
+        assert_vec3(
+            model_position(&model, pelvis),
+            model_position(&rest_model, pelvis) + Vec3::new(0.5, -0.05, 1.0),
+        );
+        assert_quat(target_deltas[pelvis], turn_then_tilt());
+    }
+
+    #[test]
+    fn a_source_motion_root_is_copied_onto_the_target_motion_root() {
+        let source_skeleton = target_skeleton();
+        let target_skeleton = doubled_target_skeleton();
+        let root = bone(&source_skeleton, "root");
+        let mut source = source_skeleton.rest_pose.to_vec();
+        source[root].rotation = turn_then_tilt() * source[root].rotation;
+        source[root].translation += Vec3::new(1.0, 0.2, 0.5);
+        let pelvis = bone(&source_skeleton, "pelvis");
+        source[pelvis].rotation = Quat::from_rotation_y(0.6) * source[pelvis].rotation;
+        let mut pose_retarget = PoseRetarget::new(
+            &target_rig(),
+            &source_skeleton,
+            &doubled_target_rig(),
+            &target_skeleton,
+        )
+        .unwrap();
+
+        let out = retarget(&mut pose_retarget, &source, target_skeleton.bone_count());
+
+        let root = bone(&target_skeleton, "root");
+        let rest_model = target_skeleton
+            .forward_kinematics(&target_skeleton.rest_pose)
+            .unwrap();
+        let model = target_skeleton.forward_kinematics(&out).unwrap();
+        assert_vec3(
+            model_position(&model, root),
+            model_position(&rest_model, root) + Vec3::new(2.0, 0.4, 1.0),
+        );
+        assert_quat(model_deltas(&target_skeleton, &out)[root], turn_then_tilt());
+    }
+
+    #[test]
+    fn a_motion_root_onto_a_target_without_one_moves_the_root() {
+        let from = target_skeleton();
+        let onto = source_skeleton();
+        let mut source = from.rest_pose.to_vec();
+        source[bone(&from, "root")].translation += Vec3::new(1.0, 0.0, 0.0);
+
+        let out = retarget(&mut target_to_source(), &source, onto.bone_count());
+
+        let hips = bone(&onto, "hips");
+        let rest_model = onto.forward_kinematics(&onto.rest_pose).unwrap();
+        let model = onto.forward_kinematics(&out).unwrap();
+        assert_vec3(
+            model_position(&model, hips),
+            model_position(&rest_model, hips) + Vec3::new(2.0, 0.0, 0.0),
+        );
+    }
+
+    #[test]
+    fn a_short_source_pose_is_the_wrong_length_and_writes_nothing() {
+        let source_skeleton = source_skeleton();
+        let count = target_skeleton().bone_count();
+        let mut out = vec![JointPose::IDENTITY; count];
+
+        assert_eq!(
+            source_to_target().retarget_into(
+                &source_skeleton.rest_pose[..source_skeleton.bone_count() - 1],
+                &mut out
+            ),
+            Err(RetargetError::PoseLength {
+                side: RetargetSide::Source,
+                expected: source_skeleton.bone_count(),
+                actual: source_skeleton.bone_count() - 1,
+            })
+        );
+        assert_eq!(out, vec![JointPose::IDENTITY; count]);
+    }
+
+    #[test]
+    fn a_short_output_is_the_wrong_length_and_is_left_alone() {
+        let count = target_skeleton().bone_count();
+        let mut out = vec![JointPose::IDENTITY; count - 1];
+
+        assert_eq!(
+            source_to_target().retarget_into(&source_skeleton().rest_pose, &mut out),
+            Err(RetargetError::PoseLength {
+                side: RetargetSide::Target,
+                expected: count,
+                actual: count - 1,
+            })
+        );
+        assert_eq!(out, vec![JointPose::IDENTITY; count - 1]);
     }
 }
