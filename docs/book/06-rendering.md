@@ -191,6 +191,14 @@ entity with `CharacterLink`. Its
 [README](../../crates/motion-matching-gizmos/README.md) says what each toggle
 draws.
 
+`FootLockGizmos`, from the `concerto-procedural-animation-gizmos` crate, draws
+each foot lock of a `FootLockNode`: a green ring and cross where a planted foot
+is held, an amber ring and a line back to the animated foot while a lock
+releases, and a grey cross at a free foot. Register
+`ProceduralAnimationGizmosPlugin` after `DefaultPlugins` and put the component
+on the entity with the `AnimationPlayer`. Its
+[README](../../crates/procedural-animation-gizmos/README.md) says more.
+
 ## Custom materials
 
 A material is an asset whose fields become shader bindings. Derive `Asset` and

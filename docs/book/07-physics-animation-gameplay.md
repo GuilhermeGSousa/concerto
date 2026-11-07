@@ -459,6 +459,37 @@ A graph is a tree of nodes under a result node:
       .with_weight_param(name!("foot_placement_weight"))
       .with_ignore_param(name!("foot_placement_ignore"))
   ```
+- **Foot locking** (`FootLockNode`, in `concerto::procedural_animation`,
+  registered by `ProceduralAnimationPlugin`) holds each planted foot where it
+  was planted, so it doesn't slide when the clip's foot motion and the
+  character's movement disagree. Each `FootLockLeg` names a foot bone, whose
+  parent is the knee and grandparent the hip, and an optional toe bone, the
+  contact point a plant is read from and held at. A contact point is planted
+  while its horizontal speed is under `plant_speed` and its height above the
+  model origin under `plant_height`; the speed is measured in the
+  animation's own frame, the contact point's model-space motion plus the
+  input's root motion, turning about the root bone, so a foot under a
+  walking or turning root plants and a foot carried by a running root does
+  not. A planted foot is locked in world
+  space, and only its horizontal position is held: its height stays the
+  input's. The lock is released when the plant ends, or when the animated
+  foot moves more than `unlock_radius` from it, and the foot then eases back
+  to the animated one over `release_halflife`; after the radius releases a
+  lock, the foot waits for its next plant. Each leg is bent to its held foot
+  with the two-bone solve, with `softness` as in two-bone IK, and the foot
+  keeps its input rotation. `weight`, times the float under `weight_param`,
+  eases in and out with `weight_halflife`, and a weight of 0 plants nothing.
+  Wire it before `FootPlacementNode`, which then adds the ground's height.
+  `concerto-procedural-animation-gizmos` draws each lock.
+  `FootLockNode::new()` starts from the defaults, `with_leg` adds a leg, and
+  each other field has a `with_<field>`:
+  ```rust
+  FootLockNode::new()
+      .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
+      .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
+      .with_unlock_radius(0.2)
+      .with_weight_param(name!("foot_lock_weight"))
+  ```
 
 Parameters are set on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`

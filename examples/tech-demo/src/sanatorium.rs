@@ -24,6 +24,7 @@ use concerto::{
 };
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
+use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 use glam::{Quat, Vec3};
 
 use crate::character::{
@@ -56,6 +57,7 @@ const PLAYER_START: &str = "PlayerStart";
 pub fn sanatorium(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(MotionMatchingGizmosPlugin)
+        .register_plugin(ProceduralAnimationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.set_startup_scene(MARKERS)

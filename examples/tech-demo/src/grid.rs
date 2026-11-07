@@ -13,6 +13,7 @@ use concerto::{
     world_grid::WorldGrid,
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
+use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 use glam::{Quat, Vec3};
 
 use crate::{
@@ -37,6 +38,7 @@ const SUN_PITCH: f32 = -0.7;
 pub fn grid(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(MotionMatchingGizmosPlugin)
+        .register_plugin(ProceduralAnimationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.insert_resource(CharacterConfig::forest());

@@ -5,8 +5,8 @@ use concerto_animation::plugin::register_animation_types;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_name::name;
 use concerto_procedural_animation::{
-    AimBone, AimNode, FootPlacementLeg, FootPlacementNode, LookAtBone, LookAtEye, LookAtNode,
-    Muzzle, ProceduralMotionChannel, ProceduralMotionNode, Waveform,
+    AimBone, AimNode, FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, LookAtBone,
+    LookAtEye, LookAtNode, Muzzle, ProceduralMotionChannel, ProceduralMotionNode, Waveform,
 };
 use concerto_reflect::TypeRegistry;
 
@@ -14,6 +14,7 @@ fn registry() -> TypeRegistry {
     let mut registry = TypeRegistry::default();
     register_animation_types(&mut registry);
     registry.register::<FootPlacementNode>();
+    registry.register::<FootLockNode>();
     registry.register::<LookAtNode>();
     registry.register::<AimNode>();
     registry.register::<ProceduralMotionNode>();
@@ -229,4 +230,41 @@ fn a_procedural_motion_node_keeps_every_field_through_a_round_trip() {
         restored.load_warnings()
     );
     assert_eq!(live_node::<ProceduralMotionNode>(&restored), Some(&node));
+}
+
+#[test]
+fn a_foot_lock_node_keeps_every_field_through_a_round_trip() {
+    let node = FootLockNode::new()
+        .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
+        .with_leg(FootLockLeg::new("RightFoot"))
+        .with_plant_speed(0.2)
+        .with_plant_height(0.08)
+        .with_unlock_radius(0.25)
+        .with_release_halflife(0.12)
+        .with_softness(0.02)
+        .with_weight(0.8)
+        .with_weight_param(name!("foot_lock_weight"))
+        .with_weight_halflife(0.25);
+    let defaults = FootLockNode::default();
+    assert_ne!(node.legs, defaults.legs);
+    assert_ne!(node.plant_speed, defaults.plant_speed);
+    assert_ne!(node.plant_height, defaults.plant_height);
+    assert_ne!(node.unlock_radius, defaults.unlock_radius);
+    assert_ne!(node.release_halflife, defaults.release_halflife);
+    assert_ne!(node.softness, defaults.softness);
+    assert_ne!(node.weight, defaults.weight);
+    assert_ne!(node.weight_param, defaults.weight_param);
+    assert_ne!(node.weight_halflife, defaults.weight_halflife);
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<FootLockNode>(&restored), Some(&node));
 }

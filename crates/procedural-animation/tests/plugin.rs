@@ -4,8 +4,8 @@ use concerto_animation::node::ReflectAnimationNode;
 use concerto_app::App;
 use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_procedural_animation::{
-    AimBone, AimNode, FootPlacementLeg, FootPlacementNode, LookAtBone, LookAtEye, LookAtNode,
-    Muzzle, ProceduralAnimationPlugin,
+    AimBone, AimNode, FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, LookAtBone,
+    LookAtEye, LookAtNode, Muzzle, ProceduralAnimationPlugin,
 };
 
 #[test]
@@ -50,4 +50,18 @@ fn the_plugin_registers_the_aim_node_and_its_bones_and_muzzle() {
     );
     assert!(registry.get(TypeId::of::<AimBone>()).is_some());
     assert!(registry.get(TypeId::of::<Muzzle>()).is_some());
+}
+
+#[test]
+fn the_plugin_registers_the_foot_lock_node_and_its_leg() {
+    let mut app = App::new();
+    app.register_plugin(ProceduralAnimationPlugin);
+
+    let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
+    assert!(
+        registry
+            .get_type_data::<ReflectAnimationNode>(TypeId::of::<FootLockNode>())
+            .is_some()
+    );
+    assert!(registry.get(TypeId::of::<FootLockLeg>()).is_some());
 }
