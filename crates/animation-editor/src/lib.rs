@@ -6,13 +6,17 @@ pub mod preview;
 use std::{path::Path, sync::Arc};
 
 use concerto_animation::clip::AnimationClip;
-use concerto_app::{App, schedule_groups::Update};
+use concerto_app::{
+    App,
+    schedule_groups::{LateUpdate, Startup, Update},
+};
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res,
     command::{CommandQueue, EntityCommandQueue},
     events::event_reader::EventReader,
 };
 use concerto_editor::{
+    actions::EditorContextSet,
     asset_editor::{
         AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved, finish_asset_request,
     },
@@ -28,12 +32,25 @@ use concerto_foundation::assets::{
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_scene::scene::Scene;
+use concerto_window::{define_action, define_context};
 
 use events::{TabEvent, read_events};
-use panels::{build_clip_panels, sync_clip_panels};
+use panels::{
+    apply_clip_event_fields, bind_clip_keys, build_clip_panels, remove_clip_event,
+    sync_clip_event_context, sync_clip_events, sync_clip_panels,
+};
 use preview::{
     ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
 };
+
+define_action!(
+    /// Remove the event selected in the active clip tab.
+    RemoveClipEvent
+);
+define_context!(
+    /// Active while the active tab is a clip's with an `AnimationEvent` selected and no text field focused.
+    ClipEventContext
+);
 
 /// What a clip's tab shows and how its preview plays, kept on the document.
 #[derive(Component)]
@@ -279,15 +296,25 @@ pub fn install(app: &mut App) {
                 sync_clip_preview,
                 load_clip,
                 build_clip_panels,
+                apply_clip_event_fields,
+                remove_clip_event,
                 sync_clip_panels,
+                sync_clip_events,
             )
                 .chain(),
         );
+    install_event_keys(app);
+}
+
+fn install_event_keys(app: &mut App) {
+    app.add_system(Startup, bind_clip_keys)
+        .add_system(LateUpdate, sync_clip_event_context.after(EditorContextSet));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::TabEventKind;
     use concerto_animation::{
         clip::{AnimationChanelOutput, AnimationChannel, ClipEventData, ClipEventKey},
         event::AnimationEvent,
@@ -296,9 +323,10 @@ mod tests {
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin},
     };
-    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
+    use concerto_ecs::{IntoSystem, ResMut, System, events::event_channel::EventChannel};
     use concerto_editor::{
         EditorPlugin,
+        actions::{DeleteEntity, ViewportContext},
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::{
             HostRole, Hosted, HostedApp, HostedPlugin,
@@ -314,8 +342,14 @@ mod tests {
     use concerto_name::Name;
     use concerto_reflect::{ReflectedValue, to_value};
     use concerto_render::ExclusiveCamera;
-    use concerto_ui::theme::UITheme;
-    use concerto_window::plugin::{Window, WindowPlugin};
+    use concerto_ui::{focus::FocusedWidget, theme::UITheme};
+    use concerto_window::{
+        input::{
+            KeyCode,
+            actions::{ActionLabel, ActionMap, Shortcut},
+        },
+        plugin::{Window, WindowPlugin},
+    };
     use glam::Vec2;
     use preview::SetClipTransport;
     use std::time::{Duration, Instant};
@@ -875,6 +909,48 @@ mod tests {
             assert!(Instant::now() < deadline, "the head never moved");
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    fn push_viewport_context(mut actions: ResMut<ActionMap>) {
+        actions.bind(
+            DeleteEntity,
+            Shortcut::key(KeyCode::Delete),
+            ViewportContext,
+        );
+        actions.push_context(ViewportContext);
+    }
+
+    #[test]
+    fn delete_means_remove_clip_event_over_the_contexts_the_editor_pushes() {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .insert_resource(ActiveEditor::default())
+            .insert_resource(FocusedWidget::default());
+        install_event_keys(&mut app);
+        app.add_system(LateUpdate, push_viewport_context.in_set(EditorContextSet));
+        app.finish_plugin_build();
+        let world = app.main_mut().world_mut();
+        let document = world.spawn(ClipDocument {
+            events: vec![TabEvent {
+                time: 0.5,
+                kind: TabEventKind::Named(Name::new("footstep")),
+            }],
+            selected_event: Some(0),
+            ..ClipDocument::default()
+        });
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+
+        app.update();
+        app.update();
+
+        let actions = app.get_resource::<ActionMap>().unwrap();
+        assert!(actions.is_active(ViewportContext));
+        assert_eq!(
+            actions.resolve(Shortcut::key(KeyCode::Delete)),
+            Some(RemoveClipEvent.intern())
+        );
     }
 
     #[test]

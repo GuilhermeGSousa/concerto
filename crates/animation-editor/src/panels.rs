@@ -41,6 +41,13 @@ use super::{
     scene_signal, settle_edit,
 };
 
+mod event_section;
+
+pub(crate) use event_section::{
+    apply_clip_event_fields, bind_clip_keys, remove_clip_event, sync_clip_event_context,
+    sync_clip_events,
+};
+
 const TITLE_HEIGHT: f32 = 16.0;
 const BOX_SIZE: f32 = 16.0;
 const NO_VALUE: &str = "None";
@@ -72,6 +79,7 @@ struct InspectorPanel {
     rate: Entity,
     clip_bones: Entity,
     driven: Entity,
+    events: event_section::EventsPanel,
     status: Entity,
 }
 
@@ -449,6 +457,7 @@ fn build_inspector(
         rate: fact(&mut panel, "Rate", theme),
         clip_bones: fact(&mut panel, "Clip bones", theme),
         driven: fact(&mut panel, "Driven", theme),
+        events: event_section::build_events(&mut panel, document, theme),
         status: panel.spawn_child(error_line(theme)).entity(),
     }
 }
@@ -662,20 +671,38 @@ mod tests {
     };
     use super::*;
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-    use concerto_ecs::{Changed, IntoSystem, ResMut, Resource, World, entity::hierarchy::ChildOf};
+    use concerto_ecs::{
+        Changed, IntoSystem, ResMut, Resource, System, World, entity::hierarchy::ChildOf,
+        events::event_channel::EventChannel,
+    };
     use concerto_editor::{hosted::testing::SceneFixture, inspector::PropertyCommits};
     use concerto_foundation::assets::registry::AssetEntry;
+    use concerto_ui::text_input::{UITextInputCancelled, UITextInputSubmitted};
+    use concerto_window::input::actions::{ActionFired, ActionMap};
     use uuid::Uuid;
 
-    struct Tab {
-        f: SceneFixture,
-        document: Entity,
+    pub(super) struct Tab {
+        pub(super) f: SceneFixture,
+        pub(super) document: Entity,
     }
 
     fn panels_fixture() -> SceneFixture {
         let mut f = clip_fixture();
+        f.world
+            .insert_resource(EventChannel::<UITextInputSubmitted>::new());
+        f.world
+            .insert_resource(EventChannel::<UITextInputCancelled>::new());
+        f.world.insert_resource(EventChannel::<ActionFired>::new());
+        f.world.insert_resource(ActionMap::default());
+        let mut bind = bind_clip_keys.into_system();
+        bind.initialize(&mut f.world);
+        bind.run_and_apply((), &mut f.world);
         f.add_delivery(build_clip_panels.into_boxed_system());
+        f.add_delivery(apply_clip_event_fields.into_boxed_system());
+        f.add_delivery(remove_clip_event.into_boxed_system());
         f.add_delivery(sync_clip_panels.into_boxed_system());
+        f.add_delivery(sync_clip_events.into_boxed_system());
+        f.add_delivery(sync_clip_event_context.into_boxed_system());
         f
     }
 
@@ -695,31 +722,31 @@ mod tests {
         Tab { f, document }
     }
 
-    fn walking_tab() -> Tab {
+    pub(super) fn walking_tab() -> Tab {
         let mut f = panels_fixture();
         let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
         tab_of(f, &walk)
     }
 
-    fn tab_of_clip(clip: &AnimationClip) -> Tab {
+    pub(super) fn tab_of_clip(clip: &AnimationClip) -> Tab {
         let mut f = panels_fixture();
         let asset = write_clip(&mut f, "content/hero/odd.gasset", clip);
         tab_of(f, &asset)
     }
 
     impl Tab {
-        fn panels(&self) -> &ClipPanels {
+        pub(super) fn panels(&self) -> &ClipPanels {
             self.f
                 .world
                 .get_component_for_entity::<ClipPanels>(self.document)
                 .expect("the panels were built")
         }
 
-        fn state(&self) -> &ClipDocument {
+        pub(super) fn state(&self) -> &ClipDocument {
             state(&self.f, self.document)
         }
 
-        fn world(&self) -> &World {
+        pub(super) fn world(&self) -> &World {
             &self.f.world
         }
 
@@ -730,26 +757,26 @@ mod tests {
                 .unwrap()
         }
 
-        fn timeline(&self) -> &Timeline {
+        pub(super) fn timeline(&self) -> &Timeline {
             self.world()
                 .get_component_for_entity::<Timeline>(self.panels().timeline)
                 .unwrap()
         }
 
-        fn text(&self, entity: Entity) -> &UIText {
+        pub(super) fn text(&self, entity: Entity) -> &UIText {
             self.world()
                 .get_component_for_entity::<UIText>(entity)
                 .unwrap()
         }
 
-        fn shown(&self, entity: Entity) -> bool {
+        pub(super) fn shown(&self, entity: Entity) -> bool {
             self.world()
                 .get_component_for_entity::<UINode>(entity)
                 .unwrap()
                 .visible
         }
 
-        fn disabled(&self, entity: Entity) -> bool {
+        pub(super) fn disabled(&self, entity: Entity) -> bool {
             self.world()
                 .get_component_for_entity::<UIDisabled>(entity)
                 .is_some()
@@ -770,7 +797,7 @@ mod tests {
                 .checked
         }
 
-        fn click(&mut self, entity: Entity) {
+        pub(super) fn click(&mut self, entity: Entity) {
             self.f.world.trigger_on(
                 entity,
                 UIClick {
@@ -780,12 +807,12 @@ mod tests {
             );
         }
 
-        fn scrub(&mut self, time: f32) {
+        pub(super) fn scrub(&mut self, time: f32) {
             let timeline = self.panels().timeline;
             self.f.world.trigger_on(timeline, TimelineScrubbed { time });
         }
 
-        fn until(&mut self, what: &str, done: impl Fn(&ClipDocument) -> bool) {
+        pub(super) fn until(&mut self, what: &str, done: impl Fn(&ClipDocument) -> bool) {
             let document = self.document;
             self.f.frames_until(what, |f| done(state(f, document)));
         }
@@ -805,7 +832,7 @@ mod tests {
             self.until("the head never moved", |state| state.time > 0.0);
         }
 
-        fn paused_at(&mut self, time: f32) {
+        pub(super) fn paused_at(&mut self, time: f32) {
             self.scrub(time);
             self.until("the seek never came back", |state| {
                 !state.playing && state.time == time
@@ -850,11 +877,11 @@ mod tests {
             std::fs::read(self.f.project_root.join(&clip.address)).unwrap()
         }
 
-        fn clean(&mut self) -> bool {
+        pub(super) fn clean(&mut self) -> bool {
             !self.f.unsaved(self.document)
         }
 
-        fn select_marker(&mut self, index: Option<usize>) {
+        pub(super) fn select_marker(&mut self, index: Option<usize>) {
             let timeline = self.panels().timeline;
             self.f
                 .world
@@ -868,16 +895,16 @@ mod tests {
                 .trigger_on(timeline, TimelineMarkerMoved { index, time });
         }
 
-        fn status(&self) -> String {
+        pub(super) fn status(&self) -> String {
             self.f.status(self.document)
         }
 
-        fn event_times(&self) -> Vec<f32> {
+        pub(super) fn event_times(&self) -> Vec<f32> {
             self.state().events.iter().map(|event| event.time).collect()
         }
     }
 
-    fn eventful_clip() -> AnimationClip {
+    pub(super) fn eventful_clip() -> AnimationClip {
         let mut clip = clip_of(10);
         clip.replace_events(vec![
             typed_key(0.25),
@@ -888,7 +915,7 @@ mod tests {
         clip
     }
 
-    fn single_key_clip() -> AnimationClip {
+    pub(super) fn single_key_clip() -> AnimationClip {
         let mut clip = AnimationClip::default();
         clip.add_channel(
             Uuid::from_u128(1),
