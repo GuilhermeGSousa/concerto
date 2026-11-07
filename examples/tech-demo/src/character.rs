@@ -6,6 +6,7 @@ use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
 use concerto::color::Color;
 use concerto::director::VirtualCamera;
 use concerto::ecs::component::scene::SceneEntityRef;
+use concerto::ecs::entity::hierarchy::Children;
 use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto::ecs::{Entity, Query, With, Without};
 use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
@@ -266,28 +267,36 @@ pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: Comman
     }
 }
 
-/// Gives the sole `AnimationPlayer` its character's graph and foot lock gizmos once that graph is in the store, starts its foot placement and foot locking at weight 0, and links the character to its capsule and skeleton.
+/// Gives each pending character's own `AnimationPlayer`, found among its descendants, the character's graph once that graph is in the store, starts its foot placement and foot locking at weight 0, adds foot lock gizmos when the capsule is the `Player`'s, and links the character to its capsule and skeleton.
 pub(crate) fn setup_character_animations(
-    players: Query<(Entity, &mut AnimationPlayer)>,
+    players: Query<&mut AnimationPlayer>,
     characters: Query<(Entity, &PendingLink)>,
+    children: Query<&Children>,
+    player_capsules: Query<Entity, With<Player>>,
     graphs: Res<AssetStore<AnimationGraph>>,
     mut cmd: CommandQueue,
 ) {
-    let Some((skeleton, mut player)) = players.iter().next() else {
-        return;
-    };
-
     for (character, pending) in characters.iter() {
         if graphs.get(&pending.graph).is_none() {
             continue;
         }
+        let Some(skeleton) = descendant(character, &children, |entity| {
+            players.contains_entity(entity)
+        }) else {
+            continue;
+        };
+        let Some(mut player) = players.get_entity(skeleton) else {
+            continue;
+        };
         player.set_float_param(foot_placement_weight(), 0.0);
         player.set_float_param(foot_lock_weight(), 0.0);
         cmd.insert(
             AnimationHandleComponent::new(pending.graph.clone()),
             skeleton,
         );
-        cmd.insert(FootLockGizmos::default(), skeleton);
+        if player_capsules.contains_entity(pending.capsule) {
+            cmd.insert(FootLockGizmos::default(), skeleton);
+        }
         cmd.insert(
             CharacterLink {
                 capsule: SceneEntityRef::Entity(pending.capsule),
@@ -297,6 +306,26 @@ pub(crate) fn setup_character_animations(
         );
         cmd.remove::<PendingLink>(character);
     }
+}
+
+fn descendant(
+    root: Entity,
+    children: &Query<&Children>,
+    matches: impl Fn(Entity) -> bool,
+) -> Option<Entity> {
+    let mut pending: Vec<Entity> = children
+        .get_entity(root)
+        .map(|direct| direct.iter().copied().collect())
+        .unwrap_or_default();
+    while let Some(entity) = pending.pop() {
+        if matches(entity) {
+            return Some(entity);
+        }
+        if let Some(below) = children.get_entity(entity) {
+            pending.extend(below.iter().copied());
+        }
+    }
+    None
 }
 
 /// Tells each linked skeleton's foot placement to skip its capsule, to place the feet only while the capsule stands on the ground, and to lock them only then and while its player has foot locking on; writes a param only when its value changes.
@@ -585,9 +614,10 @@ mod tests {
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, PendingLink, Player, PlayerSpawner, RUN, WALK,
-        cycle_displacement, debug_keys, facing, feed_foot_placement, foot_lock_weight,
-        foot_placement_ignore, foot_placement_weight, movement, setup_character_animations,
-        spawn_character, spawn_forest_walls, update_camera_stance, update_movement,
+        character_graph, cycle_displacement, debug_keys, facing, feed_foot_placement,
+        foot_lock_weight, foot_placement_ignore, foot_placement_weight, movement,
+        setup_character_animations, spawn_character, spawn_forest_walls, update_camera_stance,
+        update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -811,7 +841,10 @@ mod tests {
         spawned(&mut world);
         let (capsule, _) = capsules(&mut world)[0];
         let (character, ..) = visible_characters(&mut world)[0];
+        let root = world.spawn(Transform::default());
         let skeleton = world.spawn(AnimationPlayer::new(1));
+        world.entity_mut(character).add_child(root);
+        world.entity_mut(root).add_child(skeleton);
 
         let mut setup = setup_character_animations.into_system();
         setup.initialize(&mut world);
@@ -872,6 +905,75 @@ mod tests {
         assert_eq!(
             world.get_component_for_entity::<FootLockGizmos>(skeleton),
             Some(&FootLockGizmos::default())
+        );
+    }
+
+    #[test]
+    fn each_pending_character_links_the_skeleton_under_it() {
+        let (mut world, _) = world_with_spawner();
+        spawned(&mut world);
+        let (player_capsule, _) = capsules(&mut world)[0];
+        let (player_character, ..) = visible_characters(&mut world)[0];
+        let player_skeleton = world.spawn(AnimationPlayer::new(1));
+        world
+            .entity_mut(player_character)
+            .add_child(player_skeleton);
+
+        let npc_capsule = world.spawn(Transform::default());
+        let graph = {
+            let server = world.get_resource::<AssetServer>().unwrap();
+            server.add(character_graph(server.load(DATABASE)))
+        };
+        let npc_character = world.spawn(PendingLink {
+            capsule: npc_capsule,
+            graph,
+        });
+        let npc_root = world.spawn(Transform::default());
+        let npc_skeleton = world.spawn(AnimationPlayer::new(1));
+        world.entity_mut(npc_character).add_child(npc_root);
+        world.entity_mut(npc_root).add_child(npc_skeleton);
+
+        handle_asset_load_events(&mut world);
+        let mut setup = setup_character_animations.into_system();
+        setup.initialize(&mut world);
+        setup.run_and_apply((), &mut world);
+
+        assert_eq!(
+            world.get_component_for_entity::<CharacterLink>(player_character),
+            Some(&CharacterLink {
+                capsule: SceneEntityRef::Entity(player_capsule),
+                skeleton: SceneEntityRef::Entity(player_skeleton),
+            })
+        );
+        assert_eq!(
+            world.get_component_for_entity::<CharacterLink>(npc_character),
+            Some(&CharacterLink {
+                capsule: SceneEntityRef::Entity(npc_capsule),
+                skeleton: SceneEntityRef::Entity(npc_skeleton),
+            })
+        );
+        for skeleton in [player_skeleton, npc_skeleton] {
+            assert!(
+                world
+                    .get_component_for_entity::<AnimationHandleComponent>(skeleton)
+                    .is_some()
+            );
+        }
+        assert!(
+            world
+                .query::<&PendingLink, ()>()
+                .iter(&mut world)
+                .next()
+                .is_none()
+        );
+        assert_eq!(
+            world.get_component_for_entity::<FootLockGizmos>(player_skeleton),
+            Some(&FootLockGizmos::default())
+        );
+        assert!(
+            world
+                .get_component_for_entity::<FootLockGizmos>(npc_skeleton)
+                .is_none()
         );
     }
 
