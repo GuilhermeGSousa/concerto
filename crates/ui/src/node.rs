@@ -2499,6 +2499,22 @@ mod tests {
         assert_eq!(rect_of(&world, root).size.x, 0.0);
     }
 
+    #[test]
+    fn a_despawned_root_leaves_no_area_behind() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 1.0));
+        let kept = target_root(&mut world, camera);
+        let dropped = target_root(&mut world, camera);
+        lay_out(&mut world);
+
+        world.despawn(dropped);
+        lay_out(&mut world);
+
+        let engine = world.get_resource::<UILayoutEngine>().unwrap();
+        assert!(engine.areas.contains_key(&kept));
+        assert!(!engine.areas.contains_key(&dropped));
+    }
+
     fn settled_column(world: &mut concerto_ecs::World) -> (crate::testing::Watch, Vec<Entity>) {
         let root = column(world);
         let rows = (0..4).map(|_| row(world, root)).collect::<Vec<_>>();

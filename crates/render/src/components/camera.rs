@@ -606,5 +606,27 @@ mod tests {
 
         assert_eq!(aspect(&world, left_half), 500.0 / 1000.0);
         assert_eq!(aspect(&world, texture), 0.25);
+
+        world
+            .get_component_for_entity_mut::<Camera>(left_half)
+            .unwrap()
+            .viewport = Some(Viewport::new(Vec2::ZERO, Vec2::new(0.25, 1.0)));
+        sync(&mut world);
+        assert_eq!(aspect(&world, left_half), 250.0 / 1000.0);
+    }
+
+    #[test]
+    fn a_window_camera_with_an_empty_viewport_keeps_its_aspect() {
+        let mut world = World::new();
+        world.insert_resource(Window::new((1280, 720), 1.0));
+        let empty = world.spawn(Camera {
+            aspect: 0.75,
+            ..Camera::default()
+                .with_viewport(Viewport::new(Vec2::new(0.5, 0.0), Vec2::new(0.5, 1.0)))
+        });
+
+        sync(&mut world);
+
+        assert_eq!(aspect(&world, empty), 0.75);
     }
 }
