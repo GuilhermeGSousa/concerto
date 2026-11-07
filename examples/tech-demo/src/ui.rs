@@ -23,7 +23,7 @@ const PANEL_PADDING: UIRect = UIRect {
     left: 10.0,
 };
 const LINE_HEIGHT: f32 = 16.0;
-const LINES: usize = 9;
+const LINES: usize = 10;
 const STATS_CLEARANCE: f32 = 54.0;
 
 /// Marker for the readout's panel, whose colour tracks the grounded state.
@@ -56,6 +56,7 @@ fn readout(
     matching: Option<&Matching>,
     method: &CharacterDisplacement,
     faces_camera: bool,
+    foot_locking: bool,
 ) -> String {
     let dashes = || "--".to_string();
     let entry = matching
@@ -68,6 +69,7 @@ fn readout(
         .map_or_else(dashes, |cost| format!("{cost:.3}"));
     let method = method_name(method);
     let faces_camera = if faces_camera { "on" } else { "off" };
+    let foot_locking = if foot_locking { "on" } else { "off" };
     format!(
         "grounded: {is_grounded}\n\
          state:    {state}\n\
@@ -75,8 +77,9 @@ fn readout(
          frame:    {frame}\n\
          cost:     {cost}\n\
          WASD/arrows move, Shift run\n\
-         1-4 toggle gizmo layers\n\
+         1-5 toggle gizmo layers\n\
          F face camera: {faces_camera}\n\
+         L foot lock: {foot_locking}\n\
          M method: {method}"
     )
 }
@@ -183,6 +186,7 @@ pub(crate) fn update_grounded_overlay(
         matching.as_ref(),
         method,
         player_state.faces_camera,
+        player_state.foot_locking,
     );
     for mut ui_text in texts.iter() {
         if ui_text.text != text {
@@ -215,7 +219,8 @@ mod tests {
                 "OnGround",
                 Some(&matching),
                 &CharacterDisplacement::Adjustment(Adjustment::default()),
-                false
+                false,
+                true
             ),
             "grounded: true\n\
              state:    OnGround\n\
@@ -223,8 +228,9 @@ mod tests {
              frame:    120\n\
              cost:     0.500\n\
              WASD/arrows move, Shift run\n\
-             1-4 toggle gizmo layers\n\
+             1-5 toggle gizmo layers\n\
              F face camera: off\n\
+             L foot lock: on\n\
              M method: Adjustment"
         );
     }
@@ -237,6 +243,7 @@ mod tests {
             None,
             &CharacterDisplacement::default(),
             false,
+            true,
         );
 
         assert!(text.contains("entry:    --\nframe:    --\ncost:     --\n"));
@@ -255,6 +262,7 @@ mod tests {
             Some(&matching),
             &CharacterDisplacement::default(),
             false,
+            true,
         );
 
         assert!(text.contains("entry:    --\nframe:    7\ncost:     --\n"));
@@ -271,7 +279,7 @@ mod tests {
         let lines: Vec<String> = methods
             .iter()
             .map(|method| {
-                readout(true, "OnGround", None, method, false)
+                readout(true, "OnGround", None, method, false, true)
                     .lines()
                     .last()
                     .unwrap()
@@ -298,9 +306,24 @@ mod tests {
             None,
             &CharacterDisplacement::default(),
             true,
+            true,
         );
 
         assert!(text.contains("F face camera: on\n"));
+    }
+
+    #[test]
+    fn the_help_line_says_whether_foot_locking_is_on() {
+        let text = readout(
+            true,
+            "OnGround",
+            None,
+            &CharacterDisplacement::default(),
+            false,
+            false,
+        );
+
+        assert!(text.contains("F face camera: off\nL foot lock: off\n"));
     }
 
     #[test]

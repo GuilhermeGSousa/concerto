@@ -20,6 +20,7 @@ tracy = ["concerto/tracy"]
 concerto = { path = "../.." }
 concerto-debug-gizmos = { path = "../../crates/debug-gizmos" }
 concerto-motion-matching-gizmos = { path = "../../crates/motion-matching-gizmos" }
+concerto-procedural-animation-gizmos = { path = "../../crates/procedural-animation-gizmos" }
 glam = { version = "0.30.1" }
 serde = { version = "1", features = ["derive"] }
 derive_more = { version = "2", features = ["full"] }

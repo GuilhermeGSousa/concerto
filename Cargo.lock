@@ -5962,6 +5962,7 @@ dependencies = [
  "concerto-asset-build",
  "concerto-debug-gizmos",
  "concerto-motion-matching-gizmos",
+ "concerto-procedural-animation-gizmos",
  "derive_more",
  "fs_extra",
  "glam 0.30.10",

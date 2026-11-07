@@ -26,7 +26,9 @@ use concerto::physics::ground::GroundProbe;
 use concerto::physics::rigid_body::MotionType::Dynamic;
 use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
 use concerto::physics::shape::MeshCollider;
-use concerto::procedural_animation::{FootPlacementLeg, FootPlacementNode, IgnoredBody};
+use concerto::procedural_animation::{
+    FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, IgnoredBody,
+};
 use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::input::{Input, KeyCode, MouseButton, PhysicalKey};
@@ -36,6 +38,7 @@ use concerto::{
     reflect::{Reflect, ReflectDefault},
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmos;
+use concerto_procedural_animation_gizmos::FootLockGizmos;
 use glam::{EulerRot, Quat, Vec2, Vec3};
 
 const CHARACTER_SCENE: AssetId = asset_id!("content/lafan1/model_skeleton/scene.gasset");
@@ -85,10 +88,21 @@ impl CharacterConfig {
     }
 }
 
-#[derive(Component, Default)]
+#[derive(Component)]
 pub(crate) struct Player {
     pub(crate) faces_camera: bool,
     pub(crate) crouched: bool,
+    pub(crate) foot_locking: bool,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            faces_camera: false,
+            crouched: false,
+            foot_locking: true,
+        }
+    }
 }
 
 /// The capsule a visible character links to once its skeleton spawns, and the graph that skeleton plays.
@@ -202,6 +216,10 @@ fn foot_placement_ignore() -> Name {
     name!("foot_placement_ignore")
 }
 
+fn foot_lock_weight() -> Name {
+    name!("foot_lock_weight")
+}
+
 fn character_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
     graph.result_node().with_input(
@@ -212,11 +230,19 @@ fn character_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
             .with_ignore_param(foot_placement_ignore()),
         |mut placement| {
             placement.with_input(
-                MotionMatchingNode {
-                    database,
-                    ..Default::default()
+                FootLockNode::new()
+                    .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
+                    .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
+                    .with_weight_param(foot_lock_weight()),
+                |mut lock| {
+                    lock.with_input(
+                        MotionMatchingNode {
+                            database,
+                            ..Default::default()
+                        },
+                        |_| {},
+                    );
                 },
-                |_| {},
             );
         },
     );
@@ -240,7 +266,7 @@ pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: Comman
     }
 }
 
-/// Gives the sole `AnimationPlayer` its character's graph once that graph is in the store, starts its foot placement at weight 0, and links the character to its capsule and skeleton.
+/// Gives the sole `AnimationPlayer` its character's graph and foot lock gizmos once that graph is in the store, starts its foot placement and foot locking at weight 0, and links the character to its capsule and skeleton.
 pub(crate) fn setup_character_animations(
     players: Query<(Entity, &mut AnimationPlayer)>,
     characters: Query<(Entity, &PendingLink)>,
@@ -256,10 +282,12 @@ pub(crate) fn setup_character_animations(
             continue;
         }
         player.set_float_param(foot_placement_weight(), 0.0);
+        player.set_float_param(foot_lock_weight(), 0.0);
         cmd.insert(
             AnimationHandleComponent::new(pending.graph.clone()),
             skeleton,
         );
+        cmd.insert(FootLockGizmos::default(), skeleton);
         cmd.insert(
             CharacterLink {
                 capsule: SceneEntityRef::Entity(pending.capsule),
@@ -271,10 +299,10 @@ pub(crate) fn setup_character_animations(
     }
 }
 
-/// Tells each linked skeleton's foot placement to skip its capsule, and to place the feet only while the capsule stands on the ground; writes a param only when its value changes.
+/// Tells each linked skeleton's foot placement to skip its capsule, to place the feet only while the capsule stands on the ground, and to lock them only then and while its player has foot locking on; writes a param only when its value changes.
 pub(crate) fn feed_foot_placement(
     links: Query<&CharacterLink>,
-    capsules: Query<(Option<&BodyId>, &GroundProbe)>,
+    capsules: Query<(Option<&BodyId>, &GroundProbe, &Player)>,
     players: Query<&mut AnimationPlayer>,
 ) {
     for link in links.iter() {
@@ -285,7 +313,7 @@ pub(crate) fn feed_foot_placement(
         let Some(mut player) = players.get_entity(skeleton) else {
             continue;
         };
-        let Some((body, probe)) = capsules.get_entity(capsule) else {
+        let Some((body, probe, player_state)) = capsules.get_entity(capsule) else {
             continue;
         };
         let weight = if body.is_some() && probe.is_grounded() {
@@ -303,6 +331,14 @@ pub(crate) fn feed_foot_placement(
         }
         if player.get_float_param(foot_placement_weight()) != Some(weight) {
             player.set_float_param(foot_placement_weight(), weight);
+        }
+        let lock_weight = if player_state.foot_locking {
+            weight
+        } else {
+            0.0
+        };
+        if player.get_float_param(foot_lock_weight()) != Some(lock_weight) {
+            player.set_float_param(foot_lock_weight(), lock_weight);
         }
     }
 }
@@ -385,10 +421,14 @@ pub(crate) fn update_movement(
         .find_map(|(_, rig)| rig)
         .is_some_and(|rig| rig.stance == CameraStance::Aim);
     let toggled = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyF));
+    let locking_toggled = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyL));
 
     for (mut player, mut desired, ground) in players.iter() {
         if toggled {
             player.faces_camera = !player.faces_camera;
+        }
+        if locking_toggled {
+            player.foot_locking = !player.foot_locking;
         }
         let faces_camera = player.faces_camera || aiming;
         let (velocity, rotation) = movement(&input, yaw, faces_camera, desired.rotation);
@@ -449,8 +489,17 @@ fn next_displacement(current: &CharacterDisplacement) -> CharacterDisplacement {
     }
 }
 
-pub(crate) fn debug_keys(characters: Query<&mut MotionMatchingGizmos>, input: Res<Input>) {
+pub(crate) fn debug_keys(
+    characters: Query<&mut MotionMatchingGizmos>,
+    skeletons: Query<&mut FootLockGizmos>,
+    input: Res<Input>,
+) {
     let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
+    if pressed(KeyCode::Digit5) {
+        for mut gizmos in skeletons.iter() {
+            gizmos.locks = !gizmos.locks;
+        }
+    }
     for mut gizmos in characters.iter() {
         if pressed(KeyCode::Digit1) {
             gizmos.simulation = !gizmos.simulation;
@@ -516,7 +565,9 @@ mod tests {
         collider::{Collider, ColliderOffset},
         shape::MeshCollider,
     };
-    use concerto::procedural_animation::{FootPlacementLeg, FootPlacementNode, IgnoredBody};
+    use concerto::procedural_animation::{
+        FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, IgnoredBody,
+    };
     use concerto::reflect::{apply_value, to_value};
     use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
     use concerto::scene::{
@@ -525,6 +576,7 @@ mod tests {
     };
     use concerto::window::input::{Input, KeyCode, MouseButton, PhysicalKey};
     use concerto_motion_matching_gizmos::MotionMatchingGizmos;
+    use concerto_procedural_animation_gizmos::FootLockGizmos;
     use glam::{Quat, Vec3};
 
     use concerto::director::VirtualCamera;
@@ -533,9 +585,9 @@ mod tests {
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, PendingLink, Player, PlayerSpawner, RUN, WALK,
-        cycle_displacement, debug_keys, facing, feed_foot_placement, foot_placement_ignore,
-        foot_placement_weight, movement, setup_character_animations, spawn_character,
-        spawn_forest_walls, update_camera_stance, update_movement,
+        cycle_displacement, debug_keys, facing, feed_foot_placement, foot_lock_weight,
+        foot_placement_ignore, foot_placement_weight, movement, setup_character_animations,
+        spawn_character, spawn_forest_walls, update_camera_stance, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -810,10 +862,21 @@ mod tests {
                 .get_float_param(foot_placement_weight()),
             Some(0.0)
         );
+        assert_eq!(
+            world
+                .get_component_for_entity::<AnimationPlayer>(skeleton)
+                .unwrap()
+                .get_float_param(foot_lock_weight()),
+            Some(0.0)
+        );
+        assert_eq!(
+            world.get_component_for_entity::<FootLockGizmos>(skeleton),
+            Some(&FootLockGizmos::default())
+        );
     }
 
     #[test]
-    fn the_character_graph_places_the_feet_on_the_motion_matching_pose() {
+    fn the_character_graph_locks_then_places_the_feet_on_the_motion_matching_pose() {
         let (mut world, _) = world_with_spawner();
         spawned(&mut world);
         handle_asset_load_events(&mut world);
@@ -827,18 +890,38 @@ mod tests {
         let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
         let graph = graphs.get(&handle).unwrap();
         let nodes: Vec<_> = graph.nodes().collect();
-        let placements: Vec<AnimationNodeIndex> = graph
-            .iter()
-            .filter(|index| {
-                nodes[index.index()].type_name() == std::any::type_name::<FootPlacementNode>()
-            })
-            .collect();
+        let of_type = |type_name: &str| {
+            graph
+                .iter()
+                .filter(|index| nodes[index.index()].type_name() == type_name)
+                .collect::<Vec<AnimationNodeIndex>>()
+        };
+        let inputs = |index: AnimationNodeIndex| {
+            graph
+                .get_node_inputs(index)
+                .map(|input| nodes[input.index()].type_name())
+                .collect::<Vec<_>>()
+        };
+        let placements = of_type(std::any::type_name::<FootPlacementNode>());
+        let locks = of_type(std::any::type_name::<FootLockNode>());
         assert_eq!(placements.len(), 1);
-        let inputs: Vec<&str> = graph
-            .get_node_inputs(placements[0])
-            .map(|input| nodes[input.index()].type_name())
-            .collect();
-        assert_eq!(inputs, vec![std::any::type_name::<MotionMatchingNode>()]);
+        assert_eq!(locks.len(), 1);
+        assert_eq!(
+            inputs(placements[0]),
+            vec![std::any::type_name::<FootLockNode>()]
+        );
+        assert_eq!(
+            inputs(locks[0]),
+            vec![std::any::type_name::<MotionMatchingNode>()]
+        );
+        let expected_lock = FootLockNode::new()
+            .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
+            .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
+            .with_weight_param(name!("foot_lock_weight"));
+        assert_eq!(
+            nodes[locks[0].index()].value().unwrap().into_owned(),
+            to_value(&expected_lock).unwrap()
+        );
         let expected = FootPlacementNode::new("Hips")
             .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
             .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
@@ -866,6 +949,15 @@ mod tests {
                 .get_float_param(foot_placement_weight())
         }
 
+        fn lock_weight(&self) -> Option<f32> {
+            self.app
+                .main()
+                .world()
+                .get_component_for_entity::<AnimationPlayer>(self.player)
+                .unwrap()
+                .get_float_param(foot_lock_weight())
+        }
+
         fn ignored(&self) -> Option<BodyId> {
             self.app
                 .main()
@@ -885,7 +977,7 @@ mod tests {
         }
     }
 
-    fn fed_after(fixed_steps: usize, registered: bool) -> FedPlayer {
+    fn fed_after(fixed_steps: usize, registered: bool, foot_locking: bool) -> FedPlayer {
         let mut app = App::new();
         app.register_plugin(PhysicsPlugin);
         let world = app.main_mut().world_mut();
@@ -903,6 +995,10 @@ mod tests {
             Collider::capsule(0.5, 0.3),
             Transform::from_translation(Vec3::new(0.0, 0.85, 0.0)),
             GroundProbe::default(),
+            Player {
+                foot_locking,
+                ..Player::default()
+            },
         ));
         let player = world.spawn(AnimationPlayer::new(1));
         world.spawn(CharacterLink {
@@ -931,13 +1027,13 @@ mod tests {
 
     #[test]
     fn a_grounded_capsule_gives_foot_placement_full_weight_and_its_body_to_ignore() {
-        let grounded = fed_after(60, true);
+        let grounded = fed_after(60, true, true);
 
         assert!(grounded.body().is_some());
         assert_eq!(grounded.ignored(), grounded.body());
         assert_eq!(grounded.weight(), Some(1.0));
 
-        let in_air = fed_after(0, true);
+        let in_air = fed_after(0, true, true);
 
         assert!(in_air.body().is_some());
         assert_eq!(in_air.ignored(), in_air.body());
@@ -946,15 +1042,22 @@ mod tests {
 
     #[test]
     fn a_capsule_without_a_body_gives_foot_placement_no_weight() {
-        let unregistered = fed_after(0, false);
+        let unregistered = fed_after(0, false, true);
 
         assert_eq!(unregistered.body(), None);
         assert_eq!(unregistered.weight(), Some(0.0));
     }
 
     #[test]
+    fn a_grounded_capsule_gives_foot_locking_full_weight_only_while_it_is_on() {
+        assert_eq!(fed_after(60, true, true).lock_weight(), Some(1.0));
+        assert_eq!(fed_after(60, true, false).lock_weight(), Some(0.0));
+        assert_eq!(fed_after(0, true, true).lock_weight(), Some(0.0));
+    }
+
+    #[test]
     fn feeding_the_same_probe_state_again_leaves_the_player_unchanged() {
-        let mut fed = fed_after(60, true);
+        let mut fed = fed_after(60, true, true);
         let world = fed.app.main_mut().world_mut();
         world.tick();
         let mut feed = feed_foot_placement.into_system();
@@ -967,6 +1070,7 @@ mod tests {
             .count();
         assert_eq!(changed, 0);
         assert_eq!(fed.weight(), Some(1.0));
+        assert_eq!(fed.lock_weight(), Some(1.0));
         assert_eq!(fed.ignored(), fed.body());
     }
 
@@ -1159,6 +1263,28 @@ mod tests {
     }
 
     #[test]
+    fn l_toggles_foot_locking() {
+        let mut world = world_with_player(DesiredMotion::default());
+        let foot_locking = |world: &mut World| {
+            world
+                .query::<&Player, ()>()
+                .iter(world)
+                .next()
+                .unwrap()
+                .foot_locking
+        };
+        assert!(foot_locking(&mut world));
+
+        for expected in [false, true] {
+            world.insert_resource(holding(&[KeyCode::KeyL]));
+            let mut system = update_movement.into_system();
+            system.initialize(&mut world);
+            system.run_and_apply((), &mut world);
+            assert_eq!(foot_locking(&mut world), expected);
+        }
+    }
+
+    #[test]
     fn aiming_turns_the_character_to_the_camera_yaw() {
         let yaw = 0.7;
         let mut world = world_with_player(DesiredMotion::default());
@@ -1342,6 +1468,13 @@ mod tests {
             .clone()
     }
 
+    fn locks(world: &World, skeleton: Entity) -> bool {
+        world
+            .get_component_for_entity::<FootLockGizmos>(skeleton)
+            .unwrap()
+            .locks
+    }
+
     fn layers(world: &World, character: Entity) -> [bool; 4] {
         let gizmos = world
             .get_component_for_entity::<MotionMatchingGizmos>(character)
@@ -1365,15 +1498,32 @@ mod tests {
         for (layer, key) in keys.into_iter().enumerate() {
             let mut world = World::new();
             let character = debugged_character(&mut world);
+            let skeleton = world.spawn(FootLockGizmos::default());
 
             pressed(&mut world, key, debug_keys);
             let mut expected = [true; 4];
             expected[layer] = false;
             assert_eq!(layers(&world, character), expected);
+            assert!(locks(&world, skeleton));
 
             pressed(&mut world, key, debug_keys);
             assert_eq!(layers(&world, character), [true; 4]);
+            assert!(locks(&world, skeleton));
         }
+    }
+
+    #[test]
+    fn five_toggles_the_foot_lock_gizmos() {
+        let mut world = World::new();
+        let character = debugged_character(&mut world);
+        let skeleton = world.spawn(FootLockGizmos::default());
+
+        pressed(&mut world, KeyCode::Digit5, debug_keys);
+        assert!(!locks(&world, skeleton));
+        assert_eq!(layers(&world, character), [true; 4]);
+
+        pressed(&mut world, KeyCode::Digit5, debug_keys);
+        assert!(locks(&world, skeleton));
     }
 
     #[test]

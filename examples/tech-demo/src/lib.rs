@@ -8,6 +8,7 @@ use concerto::{
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
+use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 
 use crate::{
     character::{
@@ -29,6 +30,7 @@ pub use sanatorium::sanatorium;
 pub fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(MotionMatchingGizmosPlugin)
+        .register_plugin(ProceduralAnimationGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
@@ -58,6 +60,8 @@ mod tests {
         reflect::ReflectDefault,
         render::gpu::Gpu,
     };
+
+    use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 
     use crate::{character::PlayerSpawner, game};
 
@@ -105,6 +109,17 @@ mod tests {
     #[test]
     fn the_sanatorium_builds_with_no_gpu_and_can_cook_the_motion_database() {
         builds_with_no_gpu_and_can_cook_the_motion_database(crate::sanatorium);
+    }
+
+    #[test]
+    fn every_level_draws_the_foot_locks() {
+        let recipes: [fn(&mut App); 3] = [crate::grid, game, crate::sanatorium];
+        for recipe in recipes {
+            let mut app = App::new();
+            recipe(&mut app);
+
+            assert!(app.is_plugin_added::<ProceduralAnimationGizmosPlugin>());
+        }
     }
 }
 
