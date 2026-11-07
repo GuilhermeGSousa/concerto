@@ -15,10 +15,7 @@ use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
 
-use crate::{
-    foot_placement::{ease, elapsed_after, horizontal},
-    leg::{ResolvedLeg, bend_leg, resolve_leg},
-};
+use crate::leg::{ResolvedLeg, bend_leg, ease, elapsed_after, horizontal, resolve_leg};
 
 const MIN_WEIGHT: f32 = 1.0e-4;
 const RELEASED: f32 = 1.0e-3;
@@ -331,27 +328,34 @@ fn leg_points(resolved: &ResolvedLegs<'_>, output: &AnimationFrame) -> Option<Ve
 struct ModelMotion {
     translation: Vec3,
     rotation: Quat,
+    pivot: Vec3,
     up: Vec3,
 }
 
 impl ModelMotion {
     fn of(root: Option<&RootBone>, skeleton: &Skeleton, frame: &AnimationFrame) -> Self {
         let motion = frame.root_motion();
+        let up = root.map_or(Vec3::Y, |root| root.up);
+        let joint = root.and_then(|root| model_joint(skeleton, frame.joints(), root.index));
         let facing = root
-            .and_then(|root| {
-                model_joint(skeleton, frame.joints(), root.index)
-                    .map(|joint| joint.rotation * root.rest.rotation.inverse())
-            })
+            .zip(joint.as_ref())
+            .map(|(root, joint)| joint.rotation * root.rest.rotation.inverse())
             .unwrap_or(Quat::IDENTITY);
+        let pivot = joint.map_or(Vec3::ZERO, |joint| {
+            let at = Vec3::from(joint.transform.translation);
+            at - up * at.dot(up)
+        });
         Self {
             translation: facing * motion.translation,
             rotation: facing * motion.rotation * facing.inverse(),
-            up: root.map_or(Vec3::Y, |root| root.up),
+            pivot,
+            up,
         }
     }
 
     fn horizontal_speed(&self, previous: Vec3, contact: Vec3, elapsed: f32) -> f32 {
-        let moved = self.translation + self.rotation * contact - previous;
+        let moved =
+            self.translation + self.pivot + self.rotation * (contact - self.pivot) - previous;
         (moved - self.up * moved.dot(self.up)).length() / elapsed
     }
 }
@@ -521,6 +525,8 @@ mod tests {
     const FEET: [usize; 2] = [3, 7];
     const TOES: [usize; 2] = [4, 8];
     const STRIDE: Vec3 = Vec3::new(0.0, 0.0, 0.5);
+    const PELVIS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
+    const TURN: f32 = 0.1;
 
     fn script_param() -> Name {
         name!("script")
@@ -719,10 +725,14 @@ mod tests {
     }
 
     fn rig() -> Skeleton {
+        rig_with_pelvis_at(PELVIS)
+    }
+
+    fn rig_with_pelvis_at(pelvis: Vec3) -> Skeleton {
         let mut bones = vec![Bone {
             name: "pelvis",
             parent: None,
-            translation: Vec3::new(0.0, 0.9, 0.0),
+            translation: pelvis,
         }];
         bones.extend(leg_bones(
             ["left_hip", "left_knee", "left_foot", "left_toe"],
@@ -1027,6 +1037,21 @@ mod tests {
         stage
     }
 
+    fn turned(pelvis_turn: Quat) -> Stage {
+        let skeleton = rig_with_pelvis_at(PELVIS + Vec3::new(0.1, 0.0, 0.0));
+        let start = Script {
+            root_rotation: Quat::from_rotation_y(TURN),
+            ..Script::rest_of(&skeleton)
+        };
+        let mut stage = Stage::new(skeleton, start.clone(), locking()).with_root();
+        stage.settle();
+        let mut turned = start;
+        turned.rotations[0] = pelvis_turn;
+        stage.pose(turned);
+        stage.step(DT);
+        stage
+    }
+
     fn add_graph(world: &mut World, node: FootLockNode) -> AssetHandle<AnimationGraph> {
         let mut registry = TypeRegistry::default();
         register_animation_types(&mut registry);
@@ -1202,6 +1227,20 @@ mod tests {
     }
 
     #[test]
+    fn a_foot_held_while_the_root_turns_about_itself_locks() {
+        let mut stage = turned(Quat::from_rotation_y(-TURN));
+
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+    }
+
+    #[test]
+    fn a_foot_carried_round_by_the_roots_turn_does_not_lock() {
+        let mut stage = turned(Quat::IDENTITY);
+
+        assert_eq!(stage.phases(), [LockPhase::Free; 2]);
+    }
+
+    #[test]
     fn a_still_foot_above_the_plant_height_does_not_lock() {
         let skeleton = rig();
         let raised = Script::rest_of(&skeleton).moved(Vec3::new(0.0, 0.2, 0.0));
@@ -1279,11 +1318,18 @@ mod tests {
         for weight in [1.0, 0.5] {
             let mut stage = locked(locking().with_weight(weight));
             let rest = stage.script.clone();
+            let old = stage.legs()[0].lock;
 
             stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.05)));
             stage.step(DT);
             assert_eq!(stage.phases(), [LockPhase::Releasing; 2], "weight {weight}");
+            let released = stage.legs()[0].shown;
+
+            stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.1)));
+            stage.step(0.05);
+            assert_eq!(stage.phases(), [LockPhase::Releasing; 2], "weight {weight}");
             let shown = stage.legs()[0].shown;
+            assert!(shown.distance(released) > 1.0e-3, "weight {weight}");
             let toe = stage.output_world(TOES[0]);
 
             stage.step(DT);
@@ -1292,6 +1338,7 @@ mod tests {
             assert!(leg.shown.distance(shown) < EPS, "weight {weight}");
             let unweighted = leg.animated + (shown - leg.animated) / weight;
             assert!(leg.lock.distance(unweighted) < EPS, "weight {weight}");
+            assert!(leg.lock.distance(old) > 1.0e-3, "weight {weight}");
             assert!(stage.output_world(TOES[0]).distance(toe) < EPS);
 
             stage.step(DT);

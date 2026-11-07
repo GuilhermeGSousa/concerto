@@ -3,6 +3,7 @@ use concerto_animation::{
     node::model_space::{bone_under_first, model_joint, parent},
     pose::AnimationFrame,
 };
+use concerto_foundation::math::{Spring, SpringValue};
 use concerto_mesh::{JointName, Skeleton};
 use glam::{Quat, Vec3};
 
@@ -30,6 +31,33 @@ pub(crate) fn resolve_leg(
         foot: foot_bone,
         toe,
     })
+}
+
+pub(crate) fn elapsed_after(elapsed: f32, delta_time: f32) -> f32 {
+    if delta_time.is_finite() && delta_time > 0.0 {
+        elapsed + delta_time
+    } else {
+        elapsed
+    }
+}
+
+pub(crate) fn horizontal(v: Vec3) -> Vec3 {
+    Vec3::new(v.x, 0.0, v.z)
+}
+
+pub(crate) fn ease<T: SpringValue>(
+    spring: &mut Spring<T>,
+    target: T,
+    halflife: f32,
+    elapsed: f32,
+) -> T {
+    spring.set_halflife(halflife);
+    if halflife > 0.0 {
+        spring.update(target, elapsed)
+    } else {
+        spring.reset_to(target);
+        target
+    }
 }
 
 pub(crate) fn bend_leg(

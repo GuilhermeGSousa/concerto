@@ -8,7 +8,7 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
 use concerto_ecs::Res;
-use concerto_foundation::math::{Spring, SpringValue};
+use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::Name;
 use concerto_physics::{body::BodyId, physics_state::PhysicsState, query::QueryFilter};
@@ -17,7 +17,7 @@ use glam::{Affine3A, Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
 
-use crate::leg::{ResolvedLeg, bend_leg, resolve_leg};
+use crate::leg::{ResolvedLeg, bend_leg, ease, elapsed_after, horizontal, resolve_leg};
 
 const MIN_TOE_DISTANCE: f32 = 0.01;
 const MIN_NORMAL_LENGTH: f32 = 1.0e-3;
@@ -265,14 +265,6 @@ fn unit_normal(normal: Vec3) -> Option<Vec3> {
         .map(Vec3::normalize)
 }
 
-pub(crate) fn elapsed_after(elapsed: f32, delta_time: f32) -> f32 {
-    if delta_time.is_finite() && delta_time > 0.0 {
-        elapsed + delta_time
-    } else {
-        elapsed
-    }
-}
-
 impl FootPlacementNode {
     fn resolve<'a>(&self, skeleton: Option<&'a Skeleton>) -> Result<ResolvedLegs<'a>, String> {
         let skeleton = skeleton.ok_or("the player has no skeleton")?;
@@ -407,10 +399,6 @@ fn descends_from(skeleton: &Skeleton, bone: usize, ancestor: usize) -> bool {
         .any(|up| up == ancestor)
 }
 
-pub(crate) fn horizontal(v: Vec3) -> Vec3 {
-    Vec3::new(v.x, 0.0, v.z)
-}
-
 fn pitched(foot: Vec3, toe: Vec3, ankle: Ground, toe_ground: Ground, max_angle: f32) -> FootTarget {
     let v = toe - foot;
     let flat = horizontal(v);
@@ -449,21 +437,6 @@ fn limit_angle(tilt: Quat, max_angle: f32) -> Quat {
         Quat::IDENTITY.slerp(tilt, max_angle / angle)
     } else {
         tilt
-    }
-}
-
-pub(crate) fn ease<T: SpringValue>(
-    spring: &mut Spring<T>,
-    target: T,
-    halflife: f32,
-    elapsed: f32,
-) -> T {
-    spring.set_halflife(halflife);
-    if halflife > 0.0 {
-        spring.update(target, elapsed)
-    } else {
-        spring.reset_to(target);
-        target
     }
 }
 

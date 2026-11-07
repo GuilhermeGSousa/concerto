@@ -468,8 +468,9 @@ A graph is a tree of nodes under a result node:
   while its horizontal speed is under `plant_speed` and its height above the
   model origin under `plant_height`; the speed is measured in the
   animation's own frame, the contact point's model-space motion plus the
-  input's root motion, so a foot under a walking root plants and a foot
-  carried by a running root does not. A planted foot is locked in world
+  input's root motion, turning about the root bone, so a foot under a
+  walking or turning root plants and a foot carried by a running root does
+  not. A planted foot is locked in world
   space, and only its horizontal position is held: its height stays the
   input's. The lock is released when the plant ends, or when the animated
   foot moves more than `unlock_radius` from it, and the foot then eases back
