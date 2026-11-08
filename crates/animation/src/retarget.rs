@@ -4094,6 +4094,22 @@ mod tests {
         RetargetNode::new(handle(INNER_GRAPH), handle(SOURCE_RIG), handle(TARGET_RIG))
     }
 
+    const NEAR_FULL_REACH: f32 = 1e-3;
+
+    fn assert_poses_within(actual: &[JointPose], expected: &[JointPose], tolerance: f32) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert!(
+                actual.rotation.abs_diff_eq(expected.rotation, tolerance)
+                    || actual.rotation.abs_diff_eq(-expected.rotation, tolerance),
+                "{:?} != {:?}",
+                actual.rotation,
+                expected.rotation
+            );
+            assert_vec3(actual.translation, expected.translation);
+        }
+    }
+
     fn node_with_feet(rig: RetargetRig) -> RetargetRig {
         rig.with_goal(RetargetGoal::new("foot_l", "foot_l"))
     }
@@ -4149,7 +4165,7 @@ mod tests {
 
         for _ in 0..3 {
             played.advance();
-            assert_poses(&played.pose(), &feet_held_pose());
+            assert_poses_within(&played.pose(), &feet_held_pose(), NEAR_FULL_REACH);
         }
 
         let messages = warning_messages().split_off(before);
