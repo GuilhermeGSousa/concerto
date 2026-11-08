@@ -219,7 +219,7 @@ fn mesh_path(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<
     })
 }
 
-/// Plans a route for each agent without one, whose destination changed, whose route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now; an agent without a route waits while a `NavMeshComponent`'s mesh is still loading and none is loaded.
+/// Plans a route for each agent without one, whose destination changed, whose route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now; while a `NavMeshComponent`'s mesh is still loading and none is loaded, an agent without a route, or whose destination changed, stops and waits.
 pub fn plan_nav_routes(
     agents: Query<
         (
@@ -266,6 +266,13 @@ pub fn plan_nav_routes(
         match route {
             None if mesh_loading => continue,
             None => {}
+            Some(_) if mesh_loading && destination.is_changed() => {
+                cmd.remove::<NavRoute>(agent);
+                if let Some(mut steering) = steering {
+                    steering.velocity = Vec3::ZERO;
+                }
+                continue;
+            }
             Some(route) => {
                 let stale = route.planned_on != mesh_id || graph.is_changed();
                 if !destination.is_changed() && !stale {

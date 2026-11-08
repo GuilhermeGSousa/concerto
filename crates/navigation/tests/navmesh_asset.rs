@@ -6,6 +6,7 @@ use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
+use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::{
     assets::{
         Asset, AssetId, ContentAssetRoot, CreatableAsset,
@@ -20,8 +21,9 @@ use concerto_foundation::{
 };
 use concerto_mesh::{MeshComponent, primitives::plane};
 use concerto_navigation::{
-    NavAgent, NavDestination, NavMesh, NavMeshComponent, NavMeshData, NavMeshGeometry,
-    NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavigationPlugin, bake,
+    NavAgent, NavDestination, NavLink, NavLinks, NavMesh, NavMeshComponent, NavMeshData,
+    NavMeshGeometry, NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavSteering,
+    NavigationPlugin, bake,
 };
 use concerto_physics::{collider::BoxCollider, sensor::Sensor, shape::MeshCollider};
 use concerto_reflect::Reflect;
@@ -541,4 +543,78 @@ fn an_agent_sent_while_its_navmesh_loads_waits_and_then_routes_on_it() {
         route.remaining().iter().any(|corner| corner.z.abs() > 0.5),
         "{route:?}"
     );
+}
+
+#[test]
+fn an_agent_sent_elsewhere_while_its_navmesh_loads_stops_waits_and_then_routes_on_it() {
+    let mut project = Project::new("agent-redirected");
+    let level = project.save("level", &scene(vec![floor(), obstacle()]));
+    let id = project.save("navmesh", &navmesh_of(&[level]));
+    let mut app = app();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    server.set_derived_cache(DerivedDataCache::in_project(&project.root));
+    server.publish_content_source(project.content_root(), project.registry.clone());
+    app.insert_resource(project.registry.clone());
+    let world = app.main_mut().world_mut();
+    let west = world.spawn((Transform::from_translation(WEST), NavPoint::default()));
+    let north = world.spawn((
+        Transform::from_translation(Vec3::new(-3.0, 0.0, 3.0)),
+        NavPoint::default(),
+        NavLinks {
+            links: vec![NavLink {
+                to: SceneEntityRef::Entity(west),
+                one_way: false,
+            }],
+        },
+    ));
+    let east = world.spawn((Transform::from_translation(EAST), NavPoint::default()));
+    let agent = world.spawn((Transform::from_translation(WEST), NavAgent::new()));
+    app.update();
+    app.update();
+    app.main_mut()
+        .world_mut()
+        .insert(NavDestination::to_point(north), agent);
+    app.update();
+    let world = app.main_mut().world_mut();
+    assert_eq!(
+        world
+            .get_component_for_entity::<NavRoute>(agent)
+            .map(NavRoute::planned_on),
+        Some(None)
+    );
+
+    let handle = server.load::<NavMesh>(id);
+    world.spawn(NavMeshComponent { handle });
+    world.insert(NavDestination::to_point(east), agent);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let route = loop {
+        app.update();
+        let world = app.main_mut().world_mut();
+        let route = world.get_component_for_entity::<NavRoute>(agent).cloned();
+        if let Some(route) = route.filter(|route| route.planned_on().is_some()) {
+            break route;
+        }
+        assert!(
+            world
+                .get_component_for_entity::<NavDestination>(agent)
+                .is_some(),
+            "the agent gave up before its navmesh landed"
+        );
+        assert!(
+            world.get_component_for_entity::<NavRoute>(agent).is_none(),
+            "the agent kept its stale route"
+        );
+        assert_eq!(
+            world
+                .get_component_for_entity::<NavSteering>(agent)
+                .unwrap()
+                .velocity,
+            Vec3::ZERO
+        );
+        assert!(Instant::now() < deadline, "the navmesh never landed");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+
+    assert_eq!(route.planned_on(), Some(id));
+    assert_eq!(route.destination(), east);
 }
