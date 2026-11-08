@@ -174,3 +174,58 @@ fn an_end_just_outside_the_eroded_edge_snaps_onto_the_mesh() {
 
     assert_eq!(query.path(Vec3::ZERO, Vec3::new(7.0, 0.0, 0.0)), None);
 }
+
+#[test]
+fn a_bake_wider_than_the_cell_cap_fails_with_too_many_cells() {
+    let settings = NavMeshSettings::new();
+    let mut geometry = floor_geometry();
+    floor(&mut geometry, Vec3::new(30_000.0, 0.0, 0.0), 1.0, 1.0, 0.0);
+    match bake(&geometry, &settings) {
+        Err(NavMeshBakeError::TooManyCells { width, depth }) => {
+            assert!(width > 65_535, "{width}");
+            assert!(depth <= 65_535, "{depth}");
+        }
+        other => panic!("expected TooManyCells, got {other:?}"),
+    }
+}
+
+struct BadSetting {
+    name: &'static str,
+    settings: NavMeshSettings,
+}
+
+fn bad(name: &'static str, settings: NavMeshSettings) -> BadSetting {
+    BadSetting { name, settings }
+}
+
+#[test]
+fn settings_that_cannot_be_baked_with_fail_naming_the_setting() {
+    let cases = [
+        bad("cell_size", NavMeshSettings::new().with_cell_size(0.0)),
+        bad(
+            "cell_height",
+            NavMeshSettings::new().with_cell_height(f32::NAN),
+        ),
+        bad(
+            "agent_height",
+            NavMeshSettings::new().with_agent_height(-1.0),
+        ),
+        bad(
+            "agent_radius",
+            NavMeshSettings::new().with_agent_radius(-0.1),
+        ),
+        bad(
+            "step_height",
+            NavMeshSettings::new().with_step_height(f32::INFINITY),
+        ),
+        bad("max_slope", NavMeshSettings::new().with_max_slope(90.0)),
+    ];
+    for BadSetting { name, settings } in cases {
+        match bake(&floor_geometry(), &settings) {
+            Err(NavMeshBakeError::InvalidSettings { reason }) => {
+                assert!(reason.starts_with(name), "{name}: {reason}")
+            }
+            other => panic!("{name}: expected InvalidSettings, got {other:?}"),
+        }
+    }
+}
