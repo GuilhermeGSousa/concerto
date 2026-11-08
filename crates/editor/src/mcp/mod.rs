@@ -5,9 +5,13 @@ mod observe;
 mod run;
 mod value;
 
-pub(crate) use edit::{EditSource, adapter_commit, find_path, refusal_error, refused};
-pub(crate) use observe::listed_paths;
 pub use run::PlayTimeout;
+
+impl From<crate::inspector::WriteRefusal> for concerto_mcp::ToolError {
+    fn from(refusal: crate::inspector::WriteRefusal) -> Self {
+        Self::new(refusal.code, refusal.message)
+    }
+}
 
 use std::path::PathBuf;
 

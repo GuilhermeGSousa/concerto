@@ -14,13 +14,14 @@ use concerto_mcp::{
 use serde_json::{Map, Value};
 
 use super::{
-    edit::{ListPush, ListRemove, SetProperty, list_commit_at, list_length, refusal_error},
-    observe::{Inspect, insert_unavailable, insert_value, listed_paths},
+    edit::{ListPush, ListRemove, SetProperty, list_commit_at, list_length},
+    observe::{Inspect, insert_unavailable, insert_value},
 };
 use crate::{
     asset_editor::ActiveEditor,
     inspector::{
-        InspectedValues, ListEdit, PropertyTarget, apply_value_commit, gone, reading, set_value,
+        InspectedValues, ListEdit, PropertyTarget, apply_value_commit, gone, listed_paths, reading,
+        refusal_error, set_value,
     },
 };
 
@@ -230,9 +231,9 @@ fn answer_value_call(on: On<ValueCall>, world: &mut World) {
     } = on.signal();
     let answer = match request {
         ValueRequest::Inspect => Ok(value_answer(world, target)),
-        ValueRequest::Set { path, value } => {
-            set_value(world, target, path, value).map(|()| value_answer(world, target))
-        }
+        ValueRequest::Set { path, value } => set_value(world, target, path, value)
+            .map(|()| value_answer(world, target))
+            .map_err(ToolError::from),
         ValueRequest::List { path, edit } => edit_list(world, target, path, *edit),
     };
     match answer {
@@ -271,7 +272,7 @@ fn edit_list(
         let target = target.clone();
         list_commit_at(&name, path, &listed, false, edit, target, source.changed)
     })
-    .unwrap_or_else(|| Err(gone(&attempt)))?;
+    .unwrap_or_else(|| Err(gone(&attempt).into()))?;
     apply_value_commit(world, &commit).map_err(|refusal| refusal_error(&refusal))?;
     let path = &commit.row.address.path;
     let length = reading(world, target.as_ref(), |value, _| list_length(value, path)).unwrap_or(0);

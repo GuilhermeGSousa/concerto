@@ -37,6 +37,7 @@ mod list;
 mod name_field;
 mod name_text;
 mod numeric;
+mod paths;
 mod registry;
 mod rows;
 mod sync;
@@ -68,6 +69,9 @@ use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
 pub(crate) use list::{ListEdit, ListEditor};
+pub(crate) use paths::{
+    LIST_LIMIT, ListedPath, ShownPath, cut_note, find_path, listed_paths, shown_paths, unknown_path,
+};
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
@@ -89,7 +93,10 @@ use values::{
 };
 pub use write::WriteValue;
 use write::write_value_at;
-pub(crate) use write::{gone, reading, set_value};
+pub(crate) use write::{
+    EditSource, WriteRefusal, adapter_commit, gone, not_editable, reading, refusal_error, refused,
+    set_value,
+};
 
 pub const PANEL_ID: &str = "concerto.ecs";
 
