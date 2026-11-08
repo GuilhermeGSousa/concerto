@@ -1464,6 +1464,13 @@ mod tests {
             .unwrap();
 
         assert!(PoseRetarget::new(&source, &lafan1, &target, &ual1).is_ok());
+
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("content/lafan_database.gasset"),
+        )
+        .unwrap();
+        let database = decode_content_asset::<MotionDatabase>(&bytes).unwrap().1;
+        assert_eq!(database.skeleton.id(), LAFAN1_SKELETON);
     }
 
     fn stored<A: Asset + 'static>(world: &mut World, server: &mut AssetServer) {
