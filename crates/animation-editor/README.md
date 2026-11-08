@@ -1,6 +1,7 @@
 # concerto-animation-editor
 
-The asset editor of an `AnimationClip`, as an extension of `concerto-editor`.
+The asset editor of an `AnimationClip`, and the clip transport widget it plays
+clips with, as an extension of `concerto-editor`.
 Only editor crates depend on it. `cargo concerto new` writes this entry into a new
 project. A game made without it adds it to its own `Cargo.toml`, and
 `cargo concerto editor <dir> --update` writes the call into the game's generated
@@ -11,17 +12,47 @@ project. A game made without it adds it to its own `Cargo.toml`, and
 plugins = [{ package = "concerto-animation-editor", install = "concerto_animation_editor::install" }]
 ```
 
-`install` registers `AnimationClipEditor` as an asset editor and forwards what
-its preview reports. A game that doesn't list it has no clip tab: a clip stays
-selected in the content browser and opens nothing. Listing
+`install` adds two plugins: `TransportPlugin`, the transport widget below, and
+`AnimationClipEditorPlugin`, which registers `AnimationClipEditor` as an asset
+editor and forwards what its preview reports. A game that doesn't list it has
+no clip tab: a clip stays selected in the content browser and opens nothing. Listing
 `concerto-motion-matching-editor` doesn't bring it, so a game that wants both
 lists both.
 
-`read_clip`, `read_shown_scene`, `ClipFacts`, and in `preview` the recipe
-`clip_preview` and its signals and events, are public for other editors that
-play a clip. `concerto-motion-matching-editor` uses them, with no need for this
-crate's `install`. `events` holds `TabEvent`, the event as the tab edits it,
-with `read_events` and `write_events` to convert a clip's `ClipEventKey`s.
+`read_clip`, `read_shown_scene`, `ClipFacts`, and in `preview` the recipes
+`clip_preview` and `clip_playback` and their signals and events, are public for
+other editors that play a clip. `clip_playback` holds the clip, the time, the
+rate, playing and looping, advances the time, writes `ClipPreviewProgress`, and
+listens for `ShowClip`, `ClearClip`, `SetClipTransport` and `SeekClip`; it poses
+nothing. `clip_preview` calls it and adds the posing: every rooted skeleton,
+root motion, the scene, the skeleton gizmo and `ClipPreviewBones`.
+`concerto-motion-matching-editor` uses them, with no need for this crate's
+`install`. `events` holds `TabEvent`, the event as the tab edits it, with
+`read_events` and `write_events` to convert a clip's `ClipEventKey`s.
+
+## The transport widget
+
+`transport` holds the transport row and timeline the clip tab uses, public for
+any tab whose preview plays a clip with `clip_playback`:
+
+- `ClipTransport`, a component on the document: `duration`, `rate` (the frame
+  rate, if any), `time`, `playing`, `looping` and `speed`, the rate multiplier.
+  Its owner sets `duration` and `rate`; the widget keeps the rest;
+- `spawn_transport(parent, document, theme)` spawns step back, play/pause,
+  step forward, Loop, and the speeds 0.25×, 0.5×, 1× and 2×, and returns the
+  `TransportRow` of their entities. A step pauses, then moves one frame from the
+  frame at the current time, and stops at either end. Play at the end of a clip
+  that does not loop starts again from 0. The buttons send `SetClipTransport`
+  and `SeekClip` to the document's preview;
+- `TransportTimeline { document }` on a `Timeline` has the widget write the
+  timeline's duration, rate and time from `ClipTransport`, and
+  `scrub_transport(document)` is its scrub listener, which pauses and seeks. The
+  owner keeps the timeline's markers and tracks;
+- `TransportDisabled` on the document disables every button;
+- `TransportPlugin` copies each preview's `ClipPreviewProgress` into its
+  document's `ClipTransport`, and keeps the buttons in step with it: the play
+  glyph, Loop and the active speed selected, the steps disabled without a rate,
+  and every button disabled with no duration or under `TransportDisabled`.
 
 ## The tab
 

@@ -12,24 +12,21 @@ use concerto_editor::{
     asset_picker::{
         AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
     },
-    fonts::{MEDIUM, glyph, icon},
+    fonts::MEDIUM,
     preview::PreviewSignals,
     project::ProjectState,
-    timeline::{
-        Timeline, TimelineMarker, TimelineMarkerMoved, TimelineMarkerSelected, TimelineScrubbed,
-        frame_at, time_of_frame,
-    },
+    timeline::{Timeline, TimelineMarker, TimelineMarkerMoved, TimelineMarkerSelected},
 };
 use concerto_foundation::assets::{Asset, AssetId, registry::AssetRegistry};
 use concerto_scene::scene::Scene;
-use concerto_ui::elements::{Label, Listening, Pressable, Text, prelude::*};
+use concerto_ui::elements::{Label, prelude::*};
 use concerto_ui::{
     anchor::UIAnchoredPanel,
     checkbox::{UICheckbox, UICheckboxChanged},
-    interaction::{UIClick, UIDisabled, UIInteractionStyle},
+    interaction::UIClick,
     node::{UINode, UIRect},
     text::UIText,
-    theme::{ButtonVariant, UITheme},
+    theme::UITheme,
     transform::UIValue,
 };
 use concerto_window::input::MouseButton;
@@ -37,8 +34,9 @@ use concerto_window::input::MouseButton;
 use super::{
     ClipDocument,
     events::TabEvent,
-    preview::{SeekClip, SetClipTransport, SetRootMotion, SetSkeletonGizmo},
+    preview::{SetRootMotion, SetSkeletonGizmo},
     scene_signal, settle_edit,
+    transport::{TransportTimeline, scrub_transport, spawn_transport},
 };
 
 mod event_section;
@@ -51,7 +49,6 @@ pub(crate) use event_section::{
 const TITLE_HEIGHT: f32 = 16.0;
 const BOX_SIZE: f32 = 16.0;
 const NO_VALUE: &str = "None";
-const RATES: [(f32, &str); 4] = [(0.25, "0.25×"), (0.5, "0.5×"), (1.0, "1×"), (2.0, "2×")];
 
 /// The widgets of a clip's tab that follow its document, kept on the document.
 #[derive(Component)]
@@ -68,11 +65,6 @@ struct LeftPanel {
 }
 
 struct InspectorPanel {
-    step_back: Entity,
-    play: Entity,
-    step_forward: Entity,
-    looping: Entity,
-    rates: [Entity; RATES.len()],
     root_motion: Entity,
     duration: Entity,
     frames: Entity,
@@ -81,101 +73,6 @@ struct InspectorPanel {
     driven: Entity,
     events: event_section::EventsPanel,
     status: Entity,
-}
-
-fn transport(state: &ClipDocument) -> SetClipTransport {
-    SetClipTransport {
-        playing: state.playing,
-        looping: state.looping,
-        rate: state.rate,
-    }
-}
-
-fn pause_at(state: &ClipDocument, document: Entity, time: f32, previews: &mut PreviewSignals) {
-    previews.trigger(
-        document,
-        SetClipTransport {
-            playing: false,
-            ..transport(state)
-        },
-    );
-    previews.trigger(document, SeekClip(time));
-}
-
-fn at_the_end(state: &ClipDocument) -> bool {
-    let duration = state.facts.duration;
-    let last_frame = state
-        .facts
-        .rate
-        .map(|rate| time_of_frame(frame_at(duration, rate), rate));
-    state.time >= last_frame.unwrap_or(duration).min(duration)
-}
-
-fn toggle_playing(document: Entity) -> Listener<UIClick> {
-    (move |on: On<UIClick>, documents: Query<&ClipDocument>, mut previews: PreviewSignals| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
-        let Some(state) = documents.get_entity(document) else {
-            return;
-        };
-        let playing = !state.playing;
-        if playing && !state.looping && at_the_end(state) {
-            previews.trigger(document, SeekClip(0.0));
-        }
-        previews.trigger(
-            document,
-            SetClipTransport {
-                playing,
-                ..transport(state)
-            },
-        );
-    })
-    .into_listener()
-}
-
-fn step_frame(document: Entity, frames: i32) -> Listener<UIClick> {
-    (move |on: On<UIClick>, documents: Query<&ClipDocument>, mut previews: PreviewSignals| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
-        let Some(state) = documents.get_entity(document) else {
-            return;
-        };
-        let Some(rate) = state.facts.rate else {
-            return;
-        };
-        let frame = frame_at(state.time, rate).saturating_add_signed(frames);
-        let time = time_of_frame(frame, rate).min(state.facts.duration);
-        pause_at(state, document, time, &mut previews);
-    })
-    .into_listener()
-}
-
-fn toggle_looping(document: Entity) -> Listener<UIClick> {
-    (move |on: On<UIClick>, documents: Query<&mut ClipDocument>, mut previews: PreviewSignals| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
-        if let Some(mut state) = documents.get_entity(document) {
-            state.looping = !state.looping;
-            previews.trigger(document, transport(&state));
-        }
-    })
-    .into_listener()
-}
-
-fn set_rate(document: Entity, rate: f32) -> Listener<UIClick> {
-    (move |on: On<UIClick>, documents: Query<&mut ClipDocument>, mut previews: PreviewSignals| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
-        if let Some(mut state) = documents.get_entity(document) {
-            state.rate = rate;
-            previews.trigger(document, transport(&state));
-        }
-    })
-    .into_listener()
 }
 
 fn toggle_root_motion(document: Entity) -> Listener<UICheckboxChanged> {
@@ -197,17 +94,6 @@ fn toggle_skeleton(document: Entity) -> Listener<UICheckboxChanged> {
         if let Some(mut state) = documents.get_entity(document) {
             state.skeleton_gizmo = on.signal().checked;
             previews.trigger(document, SetSkeletonGizmo(state.skeleton_gizmo));
-        }
-    })
-    .into_listener()
-}
-
-fn scrub_clip(document: Entity) -> Listener<TimelineScrubbed> {
-    (move |on: On<TimelineScrubbed>,
-           documents: Query<&ClipDocument>,
-           mut previews: PreviewSignals| {
-        if let Some(state) = documents.get_entity(document) {
-            pause_at(state, document, on.signal().time, &mut previews);
         }
     })
     .into_listener()
@@ -349,29 +235,6 @@ fn check_row(
     checkbox
 }
 
-fn icon_button(
-    theme: &UITheme,
-    mark: char,
-    click: Listener<UIClick>,
-) -> (Listening<Pressable, UIClick>, Text) {
-    let size = theme.font_size_lg;
-    let vertical = (theme.control_height - theme.line_height(size)) / 2.0;
-    let horizontal = (theme.control_height - size) / 2.0;
-    (
-        theme
-            .pressable()
-            .solid()
-            .bordered()
-            .size(
-                UIValue::Px(theme.control_height),
-                UIValue::Px(theme.control_height),
-            )
-            .padding(UIRect::axes(vertical, horizontal))
-            .on_click(click),
-        icon(theme, mark, size),
-    )
-}
-
 fn fact(parent: &mut EntityCommandQueue, label: &str, theme: &UITheme) -> Entity {
     let mut row = parent.spawn_child(theme.row().gap(theme.spacing_sm).fixed());
     row.add_child(theme.label(label).muted().grow());
@@ -399,46 +262,7 @@ fn build_inspector(
 ) -> InspectorPanel {
     let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm));
     panel.add_child(title(theme, "Clip"));
-
-    let mut controls = panel.spawn_child(theme.row().gap(theme.spacing_xs).fixed());
-    let step_back = controls
-        .spawn_child(icon_button(
-            theme,
-            glyph::SKIP_BACK,
-            step_frame(document, -1),
-        ))
-        .entity();
-    let play = controls
-        .spawn_child(icon_button(theme, glyph::PLAY, toggle_playing(document)))
-        .entity();
-    let step_forward = controls
-        .spawn_child(icon_button(
-            theme,
-            glyph::SKIP_FORWARD,
-            step_frame(document, 1),
-        ))
-        .entity();
-    let looping = controls
-        .spawn_child(
-            theme
-                .button("Loop")
-                .ghost()
-                .on_click(toggle_looping(document)),
-        )
-        .entity();
-
-    let mut rate_row = panel.spawn_child(theme.row().gap(theme.spacing_xs).fixed());
-    let rates = RATES.map(|(rate, label)| {
-        rate_row
-            .spawn_child(
-                theme
-                    .button(label)
-                    .ghost()
-                    .on_click(set_rate(document, rate)),
-            )
-            .entity()
-    });
-
+    spawn_transport(&mut panel, document, theme);
     let root_motion = check_row(
         &mut panel,
         "Root motion",
@@ -446,11 +270,6 @@ fn build_inspector(
         theme,
     );
     InspectorPanel {
-        step_back,
-        play,
-        step_forward,
-        looping,
-        rates,
         root_motion,
         duration: fact(&mut panel, "Duration", theme),
         frames: fact(&mut panel, "Frames", theme),
@@ -477,7 +296,8 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
             selected_marker: None,
             tracks: Vec::new(),
         },
-        scrub_clip(document),
+        TransportTimeline { document },
+        scrub_transport(document),
         select_event(document),
         move_event(document),
     ))
@@ -540,11 +360,8 @@ pub(crate) fn sync_clip_panels(
     texts: Query<&mut UIText>,
     nodes: Query<&mut UINode>,
     checkboxes: Query<&mut UICheckbox>,
-    styles: Query<&mut UIInteractionStyle>,
-    disabled: Query<&UIDisabled>,
     assets: Res<AssetRegistry>,
     theme: Res<UITheme>,
-    mut cmd: CommandQueue,
 ) {
     let write_text = |entity: Entity, value: &str| {
         if let Some(mut text) = texts.get_entity(entity)
@@ -568,29 +385,12 @@ pub(crate) fn sync_clip_panels(
             checkbox.checked = checked;
         }
     };
-    let write_selected = |entity: Entity, selected: bool| {
-        let wanted = theme.interaction(ButtonVariant::Ghost, selected);
-        if let Some(mut style) = styles.get_entity(entity)
-            && style.normal != wanted.normal
-        {
-            **style = wanted;
-        }
-    };
     for (document, state, panels) in documents.iter() {
         let facts = &state.facts;
         let left = &panels.left;
         let inspector = &panels.inspector;
 
         if let Some(mut timeline) = timelines.get_entity(panels.timeline) {
-            if timeline.duration != facts.duration {
-                timeline.duration = facts.duration;
-            }
-            if timeline.rate != facts.rate {
-                timeline.rate = facts.rate;
-            }
-            if timeline.time != state.time {
-                timeline.time = state.time;
-            }
             if timeline.selection.is_some() {
                 timeline.selection = None;
             }
@@ -615,16 +415,6 @@ pub(crate) fn sync_clip_panels(
         write_checked(left.skeleton, state.skeleton_gizmo);
         write_line(left.scene_error, state.scene_error.as_deref().unwrap_or(""));
 
-        let mark = if state.playing {
-            glyph::PAUSE
-        } else {
-            glyph::PLAY
-        };
-        write_text(inspector.play, &mark.to_string());
-        write_selected(inspector.looping, state.looping);
-        for (button, (rate, _)) in inspector.rates.into_iter().zip(RATES) {
-            write_selected(button, rate == state.rate);
-        }
         write_checked(inspector.root_motion, state.root_motion);
 
         write_text(inspector.duration, &format!("{:.2} s", facts.duration));
@@ -646,32 +436,18 @@ pub(crate) fn sync_clip_panels(
             }
         }
         write_line(inspector.status, &document.status);
-
-        let no_clip = facts.duration <= 0.0;
-        let no_frames = no_clip || facts.rate.is_none();
-        for (button, off) in [
-            (inspector.step_back, no_frames),
-            (inspector.step_forward, no_frames),
-            (inspector.play, no_clip),
-            (inspector.looping, no_clip),
-        ] {
-            match (off, disabled.get_entity(button).is_some()) {
-                (true, false) => cmd.insert(UIDisabled, button),
-                (false, true) => cmd.remove::<UIDisabled>(button),
-                _ => {}
-            }
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::{
-        preview::ClipPreview,
+        preview::ClipPosing,
         tests::{
             bone, clip_fixture, clip_of, named_key, open_clip, report_bones, report_skeleton,
-            state, typed_key, write_broken_scene, write_clip, write_scene,
+            state, transport, typed_key, write_broken_scene, write_clip, write_scene,
         },
+        transport::{ClipTransport, TransportRow, sync_transport_rows, sync_transport_timelines},
     };
     use super::*;
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
@@ -679,8 +455,13 @@ mod tests {
         Changed, IntoSystem, ResMut, Resource, System, World, entity::hierarchy::ChildOf,
         events::event_channel::EventChannel,
     };
-    use concerto_editor::{hosted::testing::SceneFixture, inspector::PropertyCommits};
+    use concerto_editor::{
+        hosted::testing::SceneFixture,
+        inspector::PropertyCommits,
+        timeline::{TimelineScrubbed, time_of_frame},
+    };
     use concerto_foundation::assets::registry::AssetEntry;
+    use concerto_ui::interaction::UIDisabled;
     use concerto_ui::text_input::{UITextInputCancelled, UITextInputSubmitted};
     use concerto_window::input::actions::{ActionFired, ActionMap};
     use uuid::Uuid;
@@ -705,6 +486,8 @@ mod tests {
         f.add_delivery(apply_clip_event_fields.into_boxed_system());
         f.add_delivery(remove_clip_event.into_boxed_system());
         f.add_delivery(sync_clip_panels.into_boxed_system());
+        f.add_delivery(sync_transport_rows.into_boxed_system());
+        f.add_delivery(sync_transport_timelines.into_boxed_system());
         f.add_delivery(sync_clip_events.into_boxed_system());
         f.add_delivery(sync_clip_event_context.into_boxed_system());
         f
@@ -754,11 +537,19 @@ mod tests {
             &self.f.world
         }
 
-        fn preview(&self) -> &ClipPreview {
-            self.f
-                .scene_world(self.document)
-                .get_resource::<ClipPreview>()
-                .unwrap()
+        pub(super) fn transport(&self) -> &ClipTransport {
+            transport(&self.f, self.document)
+        }
+
+        fn transport_row(&mut self) -> TransportRow {
+            let document = self.document;
+            *self
+                .f
+                .world
+                .query::<&TransportRow, ()>()
+                .iter(&mut self.f.world)
+                .find(|row| row.document == document)
+                .expect("the transport was spawned")
         }
 
         pub(super) fn timeline(&self) -> &Timeline {
@@ -786,14 +577,6 @@ mod tests {
                 .is_some()
         }
 
-        fn selected(&self, entity: Entity) -> bool {
-            self.world()
-                .get_component_for_entity::<UIInteractionStyle>(entity)
-                .unwrap()
-                .normal
-                == UITheme::default().selection()
-        }
-
         fn checked(&self, entity: Entity) -> bool {
             self.world()
                 .get_component_for_entity::<UICheckbox>(entity)
@@ -816,30 +599,30 @@ mod tests {
             self.f.world.trigger_on(timeline, TimelineScrubbed { time });
         }
 
-        pub(super) fn until(&mut self, what: &str, done: impl Fn(&ClipDocument) -> bool) {
+        pub(super) fn until(&mut self, what: &str, done: impl Fn(&ClipTransport) -> bool) {
             let document = self.document;
-            self.f.frames_until(what, |f| done(state(f, document)));
+            self.f.frames_until(what, |f| done(transport(f, document)));
         }
 
-        fn until_previewed(&mut self, what: &str, done: impl Fn(&ClipPreview) -> bool) {
+        fn until_posed(&mut self, what: &str, done: impl Fn(&ClipPosing) -> bool) {
             let document = self.document;
             self.f.frames_until(what, |f| {
                 done(
                     f.scene_world(document)
-                        .get_resource::<ClipPreview>()
+                        .get_resource::<ClipPosing>()
                         .unwrap(),
                 )
             });
         }
 
         fn until_moving(&mut self) {
-            self.until("the head never moved", |state| state.time > 0.0);
+            self.until("the head never moved", |transport| transport.time > 0.0);
         }
 
         pub(super) fn paused_at(&mut self, time: f32) {
             self.scrub(time);
-            self.until("the seek never came back", |state| {
-                !state.playing && state.time == time
+            self.until("the seek never came back", |transport| {
+                !transport.playing && transport.time == time
             });
             self.f.frame();
         }
@@ -954,46 +737,15 @@ mod tests {
     fn a_clip_with_no_rate_says_so_and_disables_the_step_buttons() {
         let mut tab = tab_of_clip(&single_key_clip());
         tab.f.frame();
+        let row = tab.transport_row();
         let inspector = &tab.panels().inspector;
 
         assert_eq!(tab.text(inspector.frames).text, NO_VALUE);
         assert_eq!(tab.text(inspector.rate).text, NO_VALUE);
-        assert!(tab.disabled(inspector.step_back));
-        assert!(tab.disabled(inspector.step_forward));
-        assert!(!tab.disabled(inspector.play));
-        assert!(!tab.disabled(inspector.looping));
-    }
-
-    #[test]
-    fn a_clip_with_no_duration_disables_the_transport() {
-        let mut tab = tab_of_clip(&AnimationClip::default());
-        tab.f.frame();
-        let inspector = &tab.panels().inspector;
-
-        for button in [
-            inspector.step_back,
-            inspector.play,
-            inspector.step_forward,
-            inspector.looping,
-        ] {
-            assert!(tab.disabled(button));
-        }
-    }
-
-    #[test]
-    fn a_clip_with_frames_leaves_the_transport_enabled() {
-        let mut tab = walking_tab();
-        tab.f.frame();
-        let inspector = &tab.panels().inspector;
-
-        for button in [
-            inspector.step_back,
-            inspector.play,
-            inspector.step_forward,
-            inspector.looping,
-        ] {
-            assert!(!tab.disabled(button));
-        }
+        assert!(tab.disabled(row.step_back));
+        assert!(tab.disabled(row.step_forward));
+        assert!(!tab.disabled(row.play));
+        assert!(!tab.disabled(row.looping));
     }
 
     #[test]
@@ -1028,162 +780,6 @@ mod tests {
     }
 
     #[test]
-    fn play_pauses_and_plays_again() {
-        let mut tab = walking_tab();
-        tab.until_moving();
-        let play = tab.panels().inspector.play;
-        assert_eq!(tab.text(play).text, glyph::PAUSE.to_string());
-
-        tab.click(play);
-        tab.until("the clip never paused", |state| !state.playing);
-        tab.f.frame();
-        assert_eq!(tab.text(play).text, glyph::PLAY.to_string());
-
-        tab.click(play);
-        tab.until("the clip never played again", |state| state.playing);
-    }
-
-    #[test]
-    fn a_scrub_pauses_and_the_clip_stays_paused_after_it() {
-        let mut tab = walking_tab();
-        tab.until_moving();
-
-        tab.paused_at(4.0);
-        for _ in 0..5 {
-            tab.f.frame();
-        }
-
-        assert!(!tab.state().playing);
-        assert_eq!(tab.state().time, 4.0);
-        assert_eq!(tab.timeline().time, 4.0);
-        assert_eq!(tab.preview().time, 4.0);
-    }
-
-    #[test]
-    fn play_at_the_end_of_a_clip_that_does_not_loop_starts_again_from_zero() {
-        let mut tab = walking_tab();
-        let inspector = &tab.panels().inspector;
-        let (looping, play) = (inspector.looping, inspector.play);
-        tab.click(looping);
-        tab.paused_at(10.0);
-
-        tab.click(play);
-
-        tab.until("the clip never started again", |state| {
-            state.playing && state.time < 5.0
-        });
-    }
-
-    #[test]
-    fn play_on_the_last_frame_of_a_clip_ending_between_frames_starts_again_from_zero() {
-        let mut times: Vec<f32> = (0..=30).map(|frame| frame as f32 / 30.0).collect();
-        times.push(1.01);
-        let outputs = vec![glam::Vec3::ZERO; times.len()];
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            AnimationChannel::new(times, AnimationChanelOutput::Translation(outputs)),
-        );
-        let mut tab = tab_of_clip(&clip);
-        let inspector = &tab.panels().inspector;
-        let (looping, play) = (inspector.looping, inspector.play);
-        tab.click(looping);
-        tab.paused_at(1.0);
-
-        tab.click(play);
-
-        tab.until("the clip never started again", |state| {
-            state.playing && state.time < 0.5
-        });
-    }
-
-    #[test]
-    fn play_in_the_last_frame_of_a_sparse_clip_carries_on_to_the_end() {
-        let times: Vec<f32> = (0..=3).map(|key| key as f32).collect();
-        let outputs = vec![glam::Vec3::ZERO; times.len()];
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            AnimationChannel::new(times, AnimationChanelOutput::Translation(outputs)),
-        );
-        let mut tab = tab_of_clip(&clip);
-        let inspector = &tab.panels().inspector;
-        let (looping, play) = (inspector.looping, inspector.play);
-        tab.click(looping);
-        tab.paused_at(2.6);
-
-        tab.click(play);
-
-        tab.until("the clip never played", |state| state.playing);
-        assert!(tab.state().time >= 2.6);
-    }
-
-    #[test]
-    fn play_away_from_the_end_carries_on_from_where_it_is() {
-        let mut tab = walking_tab();
-        let inspector = &tab.panels().inspector;
-        let (looping, play) = (inspector.looping, inspector.play);
-        tab.click(looping);
-        tab.paused_at(4.0);
-
-        tab.click(play);
-
-        tab.until("the clip never played", |state| state.playing);
-        assert!(tab.state().time >= 4.0);
-    }
-
-    #[test]
-    fn a_step_pauses_and_moves_one_frame_from_the_frame_at_the_time() {
-        let mut tab = walking_tab();
-        tab.until_moving();
-        let inspector = &tab.panels().inspector;
-        let (back, forward) = (inspector.step_back, inspector.step_forward);
-        tab.scrub(2.01);
-        tab.until("the scrub never came back", |state| !state.playing);
-
-        tab.click(forward);
-        let next = time_of_frame(61, 30.0);
-        tab.until("the step forward never landed", |state| state.time == next);
-        assert!(!tab.state().playing);
-
-        tab.click(back);
-        let back_again = time_of_frame(60, 30.0);
-        tab.until("the step back never landed", |state| {
-            state.time == back_again
-        });
-    }
-
-    #[test]
-    fn a_step_while_playing_pauses() {
-        let mut tab = walking_tab();
-        tab.until_moving();
-        let forward = tab.panels().inspector.step_forward;
-
-        tab.click(forward);
-
-        tab.until("the step never paused", |state| !state.playing);
-    }
-
-    #[test]
-    fn a_step_stays_inside_the_clip() {
-        let mut tab = walking_tab();
-        let inspector = &tab.panels().inspector;
-        let (back, forward) = (inspector.step_back, inspector.step_forward);
-
-        tab.paused_at(0.0);
-        tab.click(back);
-        tab.f.frame();
-        tab.f.frame();
-        assert_eq!(tab.state().time, 0.0);
-
-        tab.paused_at(10.0);
-        tab.click(forward);
-        tab.f.frame();
-        tab.f.frame();
-        assert_eq!(tab.state().time, 10.0);
-    }
-
-    #[test]
     fn the_timeline_follows_the_clip_and_the_preview() {
         let mut tab = walking_tab();
 
@@ -1192,43 +788,7 @@ mod tests {
 
         tab.until_moving();
         tab.f.frame();
-        assert_eq!(tab.timeline().time, tab.state().time);
-    }
-
-    #[test]
-    fn a_rate_button_sets_the_rate_and_is_the_one_selected() {
-        let mut tab = walking_tab();
-        let rates = tab.panels().inspector.rates;
-        tab.f.frame();
-        assert!(tab.selected(rates[2]));
-
-        tab.click(rates[3]);
-        tab.f.frame();
-
-        assert_eq!(tab.state().rate, 2.0);
-        assert!(tab.selected(rates[3]));
-        assert!(!tab.selected(rates[2]));
-        tab.until_previewed("the rate never reached the preview", |preview| {
-            preview.rate == 2.0
-        });
-        assert!(tab.clean());
-    }
-
-    #[test]
-    fn loop_turns_off_and_on_and_shows_it() {
-        let mut tab = walking_tab();
-        let looping = tab.panels().inspector.looping;
-        tab.f.frame();
-        assert!(tab.selected(looping));
-
-        tab.click(looping);
-        tab.f.frame();
-
-        assert!(!tab.state().looping);
-        assert!(!tab.selected(looping));
-        tab.until_previewed("the loop flag never reached the preview", |preview| {
-            !preview.looping
-        });
+        assert_eq!(tab.timeline().time, tab.transport().time);
     }
 
     #[test]
@@ -1240,8 +800,8 @@ mod tests {
         tab.click(root_motion);
 
         assert!(tab.state().root_motion);
-        tab.until_previewed("root motion never reached the preview", |preview| {
-            preview.root_motion
+        tab.until_posed("root motion never reached the preview", |posing| {
+            posing.root_motion
         });
         assert!(tab.checked(root_motion));
     }
@@ -1255,8 +815,8 @@ mod tests {
         tab.click(skeleton);
 
         assert!(!tab.state().skeleton_gizmo);
-        tab.until_previewed("the gizmo flag never reached the preview", |preview| {
-            !preview.skeleton_gizmo
+        tab.until_posed("the gizmo flag never reached the preview", |posing| {
+            !posing.skeleton_gizmo
         });
         assert!(!tab.checked(skeleton));
     }
@@ -1391,15 +951,16 @@ mod tests {
         let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
         let mut tab = tab_of(f, &walk);
         let on_disk = tab.clip_bytes();
+        let row = tab.transport_row();
         let left = &tab.panels().left;
         let (skeleton, button) = (left.skeleton, tab.parent(left.scene));
         let inspector = &tab.panels().inspector;
         let buttons = [
-            inspector.play,
-            inspector.step_forward,
-            inspector.step_back,
-            inspector.looping,
-            inspector.rates[0],
+            row.play,
+            row.step_forward,
+            row.step_back,
+            row.looping,
+            row.speeds[0],
             inspector.root_motion,
             skeleton,
             button,
