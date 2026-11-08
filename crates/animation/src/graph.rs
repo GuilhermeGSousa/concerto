@@ -424,19 +424,20 @@ impl AnimationGraphState {
         self.graph_state.get_mut(node_index)
     }
 
-    pub(crate) fn get_state<T: 'static>(&self, node_index: &AnimationNodeIndex) -> Option<&T> {
-        self.graph_state
-            .get(node_index)
-            .and_then(|node_state| node_state.node_state.downcast_ref::<T>())
-    }
-
-    pub(crate) fn get_state_mut<T: 'static>(
+    pub(crate) fn reset_node(
         &mut self,
         node_index: &AnimationNodeIndex,
-    ) -> Option<&mut T> {
-        self.graph_state
-            .get_mut(node_index)
-            .and_then(|node_state| node_state.node_state.downcast_mut::<T>())
+        graphs: &AssetStore<AnimationGraph>,
+    ) {
+        let Some(node) = self
+            .get_animation_graph(graphs)
+            .and_then(|graph| graph.live_node(*node_index))
+        else {
+            return;
+        };
+        if let Some(active) = self.graph_state.get_mut(node_index) {
+            node.reset(&mut active.node_state);
+        }
     }
 
     pub(crate) fn for_each_state_mut<N: AnimationNode>(
