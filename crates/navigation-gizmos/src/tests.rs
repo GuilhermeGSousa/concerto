@@ -9,17 +9,21 @@ use concerto_ecs::{
     component::scene::SceneEntityRef,
     system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
 };
-use concerto_foundation::transform::{GlobalTransform, Transform};
+use concerto_foundation::{
+    assets::{asset_server::AssetServer, handle::AssetHandle},
+    transform::{GlobalTransform, Transform},
+};
 use concerto_navigation::{
-    NavGraph, NavLink, NavLinks, NavPoint, NavPointRecord, NavigationPlugin,
+    NavGraph, NavLink, NavLinks, NavMesh, NavMeshComponent, NavMeshData, NavMeshSettings, NavPoint,
+    NavPointRecord, NavPolygon, NavigationPlugin,
 };
 use glam::{Mat4, Quat, Vec3};
 
 use crate::{
     NavigationGizmos, NavigationGizmosPlugin,
     gizmos::{
-        DISABLED_COLOR, ENABLED_COLOR, LINK_COLOR, NavShape, ROUTE_COLOR, graph_shapes,
-        link_shapes, route_shapes,
+        DISABLED_COLOR, ENABLED_COLOR, LINK_COLOR, MESH_COLOR, MESH_LIFT, NavShape, ROUTE_COLOR,
+        graph_shapes, link_shapes, mesh_shapes, route_shapes,
     },
 };
 
@@ -188,6 +192,71 @@ fn a_route_is_a_line_from_the_agent_through_each_remaining_waypoint() {
     assert_ne!(ROUTE_COLOR, LINK_COLOR);
 }
 
+fn two_quads() -> NavMeshData {
+    NavMeshData {
+        vertices: vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 1.0),
+            Vec3::new(2.0, 0.0, 1.0),
+        ],
+        polygons: vec![
+            NavPolygon {
+                vertices: vec![0, 1, 4, 3],
+            },
+            NavPolygon {
+                vertices: vec![1, 2, 5, 4],
+            },
+        ],
+    }
+}
+
+fn is_edge(shape: &NavShape, a: Vec3, b: Vec3) -> bool {
+    let lift = Vec3::Y * MESH_LIFT;
+    match *shape {
+        NavShape::Line { start, end, color } => {
+            color == MESH_COLOR
+                && ((start.distance(a + lift) < EPS && end.distance(b + lift) < EPS)
+                    || (start.distance(b + lift) < EPS && end.distance(a + lift) < EPS))
+        }
+        NavShape::Circle { .. } => false,
+    }
+}
+
+#[test]
+fn a_mesh_draws_each_polygon_edge_once_just_above_it() {
+    let data = two_quads();
+
+    let shapes = mesh_shapes(&data);
+
+    assert_eq!(shapes.len(), 7, "two quads share one of their eight edges");
+    let shared = [data.vertices[1], data.vertices[4]];
+    assert_eq!(
+        shapes
+            .iter()
+            .filter(|shape| is_edge(shape, shared[0], shared[1]))
+            .count(),
+        1
+    );
+    for polygon in &data.polygons {
+        let corners: Vec<Vec3> = polygon
+            .vertices
+            .iter()
+            .map(|index| data.vertices[*index as usize])
+            .collect();
+        for (index, corner) in corners.iter().enumerate() {
+            let next = corners[(index + 1) % corners.len()];
+            assert!(shapes.iter().any(|shape| is_edge(shape, *corner, next)));
+        }
+    }
+    const { assert!(MESH_LIFT > 0.0) };
+    for other in [ENABLED_COLOR, DISABLED_COLOR, LINK_COLOR, ROUTE_COLOR] {
+        assert_ne!(MESH_COLOR, other);
+    }
+}
+
 #[test]
 fn a_route_with_no_waypoints_left_draws_nothing() {
     assert!(route_shapes(Vec3::ZERO, &[]).is_empty());
@@ -246,6 +315,17 @@ impl Stage {
             .segment_count()
     }
 
+    fn show_only_the_mesh(&mut self) {
+        let shown = self.world().get_resource_mut::<NavigationGizmos>().unwrap();
+        shown.graph = false;
+        shown.routes = false;
+    }
+
+    fn add_mesh(&mut self, data: NavMeshData) -> AssetHandle<NavMesh> {
+        let server = self.world().get_resource::<AssetServer>().unwrap().clone();
+        server.add(NavMesh::baked(NavMeshSettings::new(), data))
+    }
+
     fn expected_segments(&mut self) -> usize {
         segments(&graph_shapes(
             self.world().get_resource::<NavGraph>().unwrap(),
@@ -274,6 +354,54 @@ fn with_the_graph_flag_off_nothing_is_drawn() {
         .get_resource_mut::<NavigationGizmos>()
         .unwrap()
         .graph = false;
+    stage.tick();
+
+    assert_eq!(stage.segments(), 0);
+}
+
+#[test]
+fn a_loaded_mesh_is_drawn_once_however_many_components_hold_it() {
+    let mut stage = Stage::new();
+    stage.show_only_the_mesh();
+    let handle = stage.add_mesh(two_quads());
+    stage.world().spawn(NavMeshComponent {
+        handle: handle.clone(),
+    });
+    stage.world().spawn(NavMeshComponent { handle });
+
+    stage.tick();
+    stage.tick();
+
+    assert_eq!(stage.segments(), 7);
+}
+
+#[test]
+fn with_the_mesh_flag_off_no_mesh_is_drawn() {
+    let mut stage = Stage::new();
+    stage.show_only_the_mesh();
+    let handle = stage.add_mesh(two_quads());
+    stage.world().spawn(NavMeshComponent { handle });
+    stage
+        .world()
+        .get_resource_mut::<NavigationGizmos>()
+        .unwrap()
+        .mesh = false;
+
+    stage.tick();
+    stage.tick();
+
+    assert_eq!(stage.segments(), 0);
+}
+
+#[test]
+fn a_mesh_that_has_not_loaded_draws_nothing() {
+    let mut stage = Stage::new();
+    stage.show_only_the_mesh();
+    stage.world().spawn(NavMeshComponent {
+        handle: AssetHandle::default(),
+    });
+
+    stage.tick();
     stage.tick();
 
     assert_eq!(stage.segments(), 0);

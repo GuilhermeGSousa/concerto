@@ -1219,9 +1219,10 @@ NPC that patrols a square of four points this way.
 The `concerto-navigation-gizmos` crate, which a game adds itself, draws each
 point as a ring with a line along its facing, green when enabled and grey when
 not, each link as a line with an arrowhead on a one-way link, and the route
-each agent has left. Register `NavigationGizmosPlugin` after `DefaultPlugins`;
-the `NavigationGizmos` resource turns the graph and routes layers off. The
-graph is drawn in the editor's scene view as well, while points are placed.
+each agent has left, and the polygon edges of each loaded navmesh in amber.
+Register `NavigationGizmosPlugin` after `DefaultPlugins`; the
+`NavigationGizmos` resource turns the graph, routes and mesh layers off. The
+graph and the navmesh are drawn in the editor's scene view as well.
 Its [README](../../crates/navigation-gizmos/README.md) says more.
 
 ### Limits
