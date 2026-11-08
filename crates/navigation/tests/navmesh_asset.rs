@@ -618,3 +618,82 @@ fn an_agent_sent_elsewhere_while_its_navmesh_loads_stops_waits_and_then_routes_o
     assert_eq!(route.planned_on(), Some(id));
     assert_eq!(route.destination(), east);
 }
+
+enum MeshSwap {
+    OnTheSameHolder,
+    OnANewHolder,
+}
+
+fn a_route_is_kept_while_the_next_mesh_loads(swap: MeshSwap) {
+    let mut project = Project::new("agent-keeps-route");
+    let level = project.save("level", &scene(vec![floor(), obstacle()]));
+    let next = project.save("navmesh", &navmesh_of(&[level]));
+    let mut app = app();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    server.set_derived_cache(DerivedDataCache::in_project(&project.root));
+    server.publish_content_source(project.content_root(), project.registry.clone());
+    app.insert_resource(project.registry.clone());
+    let first = server.add(NavMesh::baked(NavMeshSettings::new(), floor_data()));
+    let first_id = first.id();
+    let world = app.main_mut().world_mut();
+    world.spawn((Transform::from_translation(WEST), NavPoint::default()));
+    let east = world.spawn((Transform::from_translation(EAST), NavPoint::default()));
+    let agent = world.spawn((Transform::from_translation(WEST), NavAgent::new()));
+    let holder = world.spawn(NavMeshComponent { handle: first });
+    app.update();
+    app.update();
+    app.main_mut()
+        .world_mut()
+        .insert(NavDestination::to_point(east), agent);
+    app.update();
+    assert_eq!(
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity::<NavRoute>(agent)
+            .map(NavRoute::planned_on),
+        Some(Some(first_id))
+    );
+
+    let handle = server.load::<NavMesh>(next);
+    let world = app.main_mut().world_mut();
+    match swap {
+        MeshSwap::OnTheSameHolder => world.insert(NavMeshComponent { handle }, holder),
+        MeshSwap::OnANewHolder => {
+            world.despawn(holder);
+            world.spawn(NavMeshComponent { handle });
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let route = loop {
+        app.update();
+        let world = app.main_mut().world_mut();
+        assert!(
+            world
+                .get_component_for_entity::<NavDestination>(agent)
+                .is_some(),
+            "the agent gave up before the next navmesh landed"
+        );
+        let route = world
+            .get_component_for_entity::<NavRoute>(agent)
+            .cloned()
+            .expect("the agent kept its route while the next navmesh loaded");
+        if route.planned_on() == Some(next) {
+            break route;
+        }
+        assert_eq!(route.planned_on(), Some(first_id));
+        assert!(Instant::now() < deadline, "the navmesh never landed");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+
+    assert_eq!(route.destination(), east);
+}
+
+#[test]
+fn a_route_is_kept_while_its_holders_next_mesh_loads() {
+    a_route_is_kept_while_the_next_mesh_loads(MeshSwap::OnTheSameHolder);
+}
+
+#[test]
+fn a_route_is_kept_while_a_new_holders_mesh_loads() {
+    a_route_is_kept_while_the_next_mesh_loads(MeshSwap::OnANewHolder);
+}

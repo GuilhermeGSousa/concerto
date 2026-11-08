@@ -1146,9 +1146,11 @@ the graph still names the destinations, and a disabled point is still never
 reached. With no mesh loaded, agents walk the graph. While a
 `NavMeshComponent`'s mesh is still on its way and no mesh is loaded, an agent
 that has no route yet, or is given a new destination, stops and waits with its
-destination kept, and plans once the mesh lands; a route already being walked
-to an unchanged destination is kept until then; a mesh whose load failed, or that was never loaded, leaves agents on the
-graph, as does a loaded mesh with no polygons.
+destination kept, and plans once the mesh lands. A route already being walked
+to an unchanged destination is kept as it is until then, even when the graph is
+rebuilt or the mesh it was planned on goes away, and is planned again on the
+mesh once it lands. A mesh whose load failed, or that was never loaded, leaves
+agents on the graph, as does a loaded mesh with no polygons.
 
 ### Agents
 
