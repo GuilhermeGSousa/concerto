@@ -15,7 +15,7 @@ pub struct RootMotionWarp {
     pub target: Name,
     /// The span of the clip the warp works over, or the whole clip when `None`.
     pub window: Option<ClipRange>,
-    /// Whether the horizontal translation is warped.
+    /// Whether the horizontal translation is corrected; off, a yaw correction still turns the clip's later path, so the end point can move.
     pub translation: bool,
     /// Whether the yaw is warped.
     pub rotation: bool,

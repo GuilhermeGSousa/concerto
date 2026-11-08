@@ -257,7 +257,8 @@ A graph is a tree of nodes under a result node:
 - **Clip** plays one `AnimationClip`, looping or once
   (`AnimationClipNode::new(clip).with_play_mode(PlayOnce)`), at the rate set
   with `with_play_rate` times the float parameter whose `Name` is given to
-  `with_play_rate_param`. Root motion scales with the rate.
+  `with_play_rate_param`. Root motion scales with the rate. `with_warp`
+  bends its root motion onto a target (see [Root motion](#root-motion)).
 - **Blend** mixes its inputs, each in proportion to its node weight, set
   with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
   at 1.0, so inputs mix equally; an input at weight 0 is left out, and with
@@ -740,6 +741,50 @@ Height is always the capsule's. Do not parent the character to its capsule: it
 would move twice. The [crate's README](../../crates/motion-matching/README.md)
 has the fields, what the skeleton has to be, and what each method promises at a
 wall.
+
+Warping root motion lands a clip on a target. An interaction clip, such as
+opening a door, has to end with the character on a spot in the level. Give its
+**Clip** node a `RootMotionWarp`, naming the blackboard param that holds the
+target and, if you like, the window of the clip it works over; without one it
+works over the whole clip. The game puts a `WarpTarget` under that param:
+
+```rust
+use concerto::animation::clip::ClipRange;
+use concerto::animation::node::{
+    AnimationClipNode, AnimationPlayMode, RootMotionWarp, WarpTarget,
+};
+
+let node = AnimationClipNode::new(open_door)
+    .with_play_mode(AnimationPlayMode::PlayOnce)
+    .with_warp(RootMotionWarp::new(name!("door")).with_window(ClipRange::new(0.2, 1.1)));
+
+player.set_param(
+    name!("door"),
+    WarpTarget {
+        position: handle.translation,
+        rotation: handle.rotation,
+    },
+);
+```
+
+Each frame in the window, the node predicts where the clip's root motion would
+leave the skeleton at the window's end, and adds the share of the error that
+this frame's time is of the time left in the window. The last frame closes all
+of it. The target is where the skeleton entity's ground point ends, with its yaw
+about +Y; the target's height, pitch and roll are ignored. That assumes the
+skeleton stands at the character's origin, as above; one off to the side misses
+a little whenever the yaw is corrected. A target that moves is followed, since
+the warp aims again every frame. `with_translation(false)` or
+`with_rotation(false)` turns off the correction of that part only. A yaw
+correction still turns the rest of the clip's path, so with translation off the
+character does not, in general, end where the unwarped clip would. Blends and
+transitions scale the correction with the clip's weight, so the landing is exact
+only when the clip reaches the root unblended at the window's end. With no
+target set, or outside the window, the clip gives its plain root motion.
+
+The warp only bends the root motion. For now the character lands on the target
+only under `Synchronization` at a `data_factor` of 1; the other methods
+reconcile it with a capsule that knows nothing of the target (#402).
 
 ### Clip events
 

@@ -614,7 +614,9 @@ joint, so the space is the one the root's parent has. The root's parent must
 have no transform of its own: the bake treats a parentless joint's local pose as
 model space, and the simulation bone stands at Y = 0 in it, so a transform there
 puts the root bone somewhere the database never saw and moves the character the
-wrong way. UAL's `Armature` has none, and LAFAN1 has no armature.
+wrong way. UAL's `Armature` has none, and LAFAN1 has no armature. A clip
+node's root motion warp predicts the character's placement in this same space,
+read from the same `GlobalTransform`.
 
 A BVH scene puts `SkeletonComponent` on the root joint itself, so its space is
 the root's own global, which holds the rotation written to the root. That is on
