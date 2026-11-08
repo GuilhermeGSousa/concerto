@@ -676,3 +676,64 @@ fn a_disabled_destination_is_unreachable_on_the_mesh() {
     );
     assert!(route(&mut app, agent).is_none());
 }
+
+#[test]
+fn moving_the_destination_mid_route_replans_a_mesh_route_toward_it() {
+    let Across {
+        mut app,
+        agent,
+        east,
+        ..
+    } = across();
+    spawn_mesh(&mut app);
+    world(&mut app).insert(NavDestination::to_point(east), agent);
+    for _ in 0..5 {
+        app.update();
+    }
+    let moved = Vec3::new(3.0, 0.0, 3.0);
+
+    world(&mut app)
+        .get_component_for_entity_mut::<Transform>(east)
+        .unwrap()
+        .translation = moved;
+    app.update();
+    app.update();
+
+    let route = route(&mut app, agent).unwrap();
+    assert!(route.planned_on().is_some());
+    assert!(
+        route.remaining().last().unwrap().distance(moved) < 0.1,
+        "{route:?}"
+    );
+}
+
+#[test]
+fn disabling_the_destination_mid_route_makes_a_mesh_route_unreachable() {
+    let Across {
+        mut app,
+        agent,
+        east,
+        ..
+    } = across();
+    spawn_mesh(&mut app);
+    world(&mut app).insert(NavDestination::to_point(east), agent);
+    for _ in 0..5 {
+        app.update();
+    }
+
+    world(&mut app)
+        .get_component_for_entity_mut::<NavPoint>(east)
+        .unwrap()
+        .enabled = false;
+    app.update();
+    app.update();
+
+    assert_eq!(
+        events::<NavUnreachable>(&app),
+        vec![NavUnreachable {
+            agent,
+            target: NavTarget::Point(east),
+        }]
+    );
+    assert!(route(&mut app, agent).is_none());
+}

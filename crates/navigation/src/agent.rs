@@ -219,7 +219,7 @@ fn mesh_path(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<
     })
 }
 
-/// Plans a route for each agent whose destination changed, whose graph route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now.
+/// Plans a route for each agent whose destination changed, whose route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now.
 pub fn plan_nav_routes(
     agents: Query<
         (
@@ -257,9 +257,7 @@ pub fn plan_nav_routes(
         .min_by_key(|mesh| mesh.entity.index());
     let mesh_id = mesh.as_ref().map(|mesh| mesh.id);
     for (agent, destination, transform, route, steering) in agents.iter() {
-        let stale = route.is_some_and(|route| {
-            route.planned_on != mesh_id || (route.planned_on.is_none() && graph.is_changed())
-        });
+        let stale = route.is_some_and(|route| route.planned_on != mesh_id || graph.is_changed());
         if !destination.is_changed() && !stale {
             continue;
         }

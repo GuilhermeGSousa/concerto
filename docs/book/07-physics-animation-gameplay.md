@@ -1156,8 +1156,8 @@ or `NavDestination::to_anchor(name)`, at the agent's speed, or at another with
 `.with_speed(speed)` for that request alone. On a navmesh, the agent plans from
 where it stands, through the mesh's corners, to the point. On the graph, it
 plans from the enabled point nearest it. It plans again when the destination
-changes, when the graph is rebuilt under a route planned on the graph, and when
-the mesh that is loaded is not the one its route was planned on: a mesh
+changes, when the graph is rebuilt under its route, as when its point moves or
+is disabled, and when the mesh that is loaded is not the one its route was planned on: a mesh
 landing, being swapped, or its component removed. `NavRoute::planned_on()`
 names that mesh, or `None` for the graph. Remove the destination, or the `NavAgent`, to stop
 it mid-route: its velocity drops to zero, it keeps its facing, and its route is

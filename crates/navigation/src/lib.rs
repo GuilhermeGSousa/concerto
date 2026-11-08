@@ -10,8 +10,8 @@ mod query;
 mod scene_colliders;
 
 pub use agent::{
-    NavAgent, NavArrived, NavDestination, NavRoute, NavSteering, NavTarget, NavUnreachable,
-    plan_nav_routes, steer_nav_agents, stop_nav_agents,
+    MeshChoiceWarned, NavAgent, NavArrived, NavDestination, NavRoute, NavSteering, NavTarget,
+    NavUnreachable, plan_nav_routes, steer_nav_agents, stop_nav_agents,
 };
 pub use asset::NavMesh;
 pub use bake::bake;
