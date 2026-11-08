@@ -47,6 +47,7 @@ use panels::{
 use preview::{
     ClipPreviewBones, SetClipTransport, ShowClip, ShowClipScene, ShownBone, clip_preview,
 };
+use rig::RetargetRigEditorPlugin;
 use save::{restore_clip_events, save_clip};
 use transport::{
     ClipTransport, TransportPlugin, follow_transport_progress, sync_transport_rows,
@@ -244,7 +245,10 @@ pub(crate) fn settle_edit(
     }
 }
 
-fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
+pub(crate) fn default_scene<'a>(
+    clip: &AssetEntry,
+    assets: &'a AssetRegistry,
+) -> Option<&'a AssetEntry> {
     assets
         .of_type::<Scene>()
         .find(|entry| entry.name() == "scene" && entry.folder() == clip.folder())
@@ -377,10 +381,11 @@ impl Plugin for AnimationClipEditorPlugin {
     }
 }
 
-/// Adds the clip editor and the transport it plays clips with to the editor's `App`.
+/// Adds the clip and rig editors and the transport they play clips with to the editor's `App`.
 pub fn install(app: &mut App) {
     app.register_plugin(TransportPlugin)
-        .register_plugin(AnimationClipEditorPlugin);
+        .register_plugin(AnimationClipEditorPlugin)
+        .register_plugin(RetargetRigEditorPlugin);
 }
 
 fn install_event_keys(app: &mut App) {
@@ -1105,6 +1110,7 @@ mod tests {
         });
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
             .register_plugin(TimePlugin)
             .register_plugin(WindowPlugin)
             .register_plugin(HostedPlugin)

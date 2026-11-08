@@ -94,7 +94,7 @@ fn pause_at(transport: &ClipTransport, document: Entity, time: f32, previews: &m
     previews.trigger(document, SeekClip(time));
 }
 
-fn at_the_end(transport: &ClipTransport) -> bool {
+pub(crate) fn at_the_end(transport: &ClipTransport) -> bool {
     let duration = transport.duration;
     let last_frame = transport
         .rate

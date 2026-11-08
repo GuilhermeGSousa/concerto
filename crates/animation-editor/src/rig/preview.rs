@@ -194,8 +194,49 @@ impl RigSides {
     }
 }
 
+#[cfg(test)]
+impl RigSides {
+    fn side(&self, side: RigSide) -> &ShownSide {
+        match side {
+            RigSide::Source => &self.source,
+            RigSide::Target => &self.target,
+        }
+    }
+
+    pub(crate) fn skeleton_of(&self, side: RigSide) -> Option<AssetId> {
+        Some(self.side(side).stage.as_ref()?.skeleton_id)
+    }
+
+    pub(crate) fn root_of(&self, side: RigSide) -> Option<Entity> {
+        Some(self.side(side).stage.as_ref()?.root)
+    }
+
+    pub(crate) fn offset_of(&self, side: RigSide) -> f32 {
+        self.side(side).offset
+    }
+
+    pub(crate) fn root_bone_of(&self, side: RigSide) -> Option<usize> {
+        self.side(side).root
+    }
+
+    pub(crate) fn colors_of(&self, side: RigSide) -> &[Color] {
+        &self.side(side).colors
+    }
+}
+
+#[cfg(test)]
+impl RigPosing {
+    pub(crate) fn retargets(&self) -> bool {
+        self.retarget.is_some()
+    }
+
+    pub(crate) fn mode(&self) -> RigPreviewMode {
+        self.mode
+    }
+}
+
 #[derive(Resource)]
-struct RigPosing {
+pub(crate) struct RigPosing {
     mode: RigPreviewMode,
     root_motion: bool,
     bones: bool,

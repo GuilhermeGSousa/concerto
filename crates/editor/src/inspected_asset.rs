@@ -101,6 +101,25 @@ impl Plugin for InspectedAssetPlugin {
     }
 }
 
+/// The systems of [`InspectedAssetSystems`] in their order, for a fixture that runs systems by hand.
+#[cfg(any(test, feature = "testing"))]
+pub fn inspected_asset_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
+    use concerto_ecs::IntoSystem;
+    vec![
+        follow_inspected_edits.into_boxed_system(),
+        save_inspected_assets.into_boxed_system(),
+        load_inspected_assets.into_boxed_system(),
+        follow_inspected_skeleton.into_boxed_system(),
+    ]
+}
+
+/// Adds [`InspectedAssetPlugin`]'s listeners to `world`, for a fixture that runs systems by hand.
+#[cfg(any(test, feature = "testing"))]
+pub fn install_inspected_listeners(world: &mut concerto_ecs::World) {
+    world.add_listener(restore_discarded_value);
+    world.add_listener(clear_status_on_edit);
+}
+
 pub(crate) fn register_inspected_kinds(
     mut opened: EventReader<SceneOpened>,
     hosted: Query<&HostedApp>,

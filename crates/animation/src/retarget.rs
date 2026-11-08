@@ -8,7 +8,7 @@ use concerto_mesh::{
     JointName, JointPose, ReflectSkeletonSource, Skeleton, SkeletonError, SkeletonSource,
 };
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Mat4, Quat, Vec3};
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ use crate::{
 
 /// A skeleton described for retargeting: its named bone chains, its retarget root and motion root, and the pose it is aligned in.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
-#[reflect(SkeletonSource)]
+#[reflect(SkeletonSource, Default)]
 pub struct RetargetRig {
     pub skeleton: AssetHandle<Skeleton>,
     pub root: JointName,

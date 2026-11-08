@@ -1,7 +1,7 @@
 # concerto-animation-editor
 
-The asset editor of an `AnimationClip`, and the clip transport widget it plays
-clips with, as an extension of `concerto-editor`.
+The asset editors of an `AnimationClip` and of a `RetargetRig`, and the clip
+transport widget they play clips with, as an extension of `concerto-editor`.
 Only editor crates depend on it. `cargo concerto new` writes this entry into a new
 project. A game made without it adds it to its own `Cargo.toml`, and
 `cargo concerto editor <dir> --update` writes the call into the game's generated
@@ -12,10 +12,14 @@ project. A game made without it adds it to its own `Cargo.toml`, and
 plugins = [{ package = "concerto-animation-editor", install = "concerto_animation_editor::install" }]
 ```
 
-`install` adds two plugins: `TransportPlugin`, the transport widget below, and
+`install` adds three plugins: `TransportPlugin`, the transport widget below;
 `AnimationClipEditorPlugin`, which registers `AnimationClipEditor` as an asset
-editor and forwards what its preview reports. A game that doesn't list it has
-no clip tab: a clip stays selected in the content browser and opens nothing. Listing
+editor and forwards what its preview reports; and `RetargetRigEditorPlugin`,
+which registers `RetargetRigEditor` as a creatable asset editor and registers
+`RetargetRig` and `AnimationClip` in the editor's `AssetServer`, so a rig tab can
+pick both. A game that doesn't list it has no clip or rig tab: a clip stays
+selected in the content browser and opens nothing, and a rig opens in the
+generic inspector. Listing
 `concerto-motion-matching-editor` doesn't bring it, so a game that wants both
 lists both.
 
