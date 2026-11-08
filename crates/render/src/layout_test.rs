@@ -16,7 +16,3 @@ pub(crate) fn words(bytes: &[u8]) -> Vec<u32> {
 pub(crate) fn float_words(values: &[f32]) -> Vec<u32> {
     values.iter().map(|value| value.to_bits()).collect()
 }
-
-pub(crate) fn gpu<T, U: From<T>>(value: T) -> U {
-    U::from(value)
-}

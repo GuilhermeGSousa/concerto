@@ -36,7 +36,6 @@ pub mod render_asset;
 pub mod resources;
 pub mod sets;
 pub mod shader;
-pub mod shader_types;
 pub mod shadow_pipeline;
 pub mod systems;
 pub(crate) mod viewport_clear;

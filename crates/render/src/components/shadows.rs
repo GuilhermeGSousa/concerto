@@ -29,7 +29,6 @@ use crate::{
     layouts::LightingLayout,
     queue::RenderQueue,
     render_asset::{render_mesh::RenderMesh, RenderAssets},
-    shader_types::GpuMat4,
     shadow_pipeline::ShadowPipeline,
 };
 
@@ -342,18 +341,18 @@ impl RenderShadowViewProjs {
 fn identity_view_projs() -> Vec<u8> {
     let mut bytes = UniformBuffer::new(Vec::new());
     bytes
-        .write(&[GpuMat4::from(Mat4::IDENTITY); MAX_SHADOW_CASTERS as usize])
+        .write(&[Mat4::IDENTITY; MAX_SHADOW_CASTERS as usize])
         .unwrap();
     bytes.into_inner()
 }
 
 fn view_proj_offset(slot: u32) -> u64 {
-    GpuMat4::SHADER_SIZE.get() * slot as u64
+    Mat4::SHADER_SIZE.get() * slot as u64
 }
 
 fn view_proj_bytes(view_proj: Mat4) -> Vec<u8> {
     let mut bytes = UniformBuffer::new(Vec::new());
-    bytes.write(&GpuMat4::from(view_proj)).unwrap();
+    bytes.write(&view_proj).unwrap();
     bytes.into_inner()
 }
 
@@ -554,7 +553,7 @@ pub(crate) fn update_shadow_view_proj(
 }
 
 fn shadow_view_proj(light: &RenderLight) -> Mat4 {
-    let direction = light.direction();
+    let direction = light.direction;
     let up = shadow_up_vector(direction);
 
     if light.light_type == LightType::Directional.index() {
@@ -571,7 +570,7 @@ fn shadow_view_proj(light: &RenderLight) -> Mat4 {
         );
         proj * view
     } else {
-        let translation = light.translation();
+        let translation = light.translation;
         let view = glam::camera::rh::view::look_at_mat4(translation, translation + direction, up);
         let fov = 2.0 * light.cos_cone_angle.clamp(-1.0, 1.0).acos();
         let proj = glam::camera::rh::proj::directx::perspective(

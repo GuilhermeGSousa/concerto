@@ -18,7 +18,7 @@ concerto-window.workspace = true
 concerto-render-macros.workspace = true
 bitflags = "2.9.1"
 encase = "0.13"
-glam.workspace = true
+glam = { workspace = true, features = ["encase-013"] }
 bytemuck = { version = "1.22.0", features = ["derive"] }
 env_logger = "0.11.6"
 log = "0.4.26"

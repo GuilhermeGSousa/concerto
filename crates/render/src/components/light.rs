@@ -17,7 +17,7 @@ use encase::{ShaderSize, ShaderType, UniformBuffer};
 use glam::Vec3;
 use wgpu::{util::DeviceExt, Buffer};
 
-use crate::{components::render_entity::RenderEntity, queue::RenderQueue, shader_types::GpuVec3};
+use crate::{components::render_entity::RenderEntity, queue::RenderQueue};
 
 const MAX_LIGHTS: usize = 128;
 
@@ -181,10 +181,10 @@ pub(crate) struct RenderShadowsEnabled(pub(crate) bool);
 
 #[derive(ShaderType, Clone, Copy, PartialEq)]
 pub struct RenderLight {
-    pub(crate) translation: GpuVec3,
+    pub(crate) translation: Vec3,
     pub(crate) intensity: f32,
     pub(crate) color: LinearRgba,
-    pub(crate) direction: GpuVec3,
+    pub(crate) direction: Vec3,
     pub(crate) light_type: u32,
 
     // Spotlight
@@ -195,9 +195,9 @@ pub struct RenderLight {
 
 impl RenderLight {
     fn synced_with(mut self, light: &Light, transform: &GlobalTransform) -> Self {
-        self.direction = (-(transform.rotation() * Vec3::Z)).into();
+        self.direction = -(transform.rotation() * Vec3::Z);
         self.color = light.color.to_linear();
-        self.translation = transform.translation().into();
+        self.translation = transform.translation();
         self.intensity = light.intensity;
         self.light_type = light.light_type.index();
         self.cos_cone_angle = match &light.light_type {
@@ -208,20 +208,12 @@ impl RenderLight {
         self
     }
 
-    pub(crate) fn translation(&self) -> Vec3 {
-        self.translation.into()
-    }
-
-    pub(crate) fn direction(&self) -> Vec3 {
-        self.direction.into()
-    }
-
     pub(crate) fn zeroed() -> Self {
         Self {
-            translation: Vec3::ZERO.into(),
+            translation: Vec3::ZERO,
             intensity: 0.0,
             color: LinearRgba::TRANSPARENT,
-            direction: Vec3::ZERO.into(),
+            direction: Vec3::ZERO,
             light_type: 0,
             cos_cone_angle: 0.0,
             shadow_layer: -1,
@@ -401,7 +393,7 @@ pub(crate) fn extract_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout_test::{float_words, gpu, uniform_words};
+    use crate::layout_test::{float_words, uniform_words};
     use concerto_app::extractor::extract;
     use concerto_app::schedule_groups::Extract;
     use concerto_ecs::{
@@ -420,10 +412,10 @@ mod tests {
     #[test]
     fn render_light_keeps_its_wgsl_layout() {
         let light = RenderLight {
-            translation: gpu(Vec3::new(1.0, 2.0, 3.0)),
+            translation: Vec3::new(1.0, 2.0, 3.0),
             intensity: 4.0,
             color: LinearRgba::new(5.0, 6.0, 7.0, 8.0),
-            direction: gpu(Vec3::new(9.0, 10.0, 11.0)),
+            direction: Vec3::new(9.0, 10.0, 11.0),
             light_type: 12,
             cos_cone_angle: 13.0,
             shadow_layer: -2,

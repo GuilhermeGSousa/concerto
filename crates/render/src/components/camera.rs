@@ -30,7 +30,6 @@ use crate::{
     queue::RenderQueue,
     render_asset::{render_texture::RenderTexture, RenderAssets},
     resources::RenderContext,
-    shader_types::{GpuMat4, GpuVec3, GpuVec4},
 };
 
 #[rustfmt::skip]
@@ -215,21 +214,21 @@ impl Default for Camera {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, ShaderType)]
 pub struct CameraUniform {
-    view_pos: GpuVec3,
-    view_proj: GpuMat4,
-    pub(crate) fog_color: GpuVec4,
-    pub(crate) fog_params: GpuVec4,
-    pub(crate) ambient: GpuVec4,
+    view_pos: Vec3,
+    view_proj: Mat4,
+    pub(crate) fog_color: Vec4,
+    pub(crate) fog_params: Vec4,
+    pub(crate) ambient: Vec4,
 }
 
 impl CameraUniform {
     pub fn new() -> Self {
         Self {
-            view_pos: Vec3::ZERO.into(),
-            view_proj: Mat4::IDENTITY.into(),
-            fog_color: Vec4::ZERO.into(),
-            fog_params: Vec4::ZERO.into(),
-            ambient: Vec3::splat(DEFAULT_AMBIENT_INTENSITY).extend(1.0).into(),
+            view_pos: Vec3::ZERO,
+            view_proj: Mat4::IDENTITY,
+            fog_color: Vec4::ZERO,
+            fog_params: Vec4::ZERO,
+            ambient: Vec3::splat(DEFAULT_AMBIENT_INTENSITY).extend(1.0),
         }
     }
 
@@ -239,13 +238,13 @@ impl CameraUniform {
         environment: Option<&CameraEnvironment>,
         transform: &GlobalTransform,
     ) {
-        self.view_pos = transform.translation().into();
-        self.view_proj = (camera.build_projection_matrix() * transform.matrix().inverse()).into();
+        self.view_pos = transform.translation();
+        self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
         environment.copied().unwrap_or_default().fill(self);
     }
 
     pub(crate) fn view_proj(&self) -> Mat4 {
-        self.view_proj.into()
+        self.view_proj
     }
 }
 
@@ -521,7 +520,7 @@ mod tests {
     use super::{
         sync_camera_aspect, viewport_rect, Camera, CameraUniform, PixelRect, RenderTarget, Viewport,
     };
-    use crate::layout_test::{float_words, gpu, uniform_words};
+    use crate::layout_test::{float_words, uniform_words};
 
     fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
         PixelRect {
@@ -535,13 +534,11 @@ mod tests {
     #[test]
     fn camera_uniform_keeps_its_wgsl_layout() {
         let uniform = CameraUniform {
-            view_pos: gpu(Vec3::new(1.0, 2.0, 3.0)),
-            view_proj: gpu(Mat4::from_cols_array(&std::array::from_fn(|index| {
-                10.0 + index as f32
-            }))),
-            fog_color: gpu(Vec4::new(30.0, 31.0, 32.0, 33.0)),
-            fog_params: gpu(Vec4::new(40.0, 41.0, 42.0, 43.0)),
-            ambient: gpu(Vec4::new(50.0, 51.0, 52.0, 53.0)),
+            view_pos: Vec3::new(1.0, 2.0, 3.0),
+            view_proj: Mat4::from_cols_array(&std::array::from_fn(|index| 10.0 + index as f32)),
+            fog_color: Vec4::new(30.0, 31.0, 32.0, 33.0),
+            fog_params: Vec4::new(40.0, 41.0, 42.0, 43.0),
+            ambient: Vec4::new(50.0, 51.0, 52.0, 53.0),
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 0.0]);

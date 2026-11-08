@@ -83,7 +83,7 @@ concerto-window = { path = "crates/window", version = "0.1.0" }
 concerto-winit = { path = "crates/winit", version = "0.1.0" }
 concerto-world-grid = { path = "crates/world-grid", version = "0.1.0" }
 parking_lot = "0.12"
-glam = "0.33.2"
+glam = "0.33.9"
 
 [lints.rust]
 warnings = "deny"
