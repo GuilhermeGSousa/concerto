@@ -204,17 +204,15 @@ fn a_trajectory_direction_the_context_cannot_place_or_aim_is_left_out() {
 
 #[test]
 fn preview_features_gives_each_channel_its_own_span_and_list() {
-    let channels: Vec<Box<dyn FeatureChannel>> = vec![
-        Box::new(BonePositions {
-            bones: vec!["LeftFoot".into()],
-            weight: 1.0,
-        }),
-        Box::new(SilentChannel),
-        Box::new(TrajectoryPositions {
-            samples: vec![0],
-            weight: 1.0,
-        }),
-    ];
+    let bones = BonePositions {
+        bones: vec!["LeftFoot".into()],
+        weight: 1.0,
+    };
+    let trajectory = TrajectoryPositions {
+        samples: vec![0],
+        weight: 1.0,
+    };
+    let channels: Vec<&dyn FeatureChannel> = vec![&bones, &SilentChannel, &trajectory];
     let skeleton = skeleton();
     let frame = FrameContext {
         skeleton: &skeleton,

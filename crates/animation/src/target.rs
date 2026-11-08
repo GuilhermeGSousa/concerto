@@ -153,6 +153,7 @@ mod tests {
         assets::{
             AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
         },
+        time::Time,
         transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
@@ -161,7 +162,10 @@ mod tests {
     use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
-    use super::{animate_targets, initialize_animation_players, initialize_skeletons};
+    use super::{
+        animate_targets, initialize_animation_players, initialize_skeletons,
+        update_animation_players,
+    };
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         debug::AnimationDebug,
@@ -636,6 +640,13 @@ mod tests {
             system.run_and_apply((), &mut self.world);
         }
 
+        fn update(&mut self) {
+            self.world.insert_resource(Time::new());
+            let mut system = update_animation_players.into_system();
+            system.initialize(&mut self.world);
+            system.run_and_apply((), &mut self.world);
+        }
+
         fn animate_without_graphs(&mut self) {
             let graphs = self
                 .world
@@ -792,13 +803,18 @@ mod tests {
 
     #[test]
     fn values_published_while_creating_or_updating_a_graph_reach_no_player() {
-        let mut rig = Rig::publishing().loaded_two_bone_skeleton();
-        let graph = rig.live_graph(Publisher {});
-        let mut player = rig.player(graph);
+        let mut bones = publishing_bones();
+        bones.animate();
 
-        rig.update(&mut player, 0.1);
+        bones.update();
 
-        assert!(player.debug().get::<Published>().is_empty());
+        let orders: Vec<u32> = bones
+            .debug()
+            .get::<Published>()
+            .iter()
+            .map(|value| value.order)
+            .collect();
+        assert_eq!(orders, vec![0, 1]);
     }
 
     #[test]

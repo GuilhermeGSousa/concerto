@@ -723,6 +723,44 @@ fn the_node_publishes_its_frame_pose_and_flags_and_its_last_query_once_it_search
     assert_eq!(last_query.trajectory.as_ptr(), trajectory);
 }
 
+#[test]
+fn the_published_database_handle_is_weak_so_a_stale_value_keeps_nothing_loaded() {
+    let (mut app, _, skeleton_handle, database) = stocked_app();
+    let world = app.main_mut().world_mut();
+    let server = world.get_resource::<AssetServer>().unwrap().clone();
+    let database_handle = server.add(database);
+    handle_asset_load_events(world);
+    assert!(matches!(database_handle, AssetHandle::Strong(..)));
+    let graph_handle = add_live_graph(
+        world,
+        MotionMatchingNode {
+            database: database_handle.clone(),
+            ..Default::default()
+        },
+        Some(&server),
+    );
+    let bones = (0..3)
+        .map(|_| SceneEntityRef::Entity(world.spawn(Transform::IDENTITY)))
+        .collect();
+    let player = world.spawn((
+        AnimationPlayer::new(3),
+        AnimationHandleComponent::new(graph_handle),
+        SkeletonComponent {
+            skeleton: skeleton_handle,
+            bones,
+            root: None,
+        },
+    ));
+    compile_schedules(world);
+    world.run_schedule(LateUpdate);
+    world.run_schedule(LateUpdate);
+
+    let published = published(world, player);
+    assert_eq!(published.len(), 1);
+    assert!(matches!(published[0].database, AssetHandle::Weak(..)));
+    assert_eq!(published[0].database.id(), database_handle.id());
+}
+
 fn motion_app() -> App {
     let mut app = App::new();
     app.register_plugin(AssetManagerPlugin);
@@ -799,12 +837,20 @@ fn start_playing(
 }
 
 fn add_graph(world: &mut World, node: MotionMatchingNode) -> AssetHandle<AnimationGraph> {
+    add_live_graph(world, node, None)
+}
+
+fn add_live_graph(
+    world: &mut World,
+    node: MotionMatchingNode,
+    server: Option<&AssetServer>,
+) -> AssetHandle<AnimationGraph> {
     let mut type_registry = TypeRegistry::default();
     register_animation_types(&mut type_registry);
     type_registry.register::<MotionMatchingNode>();
     type_registry.register::<AssetHandle<MotionDatabase>>();
     let mut graph = AnimationGraph::from_node(node);
-    graph.make_live(&type_registry, None).unwrap();
+    graph.make_live(&type_registry, server).unwrap();
     let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
     world
         .get_resource_mut::<AssetStore<AnimationGraph>>()

@@ -155,7 +155,7 @@ impl AnimationNode for MotionMatchingNode {
         output: &mut AnimationFrame,
     ) {
         context.publish(|debug: &mut MotionMatchingDebug| {
-            debug.database.clone_from(&self.database);
+            debug.database = AssetHandle::weak(self.database.id());
             debug.initialised = state.is_initialised();
             debug.failed = state.has_failed();
             debug.frame = state.frame();

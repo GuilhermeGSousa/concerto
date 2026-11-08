@@ -14,8 +14,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    CharacterLink, CharacterSimulation, DynCloneChannel, FeatureChannel, FeatureShape,
-    MotionDatabase, MotionMatchingDebug, preview_features,
+    CharacterLink, CharacterSimulation, FeatureShape, MotionDatabase, MotionMatchingDebug,
+    preview_features,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::plugin::RenderPlugin;
@@ -84,12 +84,7 @@ fn placed_channels(
     if debug.query_dims != database.feature_dims()? {
         return None;
     }
-    let channels: Vec<Box<dyn FeatureChannel>> = database
-        .live_channels()
-        .ok()?
-        .into_iter()
-        .map(DynCloneChannel::dyn_clone)
-        .collect();
+    let channels = database.live_channels().ok()?;
     let dims: usize = channels.iter().map(|channel| channel.dims()).sum();
     if features.len() != database.feature_dims()? || features.len() != dims {
         return None;
@@ -108,7 +103,7 @@ fn placed_channels(
     )
 }
 
-/// The shapes of the frame a node published it plays, per channel and placed at `bone`; `None` when they can't be read.
+/// The shapes of the frame a published motion matching node plays, per channel and placed at `bone`; `None` when they can't be read.
 pub fn matched_shapes(
     debug: &MotionMatchingDebug,
     database: &MotionDatabase,

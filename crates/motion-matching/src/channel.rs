@@ -235,7 +235,7 @@ pub fn extract_features(channels: &[&dyn FeatureChannel], frame: &FrameContext, 
 
 /// The shapes of every channel for one raw feature vector, one list per channel in order.
 pub fn preview_features(
-    channels: &[Box<dyn FeatureChannel>],
+    channels: &[&dyn FeatureChannel],
     frame: &FrameContext,
     features: &[f32],
 ) -> Vec<Vec<FeatureShape>> {
