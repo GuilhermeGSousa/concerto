@@ -1,5 +1,6 @@
 use concerto_app::{
     App,
+    plugins::AssetManagerPlugin,
     schedule_groups::{First, LateUpdate},
 };
 use concerto_debug_gizmos::{DebugGizmosPlugin, GizmoStorage};
@@ -199,6 +200,7 @@ struct Stage {
 impl Stage {
     fn new() -> Self {
         let mut app = App::new();
+        app.register_plugin(AssetManagerPlugin);
         app.register_plugin(NavigationPlugin);
         app.register_plugin(DebugGizmosPlugin);
         app.register_plugin(NavigationGizmosPlugin);

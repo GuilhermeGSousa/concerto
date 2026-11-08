@@ -3,7 +3,7 @@ use std::f32::consts::FRAC_PI_2;
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
-    plugins::{TimePlugin, TransformPlugin},
+    plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     schedule_groups::Update,
 };
 use concerto_ecs::{
@@ -32,6 +32,7 @@ fn app() -> App {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(TransformPlugin)
+        .register_plugin(AssetManagerPlugin)
         .register_plugin(NavigationPlugin);
     app.add_system(Update, walk.after(steer_nav_agents));
     app.finish_plugin_build();

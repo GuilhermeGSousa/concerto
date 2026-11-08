@@ -205,7 +205,7 @@ mod tests {
         app::{
             App,
             main_schedule::MainSchedulePlugin,
-            plugins::{TimePlugin, TransformPlugin},
+            plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
             schedule_groups::Startup,
         },
         ecs::{
@@ -285,6 +285,7 @@ mod tests {
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
             .register_plugin(TransformPlugin)
+            .register_plugin(AssetManagerPlugin)
             .register_plugin(NavigationPlugin);
         app.add_system(Startup, spawn_patrol);
         app.finish_plugin_build();

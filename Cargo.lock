@@ -1409,14 +1409,19 @@ dependencies = [
 name = "concerto-navigation"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "bincode",
  "concerto-app",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-mesh",
  "concerto-name",
+ "concerto-physics",
  "concerto-reflect",
  "concerto-scene",
  "glam 0.33.12",
  "log",
+ "pollster",
  "polyanya",
  "rerecast",
  "serde",
