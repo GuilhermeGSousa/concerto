@@ -1,4 +1,4 @@
-use std::{cell::RefCell, mem, ops::Deref};
+use std::ops::Deref;
 
 use concerto_ecs::{
     Entity,
@@ -18,10 +18,9 @@ use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
-    debug::AnimationDebug,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex},
-    node::{ErasedAnimationNode, NodeState},
+    node::{AnimationNode, ErasedAnimationNode, NodeState},
     pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
 };
@@ -49,7 +48,6 @@ pub struct AnimationPlayer {
     frame_pool: FramePool,
     paused: bool,
     event_threshold: f32,
-    debug: AnimationDebug,
     pub(crate) fired: Vec<FiredEvent>,
 }
 
@@ -61,7 +59,6 @@ impl AnimationPlayer {
             frame_pool: FramePool::new(bone_count),
             paused: false,
             event_threshold: 0.0,
-            debug: AnimationDebug::default(),
             fired: Vec::new(),
         }
     }
@@ -131,15 +128,17 @@ impl AnimationPlayer {
         self.blackboard.get_vec2(key)
     }
 
-    /// What the nodes of the player's graph published on its last evaluation.
-    pub fn debug(&self) -> &AnimationDebug {
-        &self.debug
+    /// Calls `f` with each live node of type `N` in the player's graph, inner graphs included, its state and the blackboard.
+    pub fn for_each_state<N: AnimationNode>(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        f: impl FnMut(&N, &N::State, &AnimationBlackboard),
+    ) {
+        self.graph_state.for_each_state(graphs, &self.blackboard, f);
     }
 
-    /// Calls `f` with each live node of type `N` in the player's graph, its state and the blackboard.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    pub fn for_each_state_mut<N: crate::node::AnimationNode>(
+    /// Calls `f` with each live node of type `N` in the player's graph, inner graphs included, its mutable state and the blackboard.
+    pub fn for_each_state_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
@@ -160,7 +159,6 @@ impl AnimationPlayer {
             skeleton: None,
             model_to_world: None,
             inputs,
-            debug: None,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
@@ -179,7 +177,6 @@ impl AnimationPlayer {
             skeleton,
             model_to_world: None,
             inputs,
-            debug: None,
         };
         self.graph_state.update(delta_time, graphs, &context);
     }
@@ -195,7 +192,6 @@ impl AnimationPlayer {
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
-        self.debug.clear();
         self.fired.clear();
         let bone_ids = &skeleton.bone_ids;
         let rest_pose = &skeleton.rest_pose;
@@ -215,27 +211,23 @@ impl AnimationPlayer {
                     up: up_of(entity, parents, globals),
                 })
             });
-        let debug = RefCell::new(mem::take(&mut self.debug));
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
             root,
             skeleton: Some(skeleton),
             model_to_world: Some(model_to_world_of(bones, parents, globals)),
             inputs,
-            debug: Some(&debug),
         };
 
         self.frame_pool.set_rest(rest_pose);
         let mut output_frame = self.frame_pool.acquire();
-        let evaluated = self.graph_state.evaluate(
+        if !self.graph_state.evaluate(
             graphs,
             &context,
             bone_ids,
             &mut self.frame_pool,
             &mut output_frame,
-        );
-        self.debug = debug.into_inner();
-        if !evaluated {
+        ) {
             // No graph evaluated — keep the bones' current (default) pose.
             self.frame_pool.release(output_frame);
             return false;
@@ -468,6 +460,25 @@ mod tests {
 
         assert_eq!(clip_nodes, 2);
         assert_eq!(result_nodes, 1);
+        assert_eq!(blend_nodes, 0);
+    }
+
+    #[test]
+    fn for_each_state_visits_the_live_nodes_of_the_type_through_a_shared_player() {
+        let mut fixture = fixture();
+        fixture.player.set_float_param(name!("speed"), 3.0);
+        let player = &fixture.player;
+
+        let mut speeds = Vec::new();
+        player.for_each_state::<AnimationClipNode>(fixture.walks.graphs(), |_, _, board| {
+            speeds.push(board.get_float(name!("speed")));
+        });
+        let mut blend_nodes = 0;
+        player.for_each_state::<BlendNode>(fixture.walks.graphs(), |_, _, _| {
+            blend_nodes += 1;
+        });
+
+        assert_eq!(speeds, [Some(3.0); 2]);
         assert_eq!(blend_nodes, 0);
     }
 

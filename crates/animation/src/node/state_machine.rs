@@ -356,6 +356,14 @@ impl AnimationNode for AnimationStateMachine {
 
     fn inner_states(
         &self,
+        state: &AnimationStateMachineState,
+        visit: &mut dyn FnMut(&AnimationGraphState),
+    ) {
+        state.state_graphs.iter().for_each(visit);
+    }
+
+    fn inner_states_mut(
+        &self,
         state: &mut AnimationStateMachineState,
         visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
@@ -604,6 +612,27 @@ mod tests {
 
         let mut visits = 0;
         player.for_each_state_mut::<Counter>(walks.graphs(), |_, _, _| visits += 1);
+
+        assert_eq!(visits, 1);
+    }
+
+    #[test]
+    fn for_each_state_reaches_a_node_inside_a_state_graph() {
+        let mut server = AssetServer::new();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        server.register_asset(&graphs);
+        let state_graph = server.add(AnimationGraph::default());
+        graphs.insert(state_graph.id(), counting_graph());
+        let machine =
+            AnimationStateMachine::from_initial_state(name!("only"), state_graph, |_| {}).build();
+        let top = server.add(AnimationGraph::default());
+        graphs.insert(top.id(), made_live(AnimationGraph::from_node(machine)));
+        let walks = Walks::with(AssetStore::new(), graphs, register_node_inputs::<Counter>);
+        let mut player = AnimationPlayer::new(1);
+        walks.initialize(&mut player, top);
+
+        let mut visits = 0;
+        player.for_each_state::<Counter>(walks.graphs(), |_, _, _| visits += 1);
 
         assert_eq!(visits, 1);
     }

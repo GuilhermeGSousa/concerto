@@ -1,6 +1,5 @@
 pub mod blackboard;
 pub mod clip;
-pub mod debug;
 pub mod evaluation;
 pub mod event;
 pub mod graph;

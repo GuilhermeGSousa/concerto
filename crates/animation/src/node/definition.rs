@@ -66,7 +66,10 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     fn inner_graphs(&self, _visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {}
 
     /// Visits the graph states this node's state holds for the graphs it plays inside itself.
-    fn inner_states(
+    fn inner_states(&self, _state: &Self::State, _visit: &mut dyn FnMut(&AnimationGraphState)) {}
+
+    /// Visits, mutably, the graph states this node's state holds for the graphs it plays inside itself.
+    fn inner_states_mut(
         &self,
         _state: &mut Self::State,
         _visit: &mut dyn FnMut(&mut AnimationGraphState),
@@ -116,7 +119,13 @@ pub trait ErasedAnimationNode: Send + Sync {
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
 
-    fn inner_states(&self, state: &mut NodeState, visit: &mut dyn FnMut(&mut AnimationGraphState));
+    fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState));
+
+    fn inner_states_mut(
+        &self,
+        state: &mut NodeState,
+        visit: &mut dyn FnMut(&mut AnimationGraphState),
+    );
 
     fn state_as_any<'a>(&self, state: &'a NodeState) -> &'a dyn Any;
 
@@ -186,9 +195,19 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         AnimationNode::inner_graphs(self, visit);
     }
 
-    fn inner_states(&self, state: &mut NodeState, visit: &mut dyn FnMut(&mut AnimationGraphState)) {
-        if let Some(state) = state.downcast_mut::<T::State>() {
+    fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState)) {
+        if let Some(state) = state.downcast_ref::<T::State>() {
             AnimationNode::inner_states(self, state, visit);
+        }
+    }
+
+    fn inner_states_mut(
+        &self,
+        state: &mut NodeState,
+        visit: &mut dyn FnMut(&mut AnimationGraphState),
+    ) {
+        if let Some(state) = state.downcast_mut::<T::State>() {
+            AnimationNode::inner_states_mut(self, state, visit);
         }
     }
 

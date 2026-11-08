@@ -25,15 +25,15 @@ The plugin registers `DebugGizmosPlugin` if the `App` has a renderer and nothing
 has registered it yet. An `App` without a renderer builds and draws nothing.
 
 `draw_foot_locks` runs in game time, which includes Play in the editor, after
-`animate_targets`, where the node publishes its locks, and after
+`animate_targets`, where the node writes its locks, and after
 `propagate_global_transforms`. `FootLockGizmos` is a reflected component, so the
 inspector shows its toggle while playing, but it isn't a scene component: a game
 inserts it from code.
 
 ## What it draws
 
-`locks` defaults to on. For each leg of every `FootLockDebug` the player's
-`FootLockNode`s published on its last evaluation, in world space:
+`locks` defaults to on. For each leg of every `FootLockNode` in the player's
+graph, from `FootLockState::legs()`, in world space:
 
 | Phase | Draws |
 |---|---|

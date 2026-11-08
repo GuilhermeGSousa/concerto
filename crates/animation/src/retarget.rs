@@ -791,6 +791,13 @@ pub struct RetargetNodeState {
 }
 
 impl RetargetNodeState {
+    pub(crate) fn inner(&self) -> Option<&AnimationGraphState> {
+        match &self.stage {
+            Stage::Ready(running) => Some(&running.inner),
+            Stage::Pending | Stage::Failed { .. } => None,
+        }
+    }
+
     pub(crate) fn inner_mut(&mut self) -> Option<&mut AnimationGraphState> {
         match &mut self.stage {
             Stage::Ready(running) => Some(&mut running.inner),
@@ -833,7 +840,6 @@ impl Running {
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
             inputs: context.inputs,
-            debug: context.debug,
         }
     }
 
@@ -1025,7 +1031,13 @@ impl AnimationNode for RetargetNode {
         visit(&self.graph);
     }
 
-    fn inner_states(
+    fn inner_states(&self, state: &RetargetNodeState, visit: &mut dyn FnMut(&AnimationGraphState)) {
+        if let Some(inner) = state.inner() {
+            visit(inner);
+        }
+    }
+
+    fn inner_states_mut(
         &self,
         state: &mut RetargetNodeState,
         visit: &mut dyn FnMut(&mut AnimationGraphState),
@@ -1158,7 +1170,6 @@ fn sample_frame(skeleton: &Skeleton, clip: &AnimationClip, time: f32) -> Vec<Joi
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::RefCell,
         sync::{Mutex, Once},
         thread::ThreadId,
     };
@@ -1183,13 +1194,12 @@ mod tests {
     };
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        debug::AnimationDebug,
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         graph::{AnimationGraph, made_live},
         node::{
             AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
-            ReflectAnimationNode, register_node_inputs, state_machine::AnimationStateMachine,
+            ReflectAnimationNode, state_machine::AnimationStateMachine,
         },
         player::AnimationPlayer,
         plugin::register_animation_types,
@@ -2754,6 +2764,13 @@ mod tests {
             visits
         }
 
+        fn shared_visits<N: AnimationNode>(&self) -> usize {
+            let mut visits = 0;
+            self.player
+                .for_each_state::<N>(self.walks.graphs(), |_, _, _| visits += 1);
+            visits
+        }
+
         fn advance(&mut self) {
             self.advance_by(0.1);
         }
@@ -2768,14 +2785,6 @@ mod tests {
         }
 
         fn frame(&mut self, root: Option<RootBone>) -> AnimationFrame {
-            self.frame_publishing(root, &RefCell::default())
-        }
-
-        fn frame_publishing(
-            &mut self,
-            root: Option<RootBone>,
-            debug: &RefCell<AnimationDebug>,
-        ) -> AnimationFrame {
             let skeleton = &self.player_skeleton;
             let walks = &self.walks;
             let mut frame = None;
@@ -2785,23 +2794,17 @@ mod tests {
                     let mut pool = FramePool::new(skeleton.bone_count());
                     pool.set_rest(&skeleton.rest_pose);
                     let mut output = pool.acquire();
-                    walks.evaluate_publishing(
-                        blackboard,
-                        root.clone(),
-                        Some(skeleton),
-                        debug,
-                        |context| {
-                            node.evaluate(
-                                state,
-                                evaluate_inputs(context),
-                                context,
-                                &skeleton.bone_ids,
-                                &[],
-                                &mut pool,
-                                &mut output,
-                            )
-                        },
-                    );
+                    walks.evaluate_with(blackboard, root.clone(), Some(skeleton), |context| {
+                        node.evaluate(
+                            state,
+                            evaluate_inputs(context),
+                            context,
+                            &skeleton.bone_ids,
+                            &[],
+                            &mut pool,
+                            &mut output,
+                        )
+                    });
                     frame = Some(output);
                 },
             );
@@ -3094,56 +3097,14 @@ mod tests {
         assert_eq!(played.visits::<AnimationClipNode>(), 1);
     }
 
-    #[derive(Debug, Default, PartialEq)]
-    struct InnerValue(u32);
-
-    #[derive(Default, Reflect)]
-    #[reflect(AnimationNode)]
-    struct InnerPublisher {}
-
-    impl AnimationNode for InnerPublisher {
-        type State = ();
-        type CreateInput = ();
-        type UpdateInput = ();
-        type EvaluateInput = ();
-
-        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
-
-        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
-
-        fn evaluate(
-            &self,
-            _: &mut (),
-            _: &(),
-            context: &AnimationGraphContext<'_>,
-            _: &[Uuid],
-            _: &[EvaluatedFrame],
-            _: &mut FramePool,
-            _: &mut AnimationFrame,
-        ) {
-            context.publish::<InnerValue>(|value| value.0 = 7);
-        }
-
-        fn reset(&self, _: &mut ()) {}
-    }
-
     #[test]
-    fn a_value_published_inside_the_inner_graph_reaches_the_outer_sink() {
-        let mut played =
-            Played::registering(target_skeleton(), register_node_inputs::<InnerPublisher>);
-        played.load_rigs(node_target_rig());
-        let mut registry = TypeRegistry::default();
-        register_animation_types(&mut registry);
-        registry.register::<InnerPublisher>();
-        let mut inner = AnimationGraph::from_node(InnerPublisher {});
-        inner.make_live(&registry, None).unwrap();
-        played.insert_inner(inner);
+    fn for_each_state_visits_a_node_inside_the_inner_graph() {
+        let mut played = Played::playing(node_source_rig(), turning_clip(), inner_clip());
+        assert_eq!(played.shared_visits::<AnimationClipNode>(), 0);
+
         played.advance();
-        let debug = RefCell::default();
 
-        played.frame_publishing(None, &debug);
-
-        assert_eq!(debug.borrow().get::<InnerValue>(), [InnerValue(7)]);
+        assert_eq!(played.shared_visits::<AnimationClipNode>(), 1);
     }
 
     #[derive(Resource)]
