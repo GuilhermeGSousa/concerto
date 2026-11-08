@@ -200,7 +200,7 @@ pub(super) fn build(app: &mut App) {
     );
 }
 
-pub(super) fn refused(reason: &str) -> ToolError {
+pub(crate) fn refused(reason: &str) -> ToolError {
     ToolError::new("refused", reason)
 }
 
@@ -517,7 +517,7 @@ fn unknown_path(component: &str, path: &str, listed: &[ListedPath]) -> ToolError
     )
 }
 
-pub(super) fn find_path<'a>(
+pub(crate) fn find_path<'a>(
     component: &str,
     path: &str,
     listed: &'a [ListedPath<'a>],
@@ -604,15 +604,15 @@ enum Write {
 }
 
 /// What building an edit of a property reads.
-pub(super) struct EditSource<'a> {
-    pub(super) types: &'a TypeRegistry,
-    pub(super) registry: &'a InspectorRegistry,
-    pub(super) changed: Tick,
-    pub(super) server: Option<&'a AssetServer>,
+pub(crate) struct EditSource<'a> {
+    pub(crate) types: &'a TypeRegistry,
+    pub(crate) registry: &'a InspectorRegistry,
+    pub(crate) changed: Tick,
+    pub(crate) server: Option<&'a AssetServer>,
 }
 
 /// The commit that writes `json` to `property` of `value`, through the editor that claims it.
-pub(super) fn adapter_commit(
+pub(crate) fn adapter_commit(
     property: &Property,
     target: Arc<dyn PropertyTarget>,
     owner: &str,
@@ -983,7 +983,7 @@ fn answer_property_commits(
 }
 
 /// The error a refused property write answers.
-pub(super) fn refusal_error(refusal: &PropertyRefusal) -> ToolError {
+pub(crate) fn refusal_error(refusal: &PropertyRefusal) -> ToolError {
     match refusal {
         PropertyRefusal::Undecodable(reason) => ToolError::new("invalid_value", reason),
         PropertyRefusal::NotEditable(reason) => ToolError::new("not_editable", reason),

@@ -44,6 +44,7 @@ mod target;
 mod text_field;
 mod values;
 mod variants;
+mod write;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
 use add_component::{
@@ -86,6 +87,9 @@ use values::{
     build_value_widgets, commit_value, read_inspected_values, refresh_inspected_values,
     refresh_on_new_app, send_value_commits, sync_value_cards,
 };
+pub use write::WriteValue;
+use write::write_value_at;
+pub(crate) use write::{gone, reading, set_value};
 
 pub const PANEL_ID: &str = "concerto.ecs";
 
@@ -198,6 +202,7 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(read_inspected_values);
     world.add_listener(refresh_on_new_app);
     world.add_listener(commit_value);
+    world.add_listener(write_value_at);
 }
 
 fn forget_scene(

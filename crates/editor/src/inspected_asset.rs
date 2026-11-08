@@ -3,7 +3,7 @@ use std::{any::Any, path::Path, sync::Arc};
 use anyhow::Context;
 use concerto_app::{App, InspectedAsset, InspectedAssets, Plugin, schedule_groups::Update};
 use concerto_ecs::{
-    Changed, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
+    Changed, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, SystemSet, With,
     command::{CommandQueue, EntityCommandQueue},
     events::{event_reader::EventReader, event_writer::EventWriter},
     reflect::AppTypeRegistry,
@@ -74,6 +74,10 @@ pub struct ProjectTypes {
     pub registry: Option<AppTypeRegistry>,
 }
 
+/// The `Update` systems that mark inspected documents dirty, save, load and read their skeletons; a system that reads an inspected document's state for the frame runs after it.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct InspectedAssetSystems;
+
 /// Learns the game's inspected asset kinds and types from each scene's Edit `App`, and opens, saves and discards them.
 pub struct InspectedAssetPlugin;
 
@@ -89,7 +93,8 @@ impl Plugin for InspectedAssetPlugin {
                     load_inspected_assets,
                     follow_inspected_skeleton,
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(InspectedAssetSystems),
             )
             .add_listener(restore_discarded_value)
             .add_listener(clear_status_on_edit);
@@ -193,7 +198,10 @@ pub(crate) fn follow_inspected_edits(
     mut cmd: CommandQueue,
 ) {
     for hosted in committed.read() {
-        if hosted.event.result.is_ok() && documents.get_entity(hosted.document).is_some() {
+        if hosted.event.result.is_ok()
+            && hosted.event.address.target.saved()
+            && documents.get_entity(hosted.document).is_some()
+        {
             cmd.insert(Unsaved, hosted.document);
         }
     }
@@ -362,7 +370,7 @@ pub(crate) mod tests {
         hosted::testing::{SceneFixture, hosted_now, play_request, scene_entry, scene_recipe},
         inspector::{
             InspectedSnapshots, InspectedValues, InspectorRegistry, PropertyCommits, PropertyRow,
-            commit_number, spawn_panel, value_systems,
+            PropertyTarget, TargetWorld, WriteValue, commit_number, spawn_panel, value_systems,
         },
         scene::{SaveFailed, SceneSaved},
     };
@@ -378,7 +386,7 @@ pub(crate) mod tests {
     };
     use concerto_mesh::{JointName, JointPose, ReflectSkeletonSource, Skeleton, SkeletonSource};
     use concerto_name::Name;
-    use concerto_reflect::Reflect;
+    use concerto_reflect::{Reflect, ReflectDefault};
     use concerto_ui::{node::UINode, theme::UITheme};
     use concerto_window::input::actions::ActionFired;
     use std::any::TypeId;
@@ -421,12 +429,13 @@ pub(crate) mod tests {
     }
     impl LoadableAsset for Tag {}
 
-    #[derive(serde::Serialize, serde::Deserialize, Reflect, Clone)]
-    #[reflect(SkeletonSource)]
+    #[derive(serde::Serialize, serde::Deserialize, Reflect, Clone, Default)]
+    #[reflect(SkeletonSource, Default)]
     pub(crate) struct Rig {
         pub(crate) skeleton: AssetHandle<Skeleton>,
         pub(crate) joint: JointName,
         pub(crate) joints: Vec<JointName>,
+        pub(crate) mirror: Option<JointName>,
     }
     impl Asset for Rig {
         fn name() -> &'static str {
@@ -439,6 +448,7 @@ pub(crate) mod tests {
                 skeleton: AssetHandle::default(),
                 joint: JointName::default(),
                 joints: Vec::new(),
+                mirror: None,
             }
         }
     }
@@ -692,6 +702,7 @@ pub(crate) mod tests {
             skeleton: AssetHandle::weak(skeleton.id),
             joint: "Hips".into(),
             joints: vec!["LeftFoot".into(), "Spine".into()],
+            mirror: None,
         }
     }
 
@@ -702,6 +713,14 @@ pub(crate) mod tests {
             .0
             .as_ref()
             .map(|bones| bones.iter().map(|bone| bone.as_str().to_owned()).collect())
+    }
+
+    fn rig_ref(f: &SceneFixture, document: Entity) -> &Rig {
+        held_document(f, document)
+            .value
+            .as_deref()
+            .and_then(|value| value.downcast_ref::<Rig>())
+            .expect("the document holds a rig")
     }
 
     fn rig_mut(f: &mut SceneFixture, document: Entity) -> &mut Rig {
@@ -849,22 +868,26 @@ pub(crate) mod tests {
             .and_then(|value| value.downcast_ref::<Note>())
     }
 
-    fn weight_row(f: &mut SceneFixture) -> Option<PropertyRow> {
+    fn weight_row(f: &mut SceneFixture, target: &str) -> Option<PropertyRow> {
         let world = &mut f.world;
         world
             .query::<&PropertyRow, ()>()
             .iter(world)
             .find(|row| {
-                row.address.target.name() == "TestNote" && row.address.path.to_string() == "weight"
+                row.address.target.name() == target && row.address.path.to_string() == "weight"
             })
             .cloned()
     }
 
     fn edit_weight(f: &mut SceneFixture, weight: f64) {
+        edit_weight_of(f, "TestNote", weight);
+    }
+
+    fn edit_weight_of(f: &mut SceneFixture, target: &str, weight: f64) {
         f.frames_until("the card never showed the weight", |f| {
-            weight_row(f).is_some()
+            weight_row(f, target).is_some()
         });
-        let row = weight_row(f).unwrap();
+        let row = weight_row(f, target).unwrap();
         let commits = f.world.get_resource_mut::<PropertyCommits>().unwrap();
         commit_number(commits, &row, weight).unwrap();
         f.frame();
@@ -1056,5 +1079,130 @@ pub(crate) mod tests {
         assert_eq!(snapshots.values.len(), 1);
         assert!(knows_note(&snapshots.values[0].types));
         assert!(!snapshots.values[0].properties.is_empty());
+    }
+
+    #[derive(Component)]
+    struct Scratch(Note);
+
+    struct ScratchValue(DocumentValue<Scratch>);
+
+    impl PropertyTarget for ScratchValue {
+        fn name(&self) -> String {
+            self.0.name()
+        }
+        fn world(&self) -> TargetWorld {
+            self.0.world()
+        }
+        fn read(&self, world: &World, read: &mut dyn FnMut(&dyn Reflect)) -> bool {
+            self.0.read(world, read)
+        }
+        fn edit(&self, world: &mut World, edit: &mut dyn FnMut(&mut dyn Reflect)) -> bool {
+            self.0.edit(world, edit)
+        }
+        fn types(&self, world: &World) -> Option<AppTypeRegistry> {
+            self.0.types(world)
+        }
+        fn document(&self) -> Option<Entity> {
+            self.0.document()
+        }
+        fn saved(&self) -> bool {
+            false
+        }
+    }
+
+    fn add_scratch(f: &mut SceneFixture, document: Entity) {
+        f.world.insert(Scratch(note("scratch", 1.0)), document);
+        let value = DocumentValue::<Scratch> {
+            name: "Scratch".into(),
+            document,
+            read: Box::new(|held| Some(&held.0)),
+            edit: Box::new(|held| Some(&mut held.0)),
+        };
+        f.world
+            .get_component_for_entity_mut::<InspectedValues>(document)
+            .unwrap()
+            .0
+            .push(Arc::new(ScratchValue(value)));
+    }
+
+    fn committed(f: &SceneFixture, target: &str) -> Vec<PropertyCommitted> {
+        f.written::<Hosted<PropertyCommitted>>()
+            .into_iter()
+            .map(|hosted| hosted.event)
+            .filter(|event| event.address.target.name() == target)
+            .collect()
+    }
+
+    #[test]
+    fn an_edit_to_a_value_a_save_does_not_write_is_reported_and_leaves_the_document_saved() {
+        let mut f = tab_fixture();
+        let asset = write_note(&mut f, &note("hello", 1.5));
+        let document = request_asset(&mut f, &asset);
+        add_scratch(&mut f, document);
+
+        edit_weight_of(&mut f, "Scratch", 4.0);
+
+        let scratch = f.world.get_component_for_entity::<Scratch>(document);
+        assert_eq!(scratch.unwrap().0.weight, 4.0);
+        let committed = committed(&f, "Scratch");
+        assert_eq!(committed.len(), 1);
+        assert!(committed[0].result.is_ok());
+        assert!(!f.unsaved(document));
+    }
+
+    fn rig_value(f: &SceneFixture, document: Entity) -> Arc<dyn PropertyTarget> {
+        f.world
+            .get_component_for_entity::<InspectedValues>(document)
+            .unwrap()
+            .0[0]
+            .clone()
+    }
+
+    fn write_rig(rig: &mut OpenRig, path: &str, json: serde_json::Value) {
+        let target = rig_value(&rig.f, rig.document);
+        rig.f.world.trigger(WriteValue {
+            target,
+            path: path.into(),
+            json,
+        });
+        rig.f.frame();
+    }
+
+    #[test]
+    fn write_value_writes_a_joint_name_and_an_optional_one_and_reports_each() {
+        let mut rig = open_rig();
+
+        write_rig(&mut rig, "joint", serde_json::json!("Spine"));
+        write_rig(
+            &mut rig,
+            "mirror",
+            serde_json::json!({"Some": {"0": "Head"}}),
+        );
+
+        let held = rig_ref(&rig.f, rig.document);
+        assert_eq!(held.joint, JointName::from("Spine"));
+        assert_eq!(held.mirror, Some(JointName::from("Head")));
+        let paths: Vec<String> = committed(&rig.f, "TestRig")
+            .into_iter()
+            .filter(|event| event.result.is_ok())
+            .map(|event| event.address.path.to_string())
+            .collect();
+        assert_eq!(paths, ["joint", "mirror"]);
+        assert!(rig.f.unsaved(rig.document));
+    }
+
+    #[test]
+    fn a_refused_write_value_says_why_in_the_status() {
+        let mut rig = open_rig();
+
+        write_rig(&mut rig, "joint", serde_json::json!(42));
+        let undecodable = rig.f.status(rig.document);
+        write_rig(&mut rig, "nowhere", serde_json::json!("Spine"));
+        let unknown = rig.f.status(rig.document);
+
+        assert!(undecodable.contains("TestRig.joint"), "{undecodable}");
+        assert!(unknown.contains("nowhere"), "{unknown}");
+        assert_eq!(rig_ref(&rig.f, rig.document).joint, JointName::from("Hips"));
+        assert!(!rig.f.unsaved(rig.document));
     }
 }

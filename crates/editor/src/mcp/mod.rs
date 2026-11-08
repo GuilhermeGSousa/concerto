@@ -5,6 +5,8 @@ mod observe;
 mod run;
 mod value;
 
+pub(crate) use edit::{EditSource, adapter_commit, find_path, refusal_error, refused};
+pub(crate) use observe::listed_paths;
 pub use run::PlayTimeout;
 
 use std::path::PathBuf;
