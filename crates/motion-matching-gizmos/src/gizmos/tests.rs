@@ -24,7 +24,7 @@ use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::{JointPose, SkeletonComponent};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MirrorAxis, MotionDatabase,
-    MotionEntry, MotionMatchingNode, SimulationBoneSettings, TrajectoryDirections,
+    MotionEntry, MotionMatchingState, SimulationBoneSettings, TrajectoryDirections,
     TrajectoryPositions, TrajectorySettings, bake,
 };
 use concerto_reflect::TypeRegistry;
@@ -163,14 +163,24 @@ fn baked(
     definition.with_baked(baked)
 }
 
-fn published(world: &World, player: Entity) -> &MotionMatchingDebug {
-    world
-        .get_component_for_entity::<AnimationPlayer>(player)
-        .unwrap()
-        .debug()
-        .get::<MotionMatchingDebug>()
-        .first()
-        .expect("the graph holds a motion matching node")
+fn read_state<R>(
+    world: &mut World,
+    player: Entity,
+    read: impl FnOnce(&MotionMatchingState) -> R,
+) -> R {
+    let mut read = Some(read);
+    let mut result = None;
+    world.resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
+        world
+            .get_component_for_entity::<AnimationPlayer>(player)
+            .unwrap()
+            .for_each_state::<MotionMatchingNode>(graphs, |_, state, _| {
+                if let Some(read) = read.take() {
+                    result = Some(read(state));
+                }
+            });
+    });
+    result.expect("the graph holds a motion matching node")
 }
 
 struct Stage {
@@ -348,14 +358,18 @@ impl Stage {
     }
 
     fn matched(&mut self, bone: &Transform) -> Option<Vec<Vec<FeatureShape>>> {
-        let debug = published(self.app.main().world(), self.player);
-        matched_shapes(debug, &self.database, &self.skeleton, bone)
+        let (database, skeleton) = (&self.database, &self.skeleton);
+        read_state(self.app.main_mut().world_mut(), self.player, |state| {
+            matched_shapes(state, database, skeleton, bone)
+        })
     }
 
     fn query(&mut self, bone: &Transform) -> Option<Vec<Vec<FeatureShape>>> {
-        let debug = published(self.app.main().world(), self.player);
+        let (database, skeleton) = (&self.database, &self.skeleton);
         let clips = [&self.walk, &self.turn];
-        query_shapes(debug, &self.database, &self.skeleton, &clips, bone)
+        read_state(self.app.main_mut().world_mut(), self.player, |state| {
+            query_shapes(state, database, skeleton, &clips, bone)
+        })
     }
 
     fn replace_database(&mut self, channels: Vec<FeatureChannelData>) {

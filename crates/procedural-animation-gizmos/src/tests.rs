@@ -25,7 +25,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_procedural_animation::{
-    FootLockDebug, FootLockLeg, FootLockNode, LegLock, LockPhase, ProceduralAnimationPlugin,
+    FootLockLeg, FootLockNode, LegLock, LockPhase, ProceduralAnimationPlugin,
 };
 use concerto_reflect::TypeRegistry;
 use glam::{Mat4, Vec3};
@@ -195,15 +195,17 @@ impl Stage {
 
     fn legs(&mut self) -> Vec<LegLock> {
         let player = self.player;
+        let mut legs = None;
         self.world()
-            .get_component_for_entity::<AnimationPlayer>(player)
-            .unwrap()
-            .debug()
-            .get::<FootLockDebug>()
-            .first()
-            .expect("the graph holds a foot lock node")
-            .legs
-            .clone()
+            .resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
+                world
+                    .get_component_for_entity::<AnimationPlayer>(player)
+                    .unwrap()
+                    .for_each_state::<FootLockNode>(graphs, |_, state, _| {
+                        legs = Some(state.legs().to_vec());
+                    });
+            });
+        legs.expect("the graph holds a foot lock node")
     }
 
     fn phases(&mut self) -> Vec<LockPhase> {

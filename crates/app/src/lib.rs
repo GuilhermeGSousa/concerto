@@ -38,8 +38,11 @@ use concerto_ecs::{
 use log::info;
 
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, derived::DerivedData,
-    handle::AssetLifetimeEvent, Asset, AssetId, CreatableAsset, LoadableAsset,
+    asset_server::AssetServer,
+    asset_store::AssetStore,
+    derived::DerivedData,
+    handle::{AssetLifetimeEvent, AssetLoaded},
+    Asset, AssetId, CreatableAsset, LoadableAsset,
 };
 use concerto_reflect::{GetTypeRegistration, Reflect};
 
@@ -154,7 +157,7 @@ impl App {
         self.plugin_types.contains(&std::any::TypeId::of::<P>())
     }
 
-    /// Registers an asset type and the system that tracks its handles; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
+    /// Registers an asset type and the system that tracks its handles, once per type; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
     pub fn register_asset<A: Asset>(&mut self) -> &mut Self {
         self.register_asset_with::<A>(AssetServer::register_asset)
     }
@@ -170,13 +173,7 @@ impl App {
     >(
         &mut self,
     ) -> &mut Self {
-        let registered = self
-            .get_resource::<AssetServer>()
-            .expect("Asset Server not found")
-            .is_registered::<A>();
-        if !registered {
-            self.register_asset::<A>();
-        }
+        self.register_asset::<A>();
         self.register_type::<A>();
         if self.get_resource::<InspectedAssets>().is_none() {
             self.insert_resource(InspectedAssets::default());
@@ -191,6 +188,13 @@ impl App {
         &mut self,
         register: fn(&mut AssetServer, &AssetStore<A>),
     ) -> &mut Self {
+        if self
+            .get_resource::<AssetServer>()
+            .expect("Asset Server not found")
+            .is_registered::<A>()
+        {
+            return self;
+        }
         let asset_store = AssetStore::<A>::new();
         let asset_server = self
             .get_resource_mut::<AssetServer>()
@@ -203,12 +207,18 @@ impl App {
             (|mut asset_store: ResMut<AssetStore<A>>,
               asset_server: ResMut<AssetServer>,
               events: EventWriter<AssetLifetimeEvent>| {
-                asset_store.track_assets(asset_server, events);
+                if asset_store
+                    .bypass_change_detection()
+                    .track_assets(asset_server, events)
+                {
+                    asset_store.mark_changed();
+                }
             })
             .at_edit_time(),
         );
 
         self.main_mut().insert_resource(asset_store);
+        self.register_event::<AssetLoaded<A>>();
         self
     }
 
@@ -493,6 +503,8 @@ mod tests {
     use concerto_ecs::{
         component::removed::RemovedComponents,
         events::{event_channel::EventChannel, event_reader::EventReader},
+        query::change_detection::DetectChanges,
+        resource::Res,
     };
 
     #[derive(Event)]
@@ -712,6 +724,80 @@ mod tests {
             .unwrap()
             .get(&weak)
             .is_none());
+    }
+
+    #[derive(Resource, Default)]
+    struct NoteStoreLog {
+        changed: Vec<bool>,
+        loaded: Vec<AssetId>,
+    }
+
+    fn log_note_store(
+        store: Res<AssetStore<Note>>,
+        mut loaded: EventReader<AssetLoaded<Note>>,
+        mut log: ResMut<NoteStoreLog>,
+    ) {
+        log.changed.push(store.is_changed());
+        log.loaded.extend(loaded.read().map(|event| event.id));
+    }
+
+    #[test]
+    fn an_asset_store_reads_as_changed_only_on_a_load_or_a_drop() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_plugin(plugins::AssetManagerPlugin)
+            .register_asset::<Note>()
+            .insert_resource(NoteStoreLog::default())
+            .add_system(First, log_note_store);
+        app.finish_plugin_build();
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let handle = app.get_resource::<AssetServer>().unwrap().add(Note);
+        let id = handle.id();
+        for _ in 0..3 {
+            app.update();
+        }
+        drop(handle);
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let log = app.get_resource::<NoteStoreLog>().unwrap();
+        assert_eq!(
+            log.changed[1..],
+            [false, false, false, true, false, false, true, false]
+        );
+        assert_eq!(log.loaded, [id]);
+    }
+
+    #[derive(Resource, Default)]
+    struct LoadedNotes(Vec<AssetId>);
+
+    fn log_loaded_notes(mut loaded: EventReader<AssetLoaded<Note>>, mut log: ResMut<LoadedNotes>) {
+        log.0.extend(loaded.read().map(|event| event.id));
+    }
+
+    #[test]
+    fn an_asset_type_registered_twice_reports_each_load_once() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_plugin(plugins::AssetManagerPlugin)
+            .register_asset::<Note>()
+            .register_asset::<Note>()
+            .insert_resource(LoadedNotes::default())
+            .add_system(Update, log_loaded_notes);
+        app.finish_plugin_build();
+
+        let handle = app.get_resource::<AssetServer>().unwrap().add(Note);
+        for _ in 0..2 {
+            app.update();
+        }
+
+        assert_eq!(app.get_resource::<LoadedNotes>().unwrap().0, [handle.id()]);
     }
 
     #[test]

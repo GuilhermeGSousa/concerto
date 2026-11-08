@@ -200,12 +200,6 @@ impl LegLock {
     }
 }
 
-/// What a foot lock node published on its player's last evaluation: each leg's lock, in the node's leg order.
-#[derive(Default, Clone)]
-pub struct FootLockDebug {
-    pub legs: Vec<LegLock>,
-}
-
 /// Whether a leg's foot is held, easing back to the animated foot, or following it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LockPhase {
@@ -314,13 +308,6 @@ struct LegPoints {
     foot: Vec3,
 }
 
-fn publish(context: &AnimationGraphContext<'_>, legs: &[LegLock]) {
-    context.publish(|debug: &mut FootLockDebug| {
-        debug.legs.clear();
-        debug.legs.extend_from_slice(legs);
-    });
-}
-
 fn leg_points(resolved: &ResolvedLegs<'_>, output: &AnimationFrame) -> Option<Vec<LegPoints>> {
     let position = |bone| {
         model_joint(resolved.skeleton, output.joints(), bone)
@@ -408,7 +395,6 @@ impl AnimationNode for FootLockNode {
             output.copy_from(&input.frame);
         }
         if self.legs.is_empty() {
-            publish(context, &state.legs);
             return;
         }
         let resolved = match self.resolve(context.skeleton()) {
@@ -418,14 +404,12 @@ impl AnimationNode for FootLockNode {
                     warn!("foot lock skipped: {reason}");
                     state.warned = true;
                 }
-                publish(context, &state.legs);
                 return;
             }
         };
         let model_to_world = context.model_to_world().unwrap_or_default();
         let world_to_model = WorldToModel::new(model_to_world);
         if !model_to_world.is_finite() || !world_to_model.is_finite() {
-            publish(context, &state.legs);
             return;
         }
 
@@ -449,7 +433,6 @@ impl AnimationNode for FootLockNode {
         }
 
         let Some(points) = leg_points(&resolved, output) else {
-            publish(context, &state.legs);
             return;
         };
         let motion = ModelMotion::of(context.root(), resolved.skeleton, output);
@@ -470,7 +453,6 @@ impl AnimationNode for FootLockNode {
             leg.lock.y = animated.y;
             leg.shown = animated + leg.offset * weight;
         }
-        publish(context, &state.legs);
 
         if weight.is_nan() || weight < MIN_WEIGHT {
             return;
@@ -533,7 +515,7 @@ mod tests {
     use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
-    use super::{FootLockDebug, FootLockLeg, FootLockNode, FootLockState, LegLock, LockPhase};
+    use super::{FootLockLeg, FootLockNode, FootLockState, LegLock, LockPhase};
     use crate::plugin::ProceduralAnimationPlugin;
 
     const EPS: f32 = 1.0e-4;
@@ -966,18 +948,6 @@ mod tests {
 
         fn with_state<R>(&mut self, read: impl FnOnce(&mut FootLockState) -> R) -> R {
             self.state_of::<FootLockNode, R>(read)
-        }
-
-        fn published(&mut self) -> Vec<Vec<LegLock>> {
-            let player = self.player;
-            self.world()
-                .get_component_for_entity::<AnimationPlayer>(player)
-                .unwrap()
-                .debug()
-                .get::<FootLockDebug>()
-                .iter()
-                .map(|debug| debug.legs.clone())
-                .collect()
         }
 
         fn warned(&mut self) -> bool {
@@ -1419,19 +1389,6 @@ mod tests {
         stage.settle();
         stage.step(DT);
         assert_eq!(stage.phases(), [LockPhase::Free; 2]);
-    }
-
-    #[test]
-    fn the_legs_are_published_at_weight_one_and_at_weight_zero() {
-        for weight in [1.0, 0.0] {
-            let mut stage = still(locking().with_weight(weight));
-
-            stage.step(DT);
-
-            let legs = stage.legs();
-            assert_eq!(legs.len(), 2);
-            assert_eq!(stage.published(), [legs]);
-        }
     }
 
     #[test]

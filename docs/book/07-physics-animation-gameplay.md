@@ -613,7 +613,8 @@ player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
 receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
 a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
-through `inner_graphs` and their states through `inner_states`.
+through `inner_graphs` and their states through `inner_states`, and, under
+`cfg(test)` or the `test-support` feature, mutably through `inner_states_mut`.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and
@@ -629,7 +630,7 @@ clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
-or identity when it has none; and, in `evaluate`, the sink `publish` writes to.
+or identity when it has none.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the root motion and the clip events its sources gave this frame. Its inputs
@@ -661,32 +662,29 @@ an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
 
-### Debug data
+### Reading node state
 
-A node's state is private to the player: outside tests, nothing reaches it.
-What a node wants gizmos, overlays or tools to see, it publishes from
-`evaluate` through its context:
+Gizmos, overlays and tools read a node's state from the player:
 
 ```rust
-#[derive(Default)]
-struct GainDebug {
-    amount: f32,
+fn log_gains(players: Query<&AnimationPlayer>, graphs: Res<AssetStore<AnimationGraph>>) {
+    for player in players.iter() {
+        player.for_each_state::<Gain>(&graphs, |gain, _state, _blackboard| {
+            println!("gain {}", gain.amount);
+        });
+    }
 }
-
-context.publish::<GainDebug>(|debug| debug.amount = self.amount);
 ```
 
-`AnimationPlayer::debug()` returns an `AnimationDebug`, and
-`get::<GainDebug>()` the values of that type its graph published on its last
-evaluation, in the order they were published: each node's values in walk
-order, from nodes inside state machines and retarget nodes too. Each evaluation
-starts the lists empty but keeps the values, so `fill` receives last
-evaluation's value at that position and can refill its buffers without
-allocating. A player whose graph is not loaded publishes nothing, while a paused
-player, or one whose skeleton asset is missing, does not evaluate and keeps what
-it published last. `publish` does nothing in `create_state` and `update`, and
-`fill` must not publish itself. Read the values after `animate_targets`, which
-evaluates the players.
+`for_each_state::<N>` calls the closure with each live node of type `N` in the
+player's graph, nodes inside state machines and retarget nodes included, its
+state and the player's blackboard. It takes the player by shared reference, so a
+system that only draws takes `Query<&AnimationPlayer>` and does not mark the
+player changed. `for_each_state_mut` hands out the state mutably for tests that
+set a node up; it exists only under `cfg(test)` or the crate's `test-support`
+feature, which a dependent crate enables in its dev-dependencies. A player whose
+graph is not loaded or not yet initialized visits nothing. Order the system after
+`animate_targets` to read what the last evaluation left in the state.
 
 ### Root motion
 
@@ -1050,9 +1048,9 @@ root motion against the target reference, and the frame's root motion is the
 inner graph's, with its translation multiplied by `scale()` and its rotation
 unchanged. Clip events fired in the inner graph reach the player as its own,
 and the node is finished when the inner graph is, so a state machine's
-`OnAnimationEnd` follows it. Values that nodes inside the inner graph publish
-(see [Debug data](#debug-data)) reach the player's `AnimationPlayer::debug`,
-as those of its own nodes do.
+`OnAnimationEnd` follows it. `AnimationPlayer::for_each_state` also visits
+the nodes inside the inner graph, which is how motion matching's gizmos find a
+matcher under a retarget node.
 
 Until the player's skeleton, both rigs, their skeletons, a `ClipFrame`
 reference clip and the inner graph have loaded, the node gives the rest pose,

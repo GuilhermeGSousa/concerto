@@ -1,28 +1,11 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use concerto_foundation::assets::{Asset, AssetId};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DependencyEntry {
     pub path: PathBuf,
-    pub content_hash: u64,
-}
-
-/// Hashes a file's contents for [`ImportContext::track_dependency`]. Kept
-/// as dead plumbing: importers still record dependencies, but nothing
-/// consumes them until a future incremental-import feature reads them back.
-pub fn hash_file_contents(path: &Path) -> Result<u64, ImportError> {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-
-    let bytes = std::fs::read(path).map_err(|err| ImportError::SourceUnreadable {
-        source_path: path.to_path_buf(),
-        message: err.to_string(),
-    })?;
-
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    Ok(hasher.finish())
 }
 
 #[derive(Debug, Clone)]
@@ -159,9 +142,9 @@ impl ImportContext {
         Ok(())
     }
 
-    pub fn track_dependency(&mut self, path: PathBuf, content_hash: u64) {
-        self.dependencies
-            .push(DependencyEntry { path, content_hash });
+    /// Records a file the source refers to, which an import from outside the project copies beside it.
+    pub fn track_dependency(&mut self, path: PathBuf) {
+        self.dependencies.push(DependencyEntry { path });
     }
 
     pub fn into_parts(self) -> ImportOutputs {

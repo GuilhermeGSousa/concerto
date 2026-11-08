@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use concerto_animation::{
-    animate_targets, clip::AnimationClip, player::AnimationPlayer, update_animation_players,
+    clip::AnimationClip, graph::AnimationGraph, player::AnimationPlayer, update_animation_players,
 };
 use concerto_app::{plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_color::Color;
@@ -14,8 +14,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    CharacterLink, CharacterSimulation, FeatureShape, MotionDatabase, MotionMatchingDebug,
-    preview_features,
+    CharacterLink, CharacterSimulation, FeatureShape, MotionDatabase, MotionMatchingNode,
+    MotionMatchingState, preview_features,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::plugin::RenderPlugin;
@@ -66,7 +66,6 @@ impl Plugin for MotionMatchingGizmosPlugin {
                 LateUpdate,
                 draw_motion_matching
                     .after(update_animation_players)
-                    .after(animate_targets)
                     .after(propagate_global_transforms),
             );
         }
@@ -74,22 +73,19 @@ impl Plugin for MotionMatchingGizmosPlugin {
 }
 
 fn placed_channels(
-    debug: &MotionMatchingDebug,
+    state: &MotionMatchingState,
     database: &MotionDatabase,
     skeleton: &Skeleton,
     frame: &BakedFrame,
     features: &[f32],
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    if debug.query_dims != database.feature_dims()? {
-        return None;
-    }
-    let channels = database.live_channels().ok()?;
+    let channels = state.query()?.channels();
     let dims: usize = channels.iter().map(|channel| channel.dims()).sum();
     if features.len() != database.feature_dims()? || features.len() != dims {
         return None;
     }
-    let shapes = preview_features(&channels, &frame.context(skeleton), features);
+    let shapes = preview_features(channels, &frame.context(skeleton), features);
     Some(
         shapes
             .into_iter()
@@ -103,23 +99,23 @@ fn placed_channels(
     )
 }
 
-/// The shapes of the frame a published motion matching node plays, per channel and placed at `bone`; `None` when they can't be read.
+/// The shapes of the frame the node plays, per channel and placed at `bone`; `None` when they can't be read.
 pub fn matched_shapes(
-    debug: &MotionMatchingDebug,
+    state: &MotionMatchingState,
     database: &MotionDatabase,
     skeleton: &Skeleton,
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let frame = debug.frame;
+    let frame = state.frame();
     database.range_of(frame)?;
     let baked = BakedFrame::placed(
         skeleton,
-        debug.pose.clone(),
+        state.pose().joints().to_vec(),
         database.simulation_bone(frame)?,
         database.trajectory_samples(frame)?,
     );
     placed_channels(
-        debug,
+        state,
         database,
         skeleton,
         &baked,
@@ -128,15 +124,15 @@ pub fn matched_shapes(
     )
 }
 
-/// The shapes of the last search's query a node published, per channel and placed at `bone`; `None` before a search or when they can't be read.
+/// The shapes of the last search's query, per channel and placed at `bone`; `None` before a search or when they can't be read.
 pub fn query_shapes(
-    debug: &MotionMatchingDebug,
+    state: &MotionMatchingState,
     database: &MotionDatabase,
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let query = debug.last_query.as_ref()?;
+    let query = state.last_query()?;
     database.range_of(query.frame)?;
     let baked = BakedFrame::placed(
         skeleton,
@@ -144,7 +140,7 @@ pub fn query_shapes(
         query.simulation.clone(),
         query.trajectory.clone(),
     );
-    placed_channels(debug, database, skeleton, &baked, &query.features, bone)
+    placed_channels(state, database, skeleton, &baked, &query.features, bone)
 }
 
 fn remember(trail: &mut VecDeque<(f32, Vec3)>, delta: f32, position: Vec3) {
@@ -179,6 +175,7 @@ pub fn draw_motion_matching(
     players: Query<&AnimationPlayer>,
     simulations: Query<&CharacterSimulation>,
     globals: Query<&GlobalTransform>,
+    graphs: Res<AssetStore<AnimationGraph>>,
     databases: Res<AssetStore<MotionDatabase>>,
     clips: Res<AssetStore<AnimationClip>>,
     skeletons: Res<AssetStore<Skeleton>>,
@@ -220,41 +217,40 @@ pub fn draw_motion_matching(
         if !shown.matched && !shown.query {
             continue;
         }
-        let Some(debug) = player
-            .debug()
-            .get::<MotionMatchingDebug>()
-            .iter()
-            .find(|debug| debug.initialised && !debug.failed)
-        else {
-            continue;
-        };
-        let Some(database) = databases.get(&debug.database) else {
-            continue;
-        };
-        let Some(skeleton) = skeletons.get(&database.skeleton) else {
-            continue;
-        };
-        let Some(sampled) = database
-            .clips()
-            .map(|handle| clips.get(handle))
-            .collect::<Option<Vec<_>>>()
-        else {
-            continue;
-        };
-        if shown.matched
-            && let Some(channels) = matched_shapes(debug, database, skeleton, &bone)
-        {
-            draw_channels(&mut gizmos, &bone, &channels, |channel| {
-                channel_color(channel, Some(channel))
-            });
-        }
-        if shown.query
-            && let Some(channels) = query_shapes(debug, database, skeleton, &sampled, &bone)
-        {
-            draw_channels(&mut gizmos, &bone, &channels, |channel| {
-                channel_color(channel, None)
-            });
-        }
+        let mut drawn = false;
+        player.for_each_state::<MotionMatchingNode>(&graphs, |node, state, _| {
+            if drawn || !state.is_initialised() || state.has_failed() {
+                return;
+            }
+            drawn = true;
+            let Some(database) = databases.get(&node.database) else {
+                return;
+            };
+            let Some(skeleton) = skeletons.get(&database.skeleton) else {
+                return;
+            };
+            let Some(sampled) = database
+                .clips()
+                .map(|handle| clips.get(handle))
+                .collect::<Option<Vec<_>>>()
+            else {
+                return;
+            };
+            if shown.matched
+                && let Some(channels) = matched_shapes(state, database, skeleton, &bone)
+            {
+                draw_channels(&mut gizmos, &bone, &channels, |channel| {
+                    channel_color(channel, Some(channel))
+                });
+            }
+            if shown.query
+                && let Some(channels) = query_shapes(state, database, skeleton, &sampled, &bone)
+            {
+                draw_channels(&mut gizmos, &bone, &channels, |channel| {
+                    channel_color(channel, None)
+                });
+            }
+        });
     }
 }
 

@@ -3,8 +3,7 @@ mod import_context;
 
 pub use clip_names::clip_names;
 pub use import_context::{
-    hash_file_contents, DependencyEntry, EmittedSubAsset, ImportContext, ImportError,
-    ImportOutputs, SubAssetIdResolver,
+    DependencyEntry, EmittedSubAsset, ImportContext, ImportError, ImportOutputs, SubAssetIdResolver,
 };
 
 use std::path::{Path, PathBuf};

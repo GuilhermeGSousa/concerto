@@ -246,6 +246,11 @@ impl<'world, T: Resource> ResMut<'world, T> {
         self.deref_mut();
     }
 
+    /// Borrows the resource mutably without marking it changed.
+    pub fn bypass_change_detection(&mut self) -> &mut T {
+        self.value
+    }
+
     pub fn changed_tick(&self) -> Tick {
         *self.changed_tick
     }

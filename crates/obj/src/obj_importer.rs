@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
+use concerto_asset_import::{ImportContext, ImportError, Importer};
 use concerto_color::Color;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::handle::AssetHandle;
@@ -128,14 +128,18 @@ fn import_material(
     let mtl_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
     let mtl_path = mtl_dir.join(&mtl_name);
 
-    let mtl_hash = hash_file_contents(&mtl_path)?;
-    ctx.track_dependency(mtl_path.clone(), mtl_hash);
+    let mtl_bytes = std::fs::read(&mtl_path).map_err(|err| ImportError::SourceUnreadable {
+        source_path: mtl_path.clone(),
+        message: err.to_string(),
+    })?;
+    ctx.track_dependency(mtl_path.clone());
 
-    let (mats, _name_to_index) =
-        tobj::load_mtl(&mtl_path).map_err(|err| ImportError::MalformedSource {
+    let (mats, _name_to_index) = tobj::load_mtl_buf(&mut mtl_bytes.as_slice()).map_err(|err| {
+        ImportError::MalformedSource {
             source_path: mtl_path.clone(),
             message: format!("failed to parse MTL file: {err}"),
-        })?;
+        }
+    })?;
 
     // Collapse every `newmtl` entry into one StandardMaterial — a verbatim
     // port of the runtime MTLLoader quirk, deliberately preserved here.
@@ -184,10 +188,7 @@ fn import_material(
 }
 
 fn track_texture_dependency(ctx: &mut ImportContext, mtl_dir: &Path, texture_name: &str) {
-    let texture_path = mtl_dir.join(texture_name);
-    if let Ok(hash) = hash_file_contents(&texture_path) {
-        ctx.track_dependency(texture_path, hash);
-    }
+    ctx.track_dependency(mtl_dir.join(texture_name));
 }
 
 /// Per-vertex assembly plus the normal/tangent fallback — a verbatim port of
