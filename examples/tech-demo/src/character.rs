@@ -691,7 +691,7 @@ mod tests {
         Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp,
         DesiredMotion, MotionDatabase, MotionMatchingNode, Synchronization,
     };
-    use concerto::name::name;
+    use concerto::name::{Name, name};
     use concerto::physics::physics_state::PhysicsState;
     use concerto::physics::{
         body::BodyId,
@@ -1464,6 +1464,48 @@ mod tests {
         let source = lafan1_rig.resolve(&lafan1, None).unwrap();
         let target = ual1_rig.resolve(&ual1, None).unwrap();
 
+        let bone = |skeleton: &Skeleton, index: usize| skeleton.names[index];
+        for leg in [
+            ExpectedLeg::new(
+                name!("foot_l"),
+                name!("LeftFoot"),
+                name!("LeftLeg"),
+                name!("LeftUpLeg"),
+            ),
+            ExpectedLeg::new(
+                name!("foot_r"),
+                name!("RightFoot"),
+                name!("RightLeg"),
+                name!("RightUpLeg"),
+            ),
+        ] {
+            let goal = source.goal(leg.goal).unwrap();
+            assert_eq!(bone(&lafan1, goal.tip), leg.tip);
+            assert_eq!(bone(&lafan1, goal.mid), leg.mid);
+            assert_eq!(bone(&lafan1, goal.root), leg.root);
+        }
+        for leg in [
+            ExpectedLeg::new(
+                name!("foot_l"),
+                name!("foot_l"),
+                name!("calf_l"),
+                name!("thigh_l"),
+            ),
+            ExpectedLeg::new(
+                name!("foot_r"),
+                name!("foot_r"),
+                name!("calf_r"),
+                name!("thigh_r"),
+            ),
+        ] {
+            let goal = target.goal(leg.goal).unwrap();
+            assert_eq!(bone(&ual1, goal.tip), leg.tip);
+            assert_eq!(bone(&ual1, goal.mid), leg.mid);
+            assert_eq!(bone(&ual1, goal.root), leg.root);
+        }
+        assert_eq!(source.goals.len(), 2);
+        assert_eq!(target.goals.len(), 2);
+
         assert!(PoseRetarget::new(&source, &lafan1, &target, &ual1).is_ok());
 
         let bytes = std::fs::read(
@@ -1472,6 +1514,24 @@ mod tests {
         .unwrap();
         let database = decode_content_asset::<MotionDatabase>(&bytes).unwrap().1;
         assert_eq!(database.skeleton.id(), LAFAN1_SKELETON);
+    }
+
+    struct ExpectedLeg {
+        goal: Name,
+        tip: Name,
+        mid: Name,
+        root: Name,
+    }
+
+    impl ExpectedLeg {
+        fn new(goal: Name, tip: Name, mid: Name, root: Name) -> Self {
+            Self {
+                goal,
+                tip,
+                mid,
+                root,
+            }
+        }
     }
 
     fn stored<A: Asset + 'static>(world: &mut World, server: &mut AssetServer) {

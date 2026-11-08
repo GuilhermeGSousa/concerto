@@ -19,7 +19,8 @@ use concerto_animation::node::{
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use concerto_animation::retarget::{
-    BoneCorrection, ReferencePose, RetargetChain, RetargetNode, RetargetRig,
+    BoneCorrection, ReferencePose, RetargetChain, RetargetGoal, RetargetGoalSettings, RetargetNode,
+    RetargetRig,
 };
 use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_ecs::world::World;
@@ -446,6 +447,11 @@ fn a_retarget_node_keeps_every_field_through_a_round_trip_and_its_handles_come_b
         AssetHandle::weak(AssetId::from_path("lafan1_locomotion")),
         AssetHandle::weak(AssetId::from_path("lafan1_rig")),
         AssetHandle::weak(AssetId::from_path("ual1_rig")),
+    )
+    .with_goal(
+        RetargetGoalSettings::new("foot_l")
+            .with_weight(0.25)
+            .with_softness(0.05),
     );
     let mut graph = AnimationGraph::from_node(node.clone());
     graph.make_live(&registry(false), None).unwrap();
@@ -461,6 +467,10 @@ fn a_retarget_node_keeps_every_field_through_a_round_trip_and_its_handles_come_b
     assert_eq!(
         retarget_node_handle_ids(live_node::<RetargetNode>(&restored).unwrap()),
         retarget_node_handle_ids(&node)
+    );
+    assert_eq!(
+        live_node::<RetargetNode>(&restored).unwrap().goals,
+        node.goals
     );
 
     let mut server = AssetServer::new();
@@ -803,9 +813,8 @@ fn bone_mask_encoding_matches_its_fixture() {
     check_encoding(&mask, encoding_dir());
 }
 
-#[test]
-fn retarget_rig_encoding_matches_its_fixture() {
-    let rig = RetargetRig::new()
+fn version_1_rig() -> RetargetRig {
+    RetargetRig::new()
         .with_skeleton(AssetHandle::weak(AssetId::from_bytes(
             Uuid::from_u128(13).into_bytes(),
         )))
@@ -820,7 +829,31 @@ fn retarget_rig_encoding_matches_its_fixture() {
         .with_correction(BoneCorrection::new(
             "upperarm_l",
             glam::Quat::from_xyzw(0.0, 0.0, 0.5, 0.75),
-        ));
+        ))
+}
+
+#[test]
+fn retarget_rig_encoding_matches_its_fixture() {
+    let rig = version_1_rig().with_goal(RetargetGoal::new("foot_l", "foot_l"));
 
     check_encoding(&rig, encoding_dir());
+}
+
+#[test]
+fn a_version_1_retarget_rig_migrates_to_a_rig_with_no_goals() {
+    let payload = std::fs::read(encoding_dir().join("RetargetRig.v1.bin")).unwrap();
+    let header = ContentAssetHeader {
+        asset_id: AssetId::from_path("content/rigs/ual1.gasset"),
+        references: Vec::new(),
+        kind: "RetargetRig".to_string(),
+        kind_version: 1,
+        provenance: None,
+        derived: None,
+    };
+    let bytes = write_content_asset(&header, &payload).unwrap();
+
+    let (_, rig) = decode_content_asset::<RetargetRig>(&bytes).expect("migrates");
+
+    assert_eq!(rig, version_1_rig());
+    assert!(rig.goals.is_empty());
 }

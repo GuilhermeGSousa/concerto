@@ -895,7 +895,8 @@ played on the other. It holds:
   ground motion, such as UAL1's `root`. Without one the retarget root carries
   it, as on LAFAN1;
 - `chains`, named runs of bones;
-- `reference`, the pose the rig is aligned in, and `corrections` on top of it.
+- `reference`, the pose the rig is aligned in, and `corrections` on top of it;
+- `goals`, named IK goals on bones such as the feet and hands.
 
 A `RetargetChain` is a `name`, a `start` bone and an `end` bone below it, and
 its bones run from `start` down to `end`; a single-bone chain has
@@ -914,6 +915,19 @@ text, but rigs written apart match only when they agree, so use these:
 
 Nothing checks a rig's names against the table, and chains may share bones.
 
+A `RetargetGoal` is a `name` and a `bone`, the tip of a two-bone limb: the
+goal bends the bone's parent, the mid, and the mid's parent, the root, so a
+goal on the ankle bends the knee and the thigh. Goals, like chains, are
+matched across rigs by name alone, and these names are recommended:
+
+| Goal | Bone |
+|---|---|
+| `foot_l`, `foot_r` | foot / ankle |
+| `hand_l`, `hand_r` | hand / wrist |
+
+A goal never bends the pelvis: its mid and root may not be the rig's root or
+motion root, or above either.
+
 The reference pose is `ReferencePose::Rest`, the skeleton's rest pose, or
 `ReferencePose::ClipFrame { clip, time }`, the rest pose with every channel of
 the clip sampled at `time`; a bone the clip has no channels for keeps its rest
@@ -927,7 +941,7 @@ A rig is made from the content browser's New menu and edited in the inspector,
 whose bone fields pick from the named skeleton's bones, or in code:
 
 ```rust
-use concerto::animation::retarget::{BoneCorrection, RetargetChain, RetargetRig};
+use concerto::animation::retarget::{BoneCorrection, RetargetChain, RetargetGoal, RetargetRig};
 
 let rig = RetargetRig::new()
     .with_skeleton(skeleton)
@@ -935,18 +949,22 @@ let rig = RetargetRig::new()
     .with_motion_root("root")
     .with_chain(RetargetChain::new("spine", "spine_01", "spine_03"))
     .with_chain(RetargetChain::new("head", "Head", "Head"))
-    .with_correction(BoneCorrection::new("upperarm_l", Quat::from_rotation_z(0.5)));
+    .with_correction(BoneCorrection::new("upperarm_l", Quat::from_rotation_z(0.5)))
+    .with_goal(RetargetGoal::new("foot_l", "foot_l"));
 ```
 
 `rig.resolve(&skeleton, clip)` turns it into a `ResolvedRig`: the bone indices
 of the root, the motion root and each chain (`chain(name)` finds one), the
-reference pose in local and model space, and `root_height`, the root's height
+tip, mid and root indices of each goal, in list order (`goal(name)` finds
+one), the reference pose in local and model space, and `root_height`, the root's height
 above the model origin with model +Y up. It takes the skeleton and, for a
 `ClipFrame`, the clip, which the caller loads through the rig's own handles. It
 fails with a `RigError` naming the bone or chain: an invalid skeleton, an empty
 or unknown bone, a motion root that is not above the root, an unnamed or
-duplicate chain, a chain end not below its start, a missing clip, a time that
-is not finite, a clip with no channels for the skeleton, or a root height that
+duplicate chain, a chain end not below its start, an unnamed or duplicate goal
+(`UnnamedGoal`, `DuplicateGoal`), a goal bone with no parent and grandparent
+(`GoalTooHigh`), a goal that would bend the root or the motion root
+(`GoalBendsRoot`), a missing clip, a time that is not finite, a clip with no channels for the skeleton, or a root height that
 is not finite or not above 0.1 mm.
 
 The solve that plays one rig's motion on another is `PoseRetarget`, below, and
@@ -991,8 +1009,8 @@ with different bone counts are mapped by normalised length along the chain, the
 source's change slerped between the two source bones around each target bone;
 a single-bone target chain takes the source chain's start.
 
-The target keeps the rest from its reference pose. A bone in no shared chain
-keeps its reference local rotation, a chain only the target has keeps its
+The target keeps the rest from its reference pose. Before goals are solved, a
+bone in no shared chain keeps its reference local rotation, a chain only the target has keeps its
 reference pose, and a chain only the source has is ignored. Every bone but the
 root and the motion root keeps its reference local translation and scale.
 
@@ -1006,9 +1024,35 @@ still reaches its full position and turn. A target without a motion root
 carries all of the motion on its root. `scale()` is also the factor for
 mapping a frame's root motion by hand.
 
+After this FK pass, each goal both rigs name moves the target limb with the
+two-bone IK of `concerto::animation::ik`. The pairs run in the target rig's
+goal order, and a goal on one rig only is not solved. A pair's full goal is the
+target tip's reference position plus the source tip's movement from its
+reference, relative to the source root and scaled by `scale()`, measured from
+the target root. The part that comes from the reference poses, the target
+tip's reference offset from its root less the scaled source one, turns with
+the root's turn about +Y, so the spacing of the feet follows the character's
+facing and the result is the same whether the pose still holds its root motion
+or not. A source ankle at its reference height therefore puts the
+target ankle at the target's own reference height, a planted source foot gives
+a fixed target goal, and a stride scales as root motion does. The goal is the
+FK tip position moved toward the full goal by the pair's `weight`, and
+`softness` eases the reach near full extension. The solve turns the limb's root
+and mid; the tip keeps the model rotation the FK pass gave it, and the bones
+below it, such as toes and fingers, follow. The knee or elbow stays on the side
+the FK pass bent it to, a goal out of reach straightens the limb toward it, and
+no bone changes length. Each pair sees the pose the pairs before it left.
+
+Every pair starts at weight 1 and softness 0. `set_goal(&settings)` replaces
+one pair's, from a `RetargetGoalSettings { goal, weight, softness }` built with
+`RetargetGoalSettings::new(goal)`, `with_weight` and `with_softness`. The
+weight is clamped to [0, 1], and a weight of 0, or NaN, leaves the FK result
+exactly. A name the two rigs do not both
+have fails with `RetargetError::UnknownGoal { goal }` and changes nothing.
+
 `new` fails with a `RetargetError`: `RigNotForSkeleton { side }` when a rig's
-pose lengths, bone indices, motion root or root height do not fit the skeleton
-beside it, or the skeleton is invalid, and `NoSharedChain` when the rigs share
+pose lengths, bone indices, goal bones, motion root or root height do not fit
+the skeleton beside it, or the skeleton is invalid, and `NoSharedChain` when the rigs share
 no chain name. `retarget_into` fails with `PoseLength { side, .. }` when the
 source pose or `out` has the wrong number of bones, and then writes nothing.
 
@@ -1051,6 +1095,25 @@ and the node is finished when the inner graph is, so a state machine's
 `OnAnimationEnd` follows it. `AnimationPlayer::for_each_state` also visits
 the nodes inside the inner graph, which is how motion matching's gizmos find a
 matcher under a retarget node.
+
+Every goal both rigs name is solved at weight 1 and softness 0 unless the
+node's `goals` say otherwise. Each `RetargetGoalSettings` in that list,
+added with `with_goal`, sets one goal's weight and softness, and a later entry
+for the same goal wins. The list is set in code, as the editor does not edit a
+graph's nodes:
+
+```rust
+use concerto::animation::retarget::{RetargetGoalSettings, RetargetNode};
+
+let node = RetargetNode::new(inner, lafan_rig, ual_rig)
+    .with_goal(RetargetGoalSettings::new("foot_l").with_softness(0.1))
+    .with_goal(RetargetGoalSettings::new("foot_r").with_weight(0.0));
+```
+
+An entry naming a goal the two rigs do not both have logs one warning and is
+ignored; the node still plays. The node reads its settings and both rigs'
+goals when it starts, so an edit to a rig's goals reaches a node that is
+already playing only once the node restarts.
 
 Until the player's skeleton, both rigs, their skeletons, a `ClipFrame`
 reference clip and the inner graph have loaded, the node gives the rest pose,
