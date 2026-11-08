@@ -72,7 +72,7 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
         AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, BlendNode, LayerNode,
         PlaceholderNode, ReflectAnimationNode, ResultNode, TwoBoneIkNode,
     };
-    use concerto_animation::retarget::RetargetRig;
+    use concerto_animation::retarget::{RetargetGoal, RetargetGoalSettings, RetargetRig};
     use concerto_app::InspectedAssets;
     use concerto_ecs::reflect::AppTypeRegistry;
     use concerto_foundation::assets::{Asset, handle::AssetHandle};
@@ -118,6 +118,8 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(has_node_data(TypeId::of::<AdditiveNode>()));
     assert!(has_node_data(TypeId::of::<AimOffsetNode>()));
     assert!(registry.get(TypeId::of::<AimPoint>()).is_some());
+    assert!(registry.get(TypeId::of::<RetargetGoal>()).is_some());
+    assert!(registry.get(TypeId::of::<RetargetGoalSettings>()).is_some());
     assert!(
         registry
             .get(TypeId::of::<AssetHandle<AnimationClip>>())
