@@ -74,6 +74,18 @@ fn shadow_shader_translates_for_webgl2() {
 }
 
 #[test]
+fn viewport_clear_shader_translates_for_webgl2() {
+    assert_translates_to_glsl_es_300(
+        "viewport_clear.wgsl",
+        include_str!("../src/shaders/viewport_clear.wgsl"),
+        &[
+            ("vs_main", ShaderStage::Vertex),
+            ("fs_main", ShaderStage::Fragment),
+        ],
+    );
+}
+
+#[test]
 fn webgl2_defines_no_cube_array_support() {
     assert!(WEBGL2
         .shader_defs()
