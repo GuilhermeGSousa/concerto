@@ -383,7 +383,7 @@ fn the_other_rig_and_the_clip_can_be_picked_with_the_rig_tab_alone() {
 }
 
 #[test]
-fn the_rig_plugin_registers_its_editor_and_lets_the_editor_load_rigs_and_clips() {
+fn the_rig_plugin_registers_its_editor_and_lets_the_editor_load_rigs_their_skeletons_and_clips() {
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -397,6 +397,7 @@ fn the_rig_plugin_registers_its_editor_and_lets_the_editor_load_rigs_and_clips()
     let server = app.get_resource::<AssetServer>().unwrap();
     assert!(!server.is_registered::<RetargetRig>());
     assert!(!server.is_registered::<AnimationClip>());
+    assert!(!server.is_registered::<Skeleton>());
 
     app.register_plugin(crate::transport::TransportPlugin)
         .register_plugin(RetargetRigEditorPlugin);
@@ -404,6 +405,7 @@ fn the_rig_plugin_registers_its_editor_and_lets_the_editor_load_rigs_and_clips()
     let server = app.get_resource::<AssetServer>().unwrap();
     assert!(server.is_registered::<RetargetRig>());
     assert!(server.is_registered::<AnimationClip>());
+    assert!(server.is_registered::<Skeleton>());
     let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
     let kind = RetargetRig::name();
     assert!(editors.preview(kind).is_some());

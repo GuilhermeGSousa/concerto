@@ -2,7 +2,8 @@ use std::{collections::HashSet, fmt};
 
 use concerto_ecs::Res;
 use concerto_foundation::assets::{
-    Asset, CreatableAsset, LoadableAsset, asset_store::AssetStore, handle::AssetHandle,
+    Asset, CreatableAsset, LoadableAsset, asset_server::AssetLoadContext, asset_store::AssetStore,
+    handle::AssetHandle,
 };
 use concerto_mesh::{
     JointName, JointPose, ReflectSkeletonSource, Skeleton, SkeletonError, SkeletonSource,
@@ -249,7 +250,20 @@ impl Asset for RetargetRig {
     }
 }
 
-impl LoadableAsset for RetargetRig {}
+impl LoadableAsset for RetargetRig {
+    fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+        let server = context.asset_server();
+        if !self.skeleton.id().is_nil() {
+            self.skeleton = server.load(self.skeleton.id());
+        }
+        if let ReferencePose::ClipFrame { clip, .. } = &mut self.reference
+            && !clip.id().is_nil()
+        {
+            *clip = server.load(clip.id());
+        }
+        Ok(())
+    }
+}
 
 impl CreatableAsset for RetargetRig {
     fn new_asset() -> Self {
@@ -1170,7 +1184,7 @@ mod tests {
         system::input::{SystemInputData, register_input},
     };
     use concerto_foundation::assets::{
-        Asset, AssetId, asset_store::AssetStore, handle::AssetHandle,
+        Asset, AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonError};
     use concerto_name::{Name, name};
@@ -1300,6 +1314,31 @@ mod tests {
             actual.abs_diff_eq(expected, 1e-5),
             "{actual:?} != {expected:?}"
         );
+    }
+
+    #[test]
+    fn loading_a_rig_loads_its_skeleton_and_its_reference_clip() {
+        let mut server = AssetServer::new();
+        let rigs = AssetStore::<RetargetRig>::new();
+        let skeletons = AssetStore::<Skeleton>::new();
+        let clips = AssetStore::<AnimationClip>::new();
+        server.register_asset(&rigs);
+        server.register_asset(&skeletons);
+        server.register_asset(&clips);
+        let skeleton = AssetId::new();
+        let clip = AssetId::new();
+
+        server.add(
+            rig()
+                .with_skeleton(AssetHandle::weak(skeleton))
+                .with_reference(ReferencePose::ClipFrame {
+                    clip: AssetHandle::weak(clip),
+                    time: 0.0,
+                }),
+        );
+
+        assert!(server.is_loading_or_loaded(skeleton));
+        assert!(server.is_loading_or_loaded(clip));
     }
 
     #[test]

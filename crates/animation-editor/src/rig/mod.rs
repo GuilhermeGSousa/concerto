@@ -1052,7 +1052,7 @@ pub(crate) fn sync_rig_transport(
     }
 }
 
-/// Registers [`RetargetRigEditor`], lets the editor pick rigs and clips, and runs the rig tab's systems; needs [`crate::transport::TransportPlugin`].
+/// Registers [`RetargetRigEditor`], lets the editor pick rigs and clips and load what a rig names, and runs the rig tab's systems; needs [`crate::transport::TransportPlugin`].
 pub struct RetargetRigEditorPlugin;
 
 impl Plugin for RetargetRigEditorPlugin {
@@ -1060,6 +1060,7 @@ impl Plugin for RetargetRigEditorPlugin {
         app.register_creatable_asset_editor::<RetargetRig, RetargetRigEditor>()
             .expect("the editor's App holds the asset-editor registry")
             .register_asset::<RetargetRig>()
+            .register_asset::<Skeleton>()
             .register_derived_asset::<AnimationClip>()
             .insert_resource(RigPreviewTypes(preview_types()))
             .add_system(
