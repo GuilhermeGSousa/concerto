@@ -36,8 +36,10 @@ search; [crates/editor/README.md](../crates/editor/README.md#importing)
 describes the dialog. There is no import command line. The project the editor
 has open is the *project root*, and the import writes `content/…` under it. A
 source from outside the project is first copied to the destination the dialog
-shows, with every file it refers to. A file the source refers to that cannot be
-read is skipped with a warning naming it, and the import goes on without it. To
+shows, with every file it refers to. A file the importer does not read itself,
+such as a texture an OBJ's `.mtl` names, is skipped with a warning naming it when
+it cannot be read, and the import goes on without it. A missing `.mtl`, or a
+glTF's missing `.bin` or external image, still fails the import. To
 re-import an example's sources, run its editor over a scratch copy of the
 project, never over `examples/*` itself:
 
@@ -858,7 +860,8 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
   editor and save it; a saved scene is left alone by later re-imports.
 - **No incremental import.** Re-import regenerates the source's outputs
   while preserving their identities. `track_dependency` records the files a
-  source refers to, which an import from outside the project copies beside it;
+  source refers to, which an import from outside the project copies beside it
+when they can be read;
   nothing records their contents to tell whether they changed.
 - **No cross-source references.** An importer that emits a reference to a
   sub-asset from a *different* source file logs a warning and leaves it
