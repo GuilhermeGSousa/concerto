@@ -297,9 +297,9 @@ impl Stage {
         let mut drawn = None;
         world.resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
             world
-                .get_component_for_entity_mut::<AnimationPlayer>(player)
+                .get_component_for_entity::<AnimationPlayer>(player)
                 .unwrap()
-                .for_each_state_mut::<MotionMatchingNode>(graphs, |_, state, _| {
+                .for_each_state::<MotionMatchingNode>(graphs, |_, state, _| {
                     assert!(!state.has_failed());
                     let Some(last_query) = state.last_query().cloned() else {
                         return;

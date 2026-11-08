@@ -481,6 +481,7 @@ impl AnimationGraphState {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn for_each_state_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
@@ -490,6 +491,7 @@ impl AnimationGraphState {
         self.visit_states_mut(graphs, blackboard, &mut f);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn visit_states_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
@@ -559,18 +561,18 @@ impl AnimationGraphState {
     }
 
     pub(crate) fn stateless_node<'a>(
-        &mut self,
+        &self,
         graphs: &'a AssetStore<AnimationGraph>,
     ) -> Option<&'a str> {
         let graph = self.get_animation_graph(graphs)?;
         graph.iter().find_map(|node_index| {
             let node = graph.nodes.node_weight(*node_index)?;
             let live = node.live()?;
-            let Some(node_state) = self.graph_state.get_mut(&node_index) else {
+            let Some(node_state) = self.graph_state.get(&node_index) else {
                 return Some(node.type_name());
             };
             let mut found = None;
-            live.inner_states_mut(&mut node_state.node_state, &mut |inner| {
+            live.inner_states(&node_state.node_state, &mut |inner| {
                 if found.is_none() {
                     found = inner.stateless_node(graphs);
                 }
@@ -736,6 +738,7 @@ impl AnimationGraphStates {
         self.states.iter()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut AnimationGraphState> {
         self.states.iter_mut()
     }

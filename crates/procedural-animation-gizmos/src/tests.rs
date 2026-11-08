@@ -199,9 +199,9 @@ impl Stage {
         self.world()
             .resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
                 world
-                    .get_component_for_entity_mut::<AnimationPlayer>(player)
+                    .get_component_for_entity::<AnimationPlayer>(player)
                     .unwrap()
-                    .for_each_state_mut::<FootLockNode>(graphs, |_, state, _| {
+                    .for_each_state::<FootLockNode>(graphs, |_, state, _| {
                         legs = Some(state.legs().to_vec());
                     });
             });

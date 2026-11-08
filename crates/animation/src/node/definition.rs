@@ -69,6 +69,8 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     fn inner_states(&self, _state: &Self::State, _visit: &mut dyn FnMut(&AnimationGraphState)) {}
 
     /// Visits, mutably, the graph states this node's state holds for the graphs it plays inside itself.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     fn inner_states_mut(
         &self,
         _state: &mut Self::State,
@@ -121,6 +123,7 @@ pub trait ErasedAnimationNode: Send + Sync {
 
     fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState));
 
+    #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
         &self,
         state: &mut NodeState,
@@ -201,6 +204,7 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
         &self,
         state: &mut NodeState,

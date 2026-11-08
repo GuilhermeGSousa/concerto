@@ -613,8 +613,8 @@ player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
 receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
 a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
-through `inner_graphs` and their states through `inner_states` and
-`inner_states_mut`.
+through `inner_graphs` and their states through `inner_states`, and, under
+`cfg(test)` or the `test-support` feature, mutably through `inner_states_mut`.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and
@@ -680,7 +680,9 @@ fn log_gains(players: Query<&AnimationPlayer>, graphs: Res<AssetStore<AnimationG
 player's graph, nodes inside state machines and retarget nodes included, its
 state and the player's blackboard. It takes the player by shared reference, so a
 system that only draws takes `Query<&AnimationPlayer>` and does not mark the
-player changed. `for_each_state_mut` hands out the state mutably. A player whose
+player changed. `for_each_state_mut` hands out the state mutably for tests that
+set a node up; it exists only under `cfg(test)` or the crate's `test-support`
+feature, which a dependent crate enables in its dev-dependencies. A player whose
 graph is not loaded or not yet initialized visits nothing. Order the system after
 `animate_targets` to read what the last evaluation left in the state.
 

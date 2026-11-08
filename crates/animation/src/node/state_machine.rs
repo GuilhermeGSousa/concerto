@@ -362,6 +362,7 @@ impl AnimationNode for AnimationStateMachine {
         state.state_graphs.iter().for_each(visit);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
         &self,
         state: &mut AnimationStateMachineState,

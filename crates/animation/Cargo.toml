@@ -6,6 +6,9 @@ description.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 concerto-app.workspace = true
 concerto-foundation.workspace = true

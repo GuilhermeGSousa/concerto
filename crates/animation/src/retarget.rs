@@ -798,6 +798,7 @@ impl RetargetNodeState {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn inner_mut(&mut self) -> Option<&mut AnimationGraphState> {
         match &mut self.stage {
             Stage::Ready(running) => Some(&mut running.inner),
@@ -1037,6 +1038,7 @@ impl AnimationNode for RetargetNode {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
         &self,
         state: &mut RetargetNodeState,

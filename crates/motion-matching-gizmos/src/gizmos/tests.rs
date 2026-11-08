@@ -166,15 +166,15 @@ fn baked(
 fn read_state<R>(
     world: &mut World,
     player: Entity,
-    read: impl FnOnce(&mut MotionMatchingState) -> R,
+    read: impl FnOnce(&MotionMatchingState) -> R,
 ) -> R {
     let mut read = Some(read);
     let mut result = None;
     world.resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
         world
-            .get_component_for_entity_mut::<AnimationPlayer>(player)
+            .get_component_for_entity::<AnimationPlayer>(player)
             .unwrap()
-            .for_each_state_mut::<MotionMatchingNode>(graphs, |_, state, _| {
+            .for_each_state::<MotionMatchingNode>(graphs, |_, state, _| {
                 if let Some(read) = read.take() {
                     result = Some(read(state));
                 }

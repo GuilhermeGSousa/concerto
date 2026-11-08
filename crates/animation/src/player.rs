@@ -138,6 +138,8 @@ impl AnimationPlayer {
     }
 
     /// Calls `f` with each live node of type `N` in the player's graph, inner graphs included, its mutable state and the blackboard.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn for_each_state_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
