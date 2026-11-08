@@ -633,7 +633,11 @@ fn a_clip_that_does_not_loop_ends_paused_at_its_duration() {
 }
 
 fn edit_the_rig(tab: &mut RigTab, edit: usize) {
-    let root = if edit % 2 == 0 { "spine" } else { "pelvis" };
+    let root = if edit.is_multiple_of(2) {
+        "spine"
+    } else {
+        "pelvis"
+    };
     tab.write_rig("root", json!(root));
 }
 
