@@ -30,6 +30,7 @@ use crate::{
     queue::RenderQueue,
     render_asset::{render_texture::RenderTexture, RenderAssets},
     resources::RenderContext,
+    shader_types::{GpuMat4, GpuVec3, GpuVec4},
 };
 
 #[rustfmt::skip]
@@ -193,7 +194,7 @@ impl Camera {
     }
 
     pub fn build_projection_matrix(&self) -> Mat4 {
-        Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar)
+        glam::camera::rh::proj::directx::perspective(self.fovy, self.aspect, self.znear, self.zfar)
     }
 }
 
@@ -214,21 +215,21 @@ impl Default for Camera {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, ShaderType)]
 pub struct CameraUniform {
-    view_pos: Vec3,
-    view_proj: Mat4,
-    pub(crate) fog_color: Vec4,
-    pub(crate) fog_params: Vec4,
-    pub(crate) ambient: Vec4,
+    view_pos: GpuVec3,
+    view_proj: GpuMat4,
+    pub(crate) fog_color: GpuVec4,
+    pub(crate) fog_params: GpuVec4,
+    pub(crate) ambient: GpuVec4,
 }
 
 impl CameraUniform {
     pub fn new() -> Self {
         Self {
-            view_pos: Vec3::ZERO,
-            view_proj: Mat4::IDENTITY,
-            fog_color: Vec4::ZERO,
-            fog_params: Vec4::ZERO,
-            ambient: Vec3::splat(DEFAULT_AMBIENT_INTENSITY).extend(1.0),
+            view_pos: Vec3::ZERO.into(),
+            view_proj: Mat4::IDENTITY.into(),
+            fog_color: Vec4::ZERO.into(),
+            fog_params: Vec4::ZERO.into(),
+            ambient: Vec3::splat(DEFAULT_AMBIENT_INTENSITY).extend(1.0).into(),
         }
     }
 
@@ -238,13 +239,13 @@ impl CameraUniform {
         environment: Option<&CameraEnvironment>,
         transform: &GlobalTransform,
     ) {
-        self.view_pos = transform.translation();
-        self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
+        self.view_pos = transform.translation().into();
+        self.view_proj = (camera.build_projection_matrix() * transform.matrix().inverse()).into();
         environment.copied().unwrap_or_default().fill(self);
     }
 
     pub(crate) fn view_proj(&self) -> Mat4 {
-        self.view_proj
+        self.view_proj.into()
     }
 }
 

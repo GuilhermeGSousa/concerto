@@ -17,4 +17,4 @@ concerto-physics.workspace = true
 concerto-motion-matching.workspace = true
 concerto-navigation.workspace = true
 concerto-reflect.workspace = true
-glam = { version = "0.30.1" }
+glam.workspace = true

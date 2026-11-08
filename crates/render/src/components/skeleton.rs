@@ -2,7 +2,7 @@ use std::num::NonZeroU64;
 
 use crate::{
     assets::skeleton::Skeleton, components::render_entity::RenderEntity, device::RenderDevice,
-    layouts::SkeletonLayout, queue::RenderQueue,
+    layouts::SkeletonLayout, queue::RenderQueue, shader_types::GpuMat4,
 };
 use concerto_app::extractor::Extracted;
 use concerto_ecs::{
@@ -213,7 +213,7 @@ pub(crate) fn extract_skeletons(
 fn identity_palette() -> Vec<u8> {
     let mut identity = UniformBuffer::new(Vec::new());
     identity
-        .write(&[Mat4::IDENTITY; MAX_SKELETON_BONES])
+        .write(&[GpuMat4::from(Mat4::IDENTITY); MAX_SKELETON_BONES])
         .unwrap();
     identity.into_inner()
 }

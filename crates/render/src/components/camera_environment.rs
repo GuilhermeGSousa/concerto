@@ -58,16 +58,16 @@ impl CameraEnvironment {
         match self.fog {
             Some(fog) => {
                 let c = fog.color.to_linear();
-                uniform.fog_color = Vec4::new(c.r, c.g, c.b, 1.0);
-                uniform.fog_params = Vec4::new(fog.density, fog.start, 0.0, 0.0);
+                uniform.fog_color = Vec4::new(c.r, c.g, c.b, 1.0).into();
+                uniform.fog_params = Vec4::new(fog.density, fog.start, 0.0, 0.0).into();
             }
             None => {
-                uniform.fog_color = Vec4::ZERO;
-                uniform.fog_params = Vec4::ZERO;
+                uniform.fog_color = Vec4::ZERO.into();
+                uniform.fog_params = Vec4::ZERO.into();
             }
         }
         let c = self.ambient_light();
-        uniform.ambient = Vec4::new(c.r, c.g, c.b, 1.0);
+        uniform.ambient = Vec4::new(c.r, c.g, c.b, 1.0).into();
     }
 }
 
@@ -103,8 +103,8 @@ mod tests {
     fn no_environment_means_no_fog_and_default_ambient() {
         let mut uniform = CameraUniform::new();
         CameraEnvironment::default().fill(&mut uniform);
-        assert_eq!(uniform.fog_color.w, 0.0);
-        assert_eq!(uniform.ambient.w, 1.0);
+        assert_eq!(Vec4::from(uniform.fog_color).w, 0.0);
+        assert_eq!(Vec4::from(uniform.ambient).w, 1.0);
         assert_eq!(
             CameraEnvironment::default().ambient_light().r,
             DEFAULT_AMBIENT_INTENSITY
@@ -133,7 +133,7 @@ mod tests {
             1.0,
         );
         let mut uniform = CameraUniform::new();
-        assert_eq!(uniform.ambient, default);
+        assert_eq!(Vec4::from(uniform.ambient), default);
 
         CameraEnvironment::default()
             .with_ambient(Color::WHITE)
@@ -143,7 +143,7 @@ mod tests {
             None,
             &GlobalTransform::new(Mat4::IDENTITY),
         );
-        assert_eq!(uniform.ambient, default);
+        assert_eq!(Vec4::from(uniform.ambient), default);
     }
 
     #[test]
@@ -157,10 +157,10 @@ mod tests {
             .with_ambient(Color::WHITE);
         let mut uniform = CameraUniform::new();
         environment.fill(&mut uniform);
-        assert_eq!(uniform.fog_color.w, 1.0);
-        assert_eq!(uniform.fog_params.x, 0.1);
-        assert_eq!(uniform.fog_params.y, 4.0);
-        assert_eq!(uniform.ambient, Vec4::ONE);
+        assert_eq!(Vec4::from(uniform.fog_color).w, 1.0);
+        assert_eq!(Vec4::from(uniform.fog_params).x, 0.1);
+        assert_eq!(Vec4::from(uniform.fog_params).y, 4.0);
+        assert_eq!(Vec4::from(uniform.ambient), Vec4::ONE);
     }
 
     #[test]
@@ -188,8 +188,8 @@ mod tests {
             .get_component_for_entity::<CameraEnvironment>(camera)
             .unwrap()
             .fill(&mut before);
-        assert_eq!(before.fog_color.w, 0.0);
-        assert_eq!(before.ambient.w, 1.0);
+        assert_eq!(Vec4::from(before.fog_color).w, 0.0);
+        assert_eq!(Vec4::from(before.ambient).w, 1.0);
 
         let replacement = CameraEnvironment::default()
             .with_fog(Fog {
@@ -213,9 +213,9 @@ mod tests {
             .get_component_for_entity::<CameraEnvironment>(camera)
             .unwrap()
             .fill(&mut after);
-        assert_eq!(after.fog_color.w, 1.0);
-        assert_eq!(after.fog_params.x, 0.2);
-        assert_eq!(after.fog_params.y, 4.0);
-        assert_eq!(after.ambient, Vec4::ONE);
+        assert_eq!(Vec4::from(after.fog_color).w, 1.0);
+        assert_eq!(Vec4::from(after.fog_params).x, 0.2);
+        assert_eq!(Vec4::from(after.fog_params).y, 4.0);
+        assert_eq!(Vec4::from(after.ambient), Vec4::ONE);
     }
 }

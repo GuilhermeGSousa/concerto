@@ -30,8 +30,13 @@ mod tests {
     use super::*;
 
     fn perspective() -> Frustum {
-        let view = Mat4::look_at_rh(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 100.0);
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
+        let proj = glam::camera::rh::proj::directx::perspective(
+            std::f32::consts::FRAC_PI_2,
+            1.0,
+            0.1,
+            100.0,
+        );
         Frustum::from_clip_from_world(proj * view)
     }
 
@@ -64,8 +69,8 @@ mod tests {
 
     #[test]
     fn an_orthographic_frustum_keeps_a_box_inside_its_extent_and_drops_one_outside() {
-        let view = Mat4::look_at_rh(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
-        let proj = Mat4::orthographic_rh(-5.0, 5.0, -5.0, 5.0, 0.1, 50.0);
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
+        let proj = glam::camera::rh::proj::directx::orthographic(-5.0, 5.0, -5.0, 5.0, 0.1, 50.0);
         let frustum = Frustum::from_clip_from_world(proj * view);
 
         assert!(frustum.intersects_aabb(&cube(Vec3::new(3.0, -3.0, -20.0), 1.0)));

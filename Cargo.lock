@@ -856,7 +856,7 @@ dependencies = [
  "concerto-name",
  "concerto-reflect",
  "derive_more",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "petgraph",
  "serde",
@@ -882,7 +882,7 @@ dependencies = [
  "concerto-scene",
  "concerto-ui",
  "concerto-window",
- "glam 0.30.10",
+ "glam 0.33.12",
  "tempfile",
  "uuid",
 ]
@@ -953,7 +953,7 @@ dependencies = [
  "concerto-name",
  "concerto-reflect",
  "concerto-scene",
- "glam 0.30.10",
+ "glam 0.33.12",
  "serde",
  "toml",
  "uuid",
@@ -981,7 +981,7 @@ dependencies = [
  "concerto-foundation",
  "concerto-mesh",
  "concerto-render",
- "glam 0.30.10",
+ "glam 0.33.12",
  "wgpu",
 ]
 
@@ -995,7 +995,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "serde",
 ]
@@ -1060,7 +1060,7 @@ dependencies = [
  "concerto-world-grid",
  "derive_more",
  "env_logger",
- "glam 0.30.10",
+ "glam 0.33.12",
  "glyphon",
  "image",
  "log",
@@ -1093,7 +1093,7 @@ dependencies = [
  "crossbeam-channel",
  "derive_more",
  "futures-channel",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "pollster",
  "reqwest",
@@ -1127,7 +1127,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "concerto-window",
- "glam 0.30.10",
+ "glam 0.33.12",
 ]
 
 [[package]]
@@ -1148,7 +1148,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
- "glam 0.30.10",
+ "glam 0.33.12",
  "gltf",
  "image",
  "log",
@@ -1221,7 +1221,7 @@ dependencies = [
  "concerto-foundation",
  "concerto-name",
  "concerto-reflect",
- "glam 0.30.10",
+ "glam 0.33.12",
  "serde",
  "serde_json",
  "uuid",
@@ -1242,7 +1242,7 @@ dependencies = [
  "concerto-physics",
  "concerto-reflect",
  "concerto-scene",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "pollster",
  "serde",
@@ -1269,7 +1269,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-ui",
  "concerto-window",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "pollster",
  "serde",
@@ -1292,7 +1292,7 @@ dependencies = [
  "concerto-physics",
  "concerto-reflect",
  "concerto-render",
- "glam 0.30.10",
+ "glam 0.33.12",
  "uuid",
 ]
 
@@ -1316,7 +1316,7 @@ dependencies = [
  "concerto-name",
  "concerto-reflect",
  "concerto-scene",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
 ]
 
@@ -1331,7 +1331,7 @@ dependencies = [
  "concerto-foundation",
  "concerto-navigation",
  "concerto-render",
- "glam 0.30.10",
+ "glam 0.33.12",
 ]
 
 [[package]]
@@ -1352,7 +1352,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
- "glam 0.30.10",
+ "glam 0.33.12",
  "image",
  "serde",
  "tobj",
@@ -1369,7 +1369,7 @@ dependencies = [
  "concerto-mesh",
  "concerto-reflect",
  "concerto-scene",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "profiling",
  "rapier3d",
@@ -1389,7 +1389,7 @@ dependencies = [
  "concerto-noise",
  "concerto-physics",
  "concerto-reflect",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "serde",
  "uuid",
@@ -1409,7 +1409,7 @@ dependencies = [
  "concerto-procedural-animation",
  "concerto-reflect",
  "concerto-render",
- "glam 0.30.10",
+ "glam 0.33.12",
  "uuid",
 ]
 
@@ -1430,7 +1430,7 @@ dependencies = [
  "bincode",
  "concerto-color",
  "concerto-reflect-macros",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "serde",
  "serde_json",
@@ -1470,7 +1470,7 @@ dependencies = [
  "derive_more",
  "encase",
  "env_logger",
- "glam 0.30.10",
+ "glam 0.33.12",
  "image",
  "log",
  "naga",
@@ -1507,7 +1507,7 @@ dependencies = [
  "concerto-mesh",
  "concerto-reflect",
  "concerto-render",
- "glam 0.30.10",
+ "glam 0.33.12",
  "serde",
 ]
 
@@ -1522,7 +1522,7 @@ dependencies = [
  "concerto-render",
  "derive_more",
  "env_logger",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "serde",
  "wgpu",
@@ -1573,7 +1573,7 @@ dependencies = [
  "concerto-render",
  "concerto-window",
  "derive_more",
- "glam 0.30.10",
+ "glam 0.33.12",
  "glyphon",
  "log",
  "serde",
@@ -1590,7 +1590,7 @@ dependencies = [
  "arboard",
  "concerto-app",
  "concerto-ecs",
- "glam 0.30.10",
+ "glam 0.33.12",
  "js-sys",
  "log",
  "wasm-bindgen-futures",
@@ -1608,7 +1608,7 @@ dependencies = [
  "concerto-render",
  "concerto-window",
  "gilrs",
- "glam 0.30.10",
+ "glam 0.33.12",
  "log",
  "pollster",
  "profiling",
@@ -2069,34 +2069,33 @@ dependencies = [
 
 [[package]]
 name = "encase"
-version = "0.11.2"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02ba239319a4f60905966390f5e52799d868103a533bb7e27822792332504ddd"
+checksum = "fdf6312703f02e0625e1750eadf556054b6da5e44960a3a771e9127cb357dbd8"
 dependencies = [
  "const_panic",
  "encase_derive",
- "glam 0.30.10",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "encase_derive"
-version = "0.11.2"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5223d6c647f09870553224f6e37261fe5567bc5a4f4cf13ed337476e79990f2f"
+checksum = "8429e24f02acf09b0fb3c4560c329a1a79fab14bbb9c2d632c073d0a61b0816a"
 dependencies = [
  "encase_derive_impl",
 ]
 
 [[package]]
 name = "encase_derive_impl"
-version = "0.11.2"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1796db3d892515842ca2dfb11124c4bb4a9e58d9f2c5c1072e5bca1b2334507b"
+checksum = "3ac3bf06563c72a9b64bc4d8da00ebcabd1d776ea4526c3b1461697142fe340f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2680,10 +2679,6 @@ name = "glam"
 version = "0.30.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
-dependencies = [
- "bytemuck",
- "serde_core",
-]
 
 [[package]]
 name = "glam"
@@ -2704,7 +2699,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37bfe73dc8ec21f54d181e5a60554327ec3f1c600c455a75ccbfc65d2106a6c4"
 dependencies = [
  "approx",
+ "bytemuck",
  "libm",
+ "serde_core",
 ]
 
 [[package]]
@@ -6077,7 +6074,7 @@ dependencies = [
  "concerto-procedural-animation-gizmos",
  "derive_more",
  "fs_extra",
- "glam 0.30.10",
+ "glam 0.33.12",
  "serde",
 ]
 
@@ -6675,7 +6672,7 @@ dependencies = [
  "concerto-asset-build",
  "env_logger",
  "fs_extra",
- "glam 0.30.10",
+ "glam 0.33.12",
 ]
 
 [[package]]

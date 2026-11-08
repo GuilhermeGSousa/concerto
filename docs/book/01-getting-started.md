@@ -62,7 +62,7 @@ Add `glam` to `Cargo.toml`:
 
 ```toml
 [dependencies]
-glam = "0.30"
+glam = "0.33"
 ```
 
 Then give the game a camera, a light and a grid, and make the camera circle
