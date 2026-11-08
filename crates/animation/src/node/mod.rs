@@ -498,7 +498,7 @@ mod tests {
         AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use concerto_name::{Name, name};
-    use glam::{Quat, Vec3};
+    use glam::{Affine3A, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{
@@ -562,6 +562,7 @@ mod tests {
                 index: 0,
                 rest: self.rest.clone(),
                 up: self.up,
+                space: Affine3A::IDENTITY,
             }
         }
 

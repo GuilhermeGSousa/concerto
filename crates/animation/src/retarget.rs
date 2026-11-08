@@ -9,7 +9,7 @@ use concerto_mesh::{
 };
 use concerto_name::Name;
 use concerto_reflect::Reflect;
-use glam::{Mat4, Quat, Vec3};
+use glam::{Affine3A, Mat4, Quat, Vec3};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -837,6 +837,7 @@ impl Running {
                 index: self.source_root,
                 rest: self.source_root_reference.clone(),
                 up: root.up,
+                space: root.space * Affine3A::from_scale(Vec3::splat(self.retarget.scale())),
             }),
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
@@ -1187,7 +1188,7 @@ mod tests {
     use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonError};
     use concerto_name::{Name, name};
     use concerto_reflect::{Reflect, TypeRegistry};
-    use glam::{Mat4, Quat, Vec3};
+    use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{
@@ -1201,7 +1202,7 @@ mod tests {
         graph::{AnimationGraph, made_live},
         node::{
             AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
-            ReflectAnimationNode, state_machine::AnimationStateMachine,
+            ReflectAnimationNode, register_node_inputs, state_machine::AnimationStateMachine,
         },
         player::AnimationPlayer,
         plugin::register_animation_types,
@@ -2950,6 +2951,7 @@ mod tests {
             index: 0,
             rest: target.rest_pose[0].clone(),
             up: Vec3::Y,
+            space: Affine3A::IDENTITY,
         };
 
         played.advance();
@@ -3107,6 +3109,73 @@ mod tests {
         played.advance();
 
         assert_eq!(played.shared_visits::<AnimationClipNode>(), 1);
+    }
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct SpaceProbe {}
+
+    impl AnimationNode for SpaceProbe {
+        type State = Option<Affine3A>;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
+            None
+        }
+
+        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            seen: &mut Option<Affine3A>,
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+            *seen = context.root().map(|root| root.space);
+        }
+
+        fn reset(&self, _: &mut Option<Affine3A>) {}
+    }
+
+    #[test]
+    fn the_inner_root_space_is_the_outer_space_scaled_by_the_retarget() {
+        let mut played = Played::registering(target_skeleton(), register_node_inputs::<SpaceProbe>);
+        played.load_rigs(node_target_rig());
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<SpaceProbe>();
+        let mut inner = AnimationGraph::from_node(SpaceProbe {});
+        inner.make_live(&registry, None).unwrap();
+        played.insert_inner(inner);
+        let space = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(2.0),
+            Quat::from_rotation_y(0.7) * Quat::from_rotation_x(-0.4),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let target = target_skeleton();
+        let outer_root = RootBone {
+            index: 0,
+            rest: target.rest_pose[0].clone(),
+            up: Vec3::Y,
+            space,
+        };
+
+        played.advance();
+        played.frame(Some(outer_root));
+
+        let mut seen = None;
+        played
+            .player
+            .for_each_state_mut::<SpaceProbe>(played.walks.graphs(), |_, state, _| seen = *state);
+        let expected = space * Affine3A::from_scale(Vec3::splat(source_to_target().scale()));
+        let seen = seen.expect("the inner graph saw a root");
+        assert!(seen.abs_diff_eq(expected, 1e-5), "got {seen:?}");
     }
 
     #[derive(Resource)]

@@ -47,6 +47,8 @@ pub struct RootBone {
     pub index: usize,
     pub rest: JointPose,
     pub up: Vec3,
+    /// The world transform root motion is applied in: the `GlobalTransform` of the player's entity.
+    pub space: Affine3A,
 }
 
 /// What every node of one player's graph is walked with: the player's own data and the walk's node inputs.
