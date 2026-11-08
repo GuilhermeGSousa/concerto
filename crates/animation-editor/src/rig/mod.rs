@@ -36,7 +36,7 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::skeleton::Skeleton;
 use concerto_name::Name;
-use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_reflect::{PropertyPath, Reflect, ReflectDefault};
 use concerto_scene::scene::Scene;
 
 use panels::{build_rig_panels, sync_rig_panels};
@@ -860,11 +860,27 @@ fn same_skeleton(held: Option<&Arc<Skeleton>>, read: Option<&Arc<Skeleton>>) -> 
     }
 }
 
-fn preview_edits(committed: &mut EventReader<Hosted<PropertyCommitted>>) -> Vec<Entity> {
+struct PreviewEdit {
+    document: Entity,
+    path: PropertyPath,
+}
+
+impl PreviewEdit {
+    fn names(&self, field: &str) -> bool {
+        self.path
+            .get_depth(0)
+            .is_none_or(|segment| segment == field)
+    }
+}
+
+fn preview_edits(committed: &mut EventReader<Hosted<PropertyCommitted>>) -> Vec<PreviewEdit> {
     committed
         .read()
         .filter(|hosted| hosted.event.result.is_ok() && !hosted.event.address.target.saved())
-        .map(|hosted| hosted.document)
+        .map(|hosted| PreviewEdit {
+            document: hosted.document,
+            path: hosted.event.address.path.clone(),
+        })
         .collect()
 }
 
@@ -913,7 +929,7 @@ pub(crate) fn follow_rig(
         disabled,
     ) in documents.iter()
     {
-        let edited = previewed.contains(&document);
+        let edited = previewed.iter().any(|edit| edit.document == document);
         let forgot = reads.holds_any(&written);
         if !(edited || forgot || state.is_changed() || inspected.is_changed()) {
             continue;
@@ -1030,19 +1046,21 @@ pub(crate) fn sync_rig_transport(
     let previewed = preview_edits(&mut committed);
     let mut wrote = false;
     for (document, mut state, transport) in documents.iter() {
-        if previewed.contains(&document) {
-            continue;
-        }
+        let edited = |field: &str| {
+            previewed
+                .iter()
+                .any(|edit| edit.document == document && edit.names(field))
+        };
         let paused_at = (!transport.playing).then_some(transport.time);
-        if state.preview.paused_at != paused_at {
+        if !edited("paused_at") && state.preview.paused_at != paused_at {
             state.preview.paused_at = paused_at;
             wrote = true;
         }
-        if state.preview.looping != transport.looping {
+        if !edited("looping") && state.preview.looping != transport.looping {
             state.preview.looping = transport.looping;
             wrote = true;
         }
-        if state.preview.speed != transport.speed {
+        if !edited("speed") && state.preview.speed != transport.speed {
             state.preview.speed = transport.speed;
             wrote = true;
         }

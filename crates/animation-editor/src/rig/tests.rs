@@ -685,6 +685,30 @@ fn a_clip_that_does_not_loop_stays_at_its_end_while_the_rig_is_edited_every_fram
 }
 
 #[test]
+fn a_clip_that_does_not_loop_stays_at_its_end_while_another_preview_field_is_edited_every_frame() {
+    let mut tab = rig_tab().with_other().playing_the_walk();
+    tab.write_preview("looping", json!(false));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut edit = 0;
+    while tab.state().preview.paused_at.is_none() {
+        assert!(std::time::Instant::now() < deadline, "the clip never ended");
+        tab.write_preview("bones", json!(edit % 2 == 0));
+        edit += 1;
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    for _ in 0..5 {
+        tab.write_preview("bones", json!(edit % 2 == 0));
+        edit += 1;
+    }
+
+    assert_eq!(tab.state().preview.paused_at, Some(1.0));
+    assert!(!tab.transport().playing);
+    assert!(!tab.playback().playing);
+    assert_eq!(tab.playback().time, 1.0);
+}
+
+#[test]
 fn a_clip_that_does_not_loop_ending_keeps_saved() {
     let mut tab = rig_tab().with_other().playing_the_walk();
     tab.write_preview("speed", json!(0.25));
