@@ -31,7 +31,7 @@ pub use displacement::{Adjustment, CharacterDisplacement, CharacterLink, Clamp, 
 pub use features::{
     reference_channels, BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions,
 };
-pub use node::{MotionMatchingDebug, MotionMatchingNode};
+pub use node::MotionMatchingNode;
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
 pub use search::{cost_of, search};

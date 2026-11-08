@@ -1,9 +1,9 @@
 use concerto::{
-    animation::player::AnimationPlayer,
+    animation::{graph::AnimationGraph, player::AnimationPlayer},
     color::Color,
     ecs::{CommandQueue, Component, Entity, Query, Res, With},
     foundation::assets::asset_store::AssetStore,
-    motion_matching::{CharacterDisplacement, CharacterLink, MotionDatabase, MotionMatchingDebug},
+    motion_matching::{CharacterDisplacement, CharacterLink, MotionDatabase, MotionMatchingNode},
     physics::ground::{GroundProbe, GroundState},
     ui::{
         material::UIMaterial,
@@ -153,6 +153,7 @@ pub(crate) fn update_grounded_overlay(
         Option<&PendingLink>,
     )>,
     players: Query<&AnimationPlayer>,
+    graphs: Res<AssetStore<AnimationGraph>>,
     databases: Res<AssetStore<MotionDatabase>>,
     texts: Query<&mut UIText, With<GroundedText>>,
     panels: Query<&mut UIMaterial, With<GroundedPanel>>,
@@ -174,25 +175,27 @@ pub(crate) fn update_grounded_overlay(
         GroundState::OnSteepGround(_) => "OnSteepGround",
     };
 
-    let matching = link
+    let mut matching = None;
+    if let Some(player) = link
         .and_then(|link| link.skeleton.entity())
         .and_then(|skeleton| players.get_entity(skeleton))
-        .and_then(|player| {
-            player
-                .debug()
-                .get::<MotionMatchingDebug>()
-                .iter()
-                .find_map(|debug| {
-                    let last = debug.last_query.as_ref()?;
-                    Some(Matching {
-                        entry: databases
-                            .get(&debug.database)
-                            .and_then(|database| database.entry_of(debug.frame)),
-                        frame: debug.frame,
-                        cost: last.best_cost,
-                    })
-                })
+    {
+        player.for_each_state::<MotionMatchingNode>(&graphs, |node, node_state, _| {
+            let Some(last) = node_state.last_query() else {
+                return;
+            };
+            if matching.is_some() {
+                return;
+            }
+            matching = Some(Matching {
+                entry: databases
+                    .get(&node.database)
+                    .and_then(|database| database.entry_of(node_state.frame())),
+                frame: node_state.frame(),
+                cost: last.best_cost,
+            });
         });
+    }
 
     let text = readout(
         is_grounded,
