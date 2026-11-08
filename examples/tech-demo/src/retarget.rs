@@ -1,7 +1,7 @@
 use concerto::{
     animation::{
         graph::AnimationGraph,
-        retarget::{ReferencePose, RetargetChain, RetargetNode, RetargetRig},
+        retarget::{ReferencePose, RetargetChain, RetargetGoal, RetargetNode, RetargetRig},
     },
     app::App,
     asset_id,
@@ -46,6 +46,8 @@ pub(crate) fn lafan1_rig(skeleton: AssetHandle<Skeleton>) -> RetargetRig {
         .with_chain(RetargetChain::new("arm_r", "RightShoulder", "RightHand"))
         .with_chain(RetargetChain::new("leg_l", "LeftUpLeg", "LeftToe"))
         .with_chain(RetargetChain::new("leg_r", "RightUpLeg", "RightToe"))
+        .with_goal(RetargetGoal::new("foot_l", "LeftFoot"))
+        .with_goal(RetargetGoal::new("foot_r", "RightFoot"))
 }
 
 /// The rig of UAL1's skeleton, whose `root` bone carries the ground motion.
@@ -61,6 +63,8 @@ pub(crate) fn ual1_rig(skeleton: AssetHandle<Skeleton>) -> RetargetRig {
         .with_chain(RetargetChain::new("arm_r", "clavicle_r", "hand_r"))
         .with_chain(RetargetChain::new("leg_l", "thigh_l", "ball_l"))
         .with_chain(RetargetChain::new("leg_r", "thigh_r", "ball_r"))
+        .with_goal(RetargetGoal::new("foot_l", "foot_l"))
+        .with_goal(RetargetGoal::new("foot_r", "foot_r"))
 }
 
 fn motion_matching_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
