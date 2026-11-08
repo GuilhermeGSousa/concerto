@@ -552,7 +552,8 @@ calls. It has the getters `is_initialised()`, `has_failed()`, `frame()`,
 node's state. Other crates read `MotionMatchingDebug` instead, which the node's
 `evaluate` publishes on every evaluation and
 `AnimationPlayer::debug().get::<MotionMatchingDebug>()` returns, one per node in
-walk order: the `database` handle, the `initialised` and `failed` flags, the
+walk order: a weak handle to the `database`, so a published value keeps
+nothing loaded, the `initialised` and `failed` flags, the
 `frame` it plays, that frame's `pose`, `last_query`, which is `None` until a
 search has run, and `query_dims`, the summed dimensions of the channels the node
 queries with, 0 before it is initialised. Its buffers are reused from one evaluation to the next.

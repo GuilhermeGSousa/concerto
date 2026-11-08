@@ -804,6 +804,7 @@ mod tests {
     #[test]
     fn values_published_while_creating_or_updating_a_graph_reach_no_player() {
         let mut bones = publishing_bones();
+        assert!(bones.debug().get::<Published>().is_empty());
         bones.animate();
 
         bones.update();
