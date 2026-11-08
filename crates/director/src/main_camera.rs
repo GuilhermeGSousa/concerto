@@ -1,4 +1,4 @@
-use concerto_ecs::{CommandQueue, Component, Res, ResMut, Resource};
+use concerto_ecs::{CommandQueue, Component, ResMut};
 use concerto_foundation::transform::Transform;
 use concerto_render::components::camera::Camera;
 
@@ -6,7 +6,7 @@ use crate::{director::CameraDirector, virtual_camera::VirtualCamera};
 
 /// Marks the camera the director drives.
 ///
-/// Spawned once at startup unless [`NoMainCamera`] is present, and never
+/// Spawned once at startup unless the [`CameraDirector`] is built without one, and never
 /// despawned or re-parented: there is no `camera_removed` counterpart to
 /// `camera_added`, so removing the `Camera` component leaves its `RenderCamera`
 /// rendering forever, and the director writes world-space poses straight to its
@@ -14,18 +14,10 @@ use crate::{director::CameraDirector, virtual_camera::VirtualCamera};
 #[derive(Component)]
 pub struct MainCamera;
 
-/// While present at startup, the director spawns no main camera, so the game's own cameras draw to the window undisturbed.
-#[derive(Resource, Clone, Copy, Debug, Default)]
-pub struct NoMainCamera;
-
 /// Spawns the main camera plus a lowest-priority fallback virtual camera, so the
-/// stack is never empty and the window always has a view, unless [`NoMainCamera`] is present.
-pub(crate) fn spawn_main_camera(
-    mut cmd: CommandQueue,
-    mut director: ResMut<CameraDirector>,
-    no_main_camera: Option<Res<NoMainCamera>>,
-) {
-    if no_main_camera.is_some() {
+/// stack is never empty and the window always has a view, unless the director is built without a main camera.
+pub(crate) fn spawn_main_camera(mut cmd: CommandQueue, mut director: ResMut<CameraDirector>) {
+    if !director.spawns_main_camera() {
         return;
     }
 
@@ -41,7 +33,7 @@ pub(crate) fn spawn_main_camera(
 mod tests {
     use concerto_ecs::{Entity, IntoSystem, System, With, World};
 
-    use super::{MainCamera, NoMainCamera, spawn_main_camera};
+    use super::{MainCamera, spawn_main_camera};
     use crate::{director::CameraDirector, virtual_camera::VirtualCamera};
 
     fn run_spawn(world: &mut World) {
@@ -61,9 +53,9 @@ mod tests {
     }
 
     #[test]
-    fn no_main_camera_spawns_nothing() {
+    fn a_director_without_a_main_camera_spawns_nothing() {
         let mut world = director_world();
-        world.insert_resource(NoMainCamera);
+        world.insert_resource(CameraDirector::default().with_main_camera(false));
 
         run_spawn(&mut world);
 
@@ -79,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn without_no_main_camera_the_director_spawns_one() {
+    fn a_default_director_spawns_one_main_camera() {
         let mut world = director_world();
 
         run_spawn(&mut world);

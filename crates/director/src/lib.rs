@@ -1,7 +1,7 @@
 //! Camera control as a stack.
 //!
 //! One [`MainCamera`] entity owns the window's render resources for the whole
-//! run, unless [`NoMainCamera`] is present at startup. Everything that wants to
+//! run, unless the [`CameraDirector`] is built without one. Everything that wants to
 //! control the view spawns a [`VirtualCamera`] — a pose with a priority — and
 //! the [`CameraDirector`] stacks them by priority. Whatever is on top drives the
 //! main camera, blending on takeover.
@@ -40,7 +40,7 @@ use concerto_app::{
 use concerto_ecs::IntoSystemConfig;
 
 pub use director::CameraDirector;
-pub use main_camera::{MainCamera, NoMainCamera};
+pub use main_camera::MainCamera;
 pub use virtual_camera::{BlendIn, CameraPose, Ease, Lens, VirtualCamera};
 
 /// Registers the main camera and the virtual-camera director.
@@ -52,7 +52,9 @@ pub struct CameraDirectorPlugin;
 
 impl Plugin for CameraDirectorPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(CameraDirector::default());
+        if app.get_resource::<CameraDirector>().is_none() {
+            app.insert_resource(CameraDirector::default());
+        }
         app.register_type::<VirtualCamera>();
 
         app.add_system(Startup, main_camera::spawn_main_camera);
@@ -63,6 +65,27 @@ impl Plugin for CameraDirectorPlugin {
             director::sync_virtual_cameras
                 .before(director::drive_main_camera)
                 .at_edit_time(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_app::{App, main_schedule::MainSchedulePlugin};
+
+    use super::{CameraDirector, CameraDirectorPlugin};
+
+    #[test]
+    fn the_plugin_keeps_a_director_the_game_inserted_first() {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin);
+        app.insert_resource(CameraDirector::default().with_main_camera(false));
+        app.register_plugin(CameraDirectorPlugin);
+
+        assert!(
+            !app.get_resource::<CameraDirector>()
+                .unwrap()
+                .spawns_main_camera()
         );
     }
 }

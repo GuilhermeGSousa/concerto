@@ -259,8 +259,8 @@ pub(crate) fn clear_cameras(
         overlap.warned = true;
         log::warn!(
             "a camera without a viewport draws to the window beside cameras with one, so they \
-             overlap and which one shows is undefined; insert NoMainCamera or give every window \
-             camera a viewport"
+             overlap and which one shows is undefined; build the CameraDirector with \
+             with_main_camera(false) or give every window camera a viewport"
         );
     }
 

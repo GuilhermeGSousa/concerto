@@ -41,9 +41,10 @@ cmd.spawn((VirtualCamera::new(10), Transform::default()));
 `VirtualCamera::new(priority)` sets its priority; with several, the director
 switches to the highest. A camera looks down its local −Z axis.
 
-Inserting `NoMainCamera` from a plugin's `build`, with
-`app.insert_resource(NoMainCamera)`, keeps the director from spawning its main
-camera, so the game's own cameras draw to the window.
+A game that moves its own cameras inserts a director built without its main
+camera, `app.insert_resource(CameraDirector::default().with_main_camera(false))`,
+from its plugin's `build`. `CameraDirectorPlugin` keeps a director that is already
+there, so this works before or after `DefaultPlugins`.
 
 ### Split screen
 
@@ -52,10 +53,10 @@ given as `min` and `max` in fractions of the target's size, from its top-left
 corner. It follows a window resize with no game code. Two players side by side:
 
 ```rust
-use concerto::director::NoMainCamera;
+use concerto::director::CameraDirector;
 use concerto::render::components::camera::{Camera, Viewport};
 
-app.insert_resource(NoMainCamera);
+app.insert_resource(CameraDirector::default().with_main_camera(false));
 
 cmd.spawn((
     Camera::default().with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))),
@@ -73,13 +74,13 @@ cmd.spawn((
   outside every viewport is black.
 - Window cameras must not overlap: where two do, which one shows is undefined.
   A camera without a viewport covers the whole window and overlaps every other
-  one, so split screen either inserts `NoMainCamera` or gives the director's
-  main camera a viewport too. The renderer warns once when it sees both kinds.
+  one, so split screen either builds the director without its main camera or
+  gives that camera a viewport too. The renderer warns once when it sees both kinds.
 - A camera that renders to a texture keeps the `aspect` you give it, with a
   viewport or without one; setting it is yours.
 - Culling is per camera, and shadow maps are per light and shared by every
   camera.
-- With `NoMainCamera`, the director drives no camera: virtual cameras still
+- Without its main camera, the director drives no camera: virtual cameras still
   stack, but nothing follows them. Move your cameras' `Transform`s yourself,
   from your own controllers.
 
