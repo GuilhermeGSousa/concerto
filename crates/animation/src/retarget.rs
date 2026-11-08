@@ -209,7 +209,7 @@ impl RetargetRig {
                 {
                     return Err(RigError::ClipNotForSkeleton);
                 }
-                sample_frame(skeleton, clip, *time)
+                clip.sample_pose(skeleton, *time)
             }
         };
 
@@ -1157,18 +1157,6 @@ fn is_strict_ancestor(skeleton: &Skeleton, ancestor: usize, bone: usize) -> bool
     false
 }
 
-fn sample_frame(skeleton: &Skeleton, clip: &AnimationClip, time: f32) -> Vec<JointPose> {
-    let mut pose = skeleton.rest_pose.to_vec();
-    for (joint, id) in pose.iter_mut().zip(skeleton.bone_ids.iter()) {
-        if let Some(channels) = clip.get_channels(id) {
-            for channel in channels {
-                channel.sample_transform(time, joint);
-            }
-        }
-    }
-    pose
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1192,7 +1180,7 @@ mod tests {
 
     use super::{
         BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedRig, RetargetChain,
-        RetargetError, RetargetNode, RetargetRig, RetargetSide, RigError, sample_frame,
+        RetargetError, RetargetNode, RetargetRig, RetargetSide, RigError,
     };
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
@@ -2856,7 +2844,7 @@ mod tests {
     fn retargeted_turning_pose(time: f32) -> Vec<JointPose> {
         retarget(
             &mut source_to_target(),
-            &sample_frame(&source_skeleton(), &turning_clip(), time),
+            &turning_clip().sample_pose(&source_skeleton(), time),
             target_skeleton().bone_count(),
         )
     }
