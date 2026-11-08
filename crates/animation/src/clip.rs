@@ -11,6 +11,7 @@ use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_foundation::assets::{Asset, AssetId, LoadableAsset};
 use concerto_foundation::hash::Fnv1a;
 use concerto_foundation::math::spring_damper::angular_velocity;
+use concerto_mesh::Skeleton;
 use concerto_name::Name;
 use concerto_reflect::{
     EncodeError, FromType, Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value,
@@ -637,6 +638,19 @@ impl AnimationClip {
 
     pub fn duration(&self) -> f32 {
         self.duration
+    }
+
+    /// The skeleton's rest pose with every channel this clip has for its bones sampled at `time`.
+    pub fn sample_pose(&self, skeleton: &Skeleton, time: f32) -> Vec<JointPose> {
+        let mut pose = skeleton.rest_pose.to_vec();
+        for (joint, id) in pose.iter_mut().zip(skeleton.bone_ids.iter()) {
+            if let Some(channels) = self.get_channels(id) {
+                for channel in channels {
+                    channel.sample_transform(time, joint);
+                }
+            }
+        }
+        pose
     }
 
     /// Whether the clip is additive, and against what.
@@ -1965,5 +1979,38 @@ mod tests {
         assert_near(weighted.translation, Vec3::new(6.0, 2.0, 3.0));
         assert_same_rotation(weighted.rotation, delta.rotation * pose.rotation);
         assert_eq!(weighted.scale, pose.scale);
+    }
+
+    #[test]
+    fn sample_pose_keeps_rest_on_an_unkeyed_bone_and_samples_a_keyed_one() {
+        let rest = vec![
+            JointPose {
+                translation: Vec3::new(0.0, 1.0, 0.0),
+                rotation: Quat::from_rotation_y(0.4),
+                scale: Vec3::ONE,
+            },
+            JointPose {
+                translation: Vec3::new(0.0, 0.5, 0.0),
+                rotation: Quat::from_rotation_x(0.2),
+                scale: Vec3::splat(2.0),
+            },
+        ];
+        let skeleton = Skeleton::new(
+            vec![glam::Mat4::IDENTITY; 2],
+            vec![None, Some(0)],
+            vec![Name::new("hips"), Name::new("spine")],
+            rest.clone(),
+            vec![Uuid::from_u128(1), Uuid::from_u128(2)],
+        )
+        .unwrap();
+        let clip = linear_clip(Uuid::from_u128(2));
+
+        let pose = clip.sample_pose(&skeleton, 0.5);
+
+        assert_eq!(pose.len(), 2);
+        assert_eq!(pose[0], rest[0]);
+        assert_near(pose[1].translation, Vec3::new(1.0, 0.0, -2.0));
+        assert_same_rotation(pose[1].rotation, rest[1].rotation);
+        assert_eq!(pose[1].scale, rest[1].scale);
     }
 }

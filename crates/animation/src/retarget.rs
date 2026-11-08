@@ -2,13 +2,14 @@ use std::{collections::HashSet, fmt};
 
 use concerto_ecs::Res;
 use concerto_foundation::assets::{
-    Asset, CreatableAsset, LoadableAsset, asset_store::AssetStore, handle::AssetHandle,
+    Asset, CreatableAsset, LoadableAsset, asset_server::AssetLoadContext, asset_store::AssetStore,
+    handle::AssetHandle,
 };
 use concerto_mesh::{
     JointName, JointPose, ReflectSkeletonSource, Skeleton, SkeletonError, SkeletonSource,
 };
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Mat4, Quat, Vec3};
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -25,7 +26,7 @@ use crate::{
 
 /// A skeleton described for retargeting: its named bone chains, its retarget root and motion root, and the pose it is aligned in.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
-#[reflect(SkeletonSource)]
+#[reflect(SkeletonSource, Default)]
 pub struct RetargetRig {
     pub skeleton: AssetHandle<Skeleton>,
     pub root: JointName,
@@ -306,7 +307,7 @@ impl RetargetRig {
                 {
                     return Err(RigError::ClipNotForSkeleton);
                 }
-                sample_frame(skeleton, clip, *time)
+                clip.sample_pose(skeleton, *time)
             }
         };
 
@@ -392,7 +393,20 @@ mod legacy {
     }
 }
 
-impl LoadableAsset for RetargetRig {}
+impl LoadableAsset for RetargetRig {
+    fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+        let server = context.asset_server();
+        if !self.skeleton.id().is_nil() {
+            self.skeleton = server.load(self.skeleton.id());
+        }
+        if let ReferencePose::ClipFrame { clip, .. } = &mut self.reference
+            && !clip.id().is_nil()
+        {
+            *clip = server.load(clip.id());
+        }
+        Ok(())
+    }
+}
 
 impl CreatableAsset for RetargetRig {
     fn new_asset() -> Self {
@@ -1472,18 +1486,6 @@ fn is_strict_ancestor(skeleton: &Skeleton, ancestor: usize, bone: usize) -> bool
     false
 }
 
-fn sample_frame(skeleton: &Skeleton, clip: &AnimationClip, time: f32) -> Vec<JointPose> {
-    let mut pose = skeleton.rest_pose.to_vec();
-    for (joint, id) in pose.iter_mut().zip(skeleton.bone_ids.iter()) {
-        if let Some(channels) = clip.get_channels(id) {
-            for channel in channels {
-                channel.sample_transform(time, joint);
-            }
-        }
-    }
-    pose
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1497,7 +1499,7 @@ mod tests {
         system::input::{SystemInputData, register_input},
     };
     use concerto_foundation::assets::{
-        Asset, AssetId, asset_store::AssetStore, handle::AssetHandle,
+        Asset, AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonError};
     use concerto_name::{Name, name};
@@ -1508,7 +1510,7 @@ mod tests {
     use super::{
         BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedGoal, ResolvedRig,
         RetargetChain, RetargetError, RetargetGoal, RetargetGoalSettings, RetargetNode,
-        RetargetRig, RetargetSide, RigError, sample_frame,
+        RetargetRig, RetargetSide, RigError,
     };
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
@@ -1632,6 +1634,31 @@ mod tests {
             actual.abs_diff_eq(expected, 1e-5),
             "{actual:?} != {expected:?}"
         );
+    }
+
+    #[test]
+    fn loading_a_rig_loads_its_skeleton_and_its_reference_clip() {
+        let mut server = AssetServer::new();
+        let rigs = AssetStore::<RetargetRig>::new();
+        let skeletons = AssetStore::<Skeleton>::new();
+        let clips = AssetStore::<AnimationClip>::new();
+        server.register_asset(&rigs);
+        server.register_asset(&skeletons);
+        server.register_asset(&clips);
+        let skeleton = AssetId::new();
+        let clip = AssetId::new();
+
+        server.add(
+            rig()
+                .with_skeleton(AssetHandle::weak(skeleton))
+                .with_reference(ReferencePose::ClipFrame {
+                    clip: AssetHandle::weak(clip),
+                    time: 0.0,
+                }),
+        );
+
+        assert!(server.is_loading_or_loaded(skeleton));
+        assert!(server.is_loading_or_loaded(clip));
     }
 
     #[test]
@@ -3949,7 +3976,7 @@ mod tests {
     fn retargeted_turning_pose(time: f32) -> Vec<JointPose> {
         retarget(
             &mut source_to_target(),
-            &sample_frame(&source_skeleton(), &turning_clip(), time),
+            &turning_clip().sample_pose(&source_skeleton(), time),
             target_skeleton().bone_count(),
         )
     }

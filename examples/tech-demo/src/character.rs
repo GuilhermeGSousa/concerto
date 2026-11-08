@@ -669,6 +669,7 @@ mod tests {
         App,
         schedule_groups::{LateFixedUpdate, LateUpdate},
     };
+    use concerto::asset_id;
     use concerto::ecs::component::scene::SceneEntityRef;
     use concerto::ecs::entity::hierarchy::{ChildOf, Children};
     use concerto::ecs::system::{
@@ -724,9 +725,7 @@ mod tests {
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
     use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
 
-    use crate::retarget::{
-        LAFAN1_SKELETON, RetargetedPlayer, UAL1_SCENE, UAL1_SKELETON, lafan1_rig, ual1_rig,
-    };
+    use crate::retarget::{LAFAN1_RIG, RetargetedPlayer, UAL1_RIG, UAL1_SCENE};
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, NpcSpawner, PendingLink, Player, PlayerSpawner,
@@ -1235,15 +1234,8 @@ mod tests {
         assert_eq!(matchers, vec![to_value(&expected_matcher).unwrap()]);
         assert_eq!(inner.nodes().count(), 2);
 
-        let rigs = world.get_resource::<AssetStore<RetargetRig>>().unwrap();
-        assert_eq!(
-            to_value(rigs.get(&retarget.source).unwrap()).unwrap(),
-            to_value(&lafan1_rig(AssetHandle::weak(LAFAN1_SKELETON))).unwrap()
-        );
-        assert_eq!(
-            to_value(rigs.get(&retarget.target).unwrap()).unwrap(),
-            to_value(&ual1_rig(AssetHandle::weak(UAL1_SKELETON))).unwrap()
-        );
+        assert_eq!(retarget.source.id(), LAFAN1_RIG);
+        assert_eq!(retarget.target.id(), UAL1_RIG);
     }
 
     #[test]
@@ -1451,17 +1443,26 @@ mod tests {
         decode_content_asset::<Skeleton>(&bytes).unwrap().1
     }
 
+    const UAL1_SKELETON: AssetId = asset_id!("content/UAL1/skeleton_0.gasset");
+    const LAFAN1_SKELETON: AssetId = asset_id!("content/lafan1/model_skeleton/skeleton_0.gasset");
+
+    fn committed_rig(path: &str) -> RetargetRig {
+        let bytes =
+            std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
+        decode_content_asset::<RetargetRig>(&bytes).unwrap().1
+    }
+
     #[test]
-    fn the_lafan1_and_ual1_rigs_resolve_against_their_committed_skeletons_and_retarget() {
+    fn the_committed_lafan1_and_ual1_rigs_resolve_against_their_committed_skeletons_and_retarget() {
         let lafan1 = committed_skeleton("content/lafan1/model_skeleton/skeleton_0.gasset");
         let ual1 = committed_skeleton("content/UAL1/skeleton_0.gasset");
+        let lafan1_rig = committed_rig("content/lafan1/model_skeleton/rig.gasset");
+        let ual1_rig = committed_rig("content/UAL1/rig.gasset");
+        assert_eq!(lafan1_rig.skeleton.id(), LAFAN1_SKELETON);
+        assert_eq!(ual1_rig.skeleton.id(), UAL1_SKELETON);
 
-        let source = lafan1_rig(AssetHandle::weak(LAFAN1_SKELETON))
-            .resolve(&lafan1, None)
-            .unwrap();
-        let target = ual1_rig(AssetHandle::weak(UAL1_SKELETON))
-            .resolve(&ual1, None)
-            .unwrap();
+        let source = lafan1_rig.resolve(&lafan1, None).unwrap();
+        let target = ual1_rig.resolve(&ual1, None).unwrap();
 
         let bone = |skeleton: &Skeleton, index: usize| skeleton.names[index];
         for leg in [

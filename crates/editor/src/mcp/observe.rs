@@ -17,9 +17,7 @@ use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
     host::HostPicture, receive_read_only_calls,
 };
-use concerto_reflect::{
-    PathSegment, PropertyPath, Reflect, ReflectRef, TypeRegistry, to_json, with_property,
-};
+use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
@@ -32,7 +30,10 @@ use super::{BusyInputs, act::describe_pose, is_busy, value::value_names};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
-    inspector::{InspectedValues, InspectionSource, InspectorRegistry, Property, PropertyKind},
+    inspector::{
+        InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
+        listed_paths, shown_paths,
+    },
     project::ProjectState,
     tools::{
         camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
@@ -767,8 +768,6 @@ fn search(
     path.pop();
 }
 
-const LIST_LIMIT: usize = 16;
-
 fn inspect(
     mut calls: ToolCalls<Inspect>,
     source: EditWorld<InspectionSource>,
@@ -904,95 +903,6 @@ pub(super) fn insert_value(
 pub(super) fn insert_unavailable(answer: &mut Map<String, Value>) {
     answer.insert("value".into(), Value::Null);
     answer.insert("unavailable".into(), true.into());
-}
-
-pub(super) struct ListedPath<'a> {
-    pub(super) path: PropertyPath,
-    pub(super) row: Option<&'a Property>,
-    pub(super) names_enum: bool,
-}
-
-impl<'a> ListedPath<'a> {
-    /// The row whose editor writes this path, or `None` when `set_property` writes it whole: an enum, a list, or a path no editor claims.
-    pub(super) fn adapter(&self) -> Option<&'a Property> {
-        self.row.filter(|property| {
-            !self.names_enum && property.list_length().is_none() && property.value().is_some()
-        })
-    }
-}
-
-pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec<ListedPath<'a>> {
-    let mut listed: Vec<ListedPath> = Vec::new();
-    for row in rows
-        .iter()
-        .filter(|row| !matches!(row.kind, PropertyKind::Heading))
-    {
-        let segments = row.path.segments();
-        for depth in 0..segments.len() {
-            let above = PropertyPath::new(segments[..depth].iter().copied());
-            if names_enum(value, &above) && listed.iter().all(|listed| listed.path != above) {
-                listed.push(ListedPath {
-                    path: above,
-                    row: None,
-                    names_enum: true,
-                });
-            }
-        }
-        listed.push(ListedPath {
-            path: row.path.clone(),
-            row: Some(row),
-            names_enum: names_enum(value, &row.path),
-        });
-    }
-    listed
-}
-
-/// One entry of a component's `paths`: a listed path, or the note that stands for a long list's cut elements.
-pub(super) enum ShownPath<'a> {
-    Listed(&'a ListedPath<'a>),
-    Cut { list: PropertyPath, total: usize },
-}
-
-/// The paths `inspect` shows: each list's first [`LIST_LIMIT`] elements, then a note in place of the rest.
-pub(super) fn shown_paths<'a>(listed: &'a [ListedPath<'a>]) -> Vec<ShownPath<'a>> {
-    let mut shown: Vec<ShownPath> = Vec::new();
-    for entry in listed {
-        let segments = entry.path.segments();
-        let Some((depth, index)) =
-            segments
-                .iter()
-                .enumerate()
-                .find_map(|(depth, segment)| match segment {
-                    PathSegment::Index(index) if *index >= LIST_LIMIT => Some((depth, *index)),
-                    _ => None,
-                })
-        else {
-            shown.push(ShownPath::Listed(entry));
-            continue;
-        };
-        let list = PropertyPath::new(segments[..depth].iter().copied());
-        match shown.last_mut() {
-            Some(ShownPath::Cut { list: last, total }) if *last == list => *total = index + 1,
-            _ => shown.push(ShownPath::Cut {
-                list,
-                total: index + 1,
-            }),
-        }
-    }
-    shown
-}
-
-/// What a [`ShownPath::Cut`] says, in the form `value`'s cut list does.
-pub(super) fn cut_note(list: &PropertyPath, total: usize) -> String {
-    format!("… {} more of {list}, {total} in all", total - LIST_LIMIT)
-}
-
-fn names_enum(value: &dyn Reflect, path: &PropertyPath) -> bool {
-    let mut found = false;
-    let _ = with_property(value, path, &mut |field| {
-        found = matches!(field.reflect_ref(), ReflectRef::Enum(_));
-    });
-    found
 }
 
 fn bounded(value: Value) -> Value {

@@ -21,8 +21,10 @@ use concerto_foundation::assets::{
 use super::{
     ClipDocument, ClipFacts,
     events::{TabEvent, TabEventKind, read_events, write_events},
+    measure_transport,
     preview::{SeekClip, SetClipTransport, ShowClip},
     read_clip,
+    transport::ClipTransport,
 };
 
 fn event_name(event: &TabEvent) -> &str {
@@ -70,7 +72,12 @@ fn save_clip_document(
     Ok(saved)
 }
 
-fn show_saved_clip(entity: Entity, state: &ClipDocument, previews: &mut PreviewSignals) {
+fn show_saved_clip(
+    entity: Entity,
+    state: &ClipDocument,
+    transport: &ClipTransport,
+    previews: &mut PreviewSignals,
+) {
     let Some(clip) = state.clip.as_ref() else {
         return;
     };
@@ -78,16 +85,24 @@ fn show_saved_clip(entity: Entity, state: &ClipDocument, previews: &mut PreviewS
     previews.trigger(
         entity,
         SetClipTransport {
-            playing: state.playing,
-            looping: state.looping,
-            rate: state.rate,
+            playing: transport.playing,
+            looping: transport.looping,
+            rate: transport.speed,
         },
     );
-    previews.trigger(entity, SeekClip(state.time));
+    previews.trigger(entity, SeekClip(transport.time));
 }
 
 pub(crate) fn save_clip(
-    requested: Query<(Entity, &mut EditorDocument, &mut ClipDocument), With<SaveRequested>>,
+    requested: Query<
+        (
+            Entity,
+            &mut EditorDocument,
+            &mut ClipDocument,
+            &mut ClipTransport,
+        ),
+        With<SaveRequested>,
+    >,
     project: Res<ProjectState>,
     mut assets: ResMut<AssetRegistry>,
     mut saved: EventWriter<SceneSaved>,
@@ -99,7 +114,7 @@ pub(crate) fn save_clip(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut state) in requested.iter() {
+    for (entity, mut document, mut state, mut transport) in requested.iter() {
         cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")
@@ -107,7 +122,8 @@ pub(crate) fn save_clip(
         match written {
             Ok(asset) => {
                 document.status = format!("Saved {}", asset.address);
-                show_saved_clip(entity, &state, &mut previews);
+                measure_transport(&mut transport, &state.facts);
+                show_saved_clip(entity, &state, &transport, &mut previews);
                 saved.write(SceneSaved {
                     document: entity,
                     asset,

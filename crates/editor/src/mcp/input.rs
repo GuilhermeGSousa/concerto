@@ -483,17 +483,18 @@ fn window_events(
         let invalid = |message: String| {
             ToolError::new("invalid_arguments", format!("events[{index}]: {message}"))
         };
-        let mut move_to = |at: [f32; 2], written: &mut VecDeque<WindowEvent>| {
-            let position = to_window(view, at).map_err(invalid)?;
-            written.push_back(WindowEvent::CursorMoved { position });
-            if position != pointer {
-                written.push_back(WindowEvent::MouseMotion {
-                    delta: position - pointer,
-                });
-            }
-            pointer = position;
-            Ok(())
-        };
+        let mut move_to =
+            |at: [f32; 2], written: &mut VecDeque<WindowEvent>| -> Result<(), ToolError> {
+                let position = to_window(view, at).map_err(invalid)?;
+                written.push_back(WindowEvent::CursorMoved { position });
+                if position != pointer {
+                    written.push_back(WindowEvent::MouseMotion {
+                        delta: position - pointer,
+                    });
+                }
+                pointer = position;
+                Ok(())
+            };
         match event {
             InputEvent::Key(key) => {
                 let code = key_named(&key.key).map_err(invalid)?;

@@ -1,7 +1,4 @@
-use std::{
-    any::{Any, TypeId},
-    sync::Arc,
-};
+use std::{any::TypeId, sync::Arc};
 
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
@@ -12,33 +9,28 @@ use concerto_ecs::{
     query::filter::With,
     reflect::ReflectComponent,
 };
-use concerto_foundation::assets::{asset_server::AssetServer, handle::LiveLeaves};
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError};
-use concerto_reflect::{
-    PropertyPath, Reflect, ReflectDefault, ReflectJson, ReflectRef, TypeRegistry, apply_value_with,
-    json_to_value_with, to_value_with, with_property,
-};
+use concerto_reflect::{PropertyPath, Reflect, ReflectRef, TypeRegistry, with_property};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
     act::label,
-    observe::{
-        ListedPath, SceneEntities, ShownPath, component_json, cut_note, listed_paths,
-        names_component, resolve, shown_paths,
-    },
+    observe::{SceneEntities, component_json, names_component, resolve},
 };
 use crate::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
-        ComponentTarget, ErasedEditor, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
-        Property, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget, current_editor,
+        ComponentTarget, EditSource, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
+        ListedPath, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget,
+        adapter_commit, find_path, listed_paths, not_editable, refusal_error,
+        refused as inspector_refused, unknown_path,
     },
     tools::{
         edits::{
-            ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, PropertyRefusal,
-            SetValue, dotted_name,
+            ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, SetValue, dotted_name,
         },
         entity_ops::{EntityEdit, EntityEdited},
         scene::SceneRoot,
@@ -201,11 +193,7 @@ pub(super) fn build(app: &mut App) {
 }
 
 pub(super) fn refused(reason: &str) -> ToolError {
-    ToolError::new("refused", reason)
-}
-
-fn not_editable(name: &str) -> ToolError {
-    ToolError::new("not_editable", format!("{name} has no editor."))
+    inspector_refused(reason).into()
 }
 
 fn root_refused(edit: &str) -> ToolError {
@@ -487,158 +475,9 @@ fn registered_component(types: &TypeRegistry, name: &str) -> Result<Named, ToolE
     })
 }
 
-fn shown_path(path: &PropertyPath) -> String {
-    path.to_string()
-}
-
-fn unknown_path(component: &str, path: &str, listed: &[ListedPath]) -> ToolError {
-    if listed.is_empty() {
-        return ToolError::new(
-            "unknown_path",
-            format!(
-                "{component} has no reflection data the editor can write, so it has no paths; inspect shows it unavailable."
-            ),
-        );
-    }
-    let paths: Vec<String> = shown_paths(listed)
-        .iter()
-        .map(|shown| match shown {
-            ShownPath::Listed(listed) if listed.path.depth() == 0 => "\"\"".to_owned(),
-            ShownPath::Listed(listed) => shown_path(&listed.path),
-            ShownPath::Cut { list, total } => cut_note(list, *total),
-        })
-        .collect();
-    ToolError::new(
-        "unknown_path",
-        format!(
-            "{component} has no path `{path}`; its paths are {}.",
-            paths.join(", ")
-        ),
-    )
-}
-
-pub(super) fn find_path<'a>(
-    component: &str,
-    path: &str,
-    listed: &'a [ListedPath<'a>],
-) -> Result<&'a ListedPath<'a>, ToolError> {
-    listed
-        .iter()
-        .find(|listed| shown_path(&listed.path) == path)
-        .ok_or_else(|| unknown_path(component, path, listed))
-}
-
-fn decoded(
-    field: &dyn Reflect,
-    value: &Value,
-    types: &TypeRegistry,
-    hook: &mut LiveLeaves,
-) -> Result<Box<dyn Reflect>, ToolError> {
-    let type_id = (field as &dyn Any).type_id();
-    let invalid = |reason: String| ToolError::new("invalid_value", reason);
-    let mut built = if let Some(codec) = types.get_type_data::<ReflectJson>(type_id) {
-        (codec.from_json)(value).map_err(invalid)?
-    } else {
-        let Some(default) = types.get_type_data::<ReflectDefault>(type_id) else {
-            return Err(ToolError::new(
-                "not_editable",
-                format!(
-                    "{} has no JSON form and no registered Default, so a value cannot be built from JSON.",
-                    field.type_name()
-                ),
-            ));
-        };
-        let mut built = default.default();
-        if let Ok(current) = to_value_with(field, hook) {
-            apply_value_with(built.as_mut(), &current, hook);
-        }
-        built
-    };
-    let stored = json_to_value_with(value, type_id, types, hook).map_err(invalid)?;
-    let warnings = apply_value_with(built.as_mut(), &stored, hook);
-    if warnings.is_empty() {
-        Ok(built)
-    } else {
-        Err(invalid(
-            warnings
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; "),
-        ))
-    }
-}
-
-fn value_edit(
-    field: &dyn Reflect,
-    value: &Value,
-    types: &TypeRegistry,
-    hook: &mut LiveLeaves,
-    editor: &dyn ErasedEditor,
-    property: &str,
-) -> Result<Arc<dyn Any + Send + Sync>, ToolError> {
-    let built = decoded(field, value, types, hook).map_err(|error| {
-        ToolError::new(
-            error.code,
-            format!("{value} does not fit {property}: {}", error.message),
-        )
-    })?;
-    match editor.edit_to(built.as_ref()) {
-        Ok(Some(edit)) => Ok(edit),
-        Ok(None) => Err(ToolError::new(
-            "not_editable",
-            format!(
-                "{property}'s inspector adapter offers no value edit, so set_property cannot write it."
-            ),
-        )),
-        Err(error) => Err(ToolError::new(
-            "invalid_value",
-            format!("{value} does not fit {property}: {error}"),
-        )),
-    }
-}
-
 enum Write {
     Adapter(PropertyCommit),
     Value(SetValue),
-}
-
-/// What building an edit of a property reads.
-pub(super) struct EditSource<'a> {
-    pub(super) types: &'a TypeRegistry,
-    pub(super) registry: &'a InspectorRegistry,
-    pub(super) changed: Tick,
-    pub(super) server: Option<&'a AssetServer>,
-}
-
-/// The commit that writes `json` to `property` of `value`, through the editor that claims it.
-pub(super) fn adapter_commit(
-    property: &Property,
-    target: Arc<dyn PropertyTarget>,
-    owner: &str,
-    value: &dyn Reflect,
-    json: &Value,
-    source: &EditSource,
-) -> Result<PropertyCommit, ToolError> {
-    let name = dotted_name(owner, &property.path);
-    let row = property
-        .row(target, source.changed)
-        .ok_or_else(|| not_editable(&name))?;
-    let editor = current_editor(source.registry, Some(source.types), source.changed, &row)
-        .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
-    let mut edit = Err(unknown_path(owner, "", &[]));
-    let mut hook = LiveLeaves::from_parts(source.types, source.server);
-    let _ = with_property(value, &row.address.path, &mut |field| {
-        edit = value_edit(
-            field,
-            json,
-            source.types,
-            &mut hook,
-            editor.adapter.as_ref(),
-            &name,
-        );
-    });
-    Ok(PropertyCommit { row, edit: edit? })
 }
 
 fn property_write(
@@ -975,19 +814,10 @@ fn answer_property_commits(
                     ),
                     None => component_answer(&source, &registry, target.entity, target.component),
                 }),
-                Err(refusal) => pending.reply.err(refusal_error(refusal)),
+                Err(refusal) => pending.reply.err(refusal_error(refusal).into()),
             }
             cmd.despawn(call);
         }
-    }
-}
-
-/// The error a refused property write answers.
-pub(super) fn refusal_error(refusal: &PropertyRefusal) -> ToolError {
-    match refusal {
-        PropertyRefusal::Undecodable(reason) => ToolError::new("invalid_value", reason),
-        PropertyRefusal::NotEditable(reason) => ToolError::new("not_editable", reason),
-        PropertyRefusal::Refused(reason) => refused(reason),
     }
 }
 
