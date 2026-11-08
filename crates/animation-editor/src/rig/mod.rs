@@ -378,7 +378,7 @@ impl AssetEditor for RetargetRigEditor {
 
 const BONE_GREY: Color = Color::srgba(0.6, 0.6, 0.6, 1.0);
 const ROOT_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 1.0);
-const MOTION_ROOT_COLOR: Color = Color::srgba(0.2, 0.2, 0.2, 1.0);
+const MOTION_ROOT_COLOR: Color = Color::srgba(0.85, 0.95, 0.55, 1.0);
 const PALETTE: [Color; 8] = [
     Color::srgba(0.90, 0.30, 0.30, 1.0),
     Color::srgba(0.30, 0.70, 0.95, 1.0),
