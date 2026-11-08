@@ -21,10 +21,7 @@ use crate::{
     debug::AnimationDebug,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex},
-    node::{
-        AdditiveNodeState, AnimationClipNodeState, ErasedAnimationNode, NodeState,
-        state_machine::AnimationStateMachineState,
-    },
+    node::{ErasedAnimationNode, NodeState},
     pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
 };
@@ -84,20 +81,9 @@ impl AnimationPlayer {
         self.paused
     }
 
-    pub fn play(&mut self, node_index: &AnimationNodeIndex) {
-        if let Some(clip_state) = self
-            .graph_state
-            .get_state_mut::<AnimationClipNodeState>(node_index)
-        {
-            clip_state.play();
-            return;
-        }
-        if let Some(additive_state) = self
-            .graph_state
-            .get_state_mut::<AdditiveNodeState>(node_index)
-        {
-            additive_state.play();
-        }
+    /// Restarts the node at `node_index` through its `AnimationNode::reset`; does nothing until the graph is loaded.
+    pub fn play(&mut self, node_index: &AnimationNodeIndex, graphs: &AssetStore<AnimationGraph>) {
+        self.graph_state.reset_node(node_index, graphs);
     }
 
     /// Sets the weight a `BlendNode` gives this node's pose among its inputs.
@@ -143,12 +129,6 @@ impl AnimationPlayer {
 
     pub fn get_vec2_param(&self, key: Name) -> Option<Vec2> {
         self.blackboard.get_vec2(key)
-    }
-
-    pub fn current_fsm_state(&self, node_index: &AnimationNodeIndex) -> Option<Name> {
-        self.graph_state
-            .get_state::<AnimationStateMachineState>(node_index)
-            .and_then(AnimationStateMachineState::current_state_name)
     }
 
     /// What the nodes of the player's graph published on its last evaluation.
@@ -341,14 +321,63 @@ impl Deref for AnimationHandleComponent {
 mod tests {
     use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
     use concerto_name::name;
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use uuid::Uuid;
 
     use super::AnimationPlayer;
     use crate::{
         clip::AnimationClip,
+        evaluation::AnimationGraphContext,
         graph::{AnimationGraph, made_live},
-        node::{AnimationClipNode, BlendNode, ResultNode},
+        node::{
+            AnimationClipNode, AnimationNode, BlendNode, ReflectAnimationNode, ResultNode,
+            register_node_inputs,
+        },
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
         test_walks::Walks,
     };
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct Replayable {}
+
+    impl AnimationNode for Replayable {
+        type State = u32;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
+            0
+        }
+
+        fn update(&self, _: &mut u32, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut u32,
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+        }
+
+        fn reset(&self, resets: &mut u32) {
+            *resets += 1;
+        }
+    }
+
+    fn replayable_resets(player: &mut AnimationPlayer, walks: &Walks) -> Vec<u32> {
+        let mut resets = Vec::new();
+        player.for_each_state_mut::<Replayable>(walks.graphs(), |_, state, _| {
+            resets.push(*state);
+        });
+        resets
+    }
 
     struct Fixture {
         _server: AssetServer,
@@ -383,6 +412,34 @@ mod tests {
             walks,
             player,
         }
+    }
+
+    #[test]
+    fn play_restarts_any_node_type_through_its_reset() {
+        let mut graph = AnimationGraph::new();
+        let result = graph.result_node().index();
+        let index = graph.add_node(Replayable {}, result).index();
+        let mut server = AssetServer::new();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        server.register_asset(&graphs);
+        let handle = server.add(AnimationGraph::default());
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<Replayable>();
+        graph.make_live(&registry, None).unwrap();
+        graphs.insert(handle.id(), graph);
+        let walks = Walks::with(
+            AssetStore::new(),
+            graphs,
+            register_node_inputs::<Replayable>,
+        );
+        let mut player = AnimationPlayer::new(1);
+        walks.initialize(&mut player, handle);
+        assert_eq!(replayable_resets(&mut player, &walks), [0]);
+
+        player.play(&index, walks.graphs());
+
+        assert_eq!(replayable_resets(&mut player, &walks), [1]);
     }
 
     #[test]

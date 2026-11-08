@@ -279,8 +279,8 @@ A graph is a tree of nodes under a result node:
   is always the base's. The base's events keep their weights, and the clip's
   are added at the node's weight. A plain clip passes the base through with
   one warning; an additive clip whose delta isn't built, such as one added in
-  code, passes it through with none. `AnimationPlayer::play(node)` restarts
-  the delta, and the node never holds back `OnAnimationEnd`: it always counts
+  code, passes it through with none. `AnimationPlayer::play(node, graphs)`
+  restarts the delta, and the node never holds back `OnAnimationEnd`: it always counts
   as finished. The node has no mask: it layers the delta on every bone the
   delta covers. `AdditiveNode::new(clip)` starts at weight 1, looping from 0
   at rate 1, and every other field has a `with_<field>`:
@@ -610,9 +610,10 @@ impl AnimationNode for Gain {
 The node's fields are its data and are stored with the graph. `State` is the
 per-player runtime state (a playhead, say): `create_state` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
-receive it. A node that plays graphs inside itself, as the state machine and the
-retarget node do, reports them through `inner_graphs` and their states through
-`inner_states`.
+receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
+a node restarts on `play` by resetting its state there. A node that plays graphs
+inside itself, as the state machine and the retarget node do, reports them
+through `inner_graphs` and their states through `inner_states`.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and
