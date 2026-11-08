@@ -7,14 +7,14 @@ use concerto_animation::clip::{
 };
 use concerto_animation::evaluation::AnimationGraphContext;
 use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
-use concerto_animation::graph::AnimationGraph;
+use concerto_animation::graph::{AnimationGraph, AnimationNodeData};
 use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
     AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, AnimationNode, AnimationPlayMode,
-    ErasedAnimationNode, IkGoal, LayerNode, LayerSpace, ReflectAnimationNode, TipRotation,
-    TwoBoneIkNode,
+    ErasedAnimationNode, IkGoal, LayerNode, LayerSpace, ReflectAnimationNode, RootMotionWarp,
+    TipRotation, TwoBoneIkNode,
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
@@ -32,6 +32,7 @@ use concerto_foundation::assets::content::{
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use petgraph::graph::{DiGraph, NodeIndex};
 use uuid::Uuid;
 
 #[derive(Default, Reflect)]
@@ -142,7 +143,13 @@ fn mixed_graph() -> AnimationGraph {
         .with_input(
             AnimationClipNode::new(clip("outer_pose"))
                 .with_play_rate(1.5)
-                .with_play_rate_param(name!("draw_speed")),
+                .with_play_rate_param(name!("draw_speed"))
+                .with_warp(
+                    RootMotionWarp::new(name!("door_handle"))
+                        .with_window(ClipRange::new(0.2, 0.8))
+                        .with_translation(false)
+                        .with_rotation(false),
+                ),
             |_| {},
         )
         .with_input(state_machine(), |_| {})
@@ -547,6 +554,51 @@ fn a_stored_clip_node_whose_play_rate_param_is_a_string_loads_with_one_warning_a
         &to_value(&None::<Name>).unwrap()
     );
     assert_eq!(built, to_value(&node).unwrap());
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredGraph {
+    nodes: DiGraph<AnimationNodeData, ()>,
+    result_node: NodeIndex,
+}
+
+fn without_clip_node_field(graph: &AnimationGraph, field: &str) -> AnimationGraph {
+    let mut stored: StoredGraph =
+        bincode::deserialize(&bincode::serialize(graph).unwrap()).unwrap();
+    for node in stored.nodes.node_weights_mut() {
+        if let AnimationNodeData::Stored {
+            type_name,
+            value: ReflectedValue::Struct(fields),
+        } = node
+            && type_name == std::any::type_name::<AnimationClipNode>()
+        {
+            fields.retain(|(name, _)| name != field);
+        }
+    }
+    bincode::deserialize(&bincode::serialize(&stored).unwrap()).unwrap()
+}
+
+#[test]
+fn a_stored_clip_node_without_a_warp_loads_with_no_warp() {
+    let registry = registry(false);
+    let unwarped = AnimationClipNode::new(clip("vault")).with_play_rate(1.5);
+    let warped = unwarped
+        .clone()
+        .with_warp(RootMotionWarp::new(name!("ledge")));
+    let stored = without_clip_node_field(&AnimationGraph::from_node(warped), "warp");
+
+    let mut restored = round_trip(&stored);
+    restored.make_live(&registry, None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(
+        to_value(live_node::<AnimationClipNode>(&restored).unwrap()).unwrap(),
+        to_value(&unwarped).unwrap()
+    );
 }
 
 #[test]

@@ -313,7 +313,7 @@ impl AdditiveBase {
 }
 
 /// A span of a clip in seconds, from `start` to `end`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClipRange {
     pub start: f32,

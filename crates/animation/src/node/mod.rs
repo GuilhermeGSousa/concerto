@@ -21,6 +21,7 @@ pub mod layer;
 pub mod model_space;
 pub mod state_machine;
 pub mod two_bone_ik;
+mod warp;
 
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
@@ -30,6 +31,7 @@ pub use definition::{
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
+pub use warp::{RootMotionWarp, WarpTarget};
 
 /// The rate a node plays at: `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None` or holds no `f32`; never negative.
 pub fn effective_play_rate(
@@ -444,6 +446,7 @@ pub struct AnimationClipNode {
     start_time: f32,
     play_rate: f32,
     play_rate_param: Option<Name>,
+    warp: Option<RootMotionWarp>,
 }
 
 impl Default for AnimationClipNode {
@@ -460,6 +463,7 @@ impl AnimationClipNode {
             start_time: 0.0,
             play_rate: 1.0,
             play_rate_param: None,
+            warp: None,
         }
     }
 
@@ -487,6 +491,12 @@ impl AnimationClipNode {
     /// Multiplies the play rate by the `f32` blackboard param named `param`, when it holds one.
     pub fn with_play_rate_param(mut self, param: Name) -> Self {
         self.play_rate_param = Some(param);
+        self
+    }
+
+    /// Warps the clip's root motion toward a target, as `warp` describes.
+    pub fn with_warp(mut self, warp: RootMotionWarp) -> Self {
+        self.warp = Some(warp);
         self
     }
 }
