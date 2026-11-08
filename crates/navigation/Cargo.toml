@@ -12,8 +12,11 @@ concerto-ecs.workspace = true
 concerto-foundation.workspace = true
 concerto-name.workspace = true
 concerto-reflect.workspace = true
-glam.workspace = true
+glam = { workspace = true, features = ["serde"] }
 log = "0.4"
+polyanya = { version = "0.18", default-features = false }
+rerecast = { version = "0.5", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 concerto-scene.workspace = true
