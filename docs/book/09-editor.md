@@ -29,7 +29,8 @@ plugins = [
 
 `cargo concerto editor <dir>` adds `editor/` to an existing game. With no list
 in its `Cargo.toml`, the game gets `concerto_editor::run` instead, which takes
-only the first two arguments, and it has no clip tab. To get one, add the entry
+only the first two arguments, and it has no clip tab and no rig tab: its rigs
+open in the generic inspector. To get them, add the entry
 above and run `cargo concerto editor <dir> --update`; see the
 [project tool's README](../../crates/project/README.md#editor-plugins).
 
