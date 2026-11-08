@@ -156,3 +156,21 @@ fn an_empty_geometry_bakes_to_an_empty_mesh_with_no_paths() {
     assert_eq!(data, NavMeshData::default());
     assert_eq!(NavMeshQuery::new(&data).path(Vec3::ZERO, Vec3::X), None);
 }
+
+#[test]
+fn an_end_just_outside_the_eroded_edge_snaps_onto_the_mesh() {
+    let settings = NavMeshSettings::new();
+    let query = NavMeshQuery::new(&bake(&floor_geometry(), &settings).unwrap());
+    let edge = 5.0 - settings.agent_radius;
+    let outside = Vec3::new(edge + settings.agent_radius - 0.05, 0.0, 0.0);
+
+    let to = query.path(Vec3::ZERO, outside).unwrap();
+    assert!(
+        (to.last().unwrap().x - edge).abs() <= 2.0 * settings.cell_size,
+        "{to:?}"
+    );
+    let from = query.path(outside, Vec3::new(-2.0, 0.0, 0.0)).unwrap();
+    assert!(from.last().unwrap().distance(Vec3::new(-2.0, 0.0, 0.0)) < 0.1);
+
+    assert_eq!(query.path(Vec3::ZERO, Vec3::new(7.0, 0.0, 0.0)), None);
+}

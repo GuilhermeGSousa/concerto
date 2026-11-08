@@ -4,6 +4,8 @@ use polyanya::{Mesh, Polygon, Vertex};
 use crate::navmesh::NavMeshData;
 
 const OUTSIDE: u32 = u32::MAX;
+const SEARCH_DELTA: f32 = 0.05;
+const SEARCH_STEPS: u32 = 11;
 
 /// Finds paths over a [`NavMeshData`], built once from it.
 #[derive(Clone, Debug)]
@@ -23,7 +25,7 @@ impl NavMeshQuery {
         Self { mesh: build(data) }
     }
 
-    /// The corners after `from` up to `to`, both snapped to the mesh; `from` itself is not included, or `None` when either end is off the mesh or no path joins them.
+    /// The corners after `from` up to `to`, both snapped to the mesh from up to half a metre away; `from` itself is not included, or `None` when either end is farther off the mesh or no path joins them.
     pub fn path(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         self.mesh.as_ref()?.path_3d(from, to)
     }
@@ -74,6 +76,8 @@ fn build(data: &NavMeshData) -> Option<Mesh> {
         }
     };
     mesh.update_is_one_way();
+    mesh.set_search_delta(SEARCH_DELTA)
+        .set_search_steps(SEARCH_STEPS);
     let heights = data.vertices.iter().map(|vertex| vertex.y).collect();
     if let Err(error) = mesh.layers[0].set_heights(heights) {
         log::warn!("navmesh has no query mesh: {error}");

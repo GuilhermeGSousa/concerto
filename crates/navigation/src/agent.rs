@@ -1,15 +1,26 @@
 use concerto_ecs::{
-    CommandQueue, Component, Entity, Or, Query, Ref, Res, With, Without,
+    CommandQueue, Component, Entity, Or, Query, Ref, Res, With, Without, World,
     events::{Event, event_writer::EventWriter},
     query::change_detection::DetectChanges,
     reflect::{ReflectComponent, ReflectSceneComponent},
+    system::input::SystemLocal,
+    world::FromWorld,
 };
-use concerto_foundation::transform::GlobalTransform;
+use concerto_foundation::{
+    assets::{AssetId, asset_store::AssetStore},
+    transform::GlobalTransform,
+};
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec2, Vec3};
+use log::warn;
 
-use crate::graph::{NavGraph, NavPath, horizontal_distance, yaw_facing};
+use crate::{
+    asset::NavMesh,
+    component::NavMeshComponent,
+    graph::{NavGraph, NavGraphPoint, NavPath, horizontal_distance, yaw_facing},
+    query::NavMeshQuery,
+};
 
 /// An entity that walks the nav graph; its steering is written to `NavSteering`.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
@@ -106,6 +117,7 @@ pub struct NavSteering {
 pub struct NavRoute {
     path: NavPath,
     next: usize,
+    planned_on: Option<AssetId>,
 }
 
 impl NavRoute {
@@ -116,11 +128,12 @@ impl NavRoute {
 
     /// The point the route ends at.
     pub fn destination(&self) -> Entity {
-        *self
-            .path
-            .points
-            .last()
-            .expect("a route has at least one point")
+        self.path.destination
+    }
+
+    /// The navmesh asset the route was planned on, or `None` for the graph.
+    pub fn planned_on(&self) -> Option<AssetId> {
+        self.planned_on
     }
 }
 
@@ -155,7 +168,58 @@ pub fn stop_nav_agents(
     }
 }
 
-/// Plans a route for each agent whose destination changed, or whose route the changed graph may have broken.
+/// Remembers that the choice between several [`NavMeshComponent`]s was reported.
+pub struct MeshChoiceWarned {
+    warned: bool,
+}
+
+impl FromWorld for MeshChoiceWarned {
+    fn from_world(_: &World) -> Self {
+        Self { warned: false }
+    }
+}
+
+struct ActiveMesh<'a> {
+    entity: Entity,
+    id: AssetId,
+    query: &'a NavMeshQuery,
+}
+
+fn loaded_query<'a>(
+    navmeshes: &'a AssetStore<NavMesh>,
+    component: &NavMeshComponent,
+) -> Option<&'a NavMeshQuery> {
+    let navmesh = navmeshes.get(&component.handle)?;
+    if navmesh.data()?.polygons.is_empty() {
+        return None;
+    }
+    navmesh.query()
+}
+
+fn mesh_path(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<NavPath> {
+    if !point.enabled {
+        return None;
+    }
+    let mut positions = query.path(from, point.position)?;
+    if positions.is_empty() {
+        positions.push(point.position);
+    }
+    let length = positions
+        .iter()
+        .scan(from, |previous, corner| {
+            let leg = previous.distance(*corner);
+            *previous = *corner;
+            Some(leg)
+        })
+        .sum();
+    Some(NavPath {
+        destination: point.entity,
+        positions,
+        length,
+    })
+}
+
+/// Plans a route for each agent whose destination changed, whose graph route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now.
 pub fn plan_nav_routes(
     agents: Query<
         (
@@ -167,22 +231,58 @@ pub fn plan_nav_routes(
         ),
         With<NavAgent>,
     >,
+    components: Query<(Entity, &NavMeshComponent)>,
+    navmeshes: Res<AssetStore<NavMesh>>,
     graph: Res<NavGraph>,
+    mut warned: SystemLocal<MeshChoiceWarned>,
     mut unreachable: EventWriter<NavUnreachable>,
     mut cmd: CommandQueue,
 ) {
+    let count = components.iter().count();
+    if count > 1 && !warned.warned {
+        warned.warned = true;
+        warn!(
+            "{count} entities hold a NavMeshComponent; agents route on the one with the lowest entity index whose navmesh is loaded"
+        );
+    }
+    let mesh = components
+        .iter()
+        .filter_map(|(entity, component)| {
+            Some(ActiveMesh {
+                entity,
+                id: component.handle.id(),
+                query: loaded_query(&navmeshes, component)?,
+            })
+        })
+        .min_by_key(|mesh| mesh.entity.index());
+    let mesh_id = mesh.as_ref().map(|mesh| mesh.id);
     for (agent, destination, transform, route, steering) in agents.iter() {
-        if !destination.is_changed() && !(graph.is_changed() && route.is_some()) {
+        let stale = route.is_some_and(|route| {
+            route.planned_on != mesh_id || (route.planned_on.is_none() && graph.is_changed())
+        });
+        if !destination.is_changed() && !stale {
             continue;
         }
-        let path = match destination.target {
+        let point = match destination.target {
             NavTarget::Point(point) => Some(point),
             NavTarget::Anchor(anchor) => graph.anchor(anchor),
-        }
-        .and_then(|point| graph.path_from(transform.translation(), point));
+        };
+        let path = match &mesh {
+            Some(mesh) => point
+                .and_then(|point| graph.point(point))
+                .and_then(|point| mesh_path(mesh.query, transform.translation(), point)),
+            None => point.and_then(|point| graph.path_from(transform.translation(), point)),
+        };
         match path {
             Some(path) => {
-                cmd.insert(NavRoute { path, next: 0 }, agent);
+                cmd.insert(
+                    NavRoute {
+                        path,
+                        next: 0,
+                        planned_on: mesh_id,
+                    },
+                    agent,
+                );
                 if steering.is_none() {
                     cmd.insert(
                         NavSteering {

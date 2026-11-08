@@ -1066,8 +1066,11 @@ fn aim(rigs: Query<&mut ThirdPersonCamera>, input: Res<Input>) {
 
 ## Navigation
 
-`NavigationPlugin`, in `DefaultPlugins`, walks characters between points you
-place by hand. `concerto::navigation` holds it.
+`NavigationPlugin`, in `DefaultPlugins`, walks characters to points you place
+by hand, over a navmesh baked from the level's colliders, or over a graph of
+those points linked by hand when no navmesh is loaded. `concerto::navigation`
+holds it. It registers the `NavMesh` asset, so it needs an `AssetServer`;
+`DefaultPlugins` provides one.
 
 ### Points and links
 
@@ -1101,13 +1104,46 @@ other is listed with no anchor.
 | `path_from(position, to)` | the path from the enabled point nearest a position, its length counting the leg to that point |
 | `point(entity)`, `points()`, `edges()` | the points, with their positions, facings and anchors, and one edge per link |
 
-A `NavPath` holds the points it passes, their positions and its length in
-metres. `path.travel_time(speed)` is the time to walk it at that speed, or
-`None` for a speed that is not finite and above zero.
+A `NavPath` holds its `destination`, the point it ends at, the `positions` it
+passes and its `length` in metres. `path.travel_time(speed)` is the time to
+walk it at that speed, or `None` for a speed that is not finite and above zero.
 
 Nearness and arrival are measured on the horizontal plane, X and Z: a point a
 step up or down a stair is as near as one on the floor. Path lengths count the
 height between points.
+
+### The navmesh
+
+A `NavMesh` asset is the walkable floor of a level, as polygons. It lists the
+`scenes` it is baked from and its `settings`, a `NavMeshSettings`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `agent_radius` | 0.3 m | how far the mesh keeps from walls and edges |
+| `agent_height` | 1.8 m | the headroom a place needs to be walkable |
+| `max_slope` | 45° | the steepest walkable slope |
+| `step_height` | 0.35 m | the tallest ledge an agent steps up |
+| `cell_size` | 0.1 m | the horizontal resolution of the bake |
+| `cell_height` | 0.05 m | the vertical resolution of the bake |
+
+The mesh is derived data: its file holds the scene list and the settings, and
+the polygons are baked from the box and mesh colliders of those scenes, sensor
+boxes left out, when the asset loads, cached, and cooked into the file by
+`--cook` (see [Derived data](../asset-importing.md#derived-data)). A game that
+builds its geometry in code fills a `NavMeshGeometry`, calls `bake`, and adds
+`NavMesh::baked(settings, data)` with `AssetServer::add`.
+
+A `NavMeshComponent { handle }` on an entity of the level, a scene component,
+names the mesh agents route on. Once that mesh is loaded, a `NavMeshStatus`
+on the same entity reports its polygon count and bounds, which the editor's
+inspector and MCP `inspect` show. Agents use the mesh of the entity with the
+lowest index whose mesh is loaded and has polygons; with more than one
+`NavMeshComponent`, one warning says so. An end of a route up to half a metre
+off the mesh, such as a point standing against a wall, is moved onto it.
+
+While a mesh is loaded, agents route on it and the graph's links are ignored:
+the graph still names the destinations, and a disabled point is still never
+reached. With no mesh loaded, agents walk the graph.
 
 ### Agents
 
@@ -1117,9 +1153,13 @@ waypoint reached within 0.25 m and slows down within 1.5 m of the last one;
 
 Insert a `NavDestination` to send it somewhere: `NavDestination::to_point(entity)`
 or `NavDestination::to_anchor(name)`, at the agent's speed, or at another with
-`.with_speed(speed)` for that request alone. The agent plans from the enabled
-point nearest it, and plans again when the destination changes or the graph is
-rebuilt under its route. Remove the destination, or the `NavAgent`, to stop
+`.with_speed(speed)` for that request alone. On a navmesh, the agent plans from
+where it stands, through the mesh's corners, to the point. On the graph, it
+plans from the enabled point nearest it. It plans again when the destination
+changes, when the graph is rebuilt under a route planned on the graph, and when
+the mesh that is loaded is not the one its route was planned on: a mesh
+landing, being swapped, or its component removed. `NavRoute::planned_on()`
+names that mesh, or `None` for the graph. Remove the destination, or the `NavAgent`, to stop
 it mid-route: its velocity drops to zero, it keeps its facing, and its route is
 dropped.
 
@@ -1186,15 +1226,14 @@ Its [README](../../crates/navigation-gizmos/README.md) says more.
 
 ### Limits
 
-Navigation is a graph of hand-placed points, and only that:
-
 - Agents do not avoid each other or the player. Their capsules collide in
   physics, and that is all.
-- A route is planned over the graph alone. A physics body standing on it is not
-  walked around, and a blocked agent does not plan again.
-- The nearest point an agent starts from is found by distance, without a check
-  that it can be seen or reached in a straight line.
-- Links are walked, nothing else: no doors, ladders or vaults.
-- There is no navmesh yet; it is tracked in #678.
+- The navmesh is baked offline and does not change while the game runs. A
+  physics body that moves onto a route is not walked around, and a blocked
+  agent does not plan again.
+- On the graph, the nearest point an agent starts from is found by distance,
+  without a check that it can be seen or reached in a straight line.
+- Links are walked, nothing else: no doors, ladders or vaults. A navmesh has
+  no links at all yet; off-mesh connections are tracked in #699.
 
 Next: [User interface](08-ui.md).

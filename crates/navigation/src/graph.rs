@@ -78,10 +78,10 @@ pub struct NavEdge {
     pub one_way: bool,
 }
 
-/// A route over the graph: the points it passes, their positions, and its length.
+/// A route: the point it ends at, the positions it passes, and its length.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NavPath {
-    pub points: Vec<Entity>,
+    pub destination: Entity,
     pub positions: Vec<Vec3>,
     pub length: f32,
 }
@@ -274,10 +274,7 @@ impl NavGraph {
         }
         route.reverse();
         Some(NavPath {
-            points: route
-                .iter()
-                .map(|&index| self.points[index].entity)
-                .collect(),
+            destination: self.points[goal].entity,
             positions: route
                 .iter()
                 .map(|&index| self.points[index].position)
@@ -358,8 +355,14 @@ mod tests {
                 one_way: false
             }]
         );
-        assert_eq!(graph.path(a, b).unwrap().points, vec![a, b]);
-        assert_eq!(graph.path(b, a).unwrap().points, vec![b, a]);
+        assert_eq!(
+            graph.path(a, b).unwrap().positions,
+            vec![Vec3::ZERO, Vec3::X]
+        );
+        assert_eq!(
+            graph.path(b, a).unwrap().positions,
+            vec![Vec3::X, Vec3::ZERO]
+        );
     }
 
     #[test]
@@ -377,7 +380,10 @@ mod tests {
                 one_way: true
             }]
         );
-        assert_eq!(graph.path(a, b).unwrap().points, vec![a, b]);
+        assert_eq!(
+            graph.path(a, b).unwrap().positions,
+            vec![Vec3::ZERO, Vec3::X]
+        );
         assert_eq!(graph.path(b, a), None);
     }
 
@@ -447,7 +453,7 @@ mod tests {
             NavPointRecord::new(goal, Vec3::new(2.0, 0.0, 0.0)),
         ]);
         let path = graph.path(start, goal).unwrap();
-        assert_eq!(path.points, vec![start, short, goal]);
+        assert_eq!(path.destination, goal);
         assert_eq!(
             path.positions,
             vec![
@@ -468,8 +474,12 @@ mod tests {
             NavPointRecord::new(goal, Vec3::new(4.0, 0.0, 4.0)),
         ]);
         assert_eq!(
-            graph.path(start, goal).map(|path| path.points),
-            Some(vec![start, middle, goal])
+            graph.path(start, goal).map(|path| path.positions),
+            Some(vec![
+                Vec3::ZERO,
+                Vec3::new(4.0, 0.0, -1.0),
+                Vec3::new(4.0, 0.0, 4.0)
+            ])
         );
     }
 
@@ -493,8 +503,14 @@ mod tests {
             NavPointRecord::new(b, Vec3::new(0.0, 0.0, 10.0)).with_link(link(c)),
             NavPointRecord::new(c, Vec3::X),
         ]);
-        assert_eq!(graph.path(a, c).unwrap().points, vec![a, c]);
-        assert_eq!(graph.path(c, a).unwrap().points, vec![c, b, a]);
+        assert_eq!(
+            graph.path(a, c).unwrap().positions,
+            vec![Vec3::ZERO, Vec3::X]
+        );
+        assert_eq!(
+            graph.path(c, a).unwrap().positions,
+            vec![Vec3::X, Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO]
+        );
     }
 
     #[test]
@@ -528,7 +544,7 @@ mod tests {
         assert_eq!(
             graph.path(a, a),
             Some(NavPath {
-                points: vec![a],
+                destination: a,
                 positions: vec![Vec3::ONE],
                 length: 0.0
             })
@@ -555,7 +571,7 @@ mod tests {
             NavPointRecord::new(b, Vec3::new(4.0, 0.0, 3.0)),
         ]);
         let path = graph.path_from(Vec3::ZERO, b).unwrap();
-        assert_eq!(path.points, vec![a, b]);
+        assert_eq!(path.destination, b);
         assert_eq!(
             path.positions,
             vec![Vec3::new(0.0, 0.0, 3.0), Vec3::new(4.0, 0.0, 3.0)]
@@ -566,7 +582,7 @@ mod tests {
     #[test]
     fn travel_time_is_length_over_speed() {
         let path = NavPath {
-            points: Vec::new(),
+            destination: entity(1),
             positions: Vec::new(),
             length: 6.0,
         };
@@ -576,7 +592,7 @@ mod tests {
     #[test]
     fn travel_time_needs_a_finite_positive_speed() {
         let path = NavPath {
-            points: Vec::new(),
+            destination: entity(1),
             positions: Vec::new(),
             length: 6.0,
         };
