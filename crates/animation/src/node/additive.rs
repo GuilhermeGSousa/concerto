@@ -878,7 +878,7 @@ mod tests {
         assert_eq!(advanced.len(), 1);
         assert!((advanced[0] - 0.55).abs() < 1e-6);
 
-        player.play(&index);
+        player.play(&index, rig.walks.graphs());
 
         assert_eq!(overlay_times(&mut player, &rig.walks), [0.25]);
     }
