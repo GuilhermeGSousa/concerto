@@ -18,7 +18,7 @@ use concerto_editor::{
     name_menu::{NameMenu, close_menu, open_name_menu},
     timeline::Timeline,
 };
-use concerto_mesh::skeleton::Skeleton;
+use concerto_mesh::skeleton::{JointName, Skeleton};
 use concerto_name::Name;
 use concerto_ui::elements::{Label, prelude::*};
 use concerto_ui::{
@@ -63,6 +63,11 @@ struct RigInspector {
     chains: Entity,
     driven: Entity,
     status: Entity,
+}
+
+struct ChainEnd {
+    label: &'static str,
+    joint: JointName,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -121,10 +126,20 @@ fn bone_tags(rig: Option<&RetargetRig>, bone: Name, chains: &[ChainColor]) -> Ve
         else {
             continue;
         };
-        for (end, joint) in [("start", chain.start), ("end", chain.end)] {
-            if joint.0 == bone {
+        let ends = [
+            ChainEnd {
+                label: "start",
+                joint: chain.start,
+            },
+            ChainEnd {
+                label: "end",
+                joint: chain.end,
+            },
+        ];
+        for end in ends {
+            if end.joint.0 == bone {
                 tags.push(BoneTag {
-                    label: format!("{} {end}", chain.name.as_str()),
+                    label: format!("{} {}", chain.name.as_str(), end.label),
                     color,
                 });
             }

@@ -15,7 +15,7 @@ use concerto_editor::{
     preview::PreviewSignals,
     timeline::{Timeline, TimelineScrubbed, frame_at, time_of_frame},
 };
-use concerto_ui::elements::{Listening, Pressable, Text, prelude::*};
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{UIClick, UIDisabled, UIInteractionStyle},
     node::UIRect,
@@ -27,8 +27,29 @@ use concerto_window::input::MouseButton;
 
 use crate::preview::{ClipPreviewProgress, SeekClip, SetClipTransport};
 
-pub(crate) const SPEEDS: [(f32, &str); 4] =
-    [(0.25, "0.25×"), (0.5, "0.5×"), (1.0, "1×"), (2.0, "2×")];
+struct Speed {
+    rate: f32,
+    label: &'static str,
+}
+
+const SPEEDS: [Speed; 4] = [
+    Speed {
+        rate: 0.25,
+        label: "0.25×",
+    },
+    Speed {
+        rate: 0.5,
+        label: "0.5×",
+    },
+    Speed {
+        rate: 1.0,
+        label: "1×",
+    },
+    Speed {
+        rate: 2.0,
+        label: "2×",
+    },
+];
 
 /// Where a document's clip is and how it plays; the owner sets `duration` and `rate`, and the transport keeps the rest.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -182,26 +203,29 @@ pub fn scrub_transport(document: Entity) -> Listener<TimelineScrubbed> {
 }
 
 fn icon_button(
+    parent: &mut EntityCommandQueue,
     theme: &UITheme,
     mark: char,
     click: Listener<UIClick>,
-) -> (Listening<Pressable, UIClick>, Text) {
+) -> Entity {
     let size = theme.font_size_lg;
     let vertical = (theme.control_height - theme.line_height(size)) / 2.0;
     let horizontal = (theme.control_height - size) / 2.0;
-    (
-        theme
-            .pressable()
-            .solid()
-            .bordered()
-            .size(
-                UIValue::Px(theme.control_height),
-                UIValue::Px(theme.control_height),
-            )
-            .padding(UIRect::axes(vertical, horizontal))
-            .on_click(click),
-        icon(theme, mark, size),
-    )
+    parent
+        .spawn_child((
+            theme
+                .pressable()
+                .solid()
+                .bordered()
+                .size(
+                    UIValue::Px(theme.control_height),
+                    UIValue::Px(theme.control_height),
+                )
+                .padding(UIRect::axes(vertical, horizontal))
+                .on_click(click),
+            icon(theme, mark, size),
+        ))
+        .entity()
 }
 
 /// Spawns under `parent` the transport of `document`'s clip: step back, play/pause, step forward, Loop, then the speeds.
@@ -212,23 +236,19 @@ pub fn spawn_transport(
 ) -> TransportRow {
     let mut column = parent.spawn_child(theme.column().fixed());
     let mut controls = column.spawn_child(theme.row().gap(theme.spacing_xs).fixed());
-    let step_back = controls
-        .spawn_child(icon_button(
-            theme,
-            glyph::SKIP_BACK,
-            step_frame(document, -1),
-        ))
-        .entity();
-    let play = controls
-        .spawn_child(icon_button(theme, glyph::PLAY, toggle_playing(document)))
-        .entity();
-    let step_forward = controls
-        .spawn_child(icon_button(
-            theme,
-            glyph::SKIP_FORWARD,
-            step_frame(document, 1),
-        ))
-        .entity();
+    let step_back = icon_button(
+        &mut controls,
+        theme,
+        glyph::SKIP_BACK,
+        step_frame(document, -1),
+    );
+    let play = icon_button(&mut controls, theme, glyph::PLAY, toggle_playing(document));
+    let step_forward = icon_button(
+        &mut controls,
+        theme,
+        glyph::SKIP_FORWARD,
+        step_frame(document, 1),
+    );
     let looping = controls
         .spawn_child(
             theme
@@ -238,13 +258,13 @@ pub fn spawn_transport(
         )
         .entity();
     let mut speed_row = column.spawn_child(theme.row().gap(theme.spacing_xs).fixed());
-    let speeds = SPEEDS.map(|(speed, label)| {
+    let speeds = SPEEDS.map(|speed| {
         speed_row
             .spawn_child(
                 theme
-                    .button(label)
+                    .button(speed.label)
                     .ghost()
-                    .on_click(set_speed(document, speed)),
+                    .on_click(set_speed(document, speed.rate)),
             )
             .entity()
     });
@@ -307,8 +327,8 @@ pub(crate) fn sync_transport_rows(
             text.text = mark;
         }
         write_selected(row.looping, transport.looping);
-        for (button, (speed, _)) in row.speeds.into_iter().zip(SPEEDS) {
-            write_selected(button, speed == transport.speed);
+        for (button, speed) in row.speeds.into_iter().zip(SPEEDS) {
+            write_selected(button, speed.rate == transport.speed);
         }
 
         let no_clip = off.is_some() || transport.duration <= 0.0;

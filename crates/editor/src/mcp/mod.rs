@@ -7,12 +7,6 @@ mod value;
 
 pub use run::PlayTimeout;
 
-impl From<crate::inspector::WriteRefusal> for concerto_mcp::ToolError {
-    fn from(refusal: crate::inspector::WriteRefusal) -> Self {
-        Self::new(refusal.code, refusal.message)
-    }
-}
-
 use std::path::PathBuf;
 
 use concerto_app::{
@@ -39,9 +33,16 @@ use crate::{
     hosted::{
         EditWorld, HostRole, HostedApp, PendingApp, PendingPlayApp, PlayState, ViewportTarget,
     },
+    inspector::WriteRefusal,
     project::ProjectState,
     timeline::TimelineReadout,
 };
+
+impl From<WriteRefusal> for ToolError {
+    fn from(refusal: WriteRefusal) -> Self {
+        Self::new(refusal.code, refusal.message)
+    }
+}
 
 /// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project` with `plugins` added, and [`McpPlugin`] and [`EditorMcpPlugin`].
 pub fn editor(

@@ -105,7 +105,7 @@ impl OpenRigSide {
 
 /// The registry of a rig tab's `Preview` value, apart from the game's.
 #[derive(Resource, Clone)]
-pub struct RigPreviewTypes(pub AppTypeRegistry);
+pub(crate) struct RigPreviewTypes(pub(crate) AppTypeRegistry);
 
 pub(crate) fn preview_types() -> AppTypeRegistry {
     let types = AppTypeRegistry::default();
@@ -272,25 +272,25 @@ impl RigReads {
 
 /// The skeleton and scene a preview side was last given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SentStage {
-    pub skeleton: AssetId,
-    pub scene: Option<AssetId>,
+pub(crate) struct SentStage {
+    pub(crate) skeleton: AssetId,
+    pub(crate) scene: Option<AssetId>,
 }
 
 /// Where along X each side of the preview stands.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SideOffsets {
-    pub source: f32,
-    pub target: f32,
+pub(crate) struct SideOffsets {
+    pub(crate) source: f32,
+    pub(crate) target: f32,
 }
 
 /// What a rig tab last sent its preview: each side's stage, the offsets, and the clip.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub(crate) struct SentStages {
-    pub source: Option<SentStage>,
-    pub target: Option<SentStage>,
-    pub offsets: Option<SideOffsets>,
-    pub clip: Option<AssetId>,
+    pub(crate) source: Option<SentStage>,
+    pub(crate) target: Option<SentStage>,
+    pub(crate) offsets: Option<SideOffsets>,
+    pub(crate) clip: Option<AssetId>,
 }
 
 impl SentStages {
@@ -318,28 +318,28 @@ impl SentStages {
 
 /// `count` of `of`, as a rig tab's facts read them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Share {
-    pub count: usize,
-    pub of: usize,
+pub(crate) struct Share {
+    pub(crate) count: usize,
+    pub(crate) of: usize,
 }
 
 /// What a rig tab reports about the retarget: the scale from source to target, the target chains with a source match, and the source bones the clip drives.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct RigFacts {
-    pub scale: Option<f32>,
-    pub chains: Option<Share>,
-    pub driven: Option<Share>,
+pub(crate) struct RigFacts {
+    pub(crate) scale: Option<f32>,
+    pub(crate) chains: Option<Share>,
+    pub(crate) driven: Option<Share>,
 }
 
 /// What a rig tab holds beside the rig: the preview's settings, the open rig's skeleton or why it can't be read, the rig it last followed, the status line it last wrote, and the facts.
 #[derive(Component, Default)]
-pub struct RigDocument {
-    pub preview: RigPreview,
-    pub skeleton: Option<Arc<Skeleton>>,
-    pub skeleton_error: Option<String>,
-    pub opened: Option<AssetId>,
-    pub status_line: Option<String>,
-    pub facts: RigFacts,
+pub(crate) struct RigDocument {
+    pub(crate) preview: RigPreview,
+    pub(crate) skeleton: Option<Arc<Skeleton>>,
+    pub(crate) skeleton_error: Option<String>,
+    pub(crate) opened: Option<AssetId>,
+    pub(crate) status_line: Option<String>,
+    pub(crate) facts: RigFacts,
 }
 
 /// Opens a `RetargetRig` in a tab that inspects it beside a second rig and a clip, with both characters side by side in a preview.
