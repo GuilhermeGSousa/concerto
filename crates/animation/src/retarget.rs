@@ -842,7 +842,7 @@ impl PoseRetarget {
         let full = self.target_position(self.target_root)
             + (self.source_position(pair.source_tip) - self.source_position(self.source_root))
                 * self.scale
-            + pair.offset;
+            + twist_about(self.source_delta(self.source_root), Vec3::Y) * pair.offset;
         let tip = self.target_position(pair.tip);
         let chain = TwoBoneChain {
             root: self.target_position(pair.root),
@@ -3203,6 +3203,32 @@ mod tests {
             actual.abs_diff_eq(expected, tolerance),
             "{actual:?} != {expected:?}"
         );
+    }
+
+    #[test]
+    fn a_source_turned_about_up_turns_the_solved_target_limb_with_it() {
+        let source_skeleton = goal_source_skeleton();
+        let target = goal_target_skeleton();
+        let hips = bone(&source_skeleton, "hips");
+        let turn = Quat::from_rotation_y(1.2);
+        let source = crouched_source();
+        let mut turned = source.clone();
+        turned[hips].rotation = turn * turned[hips].rotation;
+        turned[hips].translation = turn * turned[hips].translation;
+
+        let out = retarget(&mut feet_retarget(), &source, target.bone_count());
+        let turned_out = retarget(&mut feet_retarget(), &turned, target.bone_count());
+
+        let side = |pose: &[JointPose]| {
+            GoalSide {
+                skeleton: &target,
+                pose,
+                root: "pelvis",
+                tip: "foot_l",
+            }
+            .tip_from_root(pose)
+        };
+        assert_near(side(&turned_out), turn * side(&out), 1e-4);
     }
 
     #[test]

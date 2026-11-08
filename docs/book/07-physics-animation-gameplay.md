@@ -1029,7 +1029,11 @@ two-bone IK of `concerto::animation::ik`. The pairs run in the target rig's
 goal order, and a goal on one rig only is not solved. A pair's full goal is the
 target tip's reference position plus the source tip's movement from its
 reference, relative to the source root and scaled by `scale()`, measured from
-the target root. A source ankle at its reference height therefore puts the
+the target root. The part that comes from the reference poses, the target
+tip's reference offset from its root less the scaled source one, turns with
+the root's turn about +Y, so the spacing of the feet follows the character's
+facing and the result is the same whether the pose still holds its root motion
+or not. A source ankle at its reference height therefore puts the
 target ankle at the target's own reference height, a planted source foot gives
 a fixed target goal, and a stride scales as root motion does. The goal is the
 FK tip position moved toward the full goal by the pair's `weight`, and
