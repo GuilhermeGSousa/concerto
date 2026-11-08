@@ -1,4 +1,5 @@
 //! The editor of a retarget rig: the rig's inspector, a second rig and a clip picked beside it, and a preview of both characters side by side.
+mod panels;
 pub mod preview;
 
 use std::{collections::HashMap, path::Path, sync::Arc};
@@ -36,6 +37,7 @@ use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_scene::scene::Scene;
 
+use panels::{build_rig_panels, sync_rig_panels};
 pub use preview::RigPreviewMode;
 use preview::{
     PlaceRigSides, RigSide, RigStage, SetPoseRetarget, SetRigPreview, SetRigSide, ShowRigStage,
@@ -1035,7 +1037,12 @@ impl Plugin for RetargetRigEditorPlugin {
             .insert_resource(RigPreviewTypes(preview_types()))
             .add_system(
                 Update,
-                (sync_rig_transport, follow_rig)
+                (
+                    sync_rig_transport,
+                    follow_rig,
+                    build_rig_panels,
+                    sync_rig_panels,
+                )
                     .chain()
                     .after(InspectedAssetSystems)
                     .after(follow_transport_progress)

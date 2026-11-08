@@ -55,8 +55,9 @@ any tab whose preview plays a clip with `clip_playback`:
 - `TransportDisabled` on the document disables every button;
 - `TransportPlugin` copies each preview's `ClipPreviewProgress` into its
   document's `ClipTransport`, and keeps the buttons in step with it: the play
-  glyph, Loop and the active speed selected, the steps disabled without a rate,
-  and every button disabled with no duration or under `TransportDisabled`.
+  glyph, Loop, and the speed button equal to `speed` selected, or none when
+  `speed` is another value; the steps disabled without a rate, and every button
+  disabled with no duration or under `TransportDisabled`.
 
 ## The tab
 
@@ -186,3 +187,77 @@ move at all when the preview failed to build. `ClipPreviewBones` carries the
 shown skeleton's bones, `ShownBone` ids and names in bone order, which name the
 bone rows. A preview behind another tab is frozen, and the document keeps its
 last report.
+
+## The rig tab
+
+Opening a `RetargetRig` opens a tab that keeps the generic inspector over the
+rig, with its save, `Unsaved` state, Discard and bone picker, and adds a bone
+tree, a second rig and a clip beside the open one, and a preview of both
+characters side by side. The open rig is the target; `Preview.open_rig_is`
+set to `Source` swaps the sides.
+
+### The panels
+
+The `left` host, titled Bones, holds a tree of the open rig's skeleton, nested
+by parent and expanded. Each row shows the bone's name and its tags, each in
+its colour: `root`, `motion root`, and `<chain> start` or `<chain> end` at a
+chain's ends, in the chain's colour in the preview. With no skeleton it reads
+`No skeleton`; a skeleton that can't be read says why. Right-clicking a row
+opens a menu listing Root, Motion root, then `<chain> start` and
+`<chain> end` for each chain. A pick writes the bone's name at `root`,
+`chains.<i>.start` or `chains.<i>.end`, or `{"Some": {"0": "<bone>"}}` at
+`motion_root`, through `WriteValue`, the same code as MCP `set_property` on
+that path. It marks the tab `Unsaved` and the inspector refreshes. Selecting a
+row highlights it and does nothing else.
+
+The `inspector` host has, above the inspector's `RetargetRig` and `Preview`
+cards:
+
+- the title, Retarget;
+- the transport, as in the clip tab. It is disabled in Reference mode or with
+  no clip;
+- the facts: Scale, the retarget's scale from source to target (`0.93×`);
+  Chains, the target chains with a source match (`5 of 6 shared`); and Driven,
+  the source bones the clip drives (`60 of 65`). A fact that can't be worked
+  out reads `None`;
+- the status on a line of its own when it is not empty.
+
+The `bottom` host holds a timeline that follows the transport and pauses and
+seeks when scrubbed. It has no markers and no rows.
+
+### The preview
+
+`Preview` is a second value in the inspector, never saved, so editing it
+leaves the tab clean: `other`, the rig beside the open one; `clip`;
+`open_rig_is`; `mode`, `Reference` to stand both characters in their reference
+poses or `Clip` to play the clip on the source and retarget it onto the target;
+`root_motion`; `bones`; `looping`; `speed`, any finite value above 0; and
+`paused_at`, `Some(time)` while paused. The transport and `Preview` stay in
+step: a pause from the transport sets `paused_at`, and setting it pauses and
+seeks. Opening another rig in the tab keeps `Preview` and goes back to the
+start of the clip.
+
+Each side shows the `Scene` named `scene` in its skeleton's folder, or its
+bones alone when there is none or the scene holds another skeleton. The sides
+stand apart by their widths. The bones are drawn in their chain's colour, the
+same on both sides for chains of one name, with the root and the motion root in
+colours of their own. With root motion off each pelvis stays over its spot;
+on, the source moves with the clip and the target by the retarget's scale. The
+preview follows unsaved edits to the rig.
+
+### The status
+
+The status lists what stops the preview, joined with ` · `: `Source rig: …`
+or `Target rig: …` for a rig that doesn't resolve, `Retarget: …` for two rigs
+that can't be retargeted, `Pick the other rig`, `Pick a clip` in Clip mode,
+and `The clip drives none of the source skeleton's bones`. A line written by
+something else, such as `Saved …`, stays until the next edit to the rig or to
+`Preview`.
+
+### MCP
+
+The tab needs no tool of its own. `open_asset`, `inspect`, `set_property`,
+`list_push`, `list_remove` and `save` work on the `RetargetRig` value as on any
+inspected asset, and `set_property` on `Preview` drives everything the tab's
+controls do; `inspect` reads both back. `status` shows the status line and
+`screenshot` shows the preview.

@@ -32,10 +32,10 @@ use glam::{Mat4, Quat, Vec3};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const NAMES: [&str; 4] = ["root", "pelvis", "spine", "head"];
-const PELVIS: usize = 1;
+pub(super) const NAMES: [&str; 4] = ["root", "pelvis", "spine", "head"];
+pub(super) const PELVIS: usize = 1;
 
-fn skeleton(first_id: u128, heights: [f32; 4]) -> Skeleton {
+pub(super) fn skeleton(first_id: u128, heights: [f32; 4]) -> Skeleton {
     let at = |y| JointPose {
         translation: Vec3::new(0.0, y, 0.0),
         ..JointPose::IDENTITY
@@ -50,22 +50,22 @@ fn skeleton(first_id: u128, heights: [f32; 4]) -> Skeleton {
     .unwrap()
 }
 
-fn source_skeleton() -> Skeleton {
+pub(super) fn source_skeleton() -> Skeleton {
     skeleton(10, [0.0, 1.0, 0.3, 0.4])
 }
 
-fn target_skeleton() -> Skeleton {
+pub(super) fn target_skeleton() -> Skeleton {
     skeleton(20, [0.0, 0.9, 0.25, 0.35])
 }
 
-fn rig_on(skeleton: &AssetEntry) -> RetargetRig {
+pub(super) fn rig_on(skeleton: &AssetEntry) -> RetargetRig {
     RetargetRig::new()
         .with_skeleton(AssetHandle::weak(skeleton.id))
         .with_root("pelvis")
         .with_chain(RetargetChain::new("spine", "spine", "head"))
 }
 
-fn walk_on(skeleton: &Skeleton) -> AnimationClip {
+pub(super) fn walk_on(skeleton: &Skeleton) -> AnimationClip {
     let times: Vec<f32> = (0..=30).map(|frame| frame as f32 / 30.0).collect();
     let translations: Vec<[f32; 3]> = times.iter().map(|time| [*time, 1.0, 0.0]).collect();
     let rotations: Vec<[f32; 4]> = times
@@ -90,7 +90,7 @@ fn walk_on(skeleton: &Skeleton) -> AnimationClip {
     clip
 }
 
-fn rig_fixture() -> SceneFixture {
+pub(super) fn rig_fixture() -> SceneFixture {
     let mut f = SceneFixture::new();
     f.world
         .get_resource_mut::<AssetEditorRegistry>()
@@ -127,27 +127,27 @@ fn rig_fixture() -> SceneFixture {
     f
 }
 
-fn write<A: Asset>(f: &mut SceneFixture, address: &str, asset: &A) -> AssetEntry {
+pub(super) fn write<A: Asset>(f: &mut SceneFixture, address: &str, asset: &A) -> AssetEntry {
     let root = f.project_root.clone();
     let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
     let id = save_content_asset_into(asset, &root, address, assets).unwrap();
     assets.get(id).unwrap().clone()
 }
 
-struct RigTab {
-    f: SceneFixture,
-    document: Entity,
-    open: AssetEntry,
-    open_skeleton: AssetEntry,
-    other: AssetEntry,
-    other_skeleton: AssetEntry,
-    walk: AssetEntry,
+pub(super) struct RigTab {
+    pub(super) f: SceneFixture,
+    pub(super) document: Entity,
+    pub(super) open: AssetEntry,
+    pub(super) open_skeleton: AssetEntry,
+    pub(super) other: AssetEntry,
+    pub(super) other_skeleton: AssetEntry,
+    pub(super) walk: AssetEntry,
 }
 
 const OPEN_ADDRESS: &str = "content/hero/rig.gasset";
 const OTHER_ADDRESS: &str = "content/other/rig.gasset";
 
-fn rig_tab() -> RigTab {
+pub(super) fn rig_tab() -> RigTab {
     let mut f = rig_fixture();
     let open_skeleton = write(&mut f, "content/hero/skeleton.gasset", &target_skeleton());
     let other_skeleton = write(&mut f, "content/other/skeleton.gasset", &source_skeleton());
@@ -177,19 +177,19 @@ fn rig_tab() -> RigTab {
     }
 }
 
-fn hex(entry: &AssetEntry) -> Value {
+pub(super) fn hex(entry: &AssetEntry) -> Value {
     json!(entry.id.simple_hex())
 }
 
 impl RigTab {
-    fn state(&self) -> &RigDocument {
+    pub(super) fn state(&self) -> &RigDocument {
         self.f
             .world
             .get_component_for_entity::<RigDocument>(self.document)
             .unwrap()
     }
 
-    fn rig(&self) -> &RetargetRig {
+    pub(super) fn rig(&self) -> &RetargetRig {
         self.f
             .world
             .get_component_for_entity::<InspectedDocument>(self.document)
@@ -200,14 +200,14 @@ impl RigTab {
             .unwrap()
     }
 
-    fn transport(&self) -> &ClipTransport {
+    pub(super) fn transport(&self) -> &ClipTransport {
         self.f
             .world
             .get_component_for_entity::<ClipTransport>(self.document)
             .unwrap()
     }
 
-    fn values(&self) -> Vec<Arc<dyn PropertyTarget>> {
+    pub(super) fn values(&self) -> Vec<Arc<dyn PropertyTarget>> {
         self.f
             .world
             .get_component_for_entity::<InspectedValues>(self.document)
@@ -216,32 +216,32 @@ impl RigTab {
             .clone()
     }
 
-    fn status(&self) -> String {
+    pub(super) fn status(&self) -> String {
         self.f.status(self.document)
     }
 
-    fn sides(&self) -> &RigSides {
+    pub(super) fn sides(&self) -> &RigSides {
         self.f
             .scene_world(self.document)
             .get_resource::<RigSides>()
             .unwrap()
     }
 
-    fn posing(&self) -> &RigPosing {
+    pub(super) fn posing(&self) -> &RigPosing {
         self.f
             .scene_world(self.document)
             .get_resource::<RigPosing>()
             .unwrap()
     }
 
-    fn playback(&self) -> &ClipPlayback {
+    pub(super) fn playback(&self) -> &ClipPlayback {
         self.f
             .scene_world(self.document)
             .get_resource::<ClipPlayback>()
             .unwrap()
     }
 
-    fn write_value(&mut self, value: usize, path: &str, json: Value) {
+    pub(super) fn write_value(&mut self, value: usize, path: &str, json: Value) {
         let target = self.values()[value].clone();
         self.f.world.trigger(WriteValue {
             target,
@@ -251,15 +251,15 @@ impl RigTab {
         self.f.frame();
     }
 
-    fn write_rig(&mut self, path: &str, json: Value) {
+    pub(super) fn write_rig(&mut self, path: &str, json: Value) {
         self.write_value(0, path, json);
     }
 
-    fn write_preview(&mut self, path: &str, json: Value) {
+    pub(super) fn write_preview(&mut self, path: &str, json: Value) {
         self.write_value(1, path, json);
     }
 
-    fn until(&mut self, what: &str, done: impl Fn(&RigTab) -> bool) {
+    pub(super) fn until(&mut self, what: &str, done: impl Fn(&RigTab) -> bool) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
             self.f.frame();
@@ -271,7 +271,7 @@ impl RigTab {
         }
     }
 
-    fn with_other(mut self) -> Self {
+    pub(super) fn with_other(mut self) -> Self {
         let other = hex(&self.other);
         self.write_preview("other", other);
         let (source, target) = (self.other_skeleton.id, self.open_skeleton.id);
@@ -283,7 +283,7 @@ impl RigTab {
         self
     }
 
-    fn playing_the_walk(mut self) -> Self {
+    pub(super) fn playing_the_walk(mut self) -> Self {
         let walk = hex(&self.walk);
         self.write_preview("clip", walk);
         self.write_preview("mode", json!("Clip"));
@@ -295,7 +295,7 @@ impl RigTab {
         self
     }
 
-    fn committed(&self, target: &str) -> Vec<PropertyCommitted> {
+    pub(super) fn committed(&self, target: &str) -> Vec<PropertyCommitted> {
         self.f
             .written::<Hosted<PropertyCommitted>>()
             .into_iter()
@@ -526,7 +526,7 @@ fn assets_written_on_the_other_rig_reads_it_again() {
     assert_eq!(tab.status(), "");
 }
 
-fn transport_row(tab: &mut RigTab) -> TransportRow {
+pub(super) fn transport_row(tab: &mut RigTab) -> TransportRow {
     let document = tab.document;
     let host = tab.f.world.spawn(UINode::default());
     let mut spawn = (move |theme: Res<UITheme>, mut cmd: CommandQueue| {
@@ -543,7 +543,7 @@ fn transport_row(tab: &mut RigTab) -> TransportRow {
         .unwrap()
 }
 
-fn left_click() -> UIClick {
+pub(super) fn left_click() -> UIClick {
     UIClick {
         position: Default::default(),
         button: MouseButton::Left,

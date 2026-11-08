@@ -48,7 +48,7 @@ pub(crate) use event_section::{
 
 const TITLE_HEIGHT: f32 = 16.0;
 const BOX_SIZE: f32 = 16.0;
-const NO_VALUE: &str = "None";
+pub(crate) const NO_VALUE: &str = "None";
 
 /// The widgets of a clip's tab that follow its document, kept on the document.
 #[derive(Component)]
@@ -193,7 +193,7 @@ fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
     }
 }
 
-fn title(theme: &UITheme, text: &str) -> Label {
+pub(crate) fn title(theme: &UITheme, text: &str) -> Label {
     theme
         .label(text.to_uppercase())
         .small()
@@ -203,7 +203,7 @@ fn title(theme: &UITheme, text: &str) -> Label {
         .fixed()
 }
 
-fn error_line(theme: &UITheme) -> Label {
+pub(crate) fn error_line(theme: &UITheme) -> Label {
     theme.label("").color(theme.error).hidden().fixed()
 }
 
@@ -235,7 +235,7 @@ fn check_row(
     checkbox
 }
 
-fn fact(parent: &mut EntityCommandQueue, label: &str, theme: &UITheme) -> Entity {
+pub(crate) fn fact(parent: &mut EntityCommandQueue, label: &str, theme: &UITheme) -> Entity {
     let mut row = parent.spawn_child(theme.row().gap(theme.spacing_sm).fixed());
     row.add_child(theme.label(label).muted().grow());
     row.spawn_child(theme.label("").no_wrap()).entity()
