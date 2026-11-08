@@ -1268,12 +1268,17 @@ preview's events: call `forward_hosted_event::<E>()` before the editor `App`
 finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
 which preview wrote it.
 
-### The clip editor
+### The clip and rig editors
 
-The editor of an `AnimationClip` is the crate
+The editors of an `AnimationClip` and of a `RetargetRig` are in the crate
 [`concerto-animation-editor`](../animation-editor/README.md), which a game lists
-in its `Cargo.toml`. In a game that doesn't list it a clip has no editor, so
-opening one opens no tab.
+in its `Cargo.toml`. The clip tab plays a clip on its skeleton. The rig tab
+inspects a rig beside a second rig and a clip, with both characters side by
+side in its preview. Both play through the crate's transport widget, a play,
+step, loop and speed row and a timeline over the document's `ClipTransport`,
+public for any tab whose preview plays a clip. In a game that doesn't list the
+crate a clip has no editor, so opening one opens no tab, and a rig opens in the
+generic inspector.
 
 ### The timeline
 
