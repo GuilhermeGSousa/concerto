@@ -1,12 +1,10 @@
-use concerto_animation::{animate_targets, graph::AnimationGraph, player::AnimationPlayer};
+use concerto_animation::{animate_targets, player::AnimationPlayer};
 use concerto_app::{plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_color::Color;
 use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
-use concerto_ecs::{Component, IntoSystemConfig, Query, Res, reflect::ReflectComponent};
-use concerto_foundation::{
-    assets::asset_store::AssetStore, transform::systems::propagate_global_transforms,
-};
-use concerto_procedural_animation::{FootLockNode, LegLock, LockPhase};
+use concerto_ecs::{Component, IntoSystemConfig, Query, reflect::ReflectComponent};
+use concerto_foundation::transform::systems::propagate_global_transforms;
+use concerto_procedural_animation::{FootLockDebug, LegLock, LockPhase};
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::plugin::RenderPlugin;
 use glam::Vec3;
@@ -107,20 +105,19 @@ fn draw_shape(gizmos: &mut DebugGizmos, shape: LockShape) {
 
 /// Draws each foot lock of every player whose `FootLockGizmos` has `locks` on.
 pub fn draw_foot_locks(
-    players: Query<(&FootLockGizmos, &mut AnimationPlayer)>,
-    graphs: Res<AssetStore<AnimationGraph>>,
+    players: Query<(&FootLockGizmos, &AnimationPlayer)>,
     mut gizmos: DebugGizmos,
 ) {
-    for (shown, mut player) in players.iter() {
+    for (shown, player) in players.iter() {
         if !shown.locks {
             continue;
         }
-        player.for_each_state_mut::<FootLockNode>(&graphs, |_, state, _| {
-            for leg in state.legs() {
+        for debug in player.debug().get::<FootLockDebug>() {
+            for leg in &debug.legs {
                 for shape in leg_shapes(leg) {
                     draw_shape(&mut gizmos, shape);
                 }
             }
-        });
+        }
     }
 }

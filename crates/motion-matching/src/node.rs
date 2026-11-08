@@ -6,7 +6,7 @@ use concerto_animation::{
 };
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
-use concerto_mesh::skeleton::Skeleton;
+use concerto_mesh::{skeleton::Skeleton, JointPose};
 use concerto_name::{name, Name};
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     database::MotionDatabase,
     simulation::TrajectorySample,
-    state::{MotionMatchingState, Sources},
+    state::{LastQuery, MotionMatchingState, Sources},
 };
 
 /// The blackboard key under which the trajectory is published.
@@ -40,6 +40,18 @@ impl Default for MotionMatchingTrajectory {
             samples: Vec::new(),
         }
     }
+}
+
+/// What a motion matching node published on its player's last evaluation: its flags, the frame it plays, the last search's query and its channels' dimensions.
+#[derive(Default, Clone)]
+pub struct MotionMatchingDebug {
+    pub database: AssetHandle<MotionDatabase>,
+    pub initialised: bool,
+    pub failed: bool,
+    pub frame: usize,
+    pub pose: Vec<JointPose>,
+    pub last_query: Option<LastQuery>,
+    pub query_dims: usize,
 }
 
 fn sources<'a>(
@@ -136,12 +148,27 @@ impl AnimationNode for MotionMatchingNode {
         &self,
         state: &mut MotionMatchingState,
         _: &(),
-        _context: &AnimationGraphContext<'_>,
+        context: &AnimationGraphContext<'_>,
         _bone_ids: &[Uuid],
         _evaluated_inputs: &[EvaluatedFrame],
         _pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        context.publish(|debug: &mut MotionMatchingDebug| {
+            debug.database.clone_from(&self.database);
+            debug.initialised = state.is_initialised();
+            debug.failed = state.has_failed();
+            debug.frame = state.frame();
+            debug.query_dims = state.query().map_or(0, |query| {
+                query.channels().iter().map(|channel| channel.dims()).sum()
+            });
+            debug.pose.clear();
+            debug.pose.extend_from_slice(state.pose().joints());
+            match (debug.last_query.as_mut(), state.last_query()) {
+                (Some(published), Some(last)) => published.clone_from(last),
+                (_, last) => debug.last_query = last.cloned(),
+            }
+        });
         state.write_output(output);
         for event in state.fired() {
             output.push_event(*event);
