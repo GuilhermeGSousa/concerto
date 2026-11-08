@@ -14,7 +14,7 @@ Add `agent` to an issue you opened. Add as well:
 |---|---|
 | `agent:spec` | Questions and a spec approved by you in the PR, then a plan the agent follows without approval. For large tasks that change foundational work. Without it, the agent goes straight to an implementation PR. |
 | `agent:local` | Only the runner on your machine takes it. Use it for rendering, UI and editor work, which needs a look at the running program. |
-| `agent:priority` | Runners take it before issues without it. |
+| `agent:priority` | Runners take it, or its blockers while it is blocked, before issues without it. |
 | `documentation` or `lint` | Sorting only; no effect on the path. |
 
 An agent adds `agent:spec` itself, and says why in the PR, only when the issue
@@ -33,7 +33,11 @@ yours. Remove
 
 An issue whose body has a line `Blocked by #a, #b` is not taken while any of
 those issues is open. Runners take `agent:priority` issues first, then the
-rest, each oldest first.
+rest, each oldest first. A blocked `agent:priority` issue sends them to its
+blockers first, and to theirs when those are blocked too, whether or not the
+blockers carry `agent:priority`. A blocker without `agent`, opened by someone
+else, already claimed, or labelled `agent:local` for the cloud runner is
+passed over.
 
 The pipeline sets `agent:claimed-cloud` or `agent:claimed-local` on an issue it
 has taken, and `agent:needs-owner` on a PR that waits on you.
