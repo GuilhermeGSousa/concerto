@@ -610,7 +610,9 @@ impl AnimationNode for Gain {
 The node's fields are its data and are stored with the graph. `State` is the
 per-player runtime state (a playhead, say): `create_state` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
-receive it.
+receive it. A node that plays graphs inside itself, as the state machine and the
+retarget node do, reports them through `inner_graphs` and their states through
+`inner_states`.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and
@@ -626,7 +628,7 @@ clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
-or identity when it has none.
+or identity when it has none; and, in `evaluate`, the sink `publish` writes to.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the root motion and the clip events its sources gave this frame. Its inputs
@@ -675,12 +677,13 @@ context.publish::<GainDebug>(|debug| debug.amount = self.amount);
 
 `AnimationPlayer::debug()` returns an `AnimationDebug`, and
 `get::<GainDebug>()` the values of that type its graph published on its last
-evaluation, in the order they were published: one per publishing node, from
-nodes inside state machines and retarget nodes too. Each evaluation starts the
-lists empty but keeps the values, so `fill` receives last evaluation's value at
-that position and can refill its buffers without allocating. A player whose
-graph did not evaluate publishes nothing, and a paused player keeps what it
-published last. `publish` does nothing in `create_state` and `update`, and
+evaluation, in the order they were published: each node's values in walk
+order, from nodes inside state machines and retarget nodes too. Each evaluation
+starts the lists empty but keeps the values, so `fill` receives last
+evaluation's value at that position and can refill its buffers without
+allocating. A player whose graph is not loaded publishes nothing, while a paused
+player, or one whose skeleton asset is missing, does not evaluate and keeps what
+it published last. `publish` does nothing in `create_state` and `update`, and
 `fill` must not publish itself. Read the values after `animate_targets`, which
 evaluates the players.
 
