@@ -16,8 +16,9 @@ use petgraph::{
 };
 use uuid::Uuid;
 
+#[cfg(any(test, feature = "test-support"))]
+use crate::blackboard::AnimationBlackboard;
 use crate::{
-    blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, PlaceholderNode, ReflectAnimationNode,
@@ -440,6 +441,7 @@ impl AnimationGraphState {
             .and_then(|node_state| node_state.node_state.downcast_mut::<T>())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn for_each_state_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
@@ -449,6 +451,7 @@ impl AnimationGraphState {
         self.visit_states_mut(graphs, blackboard, &mut f);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn visit_states_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,

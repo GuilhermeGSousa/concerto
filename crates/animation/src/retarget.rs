@@ -833,6 +833,7 @@ impl Running {
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
             inputs: context.inputs,
+            debug: context.debug,
         }
     }
 
@@ -1157,6 +1158,7 @@ fn sample_frame(skeleton: &Skeleton, clip: &AnimationClip, time: f32) -> Vec<Joi
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::RefCell,
         sync::{Mutex, Once},
         thread::ThreadId,
     };
@@ -1181,12 +1183,13 @@ mod tests {
     };
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        debug::AnimationDebug,
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         graph::{AnimationGraph, made_live},
         node::{
             AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
-            ReflectAnimationNode, state_machine::AnimationStateMachine,
+            ReflectAnimationNode, register_node_inputs, state_machine::AnimationStateMachine,
         },
         player::AnimationPlayer,
         plugin::register_animation_types,
@@ -2765,6 +2768,14 @@ mod tests {
         }
 
         fn frame(&mut self, root: Option<RootBone>) -> AnimationFrame {
+            self.frame_publishing(root, &RefCell::default())
+        }
+
+        fn frame_publishing(
+            &mut self,
+            root: Option<RootBone>,
+            debug: &RefCell<AnimationDebug>,
+        ) -> AnimationFrame {
             let skeleton = &self.player_skeleton;
             let walks = &self.walks;
             let mut frame = None;
@@ -2774,17 +2785,23 @@ mod tests {
                     let mut pool = FramePool::new(skeleton.bone_count());
                     pool.set_rest(&skeleton.rest_pose);
                     let mut output = pool.acquire();
-                    walks.evaluate_with(blackboard, root.clone(), Some(skeleton), |context| {
-                        node.evaluate(
-                            state,
-                            evaluate_inputs(context),
-                            context,
-                            &skeleton.bone_ids,
-                            &[],
-                            &mut pool,
-                            &mut output,
-                        )
-                    });
+                    walks.evaluate_publishing(
+                        blackboard,
+                        root.clone(),
+                        Some(skeleton),
+                        debug,
+                        |context| {
+                            node.evaluate(
+                                state,
+                                evaluate_inputs(context),
+                                context,
+                                &skeleton.bone_ids,
+                                &[],
+                                &mut pool,
+                                &mut output,
+                            )
+                        },
+                    );
                     frame = Some(output);
                 },
             );
@@ -3075,6 +3092,58 @@ mod tests {
         played.advance();
 
         assert_eq!(played.visits::<AnimationClipNode>(), 1);
+    }
+
+    #[derive(Debug, Default, PartialEq)]
+    struct InnerValue(u32);
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct InnerPublisher {}
+
+    impl AnimationNode for InnerPublisher {
+        type State = ();
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
+
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut (),
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+            context.publish::<InnerValue>(|value| value.0 = 7);
+        }
+
+        fn reset(&self, _: &mut ()) {}
+    }
+
+    #[test]
+    fn a_value_published_inside_the_inner_graph_reaches_the_outer_sink() {
+        let mut played =
+            Played::registering(target_skeleton(), register_node_inputs::<InnerPublisher>);
+        played.load_rigs(node_target_rig());
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<InnerPublisher>();
+        let mut inner = AnimationGraph::from_node(InnerPublisher {});
+        inner.make_live(&registry, None).unwrap();
+        played.insert_inner(inner);
+        played.advance();
+        let debug = RefCell::default();
+
+        played.frame_publishing(None, &debug);
+
+        assert_eq!(debug.borrow().get::<InnerValue>(), [InnerValue(7)]);
     }
 
     #[derive(Resource)]

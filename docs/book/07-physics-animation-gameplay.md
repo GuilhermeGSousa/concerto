@@ -658,6 +658,32 @@ an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
 
+### Debug data
+
+A node's state is private to the player: outside tests, nothing reaches it.
+What a node wants gizmos, overlays or tools to see, it publishes from
+`evaluate` through its context:
+
+```rust
+#[derive(Default)]
+struct GainDebug {
+    amount: f32,
+}
+
+context.publish::<GainDebug>(|debug| debug.amount = self.amount);
+```
+
+`AnimationPlayer::debug()` returns an `AnimationDebug`, and
+`get::<GainDebug>()` the values of that type its graph published on its last
+evaluation, in the order they were published: one per publishing node, from
+nodes inside state machines and retarget nodes too. Each evaluation starts the
+lists empty but keeps the values, so `fill` receives last evaluation's value at
+that position and can refill its buffers without allocating. A player whose
+graph did not evaluate publishes nothing, and a paused player keeps what it
+published last. `publish` does nothing in `create_state` and `update`, and
+`fill` must not publish itself. Read the values after `animate_targets`, which
+evaluates the players.
+
 ### Root motion
 
 A clip whose root bone moves gives root motion: a `RootMotion` that says how the
@@ -1020,9 +1046,9 @@ root motion against the target reference, and the frame's root motion is the
 inner graph's, with its translation multiplied by `scale()` and its rotation
 unchanged. Clip events fired in the inner graph reach the player as its own,
 and the node is finished when the inner graph is, so a state machine's
-`OnAnimationEnd` follows it. `AnimationPlayer::for_each_state_mut` also visits
-the nodes inside the inner graph, which is how motion matching's gizmos find a
-matcher under a retarget node.
+`OnAnimationEnd` follows it. Values that nodes inside the inner graph publish
+(see [Debug data](#debug-data)) reach the player's `AnimationPlayer::debug`,
+as those of its own nodes do.
 
 Until the player's skeleton, both rigs, their skeletons, a `ClipFrame`
 reference clip and the inner graph have loaded, the node gives the rest pose,

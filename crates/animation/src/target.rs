@@ -157,13 +157,14 @@ mod tests {
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
     use concerto_name::{Name, name};
-    use concerto_reflect::{Reflect, TypeRegistry};
+    use concerto_reflect::{GetTypeRegistration, Reflect, TypeRegistry};
     use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
     use super::{animate_targets, initialize_animation_players, initialize_skeletons};
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        debug::AnimationDebug,
         evaluation::AnimationGraphContext,
         event::{AnimationEvent, AnimationSignal},
         graph::{AnimationGraph, AnimationNodeIndex, made_live},
@@ -313,6 +314,10 @@ mod tests {
             Self::registering(Quat::IDENTITY, register_node_inputs::<Probe>)
         }
 
+        fn publishing() -> Self {
+            Self::registering(Quat::IDENTITY, register_node_inputs::<Publisher>)
+        }
+
         fn registering(rest_rotation: Quat, register: impl FnOnce(&mut World)) -> Self {
             let mut server = AssetServer::new();
             let clips = AssetStore::<AnimationClip>::new();
@@ -418,11 +423,14 @@ mod tests {
             handle
         }
 
-        fn probe_graph(&mut self) -> AssetHandle<AnimationGraph> {
+        fn live_graph<N: AnimationNode + GetTypeRegistration>(
+            &mut self,
+            node: N,
+        ) -> AssetHandle<AnimationGraph> {
             let mut registry = TypeRegistry::default();
             register_animation_types(&mut registry);
-            registry.register::<Probe>();
-            let mut graph = AnimationGraph::from_node(Probe {});
+            registry.register::<N>();
+            let mut graph = AnimationGraph::from_node(node);
             graph.make_live(&registry, None).unwrap();
             let handle = self.server.add(AnimationGraph::default());
             self.walks.graphs_mut().insert(handle.id(), graph);
@@ -628,6 +636,24 @@ mod tests {
             system.run_and_apply((), &mut self.world);
         }
 
+        fn animate_without_graphs(&mut self) {
+            let graphs = self
+                .world
+                .remove_resource::<AssetStore<AnimationGraph>>()
+                .unwrap();
+            self.world
+                .insert_resource(AssetStore::<AnimationGraph>::new());
+            self.animate();
+            self.world.insert_resource(graphs);
+        }
+
+        fn debug(&self) -> &AnimationDebug {
+            self.world
+                .get_component_for_entity::<AnimationPlayer>(self.owner)
+                .unwrap()
+                .debug()
+        }
+
         fn play(&mut self, graph: AssetHandle<AnimationGraph>) {
             self.world
                 .insert(AnimationHandleComponent::new(graph), self.owner);
@@ -705,9 +731,117 @@ mod tests {
         fn reset(&self, _: &mut Option<Affine3A>) {}
     }
 
+    #[derive(Default)]
+    struct Published {
+        order: u32,
+        values: Vec<u32>,
+    }
+
+    struct Unpublished;
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct Publisher {}
+
+    impl AnimationNode for Publisher {
+        type State = ();
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), context: &AnimationGraphContext<'_>) {
+            context.publish::<Published>(|published| published.order = 10);
+        }
+
+        fn update(&self, _: &mut (), _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+            context.publish::<Published>(|published| published.order = 20);
+        }
+
+        fn evaluate(
+            &self,
+            _: &mut (),
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+            for order in 0..2 {
+                context.publish::<Published>(|published| {
+                    published.order = order;
+                    published.values.clear();
+                    published.values.extend_from_slice(&[1, 2, 3]);
+                });
+            }
+        }
+
+        fn reset(&self, _: &mut ()) {}
+    }
+
+    fn publishing_bones() -> TwoBones {
+        let mut rig = Rig::publishing().loaded_two_bone_skeleton();
+        let graph = rig.live_graph(Publisher {});
+        let player = rig.player(graph);
+        rig.spawn_two_bones(player)
+    }
+
+    fn published_buffer(bones: &TwoBones) -> *const u32 {
+        bones.debug().get::<Published>()[0].values.as_ptr()
+    }
+
+    #[test]
+    fn values_published_while_creating_or_updating_a_graph_reach_no_player() {
+        let mut rig = Rig::publishing().loaded_two_bone_skeleton();
+        let graph = rig.live_graph(Publisher {});
+        let mut player = rig.player(graph);
+
+        rig.update(&mut player, 0.1);
+
+        assert!(player.debug().get::<Published>().is_empty());
+    }
+
+    #[test]
+    fn an_evaluation_publishes_its_values_in_order_and_none_of_another_type() {
+        let mut bones = publishing_bones();
+
+        bones.animate();
+
+        let published = bones.debug().get::<Published>();
+        let orders: Vec<u32> = published.iter().map(|value| value.order).collect();
+        assert_eq!(orders, vec![0, 1]);
+        assert_eq!(published[1].values, vec![1, 2, 3]);
+        assert!(bones.debug().get::<Unpublished>().is_empty());
+    }
+
+    #[test]
+    fn the_next_evaluation_replaces_the_values_and_reuses_their_buffers() {
+        let mut bones = publishing_bones();
+        bones.animate();
+        let buffer = published_buffer(&bones);
+
+        bones.animate();
+
+        assert_eq!(bones.debug().get::<Published>().len(), 2);
+        assert_eq!(published_buffer(&bones), buffer);
+    }
+
+    #[test]
+    fn an_evaluation_with_no_graph_publishes_nothing_and_keeps_the_buffers() {
+        let mut bones = publishing_bones();
+        bones.animate();
+        let buffer = published_buffer(&bones);
+
+        bones.animate_without_graphs();
+
+        assert!(bones.debug().get::<Published>().is_empty());
+        bones.animate();
+        assert_eq!(published_buffer(&bones), buffer);
+    }
+
     fn probed_bones() -> TwoBones {
         let mut rig = Rig::probing().loaded_two_bone_skeleton();
-        let graph = rig.probe_graph();
+        let graph = rig.live_graph(Probe {});
         let player = rig.player(graph);
         rig.spawn_two_bones(player)
     }

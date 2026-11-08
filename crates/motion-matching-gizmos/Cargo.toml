@@ -7,7 +7,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-concerto-animation.workspace = true
+concerto-animation = { workspace = true, features = ["test-support"] }
 concerto-app.workspace = true
 concerto-color.workspace = true
 concerto-debug-gizmos.workspace = true
@@ -20,5 +20,6 @@ concerto-render.workspace = true
 glam = "0.30.1"
 
 [dev-dependencies]
+concerto-animation = { workspace = true, features = ["test-support"] }
 concerto-physics.workspace = true
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
