@@ -189,6 +189,13 @@ impl RigTab {
             .unwrap()
     }
 
+    pub(super) fn sent(&self) -> &SentStages {
+        self.f
+            .world
+            .get_component_for_entity::<SentStages>(self.document)
+            .unwrap()
+    }
+
     pub(super) fn rig(&self) -> &RetargetRig {
         self.f
             .world
@@ -423,7 +430,7 @@ fn two_resolving_rigs_give_the_preview_two_stages_two_sides_offsets_and_a_retarg
     let tab = rig_tab().with_other();
 
     let sides = tab.sides();
-    let offsets = tab.state().sent.offsets.unwrap();
+    let offsets = tab.sent().offsets.unwrap();
     assert!(offsets.source < 0.0 && offsets.target > 0.0);
     assert_eq!(offsets.source, -offsets.target);
     assert_eq!(sides.offset_of(RigSide::Source), offsets.source);
@@ -623,6 +630,78 @@ fn a_clip_that_does_not_loop_ends_paused_at_its_duration() {
     assert!(!tab.state().preview.looping);
 }
 
+fn edit_the_rig(tab: &mut RigTab, edit: usize) {
+    let root = if edit % 2 == 0 { "spine" } else { "pelvis" };
+    tab.write_rig("root", json!(root));
+}
+
+#[test]
+fn a_pause_from_the_widget_holds_while_the_rig_is_edited_every_frame() {
+    let mut tab = rig_tab().with_other().playing_the_walk();
+    let play = transport_row(&mut tab).play;
+    for edit in 0..5 {
+        edit_the_rig(&mut tab, edit);
+    }
+
+    tab.f.world.trigger_on(play, left_click());
+    for edit in 5..15 {
+        edit_the_rig(&mut tab, edit);
+    }
+
+    assert!(tab.state().preview.paused_at.is_some());
+    assert_eq!(tab.state().preview.paused_at, Some(tab.transport().time));
+    assert!(!tab.transport().playing);
+    assert!(!tab.playback().playing);
+}
+
+#[test]
+fn a_clip_that_does_not_loop_stays_at_its_end_while_the_rig_is_edited_every_frame() {
+    let mut tab = rig_tab().with_other().playing_the_walk();
+    tab.write_preview("looping", json!(false));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut edit = 0;
+    while tab.state().preview.paused_at.is_none() {
+        assert!(std::time::Instant::now() < deadline, "the clip never ended");
+        edit_the_rig(&mut tab, edit);
+        edit += 1;
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    for _ in 0..5 {
+        edit_the_rig(&mut tab, edit);
+        edit += 1;
+    }
+
+    assert_eq!(tab.state().preview.paused_at, Some(1.0));
+    assert!(!tab.transport().playing);
+    assert!(!tab.playback().playing);
+    assert_eq!(tab.playback().time, 1.0);
+}
+
+#[test]
+fn a_clip_that_does_not_loop_ending_keeps_saved() {
+    let mut tab = rig_tab().with_other().playing_the_walk();
+    tab.write_preview("speed", json!(0.25));
+    tab.write_preview("looping", json!(false));
+    tab.write_rig("root", json!("spine"));
+    tab.f.world.insert(SaveRequested, tab.document);
+    tab.f.frame();
+    tab.f.frame();
+    let saved = format!("Saved {OPEN_ADDRESS}");
+    assert_eq!(tab.status(), saved);
+    assert_eq!(tab.state().preview.paused_at, None);
+
+    tab.until("the clip never ended", |tab| {
+        tab.state().preview.paused_at.is_some()
+    });
+    for _ in 0..5 {
+        tab.f.frame();
+    }
+
+    assert_eq!(tab.status(), saved);
+    assert!(!tab.transport().playing);
+}
+
 #[test]
 fn reopening_another_rig_keeps_the_preview_and_goes_back_to_the_start() {
     let mut tab = rig_tab().with_other().playing_the_walk();
@@ -679,7 +758,7 @@ fn set_property_on_the_preview_mode_and_other_reaches_follow_rig_and_inspect_lis
             .is_some()
     );
     assert_eq!(
-        tab.state().sent.source.map(|stage| stage.skeleton),
+        tab.sent().source.map(|stage| stage.skeleton),
         Some(tab.other_skeleton.id)
     );
     tab.f.world.trigger(RefreshInspector);

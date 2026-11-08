@@ -20,11 +20,13 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::{AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec},
+    hosted::Hosted,
     inspected_asset::{InspectedAssetEditor, InspectedAssetSystems, InspectedDocument},
     inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, TargetWorld},
     preview::PreviewSignals,
     project::{AssetsWritten, ProjectState},
     scene::load_scene,
+    tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
@@ -181,8 +183,8 @@ impl PropertyTarget for RigPreviewValue {
 }
 
 /// What a rig tab has read, by asset id: each read or why it failed; a read goes when `AssetsWritten` names it.
-#[derive(Default)]
-pub struct RigReads {
+#[derive(Component, Default)]
+pub(crate) struct RigReads {
     skeletons: HashMap<AssetId, Result<Arc<Skeleton>, String>>,
     clips: HashMap<AssetId, Result<Arc<AnimationClip>, String>>,
     rigs: HashMap<AssetId, Result<Arc<RetargetRig>, String>>,
@@ -283,8 +285,8 @@ pub struct SideOffsets {
 }
 
 /// What a rig tab last sent its preview: each side's stage, the offsets, and the clip.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SentStages {
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub(crate) struct SentStages {
     pub source: Option<SentStage>,
     pub target: Option<SentStage>,
     pub offsets: Option<SideOffsets>,
@@ -329,16 +331,14 @@ pub struct RigFacts {
     pub driven: Option<Share>,
 }
 
-/// What a rig tab holds beside the rig: the preview's settings, the open rig's skeleton or why it can't be read, the rig it last followed, what it read, the status line it last wrote, what it last sent its preview, and the facts.
+/// What a rig tab holds beside the rig: the preview's settings, the open rig's skeleton or why it can't be read, the rig it last followed, the status line it last wrote, and the facts.
 #[derive(Component, Default)]
 pub struct RigDocument {
     pub preview: RigPreview,
     pub skeleton: Option<Arc<Skeleton>>,
     pub skeleton_error: Option<String>,
     pub opened: Option<AssetId>,
-    pub reads: RigReads,
     pub status_line: Option<String>,
-    pub sent: SentStages,
     pub facts: RigFacts,
 }
 
@@ -360,6 +360,8 @@ impl AssetEditor for RetargetRigEditor {
         editor.insert((
             InspectedValues(vec![Arc::new(rig), Arc::new(RigPreviewValue { document })]),
             RigDocument::default(),
+            RigReads::default(),
+            SentStages::default(),
             ClipTransport::default(),
             TransportDisabled,
         ));
@@ -858,16 +860,27 @@ fn same_skeleton(held: Option<&Arc<Skeleton>>, read: Option<&Arc<Skeleton>>) -> 
     }
 }
 
+fn preview_edits(committed: &mut EventReader<Hosted<PropertyCommitted>>) -> Vec<Entity> {
+    committed
+        .read()
+        .filter(|hosted| hosted.event.result.is_ok() && !hosted.event.address.target.saved())
+        .map(|hosted| hosted.document)
+        .collect()
+}
+
 pub(crate) fn follow_rig(
     documents: Query<(
         Entity,
         &mut EditorDocument,
         Ref<InspectedDocument>,
         &mut RigDocument,
+        &mut RigReads,
+        &mut SentStages,
         &mut ClipTransport,
         Option<&TransportDisabled>,
     )>,
     mut written: EventReader<AssetsWritten>,
+    mut committed: EventReader<Hosted<PropertyCommitted>>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
     mut previews: PreviewSignals,
@@ -877,6 +890,7 @@ pub(crate) fn follow_rig(
         .read()
         .flat_map(|written| written.ids.iter().copied())
         .collect();
+    let previewed = preview_edits(&mut committed);
     let Some(root) = project
         .project
         .as_ref()
@@ -888,10 +902,20 @@ pub(crate) fn follow_rig(
         root,
         assets: &assets,
     };
-    for (document, mut editor, inspected, mut state, mut transport, disabled) in documents.iter() {
-        let edited = state.is_changed();
-        let forgot = state.reads.holds_any(&written);
-        if !(edited || forgot || inspected.is_changed()) {
+    for (
+        document,
+        mut editor,
+        inspected,
+        mut state,
+        mut reads,
+        mut sent,
+        mut transport,
+        disabled,
+    ) in documents.iter()
+    {
+        let edited = previewed.contains(&document);
+        let forgot = reads.holds_any(&written);
+        if !(edited || forgot || state.is_changed() || inspected.is_changed()) {
             continue;
         }
         let Some(open) = inspected
@@ -901,7 +925,8 @@ pub(crate) fn follow_rig(
         else {
             continue;
         };
-        let state = &mut **state;
+        let reads = &mut **reads;
+        let sent = &mut **sent;
         let current = editor.current.as_ref().map(|asset| asset.id);
         let reopened = state.opened != current;
         if reopened {
@@ -912,10 +937,10 @@ pub(crate) fn follow_rig(
             }
         }
         if forgot {
-            state.reads.forget(&written);
-            state.sent.forget(&written);
+            reads.forget(&written);
+            sent.forget(&written);
         }
-        let followed = follow(open, &state.preview, &mut state.reads, &from);
+        let followed = follow(open, &state.preview, reads, &from);
 
         let open_skeleton = followed
             .sides
@@ -928,7 +953,7 @@ pub(crate) fn follow_rig(
             state.skeleton_error = followed.skeleton_error.clone();
         }
 
-        send_sides(document, open, &followed, &mut state.sent, &mut previews);
+        send_sides(document, open, &followed, sent, &mut previews);
         previews.trigger(document, SetPoseRetarget(followed.retarget.clone()));
         previews.trigger(
             document,
@@ -940,9 +965,9 @@ pub(crate) fn follow_rig(
         );
 
         let shown = followed.clip.as_ref().map(|shown| shown.id);
-        let restarted = state.sent.clip != shown;
+        let restarted = sent.clip != shown;
         if restarted {
-            state.sent.clip = shown;
+            sent.clip = shown;
             match &followed.clip {
                 Some(shown) => previews.trigger(document, ShowClip(Arc::clone(&shown.clip))),
                 None => previews.trigger(document, ClearClip),
@@ -998,12 +1023,14 @@ pub(crate) fn follow_rig(
 }
 
 pub(crate) fn sync_rig_transport(
-    documents: Query<(&mut RigDocument, &ClipTransport)>,
+    documents: Query<(Entity, &mut RigDocument, &ClipTransport)>,
+    mut committed: EventReader<Hosted<PropertyCommitted>>,
     mut cmd: CommandQueue,
 ) {
+    let previewed = preview_edits(&mut committed);
     let mut wrote = false;
-    for (mut state, transport) in documents.iter() {
-        if state.is_changed() {
+    for (document, mut state, transport) in documents.iter() {
+        if previewed.contains(&document) {
             continue;
         }
         let paused_at = (!transport.playing).then_some(transport.time);
