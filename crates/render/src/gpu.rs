@@ -1,7 +1,7 @@
 use std::fmt;
 
 use concerto_ecs::resource::Resource;
-use wgpu::{Limits, MemoryHints};
+use wgpu::{Backend, DeviceType, Limits, MemoryHints};
 
 /// The GPU an `App` renders with. A host creates it and may give the same one to several `App`s.
 #[derive(Resource, Clone)]
@@ -84,8 +84,10 @@ impl Gpu {
             )
             .await
             .map_err(|error| GpuRequestError::Device {
-                adapter: info.clone(),
                 error,
+                name: info.name.clone(),
+                device_type: info.device_type,
+                backend: info.backend,
             })?;
 
         Ok(Gpu {
@@ -112,7 +114,9 @@ impl Gpu {
 pub enum GpuRequestError {
     NoAdapter,
     Device {
-        adapter: wgpu::AdapterInfo,
+        name: String,
+        device_type: DeviceType,
+        backend: Backend,
         error: wgpu::RequestDeviceError,
     },
 }
@@ -121,10 +125,15 @@ impl fmt::Display for GpuRequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             GpuRequestError::NoAdapter => write!(f, "no adapter matched the request"),
-            GpuRequestError::Device { adapter, error } => write!(
+            GpuRequestError::Device {
+                error,
+                name,
+                device_type,
+                backend,
+            } => write!(
                 f,
                 "{} ({:?}, {:?}) gave no device: {error}",
-                adapter.name, adapter.device_type, adapter.backend
+                name, device_type, backend
             ),
         }
     }
