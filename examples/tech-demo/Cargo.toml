@@ -23,6 +23,7 @@ concerto-motion-matching-gizmos = { path = "../../crates/motion-matching-gizmos"
 concerto-navigation-gizmos = { path = "../../crates/navigation-gizmos" }
 concerto-procedural-animation-gizmos = { path = "../../crates/procedural-animation-gizmos" }
 glam.workspace = true
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 derive_more = { version = "2", features = ["full"] }
 

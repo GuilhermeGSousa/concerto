@@ -9,11 +9,15 @@ use concerto::{
         CommandQueue, Component, Entity, Query, Ref, Res, component::scene::SceneEntityRef,
         events::event_reader::EventReader, query::change_detection::DetectChanges,
     },
-    foundation::{time::Time, transform::Transform},
+    foundation::{assets::asset_server::AssetServer, time::Time, transform::Transform},
+    mesh::{MeshComponent, primitives::cuboid},
     name::Name,
-    navigation::{NavAgent, NavArrived, NavDestination, NavLink, NavLinks, NavPoint},
+    navigation::{
+        NavAgent, NavArrived, NavDestination, NavLink, NavLinks, NavMesh, NavMeshComponent,
+        NavMeshGeometry, NavMeshSettings, NavPoint, bake,
+    },
     physics::collider::Collider,
-    render::components::light::Light,
+    render::{MaterialComponent, assets::material::StandardMaterial, components::light::Light},
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
     window::input::actions::ActionMap,
     world_grid::WorldGrid,
@@ -21,7 +25,7 @@ use concerto::{
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 use concerto_navigation_gizmos::NavigationGizmosPlugin;
 use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
-use glam::{Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 
 use crate::{
     character::{
@@ -41,6 +45,18 @@ const GRID_SURFACE: Color = Color::srgba(0.247, 0.259, 0.322, 0.0);
 const SUN_INTENSITY: f32 = 2.0;
 const SUN_YAW: f32 = 0.6;
 const SUN_PITCH: f32 = -0.7;
+
+const BOX_HALF_EXTENT: f32 = 0.5;
+const BOXES: [Vec3; 4] = [
+    Vec3::new(0.0, BOX_HALF_EXTENT, 4.0),
+    Vec3::new(4.0, BOX_HALF_EXTENT, 8.0),
+    Vec3::new(0.0, BOX_HALF_EXTENT, 12.0),
+    Vec3::new(-4.0, BOX_HALF_EXTENT, 8.0),
+];
+const BOX_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
+
+const NAV_FLOOR_CENTRE: Vec3 = Vec3::new(0.0, -0.5, 8.0);
+const NAV_FLOOR_HALF_EXTENTS: Vec3 = Vec3::new(8.0, 0.5, 8.0);
 
 const NPC_SPAWN: Vec3 = Vec3::new(-2.0, 0.0, 6.0);
 const PATROL_WAIT: f32 = 1.0;
@@ -77,7 +93,7 @@ pub(crate) struct Patrol {
     pub(crate) wait: f32,
 }
 
-/// Builds the grid level: the character and its gizmos on an empty floor under the world grid, and an NPC patrolling a square of nav points.
+/// Builds the grid level: the character and its gizmos on a floor under the world grid, with four boxes the patrolling NPC routes around on a navmesh baked at startup.
 pub fn grid(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(MotionMatchingGizmosPlugin)
@@ -104,7 +120,7 @@ pub fn grid(app: &mut App) {
         .add_system(Update, update_grounded_overlay);
 }
 
-fn spawn_grid_level(mut cmd: CommandQueue) {
+fn spawn_grid_level(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {
     cmd.spawn(WorldGrid {
         line_color: GRID_LINES,
         surface_color: GRID_SURFACE,
@@ -122,9 +138,57 @@ fn spawn_grid_level(mut cmd: CommandQueue) {
             Quat::from_rotation_y(SUN_YAW) * Quat::from_rotation_x(SUN_PITCH),
         ),
     ));
+    spawn_boxes(&asset_server, &mut cmd);
+    spawn_navmesh(&asset_server, &mut cmd);
     cmd.spawn((Transform::default(), PlayerSpawner::ready()));
     spawn_patrol_points(&mut cmd);
     cmd.spawn((Transform::from_translation(NPC_SPAWN), NpcSpawner::ready()));
+}
+
+fn spawn_boxes(asset_server: &AssetServer, cmd: &mut CommandQueue) {
+    let mesh = asset_server.add(cuboid(Vec3::splat(BOX_HALF_EXTENT * 2.0)));
+    let material = asset_server.add(StandardMaterial::default().with_base_color_factor(BOX_COLOR));
+    for centre in BOXES {
+        cmd.spawn((
+            Transform::from_translation(centre),
+            Collider::cuboid(BOX_HALF_EXTENT, BOX_HALF_EXTENT, BOX_HALF_EXTENT),
+            MeshComponent {
+                handle: mesh.clone(),
+            },
+            MaterialComponent {
+                handle: material.clone(),
+            },
+        ));
+    }
+}
+
+fn grid_nav_geometry() -> NavMeshGeometry {
+    let mut geometry = NavMeshGeometry::new();
+    geometry.add_box(
+        Affine3A::from_translation(NAV_FLOOR_CENTRE),
+        NAV_FLOOR_HALF_EXTENTS,
+    );
+    for centre in BOXES {
+        geometry.add_box(
+            Affine3A::from_translation(centre),
+            Vec3::splat(BOX_HALF_EXTENT),
+        );
+    }
+    geometry
+}
+
+fn spawn_navmesh(asset_server: &AssetServer, cmd: &mut CommandQueue) {
+    let settings = NavMeshSettings::new();
+    match bake(&grid_nav_geometry(), &settings) {
+        Ok(data) => {
+            cmd.spawn(NavMeshComponent {
+                handle: asset_server.add(NavMesh::baked(settings, data)),
+            });
+        }
+        Err(error) => {
+            log::warn!("the grid navmesh did not bake, so the NPC routes on the nav graph: {error}")
+        }
+    }
 }
 
 fn spawn_patrol_points(cmd: &mut CommandQueue) {
@@ -214,7 +278,10 @@ mod tests {
         },
         foundation::{time::Time, transform::Transform},
         name::Name,
-        navigation::{NavAgent, NavArrived, NavDestination, NavGraph, NavPoint, NavigationPlugin},
+        navigation::{
+            NavAgent, NavArrived, NavDestination, NavGraph, NavMeshComponent, NavMeshData,
+            NavMeshQuery, NavMeshSettings, NavPoint, NavigationPlugin, bake,
+        },
         physics::{collider::Collider, rigid_body::RigidBody},
         render::components::light::Light,
         world_grid::WorldGrid,
@@ -224,7 +291,10 @@ mod tests {
 
     use crate::character::{CharacterConfig, Player};
 
-    use super::{NPC_SPAWN, PATROL, Patrol, grid, patrol, spawn_patrol_points};
+    use super::{
+        BOX_HALF_EXTENT, BOXES, NPC_SPAWN, PATROL, Patrol, grid, grid_nav_geometry, patrol,
+        spawn_patrol_points,
+    };
 
     #[test]
     fn the_grid_level_spawns_the_character_with_every_gizmo_on_a_grid_floor_under_a_sun() {
@@ -246,8 +316,11 @@ mod tests {
             .iter(world)
             .map(|transform| transform.translation)
             .collect();
-        assert_eq!(floors.len(), 1);
-        assert!(floors[0].y < 0.0);
+        assert_eq!(floors.len(), 1 + BOXES.len());
+        assert_eq!(floors.iter().filter(|floor| floor.y < 0.0).count(), 1);
+        for centre in BOXES {
+            assert!(floors.contains(&centre));
+        }
         let players: Vec<Vec3> = world
             .query::<&Transform, With<Player>>()
             .iter(world)
@@ -267,6 +340,79 @@ mod tests {
             .collect();
         assert_eq!(npcs, vec![NPC_SPAWN]);
         assert_eq!(world.query::<&NavPoint, ()>().iter(world).count(), 4);
+        assert_eq!(
+            world.query::<&NavMeshComponent, ()>().iter(world).count(),
+            1
+        );
+    }
+
+    const CLEARANCE_TOLERANCE: f32 = 0.1;
+    const SAMPLE_STEP: f32 = 0.05;
+
+    fn inside_inflated_box(point: Vec3, agent_radius: f32) -> bool {
+        let reach = BOX_HALF_EXTENT + agent_radius - CLEARANCE_TOLERANCE;
+        BOXES
+            .iter()
+            .any(|centre| (point.x - centre.x).abs() < reach && (point.z - centre.z).abs() < reach)
+    }
+
+    fn on_mesh(data: &NavMeshData, point: Vec3) -> bool {
+        data.polygons.iter().any(|polygon| {
+            let corners: Vec<Vec3> = polygon
+                .vertices
+                .iter()
+                .map(|index| data.vertices[*index as usize])
+                .collect();
+            let sides: Vec<f32> = corners
+                .iter()
+                .zip(corners.iter().cycle().skip(1))
+                .map(|(from, to)| {
+                    (to.x - from.x) * (point.z - from.z) - (to.z - from.z) * (point.x - from.x)
+                })
+                .collect();
+            sides.iter().all(|side| *side >= 0.0) || sides.iter().all(|side| *side <= 0.0)
+        })
+    }
+
+    #[test]
+    fn every_patrol_leg_routes_around_the_boxes_on_the_baked_navmesh() {
+        let settings = NavMeshSettings::new();
+        let started = Instant::now();
+        let data = bake(&grid_nav_geometry(), &settings).unwrap();
+        let baked_in = started.elapsed();
+        eprintln!("the grid navmesh baked in {baked_in:?}");
+        assert!(baked_in < Duration::from_secs(2));
+
+        for point in PATROL
+            .iter()
+            .map(|corner| corner.position)
+            .chain([NPC_SPAWN])
+        {
+            assert!(!inside_inflated_box(point, settings.agent_radius));
+            assert!(on_mesh(&data, point), "{point} is off the navmesh");
+        }
+
+        let query = NavMeshQuery::new(&data);
+        for (index, corner) in PATROL.iter().enumerate() {
+            let next = PATROL[(index + 1) % PATROL.len()].position;
+            let path = query
+                .path(corner.position, next)
+                .unwrap_or_else(|| panic!("no path from {} to {next}", corner.position));
+            assert!((*path.last().unwrap() - next).length() < CLEARANCE_TOLERANCE);
+            let mut from = corner.position;
+            for to in path {
+                let steps = ((to - from).length() / SAMPLE_STEP).ceil().max(1.0) as u32;
+                for step in 0..=steps {
+                    let point = from.lerp(to, step as f32 / steps as f32);
+                    assert!(
+                        !inside_inflated_box(point, settings.agent_radius),
+                        "the leg from {} to {next} passes through a box at {point}",
+                        corner.position
+                    );
+                }
+                from = to;
+            }
+        }
     }
 
     fn anchor(graph: &NavGraph, index: usize) -> Entity {

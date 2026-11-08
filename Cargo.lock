@@ -6401,6 +6401,7 @@ dependencies = [
  "derive_more",
  "fs_extra",
  "glam 0.33.12",
+ "log",
  "serde",
 ]
 

@@ -1212,7 +1212,9 @@ fn on_post(mut arrived: EventReader<NavArrived>, guards: Query<&mut Guard>) {
 
 The character's body, collider and animation come from the same set-up as the
 player's, under [Characters](#characters). The tech demo's grid level has an
-NPC that patrols a square of four points this way.
+NPC that patrols a square of four points this way, routing around a box on each
+side of the square on a navmesh the level bakes at startup with `bake` and adds
+with `NavMesh::baked`.
 
 ### Drawing the graph
 

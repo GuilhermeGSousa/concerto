@@ -60,8 +60,9 @@ cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown
 ```
 
 Examples are `tech-demo` and `ui-showcase`. `tech-demo` starts on the grid
-level: the character with every gizmo layer on an empty floor under the world
-grid, and an NPC patrolling a square of nav points. That is also the only level of the web build, which ships no forest or
+level: the character with every gizmo layer on a floor under the world grid,
+four boxes, and an NPC patrolling a square of nav points that routes around the
+boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no forest or
 sanatorium content; the cooked release build above, zipped with `index.html` at
 the root, is what goes on a web host such as itch.io. `-- --forest` runs the forest, whose scene the editor
 opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved by root
