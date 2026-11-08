@@ -37,6 +37,7 @@ use crate::{
         render::{finish_render, present_window},
         update_window,
     },
+    viewport_clear::ViewportClearPipeline,
 };
 use concerto_app::{
     edit_time::AtEditTime,
@@ -227,6 +228,7 @@ impl Plugin for RenderPlugin {
         let skeleton_layout = SkeletonLayout::new(&device);
 
         let capabilities = RenderCapabilities::from_adapter(&adapter);
+        let viewport_clear = ViewportClearPipeline::new(&device, &capabilities, config.format);
 
         let lighting_layout = LightingLayout::new(&device, &capabilities);
 
@@ -260,6 +262,7 @@ impl Plugin for RenderPlugin {
             })
             .insert_resource(RenderQueue { queue })
             .insert_resource(capabilities)
+            .insert_resource(viewport_clear)
             .insert_resource(RenderWindow::new())
             .insert_resource(camera_layouts)
             .insert_resource(skeleton_layout)

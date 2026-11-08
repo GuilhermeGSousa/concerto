@@ -25,7 +25,7 @@ exception: removing `MeshComponent` stops the mesh drawing.
 ## Cameras
 
 Spawn a `VirtualCamera` with a `Transform`. The **camera director** keeps a
-stack of virtual cameras and drives the one real camera from the live one, the
+stack of virtual cameras and drives the main camera from the live one, the
 highest priority that is enabled:
 
 ```rust
@@ -40,6 +40,49 @@ cmd.spawn((VirtualCamera::new(10), Transform::default()));
 
 `VirtualCamera::new(priority)` sets its priority; with several, the director
 switches to the highest. A camera looks down its local −Z axis.
+
+A game that moves its own cameras inserts a director built without its main
+camera, `app.insert_resource(CameraDirector::default().with_main_camera(false))`,
+from its plugin's `build`. `CameraDirectorPlugin` keeps a director that is already
+there, so this works before or after `DefaultPlugins`.
+
+### Split screen
+
+A `Camera` draws to the whole of its target unless it has a `viewport`: a rect
+given as `min` and `max` in fractions of the target's size, from its top-left
+corner. It follows a window resize with no game code. Two players side by side:
+
+```rust
+use concerto::director::CameraDirector;
+use concerto::render::components::camera::{Camera, Viewport};
+
+app.insert_resource(CameraDirector::default().with_main_camera(false));
+
+cmd.spawn((
+    Camera::default().with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))),
+    Transform::from_translation(Vec3::new(-2.0, 2.0, 8.0)),
+));
+cmd.spawn((
+    Camera::default().with_viewport(Viewport::new(Vec2::new(0.5, 0.0), Vec2::ONE)),
+    Transform::from_translation(Vec3::new(2.0, 2.0, 8.0)),
+));
+```
+
+- A window camera's aspect follows its viewport, so each half stays
+  undistorted.
+- Each camera clears only its own rect, to its `clear_color`. The window
+  outside every viewport is black.
+- Window cameras must not overlap: where two do, which one shows is undefined.
+  A camera without a viewport covers the whole window and overlaps every other
+  one, so split screen either builds the director without its main camera or
+  gives that camera a viewport too. The renderer warns once when it sees both kinds.
+- A camera that renders to a texture keeps the `aspect` you give it, with a
+  viewport or without one; setting it is yours.
+- Culling is per camera, and shadow maps are per light and shared by every
+  camera.
+- Without its main camera, the director drives no camera: virtual cameras still
+  stack, but nothing follows them. Move your cameras' `Transform`s yourself,
+  from your own controllers.
 
 ## Lights
 

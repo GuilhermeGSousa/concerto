@@ -4,6 +4,7 @@ use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::GlobalTransform,
 };
+use concerto_reflect::ReflectDefault;
 use encase::{ShaderType, UniformBuffer};
 
 use concerto_ecs::{
@@ -15,7 +16,7 @@ use concerto_ecs::{
     Entity,
 };
 use concerto_window::plugin::Window;
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -60,6 +61,99 @@ impl RenderTarget {
     }
 }
 
+/// The part of its target a camera draws to, in fractions of the target's size from its top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, concerto_reflect::Reflect)]
+#[reflect(Default)]
+pub struct Viewport {
+    pub min: Vec2,
+    pub max: Vec2,
+}
+
+impl Default for Viewport {
+    fn default() -> Self {
+        Self {
+            min: Vec2::ZERO,
+            max: Vec2::ONE,
+        }
+    }
+}
+
+impl Viewport {
+    /// A viewport from `min` to `max`, in fractions of the target.
+    pub fn new(min: Vec2, max: Vec2) -> Self {
+        Self { min, max }
+    }
+
+    /// The pixels this viewport covers on a target of `target` size.
+    pub fn to_pixels(&self, target: UVec2) -> PixelRect {
+        if !self.min.is_finite() || !self.max.is_finite() {
+            return PixelRect::default();
+        }
+        let x0 = edge(self.min.x, target.x, 0);
+        let x1 = edge(self.max.x, target.x, x0);
+        let y0 = edge(self.min.y, target.y, 0);
+        let y1 = edge(self.max.y, target.y, y0);
+        PixelRect {
+            x: x0,
+            y: y0,
+            width: x1 - x0,
+            height: y1 - y0,
+        }
+    }
+}
+
+fn edge(fraction: f32, size: u32, floor: u32) -> u32 {
+    let pixel = (fraction * size as f32).round().clamp(0.0, size as f32) as u32;
+    pixel.clamp(floor, size)
+}
+
+/// A rect on a render target in physical pixels, from its top-left corner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PixelRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl PixelRect {
+    /// True when the rect covers no pixel.
+    pub fn is_empty(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    /// Width over height, or `None` for an empty rect.
+    pub fn aspect(&self) -> Option<f32> {
+        (!self.is_empty()).then(|| self.width as f32 / self.height as f32)
+    }
+
+    /// Restricts a render pass's viewport and scissor rect to this rect.
+    pub fn apply(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_viewport(
+            self.x as f32,
+            self.y as f32,
+            self.width as f32,
+            self.height as f32,
+            0.0,
+            1.0,
+        );
+        pass.set_scissor_rect(self.x, self.y, self.width, self.height);
+    }
+}
+
+/// The pixels a camera with `viewport` covers on a target of `target` size; the whole target for `None`.
+pub fn viewport_rect(viewport: Option<&Viewport>, target: UVec2) -> PixelRect {
+    match viewport {
+        Some(viewport) => viewport.to_pixels(target),
+        None => PixelRect {
+            x: 0,
+            y: 0,
+            width: target.x,
+            height: target.y,
+        },
+    }
+}
+
 #[derive(Component, concerto_reflect::Reflect)]
 #[reflect(Component, SceneComponent)]
 #[require(crate::components::render_entity::SyncWithRenderWorld)]
@@ -70,6 +164,7 @@ pub struct Camera {
     pub zfar: f32,
     pub clear_color: Color,
     pub render_target: RenderTarget,
+    pub viewport: Option<Viewport>,
 }
 
 impl Camera {
@@ -86,6 +181,17 @@ impl Camera {
         }
     }
 
+    /// Draws this camera to `viewport` of its target instead of the whole of it.
+    pub fn with_viewport(mut self, viewport: Viewport) -> Self {
+        self.viewport = Some(viewport);
+        self
+    }
+
+    /// The pixels this camera covers on a target of `target` size.
+    pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
+        viewport_rect(self.viewport.as_ref(), target)
+    }
+
     pub fn build_projection_matrix(&self) -> Mat4 {
         Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar)
     }
@@ -100,6 +206,7 @@ impl Default for Camera {
             zfar: 100.0,
             clear_color: Self::DEFAULT_CLEAR_COLOR,
             render_target: RenderTarget::main_window(),
+            viewport: None,
         }
     }
 }
@@ -155,11 +262,28 @@ pub struct RenderCamera {
     pub camera_buffer: wgpu::Buffer,
     pub(crate) depth_texture: RenderTexture,
     pub render_target: Option<RenderTexture>,
+    pub(crate) viewport: Option<Viewport>,
 }
 
 impl RenderCamera {
     pub fn depth_texture(&self) -> &RenderTexture {
         &self.depth_texture
+    }
+
+    /// The size of the target this camera draws to: its texture, or the window's surface.
+    pub fn target_size(&self, context: &RenderContext) -> UVec2 {
+        match &self.render_target {
+            Some(target) => {
+                let size = target.texture.size();
+                UVec2::new(size.width, size.height)
+            }
+            None => UVec2::new(context.surface_config.width, context.surface_config.height),
+        }
+    }
+
+    /// The pixels this camera covers on a target of `target` size.
+    pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
+        viewport_rect(self.viewport.as_ref(), target)
     }
 
     pub fn resize_render_target(
@@ -229,6 +353,7 @@ pub(crate) fn extract_cameras(
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;
             render_camera.clear_color = camera.clear_color.to_linear();
+            render_camera.viewport = camera.viewport;
 
             if let RenderTarget::Texture(handle) = &camera.render_target {
                 if let Some(texture) = texture_assets.get(handle) {
@@ -312,6 +437,7 @@ pub(crate) fn extract_cameras(
             depth_texture,
             clear_color: camera.clear_color.to_linear(),
             render_target,
+            viewport: camera.viewport,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);
 
@@ -363,21 +489,144 @@ pub fn create_rtt(
     }
 }
 
-/// Keeps every main-window [`Camera`]'s aspect ratio matched to the window size.
+/// Keeps every main-window [`Camera`]'s aspect ratio matched to its viewport on the window.
 ///
 /// Runs in the main world, where [`Camera`] lives. The window is the
 /// authoritative size source; the render world's surface is reconfigured
 /// downstream of it, so there's no need to reach across worlds for it.
 pub(crate) fn sync_camera_aspect(cameras: Query<&mut Camera>, window: Res<Window>) {
-    let (width, height) = window.size();
-    if width == 0 || height == 0 {
-        return;
-    }
-
-    let aspect = width as f32 / height as f32;
+    let target = UVec2::from(window.size());
     for mut camera in cameras.iter() {
-        if matches!(camera.render_target, RenderTarget::MainWindow) && camera.aspect != aspect {
+        if !matches!(camera.render_target, RenderTarget::MainWindow) {
+            continue;
+        }
+        let Some(aspect) = camera.viewport_rect(target).aspect() else {
+            continue;
+        };
+        if camera.aspect != aspect {
             camera.aspect = aspect;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_ecs::{Entity, IntoSystem, System, World};
+    use concerto_foundation::assets::{handle::AssetHandle, AssetId};
+    use concerto_window::plugin::Window;
+    use glam::{UVec2, Vec2};
+
+    use super::{sync_camera_aspect, viewport_rect, Camera, PixelRect, RenderTarget, Viewport};
+
+    fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
+        PixelRect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn halves_tile_an_odd_width() {
+        let target = UVec2::new(1281, 720);
+        let left = Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0)).to_pixels(target);
+        let right = Viewport::new(Vec2::new(0.5, 0.0), Vec2::ONE).to_pixels(target);
+
+        assert_eq!(left, rect(0, 0, 641, 720));
+        assert_eq!(right, rect(641, 0, 640, 720));
+    }
+
+    #[test]
+    fn out_of_range_fractions_clamp_to_the_target() {
+        let viewport = Viewport::new(Vec2::new(-0.5, -1.0), Vec2::new(2.0, 3.0));
+
+        assert_eq!(viewport.to_pixels(UVec2::new(100, 50)), rect(0, 0, 100, 50));
+    }
+
+    #[test]
+    fn inverted_and_non_finite_rects_are_empty() {
+        let target = UVec2::new(100, 50);
+        let inverted = Viewport::new(Vec2::new(0.8, 0.0), Vec2::new(0.2, 1.0)).to_pixels(target);
+        let not_a_number = Viewport::new(Vec2::new(f32::NAN, 0.0), Vec2::ONE).to_pixels(target);
+
+        assert!(inverted.is_empty());
+        assert_eq!(inverted.aspect(), None);
+        assert!(not_a_number.is_empty());
+        assert_eq!(not_a_number, rect(0, 0, 0, 0));
+    }
+
+    #[test]
+    fn viewport_rect_without_a_viewport_is_the_whole_target() {
+        assert_eq!(
+            viewport_rect(None, UVec2::new(1280, 720)),
+            rect(0, 0, 1280, 720)
+        );
+    }
+
+    fn sync(world: &mut World) {
+        let mut system = sync_camera_aspect.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+    }
+
+    fn aspect(world: &World, camera: Entity) -> f32 {
+        world
+            .get_component_for_entity::<Camera>(camera)
+            .unwrap()
+            .aspect
+    }
+
+    #[test]
+    fn aspect_follows_the_viewport() {
+        let mut world = World::new();
+        world.insert_resource(Window::new((1280, 720), 1.0));
+        let left_half = world
+            .spawn(Camera::default().with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))));
+        let whole = world.spawn(Camera::default());
+        let texture = world.spawn(
+            Camera {
+                aspect: 0.25,
+                render_target: RenderTarget::texture(AssetHandle::weak(AssetId::from_path(
+                    "targets/minimap#texture",
+                ))),
+                ..Camera::default()
+            }
+            .with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))),
+        );
+
+        sync(&mut world);
+
+        assert_eq!(aspect(&world, left_half), 640.0 / 720.0);
+        assert_eq!(aspect(&world, whole), 1280.0 / 720.0);
+        assert_eq!(aspect(&world, texture), 0.25);
+
+        world.insert_resource(Window::new((1000, 1000), 1.0));
+        sync(&mut world);
+
+        assert_eq!(aspect(&world, left_half), 500.0 / 1000.0);
+        assert_eq!(aspect(&world, texture), 0.25);
+
+        world
+            .get_component_for_entity_mut::<Camera>(left_half)
+            .unwrap()
+            .viewport = Some(Viewport::new(Vec2::ZERO, Vec2::new(0.25, 1.0)));
+        sync(&mut world);
+        assert_eq!(aspect(&world, left_half), 250.0 / 1000.0);
+    }
+
+    #[test]
+    fn a_window_camera_with_an_empty_viewport_keeps_its_aspect() {
+        let mut world = World::new();
+        world.insert_resource(Window::new((1280, 720), 1.0));
+        let empty = world.spawn(Camera {
+            aspect: 0.75,
+            ..Camera::default()
+                .with_viewport(Viewport::new(Vec2::new(0.5, 0.0), Vec2::new(0.5, 1.0)))
+        });
+
+        sync(&mut world);
+
+        assert_eq!(aspect(&world, empty), 0.75);
     }
 }

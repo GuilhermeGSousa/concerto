@@ -26,12 +26,25 @@ use crate::{
 /// `enabled`: the entry mirrors them, and [`sync_virtual_cameras`] re-sorts the
 /// stack on the next run after either is edited, so [`live`](Self::live) and
 /// [`is_live`](Self::is_live) follow an edit one frame later.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct CameraDirector {
     main_camera: Option<Entity>,
+    spawns_main_camera: bool,
     stack: Vec<StackEntry>,
     state: DirectorState,
     blend: BlendIn,
+}
+
+impl Default for CameraDirector {
+    fn default() -> Self {
+        Self {
+            main_camera: None,
+            spawns_main_camera: true,
+            stack: Vec::new(),
+            state: DirectorState::default(),
+            blend: BlendIn::default(),
+        }
+    }
 }
 
 /// A virtual camera's place in the stack, mirrored from its component.
@@ -58,6 +71,17 @@ enum DirectorState {
 }
 
 impl CameraDirector {
+    /// Whether the director spawns its main camera at startup; turn it off for a game that moves its own cameras.
+    pub fn with_main_camera(mut self, spawns: bool) -> Self {
+        self.spawns_main_camera = spawns;
+        self
+    }
+
+    /// Whether the director spawns its main camera at startup.
+    pub fn spawns_main_camera(&self) -> bool {
+        self.spawns_main_camera
+    }
+
     /// The entity holding the one [`Camera`] that renders to the window.
     /// `None` until [`spawn_main_camera`](crate::main_camera::spawn_main_camera) runs.
     pub fn main_camera(&self) -> Option<Entity> {

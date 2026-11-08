@@ -36,6 +36,7 @@ pub mod sets;
 pub mod shader;
 pub mod shadow_pipeline;
 pub mod systems;
+pub(crate) mod viewport_clear;
 pub mod wgpu_wrapper;
 
 #[doc(hidden)]

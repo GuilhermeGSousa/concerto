@@ -27,7 +27,10 @@ use concerto_ecs::{
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_render::{
     assets::{material::AsBindGroup, texture::Texture},
-    components::render_entity::{RenderEntity, SyncWithRenderWorld},
+    components::{
+        camera::{Camera, RenderTarget},
+        render_entity::{RenderEntity, SyncWithRenderWorld},
+    },
     device::RenderDevice,
     draw_target::SharedTexture,
     queue::RenderQueue,
@@ -37,7 +40,7 @@ use concerto_render::{
     },
 };
 use concerto_window::plugin::Window;
-use glam::Vec2;
+use glam::{UVec2, Vec2};
 use log::warn;
 pub use taffy::{AlignContent, AlignItems, FlexDirection, FlexWrap, Overflow, Position};
 use taffy::{
@@ -424,6 +427,10 @@ impl Default for UINode {
     }
 }
 
+/// Lays this UI root out inside the named camera's viewport on the window, instead of over the whole window.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UITargetCamera(pub Entity);
+
 /// Computed read-only layout in logical pixels.
 #[derive(Component, Clone, PartialEq)]
 #[require(SyncWithRenderWorld)]
@@ -600,6 +607,7 @@ pub(crate) struct UILayoutEngine {
     nodes: HashMap<Entity, TaffyNode>,
     stale: HashSet<Entity>,
     roots: Vec<Entity>,
+    areas: HashMap<Entity, UIBox>,
     logical_size: Vec2,
     #[cfg(test)]
     visited: u64,
@@ -623,6 +631,7 @@ impl Default for UILayoutEngine {
             nodes: HashMap::new(),
             stale: HashSet::new(),
             roots: Vec::new(),
+            areas: HashMap::new(),
             logical_size: Vec2::ZERO,
             #[cfg(test)]
             visited: 0,
@@ -826,11 +835,13 @@ pub(crate) fn compute_ui_nodes(
         >,
         Query<Entity, Changed<Children>>,
     ),
-    (culled, texts, extents, parents): (
+    (culled, texts, extents, parents, targets, cameras): (
         Query<&UICulled>,
         Query<&crate::text::UIText>,
         Query<&UIIntrinsicHeight>,
         Query<&ChildOf>,
+        Query<&UITargetCamera>,
+        Query<&Camera>,
     ),
     (scroll_areas, widget_parts, scrolled): (
         Query<&UIScrollArea>,
@@ -956,27 +967,33 @@ pub(crate) fn compute_ui_nodes(
     engine.logical_size = logical_size;
     let roots_changed = !roots.iter().eq(engine.roots.iter().copied());
     let previous_roots = if roots_changed {
-        std::mem::replace(&mut engine.roots, roots.iter().collect())
+        let previous = std::mem::replace(&mut engine.roots, roots.iter().collect());
+        engine
+            .areas
+            .retain(|entity, _| engine.roots.contains(entity));
+        previous
     } else {
         Vec::new()
-    };
-    let window_size = Size {
-        width: AvailableSpace::Definite(logical_size.x),
-        height: AvailableSpace::Definite(logical_size.y),
     };
     let mut computed = false;
     for root in &engine.roots {
         let Some(id) = engine.nodes.get(root).map(|node| node.id) else {
             continue;
         };
+        let area = root_area(*root, &targets, &cameras, &window);
+        let moved = engine.areas.insert(*root, area) != Some(area);
         let new_root = roots_changed && !previous_roots.contains(root);
-        if !resized && !new_root && !engine.taffy.dirty(id).unwrap_or(true) {
+        if !resized && !moved && !new_root && !engine.taffy.dirty(id).unwrap_or(true) {
             continue;
         }
+        let available = Size {
+            width: AvailableSpace::Definite(area.size.x),
+            height: AvailableSpace::Definite(area.size.y),
+        };
         let measurer = &mut *measurer;
         let result = engine.taffy.compute_layout_with_measure(
             id,
-            window_size,
+            available,
             |known, available, _id, context, _style| {
                 measure_node(measurer, known, available, context)
             },
@@ -1026,11 +1043,12 @@ pub(crate) fn compute_ui_nodes(
             continue;
         };
 
-        let abs_pos = Vec2::new(layout.location.x, layout.location.y);
+        let area = engine.areas.get(&entity).copied().unwrap_or(window_clip);
+        let abs_pos = area.min + Vec2::new(layout.location.x, layout.location.y);
         let size = Vec2::new(layout.size.width, layout.size.height);
 
         let rect = UIBox { min: abs_pos, size };
-        let clip_rect = node_clip(rect, window_clip, root_node);
+        let clip_rect = node_clip(rect, area, root_node);
         write_layout(
             &layouts,
             &mut cmd,
@@ -1131,6 +1149,33 @@ pub(crate) fn compute_ui_nodes(
     #[cfg(test)]
     {
         engine.visited += sequence as u64;
+    }
+}
+
+fn root_area(
+    root: Entity,
+    targets: &Query<&UITargetCamera>,
+    cameras: &Query<&Camera>,
+    window: &Window,
+) -> UIBox {
+    let whole = UIBox {
+        min: Vec2::ZERO,
+        size: window.logical_size(),
+    };
+    let Some(camera) = targets
+        .get_entity(root)
+        .and_then(|target| cameras.get_entity(target.0))
+    else {
+        return whole;
+    };
+    if !matches!(camera.render_target, RenderTarget::MainWindow) {
+        return whole;
+    }
+    let rect = camera.viewport_rect(UVec2::from(window.size()));
+    let scale = window.scale_factor() as f32;
+    UIBox {
+        min: Vec2::new(rect.x as f32, rect.y as f32) / scale,
+        size: Vec2::new(rect.width as f32, rect.height as f32) / scale,
     }
 }
 
@@ -1705,6 +1750,7 @@ fn material_signature(
 mod tests {
     use super::*;
     use crate::anchor::UIAnchorTarget;
+    use concerto_render::components::camera::Viewport;
 
     #[test]
     fn content_rect_accounts_for_padding() {
@@ -2298,6 +2344,175 @@ mod tests {
             }
         );
         assert_eq!(row.size.y, 34.0);
+    }
+
+    fn half(min_x: f32, max_x: f32) -> Viewport {
+        Viewport::new(Vec2::new(min_x, 0.0), Vec2::new(max_x, 1.0))
+    }
+
+    fn viewport_camera(world: &mut concerto_ecs::World, viewport: Viewport) -> Entity {
+        world.spawn(Camera::default().with_viewport(viewport))
+    }
+
+    fn full_root() -> UINode {
+        UINode::default().with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+    }
+
+    fn target_root(world: &mut concerto_ecs::World, camera: Entity) -> Entity {
+        world.spawn((full_root(), UITargetCamera(camera)))
+    }
+
+    fn right_half_box() -> UIBox {
+        UIBox {
+            min: Vec2::new(400.0, 0.0),
+            size: Vec2::new(400.0, 600.0),
+        }
+    }
+
+    fn whole_window_box() -> UIBox {
+        UIBox {
+            min: Vec2::ZERO,
+            size: Vec2::new(800.0, 600.0),
+        }
+    }
+
+    #[test]
+    fn a_target_root_lays_out_in_its_cameras_viewport() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 1.0));
+        let root = target_root(&mut world, camera);
+
+        lay_out(&mut world);
+
+        assert_eq!(rect_of(&world, root), right_half_box());
+        assert_eq!(clip_of(&world, root), right_half_box());
+    }
+
+    #[test]
+    fn a_target_roots_descendants_are_clipped_to_the_viewport() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 1.0));
+        let root = target_root(&mut world, camera);
+        let wide = world.spawn((
+            UINode::default()
+                .with_size(UIValue::Px(1000.0), UIValue::Px(50.0))
+                .with_flex_shrink(0.0),
+            ChildOf::new(root),
+        ));
+
+        lay_out(&mut world);
+
+        assert_eq!(rect_of(&world, wide).min, Vec2::new(400.0, 0.0));
+        assert_eq!(clip_of(&world, wide), right_half_box());
+    }
+
+    #[test]
+    fn a_root_without_a_target_camera_spans_the_window() {
+        let mut world = layout_world();
+        viewport_camera(&mut world, half(0.5, 1.0));
+        let root = world.spawn(full_root());
+
+        lay_out(&mut world);
+
+        assert_eq!(rect_of(&world, root), whole_window_box());
+        assert_eq!(clip_of(&world, root), whole_window_box());
+    }
+
+    #[test]
+    fn a_changed_viewport_relays_the_target_root_out() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 1.0));
+        let root = target_root(&mut world, camera);
+        lay_out(&mut world);
+
+        world
+            .get_component_for_entity_mut::<Camera>(camera)
+            .unwrap()
+            .viewport = Some(half(0.0, 0.5));
+        lay_out(&mut world);
+
+        let left = UIBox {
+            min: Vec2::ZERO,
+            size: Vec2::new(400.0, 600.0),
+        };
+        assert_eq!(rect_of(&world, root), left);
+        assert_eq!(clip_of(&world, root), left);
+    }
+
+    #[test]
+    fn a_resize_relays_the_target_root_out() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 1.0));
+        let root = target_root(&mut world, camera);
+        lay_out(&mut world);
+
+        world.insert_resource(Window::new((1000, 600), 1.0));
+        lay_out(&mut world);
+        assert_eq!(
+            rect_of(&world, root),
+            UIBox {
+                min: Vec2::new(500.0, 0.0),
+                size: Vec2::new(500.0, 600.0),
+            }
+        );
+
+        world.insert_resource(Window::new((1600, 1200), 2.0));
+        lay_out(&mut world);
+        assert_eq!(rect_of(&world, root), right_half_box());
+    }
+
+    #[test]
+    fn a_target_root_falls_back_to_the_window() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 1.0));
+        let root = target_root(&mut world, camera);
+        let texture_camera = world.spawn(
+            Camera {
+                render_target: RenderTarget::texture(AssetHandle::weak(AssetId::from_path(
+                    "targets/minimap#texture",
+                ))),
+                ..Camera::default()
+            }
+            .with_viewport(half(0.5, 1.0)),
+        );
+        let texture_root = target_root(&mut world, texture_camera);
+        lay_out(&mut world);
+        assert_eq!(rect_of(&world, root), right_half_box());
+        assert_eq!(rect_of(&world, texture_root), whole_window_box());
+        assert_eq!(clip_of(&world, texture_root), whole_window_box());
+
+        world.despawn(camera);
+        lay_out(&mut world);
+
+        assert_eq!(rect_of(&world, root), whole_window_box());
+        assert_eq!(clip_of(&world, root), whole_window_box());
+    }
+
+    #[test]
+    fn an_empty_viewport_hides_the_target_root() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 0.5));
+        let root = target_root(&mut world, camera);
+
+        lay_out(&mut world);
+
+        assert_eq!(rect_of(&world, root).size.x, 0.0);
+    }
+
+    #[test]
+    fn a_despawned_root_leaves_no_area_behind() {
+        let mut world = layout_world();
+        let camera = viewport_camera(&mut world, half(0.5, 1.0));
+        let kept = target_root(&mut world, camera);
+        let dropped = target_root(&mut world, camera);
+        lay_out(&mut world);
+
+        world.despawn(dropped);
+        lay_out(&mut world);
+
+        let engine = world.get_resource::<UILayoutEngine>().unwrap();
+        assert!(engine.areas.contains_key(&kept));
+        assert!(!engine.areas.contains_key(&dropped));
     }
 
     fn settled_column(world: &mut concerto_ecs::World) -> (crate::testing::Watch, Vec<Entity>) {
