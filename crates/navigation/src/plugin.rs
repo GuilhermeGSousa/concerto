@@ -17,11 +17,14 @@ use crate::{
         NavAgent, NavArrived, NavSteering, NavUnreachable, plan_nav_routes, steer_nav_agents,
         stop_nav_agents,
     },
+    asset::NavMesh,
+    component::{NavMeshComponent, NavMeshStatus, update_nav_mesh_status},
     graph::{NavGraph, NavPointRecord},
+    navmesh::NavMeshSettings,
     point::{NavLink, NavLinks, NavPoint},
 };
 
-/// Registers the navigation components, keeps `NavGraph` in step with them, and steers agents.
+/// Registers the navigation components and the `NavMesh` asset, keeps `NavGraph` in step with them, and steers agents; needs an `AssetServer`.
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
@@ -31,6 +34,11 @@ impl Plugin for NavigationPlugin {
             .register_type::<NavLink>()
             .register_type::<NavAgent>()
             .register_type::<NavSteering>()
+            .register_type::<NavMeshSettings>()
+            .register_type::<NavMeshComponent>()
+            .register_type::<NavMeshStatus>()
+            .register_derived_asset::<NavMesh>()
+            .register_inspected_asset::<NavMesh>()
             .register_event::<NavArrived>()
             .register_event::<NavUnreachable>()
             .insert_resource(NavGraph::default())
@@ -43,6 +51,7 @@ impl Plugin for NavigationPlugin {
                 .after(propagate_global_transforms)
                 .at_edit_time(),
         );
+        app.add_system(Update, update_nav_mesh_status.at_edit_time());
         app.add_system(Update, stop_nav_agents);
         app.add_system(Update, plan_nav_routes.after(stop_nav_agents));
         app.add_system(Update, steer_nav_agents.after(plan_nav_routes));

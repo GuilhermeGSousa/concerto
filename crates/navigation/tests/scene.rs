@@ -1,7 +1,7 @@
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
-    plugins::{TimePlugin, TransformPlugin},
+    plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
 use concerto_ecs::{Entity, World, component::scene::SceneEntityRef};
 use concerto_foundation::transform::Transform;
@@ -15,6 +15,7 @@ fn app() -> App {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(TransformPlugin)
+        .register_plugin(AssetManagerPlugin)
         .register_plugin(NavigationPlugin);
     app.finish_plugin_build();
     app

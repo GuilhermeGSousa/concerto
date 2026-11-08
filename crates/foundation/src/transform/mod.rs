@@ -121,11 +121,11 @@ impl Transform {
     }
 
     pub fn look_to(&mut self, direction: Vec3, up: Vec3) {
-        self.rotation = Quat::look_to_rh(direction, up);
+        self.rotation = glam::camera::rh::view::look_to_quat(direction, up);
     }
 
     pub fn look_at(&mut self, center: Vec3, up: Vec3) {
-        self.rotation = Quat::look_at_rh(self.translation, center, up)
+        self.rotation = glam::camera::rh::view::look_at_quat(self.translation, center, up)
     }
 
     pub fn local_x(&self) -> Vec3 {

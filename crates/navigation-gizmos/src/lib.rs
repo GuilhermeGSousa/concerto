@@ -1,8 +1,10 @@
-//! The debug drawing of navigation: the nav graph's points and links, and each agent's route.
+//! The debug drawing of navigation: the nav graph's points and links, each agent's route, and each loaded navmesh's polygons.
 
 mod gizmos;
 
-pub use gizmos::{NavigationGizmos, NavigationGizmosPlugin, draw_nav_graph, draw_nav_routes};
+pub use gizmos::{
+    NavigationGizmos, NavigationGizmosPlugin, draw_nav_graph, draw_nav_mesh, draw_nav_routes,
+};
 
 #[cfg(test)]
 mod tests;

@@ -43,6 +43,11 @@ pub trait DerivedData: LoadableAsset {
     /// The content assets the blob is built from.
     fn derived_inputs(&self) -> Vec<AssetId>;
 
+    /// Further inputs named by the first inputs, such as the meshes a scene places.
+    fn further_inputs(&self, _inputs: &DerivedInputs) -> anyhow::Result<Vec<AssetId>> {
+        Ok(Vec::new())
+    }
+
     /// The cache key for the blob these inputs give; equal keys mean an equal blob.
     fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64>;
 
@@ -85,39 +90,26 @@ impl DerivedInputs {
         registry: &AssetRegistry,
         ids: &[AssetId],
     ) -> anyhow::Result<Self> {
-        let mut files = HashMap::new();
+        let mut inputs = Self::default();
+        inputs.read_more(root, registry, ids).await?;
+        Ok(inputs)
+    }
+
+    /// Reads each of `ids` not read yet, under the same rules as [`read`](Self::read).
+    pub async fn read_more(
+        &mut self,
+        root: &ContentAssetRoot,
+        registry: &AssetRegistry,
+        ids: &[AssetId],
+    ) -> anyhow::Result<()> {
         for &id in ids {
-            if files.contains_key(&id) {
+            if self.files.contains_key(&id) {
                 continue;
             }
-            let entry = registry
-                .get(id)
-                .with_context(|| format!("derived input {id:?} is not in the content registry"))?;
-            let bytes = try_read_relative(root, &entry.address)
-                .await?
-                .with_context(|| {
-                    format!(
-                        "derived input {id:?} has no content asset at '{}'",
-                        entry.address
-                    )
-                })?;
-            if let Some(check) = file_is_derived_check(&entry.kind) {
-                let derives = read_content_asset_parts(&bytes)
-                    .and_then(|parts| check(&parts.header, parts.payload))
-                    .with_context(|| {
-                        format!("failed to read derived input {id:?} at '{}'", entry.address)
-                    })?;
-                if derives {
-                    anyhow::bail!(
-                        "derived input {id:?} at '{}' is a {} that is itself derived: derived assets can't derive from derived assets",
-                        entry.address,
-                        entry.kind
-                    );
-                }
-            }
-            files.insert(id, bytes);
+            let bytes = read_input(root, registry, id).await?;
+            self.files.insert(id, bytes);
         }
-        Ok(Self { files })
+        Ok(())
     }
 
     /// The whole file of input `id`.
@@ -134,6 +126,39 @@ impl DerivedInputs {
             .with_context(|| format!("malformed derived input {id:?}"))?;
         Ok(value)
     }
+}
+
+async fn read_input(
+    root: &ContentAssetRoot,
+    registry: &AssetRegistry,
+    id: AssetId,
+) -> anyhow::Result<Vec<u8>> {
+    let entry = registry
+        .get(id)
+        .with_context(|| format!("derived input {id:?} is not in the content registry"))?;
+    let bytes = try_read_relative(root, &entry.address)
+        .await?
+        .with_context(|| {
+            format!(
+                "derived input {id:?} has no content asset at '{}'",
+                entry.address
+            )
+        })?;
+    if let Some(check) = file_is_derived_check(&entry.kind) {
+        let derives = read_content_asset_parts(&bytes)
+            .and_then(|parts| check(&parts.header, parts.payload))
+            .with_context(|| {
+                format!("failed to read derived input {id:?} at '{}'", entry.address)
+            })?;
+        if derives {
+            anyhow::bail!(
+                "derived input {id:?} at '{}' is a {} that is itself derived: derived assets can't derive from derived assets",
+                entry.address,
+                entry.kind
+            );
+        }
+    }
+    Ok(bytes)
 }
 
 /// Where derived blobs are kept, one file per type, version and key; or nowhere.
@@ -247,7 +272,9 @@ pub(crate) async fn derive_and_apply<A: DerivedData>(
     server: &AssetServer,
 ) -> anyhow::Result<DerivedBlob> {
     let (root, registry) = server.content_source();
-    let inputs = DerivedInputs::read(&root, &registry, &asset.derived_inputs()).await?;
+    let mut inputs = DerivedInputs::read(&root, &registry, &asset.derived_inputs()).await?;
+    let further = asset.further_inputs(&inputs)?;
+    inputs.read_more(&root, &registry, &further).await?;
     let key = asset.derived_key(&inputs)?;
     let cache = server.derived_cache();
     if let Some(blob) = cache.get(A::name(), A::DERIVED_VERSION, key) {

@@ -358,6 +358,8 @@ crate's serialization test, with the fixtures in its `tests/encoding/`:
 | `crates/animation/tests/graph_serialization.rs` | `AnimationClip`, `AnimationGraph`, `BoneMask`, `RetargetRig` |
 | `crates/scene/tests/scene_serialization.rs` | `Scene` |
 | `crates/motion-matching/tests/serialization.rs` | `MotionDatabase` |
+| `crates/navigation/tests/navmesh_asset.rs` | `NavMesh` |
+| `crates/scene/tests/glam_encoding.rs` | `GlamLeaves`, the reflected `Transform`, `Vec3`, `Quat` and `Mat4` leaves |
 
 A missing fixture fails the test with a hint to bless it. Bytes that differ
 fail it with a message to raise the version. The value given to the check sets
@@ -619,6 +621,9 @@ does not fall back to anything.
 `AssetServer::is_loading` reports whether an asset requested with `load` or
 `add` has yet to reach the world. A load counts until the frame that inserts
 its asset, or handles its failure; cancelled loads do not count.
+`AssetServer::is_loading_or_loaded(id)` asks the same of one asset, and stays
+true once it is in the world: it is false for an id never loaded or added, and
+once its load fails, is cancelled, or it unloads.
 
 Stored assets can only be requested by UUID. Use `asset_id!` for references
 written in code and `load` for both those IDs and serialized references.
@@ -661,6 +666,7 @@ content tree. `MotionDatabase` is one: its file is the definition, and its
 | `is_derived()` | Whether this asset has a blob to derive; `true` unless the type overrides it |
 | `file_is_derived(&header, payload)` | Whether a file of the type derives, from its header and payload; by default it decodes the payload, migrating, and asks `is_derived()`. A type overrides it when decoding all of it is slow |
 | `derived_inputs()` | The content assets the blob is built from; none may itself derive |
+| `further_inputs(&inputs)` | Further content assets named by the first inputs, such as the meshes a scene places; empty unless the type overrides it, and under the same rules as `derived_inputs()` |
 | `derived_key(&inputs)` | A `u64` that is equal for inputs giving an equal blob |
 | `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)` |
 | `apply_derived(&blob)` | Takes the blob into the asset's runtime part |
@@ -676,8 +682,9 @@ does. An input whose kind is a registered derived type is asked
 `file_is_derived`, and refused when it answers true, with an error naming the
 input's id, its address and its kind and saying it is itself derived. A plain
 asset of a derived type is accepted, and a file of a kind that isn't derived is
-never looked at. `bytes(id)` gives the whole file and `decode::<T>(id)` decodes
-it, migrating as a load does but without `on_load`.
+never looked at. `read_more` reads further ids into the same inputs under the
+same rules, skipping ids already read. `bytes(id)` gives the whole file and
+`decode::<T>(id)` decodes it, migrating as a load does but without `on_load`.
 
 A type is registered with `app.register_derived_asset::<A>()`, which also
 registers it as an asset. A load of it runs `on_load`. An asset that doesn't
@@ -686,11 +693,13 @@ hand-made file can have, is ignored with a warning. One that derives applies
 the blob of a cooked file's derived section when its `derived_version` is the type's
 `DERIVED_VERSION`, reading no inputs and touching no cache. Without a section,
 or when the section's version differs or `apply_derived` refuses it, with a
-warning, the load reads the inputs, computes the key and looks the blob up in
-the `AssetServer`'s `DerivedDataCache`. A hit is applied; a miss, or a cached blob that
+warning, the load reads the first inputs, asks `further_inputs` once with them
+and reads the further ones too, under the same rules, then computes the key
+over every input and looks the blob up in the `AssetServer`'s
+`DerivedDataCache`. A hit is applied; a miss, or a cached blob that
 `apply_derived` refuses, is derived, written to the cache and applied. The
 handle reads as loaded only once the blob is applied, and a missing input, an
-input that itself derives, or a failed derive fails the load. `AssetServer::add` derives nothing: code that adds a
+input that itself derives, first or further, or a failed derive fails the load. `AssetServer::add` derives nothing: code that adds a
 derived asset in memory attaches the computed part itself.
 
 The key covers the definition and the bytes of its inputs, not code. A change

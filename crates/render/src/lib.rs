@@ -25,6 +25,8 @@ pub mod draw_target;
 pub(crate) mod frustum;
 pub mod gpu;
 pub mod importers;
+#[cfg(test)]
+pub(crate) mod layout_test;
 pub mod layouts;
 pub mod material_plugin;
 pub mod plugin;

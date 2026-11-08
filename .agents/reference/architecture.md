@@ -8,8 +8,8 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 |---|---|---|
 | Core | `ecs`, `tasks`, `app`, `foundation`, `name`, `noise` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math; interned names; seeded hashes and noise |
 | Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj`, `bvh` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF, OBJ and BVH importers |
-| Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `motion-matching-gizmos`, `procedural-animation-gizmos`, `navigation-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; extra passes; the debug drawing of motion matching, in the running game and the database preview; the debug drawing of foot locks in the running game; the debug drawing of the nav graph, in the game and at edit time, and of each agent's route; a renderer that draws to a terminal |
-| Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `procedural-animation`, `navigation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database derived from its clips; animation graphs; procedural animation graph nodes, foot placement, foot locking, look-at, aim and procedural motion, kept out of `animation` so it has no physics dependency; the graph of hand-placed nav points and links, its path queries, and agents that write steering toward a destination; scene spawn and capture; the virtual-camera stack; player and movement helpers, and the copy of nav steering into `DesiredMotion` |
+| Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `motion-matching-gizmos`, `procedural-animation-gizmos`, `navigation-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; extra passes; the debug drawing of motion matching, in the running game and the database preview; the debug drawing of foot locks in the running game; the debug drawing of the nav graph and each loaded navmesh, in the game and at edit time, and of each agent's route; a renderer that draws to a terminal |
+| Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `procedural-animation`, `navigation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database derived from its clips; animation graphs; procedural animation graph nodes, foot placement, foot locking, look-at, aim and procedural motion, kept out of `animation` so it has no physics dependency; the graph of hand-placed nav points and links, its path queries, the navmesh baked from colliders and its path queries, and agents that route on the navmesh or else the graph and write steering toward a destination; scene spawn and capture; the virtual-camera stack; player and movement helpers, and the copy of nav steering into `DesiredMotion` |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
 | Tooling | `editor`, `animation-editor`, `motion-matching-editor`, `reflect`, `project`, `mcp` | the editor; its extension crates for animation clips and motion databases; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry`, a shared `Arc<RwLock<TypeRegistry>>` that the inspector, scenes and the `AssetServer`'s asset loads read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
 
@@ -153,12 +153,16 @@ time. The running game never reads them.
   code to do it.
 - An asset whose runtime part is computed from other content assets
   implements `DerivedData` and is registered with `register_derived_asset`
-  (`MotionDatabase` and its `BakedDatabase`). Whether an asset derives is
+  (`MotionDatabase` and its `BakedDatabase`; `NavMesh`, whose polygons are
+  baked from the colliders of its scenes). Whether an asset derives is
   decided per asset by `is_derived()`, `true` by default: one that doesn't
   loads as it is, is accepted as another derived asset's input, and isn't
   cooked; `DerivedInputs::read` asks a derived kind's `file_is_derived` and
   refuses an input that derives. Its file holds only the
-  definition; a load of one that derives derives the blob from the inputs it names, or reads it
+  definition; a load of one that derives reads the inputs it names, then the
+  `further_inputs` those first inputs name (such as the meshes a scene's
+  colliders use), which `read_more` reads once more into the same inputs under
+  the same rules. It derives the blob from them, or reads it
   from the project's `derived-cache/` under the key the type computes, and
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the

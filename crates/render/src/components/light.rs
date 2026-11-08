@@ -393,6 +393,7 @@ pub(crate) fn extract_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout_test::{float_words, uniform_words};
     use concerto_app::extractor::extract;
     use concerto_app::schedule_groups::Extract;
     use concerto_ecs::{
@@ -406,6 +407,47 @@ mod tests {
 
     fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
         GlobalTransform::new(Mat4::from_rotation_translation(rotation, translation))
+    }
+
+    #[test]
+    fn render_light_keeps_its_wgsl_layout() {
+        let light = RenderLight {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            intensity: 4.0,
+            color: LinearRgba::new(5.0, 6.0, 7.0, 8.0),
+            direction: Vec3::new(9.0, 10.0, 11.0),
+            light_type: 12,
+            cos_cone_angle: 13.0,
+            shadow_layer: -2,
+            range: 14.0,
+        };
+
+        let mut expected = float_words(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]);
+        expected.push(12);
+        expected.push(13.0f32.to_bits());
+        expected.push((-2i32) as u32);
+        expected.push(14.0f32.to_bits());
+        expected.push(0);
+
+        assert_eq!(uniform_words(&light), expected);
+        assert_eq!(RenderLight::SHADER_SIZE.get(), 64);
+        assert_eq!(light.size().get(), 64);
+    }
+
+    #[test]
+    fn lights_uniform_puts_the_count_after_every_light() {
+        let lights = LightsUniform {
+            lights: [RenderLight::zeroed(); MAX_LIGHTS],
+            light_count: 3,
+        };
+
+        let words = uniform_words(&lights);
+
+        assert_eq!(lights.size().get(), 8208);
+        assert_eq!(words.len(), 2052);
+        assert_eq!(words[2048], 3);
+        assert_eq!(words[13], (-1i32) as u32);
+        assert_eq!(words[16 * 127 + 13], (-1i32) as u32);
     }
 
     #[test]

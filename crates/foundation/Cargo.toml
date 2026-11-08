@@ -13,7 +13,7 @@ concerto-reflect.workspace = true
 concerto-ecs.workspace = true
 concerto-tasks.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }
-glam = { version = "0.30.1", features = ["serde"] }
+glam = { workspace = true, features = ["serde"] }
 cfg-if = "1"
 crossbeam-channel = "0.5.0"
 anyhow = "1.0.97"

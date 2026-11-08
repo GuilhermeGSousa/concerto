@@ -243,7 +243,7 @@ on the entity with the `AnimationPlayer`. Its
 [README](../../crates/procedural-animation-gizmos/README.md) says more.
 
 `NavigationGizmosPlugin`, from the `concerto-navigation-gizmos` crate, draws
-the nav graph and the route each agent is following; see
+the nav graph, the route each agent is following, and each loaded navmesh; see
 [Navigation](07-physics-animation-gameplay.md#drawing-the-graph).
 
 ## Custom materials
