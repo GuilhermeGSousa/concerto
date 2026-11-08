@@ -514,9 +514,13 @@ mod tests {
     use concerto_ecs::{Entity, IntoSystem, System, World};
     use concerto_foundation::assets::{handle::AssetHandle, AssetId};
     use concerto_window::plugin::Window;
-    use glam::{UVec2, Vec2};
+    use encase::ShaderType;
+    use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 
-    use super::{sync_camera_aspect, viewport_rect, Camera, PixelRect, RenderTarget, Viewport};
+    use super::{
+        sync_camera_aspect, viewport_rect, Camera, CameraUniform, PixelRect, RenderTarget, Viewport,
+    };
+    use crate::layout_test::{float_words, gpu, uniform_words};
 
     fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
         PixelRect {
@@ -525,6 +529,30 @@ mod tests {
             width,
             height,
         }
+    }
+
+    #[test]
+    fn camera_uniform_keeps_its_wgsl_layout() {
+        let uniform = CameraUniform {
+            view_pos: gpu(Vec3::new(1.0, 2.0, 3.0)),
+            view_proj: gpu(Mat4::from_cols_array(&std::array::from_fn(|index| {
+                10.0 + index as f32
+            }))),
+            fog_color: gpu(Vec4::new(30.0, 31.0, 32.0, 33.0)),
+            fog_params: gpu(Vec4::new(40.0, 41.0, 42.0, 43.0)),
+            ambient: gpu(Vec4::new(50.0, 51.0, 52.0, 53.0)),
+        };
+
+        let mut expected = float_words(&[1.0, 2.0, 3.0, 0.0]);
+        expected.extend(float_words(&std::array::from_fn::<f32, 16, _>(|index| {
+            10.0 + index as f32
+        })));
+        expected.extend(float_words(&[30.0, 31.0, 32.0, 33.0]));
+        expected.extend(float_words(&[40.0, 41.0, 42.0, 43.0]));
+        expected.extend(float_words(&[50.0, 51.0, 52.0, 53.0]));
+
+        assert_eq!(uniform_words(&uniform), expected);
+        assert_eq!(uniform.size().get(), 128);
     }
 
     #[test]

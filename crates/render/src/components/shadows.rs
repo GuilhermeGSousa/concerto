@@ -320,14 +320,9 @@ pub(crate) struct RenderShadowViewProjs {
 
 impl RenderShadowViewProjs {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let mut bytes = UniformBuffer::new(Vec::new());
-        bytes
-            .write(&[Mat4::IDENTITY; MAX_SHADOW_CASTERS as usize])
-            .unwrap();
-
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("shadow_view_projs"),
-            contents: &bytes.into_inner(),
+            contents: &identity_view_projs(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -335,11 +330,30 @@ impl RenderShadowViewProjs {
     }
 
     pub(crate) fn write(&self, queue: &wgpu::Queue, slot: u32, view_proj: Mat4) {
-        let offset = Mat4::SHADER_SIZE.get() * slot as u64;
-        let mut bytes = UniformBuffer::new(Vec::new());
-        bytes.write(&view_proj).unwrap();
-        queue.write_buffer(&self.buffer, offset, &bytes.into_inner());
+        queue.write_buffer(
+            &self.buffer,
+            view_proj_offset(slot),
+            &view_proj_bytes(view_proj),
+        );
     }
+}
+
+fn identity_view_projs() -> Vec<u8> {
+    let mut bytes = UniformBuffer::new(Vec::new());
+    bytes
+        .write(&[Mat4::IDENTITY; MAX_SHADOW_CASTERS as usize])
+        .unwrap();
+    bytes.into_inner()
+}
+
+fn view_proj_offset(slot: u32) -> u64 {
+    Mat4::SHADER_SIZE.get() * slot as u64
+}
+
+fn view_proj_bytes(view_proj: Mat4) -> Vec<u8> {
+    let mut bytes = UniformBuffer::new(Vec::new());
+    bytes.write(&view_proj).unwrap();
+    bytes.into_inner()
 }
 
 // The combined `@group(2)` bind group consumed by any material with
@@ -499,12 +513,9 @@ pub(crate) struct RenderShadowCasterViewProj {
 
 impl RenderShadowCasterViewProj {
     pub(crate) fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
-        let mut bytes = UniformBuffer::new(Vec::new());
-        bytes.write(&Mat4::IDENTITY).unwrap();
-
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("shadow_caster_view_proj"),
-            contents: &bytes.into_inner(),
+            contents: &view_proj_bytes(Mat4::IDENTITY),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -521,9 +532,7 @@ impl RenderShadowCasterViewProj {
     }
 
     pub(crate) fn write(&self, queue: &wgpu::Queue, view_proj: Mat4) {
-        let mut bytes = UniformBuffer::new(Vec::new());
-        bytes.write(&view_proj).unwrap();
-        queue.write_buffer(&self.buffer, 0, &bytes.into_inner());
+        queue.write_buffer(&self.buffer, 0, &view_proj_bytes(view_proj));
     }
 }
 
@@ -724,6 +733,23 @@ mod tests {
     };
     use concerto_mesh::{primitives::cuboid, MeshComponent};
     use concerto_window::plugin::{Window, WindowPlugin};
+
+    use crate::layout_test::{float_words, words};
+
+    #[test]
+    fn shadow_view_projs_are_packed_column_major_matrices() {
+        let view_proj = Mat4::from_cols_array(&std::array::from_fn(|index| 1.0 + index as f32));
+
+        assert_eq!(
+            words(&view_proj_bytes(view_proj)),
+            float_words(&view_proj.to_cols_array())
+        );
+        assert_eq!(view_proj_offset(5), 320);
+        assert_eq!(
+            words(&identity_view_projs()),
+            float_words(&Mat4::IDENTITY.to_cols_array()).repeat(MAX_SHADOW_CASTERS as usize)
+        );
+    }
 
     #[test]
     fn pool_capacity_is_capped_by_texture_array_layers() {

@@ -106,11 +106,7 @@ impl SkinUniforms {
     }
 
     fn write_identity_slot(queue: &Queue, buffer: &wgpu::Buffer, offset: u32) {
-        let mut identity = UniformBuffer::new(Vec::new());
-        identity
-            .write(&[Mat4::IDENTITY; MAX_SKELETON_BONES])
-            .unwrap();
-        queue.write_buffer(buffer, offset as u64, &identity.into_inner());
+        queue.write_buffer(buffer, offset as u64, &identity_palette());
     }
 
     fn alloc_slot(&mut self, device: &Device, layout: &SkeletonLayout, queue: &Queue) -> u32 {
@@ -214,10 +210,23 @@ pub(crate) fn extract_skeletons(
     }
 }
 
+fn identity_palette() -> Vec<u8> {
+    let mut identity = UniformBuffer::new(Vec::new());
+    identity
+        .write(&[Mat4::IDENTITY; MAX_SKELETON_BONES])
+        .unwrap();
+    identity.into_inner()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin};
+    use crate::{
+        draw_target::DrawTarget,
+        gpu::Gpu,
+        layout_test::{float_words, words},
+        plugin::RenderPlugin,
+    };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
@@ -231,6 +240,17 @@ mod tests {
     use concerto_mesh::skeleton::JointPose;
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec3;
+
+    #[test]
+    fn the_identity_palette_fills_one_skin_slot_with_packed_matrices() {
+        let words = words(&identity_palette());
+
+        assert_eq!(words.len() * 4, SKIN_STRIDE as usize);
+        assert_eq!(
+            words,
+            float_words(&Mat4::IDENTITY.to_cols_array()).repeat(MAX_SKELETON_BONES)
+        );
+    }
 
     fn app(gpu: &Gpu) -> App {
         let mut app = App::new();
