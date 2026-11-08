@@ -978,6 +978,7 @@ pub struct RetargetNode {
     pub graph: AssetHandle<AnimationGraph>,
     pub source: AssetHandle<RetargetRig>,
     pub target: AssetHandle<RetargetRig>,
+    pub goals: Vec<RetargetGoalSettings>,
 }
 
 impl RetargetNode {
@@ -991,7 +992,14 @@ impl RetargetNode {
             graph,
             source,
             target,
+            goals: Vec::new(),
         }
+    }
+
+    /// Adds the settings of one goal that both rigs name; a later entry for the same goal wins.
+    pub fn with_goal(mut self, settings: RetargetGoalSettings) -> Self {
+        self.goals.push(settings);
+        self
     }
 
     fn start(
@@ -1035,7 +1043,14 @@ impl RetargetNode {
             ));
         }
         let retarget = match PoseRetarget::new(&source, source_skeleton, &target, target_skeleton) {
-            Ok(retarget) => retarget,
+            Ok(mut retarget) => {
+                for settings in &self.goals {
+                    if let Err(error) = retarget.set_goal(settings) {
+                        warn!("RetargetNode ignores its settings for a goal: {error}");
+                    }
+                }
+                retarget
+            }
             Err(error) => {
                 return Some(failed(
                     error,
@@ -3696,6 +3711,18 @@ mod tests {
         }
 
         fn registering(player_skeleton: Skeleton, register: impl FnOnce(&mut World)) -> Self {
+            Self::built(player_skeleton, nested_retarget_node(), register)
+        }
+
+        fn with_node(player_skeleton: Skeleton, node: RetargetNode) -> Self {
+            Self::built(player_skeleton, node, |_| {})
+        }
+
+        fn built(
+            player_skeleton: Skeleton,
+            node: RetargetNode,
+            register: impl FnOnce(&mut World),
+        ) -> Self {
             let mut walks = Walks::with(AssetStore::new(), AssetStore::new(), register);
             walks
                 .skeletons_mut()
@@ -3706,11 +3733,7 @@ mod tests {
             walks
                 .clips_mut()
                 .insert(AssetId::from_path(HELD_CLIP), held_clip());
-            let outer = AnimationGraph::from_node(RetargetNode::new(
-                handle(INNER_GRAPH),
-                handle(SOURCE_RIG),
-                handle(TARGET_RIG),
-            ));
+            let outer = AnimationGraph::from_node(node);
             walks
                 .graphs_mut()
                 .insert(AssetId::from_path(OUTER_GRAPH), made_live(outer));
@@ -4043,6 +4066,70 @@ mod tests {
 
     fn nested_retarget_node() -> RetargetNode {
         RetargetNode::new(handle(INNER_GRAPH), handle(SOURCE_RIG), handle(TARGET_RIG))
+    }
+
+    fn node_with_feet(rig: RetargetRig) -> RetargetRig {
+        rig.with_goal(RetargetGoal::new("foot_l", "foot_l"))
+    }
+
+    fn played_with_goal_settings(settings: RetargetGoalSettings) -> Played {
+        let mut played = Played::with_node(
+            target_skeleton(),
+            nested_retarget_node().with_goal(settings),
+        );
+        played.load_rig_pair(
+            node_with_feet(node_source_rig()),
+            node_with_feet(node_target_rig()),
+        );
+        played.load_inner_graph();
+        played
+    }
+
+    fn feet_held_pose() -> Vec<JointPose> {
+        retarget(
+            &mut PoseRetarget::new(
+                &node_with_feet(source_rig_asset())
+                    .resolve(&source_skeleton(), None)
+                    .unwrap(),
+                &source_skeleton(),
+                &node_with_feet(target_rig_asset())
+                    .resolve(&target_skeleton(), None)
+                    .unwrap(),
+                &target_skeleton(),
+            )
+            .unwrap(),
+            &held_pose(),
+            target_skeleton().bone_count(),
+        )
+    }
+
+    #[test]
+    fn a_retarget_node_whose_settings_give_a_shared_goal_weight_0_plays_the_fk_pose() {
+        assert_ne!(feet_held_pose(), retargeted_held_pose());
+        let mut played =
+            played_with_goal_settings(RetargetGoalSettings::new("foot_l").with_weight(0.0));
+
+        played.advance();
+
+        assert_poses(&played.pose(), &retargeted_held_pose());
+    }
+
+    #[test]
+    fn a_retarget_node_whose_settings_name_an_unknown_goal_still_plays_with_one_warning_naming_it()
+    {
+        let before = warnings();
+        let mut played =
+            played_with_goal_settings(RetargetGoalSettings::new("hand_l").with_weight(0.0));
+
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &feet_held_pose());
+        }
+
+        let messages = warning_messages().split_off(before);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(messages[0].contains("`hand_l`"), "{}", messages[0]);
+        assert!(!played.is_finished());
     }
 
     fn node_target_reference() -> Vec<JointPose> {

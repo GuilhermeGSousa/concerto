@@ -19,7 +19,8 @@ use concerto_animation::node::{
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use concerto_animation::retarget::{
-    BoneCorrection, ReferencePose, RetargetChain, RetargetGoal, RetargetNode, RetargetRig,
+    BoneCorrection, ReferencePose, RetargetChain, RetargetGoal, RetargetGoalSettings, RetargetNode,
+    RetargetRig,
 };
 use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_ecs::world::World;
@@ -446,6 +447,11 @@ fn a_retarget_node_keeps_every_field_through_a_round_trip_and_its_handles_come_b
         AssetHandle::weak(AssetId::from_path("lafan1_locomotion")),
         AssetHandle::weak(AssetId::from_path("lafan1_rig")),
         AssetHandle::weak(AssetId::from_path("ual1_rig")),
+    )
+    .with_goal(
+        RetargetGoalSettings::new("foot_l")
+            .with_weight(0.25)
+            .with_softness(0.05),
     );
     let mut graph = AnimationGraph::from_node(node.clone());
     graph.make_live(&registry(false), None).unwrap();
@@ -461,6 +467,10 @@ fn a_retarget_node_keeps_every_field_through_a_round_trip_and_its_handles_come_b
     assert_eq!(
         retarget_node_handle_ids(live_node::<RetargetNode>(&restored).unwrap()),
         retarget_node_handle_ids(&node)
+    );
+    assert_eq!(
+        live_node::<RetargetNode>(&restored).unwrap().goals,
+        node.goals
     );
 
     let mut server = AssetServer::new();
