@@ -2,6 +2,7 @@
 pub mod events;
 mod panels;
 pub mod preview;
+pub mod rig;
 mod save;
 pub mod transport;
 

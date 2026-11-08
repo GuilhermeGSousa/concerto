@@ -970,6 +970,7 @@ dependencies = [
  "bincode",
  "concerto-animation",
  "concerto-app",
+ "concerto-color",
  "concerto-debug-gizmos",
  "concerto-ecs",
  "concerto-editor",
