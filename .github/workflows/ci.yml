@@ -63,6 +63,7 @@ jobs:
         run: cargo test --locked --workspace
         env:
           CARGO_INCREMENTAL: 0
+          CONCERTO_REQUIRE_GPU: ${{ runner.os == 'Windows' && '1' || '' }}
 
   test_physics_rapier:
     name: Test Physics (Rapier backend)
