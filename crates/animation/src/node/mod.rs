@@ -434,7 +434,7 @@ fn root_motion(
     let bend = |from: f32, to: f32| {
         let delta = stretch(from, to);
         match aim {
-            Some(aim) => aim.bend(delta, ClipRange::new(from, to), &stretch),
+            Some(aim) => aim.bend(delta, ClipRange::new(from, to), stretch),
             None => delta,
         }
     };
