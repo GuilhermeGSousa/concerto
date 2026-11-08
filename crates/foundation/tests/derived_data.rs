@@ -194,6 +194,87 @@ impl DerivedData for Maybe {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Pointer {
+    target: AssetId,
+}
+
+impl Asset for Pointer {
+    fn name() -> &'static str {
+        "Pointer"
+    }
+}
+
+impl LoadableAsset for Pointer {}
+
+#[derive(Serialize, Deserialize)]
+struct Chain {
+    tag: String,
+    pointer: AssetId,
+    #[serde(skip)]
+    total: Option<u64>,
+}
+
+impl Chain {
+    fn new(tag: &str, pointer: AssetId) -> Self {
+        Self {
+            tag: tag.to_string(),
+            pointer,
+            total: None,
+        }
+    }
+}
+
+impl Asset for Chain {
+    fn name() -> &'static str {
+        "Chain"
+    }
+}
+
+impl LoadableAsset for Chain {}
+
+impl DerivedData for Chain {
+    const DERIVED_VERSION: u32 = 1;
+
+    fn derived_inputs(&self) -> Vec<AssetId> {
+        vec![self.pointer]
+    }
+
+    fn further_inputs(&self, inputs: &DerivedInputs) -> anyhow::Result<Vec<AssetId>> {
+        Ok(vec![inputs.decode::<Pointer>(self.pointer)?.target])
+    }
+
+    fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64> {
+        let target = inputs.decode::<Pointer>(self.pointer)?.target;
+        let mut hasher = DefaultHasher::new();
+        for id in [self.pointer, target] {
+            inputs
+                .bytes(id)
+                .ok_or_else(|| anyhow::anyhow!("input {id:?} was not read"))?
+                .hash(&mut hasher);
+        }
+        Ok(hasher.finish())
+    }
+
+    fn derive(
+        &self,
+        inputs: &DerivedInputs,
+        _progress: &mut dyn FnMut(usize, usize),
+    ) -> anyhow::Result<Vec<u8>> {
+        with_probe(&self.tag, |probe| probe.derives += 1);
+        let target = inputs.decode::<Pointer>(self.pointer)?.target;
+        Ok(input_value(inputs, target)?.to_le_bytes().to_vec())
+    }
+
+    fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+        let bytes: [u8; 8] = blob
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("a chain blob is 8 bytes, not {}", blob.len()))?;
+        self.total = Some(u64::from_le_bytes(bytes));
+        Ok(())
+    }
+}
+
 struct Project {
     root: PathBuf,
     registry: AssetRegistry,
@@ -253,6 +334,26 @@ impl Project {
         .unwrap()
     }
 
+    fn pointer(&mut self, name: &str, target: AssetId) -> AssetId {
+        save_content_asset_into(
+            &Pointer { target },
+            &self.root,
+            &format!("content/{name}.gasset"),
+            &mut self.registry,
+        )
+        .unwrap()
+    }
+
+    fn chain(&mut self, name: &str, tag: &str, pointer: AssetId) -> AssetId {
+        save_content_asset_into(
+            &Chain::new(tag, pointer),
+            &self.root,
+            &format!("content/{name}.gasset"),
+            &mut self.registry,
+        )
+        .unwrap()
+    }
+
     fn cook(&self, name: &str, derived_version: u32, blob: &[u8]) {
         let path = self.root.join(format!("content/{name}.gasset"));
         let bytes = std::fs::read(&path).unwrap();
@@ -290,15 +391,21 @@ impl<const V: u32> Runtime<V> {
         let leaves = AssetStore::<Leaf>::new();
         let sums = AssetStore::<Sum<V>>::new();
         let maybes = AssetStore::<Maybe>::new();
+        let pointers = AssetStore::<Pointer>::new();
+        let chains = AssetStore::<Chain>::new();
         server.register_asset(&leaves);
         server.register_derived_asset(&sums);
         server.register_derived_asset(&maybes);
+        server.register_asset(&pointers);
+        server.register_derived_asset(&chains);
         server.publish_registry(project.registry.clone());
         server.set_derived_cache(cache);
         let mut world = World::new();
         world.insert_resource(leaves);
         world.insert_resource(sums);
         world.insert_resource(maybes);
+        world.insert_resource(pointers);
+        world.insert_resource(chains);
         world.insert_resource(server.clone());
         Self { server, world }
     }
@@ -376,6 +483,47 @@ impl<const V: u32> Runtime<V> {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
+}
+
+impl Runtime<1> {
+    fn load_chain(&mut self, id: AssetId) -> Option<u64> {
+        let handle = self.server.load::<Chain>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            if let Some(chain) = self
+                .world
+                .get_resource::<AssetStore<Chain>>()
+                .unwrap()
+                .get(&handle)
+            {
+                return Some(chain.total.expect("a loaded chain has its blob applied"));
+            }
+            if !self.server.is_loading() {
+                return None;
+            }
+            assert!(Instant::now() < deadline, "load timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+fn chain_inputs(project: &Project, chain: &Chain) -> anyhow::Result<DerivedInputs> {
+    let root = project.content_root();
+    let mut inputs = pollster::block_on(DerivedInputs::read(
+        &root,
+        &project.registry,
+        &chain.derived_inputs(),
+    ))?;
+    let further = chain.further_inputs(&inputs)?;
+    pollster::block_on(inputs.read_more(&root, &project.registry, &further))?;
+    Ok(inputs)
+}
+
+fn chain_key(project: &Project, chain: &Chain) -> u64 {
+    chain
+        .derived_key(&chain_inputs(project, chain).unwrap())
+        .unwrap()
 }
 
 fn key_of<const V: u32>(project: &Project, sum: &Sum<V>) -> u64 {
@@ -1028,4 +1176,155 @@ fn file_is_derived_decodes_the_payload_by_default() {
     };
     assert!(!answer("plain"));
     assert!(answer("derived"));
+}
+
+#[test]
+fn further_inputs_are_read_and_seen_by_the_key_and_the_derive() {
+    let tag = "further";
+    let mut project = Project::new(tag);
+    let target = project.leaf("target", 7);
+    let pointer = project.pointer("pointer", target);
+    let id = project.chain("chain", tag, pointer);
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load_chain(id), Some(7));
+
+    let key = chain_key(&project, &Chain::new(tag, pointer));
+    assert_eq!(
+        cache_files(&cache),
+        vec![cache.join(format!("Chain/v1/{key:016x}.blob"))]
+    );
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn read_more_skips_ids_already_read() {
+    let mut project = Project::new("read-more");
+    let a = project.leaf("a", 3);
+    let b = project.leaf("b", 4);
+    let root = project.content_root();
+    let mut inputs =
+        pollster::block_on(DerivedInputs::read(&root, &project.registry, &[a])).unwrap();
+    project.leaf("a", 30);
+
+    pollster::block_on(inputs.read_more(&root, &project.registry, &[a, b])).unwrap();
+
+    assert_eq!(inputs.decode::<Leaf>(a).unwrap().value, 3);
+    assert_eq!(inputs.decode::<Leaf>(b).unwrap().value, 4);
+}
+
+#[test]
+fn changing_a_further_input_changes_the_key_and_derives_again() {
+    let tag = "further-change";
+    let mut project = Project::new(tag);
+    let target = project.leaf("target", 7);
+    let pointer = project.pointer("pointer", target);
+    let id = project.chain("chain", tag, pointer);
+    let cache = project.cache_dir();
+    let before = chain_key(&project, &Chain::new(tag, pointer));
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load_chain(id),
+        Some(7)
+    );
+    project.leaf("target", 10);
+    let after = chain_key(&project, &Chain::new(tag, pointer));
+    assert_ne!(before, after);
+
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load_chain(id),
+        Some(10)
+    );
+    assert_eq!(derives(tag), 2);
+}
+
+#[test]
+fn a_missing_further_input_fails_the_load_naming_it() {
+    let tag = "further-missing";
+    let mut project = Project::new(tag);
+    let missing = AssetId::new();
+    let pointer = project.pointer("pointer", missing);
+    let id = project.chain("chain", tag, pointer);
+
+    let error = chain_inputs(&project, &Chain::new(tag, pointer))
+        .expect_err("a missing further input is an error");
+    assert!(
+        format!("{error:#}").contains(&format!("{missing:?}")),
+        "got: {error:#}"
+    );
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_chain(id), None);
+    assert_eq!(derives(tag), 0);
+}
+
+#[test]
+fn a_further_input_that_derives_is_refused() {
+    let tag = "further-derived";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    let derived = project.maybe("derived", &Maybe::new(tag, true, 6, vec![a]));
+    let pointer = project.pointer("pointer", derived);
+    let id = project.chain("chain", tag, pointer);
+
+    let error = chain_inputs(&project, &Chain::new(tag, pointer))
+        .expect_err("a further input that derives is refused");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&format!("{derived:?}")) && message.contains("itself derived"),
+        "got: {message}"
+    );
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_chain(id), None);
+    assert_eq!(derives(tag), 0);
+}
+
+#[test]
+fn a_cook_reads_further_inputs() {
+    let tag = "further-cook";
+    let mut project = Project::new(tag);
+    let target = project.leaf("target", 7);
+    let pointer = project.pointer("pointer", target);
+    project.chain("chain", tag, pointer);
+    let out = project.root.join("cooked");
+
+    let report = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .unwrap();
+
+    assert_eq!(report.cooked, vec!["content/chain.gasset"]);
+    assert_cooked_from(
+        &project,
+        &out,
+        "content/chain.gasset",
+        chain_key(&project, &Chain::new(tag, pointer)),
+        &7u64.to_le_bytes(),
+    );
+    assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_missing_further_input_stops_the_cook_naming_it() {
+    let tag = "further-cook-missing";
+    let mut project = Project::new(tag);
+    let missing = AssetId::new();
+    let pointer = project.pointer("pointer", missing);
+    project.chain("chain", tag, pointer);
+    let out = project.root.join("cooked");
+
+    let error = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .expect_err("a missing further input fails the cook");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("content/chain.gasset") && message.contains(&format!("{missing:?}")),
+        "got: {message}"
+    );
+    assert!(cache_files(&out).is_empty());
+    assert_eq!(derives(tag), 0);
 }
