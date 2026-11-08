@@ -75,13 +75,19 @@ Assets made in code are added rather than loaded:
 let material = assets.add(StandardMaterial::new(None, None));
 ```
 
-When an asset lands in its `AssetStore<A>`, loaded or added, the store sends an
-`AssetLoaded<A>` event with its id, and `Res<AssetStore<A>>::is_changed()`
-reads true. The store reads as changed again only when another asset of that
-type lands or one is freed after its last handle drops.
+When a load or an `assets.add` lands an asset in its `AssetStore<A>`, an
+`AssetLoaded<A>` event carries its id, and `Res<AssetStore<A>>::is_changed()`
+reads true. The store reads as changed again only when an asset of that type
+lands, is freed after its last handle drops, or is edited through
+`ResMut<AssetStore<A>>`.
 
 ```rust
-use concerto::foundation::assets::handle::AssetLoaded;
+use concerto::{
+    ecs::events::event_reader::EventReader,
+    foundation::assets::handle::AssetLoaded,
+    render::assets::mesh::Mesh,
+};
+use log::info;
 
 fn on_mesh_loaded(mut loaded: EventReader<AssetLoaded<Mesh>>) {
     for event in loaded.read() {

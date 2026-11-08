@@ -157,7 +157,7 @@ impl App {
         self.plugin_types.contains(&std::any::TypeId::of::<P>())
     }
 
-    /// Registers an asset type and the system that tracks its handles; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
+    /// Registers an asset type and the system that tracks its handles, once per type; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
     pub fn register_asset<A: Asset>(&mut self) -> &mut Self {
         self.register_asset_with::<A>(AssetServer::register_asset)
     }
@@ -173,13 +173,7 @@ impl App {
     >(
         &mut self,
     ) -> &mut Self {
-        let registered = self
-            .get_resource::<AssetServer>()
-            .expect("Asset Server not found")
-            .is_registered::<A>();
-        if !registered {
-            self.register_asset::<A>();
-        }
+        self.register_asset::<A>();
         self.register_type::<A>();
         if self.get_resource::<InspectedAssets>().is_none() {
             self.insert_resource(InspectedAssets::default());
@@ -194,6 +188,13 @@ impl App {
         &mut self,
         register: fn(&mut AssetServer, &AssetStore<A>),
     ) -> &mut Self {
+        if self
+            .get_resource::<AssetServer>()
+            .expect("Asset Server not found")
+            .is_registered::<A>()
+        {
+            return self;
+        }
         let asset_store = AssetStore::<A>::new();
         let asset_server = self
             .get_resource_mut::<AssetServer>()
@@ -770,6 +771,33 @@ mod tests {
             [false, false, false, true, false, false, true, false]
         );
         assert_eq!(log.loaded, [id]);
+    }
+
+    #[derive(Resource, Default)]
+    struct LoadedNotes(Vec<AssetId>);
+
+    fn log_loaded_notes(mut loaded: EventReader<AssetLoaded<Note>>, mut log: ResMut<LoadedNotes>) {
+        log.0.extend(loaded.read().map(|event| event.id));
+    }
+
+    #[test]
+    fn an_asset_type_registered_twice_reports_each_load_once() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_plugin(plugins::AssetManagerPlugin)
+            .register_asset::<Note>()
+            .register_asset::<Note>()
+            .insert_resource(LoadedNotes::default())
+            .add_system(Update, log_loaded_notes);
+        app.finish_plugin_build();
+
+        let handle = app.get_resource::<AssetServer>().unwrap().add(Note);
+        for _ in 0..2 {
+            app.update();
+        }
+
+        assert_eq!(app.get_resource::<LoadedNotes>().unwrap().0, [handle.id()]);
     }
 
     #[test]
