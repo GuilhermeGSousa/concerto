@@ -153,12 +153,16 @@ time. The running game never reads them.
   code to do it.
 - An asset whose runtime part is computed from other content assets
   implements `DerivedData` and is registered with `register_derived_asset`
-  (`MotionDatabase` and its `BakedDatabase`). Whether an asset derives is
+  (`MotionDatabase` and its `BakedDatabase`; `NavMesh`, whose polygons are
+  baked from the colliders of its scenes). Whether an asset derives is
   decided per asset by `is_derived()`, `true` by default: one that doesn't
   loads as it is, is accepted as another derived asset's input, and isn't
   cooked; `DerivedInputs::read` asks a derived kind's `file_is_derived` and
   refuses an input that derives. Its file holds only the
-  definition; a load of one that derives derives the blob from the inputs it names, or reads it
+  definition; a load of one that derives reads the inputs it names, then the
+  `further_inputs` those first inputs name (such as the meshes a scene's
+  colliders use), which `read_more` reads once more into the same inputs under
+  the same rules. It derives the blob from them, or reads it
   from the project's `derived-cache/` under the key the type computes, and
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the
