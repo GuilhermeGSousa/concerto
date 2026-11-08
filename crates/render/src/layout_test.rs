@@ -6,8 +6,10 @@ pub(crate) fn uniform_words<T: ShaderType + WriteInto>(value: &T) -> Vec<u32> {
 
 pub(crate) fn words(bytes: &[u8]) -> Vec<u32> {
     bytes
-        .chunks_exact(4)
-        .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|word| u32::from_le_bytes(*word))
         .collect()
 }
 
