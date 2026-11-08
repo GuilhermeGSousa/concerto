@@ -22,11 +22,9 @@ use crate::{
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, PlaceholderNode, ReflectAnimationNode,
         ResultNode, blend_space::BlendSpace2DBuilderContext,
-        state_machine::AnimationStateMachineState,
     },
     player::ActiveNodeState,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
-    retarget::RetargetNodeState,
 };
 
 type AnimationDirectedGraph = DiGraph<AnimationNodeData, ()>;
@@ -406,8 +404,9 @@ impl<'a> AnimationNodeContext<'a> {
     }
 }
 
+/// The per-player state of one graph: its handle and its nodes' states.
 #[derive(Default)]
-pub(crate) struct AnimationGraphState {
+pub struct AnimationGraphState {
     graph_handle: Option<AssetHandle<AnimationGraph>>,
     graph_state: HashMap<AnimationNodeIndex, ActiveNodeState>,
 }
@@ -465,17 +464,13 @@ impl AnimationGraphState {
         };
 
         for (node_index, node_state) in self.graph_state.iter_mut() {
-            if let Some(inner) = node_state
-                .node_state
-                .downcast_mut::<RetargetNodeState>()
-                .and_then(RetargetNodeState::inner_mut)
-            {
-                inner.visit_states_mut(graphs, blackboard, f);
-            }
-            let Some(node) = graph
-                .live_node(*node_index)
-                .and_then(|node| node.as_reflect().downcast_ref::<N>())
-            else {
+            let Some(live) = graph.live_node(*node_index) else {
+                continue;
+            };
+            live.inner_states(&mut node_state.node_state, &mut |inner| {
+                inner.visit_states_mut(graphs, blackboard, f)
+            });
+            let Some(node) = live.as_reflect().downcast_ref::<N>() else {
                 continue;
             };
             let Some(state) = node_state.node_state.downcast_mut::<N::State>() else {
@@ -523,22 +518,23 @@ impl AnimationGraphState {
     }
 
     pub(crate) fn stateless_node<'a>(
-        &self,
+        &mut self,
         graphs: &'a AssetStore<AnimationGraph>,
     ) -> Option<&'a str> {
         let graph = self.get_animation_graph(graphs)?;
         graph.iter().find_map(|node_index| {
             let node = graph.nodes.node_weight(*node_index)?;
-            node.live()?;
-            let Some(node_state) = self.graph_state.get(&node_index) else {
+            let live = node.live()?;
+            let Some(node_state) = self.graph_state.get_mut(&node_index) else {
                 return Some(node.type_name());
             };
-            node_state
-                .node_state
-                .downcast_ref::<AnimationStateMachineState>()?
-                .state_graphs()
-                .iter()
-                .find_map(|state_graph| state_graph.stateless_node(graphs))
+            let mut found = None;
+            live.inner_states(&mut node_state.node_state, &mut |inner| {
+                if found.is_none() {
+                    found = inner.stateless_node(graphs);
+                }
+            });
+            found
         })
     }
 
@@ -695,8 +691,8 @@ impl AnimationGraphStates {
         self.states.get_mut(*id)
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &AnimationGraphState> {
-        self.states.iter()
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut AnimationGraphState> {
+        self.states.iter_mut()
     }
 }
 

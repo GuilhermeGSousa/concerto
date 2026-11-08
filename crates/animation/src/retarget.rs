@@ -18,7 +18,7 @@ use crate::{
     clip::AnimationClip,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState},
-    node::{AnimationNode, ReflectAnimationNode, state_machine::AnimationStateMachine},
+    node::{AnimationNode, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, twist_about},
 };
 
@@ -888,20 +888,16 @@ fn holds_retarget_node(graph: &AnimationGraph, graphs: &AssetStore<AnimationGrap
     let mut pending = vec![graph];
     while let Some(graph) = pending.pop() {
         for node in graph.live_nodes() {
-            let node = node.as_reflect();
-            if node.downcast_ref::<RetargetNode>().is_some() {
+            if node.as_reflect().downcast_ref::<RetargetNode>().is_some() {
                 return true;
             }
-            let Some(machine) = node.downcast_ref::<AnimationStateMachine>() else {
-                continue;
-            };
-            for handle in machine.state_graphs() {
+            node.inner_graphs(&mut |handle| {
                 if seen.insert(handle.id())
                     && let Some(state_graph) = graphs.get(handle)
                 {
                     pending.push(state_graph);
                 }
-            }
+            });
         }
     }
     false
@@ -1021,6 +1017,20 @@ impl AnimationNode for RetargetNode {
             Stage::Pending => false,
             Stage::Ready(running) => running.finished,
             Stage::Failed { .. } => true,
+        }
+    }
+
+    fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
+        visit(&self.graph);
+    }
+
+    fn inner_states(
+        &self,
+        state: &mut RetargetNodeState,
+        visit: &mut dyn FnMut(&mut AnimationGraphState),
+    ) {
+        if let Some(inner) = state.inner_mut() {
+            visit(inner);
         }
     }
 }

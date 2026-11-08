@@ -202,10 +202,6 @@ pub struct AnimationStateMachineState {
 }
 
 impl AnimationStateMachineState {
-    pub(crate) fn state_graphs(&self) -> &AnimationGraphStates {
-        &self.state_graphs
-    }
-
     pub(crate) fn new(
         initial_state: StateId,
         state_graphs: Vec<AnimationGraphState>,
@@ -353,6 +349,18 @@ impl AnimationNode for AnimationStateMachine {
     }
 
     fn reset(&self, _state: &mut AnimationStateMachineState) {}
+
+    fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
+        self.state_graphs().for_each(visit);
+    }
+
+    fn inner_states(
+        &self,
+        state: &mut AnimationStateMachineState,
+        visit: &mut dyn FnMut(&mut AnimationGraphState),
+    ) {
+        state.state_graphs.iter_mut().for_each(visit);
+    }
 }
 
 struct FSMStateEntry {
@@ -472,8 +480,9 @@ mod tests {
     use crate::{
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
-        graph::{AnimationGraph, GraphId},
+        graph::{AnimationGraph, GraphId, made_live},
         node::{AnimationNode, ErasedAnimationNode, ReflectAnimationNode, register_node_inputs},
+        player::AnimationPlayer,
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
         test_walks::Walks,
@@ -576,5 +585,26 @@ mod tests {
         let machine = state.downcast_mut::<AnimationStateMachineState>().unwrap();
         assert_eq!(updates_in_state(machine, 0, &walks), Some(3));
         assert_eq!(updates_in_state(machine, 1, &walks), Some(0));
+    }
+
+    #[test]
+    fn for_each_state_mut_reaches_a_node_inside_a_state_graph() {
+        let mut server = AssetServer::new();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        server.register_asset(&graphs);
+        let state_graph = server.add(AnimationGraph::default());
+        graphs.insert(state_graph.id(), counting_graph());
+        let machine =
+            AnimationStateMachine::from_initial_state(name!("only"), state_graph, |_| {}).build();
+        let top = server.add(AnimationGraph::default());
+        graphs.insert(top.id(), made_live(AnimationGraph::from_node(machine)));
+        let walks = Walks::with(AssetStore::new(), graphs, register_node_inputs::<Counter>);
+        let mut player = AnimationPlayer::new(1);
+        walks.initialize(&mut player, top);
+
+        let mut visits = 0;
+        player.for_each_state_mut::<Counter>(walks.graphs(), |_, _, _| visits += 1);
+
+        assert_eq!(visits, 1);
     }
 }
