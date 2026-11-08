@@ -95,7 +95,7 @@ cargo test --locked -p concerto-physics --no-default-features --features force-r
 cargo build --locked --target wasm32-unknown-unknown
 ```
 
-A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on Windows.
+A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there; the Windows test job sets `CONCERTO_REQUIRE_GPU=1`, so they must run there.
 
 Test builds carry line tables only and `cargo build` carries full debug info,
 so the two compile everything separately, third-party crates and Jolt
