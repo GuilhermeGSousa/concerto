@@ -619,6 +619,9 @@ does not fall back to anything.
 `AssetServer::is_loading` reports whether an asset requested with `load` or
 `add` has yet to reach the world. A load counts until the frame that inserts
 its asset, or handles its failure; cancelled loads do not count.
+`AssetServer::is_loading_or_loaded(id)` asks the same of one asset, and stays
+true once it is in the world: it is false for an id never loaded or added, and
+once its load fails, is cancelled, or it unloads.
 
 Stored assets can only be requested by UUID. Use `asset_id!` for references
 written in code and `load` for both those IDs and serialized references.

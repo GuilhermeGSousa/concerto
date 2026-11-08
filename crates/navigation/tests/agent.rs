@@ -1,4 +1,7 @@
-use std::f32::consts::FRAC_PI_2;
+use std::{
+    f32::consts::FRAC_PI_2,
+    time::{Duration, Instant},
+};
 
 use concerto_app::{
     App,
@@ -19,8 +22,8 @@ use concerto_foundation::{
 use concerto_name::Name;
 use concerto_navigation::{
     NavAgent, NavArrived, NavDestination, NavLink, NavLinks, NavMesh, NavMeshComponent,
-    NavMeshGeometry, NavMeshSettings, NavPoint, NavRoute, NavSteering, NavTarget, NavUnreachable,
-    NavigationPlugin, bake, steer_nav_agents,
+    NavMeshData, NavMeshGeometry, NavMeshSettings, NavPoint, NavRoute, NavSteering, NavTarget,
+    NavUnreachable, NavigationPlugin, bake, steer_nav_agents,
 };
 use glam::{Affine3A, Quat, Vec3};
 
@@ -736,4 +739,70 @@ fn disabling_the_destination_mid_route_makes_a_mesh_route_unreachable() {
         }]
     );
     assert!(route(&mut app, agent).is_none());
+}
+
+fn plans_on_the_graph(app: &mut App, agent: Entity, east: Entity) {
+    world(app).insert(NavDestination::to_point(east), agent);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let route = loop {
+        app.update();
+        if let Some(route) = route(app, agent) {
+            break route;
+        }
+        assert!(has_destination(app, agent), "the agent gave up");
+        assert!(Instant::now() < deadline, "the agent never planned");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(route.planned_on(), None);
+    assert_eq!(route.remaining(), &[EAST]);
+    assert!(events::<NavUnreachable>(app).is_empty());
+}
+
+#[test]
+fn a_mesh_that_was_never_loaded_leaves_agents_on_the_graph() {
+    let Across {
+        mut app,
+        agent,
+        east,
+        ..
+    } = across();
+    world(&mut app).spawn(NavMeshComponent {
+        handle: AssetHandle::weak(AssetId::new()),
+    });
+    settle(&mut app);
+
+    plans_on_the_graph(&mut app, agent, east);
+}
+
+#[test]
+fn a_mesh_whose_load_failed_leaves_agents_on_the_graph() {
+    let Across {
+        mut app,
+        agent,
+        east,
+        ..
+    } = across();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let handle = server.load::<NavMesh>(AssetId::new());
+    world(&mut app).spawn(NavMeshComponent { handle });
+
+    plans_on_the_graph(&mut app, agent, east);
+}
+
+#[test]
+fn a_loaded_mesh_with_no_polygons_leaves_agents_on_the_graph() {
+    let Across {
+        mut app,
+        agent,
+        east,
+        ..
+    } = across();
+    let handle = add_mesh(
+        &mut app,
+        NavMesh::baked(NavMeshSettings::new(), NavMeshData::default()),
+    );
+    world(&mut app).spawn(NavMeshComponent { handle });
+    settle(&mut app);
+
+    plans_on_the_graph(&mut app, agent, east);
 }

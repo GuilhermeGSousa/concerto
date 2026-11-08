@@ -20,8 +20,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::{MeshComponent, primitives::plane};
 use concerto_navigation::{
-    NavMesh, NavMeshComponent, NavMeshData, NavMeshGeometry, NavMeshSettings, NavMeshStatus,
-    NavigationPlugin, bake,
+    NavAgent, NavDestination, NavMesh, NavMeshComponent, NavMeshData, NavMeshGeometry,
+    NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavigationPlugin, bake,
 };
 use concerto_physics::{collider::BoxCollider, sensor::Sensor, shape::MeshCollider};
 use concerto_reflect::Reflect;
@@ -495,5 +495,50 @@ fn a_status_goes_away_when_the_component_points_at_a_mesh_that_is_not_loaded() {
             .world_mut()
             .get_component_for_entity::<NavMeshStatus>(entity)
             .is_none()
+    );
+}
+
+#[test]
+fn an_agent_sent_while_its_navmesh_loads_waits_and_then_routes_on_it() {
+    let mut project = Project::new("agent-waits");
+    let level = project.save("level", &scene(vec![floor(), obstacle()]));
+    let id = project.save("navmesh", &navmesh_of(&[level]));
+    let mut app = app();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    server.set_derived_cache(DerivedDataCache::in_project(&project.root));
+    server.publish_content_source(project.content_root(), project.registry.clone());
+    app.insert_resource(project.registry.clone());
+    let world = app.main_mut().world_mut();
+    world.spawn((Transform::from_translation(WEST), NavPoint::default()));
+    let east = world.spawn((Transform::from_translation(EAST), NavPoint::default()));
+    let agent = world.spawn((Transform::from_translation(WEST), NavAgent::new()));
+    app.update();
+    app.update();
+
+    let handle = server.load::<NavMesh>(id);
+    let world = app.main_mut().world_mut();
+    world.spawn(NavMeshComponent { handle });
+    world.insert(NavDestination::to_point(east), agent);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let route = loop {
+        app.update();
+        let world = app.main_mut().world_mut();
+        if let Some(route) = world.get_component_for_entity::<NavRoute>(agent) {
+            break route.clone();
+        }
+        assert!(
+            world
+                .get_component_for_entity::<NavDestination>(agent)
+                .is_some(),
+            "the agent gave up before its navmesh landed"
+        );
+        assert!(Instant::now() < deadline, "the navmesh never landed");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+
+    assert_eq!(route.planned_on(), Some(id));
+    assert!(
+        route.remaining().iter().any(|corner| corner.z.abs() > 0.5),
+        "{route:?}"
     );
 }

@@ -7,7 +7,7 @@ use concerto_ecs::{
     world::FromWorld,
 };
 use concerto_foundation::{
-    assets::{AssetId, asset_store::AssetStore},
+    assets::{AssetId, asset_server::AssetServer, asset_store::AssetStore},
     transform::GlobalTransform,
 };
 use concerto_name::Name;
@@ -219,7 +219,7 @@ fn mesh_path(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<
     })
 }
 
-/// Plans a route for each agent whose destination changed, whose route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now.
+/// Plans a route for each agent without one, whose destination changed, whose route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now; an agent without a route waits while a `NavMeshComponent`'s mesh is still loading and none is loaded.
 pub fn plan_nav_routes(
     agents: Query<
         (
@@ -233,6 +233,7 @@ pub fn plan_nav_routes(
     >,
     components: Query<(Entity, &NavMeshComponent)>,
     navmeshes: Res<AssetStore<NavMesh>>,
+    server: Res<AssetServer>,
     graph: Res<NavGraph>,
     mut warned: SystemLocal<MeshChoiceWarned>,
     mut unreachable: EventWriter<NavUnreachable>,
@@ -256,10 +257,21 @@ pub fn plan_nav_routes(
         })
         .min_by_key(|mesh| mesh.entity.index());
     let mesh_id = mesh.as_ref().map(|mesh| mesh.id);
+    let mesh_loading = mesh.is_none()
+        && components.iter().any(|(_, component)| {
+            navmeshes.get(&component.handle).is_none()
+                && server.is_loading_or_loaded(component.handle.id())
+        });
     for (agent, destination, transform, route, steering) in agents.iter() {
-        let stale = route.is_some_and(|route| route.planned_on != mesh_id || graph.is_changed());
-        if !destination.is_changed() && !stale {
-            continue;
+        match route {
+            None if mesh_loading => continue,
+            None => {}
+            Some(route) => {
+                let stale = route.planned_on != mesh_id || graph.is_changed();
+                if !destination.is_changed() && !stale {
+                    continue;
+                }
+            }
         }
         let point = match destination.target {
             NavTarget::Point(point) => Some(point),

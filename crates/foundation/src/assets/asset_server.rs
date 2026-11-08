@@ -212,6 +212,12 @@ impl AssetServer {
             || !self.data.asset_load_event_receiver.is_empty()
     }
 
+    /// Whether the asset `id` is in the world or on its way there; false for an id never loaded or added, and once its load fails or is cancelled or it unloads.
+    pub fn is_loading_or_loaded(&self, id: AssetId) -> bool {
+        self.data.pending_tasks.read().unwrap().contains_key(&id)
+            || self.data.loaded_assets.read().unwrap().contains(&id)
+    }
+
     /// Cancels the loads pending at the call; none of them delivers its asset afterwards.
     pub fn cancel_pending(&self) {
         let mut pending = self.data.pending_tasks.write().unwrap();
@@ -1134,6 +1140,47 @@ mod tests {
 
         handle_asset_load_events(&mut world);
         assert!(!server.is_loading());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_id_is_loading_or_loaded_until_its_load_fails() {
+        let dir = temp_root("id-failure");
+        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
+        let id = AssetId::new();
+        assert!(!server.is_loading_or_loaded(id));
+
+        let _handle = server.load::<FixtureAsset>(id);
+        assert!(server.is_loading_or_loaded(id));
+        wait_until("the failure", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+        assert!(server.is_loading_or_loaded(id));
+
+        handle_asset_load_events(&mut world);
+        assert!(!server.is_loading_or_loaded(id));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_id_stays_loading_or_loaded_once_its_asset_lands() {
+        let dir = temp_root("id-loaded");
+        let (id, registry) = saved_fixture(&dir, 3);
+        let (server, mut world) = fixture_server(&dir, registry);
+
+        let handle = server.load::<FixtureAsset>(id);
+        wait_until("the load", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+        handle_asset_load_events(&mut world);
+
+        assert!(server.is_loading_or_loaded(id));
+        let added = server.add(FixtureAsset {
+            value: 1,
+            initialized: false,
+        });
+        assert!(server.is_loading_or_loaded(added.id()));
+        drop(handle);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
