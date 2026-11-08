@@ -3342,6 +3342,41 @@ mod tests {
     }
 
     #[test]
+    fn a_nan_or_negative_weight_counts_as_0_and_a_weight_above_1_as_1() {
+        let count = goal_target_skeleton().bone_count();
+        let source = crouched_source();
+        let weighted = |weight: f32| {
+            let mut pose_retarget = feet_retarget();
+            for goal in ["foot_l", "foot_r"] {
+                pose_retarget
+                    .set_goal(&RetargetGoalSettings::new(goal).with_weight(weight))
+                    .unwrap();
+            }
+            retarget(&mut pose_retarget, &source, count)
+        };
+        let fk = retarget(&mut plain_retarget(), &source, count);
+
+        assert_eq!(weighted(f32::NAN), fk);
+        assert_eq!(weighted(-0.5), fk);
+        assert_eq!(weighted(2.0), weighted(1.0));
+        assert_ne!(weighted(1.0), fk);
+    }
+
+    #[test]
+    fn a_goal_with_softness_eases_its_reach() {
+        let count = goal_target_skeleton().bone_count();
+        let source = crouched_source();
+        let mut soft = feet_retarget();
+        soft.set_goal(&RetargetGoalSettings::new("foot_l").with_softness(1.0))
+            .unwrap();
+
+        assert_ne!(
+            retarget(&mut soft, &source, count),
+            retarget(&mut feet_retarget(), &source, count)
+        );
+    }
+
+    #[test]
     fn a_goal_at_half_weight_moves_the_tip_halfway_from_the_fk_tip_to_its_goal() {
         let source_skeleton = goal_source_skeleton();
         let target = goal_target_skeleton();
@@ -4150,6 +4185,25 @@ mod tests {
         assert_ne!(feet_held_pose(), retargeted_held_pose());
         let mut played =
             played_with_goal_settings(RetargetGoalSettings::new("foot_l").with_weight(0.0));
+
+        played.advance();
+
+        assert_poses(&played.pose(), &retargeted_held_pose());
+    }
+
+    #[test]
+    fn a_later_setting_for_the_same_goal_wins() {
+        let mut played = Played::with_node(
+            target_skeleton(),
+            nested_retarget_node()
+                .with_goal(RetargetGoalSettings::new("foot_l"))
+                .with_goal(RetargetGoalSettings::new("foot_l").with_weight(0.0)),
+        );
+        played.load_rig_pair(
+            node_with_feet(node_source_rig()),
+            node_with_feet(node_target_rig()),
+        );
+        played.load_inner_graph();
 
         played.advance();
 

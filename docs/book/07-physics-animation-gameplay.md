@@ -1009,8 +1009,8 @@ with different bone counts are mapped by normalised length along the chain, the
 source's change slerped between the two source bones around each target bone;
 a single-bone target chain takes the source chain's start.
 
-The target keeps the rest from its reference pose. A bone in no shared chain
-keeps its reference local rotation, a chain only the target has keeps its
+The target keeps the rest from its reference pose. Before goals are solved, a
+bone in no shared chain keeps its reference local rotation, a chain only the target has keeps its
 reference pose, and a chain only the source has is ignored. Every bone but the
 root and the motion root keeps its reference local translation and scale.
 
