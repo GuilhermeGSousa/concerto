@@ -11,12 +11,14 @@ use glam::Affine3A;
 use crate::{
     blackboard::AnimationBlackboard,
     clip::AnimationClip,
+    debug::AnimationDebug,
     evaluation::{AnimationGraphContext, RootBone},
     graph::AnimationGraph,
     mask::BoneMask,
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
     player::AnimationPlayer,
     plugin::register_animation_node_inputs,
+    retarget::RetargetRig,
 };
 
 type Walk<K> = RefCell<InputState<InputSet<'static, 'static, K>>>;
@@ -45,6 +47,8 @@ impl Walks {
         world.insert_resource(clips);
         world.insert_resource(graphs);
         world.insert_resource(AssetStore::<BoneMask>::new());
+        world.insert_resource(AssetStore::<Skeleton>::new());
+        world.insert_resource(AssetStore::<RetargetRig>::new());
         register_animation_node_inputs(&mut world);
         register(&mut world);
         Self {
@@ -79,6 +83,18 @@ impl Walks {
             .expect("a test walk holds the masks")
     }
 
+    pub(crate) fn skeletons_mut(&mut self) -> &mut AssetStore<Skeleton> {
+        self.world
+            .get_resource_mut()
+            .expect("a test walk holds the skeletons")
+    }
+
+    pub(crate) fn rigs_mut(&mut self) -> &mut AssetStore<RetargetRig> {
+        self.world
+            .get_resource_mut()
+            .expect("a test walk holds the retarget rigs")
+    }
+
     pub(crate) fn into_world(self) -> World {
         self.world
     }
@@ -103,12 +119,34 @@ impl Walks {
         player.update(delta_time, self.graphs(), None, &inputs);
     }
 
+    pub(crate) fn advance_with(
+        &self,
+        player: &mut AnimationPlayer,
+        delta_time: f32,
+        skeleton: &Skeleton,
+    ) {
+        let mut state = self.update.borrow_mut();
+        let inputs = state
+            .get(&self.world)
+            .expect("a test walk fetches its inputs");
+        player.update(delta_time, self.graphs(), Some(skeleton), &inputs);
+    }
+
     pub(crate) fn create<R>(
         &self,
         blackboard: &AnimationBlackboard,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.create, blackboard, None, None, None, f)
+        walk(
+            &self.world,
+            &self.create,
+            blackboard,
+            None,
+            None,
+            None,
+            None,
+            f,
+        )
     }
 
     pub(crate) fn update<R>(
@@ -116,7 +154,16 @@ impl Walks {
         blackboard: &AnimationBlackboard,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.update, blackboard, None, None, None, f)
+        walk(
+            &self.world,
+            &self.update,
+            blackboard,
+            None,
+            None,
+            None,
+            None,
+            f,
+        )
     }
 
     pub(crate) fn evaluate<R>(
@@ -125,7 +172,16 @@ impl Walks {
         root: Option<RootBone>,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.evaluate, blackboard, root, None, None, f)
+        walk(
+            &self.world,
+            &self.evaluate,
+            blackboard,
+            root,
+            None,
+            None,
+            None,
+            f,
+        )
     }
 
     pub(crate) fn evaluate_with<R>(
@@ -142,6 +198,27 @@ impl Walks {
             root,
             skeleton,
             None,
+            None,
+            f,
+        )
+    }
+
+    pub(crate) fn evaluate_publishing<R>(
+        &self,
+        blackboard: &AnimationBlackboard,
+        root: Option<RootBone>,
+        skeleton: Option<&Skeleton>,
+        debug: &RefCell<AnimationDebug>,
+        f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
+    ) -> R {
+        walk(
+            &self.world,
+            &self.evaluate,
+            blackboard,
+            root,
+            skeleton,
+            None,
+            Some(debug),
             f,
         )
     }
@@ -160,6 +237,7 @@ impl Walks {
             None,
             Some(skeleton),
             model_to_world,
+            None,
             f,
         )
     }
@@ -172,6 +250,7 @@ fn walk<K: 'static, R>(
     root: Option<RootBone>,
     skeleton: Option<&Skeleton>,
     model_to_world: Option<Affine3A>,
+    debug: Option<&RefCell<AnimationDebug>>,
     f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
 ) -> R {
     let mut state = state.borrow_mut();
@@ -182,6 +261,7 @@ fn walk<K: 'static, R>(
         skeleton,
         model_to_world,
         inputs: &inputs,
+        debug,
     };
     f(&context)
 }

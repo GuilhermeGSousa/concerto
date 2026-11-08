@@ -22,7 +22,7 @@ use concerto_ecs::{
     system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
 };
 use concerto_foundation::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+    assets::{asset_server::AssetServer, handle::AssetHandle},
     time::Time,
     transform::{GlobalTransform, Transform},
 };
@@ -30,8 +30,8 @@ use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonComponent};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, CharacterLink, CharacterSimulation, DesiredMotion,
     FeatureChannelData, FeatureShape, JointAxis, LastQuery, MirrorAxis, MotionDatabase,
-    MotionEntry, MotionMatchingNode, MotionMatchingPlugin, SimulationBoneSettings,
-    TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
+    MotionEntry, MotionMatchingDebug, MotionMatchingNode, MotionMatchingPlugin,
+    SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
 };
 use concerto_motion_matching_gizmos::{
     MotionMatchingGizmos, MotionMatchingGizmosPlugin, matched_shapes, query_shapes,
@@ -292,28 +292,24 @@ impl Stage {
     fn drawn(&mut self) -> Option<Drawn> {
         let bone = self.bone();
         let clips = [&self.walk, &self.turn];
-        let (database, skeleton, player) = (&self.database, &self.skeleton, self.player);
-        let world = self.app.main_mut().world_mut();
-        let mut drawn = None;
-        world.resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
-            world
-                .get_component_for_entity_mut::<AnimationPlayer>(player)
-                .unwrap()
-                .for_each_state_mut::<MotionMatchingNode>(graphs, |_, state, _| {
-                    assert!(!state.has_failed());
-                    let Some(last_query) = state.last_query().cloned() else {
-                        return;
-                    };
-                    drawn = Some(Drawn {
-                        last_query,
-                        frame: state.frame(),
-                        query: query_shapes(state, database, skeleton, &clips, &bone).unwrap(),
-                        matched: matched_shapes(state, database, skeleton, &bone).unwrap(),
-                        bone: bone.clone(),
-                    });
-                });
-        });
-        drawn
+        let debug = self
+            .app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.player)
+            .unwrap()
+            .debug()
+            .get::<MotionMatchingDebug>()
+            .first()?;
+        assert!(!debug.failed);
+        let last_query = debug.last_query.clone()?;
+        Some(Drawn {
+            last_query,
+            frame: debug.frame,
+            query: query_shapes(debug, &self.database, &self.skeleton, &clips, &bone).unwrap(),
+            matched: matched_shapes(debug, &self.database, &self.skeleton, &bone).unwrap(),
+            bone: bone.clone(),
+        })
     }
 }
 

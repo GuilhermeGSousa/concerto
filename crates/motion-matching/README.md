@@ -547,9 +547,16 @@ events to the `AnimationFrame` after copying the state's frame into it.
 
 `MotionMatchingState` is the node's per-player state. Its fields are
 private: the step that advances it is its own method, which the node's `update`
-calls. Other crates read it
-through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
-`last_query()`.
+calls. It has the getters `is_initialised()`, `has_failed()`, `frame()`,
+`pose()`, `query()` and `last_query()`, but outside tests no system reaches a
+node's state. Other crates read `MotionMatchingDebug` instead, which the node's
+`evaluate` publishes on every evaluation and
+`AnimationPlayer::debug().get::<MotionMatchingDebug>()` returns, one per node in
+walk order: a weak handle to the `database`, so a published value keeps
+nothing loaded, the `initialised` and `failed` flags, the
+`frame` it plays, that frame's `pose`, `last_query`, which is `None` until a
+search has run, and `query_dims`, the summed dimensions of the channels the node
+queries with, 0 before it is initialised. Its buffers are reused from one evaluation to the next.
 
 `MotionMatchingState::last_query()` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its

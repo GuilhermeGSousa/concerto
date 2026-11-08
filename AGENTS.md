@@ -46,6 +46,7 @@ cargo build --workspace
 cargo run -p tech-demo
 cargo run -p tech-demo -- --forest
 cargo run -p tech-demo -- --sanatorium
+cargo run -p tech-demo -- --retarget
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
@@ -67,7 +68,10 @@ the root, is what goes on a web host such as itch.io. `-- --forest` runs the for
 opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved by root
 motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
 method there; hold the right mouse button or the left trigger to aim, C or the
-east face button to lower the camera, Q or the right bumper to swap shoulders). The sanatorium's Blender source and exports are in
+east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
+level with the player swapped for the UAL1 character, driven by LAFAN1 motion
+matching through a retarget node; the NPC stays LAFAN1, and `--sanatorium` and
+`--forest` win over it. The sanatorium's Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
 editor's Import…, over a scratch copy of the project; there is no import
 command line. An example may have an `editor/` crate, named `<game>-editor`,

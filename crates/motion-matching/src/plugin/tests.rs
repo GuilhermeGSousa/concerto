@@ -46,7 +46,8 @@ use glam::{Quat, Vec3};
 use crate::{
     channel::FeatureChannelData,
     database::MotionDatabase,
-    node::MotionMatchingNode,
+    node::{trajectory_key, MotionMatchingDebug, MotionMatchingNode, MotionMatchingTrajectory},
+    simulation::TrajectorySample,
     test_support::{pace_database, skeleton, turn_left, unbaked, walk_forward, Pace},
 };
 
@@ -629,6 +630,137 @@ fn a_crossed_clip_event_is_heard_once_and_not_again_while_the_database_is_missin
     assert_eq!(heard(world), 1);
 }
 
+fn published(world: &World, player: Entity) -> &[MotionMatchingDebug] {
+    world
+        .get_component_for_entity::<AnimationPlayer>(player)
+        .unwrap()
+        .debug()
+        .get::<MotionMatchingDebug>()
+}
+
+#[test]
+fn the_node_publishes_its_frame_pose_and_flags_and_its_last_query_once_it_searched() {
+    let (mut app, database_handle, skeleton_handle, database) = stocked_app();
+    let world = app.main_mut().world_mut();
+    let graph_handle = add_graph(
+        world,
+        MotionMatchingNode {
+            database: database_handle.clone(),
+            search_period: 0.0,
+            ..Default::default()
+        },
+    );
+    let bones = (0..3)
+        .map(|_| SceneEntityRef::Entity(world.spawn(Transform::IDENTITY)))
+        .collect();
+    let player = world.spawn((
+        AnimationPlayer::new(3),
+        AnimationHandleComponent::new(graph_handle),
+        SkeletonComponent {
+            skeleton: skeleton_handle,
+            bones,
+            root: None,
+        },
+    ));
+    compile_schedules(world);
+    let (walk, turn) = (walk_forward(), turn_left());
+    let clips = [&walk, &turn];
+    world.run_schedule(LateUpdate);
+    world.run_schedule(LateUpdate);
+
+    let before = published(world, player);
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].database.id(), database_handle.id());
+    assert!(before[0].initialised);
+    assert!(!before[0].failed);
+    assert!(before[0].last_query.is_none());
+    assert_eq!(Some(before[0].query_dims), database.feature_dims());
+    assert_eq!(
+        before[0].pose,
+        database.pose(before[0].frame, &skeleton(), &clips).unwrap()
+    );
+
+    let samples = vec![
+        TrajectorySample {
+            velocity: Vec3::new(0.0, 0.0, -0.25),
+            ..Default::default()
+        };
+        2
+    ];
+    world
+        .get_component_for_entity_mut::<AnimationPlayer>(player)
+        .unwrap()
+        .set_param(
+            trajectory_key(),
+            MotionMatchingTrajectory {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                samples: samples.clone(),
+            },
+        );
+    world.run_schedule(LateUpdate);
+
+    let searched = &published(world, player)[0];
+    let last_query = searched.last_query.as_ref().unwrap();
+    assert!(searched.initialised);
+    assert_eq!(last_query.trajectory, samples);
+    assert!(last_query.best_cost.is_some());
+    assert_eq!(
+        searched.pose,
+        database.pose(searched.frame, &skeleton(), &clips).unwrap()
+    );
+    let pose = searched.pose.as_ptr();
+    let features = last_query.features.as_ptr();
+    let trajectory = last_query.trajectory.as_ptr();
+
+    world.run_schedule(LateUpdate);
+
+    let again = published(world, player);
+    assert_eq!(again.len(), 1);
+    let last_query = again[0].last_query.as_ref().unwrap();
+    assert_eq!(again[0].pose.as_ptr(), pose);
+    assert_eq!(last_query.features.as_ptr(), features);
+    assert_eq!(last_query.trajectory.as_ptr(), trajectory);
+}
+
+#[test]
+fn the_published_database_handle_is_weak_so_a_stale_value_keeps_nothing_loaded() {
+    let (mut app, _, skeleton_handle, database) = stocked_app();
+    let world = app.main_mut().world_mut();
+    let server = world.get_resource::<AssetServer>().unwrap().clone();
+    let database_handle = server.add(database);
+    handle_asset_load_events(world);
+    assert!(matches!(database_handle, AssetHandle::Strong(..)));
+    let graph_handle = add_live_graph(
+        world,
+        MotionMatchingNode {
+            database: database_handle.clone(),
+            ..Default::default()
+        },
+        Some(&server),
+    );
+    let bones = (0..3)
+        .map(|_| SceneEntityRef::Entity(world.spawn(Transform::IDENTITY)))
+        .collect();
+    let player = world.spawn((
+        AnimationPlayer::new(3),
+        AnimationHandleComponent::new(graph_handle),
+        SkeletonComponent {
+            skeleton: skeleton_handle,
+            bones,
+            root: None,
+        },
+    ));
+    compile_schedules(world);
+    world.run_schedule(LateUpdate);
+    world.run_schedule(LateUpdate);
+
+    let published = published(world, player);
+    assert_eq!(published.len(), 1);
+    assert!(matches!(published[0].database, AssetHandle::Weak(..)));
+    assert_eq!(published[0].database.id(), database_handle.id());
+}
+
 fn motion_app() -> App {
     let mut app = App::new();
     app.register_plugin(AssetManagerPlugin);
@@ -705,12 +837,20 @@ fn start_playing(
 }
 
 fn add_graph(world: &mut World, node: MotionMatchingNode) -> AssetHandle<AnimationGraph> {
+    add_live_graph(world, node, None)
+}
+
+fn add_live_graph(
+    world: &mut World,
+    node: MotionMatchingNode,
+    server: Option<&AssetServer>,
+) -> AssetHandle<AnimationGraph> {
     let mut type_registry = TypeRegistry::default();
     register_animation_types(&mut type_registry);
     type_registry.register::<MotionMatchingNode>();
     type_registry.register::<AssetHandle<MotionDatabase>>();
     let mut graph = AnimationGraph::from_node(node);
-    graph.make_live(&type_registry, None).unwrap();
+    graph.make_live(&type_registry, server).unwrap();
     let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
     world
         .get_resource_mut::<AssetStore<AnimationGraph>>()

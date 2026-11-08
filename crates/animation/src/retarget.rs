@@ -1,15 +1,26 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
-use concerto_foundation::assets::{Asset, CreatableAsset, LoadableAsset, handle::AssetHandle};
+use concerto_ecs::Res;
+use concerto_foundation::assets::{
+    Asset, CreatableAsset, LoadableAsset, asset_store::AssetStore, handle::AssetHandle,
+};
 use concerto_mesh::{
     JointName, JointPose, ReflectSkeletonSource, Skeleton, SkeletonError, SkeletonSource,
 };
 use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::{Mat4, Quat, Vec3};
+use log::warn;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::{clip::AnimationClip, pose::twist_about};
+use crate::{
+    clip::AnimationClip,
+    evaluation::{AnimationGraphContext, RootBone},
+    graph::{AnimationGraph, AnimationGraphState},
+    node::{AnimationNode, ReflectAnimationNode},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, twist_about},
+};
 
 /// A skeleton described for retargeting: its named bone chains, its retarget root and motion root, and the pose it is aligned in.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
@@ -667,6 +678,364 @@ impl fmt::Display for RetargetError {
 
 impl std::error::Error for RetargetError {}
 
+/// Plays `graph` on the source rig's skeleton, retargeted onto the player's, with nodes that read the world (foot placement, IK, look-at) kept outside it; it fails, until the player's graph changes, on a nested retarget node or an inner node whose `CreateInput` is not an update input.
+#[derive(Clone, Default, Reflect, Serialize, Deserialize)]
+#[reflect(AnimationNode)]
+pub struct RetargetNode {
+    pub graph: AssetHandle<AnimationGraph>,
+    pub source: AssetHandle<RetargetRig>,
+    pub target: AssetHandle<RetargetRig>,
+}
+
+impl RetargetNode {
+    /// A node playing `graph` on the skeleton of `source`, retargeted through `target` onto the player's skeleton.
+    pub fn new(
+        graph: AssetHandle<AnimationGraph>,
+        source: AssetHandle<RetargetRig>,
+        target: AssetHandle<RetargetRig>,
+    ) -> Self {
+        Self {
+            graph,
+            source,
+            target,
+        }
+    }
+
+    fn start(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        skeletons: &AssetStore<Skeleton>,
+        rigs: &AssetStore<RetargetRig>,
+        clips: &AssetStore<AnimationClip>,
+        context: &AnimationGraphContext<'_>,
+    ) -> Option<Stage> {
+        let player = context.skeleton()?;
+        let source_rig = rigs.get(&self.source)?;
+        let target_rig = rigs.get(&self.target)?;
+        let source_skeleton = skeletons.get(&source_rig.skeleton)?;
+        let target_skeleton = skeletons.get(&target_rig.skeleton)?;
+        let source_clip = reference_clip(source_rig, clips)?;
+        let target_clip = reference_clip(target_rig, clips)?;
+        let inner_graph = graphs.get(&self.graph)?;
+        if !inner_graph.is_live() {
+            return None;
+        }
+
+        let source = match source_rig.resolve(source_skeleton, source_clip) {
+            Ok(source) => source,
+            Err(error) => return Some(failed(format!("the source rig: {error}"), None)),
+        };
+        let target = match target_rig.resolve(target_skeleton, target_clip) {
+            Ok(target) => target,
+            Err(error) => return Some(failed(format!("the target rig: {error}"), None)),
+        };
+        if target_skeleton.bone_ids != player.bone_ids {
+            return Some(failed(
+                "the target rig's skeleton is not the player's skeleton",
+                None,
+            ));
+        }
+        if holds_retarget_node(inner_graph, graphs) {
+            return Some(failed(
+                "its inner graph holds a retarget node",
+                Some(target.reference_local.into_boxed_slice()),
+            ));
+        }
+        let retarget = match PoseRetarget::new(&source, source_skeleton, &target, target_skeleton) {
+            Ok(retarget) => retarget,
+            Err(error) => {
+                return Some(failed(
+                    error,
+                    Some(target.reference_local.into_boxed_slice()),
+                ));
+            }
+        };
+
+        let source_root = source_skeleton
+            .parents
+            .iter()
+            .position(Option::is_none)
+            .unwrap_or(0);
+        let mut running = Running {
+            inner: AnimationGraphState::default(),
+            retarget,
+            pool: FramePool::new(source_skeleton.bone_count()),
+            source_skeleton: source_rig.skeleton.clone(),
+            source_root,
+            source_root_reference: source.reference_local[source_root].clone(),
+            player_bone_ids: player.bone_ids.clone(),
+            finished: false,
+            warned: false,
+        };
+        running.pool.set_rest(&source_skeleton.rest_pose);
+        let inner_context = running.inner_context(context, source_skeleton);
+        running
+            .inner
+            .initialize(self.graph.clone(), graphs, &inner_context);
+        if let Some(node) = running.inner.stateless_node(graphs) {
+            return Some(failed(
+                format!(
+                    "its inner node {node} has no state; its CreateInput must be an update input"
+                ),
+                Some(target.reference_local.into_boxed_slice()),
+            ));
+        }
+        Some(Stage::Ready(Box::new(running)))
+    }
+}
+
+/// A [`RetargetNode`]'s progress: waiting for its assets, playing, or failed.
+pub struct RetargetNodeState {
+    stage: Stage,
+    reset_pending: bool,
+}
+
+impl RetargetNodeState {
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut AnimationGraphState> {
+        match &mut self.stage {
+            Stage::Ready(running) => Some(&mut running.inner),
+            Stage::Pending | Stage::Failed { .. } => None,
+        }
+    }
+}
+
+enum Stage {
+    Pending,
+    Ready(Box<Running>),
+    Failed { fallback: Option<Box<[JointPose]>> },
+}
+
+struct Running {
+    inner: AnimationGraphState,
+    retarget: PoseRetarget,
+    pool: FramePool,
+    source_skeleton: AssetHandle<Skeleton>,
+    source_root: usize,
+    source_root_reference: JointPose,
+    player_bone_ids: Box<[Uuid]>,
+    finished: bool,
+    warned: bool,
+}
+
+impl Running {
+    fn inner_context<'a>(
+        &self,
+        context: &AnimationGraphContext<'a>,
+        skeleton: &'a Skeleton,
+    ) -> AnimationGraphContext<'a> {
+        AnimationGraphContext {
+            blackboard: context.blackboard,
+            root: context.root().map(|root| RootBone {
+                index: self.source_root,
+                rest: self.source_root_reference.clone(),
+                up: root.up,
+            }),
+            skeleton: Some(skeleton),
+            model_to_world: context.model_to_world,
+            inputs: context.inputs,
+            debug: context.debug,
+        }
+    }
+
+    fn play(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+        source: &Skeleton,
+        output: &mut AnimationFrame,
+    ) {
+        let inner_context = self.inner_context(context, source);
+        let mut frame = self.pool.acquire();
+        if self.inner.evaluate(
+            graphs,
+            &inner_context,
+            &source.bone_ids,
+            &mut self.pool,
+            &mut frame,
+        ) {
+            match self
+                .retarget
+                .retarget_into(frame.joints(), output.pose_mut().joints_mut())
+            {
+                Ok(()) => {
+                    let motion = frame.root_motion();
+                    output.set_root_motion(RootMotion {
+                        translation: motion.translation * self.retarget.scale(),
+                        rotation: motion.rotation,
+                    });
+                }
+                Err(error) => {
+                    if !self.warned {
+                        warn!("RetargetNode does not retarget its inner pose: {error}");
+                        self.warned = true;
+                    }
+                }
+            }
+            for event in frame.events() {
+                output.push_event(*event);
+            }
+        }
+        self.pool.release(frame);
+    }
+}
+
+fn failed(reason: impl fmt::Display, fallback: Option<Box<[JointPose]>>) -> Stage {
+    warn!("RetargetNode does not play: {reason}");
+    Stage::Failed { fallback }
+}
+
+fn holds_retarget_node(graph: &AnimationGraph, graphs: &AssetStore<AnimationGraph>) -> bool {
+    let mut seen = HashSet::new();
+    let mut pending = vec![graph];
+    while let Some(graph) = pending.pop() {
+        for node in graph.live_nodes() {
+            if node.as_reflect().downcast_ref::<RetargetNode>().is_some() {
+                return true;
+            }
+            node.inner_graphs(&mut |handle| {
+                if seen.insert(handle.id())
+                    && let Some(state_graph) = graphs.get(handle)
+                {
+                    pending.push(state_graph);
+                }
+            });
+        }
+    }
+    false
+}
+
+fn reference_clip<'a>(
+    rig: &RetargetRig,
+    clips: &'a AssetStore<AnimationClip>,
+) -> Option<Option<&'a AnimationClip>> {
+    match &rig.reference {
+        ReferencePose::Rest => Some(None),
+        ReferencePose::ClipFrame { clip, .. } => clips.get(clip).map(Some),
+    }
+}
+
+impl AnimationNode for RetargetNode {
+    type State = RetargetNodeState;
+    type CreateInput = ();
+    type UpdateInput = (
+        Res<'static, AssetStore<AnimationGraph>>,
+        Res<'static, AssetStore<Skeleton>>,
+        Res<'static, AssetStore<RetargetRig>>,
+        Res<'static, AssetStore<AnimationClip>>,
+    );
+    type EvaluateInput = (
+        Res<'static, AssetStore<AnimationGraph>>,
+        Res<'static, AssetStore<Skeleton>>,
+    );
+
+    fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> RetargetNodeState {
+        RetargetNodeState {
+            stage: Stage::Pending,
+            reset_pending: false,
+        }
+    }
+
+    fn update(
+        &self,
+        state: &mut RetargetNodeState,
+        delta_time: f32,
+        (graphs, skeletons, rigs, clips): &(
+            Res<AssetStore<AnimationGraph>>,
+            Res<AssetStore<Skeleton>>,
+            Res<AssetStore<RetargetRig>>,
+            Res<AssetStore<AnimationClip>>,
+        ),
+        context: &AnimationGraphContext<'_>,
+    ) {
+        if matches!(state.stage, Stage::Pending)
+            && let Some(stage) = self.start(graphs, skeletons, rigs, clips, context)
+        {
+            state.stage = stage;
+        }
+        let Stage::Ready(running) = &mut state.stage else {
+            return;
+        };
+        if context
+            .skeleton()
+            .is_some_and(|player| player.bone_ids != running.player_bone_ids)
+        {
+            state.stage = failed("the player's skeleton changed", None);
+            return;
+        }
+        let Some(source) = skeletons.get(&running.source_skeleton) else {
+            return;
+        };
+        if state.reset_pending {
+            running.inner.reset(graphs);
+            state.reset_pending = false;
+        }
+        let inner_context = running.inner_context(context, source);
+        running.inner.update(delta_time, graphs, &inner_context);
+        running.finished = running.inner.is_finished(graphs);
+    }
+
+    fn evaluate(
+        &self,
+        state: &mut RetargetNodeState,
+        (graphs, skeletons): &(Res<AssetStore<AnimationGraph>>, Res<AssetStore<Skeleton>>),
+        context: &AnimationGraphContext<'_>,
+        _bone_ids: &[Uuid],
+        _evaluated_inputs: &[EvaluatedFrame],
+        _pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        match &mut state.stage {
+            Stage::Pending => {}
+            Stage::Ready(running) => {
+                if let Some(source) = skeletons.get(&running.source_skeleton) {
+                    running.play(graphs, context, source, output);
+                }
+            }
+            Stage::Failed { fallback } => {
+                if let Some(fallback) = fallback {
+                    for (joint, reference) in output
+                        .pose_mut()
+                        .joints_mut()
+                        .iter_mut()
+                        .zip(fallback.iter())
+                    {
+                        *joint = reference.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    fn reset(&self, state: &mut RetargetNodeState) {
+        state.reset_pending = true;
+        if let Stage::Ready(running) = &mut state.stage {
+            running.finished = false;
+        }
+    }
+
+    fn is_finished(&self, state: &RetargetNodeState) -> bool {
+        match &state.stage {
+            Stage::Pending => false,
+            Stage::Ready(running) => running.finished,
+            Stage::Failed { .. } => true,
+        }
+    }
+
+    fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
+        visit(&self.graph);
+    }
+
+    fn inner_states(
+        &self,
+        state: &mut RetargetNodeState,
+        visit: &mut dyn FnMut(&mut AnimationGraphState),
+    ) {
+        if let Some(inner) = state.inner_mut() {
+            visit(inner);
+        }
+    }
+}
+
 fn rig_fits(rig: &ResolvedRig, skeleton: &Skeleton) -> bool {
     let count = skeleton.bone_count();
     skeleton.validate().is_ok()
@@ -788,16 +1157,45 @@ fn sample_frame(skeleton: &Skeleton, clip: &AnimationClip, time: f32) -> Vec<Joi
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        cell::RefCell,
+        sync::{Mutex, Once},
+        thread::ThreadId,
+    };
+
+    use concerto_ecs::{
+        World,
+        resource::{Res, Resource},
+        system::input::{SystemInputData, register_input},
+    };
+    use concerto_foundation::assets::{
+        Asset, AssetId, asset_store::AssetStore, handle::AssetHandle,
+    };
     use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonError};
-    use concerto_name::Name;
+    use concerto_name::{Name, name};
+    use concerto_reflect::{Reflect, TypeRegistry};
     use glam::{Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{
         BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedRig, RetargetChain,
-        RetargetError, RetargetRig, RetargetSide, RigError,
+        RetargetError, RetargetNode, RetargetRig, RetargetSide, RigError, sample_frame,
     };
-    use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+    use crate::{
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        debug::AnimationDebug,
+        evaluation::{AnimationGraphContext, RootBone},
+        event::AnimationEvent,
+        graph::{AnimationGraph, made_live},
+        node::{
+            AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
+            ReflectAnimationNode, register_node_inputs, state_machine::AnimationStateMachine,
+        },
+        player::AnimationPlayer,
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
+        test_walks::Walks,
+    };
 
     const NAMES: [&str; 14] = [
         "root",
@@ -1551,7 +1949,7 @@ mod tests {
         fixture_skeleton(&bones, 2000)
     }
 
-    fn source_rig() -> ResolvedRig {
+    fn source_rig_asset() -> RetargetRig {
         RetargetRig::new()
             .with_root("hips")
             .with_chain(RetargetChain::new("spine", "spine_1", "spine_3"))
@@ -1560,6 +1958,10 @@ mod tests {
             .with_chain(RetargetChain::new("arm_l", "upper_l", "hand_l"))
             .with_chain(RetargetChain::new("leg_l", "thigh_l", "foot_l"))
             .with_chain(RetargetChain::new("fin_l", "fin_l", "fin_l"))
+    }
+
+    fn source_rig() -> ResolvedRig {
+        source_rig_asset()
             .resolve(&source_skeleton(), None)
             .unwrap()
     }
@@ -1580,7 +1982,7 @@ mod tests {
         target_rig_on(&doubled_target_skeleton())
     }
 
-    fn target_rig_on(skeleton: &Skeleton) -> ResolvedRig {
+    fn target_rig_asset() -> RetargetRig {
         RetargetRig::new()
             .with_motion_root("root")
             .with_root("pelvis")
@@ -1590,8 +1992,10 @@ mod tests {
             .with_chain(RetargetChain::new("arm_l", "upperarm_l", "hand_l"))
             .with_chain(RetargetChain::new("leg_l", "thigh_l", "foot_l"))
             .with_chain(RetargetChain::new("tail", "tail", "tail"))
-            .resolve(skeleton, None)
-            .unwrap()
+    }
+
+    fn target_rig_on(skeleton: &Skeleton) -> ResolvedRig {
+        target_rig_asset().resolve(skeleton, None).unwrap()
     }
 
     #[test]
@@ -2138,5 +2542,836 @@ mod tests {
             })
         );
         assert_eq!(out, vec![JointPose::IDENTITY; count - 1]);
+    }
+
+    struct Warning {
+        thread: ThreadId,
+        message: String,
+    }
+
+    static WARNINGS: Mutex<Vec<Warning>> = Mutex::new(Vec::new());
+
+    struct WarningCapture;
+
+    impl log::Log for WarningCapture {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record) {
+            if record.level() == log::Level::Warn
+                && record.target() == "concerto_animation::retarget"
+            {
+                WARNINGS.lock().unwrap().push(Warning {
+                    thread: std::thread::current().id(),
+                    message: record.args().to_string(),
+                });
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn warning_messages() -> Vec<String> {
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| {
+            log::set_logger(&WarningCapture).unwrap();
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        let me = std::thread::current().id();
+        WARNINGS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|warning| warning.thread == me)
+            .map(|warning| warning.message.clone())
+            .collect()
+    }
+
+    fn warnings() -> usize {
+        warning_messages().len()
+    }
+
+    const SOURCE_SKELETON: &str = "retarget_node_source_skeleton";
+    const TARGET_SKELETON: &str = "retarget_node_target_skeleton";
+    const SOURCE_RIG: &str = "retarget_node_source_rig";
+    const TARGET_RIG: &str = "retarget_node_target_rig";
+    const HELD_CLIP: &str = "retarget_node_held_clip";
+    const INNER_GRAPH: &str = "retarget_node_inner_graph";
+    const OUTER_GRAPH: &str = "retarget_node_outer_graph";
+    const INNER_CLIP: &str = "retarget_node_inner_clip";
+    const NESTED_GRAPH: &str = "retarget_node_nested_graph";
+
+    fn handle<A: Asset>(path: &str) -> AssetHandle<A> {
+        AssetHandle::weak(AssetId::from_path(path))
+    }
+
+    fn held_pose() -> Vec<JointPose> {
+        let skeleton = source_skeleton();
+        let deltas: Vec<Quat> = (0..skeleton.bone_count())
+            .map(|bone| {
+                Quat::from_euler(
+                    glam::EulerRot::XYZ,
+                    0.1 * bone as f32,
+                    -0.05 * bone as f32,
+                    0.15,
+                )
+            })
+            .collect();
+        posed(&skeleton, &deltas)
+    }
+
+    fn held_clip() -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        for (id, joint) in source_skeleton().bone_ids.iter().zip(held_pose()) {
+            clip.add_channel(
+                *id,
+                AnimationChannel::new(
+                    vec![0.0, 1.0],
+                    AnimationChanelOutput::Rotation(vec![joint.rotation; 2]),
+                ),
+            );
+        }
+        clip
+    }
+
+    fn node_target_rig() -> RetargetRig {
+        target_rig_asset().with_skeleton(handle(TARGET_SKELETON))
+    }
+
+    fn retargeted_held_pose() -> Vec<JointPose> {
+        retarget(
+            &mut source_to_target(),
+            &held_pose(),
+            target_skeleton().bone_count(),
+        )
+    }
+
+    fn evaluate_inputs<'a>(
+        context: &'a AnimationGraphContext<'a>,
+    ) -> &'a SystemInputData<'a, 'a, <RetargetNode as AnimationNode>::EvaluateInput> {
+        context
+            .inputs
+            .get::<<RetargetNode as AnimationNode>::EvaluateInput>()
+            .unwrap()
+    }
+
+    fn assert_poses(actual: &[JointPose], expected: &[JointPose]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert_pose(actual, expected);
+        }
+    }
+
+    struct Played {
+        walks: Walks,
+        player: AnimationPlayer,
+        player_skeleton: Skeleton,
+    }
+
+    impl Played {
+        fn new(player_skeleton: Skeleton) -> Self {
+            Self::registering(player_skeleton, |_| {})
+        }
+
+        fn registering(player_skeleton: Skeleton, register: impl FnOnce(&mut World)) -> Self {
+            let mut walks = Walks::with(AssetStore::new(), AssetStore::new(), register);
+            walks
+                .skeletons_mut()
+                .insert(AssetId::from_path(SOURCE_SKELETON), source_skeleton());
+            walks
+                .skeletons_mut()
+                .insert(AssetId::from_path(TARGET_SKELETON), target_skeleton());
+            walks
+                .clips_mut()
+                .insert(AssetId::from_path(HELD_CLIP), held_clip());
+            let outer = AnimationGraph::from_node(RetargetNode::new(
+                handle(INNER_GRAPH),
+                handle(SOURCE_RIG),
+                handle(TARGET_RIG),
+            ));
+            walks
+                .graphs_mut()
+                .insert(AssetId::from_path(OUTER_GRAPH), made_live(outer));
+            let mut player = AnimationPlayer::new(player_skeleton.bone_count());
+            walks.initialize(&mut player, handle(OUTER_GRAPH));
+            Self {
+                walks,
+                player,
+                player_skeleton,
+            }
+        }
+
+        fn loaded(player_skeleton: Skeleton, target: RetargetRig) -> Self {
+            let mut played = Self::new(player_skeleton);
+            played.load_rigs(target);
+            played.load_inner_graph();
+            played
+        }
+
+        fn playing(source: RetargetRig, clip: AnimationClip, inner: AnimationClipNode) -> Self {
+            let mut played = Self::new(target_skeleton());
+            played
+                .walks
+                .clips_mut()
+                .insert(AssetId::from_path(INNER_CLIP), clip);
+            played.load_rig_pair(source, node_target_rig());
+            played.load_inner(inner);
+            played
+        }
+
+        fn load_rigs(&mut self, target: RetargetRig) {
+            self.load_rig_pair(node_source_rig(), target);
+        }
+
+        fn load_rig_pair(&mut self, source: RetargetRig, target: RetargetRig) {
+            self.walks
+                .rigs_mut()
+                .insert(AssetId::from_path(SOURCE_RIG), source);
+            self.walks
+                .rigs_mut()
+                .insert(AssetId::from_path(TARGET_RIG), target);
+        }
+
+        fn load_inner_graph(&mut self) {
+            self.load_inner(AnimationClipNode::new(handle(HELD_CLIP)));
+        }
+
+        fn load_inner(&mut self, inner: AnimationClipNode) {
+            self.insert_inner(made_live(AnimationGraph::from_node(inner)));
+        }
+
+        fn insert_inner(&mut self, graph: AnimationGraph) {
+            self.walks
+                .graphs_mut()
+                .insert(AssetId::from_path(INNER_GRAPH), graph);
+        }
+
+        fn visits<N: AnimationNode>(&mut self) -> usize {
+            let mut visits = 0;
+            self.player
+                .for_each_state_mut::<N>(self.walks.graphs(), |_, _, _| visits += 1);
+            visits
+        }
+
+        fn advance(&mut self) {
+            self.advance_by(0.1);
+        }
+
+        fn advance_by(&mut self, delta_time: f32) {
+            self.walks
+                .advance_with(&mut self.player, delta_time, &self.player_skeleton);
+        }
+
+        fn pose(&mut self) -> Vec<JointPose> {
+            self.frame(None).joints().to_vec()
+        }
+
+        fn frame(&mut self, root: Option<RootBone>) -> AnimationFrame {
+            self.frame_publishing(root, &RefCell::default())
+        }
+
+        fn frame_publishing(
+            &mut self,
+            root: Option<RootBone>,
+            debug: &RefCell<AnimationDebug>,
+        ) -> AnimationFrame {
+            let skeleton = &self.player_skeleton;
+            let walks = &self.walks;
+            let mut frame = None;
+            self.player.for_each_state_mut::<RetargetNode>(
+                walks.graphs(),
+                |node, state, blackboard| {
+                    let mut pool = FramePool::new(skeleton.bone_count());
+                    pool.set_rest(&skeleton.rest_pose);
+                    let mut output = pool.acquire();
+                    walks.evaluate_publishing(
+                        blackboard,
+                        root.clone(),
+                        Some(skeleton),
+                        debug,
+                        |context| {
+                            node.evaluate(
+                                state,
+                                evaluate_inputs(context),
+                                context,
+                                &skeleton.bone_ids,
+                                &[],
+                                &mut pool,
+                                &mut output,
+                            )
+                        },
+                    );
+                    frame = Some(output);
+                },
+            );
+            frame.expect("the player plays a retarget node")
+        }
+
+        fn is_finished(&mut self) -> bool {
+            let mut finished = None;
+            self.player
+                .for_each_state_mut::<RetargetNode>(self.walks.graphs(), |node, state, _| {
+                    finished = Some(node.is_finished(state))
+                });
+            finished.expect("the player plays a retarget node")
+        }
+
+        fn reset(&mut self) {
+            self.player
+                .for_each_state_mut::<RetargetNode>(self.walks.graphs(), |node, state, _| {
+                    node.reset(state)
+                });
+        }
+    }
+
+    fn node_source_rig() -> RetargetRig {
+        source_rig_asset().with_skeleton(handle(SOURCE_SKELETON))
+    }
+
+    fn inner_clip() -> AnimationClipNode {
+        AnimationClipNode::new(handle(INNER_CLIP))
+    }
+
+    fn turning_clip() -> AnimationClip {
+        let skeleton = source_skeleton();
+        let spine = bone(&skeleton, "spine_2");
+        let rest = skeleton.rest_pose[spine].rotation;
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            skeleton.bone_ids[spine],
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::Rotation(vec![rest, about_x(60.0) * rest]),
+            ),
+        );
+        clip
+    }
+
+    fn retargeted_turning_pose(time: f32) -> Vec<JointPose> {
+        retarget(
+            &mut source_to_target(),
+            &sample_frame(&source_skeleton(), &turning_clip(), time),
+            target_skeleton().bone_count(),
+        )
+    }
+
+    #[test]
+    fn a_retarget_node_plays_its_inner_graph_retargeted_onto_the_player_skeleton() {
+        let mut played = Played::loaded(target_skeleton(), node_target_rig());
+
+        played.advance();
+
+        assert_poses(&played.pose(), &retargeted_held_pose());
+    }
+
+    #[test]
+    fn a_retarget_node_holds_the_rest_pose_until_its_rigs_and_inner_graph_load() {
+        let rest = target_skeleton().rest_pose.to_vec();
+        let mut played = Played::new(target_skeleton());
+
+        played.advance();
+        assert_poses(&played.pose(), &rest);
+
+        played.load_rigs(node_target_rig());
+        played.advance();
+        assert_poses(&played.pose(), &rest);
+
+        played.load_inner_graph();
+        played.advance();
+        assert_poses(&played.pose(), &retargeted_held_pose());
+    }
+
+    #[test]
+    fn a_target_rig_on_another_skeleton_than_the_player_gives_the_rest_pose_and_one_warning() {
+        let before = warnings();
+        let rest = source_skeleton().rest_pose.to_vec();
+        let mut played = Played::loaded(source_skeleton(), node_target_rig());
+
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &rest);
+        }
+
+        assert_eq!(warnings() - before, 1);
+    }
+
+    #[test]
+    fn rigs_sharing_no_chain_give_the_target_reference_pose_and_one_warning() {
+        let before = warnings();
+        let target = RetargetRig::new()
+            .with_skeleton(handle(TARGET_SKELETON))
+            .with_motion_root("root")
+            .with_root("pelvis")
+            .with_chain(RetargetChain::new("tail", "tail", "tail"))
+            .with_correction(BoneCorrection::new("spine_02", about_x(30.0)));
+        let reference = target
+            .resolve(&target_skeleton(), None)
+            .unwrap()
+            .reference_local;
+        let mut played = Played::loaded(target_skeleton(), target);
+
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &reference);
+        }
+
+        assert_eq!(warnings() - before, 1);
+    }
+
+    #[test]
+    fn an_outer_root_nets_the_inner_pose_against_the_source_reference_and_scales_its_root_motion() {
+        let source_skeleton = source_skeleton();
+        let hips = bone(&source_skeleton, "hips");
+        let hips_rest = source_skeleton.rest_pose[hips].rotation;
+        let source = node_source_rig().with_correction(BoneCorrection::new(
+            "hips",
+            hips_rest.inverse() * Quat::from_rotation_y(0.5) * hips_rest,
+        ));
+        let mut moving = AnimationClip::default();
+        moving.add_channel(
+            source_skeleton.bone_ids[hips],
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::Translation(vec![
+                    Vec3::new(0.0, 1.0, 0.0),
+                    Vec3::new(2.0, 1.0, 4.0),
+                ]),
+            ),
+        );
+        let mut played = Played::playing(source, moving, inner_clip());
+        let target = target_skeleton();
+        let outer_root = RootBone {
+            index: 0,
+            rest: target.rest_pose[0].clone(),
+            up: Vec3::Y,
+        };
+
+        played.advance();
+        let frame = played.frame(Some(outer_root));
+
+        assert_poses(frame.joints(), &target.rest_pose);
+        assert_vec3(
+            frame.root_motion().translation,
+            Vec3::new(0.2, 0.0, 0.4) * source_to_target().scale(),
+        );
+        assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
+    }
+
+    #[test]
+    fn a_clip_event_fired_in_the_inner_graph_reaches_the_output_frame() {
+        let mut clip = held_clip();
+        clip.add_event(
+            0.05,
+            AnimationEvent {
+                name: Name::new("step"),
+            },
+        );
+        let mut played = Played::playing(node_source_rig(), clip, inner_clip());
+
+        played.advance();
+
+        assert_eq!(
+            played.frame(None).events(),
+            [FiredEvent {
+                clip: AssetId::from_path(INNER_CLIP),
+                key: 0,
+                time: 0.05,
+                weight: 1.0,
+                mirrored: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_retarget_node_finishes_with_its_inner_one_shot_clip_and_not_while_pending() {
+        let mut played = Played::new(target_skeleton());
+        played.load_rigs(node_target_rig());
+
+        played.advance();
+        assert!(!played.is_finished());
+
+        played.load_inner(
+            AnimationClipNode::new(handle(HELD_CLIP)).with_play_mode(AnimationPlayMode::PlayOnce),
+        );
+        played.advance_by(0.5);
+        assert!(!played.is_finished());
+
+        played.advance_by(0.75);
+        assert!(played.is_finished());
+    }
+
+    #[test]
+    fn reset_restarts_the_inner_graph_clip() {
+        let mut played = Played::playing(node_source_rig(), turning_clip(), inner_clip());
+        played.advance();
+        played.advance_by(0.4);
+
+        played.reset();
+        played.advance();
+
+        assert_poses(&played.pose(), &retargeted_turning_pose(0.1));
+    }
+
+    #[test]
+    fn the_inner_clip_reads_its_play_rate_from_the_player_blackboard() {
+        let mut played = Played::playing(
+            node_source_rig(),
+            turning_clip(),
+            inner_clip().with_play_rate_param(Name::new("speed")),
+        );
+        played.player.set_float_param(Name::new("speed"), 3.0);
+
+        played.advance();
+
+        assert_poses(&played.pose(), &retargeted_turning_pose(0.1 * 3.0));
+    }
+
+    fn nested_retarget_node() -> RetargetNode {
+        RetargetNode::new(handle(INNER_GRAPH), handle(SOURCE_RIG), handle(TARGET_RIG))
+    }
+
+    fn node_target_reference() -> Vec<JointPose> {
+        node_target_rig()
+            .resolve(&target_skeleton(), None)
+            .unwrap()
+            .reference_local
+    }
+
+    #[test]
+    fn an_inner_graph_holding_a_retarget_node_is_refused() {
+        let before = warnings();
+        let reference = node_target_reference();
+        let mut played = Played::new(target_skeleton());
+        played.load_rigs(node_target_rig());
+        played.insert_inner(made_live(AnimationGraph::from_node(nested_retarget_node())));
+
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &reference);
+        }
+
+        assert_eq!(played.visits::<RetargetNode>(), 1);
+        assert!(played.is_finished());
+        assert_eq!(warnings() - before, 1);
+    }
+
+    #[test]
+    fn an_inner_state_machine_state_holding_a_retarget_node_is_refused() {
+        let before = warnings();
+        let reference = node_target_reference();
+        let mut played = Played::new(target_skeleton());
+        played.load_rigs(node_target_rig());
+        played.walks.graphs_mut().insert(
+            AssetId::from_path(NESTED_GRAPH),
+            made_live(AnimationGraph::from_node(nested_retarget_node())),
+        );
+        played.insert_inner(made_live(AnimationGraph::from_node(
+            AnimationStateMachine::from_initial_state(
+                name!("nested"),
+                handle(NESTED_GRAPH),
+                |_| {},
+            )
+            .build(),
+        )));
+
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &reference);
+        }
+
+        assert_eq!(played.visits::<AnimationStateMachine>(), 0);
+        assert_eq!(warnings() - before, 1);
+    }
+
+    #[test]
+    fn for_each_state_mut_visits_a_node_inside_the_inner_graph() {
+        let mut played = Played::playing(node_source_rig(), turning_clip(), inner_clip());
+        assert_eq!(played.visits::<AnimationClipNode>(), 0);
+
+        played.advance();
+
+        assert_eq!(played.visits::<AnimationClipNode>(), 1);
+    }
+
+    #[derive(Debug, Default, PartialEq)]
+    struct InnerValue(u32);
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct InnerPublisher {}
+
+    impl AnimationNode for InnerPublisher {
+        type State = ();
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
+
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut (),
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+            context.publish::<InnerValue>(|value| value.0 = 7);
+        }
+
+        fn reset(&self, _: &mut ()) {}
+    }
+
+    #[test]
+    fn a_value_published_inside_the_inner_graph_reaches_the_outer_sink() {
+        let mut played =
+            Played::registering(target_skeleton(), register_node_inputs::<InnerPublisher>);
+        played.load_rigs(node_target_rig());
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<InnerPublisher>();
+        let mut inner = AnimationGraph::from_node(InnerPublisher {});
+        inner.make_live(&registry, None).unwrap();
+        played.insert_inner(inner);
+        played.advance();
+        let debug = RefCell::default();
+
+        played.frame_publishing(None, &debug);
+
+        assert_eq!(debug.borrow().get::<InnerValue>(), [InnerValue(7)]);
+    }
+
+    #[derive(Resource)]
+    struct CreateOnly;
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct CreatedOnce {}
+
+    impl AnimationNode for CreatedOnce {
+        type State = ();
+        type CreateInput = Res<'static, CreateOnly>;
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &Res<CreateOnly>, _context: &AnimationGraphContext<'_>) {}
+
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut (),
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+        }
+
+        fn reset(&self, _: &mut ()) {}
+    }
+
+    fn played_with_create_only() -> Played {
+        let mut played = Played::registering(target_skeleton(), |world| {
+            register_input::<CreateNodeInputs, Res<'static, CreateOnly>>(world);
+            world.insert_resource(CreateOnly);
+        });
+        played.load_rigs(node_target_rig());
+        played
+    }
+
+    fn created_once_graph() -> AnimationGraph {
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<CreatedOnce>();
+        let mut graph = AnimationGraph::from_node(CreatedOnce {});
+        graph.make_live(&registry, None).unwrap();
+        graph
+    }
+
+    fn assert_fails_once_naming_created_once(played: &mut Played) {
+        let before = warnings();
+
+        played.advance();
+        played.pose();
+        let after_first = warnings();
+        for _ in 0..2 {
+            played.advance();
+            played.pose();
+        }
+
+        let failures: Vec<String> = warning_messages()
+            .split_off(before)
+            .into_iter()
+            .filter(|message| message.starts_with("RetargetNode does not play"))
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("CreatedOnce"), "{}", failures[0]);
+        assert_eq!(warnings(), after_first);
+        assert!(played.is_finished());
+    }
+
+    #[test]
+    fn an_inner_node_whose_create_input_is_not_an_update_input_fails_the_node_with_one_warning() {
+        let mut played = played_with_create_only();
+        played.insert_inner(created_once_graph());
+
+        assert_fails_once_naming_created_once(&mut played);
+    }
+
+    #[test]
+    fn an_inner_state_machine_state_node_whose_create_input_is_not_an_update_input_fails_the_node()
+    {
+        let mut played = played_with_create_only();
+        played
+            .walks
+            .graphs_mut()
+            .insert(AssetId::from_path(NESTED_GRAPH), created_once_graph());
+        played.insert_inner(made_live(AnimationGraph::from_node(
+            AnimationStateMachine::from_initial_state(
+                name!("created"),
+                handle(NESTED_GRAPH),
+                |_| {},
+            )
+            .build(),
+        )));
+
+        assert_fails_once_naming_created_once(&mut played);
+    }
+
+    fn renamed_target_skeleton() -> Skeleton {
+        let mut skeleton = target_skeleton();
+        skeleton.bone_ids = (0..skeleton.bone_count() as u128)
+            .map(|bone| Uuid::from_u128(3000 + bone))
+            .collect();
+        skeleton
+    }
+
+    #[test]
+    fn a_player_skeleton_changed_while_playing_gives_the_rest_pose_and_one_warning() {
+        let rest = target_skeleton().rest_pose.to_vec();
+        let mut played = Played::loaded(target_skeleton(), node_target_rig());
+        played.advance();
+        assert_poses(&played.pose(), &retargeted_held_pose());
+        let before = warnings();
+
+        played.player_skeleton = renamed_target_skeleton();
+        for _ in 0..3 {
+            played.advance();
+            assert_poses(&played.pose(), &rest);
+        }
+
+        assert_eq!(warnings() - before, 1);
+        assert!(played.is_finished());
+    }
+
+    fn short_target_skeleton() -> Skeleton {
+        let skeleton = target_skeleton();
+        let count = 3;
+        Skeleton::new(
+            skeleton.inverse_bindposes[..count].to_vec(),
+            skeleton.parents[..count].to_vec(),
+            skeleton.names[..count].to_vec(),
+            skeleton.rest_pose[..count].to_vec(),
+            skeleton.bone_ids[..count].to_vec(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_output_shorter_than_the_target_skeleton_keeps_its_rest_pose_and_passes_events_with_one_warning()
+     {
+        let mut clip = turning_clip();
+        clip.add_event(
+            0.05,
+            AnimationEvent {
+                name: Name::new("step"),
+            },
+        );
+        let mut played = Played::playing(node_source_rig(), clip, inner_clip());
+        played.advance();
+        let rest = short_target_skeleton().rest_pose.to_vec();
+        let before = warnings();
+
+        played.player_skeleton = short_target_skeleton();
+        for _ in 0..3 {
+            let frame = played.frame(None);
+            assert_poses(frame.joints(), &rest);
+            assert_vec3(frame.root_motion().translation, Vec3::ZERO);
+            assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
+            assert_eq!(frame.events().len(), 1);
+            assert_eq!(frame.events()[0].clip, AssetId::from_path(INNER_CLIP));
+        }
+
+        assert_eq!(warnings() - before, 1);
+    }
+
+    const REFERENCE_CLIP: &str = "retarget_node_reference_clip";
+
+    fn source_rest_clip() -> AnimationClip {
+        let skeleton = source_skeleton();
+        let mut clip = AnimationClip::default();
+        for (id, joint) in skeleton.bone_ids.iter().zip(skeleton.rest_pose.iter()) {
+            clip.add_channel(
+                *id,
+                AnimationChannel::new(
+                    vec![0.0, 1.0],
+                    AnimationChanelOutput::Rotation(vec![joint.rotation; 2]),
+                ),
+            );
+        }
+        clip
+    }
+
+    #[test]
+    fn a_retarget_node_stays_pending_until_its_reference_clip_loads() {
+        let rest = target_skeleton().rest_pose.to_vec();
+        let mut played = Played::new(target_skeleton());
+        played.load_rig_pair(
+            node_source_rig().with_reference(ReferencePose::ClipFrame {
+                clip: handle(REFERENCE_CLIP),
+                time: 0.0,
+            }),
+            node_target_rig(),
+        );
+        played.load_inner_graph();
+        let before = warnings();
+
+        for _ in 0..2 {
+            played.advance();
+            assert_poses(&played.pose(), &rest);
+            assert!(!played.is_finished());
+        }
+        assert_eq!(warnings(), before);
+
+        played
+            .walks
+            .clips_mut()
+            .insert(AssetId::from_path(REFERENCE_CLIP), source_rest_clip());
+        played.advance();
+
+        assert_poses(&played.pose(), &retargeted_held_pose());
+    }
+
+    #[test]
+    fn reset_clears_a_finished_inner_graph_before_the_next_update() {
+        let mut played = Played::new(target_skeleton());
+        played.load_rigs(node_target_rig());
+        played.load_inner(
+            AnimationClipNode::new(handle(HELD_CLIP)).with_play_mode(AnimationPlayMode::PlayOnce),
+        );
+        played.advance_by(1.5);
+        assert!(played.is_finished());
+
+        played.reset();
+
+        assert!(!played.is_finished());
     }
 }

@@ -1,9 +1,12 @@
+use std::cell::RefCell;
+
 use concerto_ecs::system::input::Inputs;
 use concerto_mesh::Skeleton;
 use glam::{Affine3A, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
+    debug::AnimationDebug,
     pose::{EvaluatedFrame, JointPose},
 };
 
@@ -56,6 +59,7 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) skeleton: Option<&'a Skeleton>,
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
+    pub(crate) debug: Option<&'a RefCell<AnimationDebug>>,
 }
 
 impl<'a> AnimationGraphContext<'a> {
@@ -76,5 +80,12 @@ impl<'a> AnimationGraphContext<'a> {
     /// In `evaluate`, the world transform of the skeleton's model space: the `GlobalTransform` of bone 0's parent, or identity when it has none.
     pub fn model_to_world(&self) -> Option<Affine3A> {
         self.model_to_world
+    }
+
+    /// In `evaluate`, fills the next value of type `T` the player publishes, reusing last evaluation's value and its buffers; `fill` must not publish.
+    pub fn publish<T: Default + Send + Sync + 'static>(&self, fill: impl FnOnce(&mut T)) {
+        if let Some(debug) = self.debug {
+            debug.borrow_mut().publish(fill);
+        }
     }
 }

@@ -187,8 +187,13 @@ fn play_database(
 fn frame_shapes(shown: &BakedPlayback, frame: usize) -> Option<Vec<Vec<FeatureShape>>> {
     let clips = sampled_clips(shown);
     let baked = BakedFrame::new(&shown.database, &shown.skeleton, &clips, frame)?;
+    let channels: Vec<&dyn FeatureChannel> = shown
+        .channels
+        .iter()
+        .map(|channel| channel.as_ref())
+        .collect();
     Some(preview_features(
-        &shown.channels,
+        &channels,
         &baked.context(&shown.skeleton),
         shown.database.features(frame)?,
     ))

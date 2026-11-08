@@ -47,9 +47,10 @@ use concerto_procedural_animation_gizmos::FootLockGizmos;
 use glam::{EulerRot, Quat, Vec3};
 
 use crate::grid::Patrol;
+use crate::retarget::{RetargetedPlayer, retargeted_character};
 
 const CHARACTER_SCENE: AssetId = asset_id!("content/lafan1/model_skeleton/scene.gasset");
-const DATABASE: AssetId = asset_id!("content/lafan_database.gasset");
+pub(crate) const DATABASE: AssetId = asset_id!("content/lafan_database.gasset");
 
 const WALLS: [(Vec3, Vec3); 2] = [
     (Vec3::new(0.0, 1.0, -18.0), Vec3::new(6.0, 2.0, 0.5)),
@@ -179,10 +180,25 @@ impl NpcSpawner {
     }
 }
 
+/// The scene a visible character spawns and the graph its skeleton plays.
+pub(crate) struct CharacterAssets {
+    pub(crate) scene: AssetHandle<Scene>,
+    pub(crate) graph: AssetHandle<AnimationGraph>,
+}
+
+impl CharacterAssets {
+    fn lafan1(asset_server: &AssetServer) -> Self {
+        Self {
+            scene: asset_server.load(CHARACTER_SCENE),
+            graph: asset_server.add(character_graph(asset_server.load(DATABASE))),
+        }
+    }
+}
+
 fn spawn_capsule(
     placement: Transform,
     config: &CharacterConfig,
-    asset_server: &AssetServer,
+    character: CharacterAssets,
     cmd: &mut CommandQueue,
 ) -> Entity {
     let collider = Collider::capsule(config.height * 0.5 - config.radius, config.radius);
@@ -202,23 +218,26 @@ fn spawn_capsule(
         ))
         .entity();
 
-    let graph = asset_server.add(character_graph(asset_server.load(DATABASE)));
     cmd.spawn((
         placement,
         config.displacement.clone(),
         MotionMatchingGizmos::default(),
-        SceneSpawnerComponent(asset_server.load::<Scene>(CHARACTER_SCENE)),
-        PendingLink { capsule, graph },
+        SceneSpawnerComponent(character.scene),
+        PendingLink {
+            capsule,
+            graph: character.graph,
+        },
     ));
     capsule
 }
 
-/// Spawns the capsule and the visible character at the spawner, once the ground has its collider.
+/// Spawns the capsule and the visible character at the spawner, once the ground has its collider; the character is UAL1, retargeted, when the level has `RetargetedPlayer`, and LAFAN1's otherwise.
 pub(crate) fn spawn_character(
     spawners: Query<(&Transform, &mut PlayerSpawner)>,
     pending_ground: Query<Entity, (With<MeshCollider>, With<MeshComponent>, Without<Collider>)>,
     asset_server: Res<AssetServer>,
     config: Res<CharacterConfig>,
+    retargeted: Option<Res<RetargetedPlayer>>,
     mut cmd: CommandQueue,
 ) {
     if pending_ground.iter().next().is_some() {
@@ -232,7 +251,12 @@ pub(crate) fn spawn_character(
 
         let placement =
             Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation);
-        let capsule = spawn_capsule(placement, &config, &asset_server, &mut cmd);
+        let character = if retargeted.is_some() {
+            retargeted_character(&asset_server)
+        } else {
+            CharacterAssets::lafan1(&asset_server)
+        };
+        let capsule = spawn_capsule(placement, &config, character, &mut cmd);
         cmd.insert(Player::default(), capsule);
 
         let (yaw, _, _) = spawn_point.rotation.to_euler(EulerRot::YXZ);
@@ -290,21 +314,26 @@ pub(crate) fn spawn_npc(
         }
         let placement =
             Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation);
-        let capsule = spawn_capsule(placement, &config, &asset_server, &mut cmd);
+        let capsule = spawn_capsule(
+            placement,
+            &config,
+            CharacterAssets::lafan1(&asset_server),
+            &mut cmd,
+        );
         cmd.insert((NavAgent::new(), Patrol::default()), capsule);
         spawner.should_spawn = false;
     }
 }
 
-fn foot_placement_weight() -> Name {
+pub(crate) fn foot_placement_weight() -> Name {
     name!("foot_placement_weight")
 }
 
-fn foot_placement_ignore() -> Name {
+pub(crate) fn foot_placement_ignore() -> Name {
     name!("foot_placement_ignore")
 }
 
-fn foot_lock_weight() -> Name {
+pub(crate) fn foot_lock_weight() -> Name {
     name!("foot_lock_weight")
 }
 
@@ -635,6 +664,7 @@ pub(crate) fn cycle_displacement(characters: Query<&mut CharacterDisplacement>, 
 mod tests {
     use concerto::animation::graph::{AnimationGraph, AnimationNodeIndex};
     use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
+    use concerto::animation::retarget::{PoseRetarget, RetargetNode, RetargetRig};
     use concerto::app::{
         App,
         schedule_groups::{LateFixedUpdate, LateUpdate},
@@ -655,7 +685,7 @@ mod tests {
         },
         transform::Transform,
     };
-    use concerto::mesh::{Mesh, MeshComponent};
+    use concerto::mesh::{Mesh, MeshComponent, Skeleton};
     use concerto::motion_matching::{
         Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp,
         DesiredMotion, MotionDatabase, MotionMatchingNode, Synchronization,
@@ -694,11 +724,15 @@ mod tests {
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
     use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
 
+    use crate::retarget::{
+        LAFAN1_SKELETON, RetargetedPlayer, UAL1_SCENE, UAL1_SKELETON, lafan1_rig, ual1_rig,
+    };
+
     use super::{
-        CHARACTER_SCENE, CharacterConfig, DATABASE, PendingLink, Player, PlayerSpawner, RUN, WALK,
-        bind_controls, character_graph, cycle_displacement, debug_keys, facing,
+        CHARACTER_SCENE, CharacterConfig, DATABASE, NpcSpawner, PendingLink, Player, PlayerSpawner,
+        RUN, WALK, bind_controls, character_graph, cycle_displacement, debug_keys, facing,
         feed_foot_placement, foot_lock_weight, foot_placement_ignore, foot_placement_weight,
-        movement, setup_character_animations, spawn_character, spawn_forest_walls,
+        movement, setup_character_animations, spawn_character, spawn_forest_walls, spawn_npc,
         update_camera_stance, update_movement,
     };
 
@@ -1117,6 +1151,118 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_retargeted_character_locks_then_places_the_feet_on_lafan1_motion_matching_retargeted_onto_ual1()
+     {
+        let (mut world, _) = world_with_spawner();
+        world.insert_resource(RetargetedPlayer);
+        spawned(&mut world);
+        handle_asset_load_events(&mut world);
+        let scenes: Vec<AssetId> = visible_characters(&mut world)
+            .into_iter()
+            .map(|(.., scene)| scene)
+            .collect();
+        assert_eq!(scenes, vec![UAL1_SCENE]);
+        let handle = world
+            .query::<&PendingLink, ()>()
+            .iter(&mut world)
+            .map(|pending| pending.graph.clone())
+            .next()
+            .unwrap();
+
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let graph = graphs.get(&handle).unwrap();
+        let nodes: Vec<_> = graph.nodes().collect();
+        let of_type = |type_name: &str| {
+            graph
+                .iter()
+                .filter(|index| nodes[index.index()].type_name() == type_name)
+                .collect::<Vec<AnimationNodeIndex>>()
+        };
+        let inputs = |index: AnimationNodeIndex| {
+            graph
+                .get_node_inputs(index)
+                .map(|input| nodes[input.index()].type_name())
+                .collect::<Vec<_>>()
+        };
+        let placements = of_type(std::any::type_name::<FootPlacementNode>());
+        let locks = of_type(std::any::type_name::<FootLockNode>());
+        let retargets = of_type(std::any::type_name::<RetargetNode>());
+        assert_eq!(placements.len(), 1);
+        assert_eq!(locks.len(), 1);
+        assert_eq!(retargets.len(), 1);
+        assert_eq!(
+            inputs(placements[0]),
+            vec![std::any::type_name::<FootLockNode>()]
+        );
+        assert_eq!(
+            inputs(locks[0]),
+            vec![std::any::type_name::<RetargetNode>()]
+        );
+        assert!(inputs(retargets[0]).is_empty());
+        let expected_lock = FootLockNode::new()
+            .with_leg(FootLockLeg::new("foot_l").with_toe("ball_l"))
+            .with_leg(FootLockLeg::new("foot_r").with_toe("ball_r"))
+            .with_weight_param(name!("foot_lock_weight"));
+        assert_eq!(
+            nodes[locks[0].index()].value().unwrap().into_owned(),
+            to_value(&expected_lock).unwrap()
+        );
+        let expected_placement = FootPlacementNode::new("pelvis")
+            .with_leg(FootPlacementLeg::new("foot_l").with_toe("ball_l"))
+            .with_leg(FootPlacementLeg::new("foot_r").with_toe("ball_r"))
+            .with_weight_param(name!("foot_placement_weight"))
+            .with_ignore_param(name!("foot_placement_ignore"));
+        assert_eq!(
+            nodes[placements[0].index()].value().unwrap().into_owned(),
+            to_value(&expected_placement).unwrap()
+        );
+
+        let mut retarget = RetargetNode::default();
+        assert!(
+            apply_value(&mut retarget, &nodes[retargets[0].index()].value().unwrap()).is_empty()
+        );
+        let inner = graphs.get(&retarget.graph).unwrap();
+        let matchers: Vec<_> = inner
+            .nodes()
+            .filter(|node| node.type_name() == std::any::type_name::<MotionMatchingNode>())
+            .map(|node| node.value().unwrap().into_owned())
+            .collect();
+        let expected_matcher = MotionMatchingNode {
+            database: AssetHandle::weak(DATABASE),
+            ..Default::default()
+        };
+        assert_eq!(matchers, vec![to_value(&expected_matcher).unwrap()]);
+        assert_eq!(inner.nodes().count(), 2);
+
+        let rigs = world.get_resource::<AssetStore<RetargetRig>>().unwrap();
+        assert_eq!(
+            to_value(rigs.get(&retarget.source).unwrap()).unwrap(),
+            to_value(&lafan1_rig(AssetHandle::weak(LAFAN1_SKELETON))).unwrap()
+        );
+        assert_eq!(
+            to_value(rigs.get(&retarget.target).unwrap()).unwrap(),
+            to_value(&ual1_rig(AssetHandle::weak(UAL1_SKELETON))).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_npc_keeps_lafan1_when_the_player_is_retargeted() {
+        let (mut world, _) = world_with_spawner();
+        world.insert_resource(RetargetedPlayer);
+        world.spawn((Transform::default(), NpcSpawner::ready()));
+
+        let mut system = spawn_npc.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let scenes: Vec<AssetId> = visible_characters(&mut world)
+            .into_iter()
+            .map(|(.., scene)| scene)
+            .collect();
+        assert_eq!(scenes, vec![CHARACTER_SCENE]);
+    }
+
     struct FedPlayer {
         app: App,
         capsule: Entity,
@@ -1299,6 +1445,34 @@ mod tests {
         );
     }
 
+    fn committed_skeleton(path: &str) -> Skeleton {
+        let bytes =
+            std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
+        decode_content_asset::<Skeleton>(&bytes).unwrap().1
+    }
+
+    #[test]
+    fn the_lafan1_and_ual1_rigs_resolve_against_their_committed_skeletons_and_retarget() {
+        let lafan1 = committed_skeleton("content/lafan1/model_skeleton/skeleton_0.gasset");
+        let ual1 = committed_skeleton("content/UAL1/skeleton_0.gasset");
+
+        let source = lafan1_rig(AssetHandle::weak(LAFAN1_SKELETON))
+            .resolve(&lafan1, None)
+            .unwrap();
+        let target = ual1_rig(AssetHandle::weak(UAL1_SKELETON))
+            .resolve(&ual1, None)
+            .unwrap();
+
+        assert!(PoseRetarget::new(&source, &lafan1, &target, &ual1).is_ok());
+
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("content/lafan_database.gasset"),
+        )
+        .unwrap();
+        let database = decode_content_asset::<MotionDatabase>(&bytes).unwrap().1;
+        assert_eq!(database.skeleton.id(), LAFAN1_SKELETON);
+    }
+
     fn stored<A: Asset + 'static>(world: &mut World, server: &mut AssetServer) {
         let store = AssetStore::<A>::new();
         server.register_asset(&store);
@@ -1316,6 +1490,8 @@ mod tests {
         stored::<StandardMaterial>(&mut world, &mut server);
         stored::<AnimationGraph>(&mut world, &mut server);
         stored::<MotionDatabase>(&mut world, &mut server);
+        stored::<RetargetRig>(&mut world, &mut server);
+        stored::<Skeleton>(&mut world, &mut server);
         world.insert_resource(server);
         world.insert_resource(CharacterConfig::forest());
         let spawn_point = Vec3::new(3.0, 1.5, -7.0);

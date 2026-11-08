@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{cell::RefCell, mem, ops::Deref};
 
 use concerto_ecs::{
     Entity,
@@ -18,9 +18,10 @@ use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
+    debug::AnimationDebug,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex},
-    node::{AnimationNode, ErasedAnimationNode, NodeState},
+    node::{ErasedAnimationNode, NodeState},
     pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
 };
@@ -48,6 +49,7 @@ pub struct AnimationPlayer {
     frame_pool: FramePool,
     paused: bool,
     event_threshold: f32,
+    debug: AnimationDebug,
     pub(crate) fired: Vec<FiredEvent>,
 }
 
@@ -59,6 +61,7 @@ impl AnimationPlayer {
             frame_pool: FramePool::new(bone_count),
             paused: false,
             event_threshold: 0.0,
+            debug: AnimationDebug::default(),
             fired: Vec::new(),
         }
     }
@@ -128,8 +131,15 @@ impl AnimationPlayer {
         self.blackboard.get_vec2(key)
     }
 
+    /// What the nodes of the player's graph published on its last evaluation.
+    pub fn debug(&self) -> &AnimationDebug {
+        &self.debug
+    }
+
     /// Calls `f` with each live node of type `N` in the player's graph, its state and the blackboard.
-    pub fn for_each_state_mut<N: AnimationNode>(
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn for_each_state_mut<N: crate::node::AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
@@ -150,6 +160,7 @@ impl AnimationPlayer {
             skeleton: None,
             model_to_world: None,
             inputs,
+            debug: None,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
@@ -168,6 +179,7 @@ impl AnimationPlayer {
             skeleton,
             model_to_world: None,
             inputs,
+            debug: None,
         };
         self.graph_state.update(delta_time, graphs, &context);
     }
@@ -183,6 +195,7 @@ impl AnimationPlayer {
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
+        self.debug.clear();
         self.fired.clear();
         let bone_ids = &skeleton.bone_ids;
         let rest_pose = &skeleton.rest_pose;
@@ -202,23 +215,27 @@ impl AnimationPlayer {
                     up: up_of(entity, parents, globals),
                 })
             });
+        let debug = RefCell::new(mem::take(&mut self.debug));
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
             root,
             skeleton: Some(skeleton),
             model_to_world: Some(model_to_world_of(bones, parents, globals)),
             inputs,
+            debug: Some(&debug),
         };
 
         self.frame_pool.set_rest(rest_pose);
         let mut output_frame = self.frame_pool.acquire();
-        if !self.graph_state.evaluate(
+        let evaluated = self.graph_state.evaluate(
             graphs,
             &context,
             bone_ids,
             &mut self.frame_pool,
             &mut output_frame,
-        ) {
+        );
+        self.debug = debug.into_inner();
+        if !evaluated {
             // No graph evaluated — keep the bones' current (default) pose.
             self.frame_pool.release(output_frame);
             return false;

@@ -611,7 +611,9 @@ The node's fields are its data and are stored with the graph. `State` is the
 per-player runtime state (a playhead, say): `create_state` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
 receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
-a node restarts on `play` by resetting its state there.
+a node restarts on `play` by resetting its state there. A node that plays graphs
+inside itself, as the state machine and the retarget node do, reports them
+through `inner_graphs` and their states through `inner_states`.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and
@@ -627,7 +629,7 @@ clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
-or identity when it has none.
+or identity when it has none; and, in `evaluate`, the sink `publish` writes to.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the root motion and the clip events its sources gave this frame. Its inputs
@@ -658,6 +660,33 @@ Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
 an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
+
+### Debug data
+
+A node's state is private to the player: outside tests, nothing reaches it.
+What a node wants gizmos, overlays or tools to see, it publishes from
+`evaluate` through its context:
+
+```rust
+#[derive(Default)]
+struct GainDebug {
+    amount: f32,
+}
+
+context.publish::<GainDebug>(|debug| debug.amount = self.amount);
+```
+
+`AnimationPlayer::debug()` returns an `AnimationDebug`, and
+`get::<GainDebug>()` the values of that type its graph published on its last
+evaluation, in the order they were published: each node's values in walk
+order, from nodes inside state machines and retarget nodes too. Each evaluation
+starts the lists empty but keeps the values, so `fill` receives last
+evaluation's value at that position and can refill its buffers without
+allocating. A player whose graph is not loaded publishes nothing, while a paused
+player, or one whose skeleton asset is missing, does not evaluate and keeps what
+it published last. `publish` does nothing in `create_state` and `update`, and
+`fill` must not publish itself. Read the values after `animate_targets`, which
+evaluates the players.
 
 ### Root motion
 
@@ -922,8 +951,9 @@ duplicate chain, a chain end not below its start, a missing clip, a time that
 is not finite, a clip with no channels for the skeleton, or a root height that
 is not finite or not above 0.1 mm.
 
-The solve that plays one rig's motion on another is `PoseRetarget`, below. The
-clips derived from it and the graph node that runs it are coming (#589, #590).
+The solve that plays one rig's motion on another is `PoseRetarget`, below, and
+`RetargetNode` runs it in a graph every frame. Clips derived from it are coming
+(#589).
 
 ### Retargeting a pose
 
@@ -945,8 +975,11 @@ retarget.retarget_into(&source_pose, &mut pose)?;
 
 `retarget_into(source, out)` takes a full pose of the source skeleton, in bone
 order, and writes a full pose of the target into `out`. Full means with the
-root motion still in it, as a clip holds it; a graph pose, net of root motion,
-is not one.
+root motion still in it, as a clip holds it. A graph pose, net of root motion,
+is not one, with one exception: the root is measured from the source rig's
+reference, so a pose netted against the source reference's root joint gives a
+target pose netted against the target reference, with no ground offset. That
+is the pose `RetargetNode`, below, hands the solve.
 
 Each target bone in a chain the source also has turns in model space as the
 source chain turns: its model rotation's change from the target's reference
@@ -985,6 +1018,65 @@ Bone scale is assumed uniform: rotations are composed without it, so under a
 non-uniform scale a chain bone's turn and the root's position are solved in
 slightly different frames. A source pose with non-finite values gives
 non-finite values in `out`.
+
+### The retarget node
+
+`RetargetNode` (`concerto::animation::retarget`) plays motion made for one
+skeleton on another, every frame. It owns an inner graph, evaluated on the
+source rig's skeleton, and retargets each frame of it onto the player's
+skeleton with a `PoseRetarget`. `RetargetNode::new(graph, source, target)`
+takes the inner graph and the two rigs; the target rig's skeleton must be the
+player's. The node is a leaf, with no inputs, and anything can sit above it:
+
+```rust
+use concerto::animation::retarget::RetargetNode;
+
+let inner = assets.add(AnimationGraph::from_node(AnimationClipNode::new(walk)));
+let lafan_rig = assets.add(lafan_rig);
+let ual_rig = assets.add(ual_rig);
+
+let mut graph = AnimationGraph::new();
+graph
+    .result_node()
+    .with_input(RetargetNode::new(inner, lafan_rig, ual_rig), |_| {});
+cmd.insert(AnimationHandleComponent::new(assets.add(graph)), entity);
+```
+
+The inner graph shares the player's blackboard, so its parameters are the
+player's, and the player's `AnimationRootBone` reaches it as the source
+skeleton's root, netted against the source rig's reference root joint (see
+[Retargeting a pose](#retargeting-a-pose)). The output pose is then net of
+root motion against the target reference, and the frame's root motion is the
+inner graph's, with its translation multiplied by `scale()` and its rotation
+unchanged. Clip events fired in the inner graph reach the player as its own,
+and the node is finished when the inner graph is, so a state machine's
+`OnAnimationEnd` follows it. Values that nodes inside the inner graph publish
+(see [Debug data](#debug-data)) reach the player's `AnimationPlayer::debug`,
+as those of its own nodes do.
+
+Until the player's skeleton, both rigs, their skeletons, a `ClipFrame`
+reference clip and the inner graph have loaded, the node gives the rest pose,
+and its `is_finished` is false. The inner graph also sees the player's
+`model_to_world`, but at the source's scale, so nodes that read the world, such
+as foot placement, IK and look-at, go above the retarget node, on the target
+skeleton, not inside its inner graph.
+
+The node refuses:
+
+- a rig that does not resolve, or a target rig whose skeleton is not the
+  player's, and gives the player's rest pose;
+- a retarget node in its inner graph, directly or in a loaded state of a
+  state machine there, a solve that `PoseRetarget::new` refuses, or an inner node,
+  in the inner graph or in a loaded state of a state machine there, whose
+  `CreateInput` is not also an update input, which would get no state inside
+  the node's update, and gives the target rig's reference pose.
+
+Each refusal logs one warning naming it, and the node then counts as
+finished. It stays refused until the player's graph changes: fixing or
+reloading the inner graph or a rig does not bring it back. A player skeleton
+whose bones change while the node plays fails it the same way, at the rest
+pose. A pose the solve rejects while playing gives the rest pose with no root
+motion, still passes the events, and warns once.
 
 ## Gameplay helpers
 

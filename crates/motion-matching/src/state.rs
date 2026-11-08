@@ -25,13 +25,32 @@ use crate::{
 };
 
 /// One search's raw query and what it was built from, so a drawn query is a single moment in time.
-#[derive(Clone)]
 pub struct LastQuery {
     pub features: Vec<f32>,
     pub frame: usize,
     pub simulation: Transform,
     pub trajectory: Vec<TrajectorySample>,
     pub best_cost: Option<f32>,
+}
+
+impl Clone for LastQuery {
+    fn clone(&self) -> Self {
+        Self {
+            features: self.features.clone(),
+            frame: self.frame,
+            simulation: self.simulation.clone(),
+            trajectory: self.trajectory.clone(),
+            best_cost: self.best_cost,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.features.clone_from(&source.features);
+        self.frame = source.frame;
+        self.simulation.clone_from(&source.simulation);
+        self.trajectory.clone_from(&source.trajectory);
+        self.best_cost = source.best_cost;
+    }
 }
 
 /// The per-player state of a motion matching node.

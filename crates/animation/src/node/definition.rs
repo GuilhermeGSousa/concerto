@@ -4,7 +4,7 @@ use concerto_ecs::{
     World,
     system::input::{ReadOnlySystemInput, SystemInputData, register_input},
 };
-use concerto_foundation::assets::handle::LiveLeaves;
+use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_reflect::{
     EncodeError, FromType, Reflect, ReflectedValue, TypeData, ValueWarning, apply_value_with,
     to_value,
@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
+    graph::{AnimationGraph, AnimationGraphState},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 
@@ -60,6 +61,17 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     fn is_finished(&self, _state: &Self::State) -> bool {
         true
     }
+
+    /// Visits the graph assets this node plays inside itself.
+    fn inner_graphs(&self, _visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {}
+
+    /// Visits the graph states this node's state holds for the graphs it plays inside itself.
+    fn inner_states(
+        &self,
+        _state: &mut Self::State,
+        _visit: &mut dyn FnMut(&mut AnimationGraphState),
+    ) {
+    }
 }
 
 /// The graph walk that creates node states; its input set holds every registered node's `CreateInput`.
@@ -101,6 +113,10 @@ pub trait ErasedAnimationNode: Send + Sync {
     fn reset(&self, state: &mut NodeState);
 
     fn is_finished(&self, state: &NodeState) -> bool;
+
+    fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
+
+    fn inner_states(&self, state: &mut NodeState, visit: &mut dyn FnMut(&mut AnimationGraphState));
 
     fn state_as_any<'a>(&self, state: &'a NodeState) -> &'a dyn Any;
 
@@ -164,6 +180,16 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         state
             .downcast_ref::<T::State>()
             .is_none_or(|state| AnimationNode::is_finished(self, state))
+    }
+
+    fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
+        AnimationNode::inner_graphs(self, visit);
+    }
+
+    fn inner_states(&self, state: &mut NodeState, visit: &mut dyn FnMut(&mut AnimationGraphState)) {
+        if let Some(state) = state.downcast_mut::<T::State>() {
+            AnimationNode::inner_states(self, state, visit);
+        }
     }
 
     fn state_as_any<'a>(&self, state: &'a NodeState) -> &'a dyn Any {

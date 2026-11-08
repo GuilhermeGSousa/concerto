@@ -23,10 +23,12 @@ use crate::{
 
 mod character;
 mod grid;
+mod retarget;
 mod sanatorium;
 mod ui;
 
 pub use grid::grid;
+pub use retarget::retarget;
 pub use sanatorium::sanatorium;
 
 /// Builds tech-demo: the forest, the character, and its overlay.
@@ -71,7 +73,7 @@ mod tests {
 
     use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 
-    use crate::{character::PlayerSpawner, game};
+    use crate::{character::PlayerSpawner, game, retarget::RetargetedPlayer};
 
     #[test]
     fn the_recipe_declares_the_forest_and_registers_the_spawner_for_reflection() {
@@ -120,8 +122,27 @@ mod tests {
     }
 
     #[test]
+    fn the_retargeted_grid_builds_with_no_gpu_and_can_cook_the_motion_database() {
+        builds_with_no_gpu_and_can_cook_the_motion_database(crate::retarget);
+    }
+
+    #[test]
+    fn only_the_retargeted_grid_plays_the_retargeted_player() {
+        let recipes: [fn(&mut App); 4] = [crate::grid, game, crate::sanatorium, crate::retarget];
+        let retargeted: Vec<bool> = recipes
+            .into_iter()
+            .map(|recipe| {
+                let mut app = App::new();
+                recipe(&mut app);
+                app.get_resource::<RetargetedPlayer>().is_some()
+            })
+            .collect();
+        assert_eq!(retargeted, vec![false, false, false, true]);
+    }
+
+    #[test]
     fn every_level_draws_the_foot_locks() {
-        let recipes: [fn(&mut App); 3] = [crate::grid, game, crate::sanatorium];
+        let recipes: [fn(&mut App); 4] = [crate::grid, game, crate::sanatorium, crate::retarget];
         for recipe in recipes {
             let mut app = App::new();
             recipe(&mut app);
