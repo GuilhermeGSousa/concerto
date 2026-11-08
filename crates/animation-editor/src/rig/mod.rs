@@ -46,7 +46,7 @@ use crate::{
     ClipFacts, default_scene, measure_transport,
     preview::{ClearClip, SeekClip, SetClipTransport, ShowClip},
     transport::{
-        ClipTransport, SPEEDS, TransportDisabled, at_the_end, follow_transport_progress,
+        ClipTransport, TransportDisabled, at_the_end, follow_transport_progress,
         sync_transport_rows, sync_transport_timelines,
     },
 };
@@ -119,11 +119,11 @@ pub(crate) fn preview_types() -> AppTypeRegistry {
     types
 }
 
-fn known_speed(speed: f32) -> bool {
-    SPEEDS.iter().any(|(known, _)| *known == speed)
+fn playable_speed(speed: f32) -> bool {
+    speed.is_finite() && speed > 0.0
 }
 
-/// A rig tab's [`RigPreview`], shown as the `Preview` value; an edit never marks the tab unsaved, and a speed other than 0.25, 0.5, 1 or 2 is refused.
+/// A rig tab's [`RigPreview`], shown as the `Preview` value; an edit never marks the tab unsaved, and a speed of 0 or below, or not finite, is refused.
 pub struct RigPreviewValue {
     pub document: Entity,
 }
@@ -151,7 +151,7 @@ impl PropertyTarget for RigPreviewValue {
         };
         let mut preview = held.preview.clone();
         edit(&mut preview);
-        if !known_speed(preview.speed) {
+        if !playable_speed(preview.speed) {
             return false;
         }
         let changed = preview != held.preview;
@@ -327,11 +327,13 @@ pub struct RigFacts {
     pub driven: Option<Share>,
 }
 
-/// What a rig tab holds beside the rig: the preview's settings, the open rig's skeleton, what it read, the status line it last wrote, what it last sent its preview, and the facts.
+/// What a rig tab holds beside the rig: the preview's settings, the open rig's skeleton or why it can't be read, the rig it last followed, what it read, the status line it last wrote, what it last sent its preview, and the facts.
 #[derive(Component, Default)]
 pub struct RigDocument {
     pub preview: RigPreview,
     pub skeleton: Option<Arc<Skeleton>>,
+    pub skeleton_error: Option<String>,
+    pub opened: Option<AssetId>,
     pub reads: RigReads,
     pub status_line: Option<String>,
     pub sent: SentStages,
@@ -556,6 +558,7 @@ impl SideParts {
 
 struct Followed {
     open_side: RigSide,
+    skeleton_error: Option<String>,
     sides: Sides,
     retarget: Option<PoseRetarget>,
     clip: Option<ShownClip>,
@@ -595,6 +598,11 @@ fn follow(
 
     let open_view = read_side(Arc::new(open.clone()), reads, from);
     *parts.side_mut(open_side) = view_part(open_side, &open_view);
+    let skeleton_error = open_view
+        .as_ref()
+        .err()
+        .filter(|_| !open.skeleton.id().is_nil())
+        .cloned();
     *sides.side_mut(open_side) = open_view.ok();
 
     let other_id = preview.other.id();
@@ -673,6 +681,7 @@ fn follow(
 
     Followed {
         open_side,
+        skeleton_error,
         facts: RigFacts {
             scale: retarget.as_ref().map(PoseRetarget::scale),
             chains,
@@ -891,6 +900,15 @@ pub(crate) fn follow_rig(
             continue;
         };
         let state = &mut **state;
+        let current = editor.current.as_ref().map(|asset| asset.id);
+        let reopened = state.opened != current;
+        if reopened {
+            state.opened = current;
+            if state.preview.paused_at.is_some_and(|time| time != 0.0) {
+                state.preview.paused_at = Some(0.0);
+                cmd.trigger(RefreshInspector);
+            }
+        }
         if forgot {
             state.reads.forget(&written);
             state.sent.forget(&written);
@@ -903,6 +921,9 @@ pub(crate) fn follow_rig(
             .map(|view| Arc::clone(&view.skeleton));
         if !same_skeleton(state.skeleton.as_ref(), open_skeleton.as_ref()) {
             state.skeleton = open_skeleton;
+        }
+        if state.skeleton_error != followed.skeleton_error {
+            state.skeleton_error = followed.skeleton_error.clone();
         }
 
         send_sides(document, open, &followed, &mut state.sent, &mut previews);
@@ -925,12 +946,15 @@ pub(crate) fn follow_rig(
                 None => previews.trigger(document, ClearClip),
             }
         }
-        let steered = steer_transport(
+        let mut steered = steer_transport(
             &transport,
             &state.preview,
             followed.clip.as_ref(),
-            restarted,
+            restarted || reopened,
         );
+        if reopened && steered.seek.is_none() {
+            steered.seek = Some(0.0);
+        }
         if steered.send {
             previews.trigger(
                 document,

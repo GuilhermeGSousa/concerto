@@ -831,6 +831,23 @@ mod tests {
     }
 
     #[test]
+    fn a_speed_no_button_holds_selects_none() {
+        let mut playing = walking();
+        let speeds = playing.row.speeds;
+        let document = playing.document;
+
+        playing
+            .f
+            .world
+            .get_component_for_entity_mut::<ClipTransport>(document)
+            .unwrap()
+            .speed = 1.5;
+        playing.f.frame();
+
+        assert!(speeds.iter().all(|speed| !playing.selected(*speed)));
+    }
+
+    #[test]
     fn loop_turns_off_and_on_and_shows_it() {
         let mut playing = walking();
         let looping = playing.row.looping;

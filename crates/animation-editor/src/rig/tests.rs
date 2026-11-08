@@ -405,15 +405,17 @@ fn the_rig_plugin_registers_its_editor_and_lets_the_editor_load_rigs_and_clips()
 }
 
 #[test]
-fn a_speed_the_transport_has_no_button_for_is_refused() {
+fn any_finite_speed_above_zero_is_accepted_and_zero_or_below_is_refused() {
     let mut tab = rig_tab();
 
-    tab.write_preview("speed", json!(0.75));
+    tab.write_preview("speed", json!(1.5));
+    assert_eq!(tab.state().preview.speed, 1.5);
 
-    assert_eq!(tab.state().preview.speed, 1.0);
-    assert!(tab.status().contains("Preview.speed"), "{}", tab.status());
-    tab.write_preview("speed", json!(2.0));
-    assert_eq!(tab.state().preview.speed, 2.0);
+    for refused in [0.0, -1.0] {
+        tab.write_preview("speed", json!(refused));
+        assert_eq!(tab.state().preview.speed, 1.5);
+        assert!(tab.status().contains("Preview.speed"), "{}", tab.status());
+    }
 }
 
 #[test]
@@ -619,6 +621,46 @@ fn a_clip_that_does_not_loop_ends_paused_at_its_duration() {
     });
     assert_eq!(tab.state().preview.paused_at, Some(1.0));
     assert!(!tab.state().preview.looping);
+}
+
+#[test]
+fn reopening_another_rig_keeps_the_preview_and_goes_back_to_the_start() {
+    let mut tab = rig_tab().with_other().playing_the_walk();
+    tab.write_preview("paused_at", json!({"Some": {"0": 0.5}}));
+    tab.until("the preview never paused at 0.5", |tab| {
+        !tab.playback().playing && tab.playback().time == 0.5
+    });
+    let kept = tab.state().preview.clone();
+    let second = write(
+        &mut tab.f,
+        "content/hero/second.gasset",
+        &rig_on(&tab.open_skeleton),
+    );
+
+    tab.f.request(&second);
+
+    tab.until("the second rig never opened", |tab| {
+        tab.f
+            .document(tab.document)
+            .current
+            .as_ref()
+            .is_some_and(|current| current.id == second.id)
+    });
+    tab.until("the preview never went back to the start", |tab| {
+        tab.playback().time == 0.0 && tab.transport().time == 0.0
+    });
+    for _ in 0..5 {
+        tab.f.frame();
+    }
+    assert_eq!(
+        tab.state().preview,
+        RigPreview {
+            paused_at: Some(0.0),
+            ..kept
+        }
+    );
+    assert!(!tab.playback().playing);
+    assert_eq!(tab.playback().time, 0.0);
 }
 
 #[test]
