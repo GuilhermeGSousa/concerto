@@ -1,3 +1,5 @@
+use std::fmt;
+
 use concerto_ecs::resource::Resource;
 use wgpu::{Limits, MemoryHints};
 
@@ -27,22 +29,32 @@ impl Gpu {
         })
     }
 
-    /// Requests a device, or returns `None` when the machine has no suitable adapter; panics when `WGPU_ADAPTER_NAME` names no usable adapter.
+    /// Requests a device, or returns `None`, logging why, when the machine has no suitable adapter or the adapter gives no device; panics when `WGPU_ADAPTER_NAME` names no usable adapter.
     pub async fn request(
         instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
     ) -> Option<Gpu> {
+        Gpu::try_request(instance, compatible_surface)
+            .await
+            .inspect_err(|error| log::warn!("No GPU: {error}"))
+            .ok()
+    }
+
+    /// Requests a device as `request` does, saying why when there is none.
+    pub async fn try_request(
+        instance: &wgpu::Instance,
+        compatible_surface: Option<&wgpu::Surface<'_>>,
+    ) -> Result<Gpu, GpuRequestError> {
         let adapter = match wgpu::util::initialize_adapter_from_env(instance, compatible_surface) {
             Some(adapter) => adapter,
-            None => {
-                instance
-                    .request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: power_preference(wgpu::PowerPreference::from_env()),
-                        compatible_surface,
-                        force_fallback_adapter: false,
-                    })
-                    .await?
-            }
+            None => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: power_preference(wgpu::PowerPreference::from_env()),
+                    compatible_surface,
+                    force_fallback_adapter: false,
+                })
+                .await
+                .ok_or(GpuRequestError::NoAdapter)?,
         };
         let info = adapter.get_info();
         log::info!(
@@ -71,43 +83,98 @@ impl Gpu {
                 None,
             )
             .await
-            .ok()?;
+            .map_err(|error| GpuRequestError::Device {
+                adapter: info.clone(),
+                error,
+            })?;
 
-        Some(Gpu {
+        Ok(Gpu {
             device,
             queue,
             adapter,
         })
     }
 
-    /// Requests a `Gpu` for a test; with no adapter it prints a skip line and returns `None`, or panics when `CONCERTO_REQUIRE_GPU` is set.
+    /// Requests a `Gpu` for a test; without one it prints a skip line naming why and the adapters seen, and returns `None`, or panics with that reason when `CONCERTO_REQUIRE_GPU` is set.
     pub fn request_for_test() -> Option<Gpu> {
-        let found = pollster::block_on(Gpu::request(&Gpu::instance(), None));
-        skip_without_adapter(
+        let instance = Gpu::instance();
+        let found = pollster::block_on(Gpu::try_request(&instance, None))
+            .map_err(|error| format!("{error}; adapters seen: {}", adapters_seen(&instance)));
+        skip_without_gpu(
             found,
             std::env::var_os("CONCERTO_REQUIRE_GPU").is_some_and(|value| !value.is_empty()),
         )
     }
 }
 
+/// Why `Gpu::try_request` gave no `Gpu`.
+#[derive(Debug)]
+pub enum GpuRequestError {
+    NoAdapter,
+    Device {
+        adapter: wgpu::AdapterInfo,
+        error: wgpu::RequestDeviceError,
+    },
+}
+
+impl fmt::Display for GpuRequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GpuRequestError::NoAdapter => write!(f, "no adapter matched the request"),
+            GpuRequestError::Device { adapter, error } => write!(
+                f,
+                "{} ({:?}, {:?}) gave no device: {error}",
+                adapter.name, adapter.device_type, adapter.backend
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GpuRequestError {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn adapters_seen(instance: &wgpu::Instance) -> String {
+    let seen: Vec<String> = instance
+        .enumerate_adapters(wgpu::Backends::all())
+        .iter()
+        .map(|adapter| {
+            let info = adapter.get_info();
+            format!("{} ({:?}, {:?})", info.name, info.device_type, info.backend)
+        })
+        .collect();
+    if seen.is_empty() {
+        "none".to_owned()
+    } else {
+        seen.join(", ")
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn adapters_seen(_instance: &wgpu::Instance) -> String {
+    "not listed on the web".to_owned()
+}
+
 fn power_preference(from_env: Option<wgpu::PowerPreference>) -> wgpu::PowerPreference {
     from_env.unwrap_or(wgpu::PowerPreference::HighPerformance)
 }
 
-fn skip_without_adapter<T>(found: Option<T>, require: bool) -> Option<T> {
-    if found.is_none() {
-        assert!(
-            !require,
-            "CONCERTO_REQUIRE_GPU is set but no GPU adapter is available"
-        );
-        eprintln!("SKIPPED: no GPU adapter is available");
+fn skip_without_gpu<T>(found: Result<T, String>, require: bool) -> Option<T> {
+    match found {
+        Ok(gpu) => Some(gpu),
+        Err(reason) => {
+            assert!(
+                !require,
+                "CONCERTO_REQUIRE_GPU is set but no GPU is available: {reason}"
+            );
+            eprintln!("SKIPPED: no GPU is available: {reason}");
+            None
+        }
     }
-    found
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{power_preference, skip_without_adapter};
+    use super::{power_preference, skip_without_gpu};
     use wgpu::PowerPreference;
 
     #[test]
@@ -116,18 +183,21 @@ mod tests {
     }
 
     #[test]
-    fn a_found_adapter_is_returned() {
-        assert_eq!(skip_without_adapter(Some(1), true), Some(1));
+    fn a_found_gpu_is_returned() {
+        assert_eq!(skip_without_gpu(Ok(1), true), Some(1));
     }
 
     #[test]
-    fn a_missing_adapter_skips_when_not_required() {
-        assert_eq!(skip_without_adapter::<u8>(None, false), None);
+    fn a_missing_gpu_skips_when_not_required() {
+        assert_eq!(
+            skip_without_gpu::<u8>(Err("no adapter".into()), false),
+            None
+        );
     }
 
     #[test]
-    #[should_panic(expected = "CONCERTO_REQUIRE_GPU")]
-    fn a_missing_adapter_panics_when_required() {
-        skip_without_adapter::<u8>(None, true);
+    #[should_panic(expected = "CONCERTO_REQUIRE_GPU is set but no GPU is available: device lost")]
+    fn a_missing_gpu_panics_with_its_reason_when_required() {
+        skip_without_gpu::<u8>(Err("device lost".into()), true);
     }
 }
