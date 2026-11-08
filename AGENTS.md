@@ -72,7 +72,9 @@ method there; hold the right mouse button or the left trigger to aim, C or the
 east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1, and `--sanatorium` and
-`--forest` win over it. The sanatorium's Blender source and exports are in
+`--forest` win over it. Its two rigs are content assets,
+`content/UAL1/rig.gasset` and `content/lafan1/model_skeleton/rig.gasset`, that
+the editor's rig tab edits. The sanatorium's Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
 editor's Import…, over a scratch copy of the project; there is no import
 command line. An example may have an `editor/` crate, named `<game>-editor`,
