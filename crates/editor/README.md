@@ -525,9 +525,11 @@ inside the project is imported where it is, not copied.
 
 The files a source refers to come along with it: an OBJ's `.mtl` and the
 textures it names, a glTF's `.bin` buffers and external images. Each keeps its
-position relative to the source, and replaces a file already there. If one would
-land outside the project, the import fails and nothing is copied; pick a
-destination deeper inside the project. Chatter names the first failure of a
+position relative to the source, and replaces a file already there. A file that
+cannot be read is skipped with a warning naming it in the log, and the import
+goes on without it. If one that can be read would land outside the project, the
+import fails and nothing is copied; pick a destination deeper inside the
+project. Chatter names the first failure of a
 batch; the log has every one in full.
 
 ## Playing

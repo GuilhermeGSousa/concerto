@@ -36,8 +36,10 @@ search; [crates/editor/README.md](../crates/editor/README.md#importing)
 describes the dialog. There is no import command line. The project the editor
 has open is the *project root*, and the import writes `content/…` under it. A
 source from outside the project is first copied to the destination the dialog
-shows, with every file it refers to. To re-import an example's sources, run its
-editor over a scratch copy of the project, never over `examples/*` itself:
+shows, with every file it refers to. A file the source refers to that cannot be
+read is skipped with a warning naming it, and the import goes on without it. To
+re-import an example's sources, run its editor over a scratch copy of the
+project, never over `examples/*` itself:
 
 ```sh
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
