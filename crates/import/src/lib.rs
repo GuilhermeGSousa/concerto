@@ -635,7 +635,6 @@ mod tests {
             project,
             &[DependencyEntry {
                 path: source.join("triangle_ext.bin"),
-                content_hash: 0,
             }],
         )
         .expect("the buffer lands inside the project");

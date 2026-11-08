@@ -14,7 +14,7 @@ use anyhow::{Context, bail};
 use concerto_animation::clip::{
     AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
 };
-use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names, hash_file_contents};
+use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names};
 use concerto_color::Color;
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
@@ -715,18 +715,11 @@ fn push_mesh_components(
     )
 }
 
-/// Resolves one glTF external resource `uri` against the source file's
-/// directory and records it as an import dependency. `data:` URIs are embedded,
-/// not external, so they are skipped; an unreadable path is silently ignored
-/// (a genuinely missing external file surfaces from `gltf::import` itself).
 fn track_external(ctx: &mut ImportContext, source_dir: &Path, uri: &str) {
     if uri.starts_with("data:") {
         return;
     }
-    let path = source_dir.join(percent_decode(uri));
-    if let Ok(hash) = hash_file_contents(&path) {
-        ctx.track_dependency(path, hash);
-    }
+    ctx.track_dependency(source_dir.join(percent_decode(uri)));
 }
 
 /// Minimal `%XX` percent-decoder for glTF `uri` fields, which are otherwise

@@ -827,7 +827,7 @@ impl Importer for MyImporter {
 
         // Record external inputs (an external .bin, a sibling texture) so
         // importing from outside the project copies them with the source.
-        ctx.track_dependency(external_path, asset_import::hash_file_contents(&external_path)?);
+        ctx.track_dependency(external_path);
 
         Ok(())
     }
@@ -846,9 +846,9 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
   into `extras` is deprecated. Add game components to the imported scene in the
   editor and save it; a saved scene is left alone by later re-imports.
 - **No incremental import.** Re-import regenerates the source's outputs
-  while preserving their identities. `track_dependency` records inputs, which
-  an import from outside the project copies beside the source, but nothing
-  reads their content hashes yet.
+  while preserving their identities. `track_dependency` records the files a
+  source refers to, which an import from outside the project copies beside it;
+  nothing records their contents to tell whether they changed.
 - **No cross-source references.** An importer that emits a reference to a
   sub-asset from a *different* source file logs a warning and leaves it
   unresolved (e.g. an OBJ material pointing at a standalone texture).
