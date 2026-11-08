@@ -2,7 +2,7 @@
 //! and scene sub-assets, reusing the same Scene shape as glTF.
 use std::path::Path;
 
-use concerto_asset_import::{ImportContext, Importer};
+use concerto_asset_import::{ImportContext, ImportError, Importer};
 use concerto_obj::obj_importer::ObjImporter;
 use concerto_scene::scene::Scene;
 
@@ -73,4 +73,40 @@ fn import_emits_mesh_material_and_flat_scene() {
         !cooked_scene.referenced_assets.is_empty(),
         "the mesh/material ids the node references must be recorded in referenced_assets"
     );
+}
+
+#[test]
+fn a_texture_the_material_library_names_is_tracked_even_when_it_cannot_be_read() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unread_texture.obj");
+    let mut ctx = ImportContext::new(std::path::PathBuf::from("unread_texture.obj"));
+
+    ObjImporter
+        .import(&fixture, &mut ctx)
+        .expect("a texture is not read at import, so its absence must not fail it");
+    let dependencies = ctx.into_parts().dependencies;
+
+    assert!(
+        dependencies
+            .iter()
+            .any(|d| d.path == fixture.with_file_name("absent.png")),
+        "got: {:?}",
+        dependencies.iter().map(|d| &d.path).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_missing_material_library_is_reported_unreadable_at_its_path() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/absent_library.obj");
+    let mut ctx = ImportContext::new(std::path::PathBuf::from("absent_library.obj"));
+
+    let error = ObjImporter
+        .import(&fixture, &mut ctx)
+        .expect_err("the material library does not exist");
+
+    match error {
+        ImportError::SourceUnreadable { source_path, .. } => {
+            assert_eq!(source_path, fixture.with_file_name("absent.mtl"));
+        }
+        other => panic!("expected SourceUnreadable, got {other:?}"),
+    }
 }
