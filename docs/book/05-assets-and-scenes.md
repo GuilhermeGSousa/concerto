@@ -75,6 +75,21 @@ Assets made in code are added rather than loaded:
 let material = assets.add(StandardMaterial::new(None, None));
 ```
 
+When an asset lands in its `AssetStore<A>`, loaded or added, the store sends an
+`AssetLoaded<A>` event with its id, and `Res<AssetStore<A>>::is_changed()`
+reads true. The store reads as changed again only when another asset of that
+type lands or one is freed after its last handle drops.
+
+```rust
+use concerto::foundation::assets::handle::AssetLoaded;
+
+fn on_mesh_loaded(mut loaded: EventReader<AssetLoaded<Mesh>>) {
+    for event in loaded.read() {
+        info!("mesh {:?} is ready", event.id);
+    }
+}
+```
+
 ## Scenes
 
 A scene is a tree of entities saved to a `.gasset`. Importing a model makes

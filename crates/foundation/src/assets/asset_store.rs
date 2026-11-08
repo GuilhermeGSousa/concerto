@@ -58,14 +58,18 @@ impl<A: Asset + 'static> AssetStore<A> {
         self.assets.insert(id, entry);
     }
 
+    /// Removes the assets whose last handle dropped and reports each; returns whether any was removed.
     pub fn track_assets(
         &mut self,
         mut asset_server: ResMut<AssetServer>,
         mut events: EventWriter<AssetLifetimeEvent>,
-    ) {
-        for event in self.drain_drops(&mut asset_server) {
+    ) -> bool {
+        let dropped = self.drain_drops(&mut asset_server);
+        let removed = !dropped.is_empty();
+        for event in dropped {
             events.write(event);
         }
+        removed
     }
 
     pub(crate) fn drain_drops(&mut self, server: &mut AssetServer) -> Vec<AssetLifetimeEvent> {

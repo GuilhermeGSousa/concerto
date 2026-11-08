@@ -38,8 +38,11 @@ use concerto_ecs::{
 use log::info;
 
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, derived::DerivedData,
-    handle::AssetLifetimeEvent, Asset, AssetId, CreatableAsset, LoadableAsset,
+    asset_server::AssetServer,
+    asset_store::AssetStore,
+    derived::DerivedData,
+    handle::{AssetLifetimeEvent, AssetLoaded},
+    Asset, AssetId, CreatableAsset, LoadableAsset,
 };
 use concerto_reflect::{GetTypeRegistration, Reflect};
 
@@ -203,12 +206,18 @@ impl App {
             (|mut asset_store: ResMut<AssetStore<A>>,
               asset_server: ResMut<AssetServer>,
               events: EventWriter<AssetLifetimeEvent>| {
-                asset_store.track_assets(asset_server, events);
+                if asset_store
+                    .bypass_change_detection()
+                    .track_assets(asset_server, events)
+                {
+                    asset_store.mark_changed();
+                }
             })
             .at_edit_time(),
         );
 
         self.main_mut().insert_resource(asset_store);
+        self.register_event::<AssetLoaded<A>>();
         self
     }
 
@@ -493,6 +502,8 @@ mod tests {
     use concerto_ecs::{
         component::removed::RemovedComponents,
         events::{event_channel::EventChannel, event_reader::EventReader},
+        query::change_detection::DetectChanges,
+        resource::Res,
     };
 
     #[derive(Event)]
@@ -712,6 +723,53 @@ mod tests {
             .unwrap()
             .get(&weak)
             .is_none());
+    }
+
+    #[derive(Resource, Default)]
+    struct NoteStoreLog {
+        changed: Vec<bool>,
+        loaded: Vec<AssetId>,
+    }
+
+    fn log_note_store(
+        store: Res<AssetStore<Note>>,
+        mut loaded: EventReader<AssetLoaded<Note>>,
+        mut log: ResMut<NoteStoreLog>,
+    ) {
+        log.changed.push(store.is_changed());
+        log.loaded.extend(loaded.read().map(|event| event.id));
+    }
+
+    #[test]
+    fn an_asset_store_reads_as_changed_only_on_a_load_or_a_drop() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_plugin(plugins::AssetManagerPlugin)
+            .register_asset::<Note>()
+            .insert_resource(NoteStoreLog::default())
+            .add_system(First, log_note_store);
+        app.finish_plugin_build();
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let handle = app.get_resource::<AssetServer>().unwrap().add(Note);
+        let id = handle.id();
+        for _ in 0..3 {
+            app.update();
+        }
+        drop(handle);
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let log = app.get_resource::<NoteStoreLog>().unwrap();
+        assert_eq!(
+            log.changed[1..],
+            [false, false, false, true, false, false, true, false]
+        );
+        assert_eq!(log.loaded, [id]);
     }
 
     #[test]
