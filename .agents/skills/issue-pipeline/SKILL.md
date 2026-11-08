@@ -38,7 +38,7 @@ is `master`.
 | `agent` | Agents may take this issue. |
 | `agent:local` | Only the local runner takes it: the change needs a look at the running program. |
 | `agent:spec` | Questions and a spec approved by the owner, then a plan. Only for large tasks that change foundational work. |
-| `agent:priority` | Runners take it before issues without it. |
+| `agent:priority` | Runners take it, or its blockers while it is blocked, before issues without it. |
 | `documentation`, `lint` | Sorting only; no effect on the path. |
 | `agent:filed` | An agent opened this issue. |
 | `agent:claimed-cloud`, `agent:claimed-local` | Which runner owns the issue. |
@@ -49,16 +49,28 @@ owner's account, has neither claim label, and is not blocked. Its body is
 blocked while it has a line `Blocked by #a, #b` and any of those issues is
 open.
 
-Runners take eligible issues in two tiers: those labelled `agent:priority`
-first, then the rest, each tier oldest first.
+Runners pick in two tiers: issues labelled `agent:priority` first, then the
+rest, each tier oldest first. This is the tier order.
+
+In the priority tier, a priority issue that is blocked stands for its
+blockers. Walk the open issues on its `Blocked by` line, oldest first. The
+first one this runner may take is the pick, with or without `agent:priority`:
+it is eligible and, for the cloud runner, has no `agent:local`. A blocker that
+is blocked in turn is walked the same way, its own blockers before the next
+issue on the line, whatever its labels. Any other blocker this runner cannot
+take is skipped: it has no `agent` label, carries a claim label, was opened by
+someone else, or has `agent:local` and this is the cloud runner. An issue
+reached a second time in one walk is skipped. When the walk yields nothing, go
+on to the next priority issue.
 
 ## Cloud runner
 
 You are a fresh session started by the hourly scheduled task.
 
 1. Count open issues labelled `agent:claimed-cloud`. At 3 or more, end.
-2. List eligible issues without `agent:local`, in tier order. If there are
-   none, end without posting anything.
+2. Pick the first eligible issue without `agent:local` in tier order, walking
+   blocked priority issues to their blockers. If there is none, end without
+   posting anything.
 3. Claim the first: add `agent:claimed-cloud`, then re-read its labels. If
    `agent:claimed-local` is also there, remove `agent:claimed-cloud` and end.
 4. Comment on the issue with this session's link.
@@ -111,8 +123,8 @@ Each tick:
    an issue you already hold", up to the next wait. Drive first the issue whose
    worktree `<target>/.last-worktree` names.
 5. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
-   first eligible issue in tier order, preferring `agent:local` ones within
-   each tier. Add
+   first eligible issue in tier order, walking blocked priority issues to
+   their blockers, and preferring `agent:local` ones within each tier. Add
    `agent:claimed-local`, re-read its labels, and if `agent:claimed-cloud` is
    also there remove `agent:claimed-local` and stop here. Otherwise comment on
    the issue that the local runner took it, and drive it from "Start: a newly
