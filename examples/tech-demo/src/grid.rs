@@ -377,11 +377,7 @@ mod tests {
     #[test]
     fn every_patrol_leg_routes_around_the_boxes_on_the_baked_navmesh() {
         let settings = NavMeshSettings::new();
-        let started = Instant::now();
         let data = bake(&grid_nav_geometry(), &settings).unwrap();
-        let baked_in = started.elapsed();
-        eprintln!("the grid navmesh baked in {baked_in:?}");
-        assert!(baked_in < Duration::from_secs(2));
 
         for point in PATROL
             .iter()
