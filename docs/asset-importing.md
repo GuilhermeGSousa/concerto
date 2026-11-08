@@ -825,8 +825,8 @@ impl Importer for MyImporter {
         // another sub-asset's persistent UUID.
         let mesh_id = ctx.sub_asset_id("mesh/0");
 
-        // Record external inputs (an external .bin, a sibling texture) so a
-        // future incremental import can tell the source changed.
+        // Record external inputs (an external .bin, a sibling texture) so
+        // importing from outside the project copies them with the source.
         ctx.track_dependency(external_path, asset_import::hash_file_contents(&external_path)?);
 
         Ok(())
@@ -846,8 +846,9 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
   into `extras` is deprecated. Add game components to the imported scene in the
   editor and save it; a saved scene is left alone by later re-imports.
 - **No incremental import.** Re-import regenerates the source's outputs
-  while preserving their identities. `track_dependency` records inputs but
-  nothing consumes them yet.
+  while preserving their identities. `track_dependency` records inputs, which
+  an import from outside the project copies beside the source, but nothing
+  reads their content hashes yet.
 - **No cross-source references.** An importer that emits a reference to a
   sub-asset from a *different* source file logs a warning and leaves it
   unresolved (e.g. an OBJ material pointing at a standalone texture).

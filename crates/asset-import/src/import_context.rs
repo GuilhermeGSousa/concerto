@@ -9,9 +9,7 @@ pub struct DependencyEntry {
     pub content_hash: u64,
 }
 
-/// Hashes a file's contents for [`ImportContext::track_dependency`]. Kept
-/// as dead plumbing: importers still record dependencies, but nothing
-/// consumes them until a future incremental-import feature reads them back.
+/// Hashes a file's contents for [`ImportContext::track_dependency`]; nothing reads the hash yet.
 pub fn hash_file_contents(path: &Path) -> Result<u64, ImportError> {
     use std::hash::{DefaultHasher, Hash, Hasher};
 
