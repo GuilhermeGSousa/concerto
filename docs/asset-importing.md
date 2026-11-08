@@ -358,6 +358,8 @@ crate's serialization test, with the fixtures in its `tests/encoding/`:
 | `crates/animation/tests/graph_serialization.rs` | `AnimationClip`, `AnimationGraph`, `BoneMask`, `RetargetRig` |
 | `crates/scene/tests/scene_serialization.rs` | `Scene` |
 | `crates/motion-matching/tests/serialization.rs` | `MotionDatabase` |
+| `crates/navigation/tests/navmesh_asset.rs` | `NavMesh` |
+| `crates/scene/tests/glam_encoding.rs` | `GlamLeaves`, the reflected `Transform`, `Vec3`, `Quat` and `Mat4` leaves |
 
 A missing fixture fails the test with a hint to bless it. Bytes that differ
 fail it with a message to raise the version. The value given to the check sets
