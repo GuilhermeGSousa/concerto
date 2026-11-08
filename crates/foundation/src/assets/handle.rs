@@ -32,6 +32,22 @@ impl AssetLifetimeEvent {
     }
 }
 
+/// Sent when an asset of type `A`, loaded or added, lands in its `AssetStore<A>`.
+#[derive(Event)]
+pub struct AssetLoaded<A: Asset> {
+    pub id: AssetId,
+    _asset: PhantomData<fn() -> A>,
+}
+
+impl<A: Asset> AssetLoaded<A> {
+    pub(crate) fn new(id: AssetId) -> Self {
+        Self {
+            id,
+            _asset: PhantomData,
+        }
+    }
+}
+
 pub struct StrongAssetHandle {
     pub(crate) id: AssetId,
     pub(crate) lifetime_sender: Sender<AssetLifetimeEvent>,

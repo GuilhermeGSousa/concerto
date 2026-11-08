@@ -244,6 +244,14 @@ fix the entry in the same commit as the change that made it false.
   do. Keep the old layout with a private mirror struct behind a hand-written
   `Serialize` and `Deserialize`. Bumping `FORMAT_VERSION` is no way out for
   data a type registry would compute: `Asset::migrate` gets no registry.
+- **An `AssetStore<A>` reads as changed when an asset of type `A` is
+  inserted, removed or edited through `ResMut`.** A system that only drains or
+  inspects a store through `ResMut` marks it changed on every run; take the
+  borrow through `ResMut::bypass_change_detection` and call `mark_changed` when
+  the contents change. A load or an `AssetServer::add` also sends
+  `AssetLoaded<A>`, which says which asset landed; a direct `AssetStore::insert`
+  sends nothing. `register_asset::<A>()` does nothing for a type already
+  registered, so two plugins may both register it.
 - **`AssetServer::add` takes a `LoadableAsset` and runs `on_load` before the
   `Loaded` event.** When `on_load` fails, it logs an error and inserts nothing:
   the handle it returned never resolves.
