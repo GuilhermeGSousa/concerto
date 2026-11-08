@@ -32,6 +32,7 @@ pub struct RetargetRig {
     pub chains: Vec<RetargetChain>,
     pub reference: ReferencePose,
     pub corrections: Vec<BoneCorrection>,
+    pub goals: Vec<RetargetGoal>,
 }
 
 /// A named run of bones from `start` down to `end`, matched to the chain of the same name on another rig.
@@ -40,6 +41,23 @@ pub struct RetargetChain {
     pub name: Name,
     pub start: JointName,
     pub end: JointName,
+}
+
+/// A named IK goal on a bone, matched to the goal of the same name on another rig; the bone is the tip of a two-bone chain made of it, its parent and its grandparent.
+#[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
+pub struct RetargetGoal {
+    pub name: Name,
+    pub bone: JointName,
+}
+
+impl RetargetGoal {
+    /// A goal called `name` on `bone`.
+    pub fn new(name: impl Into<Name>, bone: impl Into<JointName>) -> Self {
+        Self {
+            name: name.into(),
+            bone: bone.into(),
+        }
+    }
 }
 
 /// The pose a rig is aligned in before its corrections.
@@ -138,6 +156,12 @@ impl RetargetRig {
         self
     }
 
+    /// Adds one goal, after the ones already there.
+    pub fn with_goal(mut self, goal: RetargetGoal) -> Self {
+        self.goals.push(goal);
+        self
+    }
+
     /// Resolves the rig against `skeleton`, the one `self.skeleton` names, reading the reference frame from `clip`, the one `ReferencePose::ClipFrame` names.
     pub fn resolve(
         &self,
@@ -195,6 +219,38 @@ impl RetargetRig {
             });
         }
 
+        let mut goals: Vec<ResolvedGoal> = Vec::with_capacity(self.goals.len());
+        for (index, goal) in self.goals.iter().enumerate() {
+            if goal.name.is_empty() {
+                return Err(RigError::UnnamedGoal { index });
+            }
+            if goals.iter().any(|seen| seen.name == goal.name) {
+                return Err(RigError::DuplicateGoal { goal: goal.name });
+            }
+            let tip = find_bone(skeleton, goal.bone, BoneUse::Goal(goal.name))?;
+            let Some(mid) = skeleton.parents[tip].map(usize::from) else {
+                return Err(RigError::GoalTooHigh { goal: goal.name });
+            };
+            let Some(goal_root) = skeleton.parents[mid].map(usize::from) else {
+                return Err(RigError::GoalTooHigh { goal: goal.name });
+            };
+            let bends_root = [mid, goal_root].into_iter().any(|bone| {
+                [Some(root), motion_root]
+                    .into_iter()
+                    .flatten()
+                    .any(|pinned| bone == pinned || is_strict_ancestor(skeleton, bone, pinned))
+            });
+            if bends_root {
+                return Err(RigError::GoalBendsRoot { goal: goal.name });
+            }
+            goals.push(ResolvedGoal {
+                name: goal.name,
+                tip,
+                mid,
+                root: goal_root,
+            });
+        }
+
         let mut reference_local = match &self.reference {
             ReferencePose::Rest => skeleton.rest_pose.to_vec(),
             ReferencePose::ClipFrame { time, .. } => {
@@ -234,6 +290,7 @@ impl RetargetRig {
             root,
             motion_root,
             chains,
+            goals,
             reference_local,
             reference_model,
             root_height,
@@ -242,10 +299,55 @@ impl RetargetRig {
 }
 
 impl Asset for RetargetRig {
-    const FORMAT_VERSION: u32 = 1;
+    const FORMAT_VERSION: u32 = 2;
 
     fn name() -> &'static str {
         "RetargetRig"
+    }
+
+    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
+        match version {
+            1 => {
+                let old: legacy::RetargetRigV1 = bincode::deserialize(payload)?;
+                Ok(old.into())
+            }
+            _ => anyhow::bail!(
+                "RetargetRig version {version} has no migration to version {}; re-create the rig in the editor",
+                Self::FORMAT_VERSION
+            ),
+        }
+    }
+}
+
+mod legacy {
+    use concerto_foundation::assets::handle::AssetHandle;
+    use concerto_mesh::{JointName, Skeleton};
+    use serde::Deserialize;
+
+    use super::{BoneCorrection, ReferencePose, RetargetChain, RetargetRig};
+
+    #[derive(Deserialize)]
+    pub(super) struct RetargetRigV1 {
+        skeleton: AssetHandle<Skeleton>,
+        root: JointName,
+        motion_root: Option<JointName>,
+        chains: Vec<RetargetChain>,
+        reference: ReferencePose,
+        corrections: Vec<BoneCorrection>,
+    }
+
+    impl From<RetargetRigV1> for RetargetRig {
+        fn from(old: RetargetRigV1) -> Self {
+            Self {
+                skeleton: old.skeleton,
+                root: old.root,
+                motion_root: old.motion_root,
+                chains: old.chains,
+                reference: old.reference,
+                corrections: old.corrections,
+                goals: Vec::new(),
+            }
+        }
     }
 }
 
@@ -269,6 +371,7 @@ pub struct ResolvedRig {
     pub root: usize,
     pub motion_root: Option<usize>,
     pub chains: Vec<ResolvedChain>,
+    pub goals: Vec<ResolvedGoal>,
     pub reference_local: Vec<JointPose>,
     pub reference_model: Vec<Mat4>,
     pub root_height: f32,
@@ -279,6 +382,11 @@ impl ResolvedRig {
     pub fn chain(&self, name: Name) -> Option<&ResolvedChain> {
         self.chains.iter().find(|chain| chain.name == name)
     }
+
+    /// The goal called `name`, if the rig has one.
+    pub fn goal(&self, name: Name) -> Option<&ResolvedGoal> {
+        self.goals.iter().find(|goal| goal.name == name)
+    }
 }
 
 /// A chain's name and its bones, from its start down to its end.
@@ -286,6 +394,15 @@ impl ResolvedRig {
 pub struct ResolvedChain {
     pub name: Name,
     pub bones: Vec<usize>,
+}
+
+/// A goal's name and the bones it bends: `tip`, its parent `mid`, and the mid's parent `root`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedGoal {
+    pub name: Name,
+    pub tip: usize,
+    pub mid: usize,
+    pub root: usize,
 }
 
 /// What a rig bone name was used as, for errors.
@@ -296,6 +413,7 @@ pub enum BoneUse {
     ChainStart(Name),
     ChainEnd(Name),
     Correction,
+    Goal(Name),
 }
 
 impl fmt::Display for BoneUse {
@@ -306,6 +424,7 @@ impl fmt::Display for BoneUse {
             BoneUse::ChainStart(chain) => write!(f, "the start of chain `{chain}`"),
             BoneUse::ChainEnd(chain) => write!(f, "the end of chain `{chain}`"),
             BoneUse::Correction => write!(f, "a correction"),
+            BoneUse::Goal(goal) => write!(f, "the goal `{goal}`"),
         }
     }
 }
@@ -330,6 +449,18 @@ pub enum RigError {
     },
     ChainEndNotBelowStart {
         chain: Name,
+    },
+    UnnamedGoal {
+        index: usize,
+    },
+    DuplicateGoal {
+        goal: Name,
+    },
+    GoalTooHigh {
+        goal: Name,
+    },
+    GoalBendsRoot {
+        goal: Name,
     },
     MissingClip,
     InvalidTime {
@@ -362,6 +493,17 @@ impl fmt::Display for RigError {
             }
             RigError::ChainEndNotBelowStart { chain } => {
                 write!(f, "the end of chain `{chain}` is not below its start")
+            }
+            RigError::UnnamedGoal { index } => write!(f, "goal {index} has no name"),
+            RigError::DuplicateGoal { goal } => {
+                write!(f, "goal `{goal}` is named more than once")
+            }
+            RigError::GoalTooHigh { goal } => write!(
+                f,
+                "the bone of goal `{goal}` has no parent and grandparent to bend"
+            ),
+            RigError::GoalBendsRoot { goal } => {
+                write!(f, "goal `{goal}` would bend the root or the motion root")
             }
             RigError::MissingClip => {
                 write!(
@@ -1191,8 +1333,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedRig, RetargetChain,
-        RetargetError, RetargetNode, RetargetRig, RetargetSide, RigError, sample_frame,
+        BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedGoal, ResolvedRig,
+        RetargetChain, RetargetError, RetargetGoal, RetargetNode, RetargetRig, RetargetSide,
+        RigError, sample_frame,
     };
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
@@ -1248,6 +1391,9 @@ mod tests {
     const HEAD: usize = 6;
     const UPPER_L: usize = 8;
     const HAND_L: usize = 10;
+    const THIGH_L: usize = 11;
+    const CALF_L: usize = 12;
+    const FOOT_L: usize = 13;
 
     fn rest(bone: usize) -> JointPose {
         match bone {
@@ -1584,6 +1730,104 @@ mod tests {
             RigError::UnknownBone {
                 bone: JointName::from("spine_d"),
                 used_as: BoneUse::ChainEnd(Name::new("spine")),
+            }
+        );
+    }
+
+    #[test]
+    fn a_goal_resolves_to_its_tip_its_parent_and_its_grandparent() {
+        let rig = rig()
+            .with_motion_root("root")
+            .with_goal(RetargetGoal::new("foot_l", "foot_l"))
+            .with_goal(RetargetGoal::new("hand_l", "hand_l"));
+
+        let resolved = rig.resolve(&skeleton(), None).unwrap();
+
+        assert_eq!(
+            resolved.goals,
+            vec![
+                ResolvedGoal {
+                    name: Name::new("foot_l"),
+                    tip: FOOT_L,
+                    mid: CALF_L,
+                    root: THIGH_L,
+                },
+                ResolvedGoal {
+                    name: Name::new("hand_l"),
+                    tip: HAND_L,
+                    mid: 9,
+                    root: UPPER_L,
+                },
+            ]
+        );
+        assert_eq!(resolved.goal(Name::new("hand_l")).unwrap().tip, HAND_L);
+        assert!(resolved.goal(Name::new("hand_r")).is_none());
+    }
+
+    #[test]
+    fn a_goal_with_no_name_is_unnamed() {
+        assert_eq!(
+            resolve_error(
+                &rig()
+                    .with_goal(RetargetGoal::new("foot_l", "foot_l"))
+                    .with_goal(RetargetGoal::new("", "hand_l"))
+            ),
+            RigError::UnnamedGoal { index: 1 }
+        );
+    }
+
+    #[test]
+    fn a_goal_named_twice_is_a_duplicate() {
+        assert_eq!(
+            resolve_error(
+                &rig()
+                    .with_goal(RetargetGoal::new("foot_l", "foot_l"))
+                    .with_goal(RetargetGoal::new("foot_l", "hand_l"))
+            ),
+            RigError::DuplicateGoal {
+                goal: Name::new("foot_l"),
+            }
+        );
+    }
+
+    #[test]
+    fn an_unknown_goal_bone_is_an_unknown_bone_used_as_its_goal() {
+        assert_eq!(
+            resolve_error(&rig().with_goal(RetargetGoal::new("foot_l", "ball_l"))),
+            RigError::UnknownBone {
+                bone: JointName::from("ball_l"),
+                used_as: BoneUse::Goal(Name::new("foot_l")),
+            }
+        );
+    }
+
+    #[test]
+    fn an_empty_goal_bone_is_an_unknown_bone_used_as_its_goal() {
+        assert_eq!(
+            resolve_error(&rig().with_goal(RetargetGoal::new("foot_l", ""))),
+            RigError::UnknownBone {
+                bone: JointName::default(),
+                used_as: BoneUse::Goal(Name::new("foot_l")),
+            }
+        );
+    }
+
+    #[test]
+    fn a_goal_on_a_bone_with_no_grandparent_is_too_high() {
+        assert_eq!(
+            resolve_error(&rig().with_goal(RetargetGoal::new("top", "pelvis"))),
+            RigError::GoalTooHigh {
+                goal: Name::new("top"),
+            }
+        );
+    }
+
+    #[test]
+    fn a_goal_whose_root_is_the_rig_root_would_bend_it() {
+        assert_eq!(
+            resolve_error(&rig().with_goal(RetargetGoal::new("knee_l", "calf_l"))),
+            RigError::GoalBendsRoot {
+                goal: Name::new("knee_l"),
             }
         );
     }
