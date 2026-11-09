@@ -29,8 +29,10 @@ A test earns its place when all four hold:
 | Widget | `concerto-ui` and the editor's reusable widgets | Only what nothing above can express: focus, drag, text entry, hit testing, scrolling. |
 
 Performance guarantees, such as "an idle frame lays nothing out", are
-benchmarks, not tests. Production types carry no `#[cfg(test)]` fields or
-counters for a test to read.
+benchmarks, not tests. Production types carry no `#[cfg(test)]` fields,
+counters or getters of internal state for a test to read. A `#[cfg(test)]`
+setter may stay when it puts the code in a state no public path reaches in a
+test, as `World::set_change_tick` does for the tick-check threshold.
 
 ## What not to write
 

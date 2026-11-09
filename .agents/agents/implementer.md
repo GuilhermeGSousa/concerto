@@ -40,7 +40,7 @@ The rules you are most likely to break:
 - Re-read a file immediately before you edit it.
 - No test per edge case, no test of a getter or label, no test of a private
   non-maths function, no editor test that asserts on widget entities, and no
-  `#[cfg(test)]` field in a production type. See `docs/testing.md`.
+  `#[cfg(test)]` field, counter or getter in a production type. See `docs/testing.md`.
 
 Your reply is the report and nothing else:
 

@@ -219,7 +219,8 @@ table-driven test, and a law (round trip, incremental equals fresh) in one
 private functions are for maths only. Do not test a getter, a constructor, a
 `Default`, a derive, a constant, a label's formatting, flag parsing, or what a
 dependency does on its own. Performance guarantees are benchmarks, and no
-production type carries a `#[cfg(test)]` field or counter for a test to read.
+production type carries a `#[cfg(test)]` field, counter or getter for a test to
+read; a test-only setter may reach a state no public path can.
 Engine maths, a value's persisted encoding, and a test that is the only cover
 for a behaviour stay however simple they look.
 

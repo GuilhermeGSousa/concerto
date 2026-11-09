@@ -45,8 +45,8 @@ Check:
    near-identical tests that should be a table or a property; a test of a
    getter, label, default or flag; a private non-maths function under test; an
    editor test asserting on widget entities or `UIText` to show a feature
-   works; a `#[cfg(test)]` field in a production type; a performance guarantee
-   written as a test instead of a benchmark.
+   works; a `#[cfg(test)]` field, counter or getter in a production type; a
+   performance guarantee written as a test instead of a benchmark.
 6. **Leftovers.** `SELFTEST` code, debug prints, `todo!()`, dependencies no
    longer used, files added and never referenced.
 7. **Documentation.** Every change in behaviour is reflected in the document
