@@ -18,8 +18,9 @@ Work in this order:
    watch it fail for the reason you expect. In a cloud pipeline session, write
    it without running it.
 2. Write the least code that makes it pass.
-3. Run the done gate from `AGENTS.md`, every command. In a cloud pipeline
-   session run only `cargo fmt --all -- --check`, plus
+3. Run the per-task gate from `AGENTS.md`, scoped to the crates you
+   touched. In a cloud pipeline session run only
+   `cargo fmt --all -- --check`, plus
    `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml`
    changed, and report the others as `not run (CI)`.
 4. Stage the paths you changed by name and commit with an imperative subject

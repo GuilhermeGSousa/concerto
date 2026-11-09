@@ -117,6 +117,12 @@ Both build third-party crates at `opt-level = 3` and the workspace crates at
 in the debugger; `--profile profiling` is the fully optimized build, and the
 one to measure performance with.
 
+While a plan is in progress, each task runs a gate scoped to the crates it
+touched: `cargo fmt --all -- --check`, then the clippy and test lines above
+with `-p <crate>` for each crate in place of `--workspace` (and the Rapier
+lines when physics is one of them). The full gate runs once, after the last
+task and before the branch review.
+
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
 alone needs none of them. A cloud pipeline session runs only the first, and
