@@ -41,68 +41,57 @@ impl Reachability {
 
 #[cfg(test)]
 mod tests {
+    use proptest::{prelude::*, sample::Index};
+
     use super::Reachability;
 
-    #[test]
-    fn a_fresh_graph_has_no_reachability() {
-        let r = Reachability::new(3);
-        assert!(!r.reaches(0, 1));
-        assert!(!r.reaches(0, 0));
+    struct Edge {
+        from: usize,
+        to: usize,
     }
 
-    #[test]
-    fn an_edge_makes_its_head_reachable() {
-        let mut r = Reachability::new(2);
-        r.add_edge(0, 1);
-        assert!(r.reaches(0, 1));
-        assert!(!r.reaches(1, 0));
+    fn descendants(nodes: usize, edges: &[Edge], from: usize) -> Vec<bool> {
+        let mut reached = vec![false; nodes];
+        let mut stack = vec![from];
+        while let Some(node) = stack.pop() {
+            for edge in edges.iter().filter(|edge| edge.from == node) {
+                if !reached[edge.to] {
+                    reached[edge.to] = true;
+                    stack.push(edge.to);
+                }
+            }
+        }
+        reached
     }
 
-    #[test]
-    fn reachability_is_transitive() {
-        let mut r = Reachability::new(3);
-        r.add_edge(0, 1);
-        r.add_edge(1, 2);
-        assert!(r.reaches(0, 2));
-    }
+    proptest! {
+        #[test]
+        fn try_add_edge_keeps_the_graph_acyclic_and_reaches_its_transitive_closure(
+            nodes in 1usize..140,
+            ends in prop::collection::vec(any::<Index>(), 0..120),
+        ) {
+            let mut reachability = Reachability::new(nodes);
+            let mut accepted = Vec::new();
+            for pair in ends.chunks_exact(2) {
+                let edge = Edge {
+                    from: pair[0].index(nodes),
+                    to: pair[1].index(nodes),
+                };
+                let closes_a_cycle = edge.from == edge.to
+                    || descendants(nodes, &accepted, edge.to)[edge.from];
 
-    #[test]
-    fn an_edge_into_an_existing_chain_reaches_its_descendants() {
-        let mut r = Reachability::new(3);
-        r.add_edge(1, 2);
-        r.add_edge(0, 1);
-        assert!(r.reaches(0, 2));
-    }
+                prop_assert_eq!(reachability.try_add_edge(edge.from, edge.to), !closes_a_cycle);
+                if !closes_a_cycle {
+                    accepted.push(edge);
+                }
+            }
 
-    #[test]
-    fn reachability_spans_more_than_one_word() {
-        let mut r = Reachability::new(130);
-        r.add_edge(0, 70);
-        r.add_edge(70, 129);
-        assert!(r.reaches(0, 129));
-        assert!(!r.reaches(129, 0));
-    }
-
-    #[test]
-    fn try_add_edge_refuses_an_edge_that_would_close_a_cycle() {
-        let mut r = Reachability::new(3);
-        r.add_edge(0, 1);
-        r.add_edge(1, 2);
-        assert!(!r.try_add_edge(2, 0));
-        assert!(!r.reaches(2, 0));
-    }
-
-    #[test]
-    fn try_add_edge_refuses_a_self_loop() {
-        let mut r = Reachability::new(1);
-        assert!(!r.try_add_edge(0, 0));
-    }
-
-    #[test]
-    fn try_add_edge_accepts_an_edge_that_does_not_close_a_cycle() {
-        let mut r = Reachability::new(3);
-        r.add_edge(0, 1);
-        assert!(r.try_add_edge(1, 2));
-        assert!(r.reaches(0, 2));
+            for from in 0..nodes {
+                let expected = descendants(nodes, &accepted, from);
+                for (to, reached) in expected.into_iter().enumerate() {
+                    prop_assert_eq!(reachability.reaches(from, to), reached, "{} -> {}", from, to);
+                }
+            }
+        }
     }
 }
