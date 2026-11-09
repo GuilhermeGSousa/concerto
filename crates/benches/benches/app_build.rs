@@ -1,4 +1,4 @@
-use std::time::Instant;
+use criterion::{criterion_group, criterion_main, Criterion};
 
 use concerto::headless;
 use concerto_app::{
@@ -24,25 +24,26 @@ fn scene_plugins(app: &mut App) {
         .register_plugin(concerto_scene::plugin::ScenePlugin);
 }
 
-fn build_and_step() -> Option<std::time::Duration> {
-    let started = Instant::now();
+fn build_and_step() -> Option<App> {
     let mut app = headless(scene_plugins)?;
     for _ in 0..3 {
         app.update();
     }
-    Some(started.elapsed())
+    Some(app)
 }
 
-#[test]
-#[ignore = "a measurement, run by hand"]
-fn the_cost_of_building_a_scene_app() {
-    let Some(first) = build_and_step() else {
-        println!("no GPU adapter: nothing measured");
+fn scene_app_build(c: &mut Criterion) {
+    if build_and_step().is_none() {
+        eprintln!("SKIPPED: no GPU adapter, nothing measured");
         return;
-    };
-    let second = build_and_step().unwrap();
-    let third = build_and_step().unwrap();
-    println!("first build and three frames:  {first:?}");
-    println!("second build and three frames: {second:?}");
-    println!("third build and three frames:  {third:?}");
+    }
+    let mut group = c.benchmark_group("app_build");
+    group.sample_size(10);
+    group.bench_function("scene app, built and stepped three frames", |b| {
+        b.iter_with_large_drop(build_and_step)
+    });
+    group.finish();
 }
+
+criterion_group!(benches, scene_app_build);
+criterion_main!(benches);
