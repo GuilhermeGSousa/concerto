@@ -380,7 +380,7 @@ mod tests {
     use crate::{
         ResMut, Resource, World,
         command::CommandQueue,
-        system::input::test_support::{Gate, GateOpen},
+        testing::{Gate, GateOpen},
     };
 
     #[derive(Resource, Default)]

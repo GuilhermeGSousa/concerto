@@ -347,7 +347,7 @@ mod tests {
             access::SystemAccess,
             executor::multi_thread::{MainThreadExecutor, MultiThreadedExecutor},
             meta::SystemMetadata,
-            schedule::{Schedule, ScheduleLabel, Schedules},
+            schedule::{Schedule, Schedules},
         },
         world::UnsafeWorldCell,
     };
@@ -453,22 +453,6 @@ mod tests {
         assert!(!overlapped.load(Ordering::SeqCst));
     }
 
-    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-    struct Outer;
-    impl ScheduleLabel for Outer {
-        fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
-            Box::new(self.clone())
-        }
-    }
-
-    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-    struct Inner;
-    impl ScheduleLabel for Inner {
-        fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
-            Box::new(self.clone())
-        }
-    }
-
     #[derive(Resource, Default)]
     struct RanOn(Option<ThreadId>);
 
@@ -521,7 +505,7 @@ mod tests {
         );
     }
 
-    use crate::system::input::test_support::{Gate, GateOpen};
+    use crate::testing::{Gate, GateOpen, Inner, Outer};
 
     #[derive(Resource, Default)]
     struct Ran {

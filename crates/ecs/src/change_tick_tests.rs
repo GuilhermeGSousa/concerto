@@ -6,12 +6,10 @@ use crate::{
     signal::{On, Signal},
     system::{
         executor::{SystemExecutor, single_thread::SingleThreadedExecutor},
-        input::{
-            ForeignTicks,
-            test_support::{Gate, GateOpen},
-        },
+        input::ForeignTicks,
         schedule::{ScheduleLabel, Schedules},
     },
+    testing::{Gate, GateOpen},
 };
 
 #[derive(Component, PartialEq)]

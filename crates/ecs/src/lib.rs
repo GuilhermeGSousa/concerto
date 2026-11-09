@@ -69,6 +69,9 @@ pub use world::World;
 mod change_tick_tests;
 
 #[cfg(test)]
+mod testing;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         component::{Component, ComponentId},
