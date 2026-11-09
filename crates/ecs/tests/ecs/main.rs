@@ -6,7 +6,7 @@ mod deferred_callbacks;
 mod despawn_callbacks;
 mod entity_recycling;
 mod entity_structure;
-mod hierarchy_despawn;
+mod hierarchy;
 mod lifecycle_signals;
 mod missing_resources;
 mod ordering;

@@ -1,4 +1,3 @@
-use concerto_ecs::entity::hierarchy::{ChildOf, Children};
 use concerto_ecs::{
     Component, Entity, World, component::ComponentLifecycleCallback, resource::Resource,
 };
@@ -156,24 +155,4 @@ fn deferred_self_cleanup_does_not_reenter_or_touch_dead_entities() {
     assert!(!world.entity_is_valid(despawned));
     let reused = world.spawn(());
     assert!(world.get_component_for_entity::<Marker>(reused).is_none());
-}
-
-#[test]
-fn callback_despawns_handle_deep_hierarchies_without_recursive_flushing() {
-    let mut world = World::new();
-    world.register_component::<Children>();
-    world.register_component::<ChildOf>();
-    let root = world.spawn(());
-    let mut entities = vec![root];
-    for _ in 0..2_048 {
-        let child = world.spawn(());
-        world.entity_mut(*entities.last().unwrap()).add_child(child);
-        entities.push(child);
-    }
-    world.despawn(root);
-    assert!(
-        entities
-            .into_iter()
-            .all(|entity| !world.entity_is_valid(entity))
-    );
 }
