@@ -103,25 +103,6 @@ const CHAIN: [&str; 5] = [
     "Top signal mid=true deep=true",
 ];
 
-#[test]
-fn spawn_fires_a_two_level_chain_deepest_first_with_requirements_present() {
-    let mut world = world();
-
-    world.spawn(Top);
-
-    assert_eq!(take(&mut world), CHAIN);
-}
-
-#[test]
-fn insert_fires_a_two_level_chain_deepest_first_with_requirements_present() {
-    let mut world = world();
-    let entity = world.spawn(());
-
-    world.insert(Top, entity);
-
-    assert_eq!(take(&mut world), CHAIN);
-}
-
 #[derive(Default)]
 struct ReqP;
 
@@ -173,79 +154,101 @@ impl Component for Q {
     }
 }
 
-fn expected_for_p_and_q() -> Vec<String> {
-    let mut members = [(TypeId::of::<P>(), "P"), (TypeId::of::<Q>(), "Q")];
-    members.sort_by_key(|(id, _)| *id);
-    members
+#[derive(Default)]
+struct Silent;
+
+impl Component for Silent {}
+
+struct Needs;
+
+impl Component for Needs {
+    fn register_required(required: &mut RequiredComponents) {
+        required.register::<Silent>(Silent::default);
+    }
+}
+
+fn lines(lines: &[&str]) -> Vec<String> {
+    lines.iter().map(|line| line.to_string()).collect()
+}
+
+fn p_and_q() -> Vec<String> {
+    let order = if TypeId::of::<P>() < TypeId::of::<Q>() {
+        ["P", "Q"]
+    } else {
+        ["Q", "P"]
+    };
+    order
         .iter()
-        .flat_map(|(_, name)| [format!("Req{name}"), (*name).to_string()])
+        .flat_map(|name| [format!("Req{name}"), name.to_string()])
         .collect()
 }
 
-#[test]
-fn bundle_members_with_requirements_fire_in_type_id_order_each_after_its_requirements() {
-    let mut world = world();
-
-    world.spawn((P, Q));
-
-    assert_eq!(take(&mut world), expected_for_p_and_q());
+struct HookCase {
+    name: &'static str,
+    act: fn(&mut World),
+    log: fn() -> Vec<String>,
 }
 
 #[test]
-fn insert_orders_bundle_members_the_same_way() {
-    let mut world = world();
-    let entity = world.spawn(());
+fn requirements_fire_their_hooks_and_signals_before_their_requirers() {
+    let cases = [
+        HookCase {
+            name: "spawn fires a two level chain deepest first",
+            act: |world| {
+                world.spawn(Top);
+            },
+            log: || lines(&CHAIN),
+        },
+        HookCase {
+            name: "insert fires a two level chain deepest first",
+            act: |world| {
+                let entity = world.spawn(());
+                world.insert(Top, entity);
+            },
+            log: || lines(&CHAIN),
+        },
+        HookCase {
+            name: "bundle members fire in type id order, each after its requirements",
+            act: |world| {
+                world.spawn((P, Q));
+            },
+            log: p_and_q,
+        },
+        HookCase {
+            name: "insert orders bundle members the same way",
+            act: |world| {
+                let entity = world.spawn(());
+                world.insert((Q, P), entity);
+            },
+            log: p_and_q,
+        },
+        HookCase {
+            name: "members without requirements follow",
+            act: |world| {
+                world.spawn((Plain, P));
+            },
+            log: || lines(&["ReqP", "P", "Plain"]),
+        },
+        HookCase {
+            name: "a bundle member that is a requirement fires before its requirer",
+            act: |world| {
+                world.spawn((Top, Mid));
+            },
+            log: || lines(&CHAIN),
+        },
+        HookCase {
+            name: "requirements without callbacks stay silent",
+            act: |world| {
+                world.spawn(Needs);
+            },
+            log: Vec::new,
+        },
+    ];
+    for case in cases {
+        let mut world = world();
 
-    world.insert((Q, P), entity);
+        (case.act)(&mut world);
 
-    assert_eq!(take(&mut world), expected_for_p_and_q());
-}
-
-#[test]
-fn a_requirement_fires_before_the_requirer_then_members_without_requirements_follow() {
-    let mut world = world();
-
-    world.spawn((Plain, P));
-
-    let expected = ["ReqP", "P", "Plain"];
-    assert_eq!(take(&mut world), expected);
-}
-
-#[test]
-fn a_bundle_member_that_is_a_requirement_fires_before_its_requirer() {
-    let mut world = world();
-
-    world.spawn((Top, Mid));
-
-    assert_eq!(
-        take(&mut world),
-        [
-            "Deep hook",
-            "Mid hook deep=true",
-            "Mid signal deep=true",
-            "Top hook mid=true deep=true",
-            "Top signal mid=true deep=true",
-        ]
-    );
-}
-
-#[test]
-fn required_components_without_callbacks_stay_silent() {
-    #[derive(Default)]
-    struct Silent;
-    impl Component for Silent {}
-
-    struct Needs;
-    impl Component for Needs {
-        fn register_required(required: &mut RequiredComponents) {
-            required.register::<Silent>(Silent::default);
-        }
+        assert_eq!(take(&mut world), (case.log)(), "{}", case.name);
     }
-
-    let mut world = world();
-
-    let entity = world.spawn(Needs);
-
-    assert!(world.get_component_for_entity::<Silent>(entity).is_some());
-    assert!(take(&mut world).is_empty());
 }
