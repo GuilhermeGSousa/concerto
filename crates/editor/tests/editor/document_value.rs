@@ -1,6 +1,4 @@
-#[allow(dead_code)]
-#[path = "../examples/custom_property.rs"]
-mod example;
+use crate::example;
 
 use concerto_app::{
     App,

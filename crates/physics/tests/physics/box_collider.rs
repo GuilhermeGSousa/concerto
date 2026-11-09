@@ -1,3 +1,4 @@
+use crate::common::physics_world;
 use concerto_ecs::entity::Entity;
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::system::schedule::{CompiledSchedule, Schedule};
@@ -5,8 +6,6 @@ use concerto_ecs::world::World;
 use concerto_ecs::IntoSystemConfig;
 use concerto_foundation::transform::Transform;
 use glam::Vec3;
-mod common;
-use common::physics_world;
 
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::{build_box_colliders, register_colliders, BoxCollider, Collider};

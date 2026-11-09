@@ -69,3 +69,8 @@ level where the bug was visible.
 
 Fixtures and helpers live once per crate, in its `tests/` directory or a
 `testing` module, so a change of API is one edit and not a hundred.
+
+A crate's integration tests are one binary: each file is a module of
+`tests/<crate>/main.rs`, where `<crate>` is the crate's directory name. A new
+file adds a `mod` line there; a file directly in `tests/` would be a binary of
+its own, linked against the whole engine.

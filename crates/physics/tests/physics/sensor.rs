@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::common::physics_world;
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::{ResMut, Resource};
 use concerto_ecs::signal::listener::{IntoListener, Listener};
@@ -12,8 +13,6 @@ use concerto_foundation::transform::Transform;
 use concerto_mesh::primitives::plane;
 use concerto_mesh::MeshComponent;
 use glam::{Vec2, Vec3};
-mod common;
-use common::physics_world;
 
 use concerto_physics::backend::SensorContactKind;
 use concerto_physics::body::BodyId;

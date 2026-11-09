@@ -1,4 +1,4 @@
-#[path = "../examples/custom_asset.rs"]
+#[path = "../../examples/custom_asset.rs"]
 mod custom_asset;
 
 #[test]

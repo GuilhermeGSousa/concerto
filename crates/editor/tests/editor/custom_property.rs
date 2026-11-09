@@ -1,6 +1,5 @@
 //! Exercises the downstream API without access to inspector internals.
-#[path = "../examples/custom_property.rs"]
-mod example;
+use crate::example;
 
 use concerto_app::{App, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_ecs::{

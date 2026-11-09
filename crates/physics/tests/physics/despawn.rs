@@ -2,8 +2,7 @@
 //! eagerly and never destroyed, so a "removed" collider kept colliding
 //! forever. A body must leave the simulation with its `Collider` component.
 
-mod common;
-use common::{physics_world, register_bodies};
+use crate::common::{physics_world, register_bodies};
 
 use concerto_foundation::transform::Transform;
 use concerto_physics::body::BodyId;

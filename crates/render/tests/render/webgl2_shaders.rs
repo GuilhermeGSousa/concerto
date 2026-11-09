@@ -56,7 +56,7 @@ fn assert_translates_to_glsl_es_300(
 fn standard_material_shader_translates_for_webgl2() {
     assert_translates_to_glsl_es_300(
         "shader.wgsl",
-        include_str!("../src/shaders/shader.wgsl"),
+        include_str!("../../src/shaders/shader.wgsl"),
         &[
             ("vs_main", ShaderStage::Vertex),
             ("fs_main", ShaderStage::Fragment),
@@ -68,7 +68,7 @@ fn standard_material_shader_translates_for_webgl2() {
 fn shadow_shader_translates_for_webgl2() {
     assert_translates_to_glsl_es_300(
         "shadow.wgsl",
-        include_str!("../src/shaders/shadow.wgsl"),
+        include_str!("../../src/shaders/shadow.wgsl"),
         &[("vs_main", ShaderStage::Vertex)],
     );
 }
@@ -77,7 +77,7 @@ fn shadow_shader_translates_for_webgl2() {
 fn viewport_clear_shader_translates_for_webgl2() {
     assert_translates_to_glsl_es_300(
         "viewport_clear.wgsl",
-        include_str!("../src/shaders/viewport_clear.wgsl"),
+        include_str!("../../src/shaders/viewport_clear.wgsl"),
         &[
             ("vs_main", ShaderStage::Vertex),
             ("fs_main", ShaderStage::Fragment),

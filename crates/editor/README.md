@@ -1102,7 +1102,7 @@ as an [inspected asset](#inspected-assets), so the generic tab opens, edits,
 saves and discards it: `text` is a text field and `spin_speed` a number field.
 `cargo run -p concerto-editor --example custom_asset` opens the editor over a
 temporary project holding one empty scene; New lists ExampleDialogue once that
-scene's edit `App` has built. Its smoke test, `tests/asset_editor.rs`, drives a
+scene's edit `App` has built. Its smoke test, `tests/editor/asset_editor.rs`, drives a
 hand-built editor `App` with `ProjectPlugin`, `ScenePlugin`,
 `InspectedAssetPlugin` and `ContentPlugin` through the same steps without a
 window: open the project, wait for ExampleDialogue to be creatable, create and

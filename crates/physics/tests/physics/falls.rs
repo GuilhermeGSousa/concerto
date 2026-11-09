@@ -2,10 +2,9 @@
 //! fall under gravity and come to rest on top of the floor. Bodies are created
 //! by spawning `Collider` components — never directly.
 
+use crate::common::{physics_world, register_bodies};
 use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
-mod common;
-use common::{physics_world, register_bodies};
 
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::{Collider, ColliderOffset};

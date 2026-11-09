@@ -5,10 +5,10 @@ use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, Wrap};
 
 fn fonts() -> UIFonts {
     let mut fonts = UIFonts::default();
-    fonts.add_face(include_bytes!("../fonts/Inter/Inter-Regular.ttf").as_slice());
-    fonts.add_face(include_bytes!("../fonts/Inter/Inter-Medium.ttf").as_slice());
-    fonts.add_face(include_bytes!("../fonts/Inter/Inter-SemiBold.ttf").as_slice());
-    fonts.add_face(include_bytes!("../fonts/Phosphor/Phosphor.ttf").as_slice());
+    fonts.add_face(include_bytes!("../../fonts/Inter/Inter-Regular.ttf").as_slice());
+    fonts.add_face(include_bytes!("../../fonts/Inter/Inter-Medium.ttf").as_slice());
+    fonts.add_face(include_bytes!("../../fonts/Inter/Inter-SemiBold.ttf").as_slice());
+    fonts.add_face(include_bytes!("../../fonts/Phosphor/Phosphor.ttf").as_slice());
     fonts.set_sans_serif(concerto_editor::fonts::INTER);
     fonts
 }

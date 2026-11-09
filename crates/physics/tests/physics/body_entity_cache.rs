@@ -2,8 +2,7 @@
 //! with the `Collider`, keeping the body-to-entity cache in sync so raycast
 //! hits resolve in O(1).
 
-mod common;
-use common::{physics_world, register_bodies};
+use crate::common::{physics_world, register_bodies};
 
 use concerto_foundation::transform::Transform;
 use concerto_physics::body::BodyId;

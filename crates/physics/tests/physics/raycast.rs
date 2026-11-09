@@ -2,12 +2,11 @@
 //! hit point, surface normal, and the entity owning the hit `Collider`; rays
 //! that miss report nothing.
 
+use crate::common::{physics_world, register_bodies};
 use concerto_ecs::entity::Entity;
 use concerto_ecs::world::World;
 use concerto_foundation::transform::Transform;
 use glam::Vec3;
-mod common;
-use common::{physics_world, register_bodies};
 
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
