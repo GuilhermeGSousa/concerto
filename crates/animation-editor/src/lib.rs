@@ -2,13 +2,16 @@
 pub mod events;
 mod panels;
 pub mod preview;
+pub mod rig;
 mod save;
+pub mod transport;
 
 use std::{collections::HashSet, path::Path, sync::Arc};
 
 use concerto_animation::clip::{AnimationChannel, AnimationClip};
 use concerto_app::{
     App,
+    plugins::Plugin,
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
@@ -42,10 +45,14 @@ use panels::{
     sync_clip_event_context, sync_clip_events, sync_clip_panels,
 };
 use preview::{
-    ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, ShownBone,
-    clip_preview,
+    ClipPreviewBones, SetClipTransport, ShowClip, ShowClipScene, ShownBone, clip_preview,
 };
+use rig::RetargetRigEditorPlugin;
 use save::{restore_clip_events, save_clip};
+use transport::{
+    ClipTransport, TransportPlugin, follow_transport_progress, sync_transport_rows,
+    sync_transport_timelines,
+};
 
 define_action!(
     /// Remove the event selected in the active clip tab.
@@ -61,10 +68,6 @@ define_context!(
 pub struct ClipDocument {
     pub clip: Option<Arc<AnimationClip>>,
     pub facts: ClipFacts,
-    pub time: f32,
-    pub playing: bool,
-    pub looping: bool,
-    pub rate: f32,
     pub root_motion: bool,
     pub skeleton_gizmo: bool,
     pub picked_scene: Option<AssetId>,
@@ -81,10 +84,6 @@ impl Default for ClipDocument {
         Self {
             clip: None,
             facts: ClipFacts::default(),
-            time: 0.0,
-            playing: true,
-            looping: true,
-            rate: 1.0,
             root_motion: false,
             skeleton_gizmo: true,
             picked_scene: None,
@@ -104,6 +103,15 @@ impl ClipDocument {
             .clip
             .as_ref()
             .map_or_else(Vec::new, |clip| bone_rows(clip, &self.skeleton));
+    }
+}
+
+pub(crate) fn measure_transport(transport: &mut ClipTransport, facts: &ClipFacts) {
+    if transport.duration != facts.duration {
+        transport.duration = facts.duration;
+    }
+    if transport.rate != facts.rate {
+        transport.rate = facts.rate;
     }
 }
 
@@ -178,7 +186,7 @@ pub struct AnimationClipEditor;
 
 impl AssetEditor for AnimationClipEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
-        editor.insert(ClipDocument::default());
+        editor.insert((ClipDocument::default(), ClipTransport::default()));
     }
 
     fn preview(&self) -> Option<PreviewSpec> {
@@ -193,16 +201,9 @@ impl AssetEditor for AnimationClipEditor {
 }
 
 pub(crate) fn sync_clip_preview(
-    mut progress: EventReader<Hosted<ClipPreviewProgress>>,
     mut bones: EventReader<Hosted<ClipPreviewBones>>,
     documents: Query<&mut ClipDocument>,
 ) {
-    for Hosted { document, event } in progress.read() {
-        if let Some(mut state) = documents.get_entity(*document) {
-            state.time = event.time;
-            state.playing = event.playing;
-        }
-    }
     for Hosted { document, event } in bones.read() {
         if let Some(mut state) = documents.get_entity(*document) {
             state.facts.skeleton_bones = event.bones;
@@ -244,7 +245,10 @@ pub(crate) fn settle_edit(
     }
 }
 
-fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
+pub(crate) fn default_scene<'a>(
+    clip: &AssetEntry,
+    assets: &'a AssetRegistry,
+) -> Option<&'a AssetEntry> {
     assets
         .of_type::<Scene>()
         .find(|entry| entry.name() == "scene" && entry.folder() == clip.folder())
@@ -287,7 +291,12 @@ fn scene_signal(
 }
 
 pub(crate) fn load_clip(
-    documents: Query<(Entity, &mut EditorDocument, &mut ClipDocument)>,
+    documents: Query<(
+        Entity,
+        &mut EditorDocument,
+        &mut ClipDocument,
+        &mut ClipTransport,
+    )>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
     mut previews: PreviewSignals,
@@ -295,7 +304,7 @@ pub(crate) fn load_clip(
     let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
         return;
     };
-    for (entity, mut document, mut state) in documents.iter() {
+    for (entity, mut document, mut state, mut transport) in documents.iter() {
         let Some(asset) = document.pending.clone() else {
             continue;
         };
@@ -322,15 +331,16 @@ pub(crate) fn load_clip(
         };
         state.clip = Some(Arc::clone(&clip));
         state.rebuild_rows();
-        state.time = 0.0;
-        state.playing = true;
+        measure_transport(&mut transport, &state.facts);
+        transport.time = 0.0;
+        transport.playing = true;
         previews.trigger(entity, ShowClip(clip));
         previews.trigger(
             entity,
             SetClipTransport {
                 playing: true,
-                looping: state.looping,
-                rate: state.rate,
+                looping: transport.looping,
+                rate: transport.speed,
             },
         );
         previews.trigger(
@@ -341,28 +351,41 @@ pub(crate) fn load_clip(
     }
 }
 
-/// Adds the clip editor to the editor's `App`.
-pub fn install(app: &mut App) {
-    app.register_asset_editor::<AnimationClip, AnimationClipEditor>()
-        .expect("the editor's App holds the asset-editor registry")
-        .forward_hosted_event::<ClipPreviewProgress>()
-        .forward_hosted_event::<ClipPreviewBones>()
-        .add_system(
-            Update,
-            (
-                sync_clip_preview,
-                load_clip,
-                build_clip_panels,
-                apply_clip_event_fields,
-                remove_clip_event,
-                save_clip,
-                sync_clip_panels,
-                sync_clip_events,
+/// Registers [`AnimationClipEditor`] and runs the clip tab's systems; needs [`TransportPlugin`].
+pub struct AnimationClipEditorPlugin;
+
+impl Plugin for AnimationClipEditorPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_asset_editor::<AnimationClip, AnimationClipEditor>()
+            .expect("the editor's App holds the asset-editor registry")
+            .forward_hosted_event::<ClipPreviewBones>()
+            .add_system(
+                Update,
+                (
+                    sync_clip_preview,
+                    load_clip,
+                    build_clip_panels,
+                    apply_clip_event_fields,
+                    remove_clip_event,
+                    save_clip,
+                    sync_clip_panels,
+                    sync_clip_events,
+                )
+                    .chain()
+                    .after(follow_transport_progress)
+                    .before(sync_transport_rows)
+                    .before(sync_transport_timelines),
             )
-                .chain(),
-        )
-        .add_listener(restore_clip_events);
-    install_event_keys(app);
+            .add_listener(restore_clip_events);
+        install_event_keys(app);
+    }
+}
+
+/// Adds the clip and rig editors and the transport they play clips with to the editor's `App`.
+pub fn install(app: &mut App) {
+    app.register_plugin(TransportPlugin)
+        .register_plugin(AnimationClipEditorPlugin)
+        .register_plugin(RetargetRigEditorPlugin);
 }
 
 fn install_event_keys(app: &mut App) {
@@ -410,7 +433,7 @@ mod tests {
         plugin::{Window, WindowPlugin},
     };
     use glam::Vec2;
-    use preview::SetClipTransport;
+    use preview::{ClipPreviewProgress, SetClipTransport};
     use std::time::{Duration, Instant};
     use uuid::Uuid;
 
@@ -486,6 +509,7 @@ mod tests {
             .insert_resource(EventChannel::<Hosted<ClipPreviewBones>>::new());
         f.add_delivery(forwarding::<ClipPreviewProgress>());
         f.add_delivery(forwarding::<ClipPreviewBones>());
+        f.add_delivery(follow_transport_progress.into_boxed_system());
         f.add_delivery(sync_clip_preview.into_boxed_system());
         f.add_delivery(load_clip.into_boxed_system());
         f
@@ -549,6 +573,18 @@ mod tests {
             .expect("the document is a clip's")
     }
 
+    pub(super) fn transport(f: &SceneFixture, document: Entity) -> &ClipTransport {
+        f.world
+            .get_component_for_entity::<ClipTransport>(document)
+            .expect("the document has a transport")
+    }
+
+    fn transport_mut(f: &mut SceneFixture, document: Entity) -> &mut ClipTransport {
+        f.world
+            .get_component_for_entity_mut::<ClipTransport>(document)
+            .expect("the document has a transport")
+    }
+
     fn pause(f: &mut SceneFixture, document: Entity) {
         let mut system = (move |mut previews: PreviewSignals| {
             previews.trigger(
@@ -563,7 +599,9 @@ mod tests {
         .into_system();
         system.initialize(&mut f.world);
         system.run_and_apply((), &mut f.world);
-        f.frames_until("the pause never came back", |f| !state(f, document).playing);
+        f.frames_until("the pause never came back", |f| {
+            !transport(f, document).playing
+        });
     }
 
     fn report_until(
@@ -699,11 +737,13 @@ mod tests {
     fn a_new_document_plays_and_loops_at_full_rate_with_the_gizmo_on() {
         let document = ClipDocument::default();
 
+        let transport = ClipTransport::default();
+
         assert!(document.clip.is_none());
-        assert_eq!(document.time, 0.0);
-        assert!(document.playing);
-        assert!(document.looping);
-        assert_eq!(document.rate, 1.0);
+        assert_eq!(transport.time, 0.0);
+        assert!(transport.playing);
+        assert!(transport.looping);
+        assert_eq!(transport.speed, 1.0);
         assert!(!document.root_motion);
         assert!(document.skeleton_gizmo);
         assert_eq!(document.picked_scene, None);
@@ -916,17 +956,20 @@ mod tests {
         std::fs::write(f.project_root.join(&broken.address), b"not a clip").unwrap();
 
         let document = open_clip(&mut f, &walk);
-        f.frames_until("the head never moved", |f| state(f, document).time > 0.0);
+        f.frames_until("the head never moved", |f| {
+            transport(f, document).time > 0.0
+        });
         pause(&mut f, document);
-        let paused_at = state(&f, document).time;
+        let paused_at = transport(&f, document).time;
         open_clip(&mut f, &broken);
 
         assert_ne!(f.status(document), "");
         assert_eq!(f.document(document).current, Some(walk));
-        let kept = state(&f, document);
+        let kept = transport(&f, document);
         assert_eq!(kept.time, paused_at);
         assert!(!kept.playing);
-        assert_eq!(kept.facts, ClipFacts::of(&clip_of(10)));
+        assert_eq!(kept.duration, 10.0);
+        assert_eq!(state(&f, document).facts, ClipFacts::of(&clip_of(10)));
     }
 
     #[test]
@@ -936,8 +979,10 @@ mod tests {
 
         let document = open_clip(&mut f, &walk);
 
-        f.frames_until("the head never moved", |f| state(f, document).time > 0.0);
-        assert!(state(&f, document).playing);
+        f.frames_until("the head never moved", |f| {
+            transport(f, document).time > 0.0
+        });
+        assert!(transport(&f, document).playing);
         pause(&mut f, document);
         report_bones(&mut f, document, 65, 60);
         assert_eq!(state(&f, document).facts.driven, 60);
@@ -952,25 +997,30 @@ mod tests {
         let run = write_clip(&mut f, "content/hero/run.gasset", &clip_of(20));
 
         let document = open_clip(&mut f, &walk);
-        f.frames_until("the head never moved", |f| state(f, document).time > 0.0);
+        f.frames_until("the head never moved", |f| {
+            transport(f, document).time > 0.0
+        });
         pause(&mut f, document);
         report_bones(&mut f, document, 65, 60);
         let chosen = state_mut(&mut f, document);
         chosen.picked_scene = Some(level.id);
-        chosen.rate = 2.0;
-        chosen.looping = false;
         chosen.root_motion = true;
         chosen.skeleton_gizmo = false;
+        let played = transport_mut(&mut f, document);
+        played.speed = 2.0;
+        played.looping = false;
 
         open_clip(&mut f, &run);
 
+        let restarted = transport(&f, document);
+        assert_eq!(restarted.time, 0.0);
+        assert!(restarted.playing);
+        assert_eq!(restarted.speed, 2.0);
+        assert!(!restarted.looping);
+        assert_eq!(restarted.duration, 20.0);
         let reset = state(&f, document);
-        assert_eq!(reset.time, 0.0);
-        assert!(reset.playing);
         assert_eq!(reset.picked_scene, Some(level.id));
         assert_eq!(reset.shown_scene, Some(level.id));
-        assert_eq!(reset.rate, 2.0);
-        assert!(!reset.looping);
         assert!(reset.root_motion);
         assert!(!reset.skeleton_gizmo);
         assert_eq!(reset.facts.duration, 20.0);
@@ -979,9 +1029,9 @@ mod tests {
         assert_eq!(f.document(document).current, Some(run));
 
         f.frames_until("the second clip never played", |f| {
-            state(f, document).time > 0.0
+            transport(f, document).time > 0.0
         });
-        assert!(state(&f, document).playing);
+        assert!(transport(&f, document).playing);
         assert!(f.scene_names(document).contains(&"level".to_owned()));
         assert!(!f.unsaved(document));
     }
@@ -1060,6 +1110,7 @@ mod tests {
         });
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
             .register_plugin(TimePlugin)
             .register_plugin(WindowPlugin)
             .register_plugin(HostedPlugin)
@@ -1095,6 +1146,7 @@ mod tests {
                 failed: None,
             },
             ClipDocument::default(),
+            ClipTransport::default(),
         ));
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
 
@@ -1104,7 +1156,7 @@ mod tests {
             let followed = app
                 .main()
                 .world()
-                .get_component_for_entity::<ClipDocument>(document)
+                .get_component_for_entity::<ClipTransport>(document)
                 .unwrap();
             if followed.time > 0.0 {
                 break;

@@ -72,7 +72,9 @@ method there; hold the right mouse button or the left trigger to aim, C or the
 east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1, and `--sanatorium` and
-`--forest` win over it. The sanatorium's Blender source and exports are in
+`--forest` win over it. Its two rigs are content assets,
+`content/UAL1/rig.gasset` and `content/lafan1/model_skeleton/rig.gasset`, that
+the editor's rig tab edits. The sanatorium's Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
 editor's Import…, over a scratch copy of the project; there is no import
 command line. An example may have an `editor/` crate, named `<game>-editor`,
@@ -96,7 +98,7 @@ cargo test --locked -p concerto-physics --no-default-features --features force-r
 cargo build --locked --target wasm32-unknown-unknown
 ```
 
-A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. The Ubuntu CI runner has no adapter, so GPU tests skip there; the Windows test job sets `CONCERTO_REQUIRE_GPU=1`, so they must run there.
+A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. Neither CI runner, Ubuntu or Windows, has an adapter, so GPU tests skip in CI; run them locally on a machine with a GPU.
 
 Test builds carry line tables only and `cargo build` carries full debug info,
 so the two compile everything separately, third-party crates and Jolt

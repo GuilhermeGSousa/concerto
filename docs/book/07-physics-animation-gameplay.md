@@ -937,8 +937,12 @@ after the pose's rotation: the local rotation becomes `rotation * correction`.
 Two corrections on one bone both apply, in list order. There is no absolute
 per-bone override.
 
-A rig is made from the content browser's New menu and edited in the inspector,
-whose bone fields pick from the named skeleton's bones, or in code:
+A rig is made from the content browser's New menu and edited in the editor, or
+in code. With `concerto-animation-editor` installed it opens in the rig tab: a
+bone tree to assign chains and roots, a preview of a second rig's character
+beside it, and the inspector, whose bone fields pick from the named skeleton's
+bones (see that crate's README). Without it, the rig opens in the generic
+inspector:
 
 ```rust
 use concerto::animation::retarget::{BoneCorrection, RetargetChain, RetargetGoal, RetargetRig};
@@ -958,7 +962,8 @@ of the root, the motion root and each chain (`chain(name)` finds one), the
 tip, mid and root indices of each goal, in list order (`goal(name)` finds
 one), the reference pose in local and model space, and `root_height`, the root's height
 above the model origin with model +Y up. It takes the skeleton and, for a
-`ClipFrame`, the clip, which the caller loads through the rig's own handles. It
+`ClipFrame`, the clip. A rig loaded through the `AssetServer` loads both through
+its own handles when it loads, so they arrive without the caller asking. It
 fails with a `RigError` naming the bone or chain: an invalid skeleton, an empty
 or unknown bone, a motion root that is not above the root, an unnamed or
 duplicate chain, a chain end not below its start, an unnamed or duplicate goal

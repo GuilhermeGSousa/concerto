@@ -29,6 +29,10 @@ pub trait PropertyTarget: Send + Sync + 'static {
     fn component(&self) -> Option<ComponentTarget> {
         None
     }
+    /// Whether an edit to this value changes what a save of its document writes.
+    fn saved(&self) -> bool {
+        true
+    }
 }
 
 /// Where a target's value lives.
