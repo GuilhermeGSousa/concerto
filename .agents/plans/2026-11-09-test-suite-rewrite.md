@@ -139,4 +139,14 @@ and in the PR description.
 
 ## Baseline
 
-(filled in by task 0)
+Measured 2026-11-09 on the cloud container (4 cores, 15 GB RAM):
+
+- `#[test]` functions: 4,055 (2,870 in `src/`, 1,185 in 138 integration-test
+  files).
+- Executables in `target/debug/deps` after `cargo test --workspace`: 235.
+- `cargo test --locked --workspace`, cold: 882 s. Warm: 41 s. 4,066 passed,
+  0 failed, 12 ignored.
+- `target/` after the run: 25 GB, 5.8 GB of it incremental state.
+
+Disk is tight in this container: implementers build with
+`CARGO_INCREMENTAL=0`.
