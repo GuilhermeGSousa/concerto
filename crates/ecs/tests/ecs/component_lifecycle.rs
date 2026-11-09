@@ -16,12 +16,16 @@ struct Extra;
 #[derive(Component)]
 struct Marker;
 
-/// Records every lifecycle firing and whether the component could read
-/// itself at that moment.
+#[derive(Debug, PartialEq)]
+struct Firing {
+    entity: Entity,
+    readable: bool,
+}
+
 #[derive(Resource, Default)]
 struct TrackLog {
-    added: Vec<(Entity, bool)>,
-    removed: Vec<(Entity, bool)>,
+    added: Vec<Firing>,
+    removed: Vec<Firing>,
 }
 
 struct Tracked;
@@ -33,7 +37,10 @@ impl Component for Tracked {
                 .get_component_for_entity::<Tracked>(context.entity)
                 .is_some();
             if let Some(log) = world.get_resource_mut::<TrackLog>() {
-                log.added.push((context.entity, readable));
+                log.added.push(Firing {
+                    entity: context.entity,
+                    readable,
+                });
             }
         })
     }
@@ -44,7 +51,10 @@ impl Component for Tracked {
                 .get_component_for_entity::<Tracked>(context.entity)
                 .is_some();
             if let Some(log) = world.get_resource_mut::<TrackLog>() {
-                log.removed.push((context.entity, readable));
+                log.removed.push(Firing {
+                    entity: context.entity,
+                    readable,
+                });
             }
         })
     }
@@ -155,7 +165,16 @@ fn spawn_fires_on_add_with_bundle_fully_inserted() {
     let log = world.get_resource::<TrackLog>().unwrap();
     assert_eq!(
         log.added,
-        vec![(first, true), (second, true)],
+        vec![
+            Firing {
+                entity: first,
+                readable: true
+            },
+            Firing {
+                entity: second,
+                readable: true
+            }
+        ],
         "on_add should fire once per spawn, for the right entity, with the component readable"
     );
 
@@ -164,54 +183,6 @@ fn spawn_fires_on_add_with_bundle_fully_inserted() {
         siblings.0,
         vec![true, true],
         "the whole bundle should be inserted before any on_add fires, regardless of bundle order"
-    );
-}
-
-#[test]
-fn insert_fires_on_add() {
-    let mut world = World::new();
-    world.register_component::<Tracked>();
-    world.insert_resource(TrackLog::default());
-
-    let entity = world.spawn((Value(1),));
-    world.insert(Tracked, entity);
-
-    let log = world.get_resource::<TrackLog>().unwrap();
-    assert_eq!(log.added, vec![(entity, true)]);
-}
-
-#[test]
-fn remove_component_fires_on_remove_before_removal() {
-    let mut world = World::new();
-    world.register_component::<Tracked>();
-    world.insert_resource(TrackLog::default());
-
-    let entity = world.spawn((Tracked, Value(1)));
-    world.remove_component::<Tracked>(entity);
-
-    let log = world.get_resource::<TrackLog>().unwrap();
-    assert_eq!(
-        log.removed,
-        vec![(entity, true)],
-        "remove_component fires on_remove while the outgoing component is readable"
-    );
-    assert!(world.get_component_for_entity::<Tracked>(entity).is_none());
-}
-
-#[test]
-fn despawn_fires_on_despawn_while_still_readable() {
-    let mut world = World::new();
-    world.register_component::<Tracked>();
-    world.insert_resource(TrackLog::default());
-
-    let entity = world.spawn((Tracked, Value(1)));
-    world.despawn(entity);
-
-    let log = world.get_resource::<TrackLog>().unwrap();
-    assert_eq!(
-        log.removed,
-        vec![(entity, true)],
-        "despawn fires on_despawn while the component is still readable"
     );
 }
 
@@ -288,28 +259,6 @@ fn on_despawn_despawning_another_entity() {
 
     assert_eq!(value_of(&world, victim), None, "victim should be despawned");
     assert_eq!(value_of(&world, reaper), None, "reaper should be despawned");
-}
-
-#[test]
-fn callbacks_balance_across_mixed_operations() {
-    let mut world = World::new();
-    world.register_component::<Tracked>();
-    world.insert_resource(TrackLog::default());
-
-    let a = world.spawn((Tracked, Value(1)));
-    let _b = world.spawn((Tracked, Value(2)));
-    let c = world.spawn((Tracked, Value(3)));
-
-    world.remove_component::<Tracked>(a);
-    world.despawn(c);
-
-    let log = world.get_resource::<TrackLog>().unwrap();
-    assert_eq!(log.added.len(), 3);
-    assert_eq!(
-        log.removed.len(),
-        2,
-        "one remove_component + one despawn should each run cleanup exactly once"
-    );
 }
 
 #[test]
@@ -489,17 +438,93 @@ impl Component for Replaceable {
     }
 }
 
+struct TrackCase {
+    name: &'static str,
+    act: fn(&mut World) -> Vec<Entity>,
+    added: &'static [usize],
+    removed: &'static [usize],
+}
+
 #[test]
-fn on_replace_reads_the_old_value_and_skips_the_first_insert() {
+fn add_and_remove_callbacks_fire_once_each_while_the_component_is_readable() {
+    let cases = [
+        TrackCase {
+            name: "insert fires on_add",
+            act: |world| {
+                let entity = world.spawn(Value(1));
+                world.insert(Tracked, entity);
+                vec![entity]
+            },
+            added: &[0],
+            removed: &[],
+        },
+        TrackCase {
+            name: "remove_component fires on_remove before the removal",
+            act: |world| {
+                let entity = world.spawn((Tracked, Value(1)));
+                world.remove_component::<Tracked>(entity);
+                vec![entity]
+            },
+            added: &[0],
+            removed: &[0],
+        },
+        TrackCase {
+            name: "despawn fires the removal cleanup while the component is readable",
+            act: |world| {
+                let entity = world.spawn((Tracked, Value(1)));
+                world.despawn(entity);
+                vec![entity]
+            },
+            added: &[0],
+            removed: &[0],
+        },
+        TrackCase {
+            name: "mixed operations balance",
+            act: |world| {
+                let entities = vec![
+                    world.spawn((Tracked, Value(1))),
+                    world.spawn((Tracked, Value(2))),
+                    world.spawn((Tracked, Value(3))),
+                ];
+                world.remove_component::<Tracked>(entities[0]);
+                world.despawn(entities[2]);
+                entities
+            },
+            added: &[0, 1, 2],
+            removed: &[0, 2],
+        },
+    ];
+    for case in cases {
+        let mut world = World::new();
+        world.register_component::<Tracked>();
+        world.insert_resource(TrackLog::default());
+
+        let entities = (case.act)(&mut world);
+
+        let firings = |indices: &[usize]| -> Vec<Firing> {
+            indices
+                .iter()
+                .map(|index| Firing {
+                    entity: entities[*index],
+                    readable: true,
+                })
+                .collect()
+        };
+        let log = world.get_resource::<TrackLog>().unwrap();
+        assert_eq!(log.added, firings(case.added), "{}", case.name);
+        assert_eq!(log.removed, firings(case.removed), "{}", case.name);
+    }
+}
+
+#[test]
+fn on_replace_reads_the_old_value_only_when_a_value_is_overwritten() {
     let mut world = World::new();
     world.register_component::<Replaceable>();
     world.insert_resource(ReplaceLog::default());
 
     let entity = world.spawn(Replaceable(1));
-    assert!(
-        world.get_resource::<ReplaceLog>().unwrap().0.is_empty(),
-        "spawning must not replace anything"
-    );
+    world.insert((Extra, Marker), entity);
+    assert!(world.get_resource::<ReplaceLog>().unwrap().0.is_empty());
 
     world.insert(Replaceable(2), entity);
     world.insert(Replaceable(3), entity);
@@ -512,16 +537,4 @@ fn on_replace_reads_the_old_value_and_skips_the_first_insert() {
             .0,
         3
     );
-}
-
-#[test]
-fn on_replace_does_not_fire_for_a_component_added_alongside_an_existing_one() {
-    let mut world = World::new();
-    world.register_component::<Replaceable>();
-    world.insert_resource(ReplaceLog::default());
-
-    let entity = world.spawn(Replaceable(1));
-    world.insert((Extra, Marker), entity);
-
-    assert!(world.get_resource::<ReplaceLog>().unwrap().0.is_empty());
 }

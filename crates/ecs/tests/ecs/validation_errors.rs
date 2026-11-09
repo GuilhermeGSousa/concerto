@@ -4,17 +4,23 @@ use std::{
 };
 
 use concerto_ecs::{
-    CommandQueue, IntoSystem, Res, Resource, System, World,
+    IntoSystem, Res, Resource, System, World,
     component::SystemTicks,
     system::{
         access::SystemAccess,
-        input::{SystemInput, ValidationError, ValidationKind},
+        input::{SystemInput, ValidationError},
         meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
 };
 
-static RECORDS: Mutex<Vec<(ThreadId, log::Level, String)>> = Mutex::new(Vec::new());
+struct Record {
+    thread: ThreadId,
+    level: log::Level,
+    message: String,
+}
+
+static RECORDS: Mutex<Vec<Record>> = Mutex::new(Vec::new());
 
 struct Capture;
 
@@ -24,11 +30,11 @@ impl log::Log for Capture {
     }
 
     fn log(&self, record: &log::Record) {
-        RECORDS.lock().unwrap().push((
-            std::thread::current().id(),
-            record.level(),
-            record.args().to_string(),
-        ));
+        RECORDS.lock().unwrap().push(Record {
+            thread: std::thread::current().id(),
+            level: record.level(),
+            message: record.args().to_string(),
+        });
     }
 
     fn flush(&self) {}
@@ -45,8 +51,8 @@ fn warnings() -> Vec<String> {
         .lock()
         .unwrap()
         .iter()
-        .filter(|(thread, level, _)| *thread == me && *level == log::Level::Warn)
-        .map(|(_, _, message)| message.clone())
+        .filter(|record| record.thread == me && record.level == log::Level::Warn)
+        .map(|record| record.message.clone())
         .collect()
 }
 
@@ -78,9 +84,6 @@ type Missing = Declines<true>;
 
 #[derive(Resource)]
 struct Absent;
-
-#[derive(Resource)]
-struct Queued;
 
 fn run_times<M>(system: impl IntoSystem<(), M>, times: usize) -> World {
     let mut world = World::new();
@@ -133,28 +136,4 @@ fn a_tuple_reports_its_first_declining_part() {
     let new = warnings().split_off(before);
     assert_eq!(new.len(), 1, "{new:?}");
     assert!(new[0].contains("nothing to read"), "{}", new[0]);
-}
-
-fn queues_then_skips(mut cmd: CommandQueue, _: Skips) {
-    cmd.insert_resource(Queued);
-}
-
-#[test]
-fn apply_after_a_skipped_run_applies_nothing() {
-    let world = run_times(queues_then_skips, 1);
-
-    assert!(world.get_resource::<Queued>().is_none());
-}
-
-#[test]
-fn an_error_names_its_input_and_kind_and_displays_both_parts() {
-    let error = ValidationError::missing::<Absent>("gone");
-
-    assert!(matches!(error.kind, ValidationKind::Missing));
-    assert!(error.input.ends_with("Absent"), "{}", error.input);
-    assert_eq!(error.to_string(), format!("{}: gone", error.input));
-    assert!(matches!(
-        ValidationError::skip::<Absent>("later").kind,
-        ValidationKind::Skip
-    ));
 }

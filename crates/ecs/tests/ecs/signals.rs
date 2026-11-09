@@ -290,11 +290,17 @@ fn queued_signals_are_deferred_and_observe_command_order() {
             calls.0.push(on.signal().0 + query.iter().count() as u32);
         },
     );
-    let mut system = (|mut commands: CommandQueue| {
+    let target = world.spawn(
+        (|on: On<Poke>, query: Query<&TestComponent>, mut calls: ResMut<Calls>| {
+            calls.0.push(on.signal().0 + query.iter().count() as u32);
+        })
+        .into_listener(),
+    );
+    let mut system = (move |mut commands: CommandQueue| {
         commands.spawn(TestComponent);
         commands.trigger(TestSignal(10));
         commands.spawn(TestComponent);
-        commands.trigger(TestSignal(20));
+        commands.entity(target).trigger(Poke(20));
     })
     .into_system();
     system.initialize(&mut world);
@@ -366,32 +372,6 @@ fn trigger_on_skips_entities_without_a_live_listener() {
     world.trigger_on(despawned, Poke(0));
 
     assert!(world.get_resource::<Poked>().unwrap().0.is_empty());
-}
-
-#[test]
-fn queued_entity_signals_are_deferred_and_observe_command_order() {
-    let mut world = World::new();
-    world.insert_resource(Calls::default());
-    let target = world.spawn(
-        (|on: On<Poke>, query: Query<&TestComponent>, mut calls: ResMut<Calls>| {
-            calls.0.push(on.signal().0 + query.iter().count() as u32);
-        })
-        .into_listener(),
-    );
-    let mut system = (move |mut commands: CommandQueue| {
-        commands.spawn(TestComponent);
-        commands.entity(target).trigger(Poke(10));
-        commands.spawn(TestComponent);
-        commands.entity(target).trigger(Poke(20));
-    })
-    .into_system();
-    system.initialize(&mut world);
-
-    system.run((), &mut world);
-    assert!(world.get_resource::<Calls>().unwrap().0.is_empty());
-
-    system.apply(&mut world);
-    assert_eq!(world.get_resource::<Calls>().unwrap().0, [11, 22]);
 }
 
 #[derive(Resource)]

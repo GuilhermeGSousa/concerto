@@ -1,3 +1,5 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use concerto_ecs::{
     CommandQueue, Entity, Query, Res, ResMut, Resource, World,
     component::{Component, ComponentLifecycleCallback},
@@ -104,90 +106,82 @@ fn take(world: &mut World) -> Vec<String> {
     std::mem::take(&mut world.get_resource_mut::<Log>().unwrap().0)
 }
 
-#[test]
-fn spawning_runs_the_add_hook_then_the_add_signal_with_the_new_value() {
-    let mut world = world();
-
-    world.spawn(Tracked(1));
-
-    assert_eq!(take(&mut world), ["add hook Some(1)", "add signal Some(1)"]);
-}
-
-#[test]
-fn inserting_a_new_type_fires_add() {
-    let mut world = world();
-    let entity = world.spawn(());
-
-    world.insert(Tracked(4), entity);
-
-    assert_eq!(take(&mut world), ["add hook Some(4)", "add signal Some(4)"]);
-}
-
-#[test]
-fn an_overwrite_fires_replace_with_the_old_value_then_add_with_the_new_one() {
-    let mut world = world();
-    let entity = world.spawn(Tracked(1));
-    take(&mut world);
-
-    world.insert(Tracked(2), entity);
-
-    assert_eq!(
-        take(&mut world),
-        [
-            "replace hook Some(1)",
-            "replace signal Some(1)",
-            "add hook Some(2)",
-            "add signal Some(2)"
-        ]
-    );
-}
-
-#[test]
-fn a_removal_fires_remove_while_the_value_is_still_readable() {
-    let mut world = world();
-    let entity = world.spawn(Tracked(3));
-    take(&mut world);
-
-    world.remove_component::<Tracked>(entity);
-
-    assert_eq!(
-        take(&mut world),
-        ["remove hook Some(3)", "remove signal Some(3)"]
-    );
-}
-
-#[test]
-fn a_despawn_fires_remove_then_despawn_while_the_value_is_still_readable() {
-    let mut world = world();
-    let entity = world.spawn(Tracked(5));
-    take(&mut world);
-
-    world.despawn(entity);
-
-    assert_eq!(
-        take(&mut world),
-        [
-            "remove hook Some(5)",
-            "remove signal Some(5)",
-            "despawn hook Some(5)",
-            "despawn signal Some(5)"
-        ]
-    );
-}
-
 fn spawn_through_commands(mut cmd: CommandQueue) {
     cmd.spawn(Tracked(7));
 }
 
+struct SignalCase {
+    name: &'static str,
+    setup: fn(&mut World) -> Entity,
+    act: fn(&mut World, Entity),
+    log: &'static [&'static str],
+}
+
 #[test]
-fn signals_fire_for_operations_applied_from_commands() {
-    let mut world = world();
-    let mut system = concerto_ecs::IntoSystem::into_system(spawn_through_commands);
-    concerto_ecs::System::initialize(&mut system, &mut world);
+fn each_operation_runs_its_hook_then_its_signal_while_the_value_is_readable() {
+    let cases = [
+        SignalCase {
+            name: "spawning fires add with the new value",
+            setup: |world| world.spawn(()),
+            act: |world, _| {
+                world.spawn(Tracked(1));
+            },
+            log: &["add hook Some(1)", "add signal Some(1)"],
+        },
+        SignalCase {
+            name: "inserting a new type fires add",
+            setup: |world| world.spawn(()),
+            act: |world, entity| world.insert(Tracked(4), entity),
+            log: &["add hook Some(4)", "add signal Some(4)"],
+        },
+        SignalCase {
+            name: "an overwrite fires replace with the old value then add with the new one",
+            setup: |world| world.spawn(Tracked(1)),
+            act: |world, entity| world.insert(Tracked(2), entity),
+            log: &[
+                "replace hook Some(1)",
+                "replace signal Some(1)",
+                "add hook Some(2)",
+                "add signal Some(2)",
+            ],
+        },
+        SignalCase {
+            name: "a removal fires remove",
+            setup: |world| world.spawn(Tracked(3)),
+            act: |world, entity| world.remove_component::<Tracked>(entity),
+            log: &["remove hook Some(3)", "remove signal Some(3)"],
+        },
+        SignalCase {
+            name: "a despawn fires remove then despawn",
+            setup: |world| world.spawn(Tracked(5)),
+            act: |world, entity| world.despawn(entity),
+            log: &[
+                "remove hook Some(5)",
+                "remove signal Some(5)",
+                "despawn hook Some(5)",
+                "despawn signal Some(5)",
+            ],
+        },
+        SignalCase {
+            name: "an operation applied from commands fires too",
+            setup: |world| world.spawn(()),
+            act: |world, _| {
+                let mut system = concerto_ecs::IntoSystem::into_system(spawn_through_commands);
+                concerto_ecs::System::initialize(&mut system, world);
+                concerto_ecs::System::run_and_apply(&mut system, (), world);
+            },
+            log: &["add hook Some(7)", "add signal Some(7)"],
+        },
+    ];
+    for case in cases {
+        let mut world = world();
+        let entity = (case.setup)(&mut world);
+        take(&mut world);
 
-    concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
+        (case.act)(&mut world, entity);
 
-    assert_eq!(take(&mut world), ["add hook Some(7)", "add signal Some(7)"]);
+        assert_eq!(take(&mut world), case.log, "{}", case.name);
+    }
 }
 
 #[derive(Resource, Default)]
@@ -245,16 +239,36 @@ fn reads_the_world(_: On<Add<Unqueried>>, _: &World) {}
 
 fn writes_the_world(_: On<Remove<Unqueried>>, _: &mut World) {}
 
-#[test]
-#[should_panic(expected = "reads_the_world")]
-fn a_lifecycle_listener_that_reads_the_whole_world_is_refused() {
-    World::new().add_listener(reads_the_world);
+struct RefusedCase {
+    add: fn(&mut World),
+    name: &'static str,
 }
 
 #[test]
-#[should_panic(expected = "writes_the_world")]
-fn a_lifecycle_listener_that_writes_the_whole_world_is_refused() {
-    World::new().add_listener(writes_the_world);
+fn a_lifecycle_listener_that_takes_the_whole_world_is_refused_by_name() {
+    let cases = [
+        RefusedCase {
+            add: |world| world.add_listener(reads_the_world),
+            name: "reads_the_world",
+        },
+        RefusedCase {
+            add: |world| world.add_listener(writes_the_world),
+            name: "writes_the_world",
+        },
+    ];
+    for case in cases {
+        let mut world = World::new();
+
+        let payload =
+            catch_unwind(AssertUnwindSafe(|| (case.add)(&mut world))).expect_err(case.name);
+
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap();
+        assert!(message.contains(case.name), "{message}");
+    }
 }
 
 #[derive(Resource)]

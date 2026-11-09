@@ -10,18 +10,10 @@ enum TestSet {
 struct UnitSet;
 
 #[test]
-fn interning_the_same_variant_twice_yields_equal_handles() {
+fn interned_sets_are_equal_only_for_the_same_type_and_value() {
     assert_eq!(TestSet::First.intern(), TestSet::First.intern());
-}
-
-#[test]
-fn different_variants_intern_differently() {
     assert_ne!(TestSet::First.intern(), TestSet::Second.intern());
-}
-
-#[test]
-fn different_types_with_the_same_shape_intern_differently() {
-    let a: Box<dyn SystemSet> = Box::new(UnitSet);
-    let b: Box<dyn SystemSet> = Box::new(TestSet::First);
-    assert!(a.as_ref() != b.as_ref());
+    let unit: Box<dyn SystemSet> = Box::new(UnitSet);
+    let variant: Box<dyn SystemSet> = Box::new(TestSet::First);
+    assert!(unit.as_ref() != variant.as_ref());
 }
