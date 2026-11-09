@@ -4510,6 +4510,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "one-more-night"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "concerto",
+ "concerto-asset-build",
+ "fs_extra",
+]
+
+[[package]]
+name = "one-more-night-editor"
+version = "0.1.0"
+dependencies = [
+ "concerto-animation-editor",
+ "concerto-editor",
+ "one-more-night",
+]
+
+[[package]]
 name = "openssl"
 version = "0.10.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
