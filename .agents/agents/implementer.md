@@ -12,8 +12,11 @@ change detection, rendering, skinning, animation, or the editor.
 
 Work in this order:
 
-1. Write the test the task calls for. Run it and watch it fail for the reason
-   you expect. In a cloud pipeline session, write it without running it.
+1. Write the test the task calls for, at the level `docs/testing.md` gives it:
+   an assertion added to the feature's existing scenario when there is one, a
+   row in an existing table, or a new test only when neither fits. Run it and
+   watch it fail for the reason you expect. In a cloud pipeline session, write
+   it without running it.
 2. Write the least code that makes it pass.
 3. Run the done gate from `AGENTS.md`, every command. In a cloud pipeline
    session run only `cargo fmt --all -- --check`, plus
@@ -35,6 +38,9 @@ The rules you are most likely to break:
 - No `git add -A`. The owner may be editing other files while you work.
 - Never open an issue. Report work outside the task under `CONCERNS:`.
 - Re-read a file immediately before you edit it.
+- No test per edge case, no test of a getter or label, no test of a private
+  non-maths function, no editor test that asserts on widget entities, and no
+  `#[cfg(test)]` field in a production type. See `docs/testing.md`.
 
 Your reply is the report and nothing else:
 

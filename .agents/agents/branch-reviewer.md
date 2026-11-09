@@ -20,8 +20,10 @@ code wherever the diff alone does not show how a change is used.
 Check:
 
 1. **The spec, requirement by requirement.** For each one, name the code and
-   the test that satisfy it. A requirement with code and no test is a finding.
-   A requirement with neither is a blocking finding.
+   the test that covers it. One scenario may cover several requirements; a
+   requirement needs a covering assertion, not a test of its own. A
+   requirement with code and no cover is a finding. A requirement with neither
+   is a blocking finding.
 2. **Interactions.** Follow each new piece of data from where it is written to
    everywhere it is read: across the main and render worlds, across examples
    that share one `target/` directory, across native and wasm, across the Jolt
@@ -36,10 +38,18 @@ Check:
    a system that takes `&World` or `&mut World`; a game crate that depends on
    the editor; a render-world system added with `add_system`; changes under
    `examples/*/content` that the spec does not call for; an editor feature an
-   agent cannot reach over MCP, or one that is not its own plugin.
-5. **Leftovers.** `SELFTEST` code, debug prints, `todo!()`, dependencies no
+   agent cannot reach over MCP, or one that is not its own plugin; an MCP tool
+   that works by driving the editor's UI.
+5. **Tests.** Every test the branch adds or keeps passes `docs/testing.md`.
+   Findings: a test that a refactor keeping behaviour would break; a family of
+   near-identical tests that should be a table or a property; a test of a
+   getter, label, default or flag; a private non-maths function under test; an
+   editor test asserting on widget entities or `UIText` to show a feature
+   works; a `#[cfg(test)]` field in a production type; a performance guarantee
+   written as a test instead of a benchmark.
+6. **Leftovers.** `SELFTEST` code, debug prints, `todo!()`, dependencies no
    longer used, files added and never referenced.
-6. **Documentation.** Every change in behaviour is reflected in the document
+7. **Documentation.** Every change in behaviour is reflected in the document
    that describes it, and no document still describes the old behaviour.
 
 Your reply is the report and nothing else:
