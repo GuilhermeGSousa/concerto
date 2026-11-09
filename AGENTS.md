@@ -51,6 +51,7 @@ cargo run -p one-more-night
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
+cargo run -p one-more-night-editor -- --project <scratch copy of examples/one-more-night>
 cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && trunk serve
 cargo install --path crates/project
@@ -61,9 +62,9 @@ cargo concerto run <dir> [--cook] [--release] [-- <game args>]
 cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
 ```
 
-Examples are `tech-demo`, `ui-showcase` and `one-more-night`. `one-more-night`
-is the start of a couch co-op game and opens an empty window for now. `tech-demo` starts on the grid
-level: the character with every gizmo layer on a floor under the world grid,
+Examples are `tech-demo`, `ui-showcase` and `one-more-night`.
+`one-more-night` is the start of a couch co-op game and opens an empty window
+for now. `tech-demo` starts on the grid level: the character with every gizmo layer on a floor under the world grid,
 four boxes, and an NPC patrolling a square of nav points that routes around the
 boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no forest or
 sanatorium content; the cooked release build above, zipped with `index.html` at
@@ -81,10 +82,10 @@ the editor's rig tab edits. The sanatorium's Blender source and exports are in
 editor's Import…, over a scratch copy of the project; there is no import
 command line. An example may have an `editor/` crate, named `<game>-editor`,
 that runs the editor over the game's library; an editor exists only for a game
-that has one. Today those are
-`tech-demo` and `one-more-night`. Build `tech-demo-editor` before an MCP client
-starts it through `.mcp.json`: that entry runs `cargo run`, which compiles first and can outlast
-the client's connect timeout.
+that has one. Today those are `tech-demo` and `one-more-night`. Build
+`tech-demo-editor` before an MCP client starts it through `.mcp.json`: that
+entry runs `cargo run`, which compiles first and can outlast the client's
+connect timeout.
 
 ## Done gate
 
