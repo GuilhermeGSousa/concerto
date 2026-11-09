@@ -746,7 +746,8 @@ Warping root motion lands a clip on a target. An interaction clip, such as
 opening a door, has to end with the character on a spot in the level. Give its
 **Clip** node a `RootMotionWarp`, naming the blackboard param that holds the
 target and, if you like, the window of the clip it works over; without one it
-works over the whole clip. The game puts a `WarpTarget` under that param:
+works over the whole clip. The game puts a `WarpTarget` under that param, in
+world space, here read from the `GlobalTransform` of a marker entity:
 
 ```rust
 use concerto::animation::clip::ClipRange;
@@ -761,26 +762,30 @@ let node = AnimationClipNode::new(open_door)
 player.set_param(
     name!("door"),
     WarpTarget {
-        position: handle.translation,
-        rotation: handle.rotation,
+        position: handle.translation(),
+        rotation: handle.rotation(),
     },
 );
 ```
 
 Each frame in the window, the node predicts where the clip's root motion would
 leave the skeleton at the window's end, and adds the share of the error that
-this frame's time is of the time left in the window. The last frame closes all
-of it. The target is where the skeleton entity's ground point ends, with its yaw
-about +Y; the target's height, pitch and roll are ignored. That assumes the
-skeleton stands at the character's origin, as above; one off to the side misses
-a little whenever the yaw is corrected. A target that moves is followed, since
+this frame's time is of the time left in the window. The frame that reaches the
+window's end closes all of it, so the character lands at the end of that frame;
+if the frame runs past the window's end, the clip motion after it is part of the
+landing. The target is where the skeleton entity's ground point ends, with its
+yaw about +Y; the target's height, pitch and roll are ignored. That assumes the
+skeleton entity sits at the character's origin, with no offset of its own; one
+off to the side misses a little whenever the yaw is corrected. A target that moves is followed, since
 the warp aims again every frame. `with_translation(false)` or
 `with_rotation(false)` turns off the correction of that part only. A yaw
 correction still turns the rest of the clip's path, so with translation off the
 character does not, in general, end where the unwarped clip would. Blends and
 transitions scale the correction with the clip's weight, so the landing is exact
 only when the clip reaches the root unblended at the window's end. With no
-target set, or outside the window, the clip gives its plain root motion.
+target set, or outside the window, the clip gives its plain root motion. A clip
+with no channels for the root bone has no root motion to bend, so it is not
+warped.
 
 The warp only bends the root motion. For now the character lands on the target
 only under `Synchronization` at a `data_factor` of 1; the other methods

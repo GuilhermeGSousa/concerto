@@ -8,7 +8,7 @@ use crate::{
     pose::{RootMotion, twist_about},
 };
 
-/// Bends a clip's root motion over `window`, each frame closing the share of the window's time it covers, so the root space ends on the `WarpTarget` under `target`; it lands exactly only with the skeleton at the character's origin and the clip reaching the root unblended at the window's end.
+/// Bends a clip's root motion over `window`, each frame closing the share of the window's time it covers, so the root space ends on the `WarpTarget` under `target` at the end of the frame that reaches the window's end; it lands exactly only with the skeleton at the character's origin and the clip reaching the root unblended, and a clip with no root channels is not warped.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct RootMotionWarp {
     /// The blackboard param the game puts the `WarpTarget` under.
