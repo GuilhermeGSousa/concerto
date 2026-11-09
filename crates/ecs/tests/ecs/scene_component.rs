@@ -41,27 +41,6 @@ fn capture(
 }
 
 #[test]
-fn a_scene_component_spawns_from_a_stored_value_with_its_references_mapped() {
-    let mut world = World::new();
-    world.register_type::<Rig>();
-    let nodes = [world.spawn(()), world.spawn(()), world.spawn(())];
-
-    assert!(world.apply_scene_component("Rig", &stored_rig(vec![1, 2], Some(1)), nodes[0], &nodes));
-
-    assert_eq!(
-        world.get_component_for_entity::<Rig>(nodes[0]),
-        Some(&Rig {
-            weight: 2.0,
-            bones: vec![
-                SceneEntityRef::Entity(nodes[1]),
-                SceneEntityRef::Entity(nodes[2])
-            ],
-            root: Some(SceneEntityRef::Entity(nodes[1])),
-        })
-    );
-}
-
-#[test]
 fn capture_maps_entities_back_to_their_node_indices() {
     let mut world = World::new();
     world.register_type::<Rig>();
@@ -77,20 +56,6 @@ fn capture_maps_entities_back_to_their_node_indices() {
     assert_eq!(capture(&world, nodes[0], indices), Some(stored));
 }
 
-#[test]
-fn a_reference_out_of_range_keeps_its_unresolved_default() {
-    let mut world = World::new();
-    world.register_type::<Rig>();
-    let nodes = [world.spawn(())];
-
-    assert!(world.apply_scene_component("Rig", &stored_rig(vec![7], Some(0)), nodes[0], &nodes));
-
-    let rig = world.get_component_for_entity::<Rig>(nodes[0]).unwrap();
-    assert_eq!(rig.bones[0], SceneEntityRef::default());
-    assert_eq!(rig.bones[0].entity(), None);
-    assert_eq!(rig.root, Some(SceneEntityRef::Entity(nodes[0])));
-}
-
 fn spawn_rig(world: &mut World, rig: &Rig, entity: Entity, nodes: &[Entity]) -> Vec<ValueWarning> {
     let spawn = world
         .get_resource::<AppTypeRegistry>()
@@ -102,42 +67,99 @@ fn spawn_rig(world: &mut World, rig: &Rig, entity: Entity, nodes: &[Entity]) -> 
     spawn(world, entity, &to_value(rig).unwrap(), nodes)
 }
 
-#[test]
-fn an_unset_reference_spawns_unset_without_a_warning() {
-    let mut world = World::new();
-    world.register_type::<Rig>();
-    let nodes = [world.spawn(())];
-    let rig = Rig {
-        weight: 1.0,
-        bones: vec![SceneEntityRef::default()],
-        root: Some(SceneEntityRef::default()),
-    };
+#[derive(Clone, Copy, Debug)]
+enum Ref {
+    Node(usize),
+    Unset,
+}
 
-    let warnings = spawn_rig(&mut world, &rig, nodes[0], &nodes);
+impl Ref {
+    fn stored(self) -> SceneEntityRef {
+        match self {
+            Ref::Node(index) => SceneEntityRef::Index(index),
+            Ref::Unset => SceneEntityRef::default(),
+        }
+    }
 
-    assert_eq!(warnings, Vec::new());
-    assert_eq!(world.get_component_for_entity::<Rig>(nodes[0]), Some(&rig));
+    fn spawned(self, nodes: &[Entity]) -> SceneEntityRef {
+        match self {
+            Ref::Node(index) => SceneEntityRef::Entity(nodes[index]),
+            Ref::Unset => SceneEntityRef::default(),
+        }
+    }
+}
+
+struct RigCase {
+    name: &'static str,
+    nodes: usize,
+    bones: &'static [Ref],
+    root: Option<Ref>,
+    spawned_bones: &'static [Ref],
+    spawned_root: Option<Ref>,
+    warnings: &'static [&'static str],
 }
 
 #[test]
-fn a_reference_past_the_scene_other_than_unset_warns() {
-    let mut world = World::new();
-    world.register_type::<Rig>();
-    let nodes = [world.spawn(())];
-    let rig = Rig {
-        weight: 1.0,
-        bones: vec![SceneEntityRef::Index(1), SceneEntityRef::default()],
-        root: None,
-    };
+fn a_stored_reference_spawns_as_its_node_and_one_past_the_scene_spawns_unset() {
+    let cases = [
+        RigCase {
+            name: "references map to the scene's nodes",
+            nodes: 3,
+            bones: &[Ref::Node(1), Ref::Node(2)],
+            root: Some(Ref::Node(1)),
+            spawned_bones: &[Ref::Node(1), Ref::Node(2)],
+            spawned_root: Some(Ref::Node(1)),
+            warnings: &[],
+        },
+        RigCase {
+            name: "an unset reference spawns unset without a warning",
+            nodes: 1,
+            bones: &[Ref::Unset],
+            root: Some(Ref::Unset),
+            spawned_bones: &[Ref::Unset],
+            spawned_root: Some(Ref::Unset),
+            warnings: &[],
+        },
+        RigCase {
+            name: "a reference past the scene spawns unset and warns",
+            nodes: 1,
+            bones: &[Ref::Node(7), Ref::Unset],
+            root: Some(Ref::Node(0)),
+            spawned_bones: &[Ref::Unset, Ref::Unset],
+            spawned_root: Some(Ref::Node(0)),
+            warnings: &["bones[0]"],
+        },
+    ];
+    for case in cases {
+        let mut world = World::new();
+        world.register_type::<Rig>();
+        let nodes: Vec<Entity> = (0..case.nodes).map(|_| world.spawn(())).collect();
+        let rig = Rig {
+            weight: 1.0,
+            bones: case.bones.iter().map(|bone| bone.stored()).collect(),
+            root: case.root.map(Ref::stored),
+        };
 
-    let warnings = spawn_rig(&mut world, &rig, nodes[0], &nodes);
+        let warnings = spawn_rig(&mut world, &rig, nodes[0], &nodes);
 
-    assert_eq!(
-        warnings.iter().map(|w| w.path.as_str()).collect::<Vec<_>>(),
-        ["bones[0]"]
-    );
-    let spawned = world.get_component_for_entity::<Rig>(nodes[0]).unwrap();
-    assert_eq!(spawned.bones, vec![SceneEntityRef::default(); 2]);
+        let paths: Vec<&str> = warnings.iter().map(|w| w.path.as_str()).collect();
+        assert_eq!(paths, case.warnings, "{}", case.name);
+        let expected = Rig {
+            weight: 1.0,
+            bones: case
+                .spawned_bones
+                .iter()
+                .map(|bone| bone.spawned(&nodes))
+                .collect(),
+            root: case.spawned_root.map(|root| root.spawned(&nodes)),
+        };
+        assert_eq!(
+            world.get_component_for_entity::<Rig>(nodes[0]),
+            Some(&expected),
+            "{}",
+            case.name
+        );
+    }
 }
 
 #[test]

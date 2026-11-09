@@ -32,80 +32,6 @@ mod alias_clash_b {
 }
 
 #[test]
-fn registered_component_is_deserialized_and_applied() {
-    let mut world = World::default();
-    world.register_type::<Registered>();
-    let entity = world.spawn(());
-
-    let applied = world.apply_scene_component(
-        "Registered",
-        &stored(Registered { value: 42 }),
-        entity,
-        &[entity],
-    );
-
-    assert!(
-        applied,
-        "a registered type name must be found in the registry"
-    );
-    assert_eq!(
-        world.get_component_for_entity::<Registered>(entity),
-        Some(&Registered { value: 42 }),
-        "the JSON payload must be deserialized into the real component and inserted"
-    );
-}
-
-#[test]
-fn full_type_path_also_resolves() {
-    let mut world = World::default();
-    world.register_type::<Registered>();
-    let entity = world.spawn(());
-
-    let applied = world.apply_scene_component(
-        Registered::name(),
-        &stored(Registered { value: 8 }),
-        entity,
-        &[entity],
-    );
-
-    assert!(
-        applied,
-        "the full type path is the canonical registry key and must resolve"
-    );
-    assert_eq!(
-        world.get_component_for_entity::<Registered>(entity),
-        Some(&Registered { value: 8 }),
-        "applying via the full type path must insert the real component"
-    );
-}
-
-#[test]
-fn re_registering_the_same_type_is_idempotent() {
-    let mut world = World::default();
-    // Two plugins registering the same component, or one plugin added twice.
-    world.register_type::<Registered>();
-    world.register_type::<Registered>();
-    let entity = world.spawn(());
-
-    let applied = world.apply_scene_component(
-        "Registered",
-        &stored(Registered { value: 5 }),
-        entity,
-        &[entity],
-    );
-
-    assert!(
-        applied,
-        "a double registration must leave the short name resolvable, not corrupt the map"
-    );
-    assert_eq!(
-        world.get_component_for_entity::<Registered>(entity),
-        Some(&Registered { value: 5 }),
-        "re-registering the same type must still deserialize and insert the component"
-    );
-}
-
-#[test]
 fn a_genuine_two_type_short_name_clash_resolves_to_the_last_registered() {
     let mut world = World::default();
     world.register_type::<alias_clash_a::Widget>();
@@ -160,48 +86,80 @@ fn a_genuine_two_type_short_name_clash_resolves_to_the_last_registered() {
     );
 }
 
-#[test]
-fn unregistered_component_name_is_reported_not_fatal() {
-    let mut world = World::default();
-    let entity = world.spawn(());
-
-    let applied = world.apply_scene_component(
-        "NeverRegistered",
-        &ReflectedValue::Struct(Vec::new()),
-        entity,
-        &[entity],
-    );
-
-    assert!(
-        !applied,
-        "an unregistered type name must report false rather than panicking"
-    );
-}
-
-#[test]
-fn stored_data_of_the_wrong_shape_spawns_the_default() {
-    let mut world = World::default();
-    world.register_type::<Registered>();
-    let entity = world.spawn(());
-
-    let applied = world.apply_scene_component(
-        "Registered",
-        &ReflectedValue::List(Vec::new()),
-        entity,
-        &[entity],
-    );
-
-    assert!(
-        applied,
-        "a known type still spawns when its data does not fit"
-    );
-    assert_eq!(
-        world.get_component_for_entity::<Registered>(entity),
-        Some(&Registered::default()),
-        "data that does not fit is skipped, leaving the default"
-    );
-}
-
 fn stored(value: impl Reflect) -> ReflectedValue {
     to_value(&value).unwrap()
+}
+
+struct ApplyCase {
+    name: &'static str,
+    register: fn(&mut World),
+    type_name: fn() -> &'static str,
+    stored: fn() -> ReflectedValue,
+    applied: bool,
+    spawned: Option<Registered>,
+}
+
+#[test]
+fn a_scene_component_is_found_by_its_short_or_full_name_and_spawned_from_its_stored_value() {
+    let cases = [
+        ApplyCase {
+            name: "the short name",
+            register: |world| world.register_type::<Registered>(),
+            type_name: || "Registered",
+            stored: || stored(Registered { value: 42 }),
+            applied: true,
+            spawned: Some(Registered { value: 42 }),
+        },
+        ApplyCase {
+            name: "the full type path",
+            register: |world| world.register_type::<Registered>(),
+            type_name: Registered::name,
+            stored: || stored(Registered { value: 8 }),
+            applied: true,
+            spawned: Some(Registered { value: 8 }),
+        },
+        ApplyCase {
+            name: "a type registered twice",
+            register: |world| {
+                world.register_type::<Registered>();
+                world.register_type::<Registered>();
+            },
+            type_name: || "Registered",
+            stored: || stored(Registered { value: 5 }),
+            applied: true,
+            spawned: Some(Registered { value: 5 }),
+        },
+        ApplyCase {
+            name: "an unregistered name is reported, not fatal",
+            register: |_| {},
+            type_name: || "NeverRegistered",
+            stored: || ReflectedValue::Struct(Vec::new()),
+            applied: false,
+            spawned: None,
+        },
+        ApplyCase {
+            name: "stored data of the wrong shape spawns the default",
+            register: |world| world.register_type::<Registered>(),
+            type_name: || "Registered",
+            stored: || ReflectedValue::List(Vec::new()),
+            applied: true,
+            spawned: Some(Registered::default()),
+        },
+    ];
+    for case in cases {
+        let mut world = World::default();
+        (case.register)(&mut world);
+        let entity = world.spawn(());
+
+        let applied =
+            world.apply_scene_component((case.type_name)(), &(case.stored)(), entity, &[entity]);
+
+        assert_eq!(applied, case.applied, "{}", case.name);
+        assert_eq!(
+            world.get_component_for_entity::<Registered>(entity),
+            case.spawned.as_ref(),
+            "{}",
+            case.name
+        );
+    }
 }

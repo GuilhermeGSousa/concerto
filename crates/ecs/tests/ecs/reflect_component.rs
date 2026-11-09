@@ -59,35 +59,50 @@ fn entity_ref_from_json(world: &World, value: &Value) -> Result<SceneEntityRef, 
         .unwrap())
 }
 
-#[test]
-fn a_resolved_entity_reference_is_its_id_string_in_json() {
-    let world = World::new();
-    let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
-    let entity = Entity::parse_id("42v3").unwrap();
-    let reference = SceneEntityRef::Entity(entity);
-
-    assert_eq!(to_json(&reference, &registry), json!("42v3"));
-    assert_eq!(entity_ref_from_json(&world, &json!("42v3")), Ok(reference));
+struct EntityRefCase {
+    json: Value,
+    reference: Option<SceneEntityRef>,
 }
 
 #[test]
-fn an_unresolved_entity_reference_is_its_node_index_in_json() {
+fn an_entity_reference_is_its_id_string_when_resolved_and_its_node_index_when_not() {
     let world = World::new();
     let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
-    let reference = SceneEntityRef::Index(7);
-
-    assert_eq!(to_json(&reference, &registry), json!(7));
-    assert_eq!(entity_ref_from_json(&world, &json!(7)), Ok(reference));
-}
-
-#[test]
-fn an_entity_reference_does_not_decode_from_a_malformed_id() {
-    let world = World::new();
-    for value in [json!("42"), json!("42v0"), json!(-1), json!(true)] {
-        assert!(
-            entity_ref_from_json(&world, &value).is_err(),
-            "{value} must not decode"
-        );
+    let cases = [
+        EntityRefCase {
+            json: json!("42v3"),
+            reference: Some(SceneEntityRef::Entity(Entity::parse_id("42v3").unwrap())),
+        },
+        EntityRefCase {
+            json: json!(7),
+            reference: Some(SceneEntityRef::Index(7)),
+        },
+        EntityRefCase {
+            json: json!("42"),
+            reference: None,
+        },
+        EntityRefCase {
+            json: json!("42v0"),
+            reference: None,
+        },
+        EntityRefCase {
+            json: json!(-1),
+            reference: None,
+        },
+        EntityRefCase {
+            json: json!(true),
+            reference: None,
+        },
+    ];
+    for case in cases {
+        let decoded = entity_ref_from_json(&world, &case.json);
+        match case.reference {
+            Some(reference) => {
+                assert_eq!(to_json(&reference, &registry), case.json);
+                assert_eq!(decoded, Ok(reference), "{}", case.json);
+            }
+            None => assert!(decoded.is_err(), "{} must not decode", case.json),
+        }
     }
 }
 

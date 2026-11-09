@@ -33,52 +33,44 @@ fn names(world: &World, entity: Entity) -> Vec<&'static str> {
     names
 }
 
-#[test]
-fn lists_the_registered_components_an_entity_carries() {
-    let mut world = World::default();
-    world.register_type::<Health>();
-    world.register_type::<Armour>();
+struct ListingCase {
+    spawn: fn(&mut World) -> Entity,
+    names: &'static [&'static str],
+}
 
-    let entity = world.spawn((
-        Health {
-            current: 3,
-            max: 10,
+#[test]
+fn an_entity_lists_only_the_registered_components_it_carries() {
+    let cases = [
+        ListingCase {
+            spawn: |world| {
+                world.spawn((
+                    Health {
+                        current: 3,
+                        max: 10,
+                    },
+                    Armour { plates: 2 },
+                ))
+            },
+            names: &["Armour", "Health"],
         },
-        Armour { plates: 2 },
-    ));
+        ListingCase {
+            spawn: |world| world.spawn((Health { current: 1, max: 1 }, Plumbing)),
+            names: &["Health"],
+        },
+        ListingCase {
+            spawn: |world| world.spawn(Plumbing),
+            names: &[],
+        },
+    ];
+    for case in cases {
+        let mut world = World::default();
+        world.register_type::<Health>();
+        world.register_type::<Armour>();
 
-    assert_eq!(
-        names(&world, entity),
-        vec!["Armour", "Health"],
-        "every registered component on the entity must be listed"
-    );
-}
+        let entity = (case.spawn)(&mut world);
 
-#[test]
-fn unregistered_components_are_invisible() {
-    let mut world = World::default();
-    world.register_type::<Health>();
-
-    let entity = world.spawn((Health { current: 1, max: 1 }, Plumbing));
-
-    assert_eq!(
-        names(&world, entity),
-        vec!["Health"],
-        "a component that was never registered as a scene component must not be listed"
-    );
-}
-
-#[test]
-fn an_entity_with_no_registered_components_lists_nothing() {
-    let mut world = World::default();
-    world.register_type::<Health>();
-
-    let entity = world.spawn(Plumbing);
-
-    assert!(
-        names(&world, entity).is_empty(),
-        "an entity carrying only unregistered components must list nothing"
-    );
+        assert_eq!(names(&world, entity), case.names);
+    }
 }
 
 #[test]
