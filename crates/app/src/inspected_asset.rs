@@ -19,7 +19,8 @@ pub struct InspectedAsset {
 }
 
 impl InspectedAsset {
-    pub(crate) fn of<A: CreatableAsset + Reflect>() -> Self {
+    /// The record of `A`.
+    pub fn of<A: CreatableAsset + Reflect>() -> Self {
         Self {
             kind: A::name(),
             create: create::<A>,

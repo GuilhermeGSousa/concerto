@@ -33,6 +33,7 @@ use crate::{
     ClipDocument, ClipEventContext, RemoveClipEvent,
     events::{TabEvent, TabEventKind},
     settle_edit,
+    transport::ClipTransport,
 };
 
 const NEW_EVENT: &str = "event";
@@ -68,15 +69,15 @@ impl EventsPanel {
 
 fn add_event_at_head(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
+           documents: Query<(&mut EditorDocument, &mut ClipDocument, &ClipTransport)>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some((mut editor, mut state)) = documents.get_entity(document) else {
+        let Some((mut editor, mut state, transport)) = documents.get_entity(document) else {
             return;
         };
-        let time = state.time;
+        let time = transport.time;
         let result = state.add_event(NEW_EVENT, time);
         settle_edit(result, document, &mut editor, &mut cmd);
     })
@@ -502,8 +503,8 @@ mod tests {
     fn add_event_adds_event_at_the_heads_frame_and_selects_it() {
         let mut tab = event_tab();
         tab.scrub(2.01);
-        tab.until("the scrub never came back", |state| {
-            !state.playing && frame_at(state.time, 30.0) == 60
+        tab.until("the scrub never came back", |transport| {
+            !transport.playing && frame_at(transport.time, 30.0) == 60
         });
         let add = tab.events().add;
 

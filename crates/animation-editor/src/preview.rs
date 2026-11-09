@@ -34,17 +34,15 @@ use glam::Vec3;
 use uuid::Uuid;
 
 #[derive(Resource)]
-pub(super) struct ClipPreview {
-    clip: Option<Arc<AnimationClip>>,
-    pub(super) time: f32,
-    pub(super) rate: f32,
-    playing: bool,
-    pub(super) looping: bool,
-    pub(super) root_motion: bool,
-    pub(super) skeleton_gizmo: bool,
+pub(crate) struct ClipPlayback {
+    pub(crate) clip: Option<Arc<AnimationClip>>,
+    pub(crate) time: f32,
+    pub(crate) rate: f32,
+    pub(crate) playing: bool,
+    pub(crate) looping: bool,
 }
 
-impl Default for ClipPreview {
+impl Default for ClipPlayback {
     fn default() -> Self {
         Self {
             clip: None,
@@ -52,6 +50,19 @@ impl Default for ClipPreview {
             rate: 1.0,
             playing: true,
             looping: true,
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(super) struct ClipPosing {
+    pub(super) root_motion: bool,
+    pub(super) skeleton_gizmo: bool,
+}
+
+impl Default for ClipPosing {
+    fn default() -> Self {
+        Self {
             root_motion: false,
             skeleton_gizmo: true,
         }
@@ -154,7 +165,7 @@ fn advanced(time: f32, delta: f32, rate: f32, duration: f32, looping: bool) -> (
     }
 }
 
-fn advance_clip(mut preview: ResMut<ClipPreview>, time: Res<Time>) {
+fn advance_clip(mut preview: ResMut<ClipPlayback>, time: Res<Time>) {
     if !preview.playing {
         return;
     }
@@ -171,7 +182,8 @@ fn advance_clip(mut preview: ResMut<ClipPreview>, time: Res<Time>) {
 }
 
 fn pose_clip(
-    preview: Res<ClipPreview>,
+    preview: Res<ClipPlayback>,
+    posing: Res<ClipPosing>,
     stores: Option<Res<AssetStore<Skeleton>>>,
     skeletons: Query<&SkeletonComponent>,
     transforms: Query<&mut Transform>,
@@ -207,7 +219,7 @@ fn pose_clip(
             for channel in channels {
                 channel.sample_transform(preview.time, &mut pose);
             }
-            if entity == root && !preview.root_motion {
+            if entity == root && !posing.root_motion {
                 let up = parents
                     .get_entity(root)
                     .and_then(|parent| globals.get_entity(parent.parent()))
@@ -288,34 +300,45 @@ fn follow_root(
 }
 
 #[derive(Default)]
-struct Reported {
-    progress: Option<ClipPreviewProgress>,
-    bones: Option<ClipPreviewBones>,
-}
+struct ReportedProgress(Option<ClipPreviewProgress>);
 
-impl FromWorld for Reported {
+impl FromWorld for ReportedProgress {
     fn from_world(_world: &World) -> Self {
         Self::default()
     }
 }
 
-fn report_clip(
-    preview: Res<ClipPreview>,
-    stores: Option<Res<AssetStore<Skeleton>>>,
-    skeletons: Query<(Entity, &SkeletonComponent)>,
+fn report_progress(
+    preview: Res<ClipPlayback>,
     mut progress_events: EventWriter<ClipPreviewProgress>,
-    mut bones_events: EventWriter<ClipPreviewBones>,
-    mut reported: SystemLocal<Reported>,
+    mut reported: SystemLocal<ReportedProgress>,
 ) {
     let progress = ClipPreviewProgress {
         time: preview.time,
         playing: preview.playing,
     };
-    if reported.progress.as_ref() != Some(&progress) {
-        reported.progress = Some(progress.clone());
+    if reported.0.as_ref() != Some(&progress) {
+        reported.0 = Some(progress.clone());
         progress_events.write(progress);
     }
+}
 
+#[derive(Default)]
+struct ReportedBones(Option<ClipPreviewBones>);
+
+impl FromWorld for ReportedBones {
+    fn from_world(_world: &World) -> Self {
+        Self::default()
+    }
+}
+
+fn report_bones(
+    preview: Res<ClipPlayback>,
+    stores: Option<Res<AssetStore<Skeleton>>>,
+    skeletons: Query<(Entity, &SkeletonComponent)>,
+    mut bones_events: EventWriter<ClipPreviewBones>,
+    mut reported: SystemLocal<ReportedBones>,
+) {
     let shown = first_rooted(skeletons.iter());
     let skeleton = shown
         .zip(stores.as_ref())
@@ -332,7 +355,7 @@ fn report_clip(
                 .count()
         });
     let count = shown.map_or(0, |component| component.bones().len());
-    let unchanged = reported.bones.as_ref().is_some_and(|last| {
+    let unchanged = reported.0.as_ref().is_some_and(|last| {
         last.bones == count && last.driven == driven && shows_skeleton(&last.skeleton, skeleton)
     });
     if !unchanged {
@@ -341,7 +364,7 @@ fn report_clip(
             driven,
             skeleton: shown_bones(skeleton),
         };
-        reported.bones = Some(bones.clone());
+        reported.0 = Some(bones.clone());
         bones_events.write(bones);
     }
 }
@@ -355,23 +378,23 @@ fn apply_skeleton_gizmo(cmd: &mut CommandQueue, skeleton: Entity, shown: bool) {
 }
 
 fn gizmo_new_skeletons(
-    preview: Res<ClipPreview>,
+    posing: Res<ClipPosing>,
     skeletons: Query<(Entity, &SkeletonComponent), Added<SkeletonComponent>>,
     mut cmd: CommandQueue,
 ) {
     for (entity, skeleton) in skeletons.iter() {
         if skeleton.root().is_some() {
-            apply_skeleton_gizmo(&mut cmd, entity, preview.skeleton_gizmo);
+            apply_skeleton_gizmo(&mut cmd, entity, posing.skeleton_gizmo);
         }
     }
 }
 
-fn show_clip(on: On<ShowClip>, mut preview: ResMut<ClipPreview>) {
+fn show_clip(on: On<ShowClip>, mut preview: ResMut<ClipPlayback>) {
     preview.clip = Some(Arc::clone(&on.signal().0));
     preview.time = 0.0;
 }
 
-fn clear_clip(_: On<ClearClip>, mut preview: ResMut<ClipPreview>) {
+fn clear_clip(_: On<ClearClip>, mut preview: ResMut<ClipPlayback>) {
     preview.clip = None;
     preview.time = 0.0;
 }
@@ -390,29 +413,29 @@ fn show_clip_scene(
     }
 }
 
-fn set_clip_transport(on: On<SetClipTransport>, mut preview: ResMut<ClipPreview>) {
+fn set_clip_transport(on: On<SetClipTransport>, mut preview: ResMut<ClipPlayback>) {
     let transport = on.signal();
     preview.playing = transport.playing;
     preview.looping = transport.looping;
     preview.rate = transport.rate;
 }
 
-fn seek_clip(on: On<SeekClip>, mut preview: ResMut<ClipPreview>) {
+fn seek_clip(on: On<SeekClip>, mut preview: ResMut<ClipPlayback>) {
     preview.time = on.signal().0;
 }
 
-fn set_root_motion(on: On<SetRootMotion>, mut preview: ResMut<ClipPreview>) {
-    preview.root_motion = on.signal().0;
+fn set_root_motion(on: On<SetRootMotion>, mut posing: ResMut<ClipPosing>) {
+    posing.root_motion = on.signal().0;
 }
 
 fn set_skeleton_gizmo(
     on: On<SetSkeletonGizmo>,
-    mut preview: ResMut<ClipPreview>,
+    mut posing: ResMut<ClipPosing>,
     skeletons: Query<(Entity, &SkeletonComponent)>,
     mut cmd: CommandQueue,
 ) {
     let shown = on.signal().0;
-    preview.skeleton_gizmo = shown;
+    posing.skeleton_gizmo = shown;
     for (entity, skeleton) in skeletons.iter() {
         if skeleton.root().is_some() {
             apply_skeleton_gizmo(&mut cmd, entity, shown);
@@ -420,18 +443,27 @@ fn set_skeleton_gizmo(
     }
 }
 
+/// Adds clip playback to `app`: it plays the clip [`ShowClip`] gives it and reports [`ClipPreviewProgress`], posing nothing.
+pub fn clip_playback(app: &mut App) {
+    app.insert_resource(ClipPlayback::default())
+        .register_event::<ClipPreviewProgress>()
+        .add_system(Update, advance_clip.at_preview_time())
+        .add_system(LateUpdate, report_progress.at_preview_time())
+        .add_listener(show_clip.at_preview_time())
+        .add_listener(clear_clip.at_preview_time())
+        .add_listener(set_clip_transport.at_preview_time())
+        .add_listener(seek_clip.at_preview_time());
+}
+
 /// Adds a clip preview to `app`: it poses every rooted skeleton from the clip [`ShowClip`] gives it.
 pub fn clip_preview(app: &mut App) {
     if app.is_plugin_added::<RenderPlugin>() && !app.is_plugin_added::<DebugGizmosPlugin>() {
         app.register_plugin(DebugGizmosPlugin);
     }
-    app.insert_resource(ClipPreview::default())
-        .register_event::<ClipPreviewProgress>()
+    clip_playback(app);
+    app.insert_resource(ClipPosing::default())
         .register_event::<ClipPreviewBones>()
-        .add_system(
-            Update,
-            (advance_clip, gizmo_new_skeletons).at_preview_time(),
-        )
+        .add_system(Update, gizmo_new_skeletons.at_preview_time())
         .add_system(
             LateUpdate,
             pose_clip
@@ -444,12 +476,8 @@ pub fn clip_preview(app: &mut App) {
                 .after(propagate_global_transforms)
                 .at_preview_time(),
         )
-        .add_system(LateUpdate, report_clip.after(pose_clip).at_preview_time())
-        .add_listener(show_clip.at_preview_time())
-        .add_listener(clear_clip.at_preview_time())
+        .add_system(LateUpdate, report_bones.after(pose_clip).at_preview_time())
         .add_listener(show_clip_scene.at_preview_time())
-        .add_listener(set_clip_transport.at_preview_time())
-        .add_listener(seek_clip.at_preview_time())
         .add_listener(set_root_motion.at_preview_time())
         .add_listener(set_skeleton_gizmo.at_preview_time());
 }
@@ -539,14 +567,16 @@ mod tests {
     #[test]
     fn a_document_starts_with_the_previews_values() {
         let document = crate::ClipDocument::default();
-        let preview = ClipPreview::default();
+        let transport = crate::transport::ClipTransport::default();
+        let preview = ClipPlayback::default();
+        let posing = ClipPosing::default();
 
-        assert_eq!(document.time, preview.time);
-        assert_eq!(document.rate, preview.rate);
-        assert_eq!(document.playing, preview.playing);
-        assert_eq!(document.looping, preview.looping);
-        assert_eq!(document.root_motion, preview.root_motion);
-        assert_eq!(document.skeleton_gizmo, preview.skeleton_gizmo);
+        assert_eq!(transport.time, preview.time);
+        assert_eq!(transport.speed, preview.rate);
+        assert_eq!(transport.playing, preview.playing);
+        assert_eq!(transport.looping, preview.looping);
+        assert_eq!(document.root_motion, posing.root_motion);
+        assert_eq!(document.skeleton_gizmo, posing.skeleton_gizmo);
     }
 
     #[derive(Clone, Copy)]
@@ -589,7 +619,8 @@ mod tests {
         pose: BoxedSystem,
         propagate: BoxedSystem,
         follow: BoxedSystem,
-        report: BoxedSystem,
+        progress: BoxedSystem,
+        bones: BoxedSystem,
     }
 
     impl Stage {
@@ -599,7 +630,8 @@ mod tests {
             world.register_component::<Transform>();
             world.register_component::<ChildOf>();
             world.register_component::<Children>();
-            world.insert_resource(ClipPreview::default());
+            world.insert_resource(ClipPlayback::default());
+            world.insert_resource(ClipPosing::default());
             world.insert_resource(AssetStore::<Skeleton>::new());
             world.insert_resource(EventChannel::<ClipPreviewProgress>::new());
             world.insert_resource(EventChannel::<ClipPreviewBones>::new());
@@ -613,13 +645,15 @@ mod tests {
             let mut pose = pose_clip.into_boxed_system();
             let mut propagate = propagate_global_transforms.into_boxed_system();
             let mut follow = follow_root.into_boxed_system();
-            let mut report = report_clip.into_boxed_system();
+            let mut progress = report_progress.into_boxed_system();
+            let mut bones = report_bones.into_boxed_system();
             for system in [
                 &mut gizmos,
                 &mut pose,
                 &mut propagate,
                 &mut follow,
-                &mut report,
+                &mut progress,
+                &mut bones,
             ] {
                 system.initialize(&mut world);
             }
@@ -629,7 +663,8 @@ mod tests {
                 pose,
                 propagate,
                 follow,
-                report,
+                progress,
+                bones,
             }
         }
 
@@ -638,7 +673,8 @@ mod tests {
             self.pose.run_and_apply((), &mut self.world);
             self.propagate.run_and_apply((), &mut self.world);
             self.follow.run_and_apply((), &mut self.world);
-            self.report.run_and_apply((), &mut self.world);
+            self.progress.run_and_apply((), &mut self.world);
+            self.bones.run_and_apply((), &mut self.world);
             self.world.tick();
         }
 
@@ -654,8 +690,8 @@ mod tests {
             self.world.trigger(SeekClip(time));
         }
 
-        fn preview(&self) -> &ClipPreview {
-            self.world.get_resource::<ClipPreview>().unwrap()
+        fn preview(&self) -> &ClipPlayback {
+            self.world.get_resource::<ClipPlayback>().unwrap()
         }
 
         fn transform(&self, entity: Entity) -> &Transform {
@@ -1187,7 +1223,7 @@ mod tests {
         }
 
         let world = app.main_mut().world_mut();
-        assert!(world.get_resource::<ClipPreview>().unwrap().time > 0.0);
+        assert!(world.get_resource::<ClipPlayback>().unwrap().time > 0.0);
         assert!(
             world
                 .get_component_for_entity::<Transform>(rig.driven)

@@ -37,6 +37,7 @@ mod list;
 mod name_field;
 mod name_text;
 mod numeric;
+mod paths;
 mod registry;
 mod rows;
 mod sync;
@@ -44,6 +45,7 @@ mod target;
 mod text_field;
 mod values;
 mod variants;
+mod write;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
 use add_component::{
@@ -67,6 +69,9 @@ use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
 pub(crate) use list::{ListEdit, ListEditor};
+pub(crate) use paths::{
+    LIST_LIMIT, ListedPath, ShownPath, cut_note, find_path, listed_paths, shown_paths, unknown_path,
+};
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
@@ -85,6 +90,12 @@ pub(crate) use values::{apply_value_commit, report_value_edit};
 use values::{
     build_value_widgets, commit_value, read_inspected_values, refresh_inspected_values,
     refresh_on_new_app, send_value_commits, sync_value_cards,
+};
+pub use write::WriteValue;
+use write::write_value_at;
+pub(crate) use write::{
+    EditSource, WriteRefusal, adapter_commit, gone, not_editable, reading, refusal_error, refused,
+    set_value,
 };
 
 pub const PANEL_ID: &str = "concerto.ecs";
@@ -198,6 +209,7 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(read_inspected_values);
     world.add_listener(refresh_on_new_app);
     world.add_listener(commit_value);
+    world.add_listener(write_value_at);
 }
 
 fn forget_scene(

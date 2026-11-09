@@ -47,9 +47,11 @@ cargo run -p tech-demo
 cargo run -p tech-demo -- --forest
 cargo run -p tech-demo -- --sanatorium
 cargo run -p tech-demo -- --retarget
+cargo run -p one-more-night
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
+cargo run -p one-more-night-editor -- --project <scratch copy of examples/one-more-night>
 cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && trunk serve
 cargo install --path crates/project
@@ -60,8 +62,9 @@ cargo concerto run <dir> [--cook] [--release] [-- <game args>]
 cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
 ```
 
-Examples are `tech-demo` and `ui-showcase`. `tech-demo` starts on the grid
-level: the character with every gizmo layer on a floor under the world grid,
+Examples are `tech-demo`, `ui-showcase` and `one-more-night`.
+`one-more-night` is the start of a couch co-op game and opens an empty window
+for now. `tech-demo` starts on the grid level: the character with every gizmo layer on a floor under the world grid,
 four boxes, and an NPC patrolling a square of nav points that routes around the
 boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no forest or
 sanatorium content; the cooked release build above, zipped with `index.html` at
@@ -72,15 +75,17 @@ method there; hold the right mouse button or the left trigger to aim, C or the
 east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1, and `--sanatorium` and
-`--forest` win over it. The sanatorium's Blender source and exports are in
+`--forest` win over it. Its two rigs are content assets,
+`content/UAL1/rig.gasset` and `content/lafan1/model_skeleton/rig.gasset`, that
+the editor's rig tab edits. The sanatorium's Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
 editor's Import…, over a scratch copy of the project; there is no import
 command line. An example may have an `editor/` crate, named `<game>-editor`,
 that runs the editor over the game's library; an editor exists only for a game
-that has one. Today that is
-`tech-demo`. Build `tech-demo-editor` before an MCP client starts it through
-`.mcp.json`: that entry runs `cargo run`, which compiles first and can outlast
-the client's connect timeout.
+that has one. Today those are `tech-demo` and `one-more-night`. Build
+`tech-demo-editor` before an MCP client starts it through `.mcp.json`: that
+entry runs `cargo run`, which compiles first and can outlast the client's
+connect timeout.
 
 ## Done gate
 
@@ -96,7 +101,7 @@ cargo test --locked -p concerto-physics --no-default-features --features force-r
 cargo build --locked --target wasm32-unknown-unknown
 ```
 
-A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. The Ubuntu CI runner has no adapter, so GPU tests skip there; the Windows test job sets `CONCERTO_REQUIRE_GPU=1`, so they must run there.
+A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. Neither CI runner, Ubuntu or Windows, has an adapter, so GPU tests skip in CI; run them locally on a machine with a GPU.
 
 Test builds carry line tables only and `cargo build` carries full debug info,
 so the two compile everything separately, third-party crates and Jolt

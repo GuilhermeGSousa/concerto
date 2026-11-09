@@ -1,0 +1,30 @@
+[package]
+name = "one-more-night"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+]
+
+[features]
+tracy = ["concerto/tracy"]
+
+[lib]
+
+[[bin]]
+name = "one-more-night"
+path = "src/main.rs"
+
+[dependencies]
+concerto = { version = "0.1.0", path = "../.." }
+
+[build-dependencies]
+concerto-asset-build = { version = "0.1.0", path = "../../crates/asset-build" }
+anyhow = "1.0.97"
+fs_extra = "1.3.0"

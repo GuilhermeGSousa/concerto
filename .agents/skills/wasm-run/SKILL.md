@@ -15,8 +15,8 @@ cd examples/tech-demo
 trunk serve
 ```
 
-It serves at `http://127.0.0.1:8080`. `tech-demo` has a
-`Trunk.toml` and an `index.html`; an example without them does not run on the
+It serves at `http://127.0.0.1:8080`. `tech-demo` and
+`one-more-night` have a `Trunk.toml` and an `index.html`; an example without them does not run on the
 web yet.
 
 `trunk serve` is uncooked: the motion database is derived in the browser, on

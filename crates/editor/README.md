@@ -846,6 +846,19 @@ so an asset editor puts it in one of its own panels. Nothing else happens by
 itself: an asset editor reads the event to insert `Unsaved` and to tell its
 preview.
 
+`PropertyTarget::saved` says whether an edit to the value changes what a save
+of its document writes; it defaults to `true`. A value that only steers what a
+tab shows, such as a preview setting, returns `false`: its edits still report
+`Hosted<PropertyCommitted>`, but do not mark an inspected asset's tab unsaved.
+
+A panel that writes a value by path, rather than through an inspector row,
+triggers the public signal `WriteValue { target, path, json }`. Its listener
+runs the code behind MCP `set_property` on a value, with `path` as `inspect`
+shows it and `json` as `set_property` takes it, so the panel and MCP write
+through one code path. The outcome is reported as `Hosted<PropertyCommitted>`,
+and a refusal, an unknown path included, sets the document's
+`EditorDocument::status`.
+
 A custom editor on a value row must not use `EditWorld`, which skips its system
 while no scene is the edit target. It reaches its document through
 `Res<ActiveEditor>`, because value rows exist only for the front document, and
@@ -1187,6 +1200,16 @@ edit, a save or a discard changes the skeleton it names, so its `JointName`
 fields pick from them; see [Joint names](#joint-names). MCP works on the tab as on any document value: `open_asset`,
 `inspect`, `set_property`, `list_push`, `list_remove` and `save`.
 
+`InspectedAssetPlugin` marks edits unsaved, saves, loads and reads the skeleton
+in the `Update` set `InspectedAssetSystems`; a system that reads an inspected
+document's state for the frame runs after it. A custom editor for an inspected
+kind, registered with `register_creatable_asset_editor`, wins over the generic
+one and builds on it: its `build` calls
+`InspectedAssetEditor { record: InspectedAsset::of::<T>() }.build(editor)`,
+then inserts what it adds and replaces what it extends, such as
+`InspectedValues` with the kind's value followed by values of its own. The
+plugin's systems then open, mark unsaved, save and discard the tab unchanged.
+
 ### Previews
 
 The Scene editor hosts an `App` for each open scene, with its own camera,
@@ -1245,12 +1268,17 @@ preview's events: call `forward_hosted_event::<E>()` before the editor `App`
 finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
 which preview wrote it.
 
-### The clip editor
+### The clip and rig editors
 
-The editor of an `AnimationClip` is the crate
+The editors of an `AnimationClip` and of a `RetargetRig` are in the crate
 [`concerto-animation-editor`](../animation-editor/README.md), which a game lists
-in its `Cargo.toml`. In a game that doesn't list it a clip has no editor, so
-opening one opens no tab.
+in its `Cargo.toml`. The clip tab plays a clip on its skeleton. The rig tab
+inspects a rig beside a second rig and a clip, with both characters side by
+side in its preview. Both play through the crate's transport widget, a play,
+step, loop and speed row and a timeline over the document's `ClipTransport`,
+public for any tab whose preview plays a clip. In a game that doesn't list the
+crate a clip has no editor, so opening one opens no tab, and a rig opens in the
+generic inspector.
 
 ### The timeline
 
