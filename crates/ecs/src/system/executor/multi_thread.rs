@@ -380,8 +380,6 @@ mod tests {
         schedule.add_system(spawn_tag_entity);
         schedule.add_system(check_changed_entities);
 
-        println!("{:?}", schedule);
-
         schedule
             .compile::<MultiThreadedExecutor>(&mut world)
             .run(&mut world);
@@ -563,86 +561,6 @@ mod tests {
         finished.slow.store(true, Ordering::SeqCst);
     }
 
-    #[test]
-    fn a_panicking_system_is_raised_after_its_running_neighbours_finish_and_its_dependants_never_run()
-     {
-        use crate::IntoSystemConfig;
-        for _ in 0..5 {
-            let mut world = World::new();
-            world.insert_resource(MainThreadExecutor::new());
-            world.insert_resource(Finished::default());
-            let mut schedule = Schedule::new();
-            schedule
-                .add_system(breaks)
-                .add_system(after_breaks.after(breaks))
-                .add_system(slow);
-            let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
-
-            let outcome =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiled.run(&mut world)));
-
-            let payload = outcome.expect_err("the panic is raised again");
-            assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
-            let finished = world.get_resource::<Finished>().unwrap();
-            assert!(finished.slow.load(Ordering::SeqCst));
-            assert!(!finished.dependant.load(Ordering::SeqCst));
-        }
-    }
-
-    #[derive(Resource, Default)]
-    struct ChainThreads(Vec<ThreadId>);
-
-    fn chain_first(mut threads: ResMut<ChainThreads>) {
-        threads.0.push(std::thread::current().id());
-    }
-
-    fn chain_second(mut threads: ResMut<ChainThreads>) {
-        threads.0.push(std::thread::current().id());
-    }
-
-    fn chain_third(mut threads: ResMut<ChainThreads>) {
-        threads.0.push(std::thread::current().id());
-    }
-
-    #[test]
-    fn a_chain_of_send_systems_runs_on_the_calling_thread() {
-        use crate::IntoSystemConfig;
-        let mut world = World::new();
-        world.insert_resource(ChainThreads::default());
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(chain_first)
-            .add_system(chain_second.after(chain_first))
-            .add_system(chain_third.after(chain_second));
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        let threads = &world.get_resource::<ChainThreads>().unwrap().0;
-        assert_eq!(threads.len(), 3);
-        assert!(threads.iter().all(|&id| id == std::thread::current().id()));
-    }
-
-    #[test]
-    fn a_lone_panicking_system_at_the_start_is_raised_and_its_dependant_never_runs() {
-        use crate::IntoSystemConfig;
-        let mut world = World::new();
-        world.insert_resource(Finished::default());
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(breaks)
-            .add_system(after_breaks.after(breaks));
-        let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
-
-        let outcome =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiled.run(&mut world)));
-
-        let payload = outcome.expect_err("the panic is raised again");
-        assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
-        let finished = world.get_resource::<Finished>().unwrap();
-        assert!(!finished.dependant.load(Ordering::SeqCst));
-    }
-
     struct Side {
         send: Mutex<Sender<()>>,
         recv: Mutex<Receiver<()>>,
@@ -707,86 +625,188 @@ mod tests {
         assert!(rendezvous.b.met.load(Ordering::SeqCst));
     }
 
-    #[test]
-    fn an_exclusive_system_after_a_parallel_pair_runs_on_the_calling_thread() {
-        use crate::IntoSystemConfig;
-        if fewer_than_two_threads() {
-            return;
-        }
-        let mut world = World::new();
-        world.insert_resource(Rendezvous::new());
-        world.insert_resource(ExclusiveRanOn::default());
-        let mut schedule = Schedule::new();
-        schedule.add_system(meet_a).add_system(meet_b).add_system(
-            (|world: &mut World| {
-                world.get_resource_mut::<ExclusiveRanOn>().unwrap().0 =
-                    Some(std::thread::current().id());
-            })
-            .after(meet_a)
-            .after(meet_b),
-        );
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        assert_pair_met(&world);
-        assert_eq!(
-            world.get_resource::<ExclusiveRanOn>().unwrap().0,
-            Some(std::thread::current().id())
-        );
+    struct PanicCase {
+        name: &'static str,
+        build: fn(&mut Schedule),
+        parallel_pair: bool,
+        slow_finishes: bool,
     }
 
     #[test]
-    fn a_non_send_system_after_a_parallel_pair_runs_on_the_calling_thread() {
+    fn a_panicking_system_is_raised_after_its_running_neighbours_and_its_dependants_never_run() {
         use crate::IntoSystemConfig;
-        if fewer_than_two_threads() {
-            return;
-        }
-        let mut world = World::new();
-        world.insert_resource(MainThreadExecutor::new());
-        world.insert_resource(Rendezvous::new());
-        world.insert_resource(RanOn::default());
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(meet_a)
-            .add_system(meet_b)
-            .add_system(record_thread.after(meet_a).after(meet_b));
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
+        let cases = [
+            PanicCase {
+                name: "beside a slow neighbour",
+                build: |schedule| {
+                    schedule
+                        .add_system(breaks)
+                        .add_system(after_breaks.after(breaks))
+                        .add_system(slow);
+                },
+                parallel_pair: false,
+                slow_finishes: true,
+            },
+            PanicCase {
+                name: "alone at the start",
+                build: |schedule| {
+                    schedule
+                        .add_system(breaks)
+                        .add_system(after_breaks.after(breaks));
+                },
+                parallel_pair: false,
+                slow_finishes: false,
+            },
+            PanicCase {
+                name: "alone after a parallel pair",
+                build: |schedule| {
+                    schedule
+                        .add_system(meet_a)
+                        .add_system(meet_b)
+                        .add_system(breaks.after(meet_a).after(meet_b))
+                        .add_system(after_breaks.after(breaks));
+                },
+                parallel_pair: true,
+                slow_finishes: false,
+            },
+        ];
+        for case in cases {
+            if case.parallel_pair && fewer_than_two_threads() {
+                continue;
+            }
+            for _ in 0..5 {
+                let mut world = World::new();
+                world.insert_resource(MainThreadExecutor::new());
+                world.insert_resource(Finished::default());
+                world.insert_resource(Rendezvous::new());
+                let mut schedule = Schedule::new();
+                (case.build)(&mut schedule);
+                let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
 
-        assert_pair_met(&world);
-        assert_eq!(
-            world.get_resource::<RanOn>().unwrap().0,
-            Some(std::thread::current().id())
-        );
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    compiled.run(&mut world)
+                }));
+
+                let payload = outcome.expect_err(case.name);
+                assert_eq!(
+                    payload.downcast_ref::<&str>(),
+                    Some(&"the system broke"),
+                    "{}",
+                    case.name
+                );
+                if case.parallel_pair {
+                    assert_pair_met(&world);
+                }
+                let finished = world.get_resource::<Finished>().unwrap();
+                assert_eq!(
+                    finished.slow.load(Ordering::SeqCst),
+                    case.slow_finishes,
+                    "{}",
+                    case.name
+                );
+                assert!(!finished.dependant.load(Ordering::SeqCst), "{}", case.name);
+            }
+        }
+    }
+
+    #[derive(Resource, Default)]
+    struct Threads(Vec<ThreadId>);
+
+    fn record_send(mut threads: ResMut<Threads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    fn record_send_again(mut threads: ResMut<Threads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    fn record_send_last(mut threads: ResMut<Threads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    fn record_non_send(_: NonSendMarker, mut threads: ResMut<Threads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    fn record_exclusive(world: &mut World) {
+        world
+            .get_resource_mut::<Threads>()
+            .unwrap()
+            .0
+            .push(std::thread::current().id());
+    }
+
+    struct CallingThreadCase {
+        name: &'static str,
+        build: fn(&mut Schedule),
+        parallel_pair: bool,
+        recorded: usize,
     }
 
     #[test]
-    fn a_lone_panicking_system_after_a_parallel_pair_is_raised_and_its_dependant_never_runs() {
+    fn work_that_must_stay_on_the_calling_thread_runs_there() {
         use crate::IntoSystemConfig;
-        if fewer_than_two_threads() {
-            return;
+        let cases = [
+            CallingThreadCase {
+                name: "a chain of send systems",
+                build: |schedule| {
+                    schedule
+                        .add_system(record_send)
+                        .add_system(record_send_again.after(record_send))
+                        .add_system(record_send_last.after(record_send_again));
+                },
+                parallel_pair: false,
+                recorded: 3,
+            },
+            CallingThreadCase {
+                name: "an exclusive system after a parallel pair",
+                build: |schedule| {
+                    schedule
+                        .add_system(meet_a)
+                        .add_system(meet_b)
+                        .add_system(record_exclusive.after(meet_a).after(meet_b));
+                },
+                parallel_pair: true,
+                recorded: 1,
+            },
+            CallingThreadCase {
+                name: "a non-send system after a parallel pair",
+                build: |schedule| {
+                    schedule
+                        .add_system(meet_a)
+                        .add_system(meet_b)
+                        .add_system(record_non_send.after(meet_a).after(meet_b));
+                },
+                parallel_pair: true,
+                recorded: 1,
+            },
+        ];
+        for case in cases {
+            if case.parallel_pair && fewer_than_two_threads() {
+                continue;
+            }
+            let mut world = World::new();
+            world.insert_resource(MainThreadExecutor::new());
+            world.insert_resource(Rendezvous::new());
+            world.insert_resource(Threads::default());
+            let mut schedule = Schedule::new();
+            (case.build)(&mut schedule);
+
+            schedule
+                .compile::<MultiThreadedExecutor>(&mut world)
+                .run(&mut world);
+
+            if case.parallel_pair {
+                assert_pair_met(&world);
+            }
+            let threads = &world.get_resource::<Threads>().unwrap().0;
+            assert_eq!(threads.len(), case.recorded, "{}", case.name);
+            assert!(
+                threads.iter().all(|&id| id == std::thread::current().id()),
+                "{}",
+                case.name
+            );
         }
-        let mut world = World::new();
-        world.insert_resource(Finished::default());
-        world.insert_resource(Rendezvous::new());
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(meet_a)
-            .add_system(meet_b)
-            .add_system(breaks.after(meet_a).after(meet_b))
-            .add_system(after_breaks.after(breaks));
-        let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
-
-        let outcome =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiled.run(&mut world)));
-
-        let payload = outcome.expect_err("the panic is raised again");
-        assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
-        assert_pair_met(&world);
-        let finished = world.get_resource::<Finished>().unwrap();
-        assert!(!finished.dependant.load(Ordering::SeqCst));
     }
 
     #[test]

@@ -367,10 +367,6 @@ mod tests {
     #[derive(Resource, Default)]
     struct Seen(Option<usize>);
 
-    fn observe(counter: Option<Res<Counter>>, mut seen: ResMut<Seen>) {
-        seen.0 = counter.map(|counter| counter.0);
-    }
-
     fn access_of<M>(system: impl IntoSystem<(), M>) -> SystemAccess {
         let system = system.into_system();
         let mut access = SystemAccess::default();
@@ -386,64 +382,63 @@ mod tests {
 
     fn optional_writer(_: Option<ResMut<Counter>>) {}
 
-    fn bump(counter: Option<ResMut<Counter>>, mut seen: ResMut<Seen>) {
-        seen.0 = counter.map(|mut counter| {
+    #[derive(Resource, Default)]
+    struct Bumped(Option<usize>);
+
+    fn observe(counter: Option<Res<Counter>>, mut seen: ResMut<Seen>) {
+        seen.0 = counter.map(|counter| counter.0);
+    }
+
+    fn bump(counter: Option<ResMut<Counter>>, mut bumped: ResMut<Bumped>) {
+        bumped.0 = counter.map(|mut counter| {
             counter.0 += 1;
             counter.0
         });
     }
 
     #[test]
-    fn an_optional_mutable_resource_is_none_while_absent_and_writable_once_inserted() {
+    fn an_optional_resource_is_none_while_absent_and_some_while_present() {
         let mut world = World::new();
         world.insert_resource(Seen::default());
-        let mut system = bump.into_system();
-        system.initialize(&mut world);
+        world.insert_resource(Bumped::default());
+        let mut observe = observe.into_system();
+        observe.initialize(&mut world);
+        let mut bump = bump.into_system();
+        bump.initialize(&mut world);
 
-        system.run_and_apply((), &mut world);
+        observe.run_and_apply((), &mut world);
+        bump.run_and_apply((), &mut world);
         assert_eq!(world.get_resource::<Seen>().unwrap().0, None);
+        assert_eq!(world.get_resource::<Bumped>().unwrap().0, None);
 
         world.insert_resource(Counter(7));
-        system.run_and_apply((), &mut world);
-        assert_eq!(world.get_resource::<Seen>().unwrap().0, Some(8));
-        assert_eq!(world.get_resource::<Counter>().unwrap().0, 8);
-    }
-
-    #[test]
-    fn an_optional_mutable_resource_declares_the_access_of_a_plain_one() {
-        let optional = access_of(optional_writer);
-        let reader = access_of(plain_reader);
-        assert!(!SystemAccess::are_disjoint(&optional, &reader));
-        assert!(!SystemAccess::are_disjoint(&reader, &optional));
-    }
-
-    #[test]
-    fn an_optional_resource_is_none_while_absent_and_some_once_inserted() {
-        let mut world = World::new();
-        world.insert_resource(Seen::default());
-        let mut system = observe.into_system();
-        system.initialize(&mut world);
-
-        system.run_and_apply((), &mut world);
-        assert_eq!(world.get_resource::<Seen>().unwrap().0, None);
-
-        world.insert_resource(Counter(7));
-        system.run_and_apply((), &mut world);
+        observe.run_and_apply((), &mut world);
+        bump.run_and_apply((), &mut world);
         assert_eq!(world.get_resource::<Seen>().unwrap().0, Some(7));
+        assert_eq!(world.get_resource::<Bumped>().unwrap().0, Some(8));
+        assert_eq!(world.get_resource::<Counter>().unwrap().0, 8);
 
         world.remove_resource::<Counter>();
-        system.run_and_apply((), &mut world);
+        observe.run_and_apply((), &mut world);
+        bump.run_and_apply((), &mut world);
         assert_eq!(world.get_resource::<Seen>().unwrap().0, None);
+        assert_eq!(world.get_resource::<Bumped>().unwrap().0, None);
     }
 
     #[test]
     fn an_optional_resource_declares_the_access_of_a_plain_one() {
-        let optional = access_of(optional_reader);
-        let plain = access_of(plain_reader);
-        let write = access_of(writer);
-        let reader_pair = SystemAccess::are_disjoint(&optional, &plain);
-        assert_eq!(reader_pair, SystemAccess::are_disjoint(&plain, &plain));
-        assert!(!SystemAccess::are_disjoint(&optional, &write));
-        assert!(!SystemAccess::are_disjoint(&write, &optional));
+        let optional_reader = access_of(optional_reader);
+        let optional_writer = access_of(optional_writer);
+        let reader = access_of(plain_reader);
+        let writer = access_of(writer);
+
+        assert_eq!(
+            SystemAccess::are_disjoint(&optional_reader, &reader),
+            SystemAccess::are_disjoint(&reader, &reader)
+        );
+        assert!(!SystemAccess::are_disjoint(&optional_reader, &writer));
+        assert!(!SystemAccess::are_disjoint(&writer, &optional_reader));
+        assert!(!SystemAccess::are_disjoint(&optional_writer, &reader));
+        assert!(!SystemAccess::are_disjoint(&reader, &optional_writer));
     }
 }
