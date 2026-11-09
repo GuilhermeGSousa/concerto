@@ -291,57 +291,6 @@ fn on_despawn_despawning_another_entity() {
 }
 
 #[test]
-fn noop_remove_of_missing_component_is_harmless() {
-    let mut world = World::new();
-
-    // `first` is not the archetype's last row: a buggy no-op removal would
-    // clobber `last`'s location with `first`'s.
-    let first = world.spawn((Value(1), Marker));
-    let last = world.spawn((Value(2), Marker));
-
-    world.remove_component::<Extra>(first);
-
-    assert_eq!(value_of(&world, first), Some(1));
-    assert_eq!(value_of(&world, last), Some(2));
-
-    world.get_component_for_entity_mut::<Value>(last).unwrap().0 = 20;
-    assert_eq!(
-        value_of(&world, first),
-        Some(1),
-        "mutating the last entity must not write through a corrupted location"
-    );
-    assert_eq!(value_of(&world, last), Some(20));
-}
-
-#[test]
-fn remove_component_keeps_swapped_entity_intact() {
-    let mut world = World::new();
-
-    let first = world.spawn((Value(1), Extra));
-    let last = world.spawn((Value(2), Extra));
-
-    world.remove_component::<Extra>(first);
-
-    assert_eq!(value_of(&world, first), Some(1));
-    assert!(world.get_component_for_entity::<Extra>(first).is_none());
-    assert_eq!(value_of(&world, last), Some(2));
-    assert!(world.get_component_for_entity::<Extra>(last).is_some());
-}
-
-#[test]
-fn despawn_keeps_swapped_entity_intact() {
-    let mut world = World::new();
-
-    let first = world.spawn((Value(1), Extra));
-    let last = world.spawn((Value(2), Extra));
-
-    world.despawn(first);
-
-    assert_eq!(value_of(&world, first), None);
-    assert_eq!(value_of(&world, last), Some(2));
-}
-
-#[test]
 fn callbacks_balance_across_mixed_operations() {
     let mut world = World::new();
     world.register_component::<Tracked>();

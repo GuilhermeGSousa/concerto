@@ -18,5 +18,6 @@ mod resource_get_or_insert;
 mod resource_scope;
 mod scene_component;
 mod signals;
+mod storage;
 mod system_set;
 mod validation_errors;
