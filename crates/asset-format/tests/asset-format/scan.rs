@@ -79,96 +79,7 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
 }
 
 #[test]
-fn scanning_honours_the_extension_and_a_non_canonical_base() {
-    let base = temp_root("scan-extension");
-    let id = AssetId::new();
-    write_asset(&base.join("data/a.asset"), id, "Mesh", None);
-    write_asset(&base.join("data/b.gasset"), AssetId::new(), "Mesh", None);
-
-    let entries = scan_content(&base.join("data/.."), &base.join("data"), "asset").expect("scan");
-
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: "data/a.asset".into(),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
-
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn scanning_an_absent_directory_lists_nothing() {
-    let base = temp_root("scan-absent");
-    let entries = scan_content(&base, &base.join("content"), "gasset").expect("not an error");
-    assert!(entries.is_empty());
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn a_duplicate_id_is_an_error_naming_both_addresses() {
-    let base = temp_root("scan-dup");
-    let id = AssetId::new();
-    write_asset(&base.join("content/a.gasset"), id, "Mesh", None);
-    write_asset(&base.join("content/b.gasset"), id, "Mesh", None);
-
-    let err = scan_content(&base, &base.join("content"), "gasset").expect_err("duplicate id");
-    let message = format!("{err:#}");
-    assert!(
-        message.contains("content/a.gasset") && message.contains("content/b.gasset"),
-        "got: {message}"
-    );
-
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn an_unreadable_header_is_an_error_naming_its_path() {
-    let base = temp_root("scan-unreadable");
-    std::fs::create_dir_all(base.join("content")).unwrap();
-    std::fs::write(base.join("content/broken.gasset"), b"nope").unwrap();
-
-    let err = scan_content(&base, &base.join("content"), "gasset").expect_err("bad header");
-    let message = format!("{err:#}");
-    assert!(message.contains("broken.gasset"), "got: {message}");
-
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn a_scan_reads_the_kind_version_and_registry_text_has_none() {
-    let base = temp_root("scan-kind-version");
-    let id = AssetId::new();
-    let header = ContentAssetHeader {
-        asset_id: id,
-        references: Vec::new(),
-        kind: "AnimationClip".to_string(),
-        kind_version: 3,
-        provenance: None,
-        derived: None,
-    };
-    std::fs::create_dir_all(base.join("content")).unwrap();
-    std::fs::write(
-        base.join("content/idle.gasset"),
-        write_content_asset(&header, b"payload").unwrap(),
-    )
-    .unwrap();
-
-    let scanned = scan_content(&base, &base.join("content"), "gasset").expect("scan");
-    assert_eq!(scanned[0].kind_version, Some(3));
-
-    let parsed = parse_registry(&write_registry(&scanned)).expect("parses");
-    assert_eq!(parsed[0].kind_version, None);
-
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn the_registry_text_round_trips() {
+fn the_registry_text_round_trips_without_the_kind_version() {
     let entries = vec![
         ScannedEntry {
             id: AssetId::new(),
@@ -181,7 +92,7 @@ fn the_registry_text_round_trips() {
             id: AssetId::new(),
             address: "content/quoted \"b\".gasset".into(),
             kind: "Scene".into(),
-            kind_version: None,
+            kind_version: Some(3),
             provenance: None,
         },
     ];
@@ -190,6 +101,7 @@ fn the_registry_text_round_trips() {
     let mut parsed = parse_registry(&text).expect("parses");
     parsed.sort_by_key(|entry| entry.id);
     let mut expected = entries;
+    expected[1].kind_version = None;
     expected.sort_by_key(|entry| entry.id);
     assert_eq!(parsed, expected);
 }
@@ -228,296 +140,326 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
     );
 }
 
-#[test]
-fn parsing_rejects_the_legacy_address_only_form() {
-    let text = format!(
-        "[assets]\n{} = \"content/a.gasset\"\n",
-        AssetId::new().simple_hex()
-    );
-    let err = parse_registry(&text).expect_err("legacy form");
-    assert!(format!("{err:#}").contains("rebuild"), "got: {err:#}");
+struct RegistryRefusal {
+    text: String,
+    names: &'static str,
 }
 
 #[test]
-fn parsing_rejects_two_ids_at_one_address() {
-    let text = format!(
-        "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n",
-        AssetId::new().simple_hex(),
-        AssetId::new().simple_hex(),
-    );
-    let err = parse_registry(&text).expect_err("duplicate address");
-    assert!(
-        format!("{err:#}").contains("content/a.gasset"),
-        "got: {err:#}"
-    );
-}
-
-#[test]
-fn content_config_defaults_when_content_toml_is_absent() {
-    let base = temp_root("config-absent");
-    let config = ContentConfig::load_or_default(&base).expect("defaults");
-    assert_eq!(config.root, "content");
-    assert_eq!(config.extension, "gasset");
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn content_config_fills_a_missing_field_from_the_default() {
-    let base = temp_root("config-partial");
-    std::fs::write(base.join("content.toml"), "extension = \"bin\"\n").unwrap();
-    let config = ContentConfig::load_or_default(&base).expect("parses");
-    assert_eq!(config.root, "content");
-    assert_eq!(config.extension, "bin");
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn content_config_reads_the_default_scene() {
-    let base = temp_root("config-default-scene");
-    std::fs::write(
-        base.join("content.toml"),
-        "default_scene = \"content/levels/forest.gasset\"\n",
-    )
-    .unwrap();
-    let config = ContentConfig::load_or_default(&base).expect("parses");
-    assert_eq!(
-        config.default_scene.as_deref(),
-        Some("content/levels/forest.gasset")
-    );
-    assert_eq!(config.root, "content");
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn content_config_has_no_default_scene_unless_one_is_set() {
-    let base = temp_root("config-no-default-scene");
-    std::fs::write(base.join("content.toml"), "extension = \"gasset\"\n").unwrap();
-    let config = ContentConfig::load_or_default(&base).expect("parses");
-    assert_eq!(config.default_scene, None);
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn content_config_rejects_a_root_other_than_content() {
-    for (tag, root) in [
-        ("data", "data"),
-        ("parent", "../x"),
-        ("empty", ""),
-        ("absolute", "/abs"),
+fn parsing_refuses_the_legacy_address_only_form_and_two_ids_at_one_address() {
+    for case in [
+        RegistryRefusal {
+            text: format!(
+                "[assets]\n{} = \"content/a.gasset\"\n",
+                AssetId::new().simple_hex()
+            ),
+            names: "rebuild",
+        },
+        RegistryRefusal {
+            text: format!(
+                "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n",
+                AssetId::new().simple_hex(),
+                AssetId::new().simple_hex(),
+            ),
+            names: "content/a.gasset",
+        },
     ] {
-        let base = temp_root(&format!("config-root-{tag}"));
-        std::fs::write(base.join("content.toml"), format!("root = \"{root}\"\n")).unwrap();
-        let err = ContentConfig::load_or_default(&base).expect_err("rejected");
-        assert!(
-            format!("{err:#}").contains("content root must be 'content'"),
-            "root {root:?}: {err:#}"
-        );
-        std::fs::remove_dir_all(&base).ok();
+        let err = parse_registry(&case.text).expect_err("refused");
+        assert!(format!("{err:#}").contains(case.names), "got: {err:#}");
     }
 }
 
+enum Config {
+    Loaded {
+        extension: &'static str,
+        default_scene: Option<&'static str>,
+    },
+    Refused(&'static str),
+}
+
+struct ConfigCase {
+    name: &'static str,
+    toml: Option<&'static str>,
+    expected: Config,
+}
+
 #[test]
-fn content_config_rejects_a_bad_extension() {
-    for (tag, extension) in [("empty", ""), ("dot", ".gasset"), ("slash", "a/b")] {
-        let base = temp_root(&format!("config-ext-{tag}"));
-        std::fs::write(
-            base.join("content.toml"),
-            format!("extension = \"{extension}\"\n"),
-        )
-        .unwrap();
-        let err = ContentConfig::load_or_default(&base).expect_err("rejected");
-        assert!(
-            format!("{err:#}").contains("content extension must be a nonempty extension"),
-            "extension {extension:?}: {err:#}"
-        );
+fn content_toml_fills_its_defaults_and_refuses_a_root_or_extension_it_cannot_use() {
+    let root = "content root must be 'content'";
+    let extension = "content extension must be a nonempty extension";
+    let refused = |name, toml, message| ConfigCase {
+        name,
+        toml: Some(toml),
+        expected: Config::Refused(message),
+    };
+    let cases = [
+        ConfigCase {
+            name: "absent",
+            toml: None,
+            expected: Config::Loaded {
+                extension: "gasset",
+                default_scene: None,
+            },
+        },
+        ConfigCase {
+            name: "a missing field takes the default",
+            toml: Some("extension = \"bin\"\n"),
+            expected: Config::Loaded {
+                extension: "bin",
+                default_scene: None,
+            },
+        },
+        ConfigCase {
+            name: "the content root with a custom extension",
+            toml: Some("root = \"content\"\nextension = \"bin\"\n"),
+            expected: Config::Loaded {
+                extension: "bin",
+                default_scene: None,
+            },
+        },
+        ConfigCase {
+            name: "a default scene",
+            toml: Some("default_scene = \"content/levels/forest.gasset\"\n"),
+            expected: Config::Loaded {
+                extension: "gasset",
+                default_scene: Some("content/levels/forest.gasset"),
+            },
+        },
+        refused("another root", "root = \"data\"\n", root),
+        refused("a parent root", "root = \"../x\"\n", root),
+        refused("an empty root", "root = \"\"\n", root),
+        refused("an absolute root", "root = \"/abs\"\n", root),
+        refused("an empty extension", "extension = \"\"\n", extension),
+        refused("a dotted extension", "extension = \".gasset\"\n", extension),
+        refused(
+            "an extension with a slash",
+            "extension = \"a/b\"\n",
+            extension,
+        ),
+    ];
+    for case in cases {
+        let base = temp_root("config");
+        if let Some(toml) = case.toml {
+            std::fs::write(base.join("content.toml"), toml).unwrap();
+        }
+        let loaded = ContentConfig::load_or_default(&base);
         std::fs::remove_dir_all(&base).ok();
+        match case.expected {
+            Config::Loaded {
+                extension,
+                default_scene,
+            } => {
+                let config = loaded.unwrap_or_else(|err| panic!("{}: {err:#}", case.name));
+                assert_eq!(config.root, "content", "{}", case.name);
+                assert_eq!(config.extension, extension, "{}", case.name);
+                assert_eq!(
+                    config.default_scene.as_deref(),
+                    default_scene,
+                    "{}",
+                    case.name
+                );
+            }
+            Config::Refused(message) => {
+                let err = loaded
+                    .err()
+                    .unwrap_or_else(|| panic!("{} loaded", case.name));
+                assert!(
+                    format!("{err:#}").contains(message),
+                    "{}: {err:#}",
+                    case.name
+                );
+            }
+        }
     }
-}
 
-#[test]
-fn content_config_accepts_a_custom_extension_with_the_default_root() {
-    let base = temp_root("config-bin");
-    std::fs::write(
-        base.join("content.toml"),
-        "root = \"content\"\nextension = \"bin\"\n",
-    )
-    .unwrap();
-    let config = ContentConfig::load_or_default(&base).expect("accepted");
-    assert_eq!(config.extension, "bin");
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[test]
-fn validate_rejects_a_hand_built_bad_config() {
-    let bad_root = ContentConfig {
-        root: "data".to_string(),
-        ..ContentConfig::default()
-    };
-    assert!(bad_root.validate().is_err());
-    let bad_extension = ContentConfig {
-        extension: "a.b".to_string(),
-        ..ContentConfig::default()
-    };
-    assert!(bad_extension.validate().is_err());
-    assert!(ContentConfig::default().validate().is_ok());
-}
-
-#[test]
-fn an_unreadable_content_toml_is_an_error() {
     let base = temp_root("config-unreadable");
     std::fs::create_dir(base.join("content.toml")).unwrap();
     assert!(ContentConfig::load_or_default(&base).is_err());
     std::fs::remove_dir_all(&base).ok();
 }
 
-#[cfg(unix)]
-#[test]
-fn a_symlinked_content_directory_keeps_content_addresses() {
-    let base = temp_root("scan-symlink-root");
-    let outside = temp_root("scan-symlink-outside");
-    let id = AssetId::new();
-    write_asset(&outside.join("a.gasset"), id, "Mesh", None);
-    std::os::unix::fs::symlink(&outside, base.join("content")).unwrap();
+struct Scan {
+    base: PathBuf,
+    dir: PathBuf,
+    extension: &'static str,
+}
 
-    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+enum Scanned {
+    Listed(&'static [&'static str]),
+    Refused(&'static [&'static str]),
+}
 
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: "content/a.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
+struct Layout {
+    name: &'static str,
+    build: fn(&Path) -> Scan,
+    expected: Scanned,
+}
 
-    std::fs::remove_dir_all(&base).ok();
-    std::fs::remove_dir_all(&outside).ok();
+fn content(root: &Path) -> Scan {
+    Scan {
+        base: root.to_path_buf(),
+        dir: root.join("content"),
+        extension: "gasset",
+    }
+}
+
+fn mesh(path: &Path) {
+    write_asset(path, AssetId::new(), "Mesh", None);
 }
 
 #[cfg(unix)]
-#[test]
-fn a_symlink_cycle_lists_each_entry_once_and_terminates() {
-    let base = temp_root("scan-cycle");
-    let id = AssetId::new();
-    write_asset(&base.join("content/a.gasset"), id, "Mesh", None);
-    std::fs::create_dir_all(base.join("content/sub")).unwrap();
-    std::os::unix::fs::symlink(base.join("content"), base.join("content/sub/loop")).unwrap();
-
-    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
-
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: "content/a.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
-
-    std::fs::remove_dir_all(&base).ok();
+fn link(target: &Path, link: &Path) {
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(target, link).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
-fn a_directory_reached_through_two_paths_is_listed_once_under_the_first_name() {
-    let base = temp_root("scan-twice");
-    let id = AssetId::new();
-    write_asset(&base.join("content/real/a.gasset"), id, "Mesh", None);
-    std::os::unix::fs::symlink(base.join("content/real"), base.join("content/alias")).unwrap();
-
-    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
-
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: "content/alias/a.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
-
-    std::fs::remove_dir_all(&base).ok();
-}
-
-#[cfg(unix)]
-#[test]
-fn a_directory_outside_the_base_keeps_the_walked_path_as_its_address() {
-    let base = temp_root("scan-outside-base");
-    let other = temp_root("scan-outside-dir");
-    let id = AssetId::new();
-    write_asset(&other.join("a.gasset"), id, "Mesh", None);
-
-    let entries = scan_content(&base, &other, "gasset").expect("scan");
-
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: other.join("a.gasset").to_string_lossy().replace('\\', "/"),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
-
-    std::fs::remove_dir_all(&base).ok();
-    std::fs::remove_dir_all(&other).ok();
-}
-
-#[cfg(unix)]
-#[test]
-fn a_base_with_parent_after_a_symlink_is_normalised_lexically() {
-    let base = temp_root("scan-lexical");
-    let elsewhere = temp_root("scan-lexical-target");
-    let id = AssetId::new();
-    write_asset(&elsewhere.join("a.gasset"), id, "Mesh", None);
-    std::os::unix::fs::symlink(&elsewhere, base.join("link")).unwrap();
-
-    let entries = scan_content(&base.join("link/.."), &base.join("link"), "gasset").expect("scan");
-
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: "link/a.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
-
-    std::fs::remove_dir_all(&base).ok();
-    std::fs::remove_dir_all(&elsewhere).ok();
-}
-
-#[cfg(unix)]
-#[test]
-fn a_dangling_directory_symlink_is_skipped() {
-    let base = temp_root("scan-dangling");
-    let id = AssetId::new();
-    write_asset(&base.join("content/a.gasset"), id, "Mesh", None);
-    std::os::unix::fs::symlink(base.join("missing"), base.join("content/dangling")).unwrap();
-
-    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
-
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: "content/a.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
-
-    std::fs::remove_dir_all(&base).ok();
+fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() {
+    let cases = [
+        Layout {
+            name: "only the given extension, under a non-canonical base",
+            build: |root| {
+                mesh(&root.join("data/a.asset"));
+                mesh(&root.join("data/b.gasset"));
+                Scan {
+                    base: root.join("data/.."),
+                    dir: root.join("data"),
+                    extension: "asset",
+                }
+            },
+            expected: Scanned::Listed(&["data/a.asset"]),
+        },
+        Layout {
+            name: "an absent directory",
+            build: content,
+            expected: Scanned::Listed(&[]),
+        },
+        Layout {
+            name: "a duplicate id names both addresses",
+            build: |root| {
+                let id = AssetId::new();
+                write_asset(&root.join("content/a.gasset"), id, "Mesh", None);
+                write_asset(&root.join("content/b.gasset"), id, "Mesh", None);
+                content(root)
+            },
+            expected: Scanned::Refused(&["content/a.gasset", "content/b.gasset"]),
+        },
+        Layout {
+            name: "an unreadable header names its path",
+            build: |root| {
+                std::fs::create_dir_all(root.join("content")).unwrap();
+                std::fs::write(root.join("content/broken.gasset"), b"nope").unwrap();
+                content(root)
+            },
+            expected: Scanned::Refused(&["broken.gasset"]),
+        },
+        #[cfg(unix)]
+        Layout {
+            name: "a symlinked content directory keeps content addresses",
+            build: |root| {
+                mesh(&root.join("outside/a.gasset"));
+                link(&root.join("outside"), &root.join("base/content"));
+                content(&root.join("base"))
+            },
+            expected: Scanned::Listed(&["content/a.gasset"]),
+        },
+        #[cfg(unix)]
+        Layout {
+            name: "a symlink cycle",
+            build: |root| {
+                mesh(&root.join("content/a.gasset"));
+                link(&root.join("content"), &root.join("content/sub/loop"));
+                content(root)
+            },
+            expected: Scanned::Listed(&["content/a.gasset"]),
+        },
+        #[cfg(unix)]
+        Layout {
+            name: "a directory reached through two paths",
+            build: |root| {
+                mesh(&root.join("content/real/a.gasset"));
+                link(&root.join("content/real"), &root.join("content/alias"));
+                content(root)
+            },
+            expected: Scanned::Listed(&["content/alias/a.gasset"]),
+        },
+        #[cfg(unix)]
+        Layout {
+            name: "two symlinks to one directory",
+            build: |root| {
+                mesh(&root.join("target/a.gasset"));
+                link(&root.join("target"), &root.join("base/content/alias_a"));
+                link(&root.join("target"), &root.join("base/content/alias_b"));
+                content(&root.join("base"))
+            },
+            expected: Scanned::Listed(&["content/alias_a/a.gasset"]),
+        },
+        #[cfg(unix)]
+        Layout {
+            name: "a directory outside the base keeps the walked path",
+            build: |root| {
+                std::fs::create_dir_all(root.join("base")).unwrap();
+                mesh(&root.join("other/a.gasset"));
+                Scan {
+                    base: root.join("base"),
+                    dir: root.join("other"),
+                    extension: "gasset",
+                }
+            },
+            expected: Scanned::Listed(&["<root>/other/a.gasset"]),
+        },
+        #[cfg(unix)]
+        Layout {
+            name: "a base with a parent after a symlink is normalised lexically",
+            build: |root| {
+                mesh(&root.join("elsewhere/a.gasset"));
+                link(&root.join("elsewhere"), &root.join("base/link"));
+                Scan {
+                    base: root.join("base/link/.."),
+                    dir: root.join("base/link"),
+                    extension: "gasset",
+                }
+            },
+            expected: Scanned::Listed(&["link/a.gasset"]),
+        },
+        #[cfg(unix)]
+        Layout {
+            name: "a dangling directory symlink is skipped",
+            build: |root| {
+                mesh(&root.join("content/a.gasset"));
+                link(&root.join("missing"), &root.join("content/dangling"));
+                content(root)
+            },
+            expected: Scanned::Listed(&["content/a.gasset"]),
+        },
+    ];
+    for case in cases {
+        let root = temp_root("layout");
+        let scan = (case.build)(&root);
+        let result = scan_content(&scan.base, &scan.dir, scan.extension);
+        let root_text = root.to_string_lossy().replace('\\', "/");
+        std::fs::remove_dir_all(&root).ok();
+        match case.expected {
+            Scanned::Listed(addresses) => {
+                let entries = result.unwrap_or_else(|err| panic!("{}: {err:#}", case.name));
+                assert_eq!(
+                    entries
+                        .iter()
+                        .map(|entry| entry.address.replace(&root_text, "<root>"))
+                        .collect::<Vec<_>>(),
+                    addresses,
+                    "{}",
+                    case.name
+                );
+            }
+            Scanned::Refused(named) => {
+                let message = format!("{:#}", result.err().expect(case.name));
+                for name in named {
+                    assert!(message.contains(name), "{}: {message}", case.name);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -543,32 +485,4 @@ fn an_unreadable_directory_is_an_error_naming_its_path() {
     assert!(message.contains("content/denied"), "got: {message}");
 
     std::fs::remove_dir_all(&base).ok();
-}
-
-#[cfg(unix)]
-#[test]
-fn two_symlinks_to_one_directory_list_it_once_under_the_first_name() {
-    let base = temp_root("scan-two-links");
-    let target = temp_root("scan-two-links-target");
-    let id = AssetId::new();
-    write_asset(&target.join("a.gasset"), id, "Mesh", None);
-    std::fs::create_dir_all(base.join("content")).unwrap();
-    std::os::unix::fs::symlink(&target, base.join("content/alias_a")).unwrap();
-    std::os::unix::fs::symlink(&target, base.join("content/alias_b")).unwrap();
-
-    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
-
-    assert_eq!(
-        entries,
-        vec![ScannedEntry {
-            id,
-            address: "content/alias_a/a.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: Some(1),
-            provenance: None,
-        }]
-    );
-
-    std::fs::remove_dir_all(&base).ok();
-    std::fs::remove_dir_all(&target).ok();
 }
