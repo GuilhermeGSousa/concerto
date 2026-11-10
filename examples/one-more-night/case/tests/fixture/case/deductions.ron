@@ -1,0 +1,11 @@
+[
+    Deduction(
+        id: "d_1",
+        template: "d_1.template",
+        blanks: [Blank(bank: "bank_people", answer: "t_a"), Blank(bank: "bank_places", answer: "t_room")],
+        appears_with: ["f_1"],
+        prerequisite_for_finale: true,
+        unlocks: ["d_2"],
+    ),
+    Deduction(id: "d_2", template: "d_2.template", blanks: [Blank(bank: "bank_people", answer: "t_b")]),
+]

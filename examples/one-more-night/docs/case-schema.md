@@ -1,0 +1,318 @@
+# Case schema, version 1
+
+A case is a directory of twelve RON files. `one-more-night-case`
+(`examples/one-more-night/case`) parses them and resolves every reference
+into a typed id. The crate depends on `serde` and `ron` only, so tools build it
+without the engine.
+
+The schema is frozen at the end of milestone M1. Until then it may change
+without notice; after that, any change raises `version` in `case.ron`, and a
+case written for another version fails to load.
+
+The worked example is the placeholder case in
+`examples/one-more-night/case/tests/fixture/case`. It has no story; it uses
+every construct below once.
+
+## Loading
+
+```rust
+let catalog = Catalog::from_level_manifest(&manifest_text)?
+    .with_prop("prop_letter")
+    .with_portrait("portrait_01")
+    .with_activity("sit");
+let case = Case::load_dir(Path::new("cases/test"), &catalog)?;
+```
+
+- `Case::load(&CaseFiles, &Catalog)` parses from memory. `CaseFiles::with_file`
+  adds a file's text under its name without the extension, which is what a
+  sealed bundle uses after it decrypts.
+- `Case::load_dir` reads `<name>.ron` for each of the twelve names and ignores
+  anything else in the directory.
+- All twelve files are required. A file with nothing in it is an empty list.
+
+## Ids
+
+A file names things with strings. Three rules cover all of them:
+
+- **Ids the case defines** are unique within their kind: strings, characters,
+  conversations, facts, terms, term banks, deductions, placements.
+- **Ids the case borrows** come from the `Catalog` the game passes in: rooms,
+  anchors, doors and keys from the level's `level_manifest.ron`; props,
+  portraits and activities from the game.
+- **Ids are opaque.** Debug output and errors print them, so an id must not
+  describe what it names: `npc_04`, `f_037`, `conv_12`, not a name or a clue.
+
+After loading, each kind has its own index type (`FactId`, `NpcId`, `RoomId`,
+…). `case.facts.get(id)` returns the row, `case.facts.name(id)` the name the
+file used, and `case.facts.id("f_037")` the id for a name. Catalog ids are read
+the same way: `catalog.rooms.name(id)`.
+
+## Errors
+
+`CaseError` names a file, the kind of thing and its id. It never carries text
+from a file:
+
+| Error | Meaning |
+|---|---|
+| `MissingFile` | One of the twelve files is absent. |
+| `Unreadable` | The file exists and could not be read. |
+| `Syntax` | The file is not valid RON or does not match the schema. Line and column only. |
+| `UnsupportedVersion` | `case.ron` carries another schema version. |
+| `Duplicate` | Two rows of a kind share an id; or an NPC has two schedules or dialogues; or a door has two overrides. |
+| `Unknown` | A reference names something neither the case nor the catalog defines. |
+| `Invalid` | A line's speaker is not a participant of its conversation, or a blank's answer is not in its bank. |
+
+Whether the case can be solved is the validator's job, not the loader's.
+
+## Notation
+
+- An unknown field is an error. A field marked *optional* may be left out.
+- An optional value is written bare: `time: "19:30"`, not `time: Some("19:30")`.
+- A time is `"HH:MM"`, from `"00:00"` to `"24:00"`. It loads as `GameTime`,
+  minutes since midnight.
+- `TimeWindow(from: "23:00", until: "24:00")` includes `from` and excludes
+  `until`.
+- A struct's name before its parentheses is optional in RON; when written it
+  must be the name shown here.
+
+## Files
+
+### `case.ron`
+
+```ron
+Manifest(version: 1, title: "case.title")
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `version` | integer | The schema version, 1. |
+| `title` | string id | The case's name on the title screen. |
+
+### `strings.ron`
+
+One map from string id to text. Every other file refers to text by string id
+and holds none itself, so this is the only file with readable prose.
+
+```ron
+{
+    "case.title": "…",
+    "npc_04.name": "…",
+}
+```
+
+`case.strings.get(id).as_str()` gives the text. The `Debug` output of a loaded
+`Case` prints string ids and hides the text.
+
+### `characters.ron`
+
+A list of `Character`. A character needs no schedule: someone only spoken of
+is a character too.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | id | The character's id. |
+| `name` | string id | The name shown in the casebook. |
+| `portrait` | portrait id | The casebook portrait. |
+| `questioned_by` | `Guest` or `Staff` | Which player may talk to them. |
+
+### `schedules.ron`
+
+A list of `Schedule`, at most one per character.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `npc` | character id | Whose schedule it is. |
+| `entries` | list of `ScheduleEntry` | In order. |
+
+`ScheduleEntry`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `start` | time | When the NPC is at the anchor. |
+| `anchor` | anchor id | Where. |
+| `activity` | activity id | The idle set played there. |
+| `facing` | degrees, optional | Replaces the anchor's own facing. |
+| `phase` | `Before` or `After` | Before or after the discovery. |
+| `critical` | bool, optional, false | The NPC is busy and cannot be interrupted. |
+| `conversation` | conversation id, optional | The conversation that starts with this entry. |
+
+A conversation starts when the entries that name it start; each participant's
+schedule names it at the same time.
+
+### `conversations.ron`
+
+A list of `Conversation`: what players overhear.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | id | The conversation's id. |
+| `participants` | list of character ids | Who takes part. |
+| `private` | bool, optional, false | It breaks off while the Guest is in sight. |
+| `lines` | list of `SpokenLine` | The conversation, in order. |
+| `cover` | list of `SpokenLine`, optional | What a private conversation switches to while the Guest is in sight. Empty means it stops. |
+
+`SpokenLine`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `speaker` | character id | Who says it. In a conversation, a participant. |
+| `text` | string id | The subtitle. |
+| `seconds` | number | How long the line stays up, in seconds of the game clock. |
+| `grants` | list of fact ids, optional | Facts a player gets by hearing the line. |
+
+### `dialogue.ron`
+
+A list of `Dialogue`, at most one per character.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `npc` | character id | Who answers. |
+| `brush_off` | string id | The one line said during a critical schedule entry. |
+| `no_answer` | string id | The line for a fact or person the NPC has no topic for. |
+| `topics` | list of `Topic` | What the NPC can be asked. |
+
+`Topic`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ask` | `Question(string id)`, `Fact(fact id)` or `Person(character id)` | A fixed question with its prompt, or an "Ask about…" entry. |
+| `responses` | list of `Response` | The first whose condition holds is given. A topic with none that holds is not offered. |
+
+`Response`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `when` | `Condition`, optional | Left out, the response always holds. |
+| `lines` | list of string ids | What the NPC says. |
+| `grants` | list of fact ids, optional | Facts the answer gives. |
+
+`Condition`, every field optional, all of them must hold:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `window` | `TimeWindow` | The clock is inside it. |
+| `phase` | `Before` or `After` | The NPC is in this phase. |
+| `knows` | list of fact ids | The players have found all of them. |
+
+### `facts.ron`
+
+A list of `Fact`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | id | The fact's id. |
+| `text` | string id | The casebook line. |
+| `category` | `Person`, `Place`, `Time`, `Object` or `Event` | The casebook category. |
+| `source` | `Seen`, `Heard`, `Read` or `Told` | How it is found. |
+| `people` | list of character ids, optional | Who it is about. |
+| `place` | room id, optional | Where; with `time`, its cell on the timeline. |
+| `time` | time, optional | When. |
+| `object` | placement id, optional | The placed prop it is about. |
+| `unlocks_terms` | list of term ids, optional | Terms it adds to the word banks. |
+
+A fact says what it is, not where it is found. What grants it is a line of a
+conversation, a dialogue response, a hotspot or a document.
+
+### `terms.ron`
+
+```ron
+Terms(
+    terms: [Term(id: "t_01", text: "t_01.text")],
+    banks: [TermBank(id: "bank_people", terms: ["t_01"])],
+)
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `Term.id` | id | The term's id. |
+| `Term.text` | string id | The word shown in a blank. |
+| `TermBank.id` | id | The bank's id. |
+| `TermBank.terms` | list of term ids | Every term the bank can ever offer. A player sees those a found fact has unlocked. |
+
+### `deductions.ron`
+
+A list of `Deduction`. The finale's statements are deductions too.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | id | The deduction's id. |
+| `template` | string id | The sentence, with `___` for each blank in order. |
+| `blanks` | list of `Blank(bank, answer)` | For each blank, the bank it picks from and the right term, which must be in that bank. |
+| `appears_with` | list of fact ids, optional | It appears once any of these is found. |
+| `prerequisite_for_finale` | bool, optional, false | The finale needs it confirmed. |
+| `unlocks` | list of deduction ids, optional | Deductions that appear when this one is confirmed. |
+
+### `finale.ron`
+
+```ron
+Finale(
+    staging: [Staging(npc: "npc_01", anchor: "drawing_05")],
+    statements: [Statement(deduction: "d_09", reaction: [SpokenLine(…)])],
+    ending: ["finale.end_1"],
+)
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `staging` | list of `Staging(npc, anchor)` | Where each character stands. |
+| `statements` | list of `Statement` | Answered in order. |
+| `Statement.deduction` | deduction id | The sentence to complete. |
+| `Statement.reaction` | list of `SpokenLine`, optional | What the room says when it is right. |
+| `ending` | list of string ids | The ending text, one entry per card. |
+
+### `placements.ron`
+
+A list of `Placement`: a prop of the library put on an anchor.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | id | The placement's id. |
+| `prop` | prop id | Which prop. |
+| `anchor` | anchor id | Where it sits. |
+| `name` | string id | Its name in prompts and in the casebook. |
+| `interaction` | see below | What a player can do with it. |
+
+`interaction` is one of:
+
+| Value | Meaning |
+|---|---|
+| `Scenery` | Nothing. |
+| `Inspect(hotspots: [Hotspot(label: string id, grants: [fact ids])])` | Brought up to the camera; each hotspot has a label and may grant facts. |
+| `Document(pages: [string ids], grants: [fact ids])` | Read in full; reading grants the facts. |
+| `Carry(key: key id)` | Picked up and carried; with `key`, it is that key. |
+
+`grants` and `key` are optional.
+
+### `doors.ron`
+
+```ron
+Doors(
+    staff_opens: ["d_pantry"],
+    overrides: [DoorOverride(door: "d_study", state: Locked, locked: [TimeWindow(from: "23:00", until: "24:00")])],
+)
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `staff_opens` | list of door ids, optional | Doors the Staff key ring opens. |
+| `overrides` | list of `DoorOverride`, optional | At most one per door. |
+
+`DoorOverride`; a field left out keeps the level's value:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `door` | door id | Which door. |
+| `enabled` | bool | False removes the connection for this case. |
+| `state` | `Open`, `Closed` or `Locked` | The state each loop starts with. |
+| `key` | key id | The key that opens it. |
+| `zone` | `Public`, `Service` or `Private` | Who may pass. |
+| `locked` | list of `TimeWindow` | Spans in which it is locked whatever its state. |
+
+## Not in version 1
+
+Each of these is left to the issue that builds the system, which adds it here
+before the freeze if it turns out to be case data:
+
+- When the discovery happens, which moves NPCs from `Before` to `After`.
+- An NPC ringing a bell on schedule.
+- Anything about the dumbwaiter.
