@@ -1,15 +1,68 @@
 //! Covers ObjImporter splitting a single .obj/.mtl pair into mesh, material,
 //! and scene sub-assets, reusing the same Scene shape as glTF.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use concerto_asset_import::{ImportContext, ImportError, Importer};
 use concerto_obj::obj_importer::ObjImporter;
 use concerto_scene::scene::Scene;
 
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
+
+struct Case {
+    source: &'static str,
+    dependency: &'static str,
+    unreadable: bool,
+}
+
+#[test]
+fn a_source_tracks_the_files_it_names_or_reports_the_one_it_cannot_read() {
+    let cases = [
+        Case {
+            source: "square.obj",
+            dependency: "square.mtl",
+            unreadable: false,
+        },
+        Case {
+            source: "unread_texture.obj",
+            dependency: "absent.png",
+            unreadable: false,
+        },
+        Case {
+            source: "absent_library.obj",
+            dependency: "absent.mtl",
+            unreadable: true,
+        },
+    ];
+    for case in &cases {
+        let path = fixture(case.source);
+        let expected = path.with_file_name(case.dependency);
+        let mut ctx = ImportContext::new(PathBuf::from(case.source));
+        match (ObjImporter.import(&path, &mut ctx), case.unreadable) {
+            (Ok(()), false) => {
+                let dependencies = ctx.into_parts().dependencies;
+                assert!(
+                    dependencies.iter().any(|d| d.path == expected),
+                    "{}: got {:?}",
+                    case.source,
+                    dependencies.iter().map(|d| &d.path).collect::<Vec<_>>()
+                );
+            }
+            (Err(ImportError::SourceUnreadable { source_path, .. }), true) => {
+                assert_eq!(source_path, expected, "{}", case.source);
+            }
+            (result, _) => panic!("{}: got {result:?}", case.source),
+        }
+    }
+}
+
 #[test]
 fn import_emits_mesh_material_and_flat_scene() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/square.obj");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("square.obj"));
+    let fixture = fixture("square.obj");
+    let mut ctx = ImportContext::new(PathBuf::from("square.obj"));
 
     ObjImporter
         .import(&fixture, &mut ctx)
@@ -28,14 +81,6 @@ fn import_emits_mesh_material_and_flat_scene() {
     assert!(
         names.contains(&"scene"),
         "expected a scene sub-asset, got: {names:?}"
-    );
-
-    assert!(
-        outputs
-            .dependencies
-            .iter()
-            .any(|d| d.path.file_name().unwrap() == "square.mtl"),
-        "the referenced .mtl file must be tracked as a dependency for incremental rebuilds"
     );
 
     let scene_entry = outputs
@@ -73,40 +118,4 @@ fn import_emits_mesh_material_and_flat_scene() {
         !cooked_scene.referenced_assets.is_empty(),
         "the mesh/material ids the node references must be recorded in referenced_assets"
     );
-}
-
-#[test]
-fn a_texture_the_material_library_names_is_tracked_even_when_it_cannot_be_read() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unread_texture.obj");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("unread_texture.obj"));
-
-    ObjImporter
-        .import(&fixture, &mut ctx)
-        .expect("a texture is not read at import, so its absence must not fail it");
-    let dependencies = ctx.into_parts().dependencies;
-
-    assert!(
-        dependencies
-            .iter()
-            .any(|d| d.path == fixture.with_file_name("absent.png")),
-        "got: {:?}",
-        dependencies.iter().map(|d| &d.path).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn a_missing_material_library_is_reported_unreadable_at_its_path() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/absent_library.obj");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("absent_library.obj"));
-
-    let error = ObjImporter
-        .import(&fixture, &mut ctx)
-        .expect_err("the material library does not exist");
-
-    match error {
-        ImportError::SourceUnreadable { source_path, .. } => {
-            assert_eq!(source_path, fixture.with_file_name("absent.mtl"));
-        }
-        other => panic!("expected SourceUnreadable, got {other:?}"),
-    }
 }
