@@ -1,22 +1,31 @@
 use concerto_motion_matching::filter::savitzky_golay;
 use concerto_motion_matching::BakeError;
-
-fn cubic(x: f32) -> f32 {
-    0.002 * x * x * x - 0.05 * x * x + 0.3 * x + 1.0
-}
+use proptest::prelude::*;
 
 fn variance(values: &[f32]) -> f32 {
     let mean = values.iter().sum::<f32>() / values.len() as f32;
     values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / values.len() as f32
 }
 
-#[test]
-fn reproduces_a_cubic_including_the_edges() {
-    let values: Vec<f32> = (0..40).map(|i| cubic(i as f32)).collect();
-    let smoothed = savitzky_golay(&values, 11, 3).unwrap();
-    assert_eq!(smoothed.len(), values.len());
-    for (a, b) in smoothed.iter().zip(&values) {
-        assert!((a - b).abs() < 1e-2, "{a} != {b}");
+proptest! {
+    #[test]
+    fn a_cubic_comes_through_unchanged_edges_included(
+        coefficients in prop::array::uniform4(-1.0f32..1.0),
+        count in 4usize..60,
+        half_window in 2usize..40,
+    ) {
+        let cubic = |i: usize| {
+            let x = i as f32 / count as f32;
+            coefficients[0] + x * (coefficients[1] + x * (coefficients[2] + x * coefficients[3]))
+        };
+        let values: Vec<f32> = (0..count).map(cubic).collect();
+
+        let smoothed = savitzky_golay(&values, 2 * half_window + 1, 3).unwrap();
+
+        prop_assert_eq!(smoothed.len(), count);
+        for (smooth, value) in smoothed.iter().zip(&values) {
+            prop_assert!((smooth - value).abs() < 1e-3, "{} != {}", smooth, value);
+        }
     }
 }
 
@@ -35,34 +44,70 @@ fn reduces_the_variance_of_a_noisy_line() {
     assert!(variance(&residual(&smoothed)) < variance(&residual(&values)) * 0.2);
 }
 
-#[test]
-fn clamps_a_window_longer_than_the_input() {
-    let values: Vec<f32> = (0..9).map(|i| cubic(i as f32)).collect();
-    let smoothed = savitzky_golay(&values, 61, 3).unwrap();
-    assert_eq!(smoothed.len(), 9);
-    for (a, b) in smoothed.iter().zip(&values) {
-        assert!((a - b).abs() < 1e-2, "{a} != {b}");
-    }
+struct Window {
+    count: usize,
+    window: usize,
+    refused: bool,
 }
 
 #[test]
-fn clamps_to_an_input_shorter_than_the_order() {
-    let smoothed = savitzky_golay(&[1.0, 2.0], 31, 3).unwrap();
-    assert_eq!(smoothed.len(), 2);
-    assert!(smoothed.iter().all(|v| v.is_finite()));
-}
+fn a_window_must_be_odd_and_over_three_and_is_clamped_to_the_input() {
+    let refused = |window| Window {
+        count: 20,
+        window,
+        refused: true,
+    };
+    let rows = [
+        refused(0),
+        refused(1),
+        refused(2),
+        refused(3),
+        refused(4),
+        refused(10),
+        Window {
+            count: 20,
+            window: 5,
+            refused: false,
+        },
+        Window {
+            count: 9,
+            window: 61,
+            refused: false,
+        },
+        Window {
+            count: 2,
+            window: 31,
+            refused: false,
+        },
+        Window {
+            count: 1,
+            window: 5,
+            refused: false,
+        },
+    ];
 
-#[test]
-fn rejects_even_and_too_small_windows() {
-    let values = vec![0.0; 20];
-    for window in [0, 1, 2, 3, 4, 10] {
-        assert!(
-            matches!(
-                savitzky_golay(&values, window, 3),
-                Err(BakeError::InvalidWindow { window: w, .. }) if w == window
-            ),
-            "window {window}"
-        );
+    for row in rows {
+        let values: Vec<f32> = (0..row.count).map(|i| i as f32 * 0.5).collect();
+
+        let smoothed = savitzky_golay(&values, row.window, 3);
+
+        if row.refused {
+            assert!(
+                matches!(
+                    smoothed,
+                    Err(BakeError::InvalidWindow { window, .. }) if window == row.window
+                ),
+                "window {}",
+                row.window
+            );
+        } else {
+            let smoothed = smoothed.unwrap();
+            assert_eq!(smoothed.len(), row.count, "window {}", row.window);
+            assert!(
+                smoothed.iter().all(|v| v.is_finite()),
+                "window {}",
+                row.window
+            );
+        }
     }
-    assert!(savitzky_golay(&values, 5, 3).is_ok());
 }

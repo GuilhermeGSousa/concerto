@@ -89,149 +89,165 @@ fn definition() -> MotionDatabase {
     }
 }
 
-fn hash(definition: &MotionDatabase) -> u64 {
-    weightless_hash(definition, SKELETON, &[WALK, TURN])
+struct Inputs {
+    definition: MotionDatabase,
+    skeleton: Vec<u8>,
+    clips: Vec<Vec<u8>>,
 }
 
-fn assert_changes_the_hash(change: impl FnOnce(&mut MotionDatabase)) {
-    let mut changed = definition();
-    change(&mut changed);
-    assert_ne!(hash(&changed), hash(&definition()));
-}
-
-#[test]
-fn the_same_input_gives_the_same_hash() {
-    assert_eq!(hash(&definition()), hash(&definition()));
-}
-
-#[test]
-fn a_changed_skeleton_byte_changes_the_hash() {
-    assert_ne!(
-        weightless_hash(&definition(), &[1, 2, 4], &[WALK, TURN]),
-        hash(&definition())
-    );
-}
-
-#[test]
-fn a_changed_skeleton_asset_changes_the_hash_even_with_identical_bytes() {
-    assert_changes_the_hash(|definition| {
-        definition.skeleton = AssetHandle::weak(AssetId::from_path("another skeleton"));
-    });
-}
-
-#[test]
-fn a_changed_clip_byte_changes_the_hash() {
-    assert_ne!(
-        weightless_hash(&definition(), SKELETON, &[&[4, 5, 7], TURN]),
-        hash(&definition())
-    );
-}
-
-#[test]
-fn a_byte_moved_from_one_clip_to_the_next_changes_the_hash() {
-    assert_ne!(
-        weightless_hash(&definition(), SKELETON, &[&[4, 5], &[6, 7, 8]]),
-        hash(&definition())
-    );
-}
-
-#[test]
-fn a_changed_entry_changes_the_hash() {
-    assert_changes_the_hash(|definition| {
-        definition.entries[0].clip = AssetHandle::weak(AssetId::from_path("run"));
-    });
-    assert_changes_the_hash(|definition| definition.entries[0].range = Some(TimeRange::default()));
-    assert_changes_the_hash(|definition| {
-        definition.entries[1].range = Some(TimeRange {
-            start: 0.25,
-            end: 1.0,
-        });
-    });
-    assert_changes_the_hash(|definition| {
-        definition.entries.pop();
-    });
-}
-
-#[test]
-fn a_changed_mirrored_flag_changes_the_hash() {
-    assert_changes_the_hash(|definition| definition.entries[0].mirrored = true);
-}
-
-#[test]
-fn the_mirror_axis_changes_the_hash_only_when_an_entry_is_mirrored() {
-    let mut unmirrored = definition();
-    unmirrored.mirror_axis = MirrorAxis::Z;
-    assert_eq!(hash(&unmirrored), hash(&definition()));
-
-    let mut mirrored = definition();
-    mirrored.entries[1].mirrored = true;
-    let mut turned = mirrored.clone();
-    turned.mirror_axis = MirrorAxis::Z;
-    assert_ne!(hash(&turned), hash(&mirrored));
-}
-
-#[test]
-fn a_changed_setting_changes_the_hash() {
-    assert_changes_the_hash(|definition| definition.rate = 30.0);
-    assert_changes_the_hash(|definition| definition.speed = 1.1);
-    assert_changes_the_hash(|definition| definition.simulation.position_joint = "Root".into());
-    assert_changes_the_hash(|definition| definition.simulation.position_window = 7);
-    assert_changes_the_hash(|definition| definition.trajectory.sample_dt = 0.5);
-    assert_changes_the_hash(|definition| definition.trajectory.sample_count = 2);
-}
-
-#[test]
-fn a_changed_channel_changes_the_hash() {
-    assert_changes_the_hash(|definition| definition.channels[0] = stride(9.0, 0.5, 1.0));
-    assert_changes_the_hash(|definition| {
-        definition.channels[0] = FeatureChannelData::Stored {
-            type_name: "Pace".into(),
-            value: definition.channels[0].value().unwrap().into_owned(),
+impl Inputs {
+    fn new() -> Self {
+        Self {
+            definition: definition(),
+            skeleton: SKELETON.to_vec(),
+            clips: vec![WALK.to_vec(), TURN.to_vec()],
         }
-    });
-    assert_changes_the_hash(|definition| definition.channels.swap(0, 1));
-    assert_changes_the_hash(|definition| {
-        definition.channels.pop();
-    });
+    }
+
+    fn hash(&self) -> u64 {
+        let clips: Vec<&[u8]> = self.clips.iter().map(Vec::as_slice).collect();
+        weightless_hash(&self.definition, &self.skeleton, &clips)
+    }
+}
+
+struct Change {
+    name: &'static str,
+    base: fn(&mut Inputs),
+    change: fn(&mut Inputs),
+    changes_the_hash: bool,
+}
+
+fn change(name: &'static str, change: fn(&mut Inputs)) -> Change {
+    Change {
+        name,
+        base: |_| {},
+        change,
+        changes_the_hash: true,
+    }
 }
 
 #[test]
-fn a_changed_weight_keeps_the_hash() {
-    let mut changed = definition();
-    changed.channels[0] = stride(2.0, 0.5, 7.0);
-    changed.channels[1] = stride(3.0, 0.5, 8.0);
+fn the_hash_follows_every_input_of_the_bake_but_the_top_level_channel_weights() {
+    let rows = [
+        Change {
+            changes_the_hash: false,
+            ..change("nothing", |_| {})
+        },
+        change("a skeleton byte", |inputs| inputs.skeleton[2] = 4),
+        change("the skeleton asset with identical bytes", |inputs| {
+            inputs.definition.skeleton = AssetHandle::weak(AssetId::from_path("another skeleton"));
+        }),
+        change("a clip byte", |inputs| inputs.clips[0][2] = 7),
+        change("a byte moved from one clip to the next", |inputs| {
+            let byte = inputs.clips[0].pop().unwrap();
+            inputs.clips[1].insert(0, byte);
+        }),
+        change("an entry's clip", |inputs| {
+            inputs.definition.entries[0].clip = AssetHandle::weak(AssetId::from_path("run"));
+        }),
+        change("an entry's range given", |inputs| {
+            inputs.definition.entries[0].range = Some(TimeRange::default());
+        }),
+        change("an entry's range end", |inputs| {
+            inputs.definition.entries[1].range = Some(TimeRange {
+                start: 0.25,
+                end: 1.0,
+            });
+        }),
+        change("an entry removed", |inputs| {
+            inputs.definition.entries.pop();
+        }),
+        change("an entry mirrored", |inputs| {
+            inputs.definition.entries[0].mirrored = true;
+        }),
+        Change {
+            changes_the_hash: false,
+            ..change("the mirror axis with no entry mirrored", |inputs| {
+                inputs.definition.mirror_axis = MirrorAxis::Z;
+            })
+        },
+        Change {
+            base: |inputs| inputs.definition.entries[1].mirrored = true,
+            ..change("the mirror axis with an entry mirrored", |inputs| {
+                inputs.definition.mirror_axis = MirrorAxis::Z;
+            })
+        },
+        change("the rate", |inputs| inputs.definition.rate = 30.0),
+        change("the speed", |inputs| inputs.definition.speed = 1.1),
+        change("the simulation's position joint", |inputs| {
+            inputs.definition.simulation.position_joint = "Root".into();
+        }),
+        change("the simulation's position window", |inputs| {
+            inputs.definition.simulation.position_window = 7;
+        }),
+        change("the trajectory's sample dt", |inputs| {
+            inputs.definition.trajectory.sample_dt = 0.5;
+        }),
+        change("the trajectory's sample count", |inputs| {
+            inputs.definition.trajectory.sample_count = 2;
+        }),
+        change("a channel's setting", |inputs| {
+            inputs.definition.channels[0] = stride(9.0, 0.5, 1.0);
+        }),
+        change("a channel's type name", |inputs| {
+            let channel = &inputs.definition.channels[0];
+            inputs.definition.channels[0] = FeatureChannelData::Stored {
+                type_name: "Pace".into(),
+                value: channel.value().unwrap().into_owned(),
+            };
+        }),
+        change("the channel order", |inputs| {
+            inputs.definition.channels.swap(0, 1);
+        }),
+        change("a channel removed", |inputs| {
+            inputs.definition.channels.pop();
+        }),
+        change("a nested weight", |inputs| {
+            inputs.definition.channels[0] = stride(2.0, 0.75, 1.0);
+        }),
+        Change {
+            changes_the_hash: false,
+            ..change("every top-level weight", |inputs| {
+                inputs.definition.channels[0] = stride(2.0, 0.5, 7.0);
+                inputs.definition.channels[1] = stride(3.0, 0.5, 8.0);
+            })
+        },
+        Change {
+            changes_the_hash: false,
+            ..change("the channels stored rather than live", |inputs| {
+                inputs.definition.channels =
+                    inputs.definition.channels.iter().map(unloaded).collect();
+            })
+        },
+    ];
 
-    assert_eq!(hash(&changed), hash(&definition()));
+    for row in rows {
+        let mut base = Inputs::new();
+        (row.base)(&mut base);
+        let mut changed = Inputs::new();
+        (row.base)(&mut changed);
+        (row.change)(&mut changed);
+
+        assert_eq!(
+            changed.hash() != base.hash(),
+            row.changes_the_hash,
+            "{}",
+            row.name
+        );
+    }
 }
 
 #[test]
-fn a_changed_nested_weight_changes_the_hash() {
-    assert_changes_the_hash(|definition| definition.channels[0] = stride(2.0, 0.75, 1.0));
-}
-
-#[test]
-fn weights_of_reads_the_live_channels_in_order() {
+fn weights_of_reads_the_live_channels_in_order_and_names_one_not_loaded() {
     assert_eq!(weights_of(&definition()).unwrap(), vec![1.0, 0.25]);
-}
 
-#[test]
-fn weights_of_names_a_channel_that_was_not_loaded() {
-    let mut definition = definition();
-    definition.channels[0] = unloaded(&definition.channels[0]);
-
+    let mut stored = definition();
+    stored.channels[0] = unloaded(&stored.channels[0]);
     assert_eq!(
-        weights_of(&definition),
+        weights_of(&stored),
         Err(BakeError::UnloadedChannel("Stride".into()))
     );
-}
-
-#[test]
-fn a_loaded_definition_hashes_as_it_did_stored() {
-    let live = definition();
-    let mut stored = definition();
-    stored.channels = live.channels.iter().map(unloaded).collect();
-    assert_eq!(hash(&stored), hash(&live));
 
     stored.load_channels(&registry()).unwrap();
-    assert_eq!(weights_of(&stored), weights_of(&live));
+    assert_eq!(weights_of(&stored), weights_of(&definition()));
 }
