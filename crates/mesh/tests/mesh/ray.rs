@@ -36,80 +36,103 @@ fn two_walls() -> Mesh {
     }
 }
 
+struct Case {
+    case: &'static str,
+    ray: Ray,
+    distance: Option<f32>,
+}
+
+fn assert_distance(case: &Case, distance: Option<f32>) {
+    match (distance, case.distance) {
+        (Some(actual), Some(expected)) => assert!(
+            (actual - expected).abs() < 1e-5,
+            "{}: {actual} != {expected}",
+            case.case
+        ),
+        (actual, expected) => assert_eq!(actual, expected, "{}", case.case),
+    }
+}
+
 #[test]
 fn a_box_is_entered_where_the_ray_first_touches_it() {
-    let entry = unit_box().ray_entry(&ray([0.0, 0.0, -5.0], [0.0, 0.0, 1.0]));
-    assert_eq!(entry, Some(4.0));
-    let diagonal = unit_box()
-        .ray_entry(&ray([-3.0, 0.0, -3.0], [1.0, 0.0, 1.0]))
-        .unwrap();
-    assert!((diagonal - 2.0).abs() < 1e-5);
+    let cases = [
+        Case {
+            case: "straight on",
+            ray: ray([0.0, 0.0, -5.0], [0.0, 0.0, 1.0]),
+            distance: Some(4.0),
+        },
+        Case {
+            case: "diagonal",
+            ray: ray([-3.0, 0.0, -3.0], [1.0, 0.0, 1.0]),
+            distance: Some(2.0),
+        },
+        Case {
+            case: "starting inside",
+            ray: ray([0.2, 0.1, 0.0], [1.0, 0.0, 0.0]),
+            distance: Some(0.0),
+        },
+        Case {
+            case: "along a face",
+            ray: ray([1.0, 0.0, -5.0], [0.0, 0.0, 1.0]),
+            distance: Some(4.0),
+        },
+        Case {
+            case: "parallel to the faces and outside them",
+            ray: ray([3.0, 0.0, -5.0], [0.0, 0.0, 1.0]),
+            distance: None,
+        },
+        Case {
+            case: "the box is behind the origin",
+            ray: ray([0.0, 0.0, 5.0], [0.0, 0.0, 1.0]),
+            distance: None,
+        },
+        Case {
+            case: "passing above",
+            ray: ray([0.0, 5.0, -5.0], [0.0, 0.1, 1.0]),
+            distance: None,
+        },
+    ];
+    for case in &cases {
+        assert_distance(case, unit_box().ray_entry(&case.ray));
+    }
 }
 
 #[test]
-fn a_ray_starting_inside_enters_at_zero() {
-    assert_eq!(
-        unit_box().ray_entry(&ray([0.2, 0.1, 0.0], [1.0, 0.0, 0.0])),
-        Some(0.0)
-    );
-}
+fn a_mesh_is_hit_at_its_nearest_triangle_from_either_side() {
+    let cases = [
+        Case {
+            case: "the near wall, whatever the index order",
+            ray: ray([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            distance: Some(2.0),
+        },
+        Case {
+            case: "from behind, the far wall on its back face",
+            ray: ray([0.0, 0.0, 9.0], [0.0, 0.0, -1.0]),
+            distance: Some(4.0),
+        },
+        Case {
+            case: "outside the triangles' edges",
+            ray: ray([2.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            distance: None,
+        },
+        Case {
+            case: "pointing away",
+            ray: ray([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]),
+            distance: None,
+        },
+        Case {
+            case: "parallel to the walls",
+            ray: ray([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+            distance: None,
+        },
+    ];
+    for case in &cases {
+        assert_distance(case, two_walls().ray_hit(&case.ray));
+    }
 
-#[test]
-fn a_box_beside_or_behind_the_ray_is_missed() {
-    assert_eq!(
-        unit_box().ray_entry(&ray([3.0, 0.0, -5.0], [0.0, 0.0, 1.0])),
-        None,
-        "parallel to the faces and outside them"
-    );
-    assert_eq!(
-        unit_box().ray_entry(&ray([0.0, 0.0, 5.0], [0.0, 0.0, 1.0])),
-        None,
-        "the box is behind the origin"
-    );
-    assert_eq!(
-        unit_box().ray_entry(&ray([0.0, 5.0, -5.0], [0.0, 0.1, 1.0])),
-        None
-    );
-}
-
-#[test]
-fn a_ray_along_a_face_still_hits() {
-    assert_eq!(
-        unit_box().ray_entry(&ray([1.0, 0.0, -5.0], [0.0, 0.0, 1.0])),
-        Some(4.0)
-    );
-}
-
-#[test]
-fn the_nearest_triangle_wins_regardless_of_index_order_or_facing() {
-    let mesh = two_walls();
-    assert_eq!(
-        mesh.ray_hit(&ray([0.0, 0.0, 0.0], [0.0, 0.0, 1.0])),
-        Some(2.0)
-    );
-    assert_eq!(
-        mesh.ray_hit(&ray([0.0, 0.0, 9.0], [0.0, 0.0, -1.0])),
-        Some(4.0),
-        "from behind, the far wall is nearer and is hit on its back face"
-    );
-}
-
-#[test]
-fn a_ray_outside_the_triangles_edges_or_pointing_away_misses() {
-    let mesh = two_walls();
-    assert_eq!(mesh.ray_hit(&ray([2.0, 0.0, 0.0], [0.0, 0.0, 1.0])), None);
-    assert_eq!(mesh.ray_hit(&ray([0.0, 0.0, 0.0], [0.0, 0.0, -1.0])), None);
-    assert_eq!(mesh.ray_hit(&ray([0.0, 0.0, 0.0], [1.0, 0.0, 0.0])), None);
-}
-
-#[test]
-fn malformed_indices_are_skipped() {
-    let mut mesh = two_walls();
-    mesh.indices = vec![0, 1, 99, 0, 1, 2, 7];
-    assert_eq!(
-        mesh.ray_hit(&ray([0.0, 0.0, 0.0], [0.0, 0.0, 1.0])),
-        Some(2.0)
-    );
+    let mut malformed = two_walls();
+    malformed.indices = vec![0, 1, 99, 0, 1, 2, 7];
+    assert_distance(&cases[0], malformed.ray_hit(&cases[0].ray));
 }
 
 #[test]

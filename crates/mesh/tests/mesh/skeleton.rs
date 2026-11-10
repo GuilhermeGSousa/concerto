@@ -32,92 +32,80 @@ fn chain() -> Skeleton {
     .expect("a parents-first chain must build")
 }
 
-#[test]
-fn new_rejects_unequal_lengths() {
-    let result = Skeleton::new(
-        vec![Mat4::IDENTITY; 2],
-        vec![None],
+struct Refusal {
+    case: &'static str,
+    result: Result<(), SkeletonError>,
+    error: SkeletonError,
+}
+
+fn two_bones(parents: Vec<Option<u16>>) -> Result<(), SkeletonError> {
+    let count = 2;
+    Skeleton::new(
+        vec![Mat4::IDENTITY; count],
+        parents,
         vec!["a".into(), "b".into()],
-        vec![JointPose::IDENTITY; 2],
-        vec![Uuid::nil(); 2],
-    );
-    assert_eq!(
-        result.err(),
-        Some(SkeletonError::LengthMismatch {
-            field: "parents",
-            expected: 2,
-            actual: 1
-        })
-    );
+        vec![JointPose::IDENTITY; count],
+        vec![Uuid::nil(); count],
+    )
+    .map(|_| ())
 }
 
 #[test]
-fn new_rejects_a_parent_that_does_not_precede_its_child() {
-    let result = Skeleton::new(
-        vec![Mat4::IDENTITY; 2],
-        vec![Some(1), None],
-        vec!["a".into(), "b".into()],
-        vec![JointPose::IDENTITY; 2],
-        vec![Uuid::nil(); 2],
-    );
-    assert_eq!(
-        result.err(),
-        Some(SkeletonError::ParentNotBefore { bone: 0, parent: 1 })
-    );
-
-    let own_parent = Skeleton::new(
-        vec![Mat4::IDENTITY],
-        vec![Some(0)],
-        vec!["a".into()],
-        vec![JointPose::IDENTITY],
-        vec![Uuid::nil()],
-    );
-    assert!(own_parent.is_err(), "a bone cannot be its own parent");
+fn a_skeleton_refuses_mismatched_lengths_unordered_parents_and_poses_of_the_wrong_length() {
+    let cases = [
+        Refusal {
+            case: "unequal lengths",
+            result: two_bones(vec![None]),
+            error: SkeletonError::LengthMismatch {
+                field: "parents",
+                expected: 2,
+                actual: 1,
+            },
+        },
+        Refusal {
+            case: "a parent after its child",
+            result: two_bones(vec![Some(1), None]),
+            error: SkeletonError::ParentNotBefore { bone: 0, parent: 1 },
+        },
+        Refusal {
+            case: "a bone its own parent",
+            result: two_bones(vec![None, Some(1)]),
+            error: SkeletonError::ParentNotBefore { bone: 1, parent: 1 },
+        },
+        Refusal {
+            case: "a pose of the wrong length",
+            result: chain()
+                .forward_kinematics(&[JointPose::IDENTITY])
+                .map(|_| ()),
+            error: SkeletonError::PoseLength {
+                expected: 3,
+                actual: 1,
+            },
+        },
+    ];
+    for case in cases {
+        assert_eq!(case.result, Err(case.error), "{}", case.case);
+    }
 }
 
 #[test]
-fn bone_index_finds_the_first_bone_by_name() {
+fn forward_kinematics_places_each_joint_under_its_parent() {
     let skeleton = chain();
     assert_eq!(skeleton.bone_count(), 3);
     assert_eq!(skeleton.bone_index(name!("spine")), Some(1));
     assert_eq!(skeleton.bone_index(name!("tail")), None);
-}
 
-#[test]
-fn forward_kinematics_composes_parent_transforms() {
-    let skeleton = chain();
-    let global = skeleton
-        .forward_kinematics(&skeleton.rest_pose)
-        .expect("a pose of the right length must evaluate");
-
+    let global = skeleton.forward_kinematics(&skeleton.rest_pose).unwrap();
     assert_eq!(global.len(), 3);
     assert!(global[0].abs_diff_eq(Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0)), 1e-6));
     assert!(global[2].abs_diff_eq(Mat4::from_translation(Vec3::new(0.0, 3.0, 0.0)), 1e-6));
-}
 
-#[test]
-fn forward_kinematics_applies_parent_rotation_to_children() {
-    let skeleton = chain();
     let mut local = skeleton.rest_pose.to_vec();
     local[0].rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-    let global = skeleton.forward_kinematics(&local).unwrap();
-
-    let head = global[2].transform_point3(Vec3::ZERO);
+    let head = skeleton.forward_kinematics(&local).unwrap()[2].transform_point3(Vec3::ZERO);
     assert!(
         head.abs_diff_eq(Vec3::new(-2.0, 1.0, 0.0), 1e-5),
         "got {head}"
-    );
-}
-
-#[test]
-fn forward_kinematics_rejects_a_pose_of_the_wrong_length() {
-    let skeleton = chain();
-    assert_eq!(
-        skeleton.forward_kinematics(&[JointPose::IDENTITY]),
-        Err(SkeletonError::PoseLength {
-            expected: 3,
-            actual: 1
-        })
     );
 }
 
@@ -136,23 +124,20 @@ fn joint_pose_to_mat4_scales_then_rotates_then_translates() {
 }
 
 #[test]
-fn a_joint_name_reflects_as_a_leaf_holding_the_bytes_of_its_text() {
+fn a_joint_name_encodes_as_its_text_in_reflection_json_and_bincode() {
     let stored = to_value(&JointName::from("Hips")).unwrap();
-
     assert!(matches!(stored, ReflectedValue::Leaf(_)));
     assert_eq!(stored, to_value(&"Hips".to_string()).unwrap());
-
     let mut read = JointName::default();
     assert!(apply_value(&mut read, &stored).is_empty());
     assert_eq!(read, JointName::from("Hips"));
-}
 
-#[test]
-fn a_joint_name_writes_and_reads_json_as_a_string() {
     let mut registry = TypeRegistry::default();
     registry.register::<JointName>();
     let id = TypeId::of::<JointName>();
-
+    let registration = registry.get_by_name("JointName").unwrap();
+    assert!(registration.data::<ReflectDefault>().is_some());
+    assert!(registration.data::<ReflectJson>().is_some());
     assert_eq!(to_json(&JointName::from("Hips"), &registry), json!("Hips"));
     assert_eq!(
         json_to_value(&json!("Spine"), id, &registry).unwrap(),
@@ -162,22 +147,8 @@ fn a_joint_name_writes_and_reads_json_as_a_string() {
         json_to_value(&json!(3), id, &registry).unwrap_err(),
         "expected a string"
     );
-}
 
-#[test]
-fn a_joint_name_registers_its_default_and_json_form() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<JointName>();
-    let registration = registry.get_by_name("JointName").unwrap();
-
-    assert!(registration.data::<ReflectDefault>().is_some());
-    assert!(registration.data::<ReflectJson>().is_some());
-}
-
-#[test]
-fn a_joint_name_round_trips_through_bincode_as_its_text() {
     let bytes = bincode::serialize(&JointName::from("Hips")).unwrap();
-
     assert_eq!(bytes, bincode::serialize("Hips").unwrap());
     assert_eq!(
         bincode::deserialize::<JointName>(&bytes).unwrap(),

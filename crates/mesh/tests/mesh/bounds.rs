@@ -50,74 +50,29 @@ fn cube(extent: f32) -> Aabb {
     }
 }
 
-#[test]
-fn the_box_appears_once_the_mesh_has_loaded_and_not_before() {
-    let mut world = world();
-    let id = AssetId::new();
-    let entity = with_mesh(&mut world, id);
-    run(&mut world);
-    assert_eq!(bounds(&world, entity), None);
-
-    load(&mut world, id, mesh(2.0));
-    run(&mut world);
-    assert_eq!(bounds(&world, entity), Some(cube(2.0)));
-    assert!(world
-        .get_component_for_entity::<AabbSource>(entity)
-        .is_some());
-}
-
-#[test]
-fn the_box_follows_a_changed_handle() {
-    let mut world = world();
-    let (small, large) = (AssetId::new(), AssetId::new());
-    load(&mut world, small, mesh(1.0));
-    load(&mut world, large, mesh(5.0));
-    let entity = with_mesh(&mut world, small);
-    run(&mut world);
-    assert_eq!(bounds(&world, entity), Some(cube(1.0)));
-
+fn handle(world: &mut World, entity: Entity, id: AssetId) {
     world
         .get_component_for_entity_mut::<MeshComponent>(entity)
         .unwrap()
-        .handle = AssetHandle::weak(large);
-    run(&mut world);
-    assert_eq!(bounds(&world, entity), Some(cube(5.0)));
+        .handle = AssetHandle::weak(id);
 }
 
-#[test]
-fn a_hand_set_box_is_left_alone() {
-    let mut world = world();
-    let id = AssetId::new();
-    load(&mut world, id, mesh(1.0));
-    let entity = with_mesh(&mut world, id);
-    world.insert(cube(9.0), entity);
-    run(&mut world);
-    assert_eq!(bounds(&world, entity), Some(cube(9.0)));
-    assert!(world
+fn computed(world: &World, entity: Entity) -> bool {
+    world
         .get_component_for_entity::<AabbSource>(entity)
-        .is_none());
+        .is_some()
 }
 
 #[test]
-fn a_computed_box_is_removed_with_the_mesh() {
+fn a_mesh_entity_gets_the_box_of_its_loaded_mesh_unless_it_set_its_own() {
     let mut world = world();
-    let id = AssetId::new();
-    load(&mut world, id, mesh(1.0));
-    let entity = with_mesh(&mut world, id);
+    let (small, large, empty) = (AssetId::new(), AssetId::new(), AssetId::new());
+    let entity = with_mesh(&mut world, small);
     run(&mut world);
-    world.remove_component::<MeshComponent>(entity);
-    run(&mut world);
-    assert_eq!(bounds(&world, entity), None);
-    assert!(world
-        .get_component_for_entity::<AabbSource>(entity)
-        .is_none());
-}
+    assert_eq!(bounds(&world, entity), None, "the mesh has not loaded");
 
-#[test]
-fn an_empty_mesh_gets_no_box_and_drops_a_stale_one() {
-    let mut world = world();
-    let (solid, empty) = (AssetId::new(), AssetId::new());
-    load(&mut world, solid, mesh(1.0));
+    load(&mut world, small, mesh(2.0));
+    load(&mut world, large, mesh(5.0));
     load(
         &mut world,
         empty,
@@ -126,12 +81,30 @@ fn an_empty_mesh_gets_no_box_and_drops_a_stale_one() {
             indices: vec![],
         },
     );
-    let entity = with_mesh(&mut world, solid);
+    let hand_set = with_mesh(&mut world, small);
+    world.insert(cube(9.0), hand_set);
     run(&mut world);
-    world
-        .get_component_for_entity_mut::<MeshComponent>(entity)
-        .unwrap()
-        .handle = AssetHandle::weak(empty);
+    assert_eq!(bounds(&world, entity), Some(cube(2.0)));
+    assert!(computed(&world, entity));
+    assert_eq!(bounds(&world, hand_set), Some(cube(9.0)));
+    assert!(!computed(&world, hand_set));
+
+    handle(&mut world, entity, large);
+    run(&mut world);
+    assert_eq!(bounds(&world, entity), Some(cube(5.0)));
+
+    handle(&mut world, entity, empty);
+    run(&mut world);
+    assert_eq!(
+        bounds(&world, entity),
+        None,
+        "an empty mesh drops the stale box"
+    );
+
+    handle(&mut world, entity, small);
+    run(&mut world);
+    world.remove_component::<MeshComponent>(entity);
     run(&mut world);
     assert_eq!(bounds(&world, entity), None);
+    assert!(!computed(&world, entity));
 }

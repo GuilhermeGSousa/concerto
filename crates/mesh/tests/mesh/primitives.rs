@@ -67,34 +67,162 @@ fn assert_uvs_follow_tangents(mesh: &Mesh) {
     }
 }
 
-fn assert_bounds(mesh: &Mesh, half_extents: Vec3) {
-    let bounds = mesh.local_aabb().unwrap();
-    assert!(bounds.min.abs_diff_eq(-half_extents, EPSILON));
-    assert!(bounds.max.abs_diff_eq(half_extents, EPSILON));
+struct Shape {
+    case: &'static str,
+    mesh: Mesh,
+    vertices: usize,
+    indices: usize,
+    half_extents: Option<Vec3>,
 }
 
 #[test]
-fn a_plane_faces_up_from_the_xz_plane() {
-    let mesh = plane(Vec2::new(4.0, 2.0));
+fn every_shape_is_well_formed_with_its_counts_bounds_and_texture_directions() {
+    let shapes = [
+        Shape {
+            case: "plane",
+            mesh: plane(Vec2::new(4.0, 2.0)),
+            vertices: 4,
+            indices: 6,
+            half_extents: Some(Vec3::new(2.0, 0.0, 1.0)),
+        },
+        Shape {
+            case: "cuboid",
+            mesh: cuboid(Vec3::new(2.0, 4.0, 6.0)),
+            vertices: 24,
+            indices: 36,
+            half_extents: Some(Vec3::new(1.0, 2.0, 3.0)),
+        },
+        Shape {
+            case: "sphere",
+            mesh: uv_sphere(1.5, 8, 16),
+            vertices: 9 * 17,
+            indices: 6 * 16 * 7,
+            half_extents: Some(Vec3::splat(1.5)),
+        },
+        Shape {
+            case: "sphere at the smallest counts",
+            mesh: uv_sphere(1.0, 0, 0),
+            vertices: 3 * 4,
+            indices: 6 * 3,
+            half_extents: None,
+        },
+        Shape {
+            case: "capsule",
+            mesh: capsule(0.5, 1.0, 4, 16),
+            vertices: 10 * 17,
+            indices: 6 * 16 * 8,
+            half_extents: Some(Vec3::new(0.5, 1.5, 0.5)),
+        },
+        Shape {
+            case: "capsule with no height",
+            mesh: capsule(1.0, 0.0, 2, 8),
+            vertices: 5 * 9,
+            indices: 6 * 8 * 3,
+            half_extents: Some(Vec3::ONE),
+        },
+        Shape {
+            case: "capsule with a negative height",
+            mesh: capsule(1.0, -1.0, 2, 8),
+            vertices: 5 * 9,
+            indices: 6 * 8 * 3,
+            half_extents: Some(Vec3::ONE),
+        },
+        Shape {
+            case: "capsule at the smallest counts",
+            mesh: capsule(1.0, 1.0, 0, 0),
+            vertices: 4 * 4,
+            indices: 6 * 3 * 2,
+            half_extents: None,
+        },
+    ];
+    for shape in &shapes {
+        let mesh = &shape.mesh;
+        assert_eq!(mesh.vertices.len(), shape.vertices, "{}", shape.case);
+        assert_eq!(mesh.indices.len(), shape.indices, "{}", shape.case);
+        assert_well_formed(mesh);
+        assert_uvs_follow_tangents(mesh);
+        let bounds = mesh.local_aabb().unwrap();
+        let Some(half_extents) = shape.half_extents else {
+            continue;
+        };
+        assert!(
+            bounds.min.abs_diff_eq(-half_extents, EPSILON)
+                && bounds.max.abs_diff_eq(half_extents, EPSILON),
+            "{}: {bounds:?}",
+            shape.case
+        );
+    }
+    for mesh in [uv_sphere(0.0, 4, 8), capsule(0.0, 0.0, 2, 8)] {
+        assert!(mesh
+            .vertices
+            .iter()
+            .all(|vertex| vertex.uv_coords.iter().all(|value| value.is_finite())));
+    }
+}
 
-    assert_eq!(mesh.vertices.len(), 4);
-    assert_eq!(mesh.indices.len(), 6);
-    assert_well_formed(&mesh);
-    assert_bounds(&mesh, Vec3::new(2.0, 0.0, 1.0));
-    assert!(mesh
+struct Round {
+    mesh: Mesh,
+    radius: f32,
+    half_height: f32,
+    segments: usize,
+}
+
+#[test]
+fn a_round_shape_puts_every_vertex_at_its_radius_from_its_axis_and_closes_its_seam() {
+    let shapes = [
+        Round {
+            mesh: uv_sphere(1.5, 8, 16),
+            radius: 1.5,
+            half_height: 0.0,
+            segments: 16,
+        },
+        Round {
+            mesh: capsule(0.25, 2.0, 6, 12),
+            radius: 0.25,
+            half_height: 2.0,
+            segments: 12,
+        },
+        Round {
+            mesh: uv_sphere(50.0, 8, 16),
+            radius: 50.0,
+            half_height: 0.0,
+            segments: 16,
+        },
+        Round {
+            mesh: capsule(50.0, 1.0, 4, 16),
+            radius: 50.0,
+            half_height: 1.0,
+            segments: 16,
+        },
+    ];
+    for shape in &shapes {
+        for vertex in &shape.mesh.vertices {
+            let position = Vec3::from(vertex.pos_coords);
+            let on_axis = Vec3::new(
+                0.0,
+                position.y.clamp(-shape.half_height, shape.half_height),
+                0.0,
+            );
+            let outward = position - on_axis;
+            assert!((outward.length() - shape.radius).abs() < EPSILON * shape.radius.max(1.0));
+            assert!(outward
+                .normalize()
+                .abs_diff_eq(Vec3::from(vertex.normal), EPSILON));
+        }
+        for ring in shape.mesh.vertices.chunks(shape.segments + 1) {
+            assert_eq!(ring[0].pos_coords, ring[shape.segments].pos_coords);
+        }
+    }
+}
+
+#[test]
+fn flat_faces_have_their_own_vertices_facing_out_with_upright_texture() {
+    assert!(plane(Vec2::new(4.0, 2.0))
         .vertices
         .iter()
         .all(|vertex| vertex.normal == [0.0, 1.0, 0.0]));
-}
 
-#[test]
-fn a_cuboid_has_its_own_vertices_on_each_face() {
     let mesh = cuboid(Vec3::new(2.0, 4.0, 6.0));
-
-    assert_eq!(mesh.vertices.len(), 24);
-    assert_eq!(mesh.indices.len(), 36);
-    assert_well_formed(&mesh);
-    assert_bounds(&mesh, Vec3::new(1.0, 2.0, 3.0));
     for direction in [Vec3::X, Vec3::Y, Vec3::Z] {
         for side in [direction, -direction] {
             let on_face = mesh
@@ -106,83 +234,14 @@ fn a_cuboid_has_its_own_vertices_on_each_face() {
             assert_eq!(on_face, 4, "{side}");
         }
     }
-}
-
-#[test]
-fn a_sphere_has_every_vertex_at_its_radius_with_a_radial_normal() {
-    let mesh = uv_sphere(1.5, 8, 16);
-
-    assert_eq!(mesh.vertices.len(), 9 * 17);
-    assert_eq!(mesh.indices.len(), 6 * 16 * 7);
-    assert_well_formed(&mesh);
-    assert_bounds(&mesh, Vec3::splat(1.5));
-    for vertex in &mesh.vertices {
-        let position = Vec3::from(vertex.pos_coords);
-        assert!((position.length() - 1.5).abs() < EPSILON);
-        assert!(position
-            .normalize()
-            .abs_diff_eq(Vec3::from(vertex.normal), EPSILON));
+    for vertex in mesh
+        .vertices
+        .iter()
+        .filter(|vertex| vertex.normal[1] == 0.0)
+    {
+        let top = vertex.pos_coords[1] > 0.0;
+        assert_eq!(vertex.uv_coords[1], if top { 0.0 } else { 1.0 });
     }
-}
-
-#[test]
-fn a_sphere_keeps_a_usable_shape_at_the_smallest_counts() {
-    let mesh = uv_sphere(1.0, 0, 0);
-
-    assert_eq!(mesh.vertices.len(), 3 * 4);
-    assert_eq!(mesh.indices.len(), 6 * 3);
-    assert_well_formed(&mesh);
-}
-
-#[test]
-fn a_capsule_runs_along_y_past_its_half_height_by_its_radius() {
-    let mesh = capsule(0.5, 1.0, 4, 16);
-
-    assert_eq!(mesh.vertices.len(), 10 * 17);
-    assert_eq!(mesh.indices.len(), 6 * 16 * 8);
-    assert_well_formed(&mesh);
-    assert_bounds(&mesh, Vec3::new(0.5, 1.5, 0.5));
-}
-
-#[test]
-fn a_capsule_has_every_vertex_at_its_radius_from_its_axis_segment() {
-    let mesh = capsule(0.25, 2.0, 6, 12);
-
-    for vertex in &mesh.vertices {
-        let position = Vec3::from(vertex.pos_coords);
-        let on_axis = Vec3::new(0.0, position.y.clamp(-2.0, 2.0), 0.0);
-        let outward = position - on_axis;
-        assert!((outward.length() - 0.25).abs() < EPSILON);
-        assert!(outward
-            .normalize()
-            .abs_diff_eq(Vec3::from(vertex.normal), EPSILON));
-    }
-}
-
-#[test]
-fn a_capsule_with_no_height_is_a_sphere() {
-    let mesh = capsule(1.0, 0.0, 2, 8);
-
-    assert_eq!(mesh.vertices.len(), 5 * 9);
-    assert_well_formed(&mesh);
-    assert_bounds(&mesh, Vec3::ONE);
-}
-
-#[test]
-fn a_capsule_keeps_a_usable_shape_at_the_smallest_counts() {
-    let mesh = capsule(1.0, 1.0, 0, 0);
-
-    assert_eq!(mesh.vertices.len(), 4 * 4);
-    assert_eq!(mesh.indices.len(), 6 * 3 * 2);
-    assert_well_formed(&mesh);
-}
-
-#[test]
-fn texture_coordinates_start_at_the_top_left_of_every_shape() {
-    assert_uvs_follow_tangents(&plane(Vec2::new(4.0, 2.0)));
-    assert_uvs_follow_tangents(&cuboid(Vec3::new(2.0, 4.0, 6.0)));
-    assert_uvs_follow_tangents(&uv_sphere(1.5, 8, 16));
-    assert_uvs_follow_tangents(&capsule(0.5, 1.0, 4, 16));
 }
 
 #[test]
@@ -201,45 +260,4 @@ fn a_capsule_spreads_texture_height_by_length() {
     let length = 2.0 * half_height + std::f32::consts::PI * radius;
 
     assert!((span - 2.0 * half_height / length).abs() < 1e-3, "{span}");
-}
-
-#[test]
-fn a_seam_joins_at_identical_positions() {
-    for mesh in [uv_sphere(50.0, 8, 16), capsule(50.0, 1.0, 4, 16)] {
-        for ring in mesh.vertices.chunks(17) {
-            assert_eq!(ring[0].pos_coords, ring[16].pos_coords);
-        }
-    }
-}
-
-#[test]
-fn a_capsule_with_a_negative_height_is_a_sphere() {
-    let mesh = capsule(1.0, -1.0, 2, 8);
-
-    assert_eq!(mesh.vertices.len(), 5 * 9);
-    assert_bounds(&mesh, Vec3::ONE);
-}
-
-#[test]
-fn a_cuboid_draws_its_side_faces_upright() {
-    let mesh = cuboid(Vec3::ONE);
-
-    for vertex in mesh
-        .vertices
-        .iter()
-        .filter(|vertex| vertex.normal[1] == 0.0)
-    {
-        let top = vertex.pos_coords[1] > 0.0;
-        assert_eq!(vertex.uv_coords[1], if top { 0.0 } else { 1.0 });
-    }
-}
-
-#[test]
-fn a_shape_of_no_size_keeps_finite_texture_coordinates() {
-    for mesh in [uv_sphere(0.0, 4, 8), capsule(0.0, 0.0, 2, 8)] {
-        assert!(mesh
-            .vertices
-            .iter()
-            .all(|vertex| vertex.uv_coords.iter().all(|value| value.is_finite())));
-    }
 }
