@@ -1,0 +1,19 @@
+[
+    Dialogue(
+        npc: "npc_a",
+        brush_off: "npc_a.busy",
+        no_answer: "npc_a.no_answer",
+        topics: [
+            Topic(ask: Question("npc_a.q1"), responses: [
+                Response(
+                    when: Condition(window: TimeWindow(from: "20:00", until: "24:00"), phase: Before, knows: ["f_1"]),
+                    lines: ["npc_a.q1.r2"],
+                    grants: ["f_3"],
+                ),
+                Response(lines: ["npc_a.q1.r1"]),
+            ]),
+            Topic(ask: Fact("f_1"), responses: [Response(lines: ["npc_a.about_f1"])]),
+            Topic(ask: Person("npc_b"), responses: [Response(lines: ["npc_a.about_b"])]),
+        ],
+    ),
+]
