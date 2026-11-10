@@ -108,6 +108,10 @@ cargo test --locked -p concerto-physics --no-default-features --features force-r
 cargo build --locked --target wasm32-unknown-unknown
 ```
 
+CI installs the latest stable Rust, and each clippy release adds lints, so
+run `rustup update stable` before the gate; an older local toolchain passes
+code that CI's clippy rejects.
+
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. Neither CI runner, Ubuntu or Windows, has an adapter, so GPU tests skip in CI; run them locally on a machine with a GPU.
 
 Test builds carry line tables only and `cargo build` carries full debug info,
