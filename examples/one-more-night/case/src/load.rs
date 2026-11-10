@@ -6,9 +6,9 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     Ask, Blank, Case, CaseError, Catalog, Character, Condition, Conversation, Deduction, Dialogue,
-    DoorOverride, Doors, Fact, Finale, Hotspot, Id, Interaction, Names, NpcId, Placement, Problem,
-    Response, Schedule, ScheduleEntry, SpokenLine, Staging, Statement, StrId, Table, Term,
-    TermBank, Text, Topic, raw,
+    DoorOverride, Doors, Fact, Features, Finale, GameTime, Hotspot, Id, Interaction, Names, NpcId,
+    Phase, Placement, Problem, Response, Schedule, ScheduleEntry, SpokenLine, Staging, Statement,
+    StrId, Table, Term, TermBank, Text, Topic, ids::is_id, raw,
 };
 
 /// The schema version this crate reads; `case.ron` must carry it.
@@ -26,9 +26,10 @@ const DEDUCTIONS: &str = "deductions";
 const FINALE: &str = "finale";
 const PLACEMENTS: &str = "placements";
 const DOORS: &str = "doors";
+const FEATURES: &str = "features";
 
 /// The files of a case directory, without their `.ron` extension.
-pub const FILES: [&str; 12] = [
+pub const FILES: [&str; 13] = [
     CASE,
     STRINGS,
     CHARACTERS,
@@ -41,6 +42,7 @@ pub const FILES: [&str; 12] = [
     FINALE,
     PLACEMENTS,
     DOORS,
+    FEATURES,
 ];
 
 /// The text of a case's files, held in memory.
@@ -84,6 +86,7 @@ impl Case {
         let manifest: raw::Manifest = parse(files, CASE)?;
         if manifest.version != FORMAT_VERSION {
             return Err(CaseError::UnsupportedVersion {
+                file: CASE,
                 found: manifest.version,
             });
         }
@@ -98,6 +101,7 @@ impl Case {
         let finale: raw::Finale = parse(files, FINALE)?;
         let placements: Vec<raw::Placement> = parse(files, PLACEMENTS)?;
         let doors: raw::Doors = parse(files, DOORS)?;
+        let features: raw::Features = parse(files, FEATURES)?;
 
         let names = CaseNames {
             catalog,
@@ -123,9 +127,13 @@ impl Case {
             .iter()
             .map(|row| names.character(row))
             .collect::<Result<Vec<_>, _>>()?;
+        let conversations = conversations
+            .iter()
+            .map(|row| names.conversation(row))
+            .collect::<Result<Vec<_>, _>>()?;
         let schedules = schedules
             .iter()
-            .map(|row| names.schedule(row))
+            .map(|row| names.schedule(row, &conversations))
             .collect::<Result<Vec<_>, _>>()?;
         unique(
             SCHEDULES,
@@ -133,10 +141,6 @@ impl Case {
             &names,
             schedules.iter().map(|row| row.npc),
         )?;
-        let conversations = conversations
-            .iter()
-            .map(|row| names.conversation(row))
-            .collect::<Result<Vec<_>, _>>()?;
         let dialogues = dialogues
             .iter()
             .map(|row| names.dialogue(row))
@@ -163,7 +167,7 @@ impl Case {
             .collect::<Result<Vec<_>, _>>()?;
         let deductions = deductions
             .iter()
-            .map(|row| names.deduction(row, &term_banks))
+            .map(|row| names.deduction(row, &term_banks, &strings))
             .collect::<Result<Vec<_>, _>>()?;
         let finale = names.finale(&finale)?;
         let placements = placements
@@ -171,6 +175,7 @@ impl Case {
             .map(|row| names.placement(row))
             .collect::<Result<Vec<_>, _>>()?;
         let doors = names.doors(&doors)?;
+        let features = names.features(&features)?;
         let texts = strings
             .0
             .into_iter()
@@ -191,6 +196,7 @@ impl Case {
             finale,
             placements: Table::new(names.placements, placements),
             doors,
+            features,
         })
     }
 
@@ -224,7 +230,8 @@ impl<'a> At<'a> {
     }
 
     fn owner(&self) -> String {
-        format!("{} `{}`", self.kind, self.id)
+        let id = if is_id(self.id) { self.id } else { "?" };
+        format!("{} `{id}`", self.kind)
     }
 
     fn invalid(&self, problem: Problem) -> CaseError {
@@ -237,6 +244,13 @@ impl<'a> At<'a> {
 }
 
 fn find<I: Id>(names: &Names<I>, name: &str, at: &At) -> Result<I, CaseError> {
+    if !is_id(name) {
+        return Err(CaseError::NotAnId {
+            file: at.file,
+            owner: at.owner(),
+            kind: I::KIND,
+        });
+    }
     names.id(name).ok_or_else(|| CaseError::Unknown {
         file: at.file,
         owner: at.owner(),
@@ -300,8 +314,13 @@ impl CaseNames<'_> {
         })
     }
 
-    fn schedule(&self, row: &raw::Schedule) -> Result<Schedule, CaseError> {
+    fn schedule(
+        &self,
+        row: &raw::Schedule,
+        conversations: &[Conversation],
+    ) -> Result<Schedule, CaseError> {
         let at = At::new(SCHEDULES, "schedule", &row.npc);
+        let npc = find(&self.characters, &row.npc, &at)?;
         let entries = row
             .entries
             .iter()
@@ -316,11 +335,25 @@ impl CaseNames<'_> {
                     conversation: find_optional(&self.conversations, &entry.conversation, &at)?,
                 })
             })
-            .collect::<Result<Vec<_>, CaseError>>()?;
-        Ok(Schedule {
-            npc: find(&self.characters, &row.npc, &at)?,
-            entries,
-        })
+            .collect::<Result<Vec<ScheduleEntry>, CaseError>>()?;
+        let outsider = entries
+            .iter()
+            .filter_map(|entry| entry.conversation)
+            .any(|id| !conversations[id.index()].participants.contains(&npc));
+        if outsider {
+            return Err(at.invalid(Problem::NotInConversation));
+        }
+        for phase in [Phase::Before, Phase::After] {
+            let starts: Vec<GameTime> = entries
+                .iter()
+                .filter(|entry| entry.phase == phase)
+                .map(|entry| entry.start)
+                .collect();
+            if starts.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err(at.invalid(Problem::EntriesOutOfOrder));
+            }
+        }
+        Ok(Schedule { npc, entries })
     }
 
     fn spoken_lines(
@@ -330,6 +363,9 @@ impl CaseNames<'_> {
     ) -> Result<Vec<SpokenLine>, CaseError> {
         rows.iter()
             .map(|row| {
+                if !(row.seconds >= 0.0 && row.seconds.is_finite()) {
+                    return Err(at.invalid(Problem::NegativeDuration));
+                }
                 Ok(SpokenLine {
                     speaker: find(&self.characters, &row.speaker, at)?,
                     text: find(&self.strings, &row.text, at)?,
@@ -345,6 +381,7 @@ impl CaseNames<'_> {
         let conversation = Conversation {
             participants: find_all(&self.characters, &row.participants, &at)?,
             private: row.private,
+            earshot: row.earshot,
             lines: self.spoken_lines(&row.lines, &at)?,
             cover: self.spoken_lines(&row.cover, &at)?,
         };
@@ -424,7 +461,12 @@ impl CaseNames<'_> {
         })
     }
 
-    fn deduction(&self, row: &raw::Deduction, banks: &[TermBank]) -> Result<Deduction, CaseError> {
+    fn deduction(
+        &self,
+        row: &raw::Deduction,
+        banks: &[TermBank],
+        strings: &raw::Strings,
+    ) -> Result<Deduction, CaseError> {
         let at = At::new(DEDUCTIONS, "deduction", &row.id);
         let blanks = row
             .blanks
@@ -443,8 +485,12 @@ impl CaseNames<'_> {
                 Ok(resolved)
             })
             .collect::<Result<Vec<_>, CaseError>>()?;
+        let template = find(&self.strings, &row.template, &at)?;
+        if strings.0[template.index()].text.matches("___").count() != blanks.len() {
+            return Err(at.invalid(Problem::BlankCountMismatch));
+        }
         Ok(Deduction {
-            template: find(&self.strings, &row.template, &at)?,
+            template,
             blanks,
             appears_with: find_all(&self.facts, &row.appears_with, &at)?,
             prerequisite_for_finale: row.prerequisite_for_finale,
@@ -463,7 +509,11 @@ impl CaseNames<'_> {
                     anchor: find(&self.catalog.anchors, &place.anchor, &at)?,
                 })
             })
-            .collect::<Result<Vec<_>, CaseError>>()?;
+            .collect::<Result<Vec<Staging>, CaseError>>()?;
+        let mut staged = HashSet::new();
+        if !staging.iter().all(|place| staged.insert(place.npc)) {
+            return Err(at.invalid(Problem::StagedTwice));
+        }
         let statements = row
             .statements
             .iter()
@@ -510,6 +560,27 @@ impl CaseNames<'_> {
             name: find(&self.strings, &row.name, &at)?,
             interaction,
         })
+    }
+
+    fn features(&self, row: &raw::Features) -> Result<Features, CaseError> {
+        let at = At::new(FEATURES, "features", FEATURES);
+        let on = find_all(&self.catalog.features, &row.on, &at)?;
+        let off = find_all(&self.catalog.features, &row.off, &at)?;
+        let mut set = HashSet::new();
+        for feature in on.iter().chain(&off) {
+            if !set.insert(*feature) {
+                return Err(CaseError::Duplicate {
+                    file: FEATURES,
+                    kind: "feature setting",
+                    id: self.catalog.features.name(*feature).to_string(),
+                });
+            }
+        }
+        if let Some(missing) = self.catalog.features.ids().find(|id| !set.contains(id)) {
+            let name = self.catalog.features.name(missing);
+            return Err(At::new(FEATURES, "feature", name).invalid(Problem::FeatureNotSet));
+        }
+        Ok(Features { on })
     }
 
     fn doors(&self, row: &raw::Doors) -> Result<Doors, CaseError> {

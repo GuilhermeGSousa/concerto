@@ -13,7 +13,7 @@ impl GameTime {
 
     pub fn from_hm(hour: u16, minute: u16) -> Option<Self> {
         let valid = minute < 60 && (hour < 24 || (hour == 24 && minute == 0));
-        valid.then_some(Self(hour * 60 + minute))
+        valid.then(|| Self(hour * 60 + minute))
     }
 
     pub fn parse(text: &str) -> Option<Self> {
@@ -53,10 +53,32 @@ impl<'de> Deserialize<'de> for GameTime {
 
 /// A span of the night, from `from` up to but not including `until`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "WindowFields")]
 pub struct TimeWindow {
     pub from: GameTime,
     pub until: GameTime,
+}
+
+#[derive(Deserialize)]
+#[serde(rename = "TimeWindow", deny_unknown_fields)]
+struct WindowFields {
+    from: GameTime,
+    until: GameTime,
+}
+
+impl TryFrom<WindowFields> for TimeWindow {
+    type Error = &'static str;
+
+    fn try_from(fields: WindowFields) -> Result<Self, Self::Error> {
+        if fields.from < fields.until {
+            Ok(Self {
+                from: fields.from,
+                until: fields.until,
+            })
+        } else {
+            Err("a window ends after it starts")
+        }
+    }
 }
 
 impl TimeWindow {
@@ -83,6 +105,13 @@ mod tests {
         ] {
             assert_eq!(GameTime::parse(text), None, "{text}");
         }
+    }
+
+    #[test]
+    fn an_hour_or_minute_out_of_range_is_no_time() {
+        assert_eq!(GameTime::from_hm(24, 1), None);
+        assert_eq!(GameTime::from_hm(u16::MAX, 0), None);
+        assert_eq!(GameTime::from_hm(24, 0), Some(GameTime::MIDNIGHT));
     }
 
     #[test]

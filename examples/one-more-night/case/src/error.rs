@@ -15,7 +15,13 @@ pub enum CaseError {
         column: usize,
     },
     UnsupportedVersion {
+        file: &'static str,
         found: u32,
+    },
+    NotAnId {
+        file: &'static str,
+        owner: String,
+        kind: &'static str,
     },
     Duplicate {
         file: &'static str,
@@ -40,6 +46,12 @@ pub enum CaseError {
 pub enum Problem {
     SpeakerNotParticipant,
     AnswerNotInBank,
+    NotInConversation,
+    EntriesOutOfOrder,
+    NegativeDuration,
+    BlankCountMismatch,
+    StagedTwice,
+    FeatureNotSet,
 }
 
 impl fmt::Display for Problem {
@@ -49,6 +61,14 @@ impl fmt::Display for Problem {
                 "has a line spoken by someone who is not a participant"
             }
             Problem::AnswerNotInBank => "has a blank whose answer is not in its bank",
+            Problem::NotInConversation => "names a conversation its character takes no part in",
+            Problem::EntriesOutOfOrder => "has entries of one phase that are not in order of start",
+            Problem::NegativeDuration => "has a line whose seconds are not zero or more",
+            Problem::BlankCountMismatch => {
+                "has a template whose `___` count is not its blank count"
+            }
+            Problem::StagedTwice => "stages a character twice",
+            Problem::FeatureNotSet => "is neither on nor off",
         })
     }
 }
@@ -61,10 +81,12 @@ impl fmt::Display for CaseError {
             CaseError::Syntax { file, line, column } => {
                 write!(f, "{file}.ron:{line}:{column}: does not match the schema")
             }
-            CaseError::UnsupportedVersion { found } => write!(
+            CaseError::UnsupportedVersion { file, found } => {
+                write!(f, "{file}.ron: version {found} is not supported")
+            }
+            CaseError::NotAnId { file, owner, kind } => write!(
                 f,
-                "case.ron: schema version {found} is not version {}",
-                crate::FORMAT_VERSION
+                "{file}.ron: {owner} has text where the id of a {kind} belongs"
             ),
             CaseError::Duplicate { file, kind, id } => {
                 write!(f, "{file}.ron: {kind} `{id}` is defined twice")

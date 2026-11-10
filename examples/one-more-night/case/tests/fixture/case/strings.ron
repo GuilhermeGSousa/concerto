@@ -2,6 +2,7 @@
     "case.title": "Placeholder case",
     "npc_a.name": "Person A",
     "npc_b.name": "Person B",
+    "npc_c.name": "Person C",
     "npc_a.busy": "Placeholder brush-off",
     "npc_a.no_answer": "Placeholder shrug",
     "npc_a.q1": "Placeholder question",
@@ -28,4 +29,5 @@
     "p_2.page": "Placeholder page",
     "p_3.name": "Placeholder key",
     "p_4.name": "Placeholder scenery",
+    "p_5.name": "Placeholder item",
 }

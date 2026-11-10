@@ -21,8 +21,13 @@ LevelManifest(
         Anchor(id: "corridor_01", room: "corridor", pos: (2.00, 5.00, 0.00), facing: 0.0, tags: ["stand"]),
         Anchor(id: "corridor_02", room: "corridor", pos: (6.00, 5.00, 0.80), facing: 0.0, tags: ["surface"]),
     ],
-    features: [],
-    links: [],
+    features: [
+        Feature(id: "F01", doors: ["d_ab"], links: [], on: [], off: []),
+        Feature(id: "F02", doors: [], links: ["acoustic.F02.src", "acoustic.F02.dst"], on: [], off: []),
+    ],
+    links: [
+        AcousticLink(feature: "F02", src: "acoustic.F02.src", dst: "acoustic.F02.dst", radius: 4.0, two_way: false, area: None),
+    ],
     travel: [
         Travel(from: "room_a_01", to: "room_b_01", seconds: 4.0),
     ],

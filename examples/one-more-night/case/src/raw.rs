@@ -82,6 +82,8 @@ pub struct Conversation {
     pub participants: Vec<String>,
     #[serde(default)]
     pub private: bool,
+    #[serde(default)]
+    pub earshot: Option<f32>,
     pub lines: Vec<SpokenLine>,
     #[serde(default)]
     pub cover: Vec<SpokenLine>,
@@ -259,6 +261,13 @@ pub struct Hotspot {
     pub label: String,
     #[serde(default)]
     pub grants: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Features {
+    pub on: Vec<String>,
+    pub off: Vec<String>,
 }
 
 #[derive(Deserialize)]

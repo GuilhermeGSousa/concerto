@@ -3,8 +3,8 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::{
-    ActivityId, AnchorId, ConvId, DeductionId, DoorId, FactId, GameTime, KeyId, NpcId, PlacementId,
-    PortraitId, PropId, RoomId, StrId, Table, TermBankId, TermId, TimeWindow,
+    ActivityId, AnchorId, ConvId, DeductionId, DoorId, FactId, FeatureId, GameTime, KeyId, NpcId,
+    PlacementId, PortraitId, PropId, RoomId, StrId, Table, TermBankId, TermId, TimeWindow,
 };
 
 /// A loaded case: every file parsed and every reference resolved into a typed id.
@@ -23,6 +23,7 @@ pub struct Case {
     pub finale: Finale,
     pub placements: Table<PlacementId, Placement>,
     pub doors: Doors,
+    pub features: Features,
 }
 
 impl Case {
@@ -136,6 +137,7 @@ pub struct ScheduleEntry {
 pub struct Conversation {
     pub participants: Vec<NpcId>,
     pub private: bool,
+    pub earshot: Option<f32>,
     pub lines: Vec<SpokenLine>,
     pub cover: Vec<SpokenLine>,
 }
@@ -283,6 +285,18 @@ pub enum Interaction {
 pub struct Hotspot {
     pub label: StrId,
     pub grants: Vec<FactId>,
+}
+
+/// The level's special features the case turns on; every other one is off.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Features {
+    pub on: Vec<FeatureId>,
+}
+
+impl Features {
+    pub fn is_on(&self, feature: FeatureId) -> bool {
+        self.on.contains(&feature)
+    }
 }
 
 /// What the case changes about the level's doors.

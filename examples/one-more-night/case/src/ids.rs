@@ -11,6 +11,11 @@ pub trait Id: Copy + Eq {
     fn index(self) -> usize;
 }
 
+pub(crate) fn is_id(name: &str) -> bool {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-');
+    !name.is_empty() && name.len() <= 64 && name.chars().all(allowed)
+}
+
 macro_rules! ids {
     ($($(#[$doc:meta])* $name:ident => $kind:literal,)*) => {
         $(
@@ -56,6 +61,8 @@ ids! {
     AnchorId => "anchor",
     /// A door of the level.
     DoorId => "door",
+    /// A special feature of the level that a case turns on or off.
+    FeatureId => "feature",
     /// A key.
     KeyId => "key",
     /// A prop of the props library.
@@ -95,7 +102,14 @@ impl<I: Id> Names<I> {
         names: impl Iterator<Item = &'a str>,
     ) -> Result<Self, CaseError> {
         let mut built = Self::default();
-        for name in names {
+        for (index, name) in names.enumerate() {
+            if !is_id(name) {
+                return Err(CaseError::NotAnId {
+                    file,
+                    owner: format!("{} number {}", I::KIND, index + 1),
+                    kind: I::KIND,
+                });
+            }
             if built.lookup.contains_key(name) {
                 return Err(CaseError::Duplicate {
                     file,

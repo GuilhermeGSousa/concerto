@@ -1,6 +1,6 @@
 # Case schema, version 1
 
-A case is a directory of twelve RON files. `one-more-night-case`
+A case is a directory of thirteen RON files. `one-more-night-case`
 (`examples/one-more-night/case`) parses them and resolves every reference
 into a typed id. The crate depends on `serde` and `ron` only, so tools build it
 without the engine.
@@ -26,9 +26,11 @@ let case = Case::load_dir(Path::new("cases/test"), &catalog)?;
 - `Case::load(&CaseFiles, &Catalog)` parses from memory. `CaseFiles::with_file`
   adds a file's text under its name without the extension, which is what a
   sealed bundle uses after it decrypts.
-- `Case::load_dir` reads `<name>.ron` for each of the twelve names and ignores
+- `Case::load_dir` reads `<name>.ron` for each of the thirteen names and ignores
   anything else in the directory.
-- All twelve files are required. A file with nothing in it is an empty list.
+- All thirteen files are required. A file with no rows still holds its empty
+  form: `[]` for a list, and empty lists inside `Terms(..)`, `Finale(..)`,
+  `Doors(..)` and `Features(..)`.
 
 ## Ids
 
@@ -37,10 +39,13 @@ A file names things with strings. Three rules cover all of them:
 - **Ids the case defines** are unique within their kind: strings, characters,
   conversations, facts, terms, term banks, deductions, placements.
 - **Ids the case borrows** come from the `Catalog` the game passes in: rooms,
-  anchors, doors and keys from the level's `level_manifest.ron`; props,
-  portraits and activities from the game.
+  anchors, doors, keys and features from the level's `level_manifest.ron`,
+  version 1; props, portraits and activities from the game.
 - **Ids are opaque.** Debug output and errors print them, so an id must not
   describe what it names: `npc_04`, `f_037`, `conv_12`, not a name or a clue.
+- **An id is 1 to 64 characters of letters, digits, `_`, `.` and `-`.**
+  Anything else in an id's place, a sentence for instance, fails the load with
+  an error that does not repeat it.
 
 After loading, each kind has its own index type (`FactId`, `NpcId`, `RoomId`,
 …). `case.facts.get(id)` returns the row, `case.facts.name(id)` the name the
@@ -49,20 +54,35 @@ the same way: `catalog.rooms.name(id)`.
 
 ## Errors
 
-`CaseError` names a file, the kind of thing and its id. It never carries text
-from a file:
+`CaseError` names a file, the kind of thing and its id. It carries nothing
+else from a file:
 
 | Error | Meaning |
 |---|---|
-| `MissingFile` | One of the twelve files is absent. |
+| `MissingFile` | One of the thirteen files is absent. |
 | `Unreadable` | The file exists and could not be read. |
 | `Syntax` | The file is not valid RON or does not match the schema. Line and column only. |
-| `UnsupportedVersion` | `case.ron` carries another schema version. |
-| `Duplicate` | Two rows of a kind share an id; or an NPC has two schedules or dialogues; or a door has two overrides. |
+| `UnsupportedVersion` | `case.ron` or the level manifest carries another version. |
+| `NotAnId` | Something that is not shaped like an id sits where an id belongs. It is not shown. |
+| `Duplicate` | Two rows of a kind share an id; or an NPC has two schedules or dialogues; or a door has two overrides; or a feature is set twice. |
 | `Unknown` | A reference names something neither the case nor the catalog defines. |
-| `Invalid` | A line's speaker is not a participant of its conversation, or a blank's answer is not in its bank. |
+| `Invalid` | One of the rules below is broken. |
 
-Whether the case can be solved is the validator's job, not the loader's.
+The rules `Invalid` reports:
+
+- A line of a conversation is spoken by one of its participants.
+- A schedule names only conversations its character takes part in.
+- The entries of one phase of a schedule are in strictly increasing order of
+  `start`.
+- A line's `seconds` are zero or more.
+- A blank's answer is in its bank.
+- A deduction's template has one `___` for each blank.
+- The finale stages a character once.
+- Every feature of the level is on or off.
+
+Everything else is the validator's job: that a conversation is started by
+every participant at the same time, that schedules can be walked, that facts
+can be found and that the case can be solved.
 
 ## Notation
 
@@ -71,7 +91,8 @@ Whether the case can be solved is the validator's job, not the loader's.
 - A time is `"HH:MM"`, from `"00:00"` to `"24:00"`. It loads as `GameTime`,
   minutes since midnight.
 - `TimeWindow(from: "23:00", until: "24:00")` includes `from` and excludes
-  `until`.
+  `until`, and `until` is later than `from`. "After 23:00" ends at `"24:00"`,
+  not `"00:00"`.
 - A struct's name before its parentheses is optional in RON; when written it
   must be the name shown here.
 
@@ -122,7 +143,7 @@ A list of `Schedule`, at most one per character.
 | Field | Type | Meaning |
 |---|---|---|
 | `npc` | character id | Whose schedule it is. |
-| `entries` | list of `ScheduleEntry` | In order. |
+| `entries` | list of `ScheduleEntry` | Within a phase, in order of `start`. |
 
 `ScheduleEntry`:
 
@@ -136,8 +157,9 @@ A list of `Schedule`, at most one per character.
 | `critical` | bool, optional, false | The NPC is busy and cannot be interrupted. |
 | `conversation` | conversation id, optional | The conversation that starts with this entry. |
 
-A conversation starts when the entries that name it start; each participant's
-schedule names it at the same time.
+A conversation starts when the entries that name it start. Each participant's
+schedule should name it at the same time; the loader checks only that whoever
+names it takes part.
 
 ### `conversations.ron`
 
@@ -148,6 +170,7 @@ A list of `Conversation`: what players overhear.
 | `id` | id | The conversation's id. |
 | `participants` | list of character ids | Who takes part. |
 | `private` | bool, optional, false | It breaks off while the Guest is in sight. |
+| `earshot` | metres, optional | Replaces the game's default earshot radius. |
 | `lines` | list of `SpokenLine` | The conversation, in order. |
 | `cover` | list of `SpokenLine`, optional | What a private conversation switches to while the Guest is in sight. Empty means it stops. |
 
@@ -238,9 +261,17 @@ A list of `Deduction`. The finale's statements are deductions too.
 | `id` | id | The deduction's id. |
 | `template` | string id | The sentence, with `___` for each blank in order. |
 | `blanks` | list of `Blank(bank, answer)` | For each blank, the bank it picks from and the right term, which must be in that bank. |
-| `appears_with` | list of fact ids, optional | It appears once any of these is found. |
+| `appears_with` | list of fact ids, optional | It appears in the casebook once any of these is found. |
 | `prerequisite_for_finale` | bool, optional, false | The finale needs it confirmed. |
 | `unlocks` | list of deduction ids, optional | Deductions that appear when this one is confirmed. |
+
+When a deduction shows in the casebook:
+
+- One with `appears_with`: once any of those facts is found.
+- One another deduction `unlocks`: once that one is confirmed. With
+  `appears_with` as well, whichever comes first.
+- One with neither: from the start, unless it is a finale statement.
+- A finale statement with neither shows only in the finale.
 
 ### `finale.ron`
 
@@ -281,7 +312,8 @@ A list of `Placement`: a prop of the library put on an anchor.
 | `Document(pages: [string ids], grants: [fact ids])` | Read in full; reading grants the facts. |
 | `Carry(key: key id)` | Picked up and carried; with `key`, it is that key. |
 
-`grants` and `key` are optional.
+`grants` and `key` are optional. An item that is no key is `Carry()`, with the
+parentheses.
 
 ### `doors.ron`
 
@@ -308,6 +340,19 @@ Doors(
 | `zone` | `Public`, `Service` or `Private` | Who may pass. |
 | `locked` | list of `TimeWindow` | Spans in which it is locked whatever its state. |
 
+`key` can replace a door's key and cannot remove it.
+
+### `features.ron`
+
+```ron
+Features(on: ["F02"], off: ["F01"])
+```
+
+The level's special features, each built into the level and switched by the
+case. Every feature in the level manifest is in exactly one of the two lists,
+so no default says which ones matter. `case.features.is_on(id)` answers for
+one.
+
 ## Not in version 1
 
 Each of these is left to the issue that builds the system, which adds it here
@@ -316,3 +361,4 @@ before the freeze if it turns out to be case data:
 - When the discovery happens, which moves NPCs from `Before` to `After`.
 - An NPC ringing a bell on schedule.
 - Anything about the dumbwaiter.
+- Removing a door's key, and a door that is always open.

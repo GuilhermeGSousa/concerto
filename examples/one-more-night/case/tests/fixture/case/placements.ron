@@ -3,4 +3,5 @@
     Placement(id: "p_2", prop: "prop_b", anchor: "room_b_03", name: "p_2.name", interaction: Document(pages: ["p_2.page"])),
     Placement(id: "p_3", prop: "prop_key", anchor: "corridor_02", name: "p_3.name", interaction: Carry(key: "k_service")),
     Placement(id: "p_4", prop: "prop_a", anchor: "room_b_04", name: "p_4.name", interaction: Scenery),
+    Placement(id: "p_5", prop: "prop_b", anchor: "corridor_01", name: "p_5.name", interaction: Carry()),
 ]

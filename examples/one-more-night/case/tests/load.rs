@@ -47,10 +47,10 @@ fn the_fixture_directory_loads() {
     let case = Case::load_dir(&fixture_dir().join("case"), &catalog()).unwrap();
     assert_eq!(case.strings.name(case.title), "case.title");
     assert_eq!(case.strings.get(case.title).as_str(), "Placeholder case");
-    assert_eq!(case.characters.len(), 2);
+    assert_eq!(case.characters.len(), 3);
     assert_eq!(case.facts.len(), 3);
     assert_eq!(case.deductions.len(), 2);
-    assert_eq!(case.placements.len(), 4);
+    assert_eq!(case.placements.len(), 5);
 }
 
 #[test]
@@ -92,6 +92,7 @@ fn conversations_resolve_speakers_lines_and_grants() {
         .conversations
         .get(case.conversations.id("conv_1").unwrap());
     assert!(conversation.private);
+    assert_eq!(conversation.earshot, Some(4.0));
     assert_eq!(conversation.participants.len(), 2);
     let line = &conversation.lines[1];
     assert_eq!(case.characters.name(line.speaker), "npc_b");
@@ -209,6 +210,8 @@ fn placements_resolve_props_anchors_and_interactions() {
     );
     let scenery = case.placements.get(case.placements.id("p_4").unwrap());
     assert_eq!(scenery.interaction, Interaction::Scenery);
+    let item = case.placements.get(case.placements.id("p_5").unwrap());
+    assert_eq!(item.interaction, Interaction::Carry { key: None });
 }
 
 #[test]
@@ -252,7 +255,10 @@ fn every_file_is_required() {
 fn another_schema_version_is_refused() {
     assert_eq!(
         load_with("case", "version: 1", "version: 2").err(),
-        Some(CaseError::UnsupportedVersion { found: 2 })
+        Some(CaseError::UnsupportedVersion {
+            file: "case",
+            found: 2
+        })
     );
 }
 
@@ -395,7 +401,7 @@ fn a_syntax_error_gives_a_position_and_no_file_content() {
         panic!("not a syntax error: {error}");
     };
     assert_eq!(file, "conversations");
-    assert_eq!(line, 7);
+    assert_eq!(line, 8);
     assert!(!error.to_string().contains("secret"));
     assert!(!format!("{error:?}").contains("secret"));
 }
@@ -431,4 +437,215 @@ fn the_manor_manifest_fills_a_catalog() {
     assert!(catalog.doors.id("d_front").is_some());
     assert!(catalog.anchors.id("pantry_03").is_some());
     assert!(catalog.keys.id("k_cellar").is_some());
+    assert_eq!(catalog.features.len(), 14);
+}
+
+fn manifest_with(from: &str, to: &str) -> Result<Catalog, CaseError> {
+    let text = std::fs::read_to_string(fixture_dir().join("level_manifest.ron")).unwrap();
+    assert!(text.contains(from), "the manifest has no `{from}`");
+    Catalog::from_level_manifest(&text.replacen(from, to, 1))
+}
+
+fn invalid(file: &'static str, owner: &str, problem: Problem) -> Option<CaseError> {
+    Some(CaseError::Invalid {
+        file,
+        owner: owner.to_string(),
+        problem,
+    })
+}
+
+#[test]
+fn text_where_an_id_belongs_is_refused_without_being_shown() {
+    let error = load_with("dialogue", "\"npc_a.q1.r1\"", "\"An unreadable secret.\"")
+        .err()
+        .unwrap();
+    assert_eq!(
+        error,
+        CaseError::NotAnId {
+            file: "dialogue",
+            owner: "dialogue `npc_a`".to_string(),
+            kind: "string",
+        }
+    );
+    assert!(!error.to_string().contains("secret"));
+
+    let error = load_with("facts", "id: \"f_2\"", "id: \"An unreadable secret.\"")
+        .err()
+        .unwrap();
+    assert_eq!(
+        error,
+        CaseError::NotAnId {
+            file: "facts",
+            owner: "fact number 2".to_string(),
+            kind: "fact",
+        }
+    );
+
+    let error = load_with(
+        "schedules",
+        "Schedule(npc: \"npc_a\"",
+        "Schedule(npc: \"An unreadable secret.\"",
+    )
+    .err()
+    .unwrap();
+    assert!(!format!("{error} {error:?}").contains("secret"));
+}
+
+#[test]
+fn a_second_dialogue_for_one_character_is_refused() {
+    let files = files();
+    let text = files.text("dialogue").unwrap().trim_end();
+    let text = format!(
+        "{}Dialogue(npc: \"npc_a\", brush_off: \"npc_a.busy\", no_answer: \"npc_a.no_answer\", topics: [])]",
+        text.strip_suffix(']').unwrap()
+    );
+    assert_eq!(
+        Case::load(&files.with_file("dialogue", text), &catalog()).err(),
+        Some(CaseError::Duplicate {
+            file: "dialogue",
+            kind: "dialogue",
+            id: "npc_a".to_string(),
+        })
+    );
+}
+
+#[test]
+fn a_second_override_for_one_door_is_refused() {
+    assert_eq!(
+        load_with(
+            "doors",
+            "DoorOverride(door: \"d_service\"",
+            "DoorOverride(door: \"d_ab\""
+        )
+        .err(),
+        Some(CaseError::Duplicate {
+            file: "doors",
+            kind: "door override",
+            id: "d_ab".to_string(),
+        })
+    );
+}
+
+#[test]
+fn a_schedule_cannot_name_a_conversation_of_other_characters() {
+    assert_eq!(
+        load_with(
+            "schedules",
+            "Schedule(npc: \"npc_b\"",
+            "Schedule(npc: \"npc_c\""
+        )
+        .err(),
+        invalid("schedules", "schedule `npc_c`", Problem::NotInConversation)
+    );
+}
+
+#[test]
+fn entries_of_one_phase_are_in_order_of_start() {
+    assert_eq!(
+        load_with(
+            "schedules",
+            "start: \"19:30\", anchor: \"room_b_01\"",
+            "start: \"17:00\", anchor: \"room_b_01\""
+        )
+        .err(),
+        invalid("schedules", "schedule `npc_a`", Problem::EntriesOutOfOrder)
+    );
+}
+
+#[test]
+fn a_negative_duration_is_refused() {
+    assert_eq!(
+        load_with(
+            "conversations",
+            "seconds: 60.0, grants",
+            "seconds: -1.0, grants"
+        )
+        .err(),
+        invalid(
+            "conversations",
+            "conversation `conv_1`",
+            Problem::NegativeDuration
+        )
+    );
+}
+
+#[test]
+fn a_template_has_one_gap_for_each_blank() {
+    assert_eq!(
+        load_with("strings", "\"It was ___.\"", "\"It was.\"").err(),
+        invalid("deductions", "deduction `d_2`", Problem::BlankCountMismatch)
+    );
+}
+
+#[test]
+fn a_character_is_staged_once() {
+    assert_eq!(
+        load_with("finale", "Staging(npc: \"npc_b\"", "Staging(npc: \"npc_a\"").err(),
+        invalid("finale", "finale `finale`", Problem::StagedTwice)
+    );
+}
+
+#[test]
+fn a_window_that_ends_before_it_starts_is_a_syntax_error() {
+    let error = load_with("doors", "until: \"24:00\"", "until: \"22:00\"")
+        .err()
+        .unwrap();
+    assert!(matches!(error, CaseError::Syntax { file: "doors", .. }));
+}
+
+#[test]
+fn features_resolve_to_the_ones_turned_on() {
+    let case = load();
+    let catalog = catalog();
+    assert!(case.features.is_on(catalog.features.id("F02").unwrap()));
+    assert!(!case.features.is_on(catalog.features.id("F01").unwrap()));
+}
+
+#[test]
+fn every_feature_of_the_level_is_set_exactly_once() {
+    assert_eq!(
+        load_with("features", "off: [\"F01\"]", "off: []").err(),
+        invalid("features", "feature `F01`", Problem::FeatureNotSet)
+    );
+    assert_eq!(
+        load_with("features", "off: [\"F01\"]", "off: [\"F01\", \"F02\"]").err(),
+        Some(CaseError::Duplicate {
+            file: "features",
+            kind: "feature setting",
+            id: "F02".to_string(),
+        })
+    );
+    assert!(matches!(
+        load_with("features", "off: [\"F01\"]", "off: [\"F01\", \"F99\"]").err(),
+        Some(CaseError::Unknown {
+            kind: "feature",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_level_manifest_with_a_repeated_id_or_another_version_is_refused() {
+    assert_eq!(
+        manifest_with("Room(id: \"room_b\"", "Room(id: \"room_a\"").err(),
+        Some(CaseError::Duplicate {
+            file: "level_manifest",
+            kind: "room",
+            id: "room_a".to_string(),
+        })
+    );
+    assert_eq!(
+        manifest_with("version: 1", "version: 2").err(),
+        Some(CaseError::UnsupportedVersion {
+            file: "level_manifest",
+            found: 2,
+        })
+    );
+    assert!(matches!(
+        manifest_with("rooms: [", "rooms: (").err(),
+        Some(CaseError::Syntax {
+            file: "level_manifest",
+            ..
+        })
+    ));
 }
