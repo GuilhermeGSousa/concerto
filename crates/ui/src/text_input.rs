@@ -1017,8 +1017,8 @@ mod tests {
         focus::{UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, update_focus},
         interaction::{HoveredNode, Interactable, UIInputState, update_ui_interaction},
         node::{
-            AlignItems, FlexDirection, Overflow, UIBox, UILayout, UILayoutDiagnostics,
-            UILayoutEngine, UIRect, UITextMeasure, compute_ui_nodes, install_layout_listeners,
+            AlignItems, FlexDirection, UIBox, UILayout, UILayoutDiagnostics, UILayoutEngine,
+            UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         sets::UiSet,
         testing::Watch,
@@ -1231,13 +1231,6 @@ mod tests {
                 .blink_start = Instant::now() - since;
         }
 
-        fn layout_passes(&self) -> u64 {
-            self.world
-                .get_resource::<UILayoutDiagnostics>()
-                .unwrap()
-                .layout_passes
-        }
-
         fn children(&self, entity: Entity) -> Vec<Entity> {
             self.world
                 .get_component_for_entity::<Children>(entity)
@@ -1340,73 +1333,6 @@ mod tests {
     }
 
     #[test]
-    fn a_text_field_gets_a_viewport_holding_a_selection_and_a_label_and_a_caret() {
-        let t = UITheme::nocturne();
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("Name").small().value("Alice"));
-        fields.frame();
-
-        assert!(
-            fields
-                .world
-                .get_component_for_entity::<UIText>(field)
-                .is_none(),
-            "the text moves to the label"
-        );
-        let children = fields.children(field);
-        assert_eq!(children.len(), 2);
-        let (viewport, caret) = (children[0], children[1]);
-        let inside = fields.children(viewport);
-        assert_eq!(inside.len(), 2);
-        let (selection, label) = (inside[0], inside[1]);
-        assert_eq!(
-            fields.get::<UITextInputParts>(field).viewport,
-            viewport,
-            "the parts name the viewport"
-        );
-
-        let node = fields.get::<UINode>(viewport);
-        assert_eq!(node.position, Position::Relative);
-        assert_eq!(node.flex_grow, 1.0);
-        assert_eq!(node.flex_shrink, 1.0);
-        assert_eq!(node.min_width, UIValue::Px(0.0));
-        assert_eq!(node.overflow_x, Overflow::Hidden);
-        assert_eq!(node.padding, UIRect::default());
-        assert!(
-            fields
-                .world
-                .get_component_for_entity::<UIText>(viewport)
-                .is_none()
-        );
-
-        let text = fields.get::<UIText>(label);
-        assert_eq!(text.text, "Alice");
-        assert_eq!(text.font_size, t.font_size_sm);
-        assert_eq!(text.color, t.text);
-        assert!(!text.wrap);
-        assert!(!text.ellipsis);
-        assert_eq!(fields.get::<UINode>(label).min_width, UIValue::Auto);
-        assert_eq!(fields.get::<UINode>(label).flex_shrink, 0.0);
-        assert_eq!(fields.get::<UINode>(label).position, Position::Relative);
-
-        for quad in [selection, caret] {
-            assert_eq!(fields.get::<UINode>(quad).position, Position::Absolute);
-            assert_eq!(
-                fields.get::<UINode>(quad).height,
-                UIValue::Px(text.line_height)
-            );
-            assert!(
-                fields
-                    .world
-                    .get_component_for_entity::<UIText>(quad)
-                    .is_none()
-            );
-        }
-        assert_eq!(fields.get::<UINode>(selection).width, UIValue::Px(0.0));
-        assert_eq!(fields.get::<UINode>(caret).width, UIValue::Px(1.0));
-    }
-
-    #[test]
     fn an_input_without_text_gets_no_children() {
         let mut fields = Fields::new();
         let input = fields.spawn((UINode::default(), UITextInput::new("")));
@@ -1416,47 +1342,32 @@ mod tests {
     }
 
     #[test]
-    fn the_label_shows_the_placeholder_while_the_value_is_empty() {
+    fn an_empty_field_shows_its_placeholder_at_half_the_text_alpha() {
         let t = UITheme::nocturne();
+        let custom = Color::hsl(200.0, 0.5, 0.6, 0.8);
         let mut fields = Fields::new();
         let field = fields.spawn(t.text_field("Search…"));
-        fields.frame();
-        let label = fields.label(field);
-        assert_eq!(fields.get::<UIText>(label).text, "Search…");
-
-        fields.set_value(field, "bunny");
-        fields.frame();
-        assert_eq!(fields.get::<UIText>(label).text, "bunny");
-
-        fields.set_value(field, "");
-        fields.frame();
-        assert_eq!(fields.get::<UIText>(label).text, "Search…");
-    }
-
-    #[test]
-    fn the_placeholder_is_drawn_at_half_the_text_alpha() {
-        let t = UITheme::nocturne();
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("Search…"));
+        let renamed = fields.spawn(t.text_field("Rename…").color(custom));
         fields.frames(2);
-
-        let text = fields.get::<UIText>(fields.label(field));
+        let label = fields.label(field);
+        let text = fields.get::<UIText>(label);
         assert_eq!(text.text, "Search…");
         assert_eq!(text.color, dimmed(t.text));
-        let (full, half) = (t.text.to_srgba(), text.color.to_srgba());
+        let full = t.text.to_srgba();
+        let half = text.color.to_srgba();
         assert_eq!(half.a, full.a * 0.5);
-        assert_eq!((half.r, half.g, half.b), (full.r, full.g, full.b));
-    }
+        assert_eq!([half.r, half.g, half.b], [full.r, full.g, full.b]);
+        let renamed_label = fields.label(renamed);
+        assert_eq!(fields.get::<UIText>(renamed_label).color, dimmed(custom));
+        assert_eq!(
+            fields.get::<UIText>(renamed_label).color,
+            Color::hsl(200.0, 0.5, 0.6, 0.4)
+        );
 
-    #[test]
-    fn typing_shows_the_full_text_colour_and_emptying_dims_it_again() {
-        let t = UITheme::nocturne();
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("Search…"));
-        fields.frame();
         fields.focus(Some(field));
-        fields.frames(2);
-        let label = fields.label(field);
+        fields.frames(3);
+        assert_eq!(fields.get::<UIText>(label).text, "Search…", "focused");
+        assert_eq!(fields.get::<UIText>(label).color, dimmed(t.text));
 
         fields.type_text("b");
         fields.frame();
@@ -1467,59 +1378,56 @@ mod tests {
         fields.frame();
         assert_eq!(fields.get::<UIText>(label).text, "Search…");
         assert_eq!(fields.get::<UIText>(label).color, dimmed(t.text));
+
+        fields.set_value(renamed, "bunny");
+        fields.frame();
+        assert_eq!(fields.get::<UIText>(renamed_label).text, "bunny");
+        assert_eq!(fields.get::<UIText>(renamed_label).color, custom);
+        fields.set_value(renamed, "");
+        fields.frame();
+        assert_eq!(fields.get::<UIText>(renamed_label).text, "Rename…");
     }
 
     #[test]
-    fn a_custom_text_colour_is_dimmed_for_the_placeholder() {
+    fn a_focused_field_blinking_its_caret_writes_no_node_and_no_text() {
         let t = UITheme::nocturne();
-        let custom = Color::hsl(200.0, 0.5, 0.6, 0.8);
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("Rename…").color(custom));
-        fields.frames(2);
+        for setup in ["empty", "short", "scrolled"] {
+            let mut fields = Fields::new();
+            let field = match setup {
+                "empty" => fields.spawn(t.text_field("Search…")),
+                "short" => fields.spawn(t.text_field("").value("hello")),
+                _ => fields.long(LONG),
+            };
+            fields.frame();
+            fields.focus(Some(field));
+            fields.frames(2);
+            if setup == "scrolled" {
+                fields.key(KeyCode::End);
+            }
+            fields.frames(3);
+            assert_eq!(fields.scroll(field) > 0.0, setup == "scrolled", "{setup}");
+            fn idle() {}
+            let mut nodes = Watch::new::<UINode, _>(&mut fields.world, idle);
+            nodes.run(&mut fields.world);
+            let mut texts = Watch::new::<UIText, _>(&mut fields.world, idle);
+            texts.run(&mut fields.world);
 
-        let color = fields.get::<UIText>(fields.label(field)).color;
-        assert_eq!(color, dimmed(custom));
-        assert_eq!(color, Color::hsl(200.0, 0.5, 0.6, 0.4));
-
-        fields.set_value(field, "bunny");
-        fields.frame();
-        assert_eq!(fields.get::<UIText>(fields.label(field)).color, custom);
-    }
-
-    #[test]
-    fn a_focused_empty_field_keeps_the_dimmed_placeholder() {
-        let t = UITheme::nocturne();
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("Search…"));
-        fields.frame();
-        fields.focus(Some(field));
-        fields.frames(3);
-
-        let text = fields.get::<UIText>(fields.label(field));
-        assert_eq!(text.text, "Search…");
-        assert_eq!(text.color, dimmed(t.text));
-    }
-
-    #[test]
-    fn an_idle_focused_empty_field_writes_no_text_and_lays_nothing_out() {
-        let t = UITheme::nocturne();
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("Search…"));
-        fields.frame();
-        fields.focus(Some(field));
-        fields.frames(4);
-        let passes = fields.layout_passes();
-        fn idle() {}
-        let mut texts = Watch::new::<UIText, _>(&mut fields.world, idle);
-        texts.run(&mut fields.world);
-
-        fields.frames(2);
-        fields.show_the_caret_for(field, Duration::from_millis(795));
-        fields.frame();
-        fields.show_the_caret_for(field, Duration::ZERO);
-        fields.frame();
-        assert_eq!(fields.layout_passes(), passes);
-        assert_eq!(texts.run(&mut fields.world), 0, "no UIText was written");
+            fields.frames(2);
+            fields.show_the_caret_for(field, Duration::from_millis(795));
+            fields.frame();
+            fields.show_the_caret_for(field, Duration::ZERO);
+            fields.frame();
+            assert_eq!(
+                nodes.run(&mut fields.world),
+                0,
+                "{setup}: a UINode was written"
+            );
+            assert_eq!(
+                texts.run(&mut fields.world),
+                0,
+                "{setup}: a UIText was written"
+            );
+        }
     }
 
     #[test]
@@ -1596,6 +1504,11 @@ mod tests {
             assert_eq!(viewport.size.x, label.size.x);
             assert_eq!(field_layout.rect.size.x, label.size.x + padding);
             assert_eq!(label.size.x, fields.line_width(field).ceil() + CARET);
+            let (_, _, caret) = fields.parts(field);
+            assert!(
+                fields.alpha(caret) > 0.0,
+                "typing {character} shows the caret"
+            );
             last = field_layout.rect.size.x;
         }
         assert_eq!(fields.get::<UITextInput>(field).value, "abcdeWW");
@@ -1897,50 +1810,6 @@ mod tests {
     }
 
     #[test]
-    fn typing_at_the_end_of_a_content_sized_field_never_hides_the_caret() {
-        let t = UITheme::nocturne();
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("").value("abc"));
-        fields.frame();
-        fields.focus(Some(field));
-        fields.frames(2);
-        fields.key(KeyCode::End);
-        fields.frame();
-
-        let (_, _, caret) = fields.parts(field);
-        for character in ["d", "e", "W", "W", "m"] {
-            fields.type_text(character);
-            assert!(
-                fields.alpha(caret) > 0.0,
-                "typing {character} shows the caret"
-            );
-        }
-    }
-
-    #[test]
-    fn an_idle_scrolled_field_writes_no_node_and_lays_nothing_out() {
-        let mut fields = Fields::new();
-        let field = fields.long(LONG);
-        fields.focus(Some(field));
-        fields.frames(2);
-        fields.key(KeyCode::End);
-        fields.frames(3);
-        assert!(fields.scroll(field) > 0.0);
-        let passes = fields.layout_passes();
-        fn idle() {}
-        let mut nodes = Watch::new::<UINode, _>(&mut fields.world, idle);
-        nodes.run(&mut fields.world);
-
-        fields.frames(2);
-        fields.show_the_caret_for(field, Duration::from_millis(795));
-        fields.frame();
-        fields.show_the_caret_for(field, Duration::ZERO);
-        fields.frame();
-        assert_eq!(fields.layout_passes(), passes);
-        assert_eq!(nodes.run(&mut fields.world), 0, "no UINode was written");
-    }
-
-    #[test]
     fn a_press_on_a_scrolled_field_places_the_caret_on_the_glyph_under_the_pointer() {
         let mut fields = Fields::new();
         let field = fields.long(LONG);
@@ -2162,49 +2031,39 @@ mod tests {
     }
 
     #[test]
-    fn an_idle_focused_field_writes_no_node_and_lays_nothing_out() {
-        let t = UITheme::nocturne();
-        let mut fields = Fields::new();
-        let field = fields.spawn(t.text_field("").value("hello"));
-        fields.frame();
-        fields.focus(Some(field));
-        fields.frames(4);
-        let passes = fields.layout_passes();
-        fn idle() {}
-        let mut nodes = Watch::new::<UINode, _>(&mut fields.world, idle);
-        nodes.run(&mut fields.world);
-
-        fields.frames(2);
-        fields.show_the_caret_for(field, Duration::from_millis(795));
-        fields.frame();
-        fields.show_the_caret_for(field, Duration::ZERO);
-        fields.frame();
-        assert_eq!(fields.layout_passes(), passes);
-        assert_eq!(nodes.run(&mut fields.world), 0, "no UINode was written");
-    }
-
-    #[test]
-    fn gaining_focus_restarts_the_blink() {
+    fn gaining_focus_or_a_press_restarts_the_blink() {
         let mut editing = Editing::new();
-        let field = editing.field("abc", 0, None);
-        editing.focus(Some(field));
-        editing.frame();
+        let field = editing.laid_out("hello");
+        editing.click(0.0);
         editing.focus(None);
         editing.frame();
-        let before = Instant::now();
-        editing
-            .world
-            .get_component_for_entity_mut::<UITextEditState>(field)
-            .unwrap()
-            .blink_start = before - Duration::from_secs(2);
+        let age_the_blink = |editing: &mut Editing| {
+            let before = Instant::now();
+            editing
+                .world
+                .get_component_for_entity_mut::<UITextEditState>(field)
+                .unwrap()
+                .blink_start = before - Duration::from_secs(2);
+            before
+        };
+        let restarted = |editing: &Editing, before: Instant| {
+            editing
+                .world
+                .get_component_for_entity::<UITextEditState>(field)
+                .unwrap()
+                .blink_start
+                >= before
+        };
 
+        let before = age_the_blink(&mut editing);
         editing.focus(Some(field));
         editing.frame();
-        let state = editing
-            .world
-            .get_component_for_entity::<UITextEditState>(field)
-            .unwrap();
-        assert!(state.blink_start >= before);
+        assert!(restarted(&editing, before), "gaining focus");
+
+        editing.let_the_last_press_age(field);
+        let before = age_the_blink(&mut editing);
+        editing.click(5.0);
+        assert!(restarted(&editing, before), "a press");
     }
 
     #[test]
@@ -2514,13 +2373,6 @@ mod tests {
                 .value
         }
 
-        fn cursor(&self, field: Entity) -> usize {
-            self.world
-                .get_component_for_entity::<UITextInput>(field)
-                .unwrap()
-                .cursor
-        }
-
         fn caret(&self, field: Entity) -> (usize, Option<usize>) {
             let input = self
                 .world
@@ -2538,54 +2390,91 @@ mod tests {
     }
 
     #[test]
-    fn a_paste_lands_in_the_focused_field_with_line_breaks_as_spaces() {
-        let mut editing = Editing::new();
-        let other = editing.field("other", 0, None);
-        let field = editing.focused("ab", 1, None);
-        editing.paste("x\ny\r\nz");
-        editing.frame();
+    fn a_paste_lands_in_the_focused_field_only() {
+        struct Case {
+            value: &'static str,
+            cursor: usize,
+            anchor: Option<usize>,
+            focused: bool,
+            pasted: &'static str,
+            after: &'static str,
+            cursor_after: usize,
+            anchor_after: Option<usize>,
+        }
+        for case in [
+            Case {
+                value: "ab",
+                cursor: 1,
+                anchor: None,
+                focused: true,
+                pasted: "x\ny\r\nz",
+                after: "ax y zb",
+                cursor_after: 6,
+                anchor_after: None,
+            },
+            Case {
+                value: "abcd",
+                cursor: 3,
+                anchor: Some(1),
+                focused: true,
+                pasted: "X",
+                after: "aXd",
+                cursor_after: 2,
+                anchor_after: None,
+            },
+            Case {
+                value: "abc",
+                cursor: 3,
+                anchor: Some(0),
+                focused: true,
+                pasted: "",
+                after: "abc",
+                cursor_after: 3,
+                anchor_after: Some(0),
+            },
+            Case {
+                value: "ab",
+                cursor: 1,
+                anchor: None,
+                focused: false,
+                pasted: "x",
+                after: "ab",
+                cursor_after: 1,
+                anchor_after: None,
+            },
+        ] {
+            let mut editing = Editing::new();
+            let other = editing.field("other", 0, None);
+            let field = if case.focused {
+                editing.focused(case.value, case.cursor, case.anchor)
+            } else {
+                editing.field(case.value, case.cursor, case.anchor)
+            };
+            editing.paste(case.pasted);
+            editing.frame();
 
-        assert_eq!(editing.value(field), "ax y zb");
-        assert_eq!(editing.cursor(field), 6);
-        assert_eq!(editing.value(other), "other");
-
-        editing.keys(&[COMMAND, KeyCode::KeyZ]);
-        assert_eq!(editing.value(field), "ab");
-    }
-
-    #[test]
-    fn a_paste_replaces_the_selection() {
-        let mut editing = Editing::new();
-        let field = editing.focused("abcd", 3, Some(1));
-        editing.paste("X");
-        editing.frame();
-
-        assert_eq!(editing.value(field), "aXd");
-        assert_eq!(editing.cursor(field), 2);
-    }
-
-    #[test]
-    fn a_paste_without_a_focused_field_is_dropped() {
-        let mut editing = Editing::new();
-        let field = editing.field("ab", 1, None);
-        editing.paste("x");
-        editing.frame();
-        assert_eq!(editing.value(field), "ab");
-
-        editing.focus(Some(field));
-        editing.frame();
-        assert_eq!(editing.value(field), "ab");
-    }
-
-    #[test]
-    fn an_empty_paste_keeps_the_selection() {
-        let mut editing = Editing::new();
-        let field = editing.focused("abc", 3, Some(0));
-        editing.paste("");
-        editing.frame();
-
-        assert_eq!(editing.value(field), "abc");
-        assert_eq!(editing.caret(field), (3, Some(0)));
+            assert_eq!(editing.value(field), case.after, "{:?}", case.pasted);
+            assert_eq!(
+                editing.caret(field),
+                (case.cursor_after, case.anchor_after),
+                "{:?}",
+                case.pasted
+            );
+            assert_eq!(editing.value(other), "other");
+            if !case.focused {
+                editing.focus(Some(field));
+                editing.frame();
+                assert_eq!(
+                    editing.value(field),
+                    case.value,
+                    "a dropped paste stays dropped"
+                );
+            }
+            if case.after != case.value {
+                editing.keys(&[COMMAND, KeyCode::KeyZ]);
+                assert_eq!(editing.value(field), case.value, "undo takes a paste back");
+            }
+        }
     }
 
     #[test]
@@ -2608,135 +2497,189 @@ mod tests {
     }
 
     #[test]
-    fn arrows_move_one_character_and_shift_extends_the_selection() {
-        let mut editing = Editing::new();
-        let field = editing.focused("aé東", 1, None);
-
-        editing.keys(&[KeyCode::ArrowRight]);
-        assert_eq!(editing.caret(field), (3, None));
-        editing.keys(&[SHIFT, KeyCode::ArrowRight]);
-        assert_eq!(editing.caret(field), (6, Some(3)));
-        editing.keys(&[SHIFT, KeyCode::ArrowLeft]);
-        assert_eq!(editing.caret(field), (3, None));
-        editing.keys(&[SHIFT, KeyCode::ArrowLeft]);
-        assert_eq!(editing.caret(field), (1, Some(3)));
-        editing.keys(&[KeyCode::ArrowLeft]);
-        assert_eq!(editing.caret(field), (0, None));
-        editing.keys(&[KeyCode::ArrowLeft]);
-        assert_eq!(editing.caret(field), (0, None));
-        assert_eq!(editing.changes(), 0, "moving the caret changes no value");
+    fn caret_keys_move_by_character_word_or_end_and_shift_extends_the_selection() {
+        struct Move {
+            keys: &'static [KeyCode],
+            cursor: usize,
+            anchor: Option<usize>,
+        }
+        struct Case {
+            value: &'static str,
+            cursor: usize,
+            moves: &'static [Move],
+        }
+        const RIGHT: KeyCode = KeyCode::ArrowRight;
+        const LEFT: KeyCode = KeyCode::ArrowLeft;
+        for case in [
+            Case {
+                value: "aé東",
+                cursor: 1,
+                moves: &[
+                    Move {
+                        keys: &[RIGHT],
+                        cursor: 3,
+                        anchor: None,
+                    },
+                    Move {
+                        keys: &[SHIFT, RIGHT],
+                        cursor: 6,
+                        anchor: Some(3),
+                    },
+                    Move {
+                        keys: &[SHIFT, LEFT],
+                        cursor: 3,
+                        anchor: None,
+                    },
+                    Move {
+                        keys: &[SHIFT, LEFT],
+                        cursor: 1,
+                        anchor: Some(3),
+                    },
+                    Move {
+                        keys: &[LEFT],
+                        cursor: 0,
+                        anchor: None,
+                    },
+                    Move {
+                        keys: &[LEFT],
+                        cursor: 0,
+                        anchor: None,
+                    },
+                ],
+            },
+            Case {
+                value: "hello big world",
+                cursor: 0,
+                moves: &[
+                    Move {
+                        keys: &[COMMAND, RIGHT],
+                        cursor: 5,
+                        anchor: None,
+                    },
+                    Move {
+                        keys: &[COMMAND, RIGHT],
+                        cursor: 9,
+                        anchor: None,
+                    },
+                    Move {
+                        keys: &[COMMAND, SHIFT, LEFT],
+                        cursor: 6,
+                        anchor: Some(9),
+                    },
+                    Move {
+                        keys: &[COMMAND, LEFT],
+                        cursor: 0,
+                        anchor: None,
+                    },
+                ],
+            },
+            Case {
+                value: "abc",
+                cursor: 1,
+                moves: &[
+                    Move {
+                        keys: &[KeyCode::End],
+                        cursor: 3,
+                        anchor: None,
+                    },
+                    Move {
+                        keys: &[SHIFT, KeyCode::Home],
+                        cursor: 0,
+                        anchor: Some(3),
+                    },
+                    Move {
+                        keys: &[KeyCode::Home],
+                        cursor: 0,
+                        anchor: None,
+                    },
+                    Move {
+                        keys: &[SHIFT, KeyCode::End],
+                        cursor: 3,
+                        anchor: Some(0),
+                    },
+                    Move {
+                        keys: &[COMMAND, KeyCode::KeyA],
+                        cursor: 3,
+                        anchor: Some(0),
+                    },
+                ],
+            },
+        ] {
+            let mut editing = Editing::new();
+            let field = editing.focused(case.value, case.cursor, None);
+            let changes = editing.changes();
+            for (index, step) in case.moves.iter().enumerate() {
+                editing.keys(step.keys);
+                assert_eq!(
+                    editing.caret(field),
+                    (step.cursor, step.anchor),
+                    "{} move {index}",
+                    case.value
+                );
+            }
+            assert_eq!(
+                editing.changes(),
+                changes,
+                "moving the caret changes no value"
+            );
+        }
     }
 
     #[test]
-    fn command_arrows_move_one_word() {
-        let mut editing = Editing::new();
-        let field = editing.focused("hello big world", 0, None);
+    fn deleting_removes_the_selection_or_else_a_character_or_a_word() {
+        struct Case {
+            value: &'static str,
+            cursor: usize,
+            anchor: Option<usize>,
+            keys: &'static [KeyCode],
+            after: &'static str,
+            cursor_after: usize,
+        }
+        const BACK: KeyCode = KeyCode::Backspace;
+        const DELETE: KeyCode = KeyCode::Delete;
+        let case = |value, cursor, anchor, keys, after, cursor_after| Case {
+            value,
+            cursor,
+            anchor,
+            keys,
+            after,
+            cursor_after,
+        };
+        for case in [
+            case("abcd", 2, None, &[BACK], "acd", 1),
+            case("acd", 1, None, &[DELETE], "ad", 1),
+            case("aé東x", 6, None, &[BACK], "aéx", 3),
+            case("aéx", 1, Some(4), &[DELETE], "a", 1),
+            case("a", 1, Some(0), &[BACK], "", 0),
+            case("", 0, None, &[BACK], "", 0),
+            case("", 0, None, &[DELETE], "", 0),
+            case(
+                "hello big world",
+                9,
+                None,
+                &[COMMAND, BACK],
+                "hello  world",
+                6,
+            ),
+            case("hello  world", 6, None, &[COMMAND, DELETE], "hello ", 6),
+            case("hello ", 0, Some(2), &[COMMAND, DELETE], "llo ", 0),
+            case("llo ", 4, Some(3), &[COMMAND, BACK], "llo", 3),
+        ] {
+            let mut editing = Editing::new();
+            let field = editing.focused(case.value, case.cursor, case.anchor);
+            let changes = editing.changes();
 
-        editing.keys(&[COMMAND, KeyCode::ArrowRight]);
-        assert_eq!(editing.caret(field), (5, None));
-        editing.keys(&[COMMAND, KeyCode::ArrowRight]);
-        assert_eq!(editing.caret(field), (9, None));
-        editing.keys(&[COMMAND, SHIFT, KeyCode::ArrowLeft]);
-        assert_eq!(editing.caret(field), (6, Some(9)));
-        editing.keys(&[COMMAND, KeyCode::ArrowLeft]);
-        assert_eq!(editing.caret(field), (0, None));
-    }
+            editing.keys(case.keys);
 
-    #[test]
-    fn home_and_end_jump_to_the_ends_and_shift_extends() {
-        let mut editing = Editing::new();
-        let field = editing.focused("abc", 1, None);
-
-        editing.keys(&[KeyCode::End]);
-        assert_eq!(editing.caret(field), (3, None));
-        editing.keys(&[SHIFT, KeyCode::Home]);
-        assert_eq!(editing.caret(field), (0, Some(3)));
-        editing.keys(&[KeyCode::Home]);
-        assert_eq!(editing.caret(field), (0, None));
-        editing.keys(&[SHIFT, KeyCode::End]);
-        assert_eq!(editing.caret(field), (3, Some(0)));
-    }
-
-    #[test]
-    fn backspace_and_delete_remove_the_selection_or_one_character() {
-        let mut editing = Editing::new();
-        let field = editing.focused("abcd", 2, None);
-
-        editing.keys(&[KeyCode::Backspace]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("acd", (1, None))
-        );
-        editing.keys(&[KeyCode::Delete]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("ad", (1, None))
-        );
-
-        editing.set_value(field, "aé東x");
-        editing.set_caret(field, 6, None);
-        editing.keys(&[KeyCode::Backspace]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("aéx", (3, None))
-        );
-
-        editing.set_caret(field, 1, Some(4));
-        editing.keys(&[KeyCode::Delete]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("a", (1, None))
-        );
-        editing.set_caret(field, 1, Some(0));
-        editing.keys(&[KeyCode::Backspace]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("", (0, None))
-        );
-
-        let changes = editing.changes();
-        editing.keys(&[KeyCode::Backspace]);
-        editing.keys(&[KeyCode::Delete]);
-        assert_eq!(editing.changes(), changes, "nothing left to delete");
-    }
-
-    #[test]
-    fn command_backspace_and_delete_remove_a_word_or_the_selection() {
-        let mut editing = Editing::new();
-        let field = editing.focused("hello big world", 9, None);
-
-        editing.keys(&[COMMAND, KeyCode::Backspace]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("hello  world", (6, None))
-        );
-        editing.keys(&[COMMAND, KeyCode::Delete]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("hello ", (6, None))
-        );
-
-        editing.set_caret(field, 0, Some(2));
-        editing.keys(&[COMMAND, KeyCode::Delete]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("llo ", (0, None))
-        );
-        editing.set_caret(field, 4, Some(3));
-        editing.keys(&[COMMAND, KeyCode::Backspace]);
-        assert_eq!(
-            (editing.value(field), editing.caret(field)),
-            ("llo", (3, None))
-        );
-    }
-
-    #[test]
-    fn command_a_selects_everything() {
-        let mut editing = Editing::new();
-        let field = editing.focused("abc", 1, None);
-
-        editing.keys(&[COMMAND, KeyCode::KeyA]);
-        assert_eq!(editing.caret(field), (3, Some(0)));
+            let what = format!("{:?} {:?}", case.value, case.keys);
+            assert_eq!(editing.value(field), case.after, "{what}");
+            assert_eq!(editing.caret(field), (case.cursor_after, None), "{what}");
+            assert_eq!(
+                editing.changes() - changes,
+                usize::from(case.after != case.value),
+                "{what}: one change for a deletion, none when nothing is left"
+            );
+        }
     }
 
     #[test]
@@ -2837,18 +2780,6 @@ mod tests {
     }
 
     #[test]
-    fn gaining_focus_by_a_direct_write_selects_everything() {
-        let mut editing = Editing::new();
-        let field = editing.field("abc", 0, None);
-        editing.focus(Some(field));
-        editing.frame();
-        assert_eq!(editing.caret(field), (3, Some(0)));
-
-        editing.type_text("x");
-        assert_eq!(editing.value(field), "x");
-    }
-
-    #[test]
     fn word_at_finds_the_segment_under_an_index() {
         assert_eq!(word_at("hello big world", 0), (0, 5));
         assert_eq!(word_at("hello big world", 4), (0, 5));
@@ -2883,16 +2814,6 @@ mod tests {
     }
 
     #[test]
-    fn gaining_focus_by_a_press_selects_everything() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("abc");
-        editing.click(5.0);
-
-        assert_eq!(editing.focused_widget(), Some(field));
-        assert_eq!(editing.caret(field), (3, Some(0)));
-    }
-
-    #[test]
     fn a_press_places_the_caret_and_a_shift_press_extends_the_selection() {
         let mut editing = Editing::new();
         let field = editing.laid_out("hello world");
@@ -2912,27 +2833,6 @@ mod tests {
         let x = editing.x_of(field, 9);
         editing.shift_click(x);
         assert_eq!(editing.caret(field), (9, Some(6)));
-    }
-
-    #[test]
-    fn a_press_restarts_the_blink() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello");
-        editing.click(0.0);
-        editing.let_the_last_press_age(field);
-        let before = Instant::now();
-        editing
-            .world
-            .get_component_for_entity_mut::<UITextEditState>(field)
-            .unwrap()
-            .blink_start = before - Duration::from_secs(2);
-
-        editing.click(5.0);
-        let state = editing
-            .world
-            .get_component_for_entity::<UITextEditState>(field)
-            .unwrap();
-        assert!(state.blink_start >= before);
     }
 
     #[test]
@@ -3017,42 +2917,49 @@ mod tests {
     }
 
     #[test]
-    fn a_double_press_at_a_word_edge_selects_only_that_word() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.click(0.0);
-        let cases = [
-            (6, 0.1, (6, 9)),
-            (4, 0.9, (0, 5)),
-            (5, 0.1, (5, 6)),
-            (5, 0.9, (5, 6)),
-            (0, 0.1, (0, 5)),
-            (14, 0.9, (10, 15)),
-        ];
-        for (index, along, expected) in cases {
-            let (glyph_x, glyph_w) = editing.glyph(field, index);
-            let x = glyph_x + glyph_w * along;
-            editing.let_the_last_press_age(field);
-            editing.click(x);
-            editing.click(x);
-            assert_eq!(editing.selection(field), Some(expected), "{index} {along}");
-            editing.let_the_last_press_age(field);
+    fn a_double_press_selects_only_the_word_under_the_pointer() {
+        struct Case {
+            text: &'static str,
+            index: usize,
+            along: f32,
+            start: usize,
+            end: usize,
         }
-    }
-
-    #[test]
-    fn a_double_press_on_a_one_letter_word_selects_it_alone() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("is a test");
-        editing.click(0.0);
-        for along in [0.1, 0.9] {
-            let (glyph_x, glyph_w) = editing.glyph(field, 3);
-            let x = glyph_x + glyph_w * along;
+        let case = |text, index, along, start, end| Case {
+            text,
+            index,
+            along,
+            start,
+            end,
+        };
+        for case in [
+            case("hello big world", 6, 0.1, 6, 9),
+            case("hello big world", 4, 0.9, 0, 5),
+            case("hello big world", 5, 0.1, 5, 6),
+            case("hello big world", 5, 0.9, 5, 6),
+            case("hello big world", 0, 0.1, 0, 5),
+            case("hello big world", 14, 0.9, 10, 15),
+            case("is a test", 3, 0.1, 3, 4),
+            case("is a test", 3, 0.9, 3, 4),
+        ] {
+            let mut editing = Editing::new();
+            let field = editing.laid_out(case.text);
+            editing.click(0.0);
+            let (glyph_x, glyph_w) = editing.glyph(field, case.index);
+            let x = glyph_x + glyph_w * case.along;
             editing.let_the_last_press_age(field);
+
             editing.click(x);
             editing.click(x);
-            assert_eq!(editing.selection(field), Some((3, 4)), "{along}");
-            assert_eq!(editing.caret(field), (4, Some(3)));
+
+            assert_eq!(
+                editing.caret(field),
+                (case.end, Some(case.start)),
+                "{} at {} {}",
+                case.text,
+                case.index,
+                case.along
+            );
         }
     }
 
@@ -3138,125 +3045,118 @@ mod tests {
     }
 
     #[test]
-    fn an_arrow_key_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
+    fn any_other_edit_ends_word_wise_extension() {
+        struct Then {
+            shift_press_at: usize,
+            cursor: usize,
+            anchor: usize,
+        }
+        struct Case {
+            name: &'static str,
+            end: fn(&mut Editing, Entity),
+            then: Option<Then>,
+        }
+        for case in [
+            Case {
+                name: "an arrow key",
+                end: |editing, _| editing.keys(&[KeyCode::ArrowRight]),
+                then: Some(Then {
+                    shift_press_at: 13,
+                    cursor: 13,
+                    anchor: 10,
+                }),
+            },
+            Case {
+                name: "a single press",
+                end: |editing, field| {
+                    editing.let_the_last_press_age(field);
+                    editing.click(editing.x_of(field, 1));
+                },
+                then: Some(Then {
+                    shift_press_at: 13,
+                    cursor: 13,
+                    anchor: 1,
+                }),
+            },
+            Case {
+                name: "a triple press",
+                end: |editing, field| editing.click(editing.x_of(field, 7)),
+                then: Some(Then {
+                    shift_press_at: 1,
+                    cursor: 0,
+                    anchor: 15,
+                }),
+            },
+            Case {
+                name: "select all",
+                end: |editing, _| editing.keys(&[COMMAND, KeyCode::KeyA]),
+                then: Some(Then {
+                    shift_press_at: 1,
+                    cursor: 1,
+                    anchor: 0,
+                }),
+            },
+            Case {
+                name: "typing",
+                end: |editing, _| editing.type_text("x"),
+                then: None,
+            },
+            Case {
+                name: "backspace",
+                end: |editing, _| editing.keys(&[KeyCode::Backspace]),
+                then: None,
+            },
+            Case {
+                name: "command backspace",
+                end: |editing, _| editing.keys(&[COMMAND, KeyCode::Backspace]),
+                then: None,
+            },
+            Case {
+                name: "undo",
+                end: |editing, _| editing.keys(&[COMMAND, KeyCode::KeyZ]),
+                then: None,
+            },
+            Case {
+                name: "redo",
+                end: |editing, _| editing.keys(&[COMMAND, KeyCode::KeyY]),
+                then: None,
+            },
+            Case {
+                name: "an outside caret write",
+                end: |editing, field| {
+                    editing.set_caret(field, 2, None);
+                    editing.frame();
+                },
+                then: None,
+            },
+            Case {
+                name: "an outside value write",
+                end: |editing, field| {
+                    editing.set_value(field, "other text");
+                    editing.frame();
+                },
+                then: None,
+            },
+        ] {
+            let mut editing = Editing::new();
+            let field = editing.laid_out("hello big world");
+            editing.double_click_big(field);
 
-        editing.keys(&[KeyCode::ArrowRight]);
-        assert_eq!(editing.word(field), None);
-        assert_eq!(editing.caret(field), (10, None));
-        editing.let_the_last_press_age(field);
-        editing.shift_click(editing.x_of(field, 13));
-        assert_eq!(editing.caret(field), (13, Some(10)));
-    }
+            (case.end)(&mut editing, field);
 
-    #[test]
-    fn a_single_press_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-
-        editing.let_the_last_press_age(field);
-        editing.click(editing.x_of(field, 1));
-        assert_eq!(editing.word(field), None);
-        assert_eq!(editing.caret(field), (1, None));
-        editing.let_the_last_press_age(field);
-        editing.shift_click(editing.x_of(field, 13));
-        assert_eq!(editing.caret(field), (13, Some(1)));
-    }
-
-    #[test]
-    fn a_triple_press_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-
-        editing.click(editing.x_of(field, 7));
-        assert_eq!(editing.word(field), None);
-        assert_eq!(editing.caret(field), (15, Some(0)));
-        editing.let_the_last_press_age(field);
-        editing.shift_click(editing.x_of(field, 1));
-        assert_eq!(editing.word(field), None);
-        assert_eq!(editing.caret(field), (0, Some(15)));
-    }
-
-    #[test]
-    fn select_all_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-
-        editing.keys(&[COMMAND, KeyCode::KeyA]);
-        assert_eq!(editing.word(field), None);
-        editing.let_the_last_press_age(field);
-        editing.shift_click(editing.x_of(field, 1));
-        assert_eq!(editing.caret(field), (1, Some(0)));
-    }
-
-    #[test]
-    fn typing_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-        editing.type_text("x");
-        assert_eq!(editing.word(field), None);
-    }
-
-    #[test]
-    fn backspace_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-        editing.keys(&[KeyCode::Backspace]);
-        assert_eq!(editing.word(field), None);
-    }
-
-    #[test]
-    fn command_backspace_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-        editing.keys(&[COMMAND, KeyCode::Backspace]);
-        assert_eq!(editing.word(field), None);
-    }
-
-    #[test]
-    fn undo_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-        editing.keys(&[COMMAND, KeyCode::KeyZ]);
-        assert_eq!(editing.word(field), None);
-    }
-
-    #[test]
-    fn redo_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-        editing.keys(&[COMMAND, KeyCode::KeyY]);
-        assert_eq!(editing.word(field), None);
-    }
-
-    #[test]
-    fn an_outside_caret_write_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-        editing.set_caret(field, 2, None);
-        editing.frame();
-        assert_eq!(editing.word(field), None);
-    }
-
-    #[test]
-    fn an_outside_value_write_ends_word_wise_extension() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.double_click_big(field);
-        editing.set_value(field, "other text");
-        editing.frame();
-        assert_eq!(editing.word(field), None);
+            assert_eq!(editing.word(field), None, "{}", case.name);
+            if let Some(then) = case.then {
+                editing.let_the_last_press_age(field);
+                editing.shift_click(editing.x_of(field, then.shift_press_at));
+                assert_eq!(editing.word(field), None, "{}", case.name);
+                assert_eq!(
+                    editing.caret(field),
+                    (then.cursor, Some(then.anchor)),
+                    "{} then a shift press extends by characters",
+                    case.name
+                );
+            }
+        }
     }
 
     #[test]
@@ -3279,22 +3179,6 @@ mod tests {
 
         editing.keys(&[SHIFT, KeyCode::ArrowLeft]);
         assert_eq!(editing.caret(field), (14, Some(0)));
-    }
-
-    #[test]
-    fn a_triple_press_selects_the_whole_line() {
-        let mut editing = Editing::new();
-        let field = editing.laid_out("hello big world");
-        editing.click(0.0);
-        editing.let_the_last_press_age(field);
-        let x = editing.x_of(field, 7);
-
-        editing.click(x);
-        assert_eq!(editing.caret(field), (7, None));
-        editing.click(x);
-        assert_eq!(editing.selection(field), Some((6, 9)));
-        editing.click(x);
-        assert_eq!(editing.selection(field), Some((0, 15)));
     }
 
     #[test]
@@ -3330,14 +3214,18 @@ mod tests {
         let field = editing.focused("abc", 3, None);
 
         editing.keys(&[KeyCode::Enter]);
-        let submitted: Vec<(Entity, String)> = editing
+        editing.keys(&[KeyCode::NumpadEnter]);
+        let submitted = editing
             .world
             .get_resource::<EventChannel<UITextInputSubmitted>>()
             .unwrap()
             .read_from(&mut EventCursor::default())
-            .map(|event| (event.entity, event.value.clone()))
-            .collect();
-        assert_eq!(submitted, [(field, "abc".to_owned())]);
+            .map(|event| {
+                assert_eq!(event.entity, field);
+                event.value.clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(submitted, ["abc", "abc"]);
         assert_eq!(editing.focused_widget(), Some(field));
 
         editing.keys(&[KeyCode::Escape]);
@@ -3349,22 +3237,5 @@ mod tests {
         assert_eq!(cancelled, 1);
         assert_eq!(editing.focused_widget(), None);
         assert_eq!(editing.value(field), "abc");
-    }
-
-    #[test]
-    fn enter_submits_and_escape_cancels() {
-        assert_eq!(
-            finish_key(|key| key == KeyCode::Enter),
-            Some(Finish::Submit)
-        );
-        assert_eq!(
-            finish_key(|key| key == KeyCode::NumpadEnter),
-            Some(Finish::Submit)
-        );
-        assert_eq!(
-            finish_key(|key| key == KeyCode::Escape),
-            Some(Finish::Cancel)
-        );
-        assert_eq!(finish_key(|key| key == KeyCode::KeyA), None);
     }
 }
