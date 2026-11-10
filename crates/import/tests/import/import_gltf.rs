@@ -7,8 +7,9 @@ use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset_into, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
-use concerto_foundation::assets::{Asset, AssetId};
-use concerto_mesh::mesh::MeshComponent;
+use concerto_foundation::assets::utils::load_content_asset;
+use concerto_foundation::assets::{Asset, AssetId, ContentAssetRoot};
+use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_scene::scene::Scene;
 
 fn fixture(project_root: &Path) -> PathBuf {
@@ -23,7 +24,7 @@ fn fixture(project_root: &Path) -> PathBuf {
 }
 
 #[test]
-fn writes_content_assets_with_content_path_cross_references() {
+fn an_imported_gltf_writes_content_assets_that_load_back_and_reference_each_other_by_minted_id() {
     let project_root = std::env::temp_dir().join(format!("import-gltf-{}", std::process::id()));
     std::fs::create_dir_all(&project_root).unwrap();
 
@@ -78,6 +79,40 @@ fn writes_content_assets_with_content_path_cross_references() {
     assert!(
         header.references.contains(&mesh_id),
         "header references list carries the mesh's minted id"
+    );
+
+    let content = ContentAssetRoot::Directory(project_root.clone());
+    let mesh = pollster::block_on(load_content_asset::<Mesh>(
+        &content,
+        "content/triangle/mesh_0.gasset",
+    ))
+    .expect("the imported mesh loads through the runtime path");
+    assert_eq!(mesh.vertices.len(), 3);
+    assert_eq!(
+        read_content_asset_header(&project_root.join("content/triangle/mesh_0.gasset"))
+            .unwrap()
+            .kind_version,
+        Mesh::FORMAT_VERSION
+    );
+    let err = pollster::block_on(load_content_asset::<Scene>(
+        &content,
+        "content/triangle/mesh_0.gasset",
+    ))
+    .expect_err("the kind tag rejects a Scene load of a Mesh file");
+    assert!(format!("{err:#}").contains("Mesh"));
+    let loaded = pollster::block_on(load_content_asset::<Scene>(
+        &content,
+        "content/triangle/scene.gasset",
+    ))
+    .expect("the scene loads by address");
+    let registry =
+        AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("scan");
+    assert_eq!(
+        registry
+            .get(loaded.referenced_assets[0])
+            .map(|entry| entry.address.as_str()),
+        Some("content/triangle/mesh_0.gasset"),
+        "a baked reference resolves through the registry to the file it names"
     );
 
     std::fs::remove_dir_all(&project_root).ok();
@@ -136,29 +171,4 @@ fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
     let mut entries: Vec<_> = registry.iter().cloned().collect();
     entries.sort_by(|a, b| a.address.cmp(&b.address));
     entries
-}
-
-#[test]
-fn re_importing_reuses_the_ids_already_on_disk() {
-    let project_root =
-        std::env::temp_dir().join(format!("import-gltf-reuse-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-
-    let first =
-        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
-            .expect("first import");
-    let ids_before: Vec<AssetId> = first.iter().map(|asset| asset.id).collect();
-
-    let second =
-        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
-            .expect("second import");
-    let ids_after: Vec<AssetId> = second.iter().map(|asset| asset.id).collect();
-
-    assert_eq!(
-        ids_before, ids_after,
-        "a re-import must keep every id, or every baked cross-reference breaks"
-    );
-
-    std::fs::remove_dir_all(&project_root).ok();
 }

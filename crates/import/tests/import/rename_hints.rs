@@ -49,10 +49,15 @@ fn ids_by_name(imported: &ImportedSource) -> BTreeMap<String, AssetId> {
         .collect()
 }
 
-fn rename_outputs(project: &Path, destination: &str, renames: &[(&str, &str)]) {
+struct Rename {
+    from: &'static str,
+    to: &'static str,
+}
+
+fn rename_outputs(project: &Path, destination: &str, renames: &[Rename]) {
     let sidecar = sidecar_path(&project.join(destination));
     let mut metadata = SourceMetadata::load(&sidecar).unwrap();
-    for (from, to) in renames {
+    for Rename { from, to } in renames {
         let output = metadata.outputs.remove(*from).expect("output exists");
         let path = walk(project)
             .into_iter()
@@ -119,7 +124,10 @@ fn a_bvh_reimport_over_an_index_named_clip_keeps_its_id_and_file() {
     rename_outputs(
         project.path(),
         "assets/walk.bvh",
-        &[("animation/walk", "animation/0")],
+        &[Rename {
+            from: "animation/walk",
+            to: "animation/0",
+        }],
     );
 
     let second = import(&source, "assets/walk.bvh", project.path()).expect("second import");
@@ -142,72 +150,89 @@ fn a_bvh_reimport_over_an_index_named_clip_keeps_its_id_and_file() {
     assert_eq!(metadata.outputs["animation/walk"].asset_id, clip.id);
 }
 
-#[test]
-fn a_gltf_reimport_over_index_named_clips_keeps_their_ids() {
-    let scratch = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    let source = scratch.path().join("clips.gltf");
-    std::fs::write(
-        &source,
-        gltf_with_clip_names(&[Some("Wiggle"), None, Some("Wiggle")]),
-    )
-    .unwrap();
-    let first = import(&source, "assets/clips.gltf", project.path()).expect("first import");
-    let before = ids_by_name(&first);
-    rename_outputs(
-        project.path(),
-        "assets/clips.gltf",
-        &[
-            ("animation/Wiggle", "animation/0"),
-            ("animation/Wiggle_2", "animation/2"),
-        ],
-    );
+struct Reimport {
+    case: &'static str,
+    names: [Option<&'static str>; 3],
+    kept: [Kept; 2],
+    removed: Option<&'static str>,
+}
 
-    let second = import(&source, "assets/clips.gltf", project.path()).expect("second import");
-
-    let after = ids_by_name(&second);
-    for name in ["animation/Wiggle", "animation/1", "animation/Wiggle_2"] {
-        assert_eq!(after[name], before[name], "{name} keeps its id");
-    }
-    assert!(
-        second.removed.is_empty(),
-        "nothing is pruned: {:?}",
-        second.removed
-    );
+struct Kept {
+    now: &'static str,
+    before: &'static str,
 }
 
 #[test]
-fn a_gltf_clip_named_like_another_clips_index_is_not_hinted() {
-    let scratch = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    let source = scratch.path().join("clips.gltf");
-    std::fs::write(
-        &source,
-        gltf_with_clip_names(&[Some("Wiggle"), None, Some("Wiggle")]),
-    )
-    .unwrap();
-    let first = import(&source, "assets/clips.gltf", project.path()).expect("first import");
-    let before = ids_by_name(&first);
-    rename_outputs(
-        project.path(),
-        "assets/clips.gltf",
-        &[
-            ("animation/Wiggle", "animation/0"),
-            ("animation/Wiggle_2", "animation/2"),
-        ],
-    );
+fn a_gltf_reimport_over_index_named_clips_hints_only_the_clips_still_unnamed() {
+    let cases = [
+        Reimport {
+            case: "the same names",
+            names: [Some("Wiggle"), None, Some("Wiggle")],
+            kept: [
+                Kept {
+                    now: "animation/Wiggle",
+                    before: "animation/Wiggle",
+                },
+                Kept {
+                    now: "animation/Wiggle_2",
+                    before: "animation/Wiggle_2",
+                },
+            ],
+            removed: None,
+        },
+        Reimport {
+            case: "a clip named like another clip's index",
+            names: [Some("1"), None, Some("0")],
+            kept: [
+                Kept {
+                    now: "animation/1",
+                    before: "animation/1",
+                },
+                Kept {
+                    now: "animation/0",
+                    before: "animation/Wiggle",
+                },
+            ],
+            removed: Some("animation/Wiggle_2"),
+        },
+    ];
+    for case in &cases {
+        let scratch = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let source = scratch.path().join("clips.gltf");
+        std::fs::write(
+            &source,
+            gltf_with_clip_names(&[Some("Wiggle"), None, Some("Wiggle")]),
+        )
+        .unwrap();
+        let first = import(&source, "assets/clips.gltf", project.path()).expect("first import");
+        let before = ids_by_name(&first);
+        rename_outputs(
+            project.path(),
+            "assets/clips.gltf",
+            &[
+                Rename {
+                    from: "animation/Wiggle",
+                    to: "animation/0",
+                },
+                Rename {
+                    from: "animation/Wiggle_2",
+                    to: "animation/2",
+                },
+            ],
+        );
 
-    std::fs::write(&source, gltf_with_clip_names(&[Some("1"), None, Some("0")])).unwrap();
-    let second = import(&source, "assets/clips.gltf", project.path()).expect("second import");
+        std::fs::write(&source, gltf_with_clip_names(&case.names)).unwrap();
+        let second = import(&source, "assets/clips.gltf", project.path()).expect("second import");
 
-    let after = ids_by_name(&second);
-    let unique: std::collections::BTreeSet<_> = after.values().collect();
-    assert_eq!(
-        unique.len(),
-        after.len(),
-        "every output has its own id: {after:?}"
-    );
-    assert_eq!(after["animation/1"], before["animation/1"]);
-    assert_eq!(after["animation/0"], before["animation/Wiggle"]);
-    assert_eq!(second.removed, vec![before["animation/Wiggle_2"]]);
+        let after = ids_by_name(&second);
+        let unique: std::collections::BTreeSet<_> = after.values().collect();
+        assert_eq!(unique.len(), after.len(), "{}: {after:?}", case.case);
+        assert_eq!(after["animation/1"], before["animation/1"], "{}", case.case);
+        for kept in &case.kept {
+            assert_eq!(after[kept.now], before[kept.before], "{}", case.case);
+        }
+        let removed: Vec<AssetId> = case.removed.iter().map(|name| before[*name]).collect();
+        assert_eq!(second.removed, removed, "{}", case.case);
+    }
 }

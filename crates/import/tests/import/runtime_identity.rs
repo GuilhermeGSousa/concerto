@@ -20,7 +20,12 @@ impl Drop for Project {
     }
 }
 
-fn runtime(root: &Project) -> (AssetServer, World) {
+struct Runtime {
+    server: AssetServer,
+    world: World,
+}
+
+fn runtime(root: &Project) -> Runtime {
     let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.0.clone()));
     let store = AssetStore::<Mesh>::new();
     server.register_asset(&store);
@@ -30,7 +35,7 @@ fn runtime(root: &Project) -> (AssetServer, World) {
     let mut world = World::new();
     world.insert_resource(store);
     world.insert_resource(server.clone());
-    (server, world)
+    Runtime { server, world }
 }
 
 fn wait_for_mesh(world: &mut World, handle: &AssetHandle<Mesh>) {
@@ -75,7 +80,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
     assert_ne!(id, AssetId::from_path(address));
 
     let serialized = {
-        let (server, mut world) = runtime(&project);
+        let Runtime { server, mut world } = runtime(&project);
         let handle = server.load::<Mesh>(id);
         assert_eq!(handle.id(), id);
         wait_for_mesh(&mut world, &handle);
@@ -88,7 +93,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
     assert!(!project.0.join(address).exists());
 
     let restored: AssetHandle<Mesh> = bincode::deserialize(&serialized).unwrap();
-    let (server, mut world) = runtime(&project);
+    let Runtime { server, mut world } = runtime(&project);
     let by_id = server.load::<Mesh>(restored.id());
     let repeated = server.load::<Mesh>(id);
     assert_eq!(repeated.id(), id);

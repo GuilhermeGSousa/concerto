@@ -289,126 +289,7 @@ fn same_stem_sources_in_different_directories_have_independent_outputs() {
     );
 }
 
-#[test]
-fn an_output_owned_by_another_source_rejects_import_before_any_writes() {
-    let project = Project::new();
-    let source = project.source("assets/triangle.gltf");
-    let occupied = project.path("content/triangle/scene.gasset");
-    std::fs::create_dir_all(occupied.parent().unwrap()).unwrap();
-    let header = ContentAssetHeader {
-        asset_id: AssetId::new(),
-        references: vec![],
-        kind: "Scene".into(),
-        kind_version: 1,
-        provenance: Some(ImportProvenance {
-            source: "assets/another_source.gltf".into(),
-            sub_asset: "scene".into(),
-        }),
-        derived: None,
-    };
-    std::fs::write(
-        occupied,
-        write_content_asset(&header, b"untouched payload").unwrap(),
-    )
-    .unwrap();
-    let before = project.snapshot();
-
-    assert!(concerto_import::import_source(&source, &project.0, &Default::default()).is_err());
-    assert_eq!(
-        project.snapshot(),
-        before,
-        "a collision must not leave partial outputs or metadata"
-    );
-}
-
-#[test]
-fn a_corrupt_existing_header_fails_without_modifying_content_or_metadata() {
-    let project = Project::new();
-    let source = project.source("assets/triangle.gltf");
-    let first = project.import(&source);
-    std::fs::write(project.path(output(&first, "scene")), b"corrupt header").unwrap();
-    rename_node(&source, "Should not be imported");
-    let before = project.snapshot();
-
-    assert!(concerto_import::import_source(&source, &project.0, &Default::default()).is_err());
-    assert_eq!(
-        project.snapshot(),
-        before,
-        "corruption must not reset identity or modify another output"
-    );
-}
-
-#[test]
-fn legacy_content_bootstraps_metadata_and_retains_its_uuid_and_address() {
-    let project = Project::new();
-    let source = project.source("assets/characters/hero.gltf");
-    let legacy_address = "content/hero/scene.gasset";
-    let legacy_id = AssetId::from_path(legacy_address);
-    let legacy_path = project.path(legacy_address);
-    std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
-    let header = ContentAssetHeader {
-        asset_id: legacy_id,
-        references: vec![],
-        kind: "Scene".into(),
-        kind_version: 1,
-        provenance: Some(ImportProvenance {
-            source: "assets/characters/hero.gltf".into(),
-            sub_asset: "scene".into(),
-        }),
-        derived: None,
-    };
-    std::fs::write(
-        &legacy_path,
-        write_content_asset(&header, b"legacy payload").unwrap(),
-    )
-    .unwrap();
-
-    let imported = project.import(&source);
-
-    assert_eq!(output(&imported, "scene"), legacy_address);
-    assert_eq!(
-        read_content_asset_header(&legacy_path).unwrap().asset_id,
-        legacy_id
-    );
-    let metadata: toml::Value =
-        toml::from_str(&std::fs::read_to_string(sidecar(&source)).unwrap()).unwrap();
-    assert_eq!(metadata["version"].as_integer(), Some(1));
-    assert_eq!(metadata["importer"].as_str(), Some("gltf"));
-    assert_eq!(
-        AssetId::from_simple_hex(metadata["outputs"]["scene"]["asset_id"].as_str().unwrap())
-            .unwrap(),
-        legacy_id
-    );
-    assert_eq!(
-        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
-            .unwrap()
-            .get(legacy_id)
-            .map(|entry| entry.address.as_str()),
-        Some(legacy_address)
-    );
-}
-
-#[test]
-fn copying_a_sidecar_cannot_claim_another_live_sources_outputs() {
-    let project = Project::new();
-    let original = project.source("assets/original.gltf");
-    project.import(&original);
-    let copied = project.source("assets/copied.gltf");
-    std::fs::copy(sidecar(&original), sidecar(&copied)).unwrap();
-    let before = project.snapshot();
-
-    assert!(concerto_import::import_source(&copied, &project.0, &Default::default()).is_err());
-    assert_eq!(project.snapshot(), before);
-}
-
-#[test]
-fn external_legacy_source_bootstraps_without_changing_its_identity() {
-    let project = Project::new();
-    let external = Project::new();
-    let source = external.source("triangle.gltf");
-    let address = "content/triangle/scene.gasset";
-    let id = AssetId::new();
-    let path = project.path(address);
+fn write_scene_header(path: &Path, id: AssetId, source: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let header = ContentAssetHeader {
         asset_id: id,
@@ -416,27 +297,165 @@ fn external_legacy_source_bootstraps_without_changing_its_identity() {
         kind: "Scene".into(),
         kind_version: 1,
         provenance: Some(ImportProvenance {
-            source: source.to_str().unwrap().into(),
+            source: source.into(),
             sub_asset: "scene".into(),
         }),
         derived: None,
     };
     std::fs::write(
-        &path,
-        write_content_asset(&header, b"legacy payload").unwrap(),
+        path,
+        write_content_asset(&header, b"untouched payload").unwrap(),
     )
     .unwrap();
+}
 
-    let imported = project.import(&source);
-
-    assert_eq!(output(&imported, "scene"), address);
-    assert_eq!(read_content_asset_header(&path).unwrap().asset_id, id);
-    assert!(sidecar(&source).is_file());
-    assert_eq!(
-        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
-            .unwrap()
-            .get(id)
-            .map(|entry| entry.address.as_str()),
-        Some(address)
+fn owned_by_another_source(project: &Project) -> PathBuf {
+    let source = project.source("assets/triangle.gltf");
+    write_scene_header(
+        &project.path("content/triangle/scene.gasset"),
+        AssetId::new(),
+        "assets/another_source.gltf",
     );
+    source
+}
+
+fn corrupt_header(project: &Project) -> PathBuf {
+    let source = project.source("assets/triangle.gltf");
+    let first = project.import(&source);
+    std::fs::write(project.path(output(&first, "scene")), b"corrupt header").unwrap();
+    rename_node(&source, "Should not be imported");
+    source
+}
+
+fn copied_sidecar(project: &Project) -> PathBuf {
+    let original = project.source("assets/original.gltf");
+    project.import(&original);
+    let copied = project.source("assets/copied.gltf");
+    std::fs::copy(sidecar(&original), sidecar(&copied)).unwrap();
+    copied
+}
+
+const WALK: &str = "HIERARCHY\nROOT Hips\n{\n\tOFFSET 0 0 0\n\tCHANNELS 1 Xposition\n}\nMOTION\nFrames: 2\nFrame Time: 0.1\n0\n1\n";
+
+fn invalid_setting(project: &Project) -> PathBuf {
+    let source = project.path("assets/walk.bvh");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, WALK).unwrap();
+    std::fs::write(
+        sidecar(&source),
+        "version = 1\nsource_id = \"00000000-0000-0000-0000-000000000001\"\nimporter = \"bvh\"\n\n[settings]\nscale = -1.0\n",
+    )
+    .unwrap();
+    source
+}
+
+struct Refusal {
+    case: &'static str,
+    setup: fn(&Project) -> PathBuf,
+    message: &'static str,
+}
+
+#[test]
+fn an_import_that_would_lose_an_identity_or_break_a_setting_writes_nothing() {
+    let cases = [
+        Refusal {
+            case: "an output owned by another source",
+            setup: owned_by_another_source,
+            message: "",
+        },
+        Refusal {
+            case: "a corrupt existing header",
+            setup: corrupt_header,
+            message: "",
+        },
+        Refusal {
+            case: "a sidecar copied from a live source",
+            setup: copied_sidecar,
+            message: "",
+        },
+        Refusal {
+            case: "an invalid setting in the sidecar",
+            setup: invalid_setting,
+            message: "scale",
+        },
+    ];
+    for case in &cases {
+        let project = Project::new();
+        let source = (case.setup)(&project);
+        let before = project.snapshot();
+
+        let error = concerto_import::import_source(&source, &project.0, &Default::default())
+            .expect_err(case.case);
+
+        assert!(
+            format!("{error:?}").contains(case.message),
+            "{}: {error:?}",
+            case.case
+        );
+        assert_eq!(project.snapshot(), before, "{}", case.case);
+    }
+}
+
+struct Legacy {
+    external: bool,
+    source: &'static str,
+    address: &'static str,
+}
+
+#[test]
+fn legacy_content_bootstraps_a_sidecar_and_keeps_its_uuid_and_address() {
+    let cases = [
+        Legacy {
+            external: false,
+            source: "assets/characters/hero.gltf",
+            address: "content/hero/scene.gasset",
+        },
+        Legacy {
+            external: true,
+            source: "triangle.gltf",
+            address: "content/triangle/scene.gasset",
+        },
+    ];
+    for case in &cases {
+        let project = Project::new();
+        let elsewhere = Project::new();
+        let source = if case.external {
+            elsewhere.source(case.source)
+        } else {
+            project.source(case.source)
+        };
+        let recorded = if case.external {
+            source.to_str().unwrap()
+        } else {
+            case.source
+        };
+        let id = AssetId::from_path(case.address);
+        write_scene_header(&project.path(case.address), id, recorded);
+
+        let imported = project.import(&source);
+
+        assert_eq!(output(&imported, "scene"), case.address);
+        assert_eq!(
+            read_content_asset_header(&project.path(case.address))
+                .unwrap()
+                .asset_id,
+            id
+        );
+        let metadata: toml::Value =
+            toml::from_str(&std::fs::read_to_string(sidecar(&source)).unwrap()).unwrap();
+        assert_eq!(metadata["version"].as_integer(), Some(1));
+        assert_eq!(metadata["importer"].as_str(), Some("gltf"));
+        assert_eq!(
+            AssetId::from_simple_hex(metadata["outputs"]["scene"]["asset_id"].as_str().unwrap())
+                .unwrap(),
+            id
+        );
+        assert_eq!(
+            AssetRegistry::from_content_tree(&project.0, "content", "gasset")
+                .unwrap()
+                .get(id)
+                .map(|entry| entry.address.as_str()),
+            Some(case.address)
+        );
+    }
 }

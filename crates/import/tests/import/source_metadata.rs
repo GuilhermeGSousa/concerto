@@ -15,29 +15,19 @@ const HEADER: &str =
     "version = 1\nsource_id = \"00000000-0000-0000-0000-000000000001\"\nimporter = \"bvh\"\n";
 
 #[test]
-fn settings_round_trip_through_load_and_the_writer() {
+fn a_sidecar_round_trips_its_settings_and_refuses_an_unknown_importer() {
     let path = sidecar(&format!(
         "{HEADER}\n[settings]\nscale = 0.5\nframe_range = [0, 10]\n"
     ));
     let metadata = SourceMetadata::load(&path).unwrap();
     assert_eq!(metadata.settings["scale"].as_float(), Some(0.5));
     let written = toml::to_string_pretty(&metadata).unwrap();
-    let reread = sidecar(&written);
-    let again = SourceMetadata::load(&reread).unwrap();
+    let again = SourceMetadata::load(&sidecar(&written)).unwrap();
     assert_eq!(again.settings, metadata.settings);
-}
 
-#[test]
-fn a_sidecar_without_settings_parses_with_an_empty_table_and_writes_none() {
-    let metadata = SourceMetadata::load(&sidecar(HEADER)).unwrap();
-    assert!(metadata.settings.is_empty());
-    assert!(!toml::to_string_pretty(&metadata)
-        .unwrap()
-        .contains("settings"));
-}
+    let bare = SourceMetadata::load(&sidecar(HEADER)).unwrap();
+    assert!(bare.settings.is_empty());
+    assert!(!toml::to_string_pretty(&bare).unwrap().contains("settings"));
 
-#[test]
-fn an_unknown_importer_name_is_still_rejected() {
-    let text = HEADER.replace("bvh", "fbx");
-    assert!(SourceMetadata::load(&sidecar(&text)).is_err());
+    assert!(SourceMetadata::load(&sidecar(&HEADER.replace("bvh", "fbx"))).is_err());
 }
