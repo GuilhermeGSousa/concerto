@@ -83,7 +83,7 @@ pub struct TimedEvent {
     pub name: Name,
 }
 
-/// The named moments of the night, kept in time order; each fires once, when the clock passes it.
+/// The named moments of the night, kept in time order; each fires once, when the clock passes it, and those at or before the start fire on the first advance.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct NightSchedule {
     events: Vec<TimedEvent>,
@@ -116,7 +116,7 @@ pub struct HourStruck {
     pub hour: u32,
 }
 
-/// The night clock reached its end.
+/// The night clock reached its end, 00:00 unless `NightClock::with_end` moved it.
 #[derive(Event, Clone, Copy, Debug, PartialEq)]
 pub struct Midnight;
 
@@ -142,7 +142,7 @@ impl NightClock {
         self
     }
 
-    /// The time the night ends and the clock stops at.
+    /// The time the night ends and the clock stops at; it must come after the start, or the night is over before it begins.
     pub fn with_end(mut self, end: GameTime) -> Self {
         self.end = end;
         self
@@ -170,12 +170,13 @@ impl NightClock {
             return step;
         }
         let from = self.now;
+        let first = from == self.start;
         let to = GameTime((from.0 + real.as_secs_f64() * self.scale).min(self.end.0.max(from.0)));
         self.now = to;
         step.reached = schedule
             .events
             .iter()
-            .filter(|event| from < event.at && event.at <= to)
+            .filter(|event| (first || from < event.at) && event.at <= to)
             .map(|event| ClockReached {
                 name: event.name,
                 at: event.at,
@@ -192,12 +193,15 @@ impl NightClock {
     }
 }
 
-/// Runs the night clock, fires its schedule and its hours, and shows the time on screen.
-pub struct NightClockPlugin;
+/// Runs `clock` as the night clock, fires its schedule and its hours, and shows the time on screen.
+#[derive(Clone, Debug, Default)]
+pub struct NightClockPlugin {
+    pub clock: NightClock,
+}
 
 impl Plugin for NightClockPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(NightClock::default())
+        app.insert_resource(self.clock.clone())
             .insert_resource(NightSchedule::default())
             .insert_resource(NightPaused::default())
             .register_event::<ClockReached>()
@@ -265,7 +269,14 @@ fn update_clock_readout(clock: Res<NightClock>, texts: Query<&mut UIText, With<C
 mod tests {
     use std::time::Duration;
 
-    use concerto::name::name;
+    use concerto::{
+        ecs::{
+            Schedule, World,
+            events::{event_channel::EventChannel, event_cursor::EventCursor},
+            system::executor::single_thread::SingleThreadedExecutor,
+        },
+        name::name,
+    };
 
     use super::*;
 
@@ -394,5 +405,82 @@ mod tests {
     fn the_readout_shows_hours_and_minutes() {
         assert_eq!(readout(GameTime::hm(18, 5)), "18:05");
         assert_eq!(readout(GameTime::hm(24, 0)), "00:00");
+    }
+
+    #[test]
+    fn moments_at_or_before_the_start_fire_on_the_first_advance_only() {
+        let mut clock = NightClock::default();
+        let mut schedule = NightSchedule::default();
+        schedule
+            .at(GameTime::hm(17, 0), name!("early"))
+            .at(GameTime::hm(18, 0), name!("opening"));
+
+        let first = clock.advance(Duration::from_secs(1), false, &schedule);
+        let second = clock.advance(Duration::from_secs(1), false, &schedule);
+
+        assert_eq!(
+            first
+                .reached
+                .iter()
+                .map(|event| event.name)
+                .collect::<Vec<_>>(),
+            vec![name!("early"), name!("opening")]
+        );
+        assert!(second.reached.is_empty());
+    }
+
+    fn world_after_one_frame(paused: bool) -> World {
+        let mut world = World::new();
+        world.insert_resource(NightClock::default().with_scale(1.0e7));
+        world.insert_resource(NightSchedule::default());
+        world.insert_resource(NightPaused(paused));
+        world.insert_resource(EventChannel::<ClockReached>::new());
+        world.insert_resource(EventChannel::<HourStruck>::new());
+        world.insert_resource(EventChannel::<Midnight>::new());
+        let mut time = Time::new();
+        std::thread::sleep(Duration::from_millis(20));
+        time.update();
+        world.insert_resource(time);
+
+        let mut schedule = Schedule::new();
+        schedule.add_system(advance_night_clock);
+        schedule
+            .compile::<SingleThreadedExecutor>(&mut world)
+            .run(&mut world);
+        world
+    }
+
+    fn sent<T: Event + Copy + 'static>(world: &World) -> Vec<T> {
+        let channel = world.get_resource::<EventChannel<T>>().unwrap();
+        channel
+            .read_from(&mut EventCursor::default())
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn the_clock_system_holds_still_while_the_shared_pause_is_on() {
+        let world = world_after_one_frame(true);
+
+        assert_eq!(
+            world.get_resource::<NightClock>().unwrap().now(),
+            GameTime::hm(18, 0)
+        );
+        assert!(sent::<Midnight>(&world).is_empty());
+    }
+
+    #[test]
+    fn the_clock_system_sends_the_hours_and_midnight_it_passed() {
+        let world = world_after_one_frame(false);
+
+        assert!(world.get_resource::<NightClock>().unwrap().is_over());
+        assert_eq!(
+            sent::<HourStruck>(&world)
+                .iter()
+                .map(|struck| struck.hour)
+                .collect::<Vec<_>>(),
+            vec![19, 20, 21, 22, 23, 0]
+        );
+        assert_eq!(sent::<Midnight>(&world), vec![Midnight]);
     }
 }

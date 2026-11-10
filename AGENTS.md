@@ -64,8 +64,8 @@ cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown
 
 Examples are `tech-demo`, `ui-showcase` and `one-more-night`.
 `one-more-night` is the start of a couch co-op game; for now it opens a window
-with the night clock, 18:00 to 00:00 over 18 real minutes, in its corner. Its manor graybox is in `examples/one-more-night/assets/manor/`: the
-Blender source, the scripts that generate and export it, and the export, with a
+with the night clock, 18:00 to 00:00 over 18 real minutes, in its corner. Its
+manor graybox is in `examples/one-more-night/assets/manor/`: the Blender source, the scripts that generate and export it, and the export, with a
 `README.md` that says how to run them; the game does not load it yet. `tech-demo` starts on the grid level: the character with every gizmo layer on a floor under the world grid,
 four boxes, and an NPC patrolling a square of nav points that routes around the
 boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no forest or
