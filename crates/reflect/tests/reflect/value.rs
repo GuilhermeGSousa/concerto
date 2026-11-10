@@ -42,17 +42,6 @@ struct Everything {
     list: Vec<Inner>,
 }
 
-#[derive(Reflect, Default, Debug, PartialEq)]
-struct Smaller {
-    weight: f32,
-}
-
-#[derive(Reflect, Default, Debug, PartialEq)]
-struct Larger {
-    weight: f32,
-    added: f32,
-}
-
 fn everything() -> Everything {
     Everything {
         position: Vec3::new(1.0, 2.0, 3.0),
@@ -106,104 +95,134 @@ fn the_tree_survives_bincode() {
     assert_eq!(decoded, stored);
 }
 
-#[test]
-fn a_field_the_tree_lacks_keeps_its_default() {
-    let stored = to_value(&Smaller { weight: 3.0 }).unwrap();
-    let mut loaded = Larger {
-        weight: 0.0,
-        added: 7.0,
-    };
-    assert!(apply_value(&mut loaded, &stored).is_empty());
-    assert_eq!(
-        loaded,
-        Larger {
-            weight: 3.0,
-            added: 7.0
-        }
-    );
+struct Mismatch {
+    name: &'static str,
+    stored: ReflectedValue,
+    expected: Everything,
+    warnings: &'static [&'static str],
+}
+
+fn field(name: &str, value: ReflectedValue) -> ReflectedValue {
+    ReflectedValue::Struct(vec![(name.into(), value)])
 }
 
 #[test]
-fn a_stored_field_the_type_lacks_is_ignored_with_a_warning_naming_its_path() {
-    let stored = to_value(&Larger {
-        weight: 3.0,
-        added: 1.0,
-    })
-    .unwrap();
-    let mut loaded = Smaller::default();
-    let warnings = apply_value(&mut loaded, &stored);
-    assert_eq!(loaded, Smaller { weight: 3.0 });
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].path, "added");
-}
-
-#[test]
-fn a_node_of_the_wrong_kind_leaves_the_field_unchanged_with_a_warning() {
-    let stored = ReflectedValue::Struct(vec![
-        ("weight".into(), ReflectedValue::List(Vec::new())),
-        ("label".into(), to_value(&"kept".to_string()).unwrap()),
-    ]);
-    let mut loaded = Inner {
-        weight: 9.0,
-        label: String::new(),
-    };
-    let warnings = apply_value(&mut loaded, &stored);
-    assert_eq!(
-        loaded,
-        Inner {
-            weight: 9.0,
-            label: "kept".into()
-        }
-    );
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].path, "weight");
-}
-
-#[test]
-fn a_leaf_that_does_not_decode_leaves_the_field_unchanged_with_a_warning() {
-    let stored = ReflectedValue::Struct(vec![("weight".into(), ReflectedValue::Leaf(vec![1]))]);
-    let mut loaded = Smaller { weight: 2.0 };
-    let warnings = apply_value(&mut loaded, &stored);
-    assert_eq!(loaded, Smaller { weight: 2.0 });
-    assert_eq!(warnings[0].path, "weight");
-}
-
-#[test]
-fn an_unknown_variant_leaves_the_enum_unchanged_with_a_warning() {
-    let stored = ReflectedValue::Variant {
-        name: "Cube".into(),
-        fields: Vec::new(),
-    };
-    let mut loaded = Shape::Sphere(1.0);
-    let warnings = apply_value(&mut loaded, &stored);
-    assert_eq!(loaded, Shape::Sphere(1.0));
-    assert_eq!(warnings.len(), 1);
-}
-
-#[test]
-fn a_list_grows_and_shrinks_to_the_stored_length() {
-    let stored = to_value(&vec![1.0_f32, 2.0, 3.0]).unwrap();
-    let mut longer = vec![9.0_f32; 5];
-    assert!(apply_value(&mut longer, &stored).is_empty());
-    assert_eq!(longer, [1.0, 2.0, 3.0]);
-
-    let mut shorter = vec![9.0_f32];
-    assert!(apply_value(&mut shorter, &stored).is_empty());
-    assert_eq!(shorter, [1.0, 2.0, 3.0]);
-}
-
-#[test]
-fn warnings_name_nested_paths_through_lists_and_variants() {
-    let stored = ReflectedValue::Struct(vec![(
-        "list".into(),
-        ReflectedValue::List(vec![ReflectedValue::Struct(vec![(
-            "gone".into(),
-            to_value(&1.0_f32).unwrap(),
-        )])]),
-    )]);
-    let mut loaded = Everything::default();
-    let warnings = apply_value(&mut loaded, &stored);
-    assert_eq!(warnings[0].path, "list[0].gone");
+fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
+    let label = |text: &str| to_value(&text.to_string()).unwrap();
+    let cases = [
+        Mismatch {
+            name: "a field the tree lacks keeps its value",
+            stored: field("pair", to_value(&Pair(9.0, false)).unwrap()),
+            expected: Everything {
+                pair: Pair(9.0, false),
+                ..everything()
+            },
+            warnings: &[],
+        },
+        Mismatch {
+            name: "a stored field the type lacks is ignored",
+            stored: field("added", to_value(&1.0_f32).unwrap()),
+            expected: everything(),
+            warnings: &["added"],
+        },
+        Mismatch {
+            name: "a node of the wrong kind leaves the field unchanged",
+            stored: field(
+                "inner",
+                ReflectedValue::Struct(vec![
+                    ("weight".into(), ReflectedValue::List(Vec::new())),
+                    ("label".into(), label("kept")),
+                ]),
+            ),
+            expected: Everything {
+                inner: Inner {
+                    weight: 0.5,
+                    label: "kept".into(),
+                },
+                ..everything()
+            },
+            warnings: &["inner.weight"],
+        },
+        Mismatch {
+            name: "a leaf that does not decode leaves the field unchanged",
+            stored: field("inner", field("weight", ReflectedValue::Leaf(vec![1]))),
+            expected: everything(),
+            warnings: &["inner.weight"],
+        },
+        Mismatch {
+            name: "an unknown variant leaves the enum unchanged",
+            stored: field(
+                "shape",
+                ReflectedValue::Variant {
+                    name: "Cube".into(),
+                    fields: Vec::new(),
+                },
+            ),
+            expected: everything(),
+            warnings: &["shape"],
+        },
+        Mismatch {
+            name: "a list shrinks to the stored length and paths name its elements",
+            stored: field(
+                "list",
+                ReflectedValue::List(vec![field("gone", to_value(&1.0_f32).unwrap())]),
+            ),
+            expected: Everything {
+                list: everything().list[..1].to_vec(),
+                ..everything()
+            },
+            warnings: &["list[0].gone"],
+        },
+        Mismatch {
+            name: "a list grows to the stored length from defaults",
+            stored: field(
+                "list",
+                ReflectedValue::List(vec![
+                    ReflectedValue::Struct(Vec::new()),
+                    ReflectedValue::Struct(Vec::new()),
+                    field("label", label("c")),
+                ]),
+            ),
+            expected: Everything {
+                list: [
+                    everything().list,
+                    vec![Inner {
+                        weight: 0.0,
+                        label: "c".into(),
+                    }],
+                ]
+                .concat(),
+                ..everything()
+            },
+            warnings: &[],
+        },
+        Mismatch {
+            name: "paths name the fields of a variant",
+            stored: field(
+                "other",
+                ReflectedValue::Variant {
+                    name: "Cone".into(),
+                    fields: vec![("gone".into(), to_value(&1.0_f32).unwrap())],
+                },
+            ),
+            expected: everything(),
+            warnings: &["other.gone"],
+        },
+    ];
+    for case in cases {
+        let mut loaded = everything();
+        let warnings = apply_value(&mut loaded, &case.stored);
+        assert_eq!(loaded, case.expected, "{}", case.name);
+        assert_eq!(
+            warnings
+                .iter()
+                .map(|warning| warning.path.as_str())
+                .collect::<Vec<_>>(),
+            case.warnings,
+            "{}",
+            case.name
+        );
+    }
 }
 
 struct Doubling;

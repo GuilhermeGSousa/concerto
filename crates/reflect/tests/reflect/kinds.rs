@@ -44,7 +44,7 @@ fn names(value: &dyn Reflect) -> Vec<&'static str> {
 }
 
 #[test]
-fn named_tuple_and_unit_structs_are_structs_with_named_fields() {
+fn named_tuple_unit_and_generic_structs_are_structs_with_named_fields() {
     let named = Named {
         weight: 2.0,
         label: "a".into(),
@@ -74,6 +74,15 @@ fn named_tuple_and_unit_structs_are_structs_with_named_fields() {
         panic!("a unit struct is a Struct");
     };
     assert_eq!(fields.field_len(), 0);
+
+    let generic = Generic { value: 4_u32 };
+    let ReflectRef::Struct(fields) = generic.reflect_ref() else {
+        panic!("a generic struct is a Struct");
+    };
+    assert_eq!(
+        (fields.field("value").unwrap() as &dyn Any).downcast_ref::<u32>(),
+        Some(&4)
+    );
 }
 
 #[test]
@@ -127,36 +136,17 @@ fn an_option_is_an_enum_of_none_and_some() {
 }
 
 #[test]
-fn a_vec_is_a_list_that_grows_with_defaults_and_shrinks() {
-    let mut list = vec![1.0_f32, 2.0];
-    let ReflectMut::List(elements) = list.reflect_mut() else {
-        panic!("a Vec is a List");
-    };
-    elements.push_default();
-    assert_eq!(elements.len(), 3);
-    elements.truncate(1);
-    assert_eq!(list, [1.0]);
-}
-
-#[test]
-fn removing_from_a_vec_takes_that_element_out() {
+fn a_vec_is_a_list_that_grows_with_defaults_shrinks_and_removes_in_range() {
     let mut list = vec![1.0_f32, 2.0, 3.0];
     let ReflectMut::List(elements) = list.reflect_mut() else {
         panic!("a Vec is a List");
     };
     assert!(elements.remove(1));
-    assert_eq!(elements.len(), 2);
-    assert_eq!(list, [1.0, 3.0]);
-}
-
-#[test]
-fn removing_out_of_range_from_a_vec_changes_nothing() {
-    let mut list = vec![1.0_f32, 2.0];
-    let ReflectMut::List(elements) = list.reflect_mut() else {
-        panic!("a Vec is a List");
-    };
     assert!(!elements.remove(2));
-    assert_eq!(list, [1.0, 2.0]);
+    elements.push_default();
+    assert_eq!(elements.len(), 3);
+    elements.truncate(2);
+    assert_eq!(list, [1.0, 3.0]);
 }
 
 #[test]
@@ -177,7 +167,7 @@ fn a_leaf_encodes_and_decodes_itself() {
 }
 
 #[test]
-fn visiting_sees_struct_fields_and_the_active_variants_fields_only() {
+fn visiting_sees_struct_fields_and_the_active_variants_fields_only_and_an_options_value_as_zero() {
     assert_eq!(names(&Named::default()), ["weight", "label"]);
     assert_eq!(names(&Pair::default()), ["0", "1"]);
     assert_eq!(
@@ -188,18 +178,7 @@ fn visiting_sees_struct_fields_and_the_active_variants_fields_only() {
         ["angle", "length"]
     );
     assert!(names(&Shape::Point).is_empty());
+    assert_eq!(names(&Some(1.0_f32)), ["0"]);
     assert!(names(&vec![1.0_f32]).is_empty());
     assert!(names(&1.0_f32).is_empty());
-}
-
-#[test]
-fn a_generic_struct_reflects_its_parameter() {
-    let value = Generic { value: 4_u32 };
-    let ReflectRef::Struct(fields) = value.reflect_ref() else {
-        panic!("a generic struct is a Struct");
-    };
-    assert_eq!(
-        (fields.field("value").unwrap() as &dyn Any).downcast_ref::<u32>(),
-        Some(&4)
-    );
 }

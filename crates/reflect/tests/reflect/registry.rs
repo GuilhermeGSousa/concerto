@@ -1,4 +1,4 @@
-use std::{any::TypeId, sync::Mutex};
+use std::{any::TypeId, collections::HashSet, sync::Mutex};
 
 use concerto_reflect::{
     FromType, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectList,
@@ -64,7 +64,7 @@ mod elsewhere {
 }
 
 #[test]
-fn a_registration_carries_its_names_and_the_type_data_its_derive_declared() {
+fn a_registration_carries_its_names_and_only_the_type_data_its_derive_declared() {
     let mut registry = TypeRegistry::default();
     registry.register::<Gain>();
 
@@ -81,6 +81,11 @@ fn a_registration_carries_its_names_and_the_type_data_its_derive_declared() {
             .get_type_data::<ReflectThing>(TypeId::of::<Gain>())
             .is_some()
     );
+
+    registry.register::<Plain>();
+    let registration = registry.get(TypeId::of::<Plain>()).unwrap();
+    assert!(registration.data::<ReflectThing>().is_none());
+    assert!(registration.data::<ReflectDefault>().is_none());
 }
 
 #[test]
@@ -98,26 +103,6 @@ fn a_registration_fetched_with_get_outlives_a_later_register() {
     assert!(registration.data::<ReflectThing>().is_some());
     assert_eq!(by_name.type_id(), registration.type_id());
     assert!(listed > 2);
-}
-
-#[test]
-fn a_type_declaring_nothing_has_no_type_data() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Plain>();
-
-    let registration = registry.get(TypeId::of::<Plain>()).unwrap();
-    assert!(registration.data::<ReflectThing>().is_none());
-    assert!(registration.data::<ReflectDefault>().is_none());
-}
-
-#[test]
-fn registering_twice_changes_nothing() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Gain>();
-    let once = registry.iter().count();
-    registry.register::<Gain>();
-
-    assert_eq!(registry.iter().count(), once);
 }
 
 #[test]
@@ -159,23 +144,15 @@ fn an_opaque_type_is_a_leaf_that_visits_no_fields_and_still_carries_its_type_dat
 }
 
 #[test]
-fn a_name_resolves_by_full_path_first_then_by_short_name() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Gain>();
-
-    let by_path = registry.get_by_name(std::any::type_name::<Gain>()).unwrap();
-    let by_short = registry.get_by_name("Gain").unwrap();
-
-    assert_eq!(by_path.type_id(), TypeId::of::<Gain>());
-    assert_eq!(by_short.type_id(), TypeId::of::<Gain>());
-    assert!(registry.get_by_name("Missing").is_none());
-}
-
-#[test]
-fn two_types_sharing_a_short_name_resolve_to_the_last_registered_with_a_warning() {
+fn a_name_resolves_by_full_path_then_by_the_last_registered_short_name_with_a_warning() {
     capture_warnings();
     let mut registry = TypeRegistry::default();
     registry.register::<Gain>();
+    assert_eq!(
+        registry.get_by_name("Gain").unwrap().type_id(),
+        TypeId::of::<Gain>()
+    );
+    assert!(registry.get_by_name("Missing").is_none());
 
     registry.register::<elsewhere::Gain>();
 
@@ -236,7 +213,6 @@ fn a_generic_type_registers_where_its_type_data_applies() {
             .get_type_data::<ReflectSpecial>(TypeId::of::<Wrapper<Yes>>())
             .is_some()
     );
-    assert!(registry.get(TypeId::of::<Yes>()).is_some());
 }
 
 #[derive(Reflect, Default)]
@@ -267,58 +243,9 @@ struct Tree {
     shape: Shape,
 }
 
-#[test]
-fn registering_a_type_registers_the_types_its_fields_hold() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Tree>();
-
-    for id in [
-        TypeId::of::<f32>(),
-        TypeId::of::<Option<Leafy>>(),
-        TypeId::of::<Leafy>(),
-        TypeId::of::<u8>(),
-        TypeId::of::<Vec<Twig>>(),
-        TypeId::of::<Twig>(),
-        TypeId::of::<u16>(),
-        TypeId::of::<Shape>(),
-        TypeId::of::<i64>(),
-        TypeId::of::<u32>(),
-    ] {
-        assert!(registry.get(id).is_some(), "{id:?} was not registered");
-    }
-}
-
 #[derive(Reflect, Default)]
 struct Node {
     children: Vec<Node>,
-}
-
-#[test]
-fn a_type_that_holds_itself_registers_once() {
-    let mut registry = TypeRegistry::default();
-    let built_in = registry.iter().count();
-    registry.register::<Node>();
-
-    assert!(registry.get(TypeId::of::<Node>()).is_some());
-    assert!(registry.get(TypeId::of::<Vec<Node>>()).is_some());
-    assert_eq!(registry.iter().count(), built_in + 2);
-}
-
-#[test]
-fn an_opaque_type_registers_none_of_its_fields() {
-    let mut registry = TypeRegistry::default();
-    let built_in: Vec<_> = registry
-        .iter()
-        .map(|registration| registration.type_id())
-        .collect();
-    registry.register::<Handle>();
-
-    let added: Vec<_> = registry
-        .iter()
-        .map(|registration| registration.type_id())
-        .filter(|id| !built_in.contains(id))
-        .collect();
-    assert_eq!(added, [TypeId::of::<Handle>()]);
 }
 
 #[derive(Reflect, Default)]
@@ -337,86 +264,172 @@ enum Sealed {
     Shut,
 }
 
+struct Registers {
+    name: &'static str,
+    register: fn(&mut TypeRegistry),
+    added: Vec<TypeId>,
+}
+
 #[test]
-fn a_unit_only_enum_registers_its_variant_names_in_order() {
+fn registering_a_type_adds_it_and_the_types_its_fields_hold_once() {
+    let cases = [
+        Registers {
+            name: "a struct's fields, through options, lists and variants",
+            register: |registry| registry.register::<Tree>(),
+            added: vec![
+                TypeId::of::<Tree>(),
+                TypeId::of::<Option<Leafy>>(),
+                TypeId::of::<Leafy>(),
+                TypeId::of::<Vec<Twig>>(),
+                TypeId::of::<Twig>(),
+                TypeId::of::<Shape>(),
+            ],
+        },
+        Registers {
+            name: "a type registered twice",
+            register: |registry| {
+                registry.register::<Gain>();
+                registry.register::<Gain>();
+            },
+            added: vec![TypeId::of::<Gain>()],
+        },
+        Registers {
+            name: "a type that holds itself",
+            register: |registry| registry.register::<Node>(),
+            added: vec![TypeId::of::<Node>(), TypeId::of::<Vec<Node>>()],
+        },
+        Registers {
+            name: "an opaque type",
+            register: |registry| registry.register::<Handle>(),
+            added: vec![TypeId::of::<Handle>()],
+        },
+        Registers {
+            name: "a generic type",
+            register: |registry| registry.register::<Wrapper<Yes>>(),
+            added: vec![TypeId::of::<Wrapper<Yes>>(), TypeId::of::<Yes>()],
+        },
+    ];
+    for case in cases {
+        let mut registry = TypeRegistry::default();
+        let built_in: HashSet<TypeId> = registry
+            .iter()
+            .map(|registration| registration.type_id())
+            .collect();
+        (case.register)(&mut registry);
+        let added: HashSet<TypeId> = registry
+            .iter()
+            .map(|registration| registration.type_id())
+            .filter(|id| !built_in.contains(id))
+            .collect();
+        assert_eq!(
+            registry.iter().count(),
+            built_in.len() + added.len(),
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            added,
+            case.added.into_iter().collect::<HashSet<_>>(),
+            "{}",
+            case.name
+        );
+    }
+}
+
+struct Shaped {
+    name: &'static str,
+    id: TypeId,
+    variants: Option<&'static [&'static str]>,
+    option: bool,
+    list: bool,
+}
+
+#[test]
+fn an_enum_registers_its_variant_names_in_order_an_option_its_marker_and_a_vec_its_list() {
     let mut registry = TypeRegistry::default();
     registry.register::<Mood>();
-
-    let info = registry
-        .get_type_data::<ReflectEnumInfo>(TypeId::of::<Mood>())
-        .unwrap();
-    assert_eq!(info.variants, ["Calm", "Angry", "Sleepy"]);
-    assert!(
-        registry
-            .get_type_data::<ReflectOption>(TypeId::of::<Mood>())
-            .is_none()
-    );
-}
-
-#[test]
-fn an_enum_with_tuple_and_named_variants_registers_its_variant_names_in_order() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Shape>();
-
-    let info = registry
-        .get_type_data::<ReflectEnumInfo>(TypeId::of::<Shape>())
-        .unwrap();
-    assert_eq!(info.variants, ["Empty", "Round", "Pair"]);
-}
-
-#[test]
-fn an_option_registers_none_and_some_and_the_option_marker() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Option<Leafy>>();
-
-    let id = TypeId::of::<Option<Leafy>>();
-    assert_eq!(
-        registry
-            .get_type_data::<ReflectEnumInfo>(id)
-            .unwrap()
-            .variants,
-        ["None", "Some"]
-    );
-    assert!(registry.get_type_data::<ReflectOption>(id).is_some());
-}
-
-#[test]
-fn a_vec_field_registers_as_a_list_with_nothing_declared() {
-    let mut registry = TypeRegistry::default();
     registry.register::<Tree>();
-
-    assert!(
-        registry
-            .get_type_data::<ReflectList>(TypeId::of::<Vec<Twig>>())
-            .is_some()
-    );
-    assert!(
-        registry
-            .get_type_data::<ReflectList>(TypeId::of::<Tree>())
-            .is_none()
-    );
-}
-
-#[test]
-fn an_option_is_not_a_list() {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Option<f32>>();
-
-    assert!(
-        registry
-            .get_type_data::<ReflectList>(TypeId::of::<Option<f32>>())
-            .is_none()
-    );
-}
-
-#[test]
-fn a_struct_and_an_opaque_enum_register_no_variant_names() {
-    let mut registry = TypeRegistry::default();
     registry.register::<Gain>();
     registry.register::<Sealed>();
-
-    for id in [TypeId::of::<Gain>(), TypeId::of::<Sealed>()] {
-        assert!(registry.get_type_data::<ReflectEnumInfo>(id).is_none());
-        assert!(registry.get_type_data::<ReflectOption>(id).is_none());
+    registry.register::<Option<f32>>();
+    let cases = [
+        Shaped {
+            name: "a unit-only enum",
+            id: TypeId::of::<Mood>(),
+            variants: Some(&["Calm", "Angry", "Sleepy"]),
+            option: false,
+            list: false,
+        },
+        Shaped {
+            name: "an enum with tuple and named variants",
+            id: TypeId::of::<Shape>(),
+            variants: Some(&["Empty", "Round", "Pair"]),
+            option: false,
+            list: false,
+        },
+        Shaped {
+            name: "an option",
+            id: TypeId::of::<Option<Leafy>>(),
+            variants: Some(&["None", "Some"]),
+            option: true,
+            list: false,
+        },
+        Shaped {
+            name: "an option of a leaf",
+            id: TypeId::of::<Option<f32>>(),
+            variants: Some(&["None", "Some"]),
+            option: true,
+            list: false,
+        },
+        Shaped {
+            name: "a vec field",
+            id: TypeId::of::<Vec<Twig>>(),
+            variants: None,
+            option: false,
+            list: true,
+        },
+        Shaped {
+            name: "a struct",
+            id: TypeId::of::<Tree>(),
+            variants: None,
+            option: false,
+            list: false,
+        },
+        Shaped {
+            name: "a struct declaring type data",
+            id: TypeId::of::<Gain>(),
+            variants: None,
+            option: false,
+            list: false,
+        },
+        Shaped {
+            name: "an opaque enum",
+            id: TypeId::of::<Sealed>(),
+            variants: None,
+            option: false,
+            list: false,
+        },
+    ];
+    for case in cases {
+        assert_eq!(
+            registry
+                .get_type_data::<ReflectEnumInfo>(case.id)
+                .map(|info| info.variants),
+            case.variants,
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            registry.get_type_data::<ReflectOption>(case.id).is_some(),
+            case.option,
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            registry.get_type_data::<ReflectList>(case.id).is_some(),
+            case.list,
+            "{}",
+            case.name
+        );
     }
 }

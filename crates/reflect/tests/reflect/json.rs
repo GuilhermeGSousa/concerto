@@ -3,191 +3,98 @@ use std::fmt::Debug;
 
 use concerto_color::Color;
 use concerto_reflect::{
-    LeafError, LeafHook, Reflect, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistry,
-    apply_value, json_to_value, json_to_value_with, to_json, to_value,
+    LeafError, LeafHook, Reflect, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistration,
+    TypeRegistry, apply_value, json_to_value, json_to_value_with, to_json, to_value,
 };
 use glam::{Quat, Vec2, Vec3, Vec4};
 use serde_json::{Value, json};
 
-fn codec<T: Reflect>(registry: &TypeRegistry) -> &ReflectJson {
-    registry
-        .get_type_data::<ReflectJson>(TypeId::of::<T>())
-        .unwrap_or_else(|| panic!("{} has no JSON codec", std::any::type_name::<T>()))
+struct Codec {
+    value: Box<dyn Reflect>,
+    json: Value,
 }
 
-fn decode<T: Reflect + Clone>(registry: &TypeRegistry, value: &Value) -> Result<T, String> {
-    let decoded = (codec::<T>(registry).from_json)(value)?;
-    Ok((decoded.as_ref() as &dyn Any)
-        .downcast_ref::<T>()
-        .expect("the codec builds its own type")
-        .clone())
+fn codec(value: impl Reflect, json: Value) -> Codec {
+    Codec {
+        value: Box::new(value),
+        json,
+    }
 }
 
-fn assert_codec<T: Reflect + Clone + Default + PartialEq + Debug>(value: T, expected: Value) {
+#[test]
+fn each_leaf_with_a_codec_is_written_as_its_json_and_built_back_from_it() {
     let registry = TypeRegistry::default();
-    assert_eq!((codec::<T>(&registry).to_json)(&value), expected);
-    assert_eq!(to_json(&value, &registry), expected);
-    assert_eq!(decode::<T>(&registry, &expected), Ok(value.clone()));
-    assert_eq!(write::<T>(&registry, &expected, T::default()), Ok(value));
-}
+    let cases = [
+        codec(true, json!(true)),
+        codec(false, json!(false)),
+        codec(u8::MAX, json!(255)),
+        codec(u16::MAX, json!(65535)),
+        codec(u32::MAX, json!(4294967295_u64)),
+        codec(u64::MAX, json!(u64::MAX)),
+        codec(usize::MAX, json!(usize::MAX)),
+        codec(i8::MIN, json!(-128)),
+        codec(i16::MIN, json!(-32768)),
+        codec(i32::MIN, json!(-2147483648_i64)),
+        codec(i64::MIN, json!(i64::MIN)),
+        codec(isize::MIN, json!(isize::MIN)),
+        codec(0.1_f32, json!(0.1)),
+        codec(-2.5_f32, json!(-2.5)),
+        codec(f32::MAX, json!(3.4028235e38)),
+        codec(f32::MIN_POSITIVE, json!(1.1754944e-38)),
+        codec(0.1_f64, json!(0.1)),
+        codec(f64::MAX, json!(f64::MAX)),
+        codec(f32::INFINITY, json!("inf")),
+        codec(f32::NEG_INFINITY, json!("-inf")),
+        codec(f64::INFINITY, json!("inf")),
+        codec(f64::NEG_INFINITY, json!("-inf")),
+        codec(f32::NAN, json!("NaN")),
+        codec(f64::NAN, json!("NaN")),
+        codec(String::from("Hero"), json!("Hero")),
+        codec(Vec2::new(1.0, -0.5), json!([1.0, -0.5])),
+        codec(Vec3::new(0.1, 2.0, 3.0), json!([0.1, 2.0, 3.0])),
+        codec(Vec4::new(1.0, 2.0, 3.0, 4.0), json!([1.0, 2.0, 3.0, 4.0])),
+        codec(
+            Quat::from_xyzw(0.0, 0.6, 0.0, 0.8),
+            json!([0.0, 0.6, 0.0, 0.8]),
+        ),
+        codec(
+            Color::rgba(0.1, 0.5, 1.0, 0.25),
+            json!([0.1, 0.5, 1.0, 0.25]),
+        ),
+        codec(Color::WHITE, json!([1.0, 1.0, 1.0, 1.0])),
+    ];
+    for case in cases {
+        let value = case.value.as_ref();
+        let codec = registry
+            .get_type_data::<ReflectJson>((value as &dyn Any).type_id())
+            .unwrap_or_else(|| panic!("{} has no JSON codec", case.json));
+        assert_eq!(to_json(value, &registry), case.json);
+        assert_eq!((codec.to_json)(value), case.json);
+        let built = (codec.from_json)(&case.json).unwrap();
+        assert_eq!(to_json(built.as_ref(), &registry), case.json);
+        assert_eq!(
+            json_to_value(&case.json, (value as &dyn Any).type_id(), &registry),
+            Ok(to_value(value).unwrap()),
+            "{}",
+            case.json
+        );
+    }
 
-fn write<T: Reflect + Debug>(
-    registry: &TypeRegistry,
-    json: &Value,
-    mut onto: T,
-) -> Result<T, String> {
-    let stored = json_to_value(json, TypeId::of::<T>(), registry)?;
-    let warnings = apply_value(&mut onto, &stored);
-    assert!(warnings.is_empty(), "{warnings:?}");
-    Ok(onto)
-}
+    for case in [codec(3.0_f32, json!(3)), codec(-3.0_f64, json!(-3))] {
+        let value = case.value.as_ref();
+        assert_eq!(
+            json_to_value(&case.json, (value as &dyn Any).type_id(), &registry),
+            Ok(to_value(value).unwrap()),
+            "a float decodes from the integer {}",
+            case.json
+        );
+    }
 
-fn write_error<T: Reflect>(registry: &TypeRegistry, json: Value) -> String {
-    json_to_value(&json, TypeId::of::<T>(), registry).expect_err("the value must not decode")
-}
-
-#[test]
-fn bool_is_a_json_boolean() {
-    assert_codec(true, json!(true));
-    assert_codec(false, json!(false));
-}
-
-#[test]
-fn integers_are_json_numbers_at_their_full_range() {
-    assert_codec(u8::MAX, json!(255));
-    assert_codec(u16::MAX, json!(65535));
-    assert_codec(u32::MAX, json!(4294967295_u64));
-    assert_codec(u64::MAX, json!(u64::MAX));
-    assert_codec(usize::MAX, json!(usize::MAX));
-    assert_codec(i8::MIN, json!(-128));
-    assert_codec(i16::MIN, json!(-32768));
-    assert_codec(i32::MIN, json!(-2147483648_i64));
-    assert_codec(i64::MIN, json!(i64::MIN));
-    assert_codec(isize::MIN, json!(isize::MIN));
-}
-
-#[test]
-fn an_integer_out_of_range_or_not_an_integer_does_not_decode() {
-    let registry = TypeRegistry::default();
-    assert!(decode::<u8>(&registry, &json!(256)).is_err());
-    assert!(decode::<u8>(&registry, &json!(-1)).is_err());
-    assert!(decode::<i8>(&registry, &json!(128)).is_err());
-    assert!(decode::<u32>(&registry, &json!(1.5)).is_err());
-    assert!(decode::<u32>(&registry, &json!("1")).is_err());
-}
-
-#[test]
-fn floats_are_json_numbers_in_their_shortest_form() {
-    assert_codec(0.1_f32, json!(0.1));
-    assert_codec(-2.5_f32, json!(-2.5));
-    assert_codec(f32::MAX, json!(3.4028235e38));
-    assert_codec(f32::MIN_POSITIVE, json!(1.1754944e-38));
-    assert_codec(0.1_f64, json!(0.1));
-    assert_codec(f64::MAX, json!(f64::MAX));
-}
-
-#[test]
-fn a_float_decodes_from_an_integer() {
-    let registry = TypeRegistry::default();
-    assert_eq!(decode::<f32>(&registry, &json!(3)), Ok(3.0));
-    assert_eq!(decode::<f64>(&registry, &json!(-3)), Ok(-3.0));
-}
-
-#[test]
-fn a_leaf_written_from_json_is_the_codecs_value_encoded() {
-    let registry = TypeRegistry::default();
-    assert_eq!(
-        json_to_value(&json!([1.0, 2.0, 3.0]), TypeId::of::<Vec3>(), &registry),
-        Ok(to_value(&Vec3::new(1.0, 2.0, 3.0)).unwrap())
-    );
-}
-
-#[test]
-fn non_finite_floats_are_strings() {
-    assert_codec(f32::INFINITY, json!("inf"));
-    assert_codec(f32::NEG_INFINITY, json!("-inf"));
-    assert_codec(f64::INFINITY, json!("inf"));
-    assert_codec(f64::NEG_INFINITY, json!("-inf"));
-
-    let registry = TypeRegistry::default();
-    let nan = f32::NAN;
-    assert_eq!(to_json(&nan, &registry), json!("NaN"));
-    assert!(decode::<f32>(&registry, &json!("NaN")).unwrap().is_nan());
-    assert_eq!(to_json(&f64::NAN, &registry), json!("NaN"));
-    assert!(decode::<f64>(&registry, &json!("NaN")).unwrap().is_nan());
-    assert!(
-        write::<f32>(&registry, &json!("NaN"), 0.0)
-            .unwrap()
-            .is_nan()
-    );
-}
-
-#[test]
-fn a_float_does_not_decode_from_a_finite_string_or_out_of_range() {
-    let registry = TypeRegistry::default();
-    assert!(decode::<f32>(&registry, &json!("1.5")).is_err());
-    assert!(decode::<f32>(&registry, &json!("fast")).is_err());
-    assert!(decode::<f32>(&registry, &json!(1e40)).is_err());
-    assert!(decode::<f64>(&registry, &json!(true)).is_err());
-}
-
-#[test]
-fn string_is_a_json_string() {
-    assert_codec(String::from("Hero"), json!("Hero"));
-    assert!(decode::<String>(&TypeRegistry::default(), &json!(1)).is_err());
-}
-
-#[test]
-fn vectors_and_quaternions_are_arrays_of_their_components() {
-    assert_codec(Vec2::new(1.0, -0.5), json!([1.0, -0.5]));
-    assert_codec(Vec3::new(0.1, 2.0, 3.0), json!([0.1, 2.0, 3.0]));
-    assert_codec(Vec4::new(1.0, 2.0, 3.0, 4.0), json!([1.0, 2.0, 3.0, 4.0]));
-    assert_codec(
-        Quat::from_xyzw(0.0, 0.6, 0.0, 0.8),
-        json!([0.0, 0.6, 0.0, 0.8]),
-    );
-}
-
-#[test]
-fn a_vector_of_the_wrong_length_or_with_a_non_number_does_not_decode() {
-    let registry = TypeRegistry::default();
-    assert!(decode::<Vec3>(&registry, &json!([1.0, 2.0])).is_err());
-    assert!(decode::<Vec3>(&registry, &json!([1.0, 2.0, 3.0, 4.0])).is_err());
-    assert!(decode::<Vec3>(&registry, &json!([1.0, "x", 3.0])).is_err());
-    assert!(decode::<Quat>(&registry, &json!({ "x": 0.0 })).is_err());
-}
-
-#[test]
-fn a_color_is_an_array_of_its_linear_components() {
-    assert_codec(
-        Color::rgba(0.1, 0.5, 1.0, 0.25),
-        json!([0.1, 0.5, 1.0, 0.25]),
-    );
-    assert_codec(Color::WHITE, json!([1.0, 1.0, 1.0, 1.0]));
-}
-
-#[test]
-fn a_color_in_another_space_is_written_as_its_linear_components() {
-    let registry = TypeRegistry::default();
     let srgb = Color::srgba(0.5, 0.5, 0.5, 1.0);
     let [r, g, b, a] = srgb.to_array();
-
-    let json = to_json(&srgb, &registry);
     assert_eq!(
-        decode::<Color>(&registry, &json),
-        Ok(Color::rgba(r, g, b, a))
-    );
-}
-
-#[test]
-fn a_color_of_the_wrong_length_or_with_a_non_number_does_not_decode() {
-    let registry = TypeRegistry::default();
-    assert!(decode::<Color>(&registry, &json!([1.0, 1.0, 1.0])).is_err());
-    assert!(decode::<Color>(&registry, &json!([1.0, 1.0, 1.0, 1.0, 1.0])).is_err());
-    assert!(decode::<Color>(&registry, &json!([1.0, "x", 1.0, 1.0])).is_err());
-    assert_eq!(
-        write_error::<Color>(&registry, json!("#ffffff")),
-        "expected an array of 4 numbers"
+        to_json(&srgb, &registry),
+        to_json(&Color::rgba(r, g, b, a), &registry)
     );
 }
 
@@ -315,6 +222,17 @@ fn nested() -> Nested {
     }
 }
 
+fn write<T: Reflect + Debug>(
+    registry: &TypeRegistry,
+    json: &Value,
+    mut onto: T,
+) -> Result<T, String> {
+    let stored = json_to_value(json, TypeId::of::<T>(), registry)?;
+    let warnings = apply_value(&mut onto, &stored);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    Ok(onto)
+}
+
 fn nested_registry() -> TypeRegistry {
     let mut registry = TypeRegistry::default();
     registry.register::<Nested>();
@@ -346,200 +264,198 @@ fn an_opaque_field_written_as_its_marker_is_left_as_it_was() {
     );
 }
 
-#[test]
-fn fields_left_out_of_the_json_are_not_written() {
-    let registry = nested_registry();
-    let json = json!({ "position": [4.0, 5.0, 6.0], "cone": { "Cone": { "angle": 1.0 } } });
+struct Partial {
+    name: &'static str,
+    json: Value,
+    expected: Nested,
+}
 
-    let written = write(&registry, &json, nested()).unwrap();
-    assert_eq!(
-        written,
-        Nested {
-            position: Vec3::new(4.0, 5.0, 6.0),
-            cone: Shape::Cone {
-                angle: 1.0,
-                length: 8.0,
+#[test]
+fn a_partial_write_changes_only_what_the_json_names() {
+    let registry = nested_registry();
+    let cases = [
+        Partial {
+            name: "fields left out of the json are not written",
+            json: json!({ "position": [4.0, 5.0, 6.0], "cone": { "Cone": { "angle": 1.0 } } }),
+            expected: Nested {
+                position: Vec3::new(4.0, 5.0, 6.0),
+                cone: Shape::Cone {
+                    angle: 1.0,
+                    length: 8.0,
+                },
+                ..nested()
             },
-            ..nested()
-        }
-    );
-}
-
-#[test]
-fn a_variant_switched_by_name_alone_starts_from_its_defaults() {
-    let registry = nested_registry();
-    let written = write(
-        &registry,
-        &json!({ "point": "Cone", "maybe": "None" }),
-        nested(),
-    );
-
-    assert_eq!(
-        written.map(|written| (written.point, written.maybe)),
-        Ok((
-            Shape::Cone {
-                angle: 0.0,
-                length: 0.0
+        },
+        Partial {
+            name: "a variant switched by name alone starts from its defaults",
+            json: json!({ "point": "Cone", "maybe": "None" }),
+            expected: Nested {
+                point: Shape::Cone {
+                    angle: 0.0,
+                    length: 0.0,
+                },
+                maybe: None,
+                ..nested()
             },
-            None
-        ))
-    );
+        },
+        Partial {
+            name: "a list takes the json length",
+            json: json!({ "list": [{ "label": "only" }] }),
+            expected: Nested {
+                list: vec![Inner {
+                    weight: 1.0,
+                    label: "only".into(),
+                }],
+                ..nested()
+            },
+        },
+    ];
+    for case in cases {
+        assert_eq!(
+            write(&registry, &case.json, nested()),
+            Ok(case.expected),
+            "{}",
+            case.name
+        );
+    }
+}
+
+struct Refused {
+    target: TypeId,
+    registry: fn() -> TypeRegistry,
+    json: Value,
+    error: String,
+}
+
+fn refused<T: Reflect>(json: Value, error: &str) -> Refused {
+    Refused {
+        target: TypeId::of::<T>(),
+        registry: nested_registry,
+        json,
+        error: error.into(),
+    }
 }
 
 #[test]
-fn a_list_written_from_json_takes_the_json_length() {
-    let registry = nested_registry();
-    let written = write(
-        &registry,
-        &json!({ "list": [{ "label": "only" }] }),
-        nested(),
+fn json_that_does_not_fit_the_type_is_refused_naming_the_path_and_the_shape_it_expects() {
+    let number = "expected a number, or \"NaN\", \"inf\" or \"-inf\"";
+    let secret = std::any::type_name::<Secret>();
+    let opaque = format!("{secret} has no JSON form, so it cannot be written");
+    let no_default = format!(
+        "{} has no JSON form and no registered Default, so JSON cannot build it",
+        std::any::type_name::<Inner>()
     );
-
-    assert_eq!(
-        written.map(|written| written.list),
-        Ok(vec![Inner {
-            weight: 1.0,
-            label: "only".into(),
-        }])
-    );
-}
-
-#[test]
-fn a_leaf_that_does_not_decode_names_its_path_and_shape() {
-    let registry = nested_registry();
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "position": [1.0, "x", 3.0] })),
-        "position: expected an array of 3 numbers"
-    );
-    assert_eq!(
-        write_error::<Nested>(
-            &registry,
-            json!({ "list": [{ "weight": 1.0 }, { "weight": "heavy" }] })
+    let variant = "shape: expected a variant name, or an object with one key naming the variant";
+    let cases = [
+        refused::<u8>(json!(256), "expected an integer from 0 to 255"),
+        refused::<u8>(json!(-1), "expected an integer from 0 to 255"),
+        refused::<i8>(json!(128), "expected an integer from -128 to 127"),
+        refused::<u32>(json!(1.5), "expected an integer from 0 to 4294967295"),
+        refused::<u32>(json!("1"), "expected an integer from 0 to 4294967295"),
+        refused::<f32>(json!("1.5"), number),
+        refused::<f32>(json!("fast"), number),
+        refused::<f32>(json!(1e40), number),
+        refused::<f64>(json!(true), number),
+        refused::<String>(json!(1), "expected a string"),
+        refused::<Vec3>(json!([1.0, 2.0]), "expected an array of 3 numbers"),
+        refused::<Vec3>(
+            json!([1.0, 2.0, 3.0, 4.0]),
+            "expected an array of 3 numbers",
         ),
-        "list[1].weight: expected a number, or \"NaN\", \"inf\" or \"-inf\""
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "cone": { "Cone": { "angle": true } } })),
-        "cone.angle: expected a number, or \"NaN\", \"inf\" or \"-inf\""
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "pair": { "0": 256 } })),
-        "pair.0: expected an integer from 0 to 255"
-    );
-    assert_eq!(
-        write_error::<Vec3>(&registry, json!("up")),
-        "expected an array of 3 numbers"
-    );
-}
-
-#[test]
-fn a_struct_that_is_not_an_object_names_its_fields() {
-    let registry = nested_registry();
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "pair": 3 })),
-        "pair: expected an object with the fields 0, 1"
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!([])),
-        "expected an object with the fields position, shape, point, cone, list, pair, maybe, never, secret, tint"
-    );
-}
-
-#[test]
-fn an_unknown_field_is_named_with_the_fields_there_are() {
-    let registry = nested_registry();
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "list": [{ "mass": 1.0 }] })),
-        "list[0].mass: no such field; the fields are weight, label"
-    );
-}
-
-#[test]
-fn an_enum_names_the_variant_shape_it_expects() {
-    let registry = nested_registry();
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "shape": "Cube" })),
-        "shape: no variant 'Cube'; the variants are Point, Sphere, Cone"
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "shape": { "Cube": {} } })),
-        "shape: no variant 'Cube'; the variants are Point, Sphere, Cone"
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "maybe": "Many" })),
-        "maybe: no variant 'Many'; the variants are None, Some"
-    );
-    let shape = "shape: expected a variant name, or an object with one key naming the variant";
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "shape": { "Sphere": {}, "Cone": {} } })),
-        shape
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "shape": 1 })),
-        shape
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "shape": { "Sphere": 2.0 } })),
-        "shape: expected an object with the fields 0"
-    );
-}
-
-#[test]
-fn a_list_that_is_not_an_array_says_so() {
-    let registry = nested_registry();
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "list": { "weight": 1.0 } })),
-        "list: expected an array"
-    );
-}
-
-#[test]
-fn an_opaque_leaf_cannot_be_written() {
-    let registry = nested_registry();
-    let opaque = format!(
-        "{} has no JSON form, so it cannot be written",
-        std::any::type_name::<Secret>()
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "secret": 42 })),
-        format!("secret: {opaque}")
-    );
-    assert_eq!(
-        write_error::<Nested>(&registry, json!({ "secret": { "opaque": "other::Type" } })),
-        format!("secret: {opaque}")
-    );
-
-    let mut registry = TypeRegistry::default();
-    registry.register::<Secret>();
-    assert_eq!(
-        write_error::<Secret>(
-            &registry,
-            json!({ "opaque": std::any::type_name::<Secret>() })
+        refused::<Vec3>(json!([1.0, "x", 3.0]), "expected an array of 3 numbers"),
+        refused::<Vec3>(json!("up"), "expected an array of 3 numbers"),
+        refused::<Quat>(json!({ "x": 0.0 }), "expected an array of 4 numbers"),
+        refused::<Color>(json!([1.0, 1.0, 1.0]), "expected an array of 4 numbers"),
+        refused::<Color>(
+            json!([1.0, 1.0, 1.0, 1.0, 1.0]),
+            "expected an array of 4 numbers",
         ),
-        opaque
-    );
-}
-
-#[test]
-fn a_type_with_no_codec_and_no_registered_default_cannot_be_built() {
-    let registry = nested_registry();
-    assert_eq!(
-        write_error::<Inner>(&registry, json!({})),
-        format!(
-            "{} has no JSON form and no registered Default, so JSON cannot build it",
-            std::any::type_name::<Inner>()
-        )
-    );
-
-    let mut registry = TypeRegistry::default();
-    registry.add(concerto_reflect::TypeRegistration::of::<Inner>());
-    assert_eq!(
-        write_error::<Inner>(&registry, json!({})),
-        format!(
-            "{} has no JSON form and no registered Default, so JSON cannot build it",
-            std::any::type_name::<Inner>()
-        )
-    );
+        refused::<Color>(
+            json!([1.0, "x", 1.0, 1.0]),
+            "expected an array of 4 numbers",
+        ),
+        refused::<Color>(json!("#ffffff"), "expected an array of 4 numbers"),
+        refused::<Nested>(
+            json!({ "position": [1.0, "x", 3.0] }),
+            "position: expected an array of 3 numbers",
+        ),
+        refused::<Nested>(
+            json!({ "list": [{ "weight": 1.0 }, { "weight": "heavy" }] }),
+            &format!("list[1].weight: {number}"),
+        ),
+        refused::<Nested>(
+            json!({ "cone": { "Cone": { "angle": true } } }),
+            &format!("cone.angle: {number}"),
+        ),
+        refused::<Nested>(
+            json!({ "pair": { "0": 256 } }),
+            "pair.0: expected an integer from 0 to 255",
+        ),
+        refused::<Nested>(
+            json!({ "pair": 3 }),
+            "pair: expected an object with the fields 0, 1",
+        ),
+        refused::<Nested>(
+            json!([]),
+            "expected an object with the fields position, shape, point, cone, list, pair, maybe, never, secret, tint",
+        ),
+        refused::<Nested>(
+            json!({ "list": [{ "mass": 1.0 }] }),
+            "list[0].mass: no such field; the fields are weight, label",
+        ),
+        refused::<Nested>(
+            json!({ "shape": "Cube" }),
+            "shape: no variant 'Cube'; the variants are Point, Sphere, Cone",
+        ),
+        refused::<Nested>(
+            json!({ "shape": { "Cube": {} } }),
+            "shape: no variant 'Cube'; the variants are Point, Sphere, Cone",
+        ),
+        refused::<Nested>(
+            json!({ "maybe": "Many" }),
+            "maybe: no variant 'Many'; the variants are None, Some",
+        ),
+        refused::<Nested>(json!({ "shape": { "Sphere": {}, "Cone": {} } }), variant),
+        refused::<Nested>(json!({ "shape": 1 }), variant),
+        refused::<Nested>(
+            json!({ "shape": { "Sphere": 2.0 } }),
+            "shape: expected an object with the fields 0",
+        ),
+        refused::<Nested>(
+            json!({ "list": { "weight": 1.0 } }),
+            "list: expected an array",
+        ),
+        refused::<Nested>(json!({ "secret": 42 }), &format!("secret: {opaque}")),
+        refused::<Nested>(
+            json!({ "secret": { "opaque": "other::Type" } }),
+            &format!("secret: {opaque}"),
+        ),
+        Refused {
+            registry: || {
+                let mut registry = TypeRegistry::default();
+                registry.register::<Secret>();
+                registry
+            },
+            ..refused::<Secret>(json!({ "opaque": secret }), &opaque)
+        },
+        refused::<Inner>(json!({}), &no_default),
+        Refused {
+            registry: || {
+                let mut registry = TypeRegistry::default();
+                registry.add(TypeRegistration::of::<Inner>());
+                registry
+            },
+            ..refused::<Inner>(json!({}), &no_default)
+        },
+    ];
+    for case in cases {
+        assert_eq!(
+            json_to_value(&case.json, case.target, &(case.registry)()),
+            Err(case.error),
+            "{}",
+            case.json
+        );
+    }
 }
 
 struct Refusing;
