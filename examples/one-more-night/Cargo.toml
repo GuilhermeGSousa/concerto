@@ -23,6 +23,7 @@ path = "src/main.rs"
 
 [dependencies]
 concerto = { version = "0.1.0", path = "../.." }
+one-more-night-case = { path = "case" }
 
 [build-dependencies]
 concerto-asset-build = { version = "0.1.0", path = "../../crates/asset-build" }

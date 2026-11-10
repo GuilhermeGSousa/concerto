@@ -400,10 +400,32 @@ fn import_with(
             }
         }
     }
+    let mut readable = HashMap::new();
+    for dependency in &outputs.dependencies {
+        readable
+            .entry(dependency.path.as_path())
+            .or_insert_with(|| match readable_file(&dependency.path) {
+                Ok(()) => true,
+                Err(error) => {
+                    log::warn!(
+                        "'{}' refers to '{}', which cannot be read ({error}); importing without it",
+                        source.display(),
+                        dependency.path.display()
+                    );
+                    false
+                }
+            });
+    }
+    let readable_dependencies: Vec<DependencyEntry> = outputs
+        .dependencies
+        .iter()
+        .filter(|dependency| readable[dependency.path.as_path()])
+        .cloned()
+        .collect();
     let copies = if read == source {
         Vec::new()
     } else {
-        planned_copies(read, source, project_root, &outputs.dependencies)?
+        planned_copies(read, source, project_root, &readable_dependencies)?
     };
 
     // Staging all bytes first catches write errors before replacing old files.
@@ -449,6 +471,14 @@ fn import_with(
         siblings,
         removed,
     })
+}
+
+fn readable_file(path: &Path) -> std::io::Result<()> {
+    if std::fs::File::open(path)?.metadata()?.is_file() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("not a file"))
+    }
 }
 
 fn planned_copies(
@@ -1057,5 +1087,34 @@ mod tests {
         assert!(result.is_err());
         assert!(fixture.root().join(&dropped.address).exists());
         assert_eq!(fixture.snapshot(), before);
+    }
+
+    #[test]
+    fn an_in_place_import_warns_about_a_dependency_it_cannot_read() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
+        let project = tempfile::tempdir().expect("tempdir");
+        let assets = project.path().join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        for name in ["unread_texture.obj", "unread_texture.mtl"] {
+            std::fs::copy(fixtures.join(name), assets.join(name)).unwrap();
+        }
+        let logger = capture_logs();
+
+        import_source(
+            &assets.join("unread_texture.obj"),
+            project.path(),
+            &ContentConfig::default(),
+        )
+        .expect("the import succeeds");
+
+        let lines = logger.lines();
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("absent.png"))
+                .count(),
+            1,
+            "{lines:?}"
+        );
     }
 }

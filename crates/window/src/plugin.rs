@@ -1,4 +1,7 @@
-use concerto_ecs::resource::{ResMut, Resource};
+use concerto_ecs::{
+    resource::{ResMut, Resource},
+    IntoSystemConfig,
+};
 use glam::Vec2;
 
 use crate::{
@@ -6,7 +9,7 @@ use crate::{
     events::{fold_input, fold_window, FoldInput, GamepadConnection, InputGate, WindowEvent},
     input::{
         actions::{resolve_actions, ActionFired, ActionMap},
-        Input,
+        update_players, Input, PlayerEvent, Players,
     },
 };
 use concerto_app::{
@@ -72,6 +75,9 @@ impl Plugin for WindowPlugin {
         app.register_event::<ActionFired>();
         app.add_system(First, fold_input.at_edit_time().in_set(FoldInput));
         app.add_system(First, fold_window.at_edit_time());
+        app.insert_resource(Players::default());
+        app.register_event::<PlayerEvent>();
+        app.add_system(First, update_players.after(FoldInput));
         app.add_system(LateUpdate, resolve_actions);
         app.insert_resource(WindowClipboard::default());
         app.register_event::<ClipboardPasted>();

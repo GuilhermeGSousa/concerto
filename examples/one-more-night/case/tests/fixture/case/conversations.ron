@@ -1,0 +1,15 @@
+[
+    Conversation(
+        id: "conv_1",
+        participants: ["npc_a", "npc_b"],
+        private: true,
+        earshot: 4.0,
+        lines: [
+            SpokenLine(speaker: "npc_a", text: "conv_1.l1", seconds: 60.0),
+            SpokenLine(speaker: "npc_b", text: "conv_1.l2", seconds: 60.0, grants: ["f_2"]),
+        ],
+        cover: [
+            SpokenLine(speaker: "npc_a", text: "conv_1.cover", seconds: 60.0),
+        ],
+    ),
+]

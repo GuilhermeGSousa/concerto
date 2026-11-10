@@ -371,3 +371,16 @@ fn copies_keep_the_permissions_of_their_sources() {
         assert_eq!(mode & 0o777, 0o644, "{name}");
     }
 }
+
+#[test]
+fn an_external_obj_whose_texture_is_missing_imports_and_copies_the_rest() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let imported = import_source_into(
+        &fixtures("obj").join("unread_texture.obj"),
+        "assets/unread_texture.obj",
+        project.path(),
+        &config(),
+    )
+    .expect("the import succeeds");
+    assert_eq!(imported.siblings, ["assets/unread_texture.mtl"]);
+}

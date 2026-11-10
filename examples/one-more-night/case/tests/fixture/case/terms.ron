@@ -1,0 +1,11 @@
+Terms(
+    terms: [
+        Term(id: "t_a", text: "t_a.text"),
+        Term(id: "t_b", text: "t_b.text"),
+        Term(id: "t_room", text: "t_room.text"),
+    ],
+    banks: [
+        TermBank(id: "bank_people", terms: ["t_a", "t_b"]),
+        TermBank(id: "bank_places", terms: ["t_room"]),
+    ],
+)

@@ -65,7 +65,13 @@ cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown
 
 Examples are `tech-demo`, `ui-showcase` and `one-more-night`.
 `one-more-night` is the start of a couch co-op game and opens an empty window
-for now. `tech-demo` starts on the grid level: the character with every gizmo layer on a floor under the world grid,
+for now. Its manor graybox is in `examples/one-more-night/assets/manor/`: the
+Blender source, the scripts that generate and export it, and the export, with a
+`README.md` that says how to run them; the game does not load it yet. Its
+mystery is data: `examples/one-more-night/case` is `one-more-night-case`, an
+engine-free crate that loads a case directory of RON files, and
+`examples/one-more-night/docs/case-schema.md` is the schema; nothing in the
+game reads a case yet. `tech-demo` starts on the grid level: the character with every gizmo layer on a floor under the world grid,
 four boxes, and an NPC patrolling a square of nav points that routes around the
 boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no forest or
 sanatorium content; the cooked release build above, zipped with `index.html` at
