@@ -1,6 +1,7 @@
 use concerto_animation::mirror::{MirrorError, PoseMirror};
 use concerto_mesh::skeleton::{JointPose, Skeleton};
 use glam::{Mat3, Mat4, Quat, Vec3};
+use proptest::prelude::*;
 use uuid::Uuid;
 
 fn joint(translation: Vec3, rotation: Quat) -> JointPose {
@@ -11,12 +12,22 @@ fn joint(translation: Vec3, rotation: Quat) -> JointPose {
     }
 }
 
-fn skeleton(bones: &[(&str, Option<u16>, JointPose)]) -> Skeleton {
+struct Bone {
+    name: &'static str,
+    parent: Option<u16>,
+    pose: JointPose,
+}
+
+fn bone(name: &'static str, parent: Option<u16>, pose: JointPose) -> Bone {
+    Bone { name, parent, pose }
+}
+
+fn skeleton(bones: &[Bone]) -> Skeleton {
     Skeleton::new(
         vec![Mat4::IDENTITY; bones.len()],
-        bones.iter().map(|(_, parent, _)| *parent).collect(),
-        bones.iter().map(|(name, _, _)| (*name).into()).collect(),
-        bones.iter().map(|(_, _, pose)| pose.clone()).collect(),
+        bones.iter().map(|bone| bone.parent).collect(),
+        bones.iter().map(|bone| bone.name.into()).collect(),
+        bones.iter().map(|bone| bone.pose.clone()).collect(),
         bones.iter().map(|_| Uuid::new_v4()).collect(),
     )
     .unwrap()
@@ -35,17 +46,17 @@ fn mirrored_rotation(rotation: Quat, axis: Vec3) -> Quat {
 fn symmetric_skeleton(leg_rest: Quat) -> Skeleton {
     let foot = Vec3::new(0.0, -0.4, 0.0);
     skeleton(&[
-        (
+        bone(
             "Hips",
             None,
             joint(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY),
         ),
-        (
+        bone(
             "LeftLeg",
             Some(0),
             joint(Vec3::new(0.1, -0.1, 0.0), leg_rest),
         ),
-        (
+        bone(
             "RightLeg",
             Some(0),
             joint(
@@ -53,13 +64,13 @@ fn symmetric_skeleton(leg_rest: Quat) -> Skeleton {
                 mirrored_rotation(leg_rest, Vec3::X),
             ),
         ),
-        (
+        bone(
             "Spine",
             Some(0),
             joint(Vec3::new(0.0, 0.2, 0.0), Quat::IDENTITY),
         ),
-        ("LeftFoot", Some(1), joint(foot, Quat::IDENTITY)),
-        ("RightFoot", Some(2), joint(foot, Quat::IDENTITY)),
+        bone("LeftFoot", Some(1), joint(foot, Quat::IDENTITY)),
+        bone("RightFoot", Some(2), joint(foot, Quat::IDENTITY)),
     ])
 }
 
@@ -67,18 +78,41 @@ fn rotated_rest() -> Quat {
     Quat::from_euler(glam::EulerRot::XYZ, 0.3, 0.2, 0.4)
 }
 
-fn posed(skeleton: &Skeleton) -> Vec<JointPose> {
-    let mut pose = skeleton.rest_pose.to_vec();
-    pose[0] = joint(
-        Vec3::new(0.3, 0.9, 0.2),
-        Quat::from_euler(glam::EulerRot::YXZ, 0.7, 0.1, -0.2),
-    );
-    pose[1].rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.8, -0.3, 0.5);
-    pose[2].rotation = Quat::from_euler(glam::EulerRot::XYZ, -0.2, 0.6, 0.1);
-    pose[3].rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.1, 0.4, -0.3);
-    pose[4].rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.5, 0.0, 0.2);
-    pose[5].rotation = Quat::from_euler(glam::EulerRot::XYZ, -0.4, 0.3, 0.0);
-    pose
+fn yawed_skeleton() -> Skeleton {
+    let m = reflection(Vec3::X);
+    let spine = Quat::from_rotation_y(0.5);
+    let left_arm = rotated_rest();
+    let right_arm = (mirrored_rotation(left_arm, Vec3::X)
+        * Quat::from_rotation_x(std::f32::consts::PI))
+    .normalize();
+    let spine_model = Mat3::from_quat(spine);
+    let right_arm_offset = Vec3::new(-0.2, 0.1, 0.05);
+    let left_arm_offset = spine_model.transpose() * m * spine_model * right_arm_offset;
+    let left_model = spine_model * Mat3::from_quat(left_arm);
+    let right_model = spine_model * Mat3::from_quat(right_arm);
+    let right_hand_offset = Vec3::new(0.05, -0.3, 0.1);
+    let left_hand_offset = left_model.transpose() * m * right_model * right_hand_offset;
+    skeleton(&[
+        bone(
+            "Hips",
+            None,
+            joint(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY),
+        ),
+        bone("Spine", Some(0), joint(Vec3::new(0.0, 0.2, 0.0), spine)),
+        bone(
+            "Neck",
+            Some(1),
+            joint(Vec3::new(0.0, 0.3, 0.0), Quat::IDENTITY),
+        ),
+        bone("LeftArm", Some(1), joint(left_arm_offset, left_arm)),
+        bone("RightArm", Some(1), joint(right_arm_offset, right_arm)),
+        bone("LeftHand", Some(3), joint(left_hand_offset, Quat::IDENTITY)),
+        bone(
+            "RightHand",
+            Some(4),
+            joint(right_hand_offset, Quat::IDENTITY),
+        ),
+    ])
 }
 
 fn mirror(mirror: &PoseMirror, source: &[JointPose]) -> Vec<JointPose> {
@@ -104,142 +138,148 @@ fn left_and_right_joints_are_twins_and_the_rest_are_their_own() {
     assert_eq!(mirror.twin(6), None);
 }
 
-#[test]
-fn mirroring_the_rest_pose_returns_the_rest_pose() {
-    let skeleton = symmetric_skeleton(rotated_rest());
-    let mirror_x = PoseMirror::new(&skeleton, Vec3::X).unwrap();
+fn any_turn() -> impl Strategy<Value = Quat> {
+    prop::array::uniform3(-1.5f32..1.5)
+        .prop_map(|[x, y, z]| Quat::from_euler(glam::EulerRot::XYZ, x, y, z))
+}
 
-    let out = mirror(&mirror_x, &skeleton.rest_pose);
+proptest! {
+    #[test]
+    fn mirroring_keeps_the_rest_pose_puts_each_joint_at_its_twins_reflection_and_undoes_itself(
+        which in 0usize..3,
+        turns in prop::collection::vec(any_turn(), 7),
+        hips_at in prop::array::uniform3(-1.0f32..1.0).prop_map(Vec3::from_array),
+    ) {
+        let identity_rests = which == 0;
+        let skeleton = match which {
+            0 => symmetric_skeleton(Quat::IDENTITY),
+            1 => symmetric_skeleton(rotated_rest()),
+            _ => yawed_skeleton(),
+        };
+        let mirror_x = PoseMirror::new(&skeleton, Vec3::X).unwrap();
+        let m = reflection(Vec3::X);
+        let mut pose = skeleton.rest_pose.to_vec();
+        pose[0].translation = hips_at;
+        for (joint, turn) in pose.iter_mut().zip(&turns) {
+            joint.rotation = *turn * joint.rotation;
+        }
 
-    for (result, rest) in out.iter().zip(skeleton.rest_pose.iter()) {
-        assert!(result.translation.abs_diff_eq(rest.translation, 1e-5));
-        assert!(same_rotation(result.rotation, rest.rotation));
-        assert_eq!(result.scale, rest.scale);
+        let rest = mirror(&mirror_x, &skeleton.rest_pose);
+        let mirrored = mirror(&mirror_x, &pose);
+        let twice = mirror(&mirror_x, &mirrored);
+
+        for (result, rest) in rest.iter().zip(skeleton.rest_pose.iter()) {
+            prop_assert!(result.translation.abs_diff_eq(rest.translation, 1e-5));
+            prop_assert!(same_rotation(result.rotation, rest.rotation));
+            prop_assert_eq!(result.scale, rest.scale);
+        }
+        for (result, original) in twice.iter().zip(pose.iter()) {
+            prop_assert!(result.translation.abs_diff_eq(original.translation, 1e-4));
+            prop_assert!(same_rotation(result.rotation, original.rotation));
+        }
+        let original = skeleton.forward_kinematics(&pose).unwrap();
+        let reflected = skeleton.forward_kinematics(&mirrored).unwrap();
+        for (bone, model) in reflected.iter().enumerate() {
+            let twin = mirror_x.twin(bone).unwrap();
+            prop_assert!(
+                model.w_axis.truncate().abs_diff_eq(m * original[twin].w_axis.truncate(), 1e-4),
+                "{}",
+                skeleton.names[bone]
+            );
+            if identity_rests {
+                let expected = m * Mat3::from_mat4(original[twin]) * m;
+                prop_assert!(Mat3::from_mat4(*model).abs_diff_eq(expected, 1e-4));
+            }
+        }
     }
 }
 
-#[test]
-fn mirroring_twice_returns_the_original_pose() {
-    let skeleton = symmetric_skeleton(rotated_rest());
-    let mirror_x = PoseMirror::new(&skeleton, Vec3::X).unwrap();
-    let pose = posed(&skeleton);
-
-    let twice = mirror(&mirror_x, &mirror(&mirror_x, &pose));
-
-    for (result, original) in twice.iter().zip(pose.iter()) {
-        assert!(result.translation.abs_diff_eq(original.translation, 1e-5));
-        assert!(same_rotation(result.rotation, original.rotation));
-    }
+struct Refusal {
+    name: &'static str,
+    skeleton: Skeleton,
+    axis: Vec3,
+    error: MirrorError,
 }
 
 #[test]
-fn each_joint_lands_at_the_reflection_of_its_twin() {
-    let skeleton = symmetric_skeleton(rotated_rest());
-    let mirror_x = PoseMirror::new(&skeleton, Vec3::X).unwrap();
-    let m = reflection(Vec3::X);
-    let pose = posed(&skeleton);
-
-    let original = skeleton.forward_kinematics(&pose).unwrap();
-    let mirrored = skeleton
-        .forward_kinematics(&mirror(&mirror_x, &pose))
-        .unwrap();
-
-    let right_foot = mirrored[5].w_axis.truncate();
-    let left_foot = original[4].w_axis.truncate();
-    assert!(right_foot.abs_diff_eq(m * left_foot, 1e-5));
-    for (bone, model) in mirrored.iter().enumerate() {
-        let twin = mirror_x.twin(bone).unwrap();
-        let position = model.w_axis.truncate();
-        assert!(position.abs_diff_eq(m * original[twin].w_axis.truncate(), 1e-5));
-    }
-}
-
-#[test]
-fn with_identity_rest_rotations_the_model_rotation_is_conjugated_by_the_reflection() {
-    let skeleton = symmetric_skeleton(Quat::IDENTITY);
-    let mirror_x = PoseMirror::new(&skeleton, Vec3::X).unwrap();
-    let m = reflection(Vec3::X);
-    let pose = posed(&skeleton);
-
-    let original = skeleton.forward_kinematics(&pose).unwrap();
-    let mirrored = skeleton
-        .forward_kinematics(&mirror(&mirror_x, &pose))
-        .unwrap();
-
-    for (bone, model) in mirrored.iter().enumerate() {
-        let twin = mirror_x.twin(bone).unwrap();
-        let expected = m * Mat3::from_mat4(original[twin]) * m;
-        assert!(Mat3::from_mat4(*model).abs_diff_eq(expected, 1e-5));
-    }
-}
-
-#[test]
-fn a_skeleton_symmetric_across_z_mirrors_across_z_and_not_x() {
-    let skeleton = skeleton(&[
-        (
+fn a_skeleton_that_is_not_mirror_symmetric_about_the_axis_is_refused_naming_why() {
+    let across_z = skeleton(&[
+        bone(
             "Hips",
             None,
             joint(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY),
         ),
-        (
+        bone(
             "LeftLeg",
             Some(0),
             joint(Vec3::new(0.0, -0.1, 0.1), Quat::IDENTITY),
         ),
-        (
+        bone(
             "RightLeg",
             Some(0),
             joint(Vec3::new(0.0, -0.1, -0.1), Quat::IDENTITY),
         ),
     ]);
+    assert!(PoseMirror::new(&across_z, Vec3::Z).is_ok());
+    let cases = [
+        Refusal {
+            name: "a skeleton symmetric across z mirrored across x",
+            skeleton: across_z,
+            axis: Vec3::X,
+            error: MirrorError::Asymmetric {
+                joint: "LeftLeg".to_string(),
+                distance: 0.0,
+            },
+        },
+        Refusal {
+            name: "a left joint without a right twin",
+            skeleton: skeleton(&[
+                bone("Hips", None, JointPose::IDENTITY),
+                bone("LeftHand", Some(0), JointPose::IDENTITY),
+            ]),
+            axis: Vec3::X,
+            error: MirrorError::MissingTwin {
+                joint: "LeftHand".to_string(),
+                twin: "RightHand".to_string(),
+            },
+        },
+        Refusal {
+            name: "twins under parents that are not twins",
+            skeleton: skeleton(&[
+                bone("Hips", None, JointPose::IDENTITY),
+                bone("LeftArm", Some(0), JointPose::IDENTITY),
+                bone("RightArm", Some(0), JointPose::IDENTITY),
+                bone("LeftHand", Some(1), JointPose::IDENTITY),
+                bone("RightHand", Some(1), JointPose::IDENTITY),
+            ]),
+            axis: Vec3::X,
+            error: MirrorError::TwinParents {
+                joint: "LeftHand".to_string(),
+            },
+        },
+        Refusal {
+            name: "a zero axis",
+            skeleton: symmetric_skeleton(Quat::IDENTITY),
+            axis: Vec3::ZERO,
+            error: MirrorError::InvalidAxis(Vec3::ZERO),
+        },
+    ];
 
-    assert!(matches!(
-        PoseMirror::new(&skeleton, Vec3::X),
-        Err(MirrorError::Asymmetric { .. })
-    ));
-    assert!(PoseMirror::new(&skeleton, Vec3::Z).is_ok());
-}
+    for case in cases {
+        let error = PoseMirror::new(&case.skeleton, case.axis).unwrap_err();
 
-#[test]
-fn a_left_joint_without_a_right_twin_is_missing_its_twin() {
-    let skeleton = skeleton(&[
-        ("Hips", None, JointPose::IDENTITY),
-        ("LeftHand", Some(0), JointPose::IDENTITY),
-    ]);
-
-    assert_eq!(
-        PoseMirror::new(&skeleton, Vec3::X),
-        Err(MirrorError::MissingTwin {
-            joint: "LeftHand".to_string(),
-            twin: "RightHand".to_string(),
-        })
-    );
-}
-
-#[test]
-fn twins_under_parents_that_are_not_twins_are_rejected() {
-    let skeleton = skeleton(&[
-        ("Hips", None, JointPose::IDENTITY),
-        ("LeftArm", Some(0), JointPose::IDENTITY),
-        ("RightArm", Some(0), JointPose::IDENTITY),
-        ("LeftHand", Some(1), JointPose::IDENTITY),
-        ("RightHand", Some(1), JointPose::IDENTITY),
-    ]);
-
-    assert_eq!(
-        PoseMirror::new(&skeleton, Vec3::X),
-        Err(MirrorError::TwinParents {
-            joint: "LeftHand".to_string(),
-        })
-    );
-}
-
-#[test]
-fn a_zero_axis_is_invalid() {
-    assert_eq!(
-        PoseMirror::new(&symmetric_skeleton(Quat::IDENTITY), Vec3::ZERO),
-        Err(MirrorError::InvalidAxis(Vec3::ZERO))
-    );
+        let error = match error {
+            MirrorError::Asymmetric { joint, distance } => {
+                assert!(distance > 0.0, "{}: {distance}", case.name);
+                MirrorError::Asymmetric {
+                    joint,
+                    distance: 0.0,
+                }
+            }
+            other => other,
+        };
+        assert_eq!(error, case.error, "{}", case.name);
+    }
 }
 
 #[test]
@@ -255,81 +295,4 @@ fn a_short_pose_does_not_fit_the_mirror() {
             actual: 2,
         })
     );
-}
-
-fn yawed_skeleton() -> Skeleton {
-    let m = reflection(Vec3::X);
-    let spine = Quat::from_rotation_y(0.5);
-    let left_arm = rotated_rest();
-    let right_arm = (mirrored_rotation(left_arm, Vec3::X)
-        * Quat::from_rotation_x(std::f32::consts::PI))
-    .normalize();
-    let spine_model = Mat3::from_quat(spine);
-    let right_arm_offset = Vec3::new(-0.2, 0.1, 0.05);
-    let left_arm_offset = spine_model.transpose() * m * spine_model * right_arm_offset;
-    let left_model = spine_model * Mat3::from_quat(left_arm);
-    let right_model = spine_model * Mat3::from_quat(right_arm);
-    let right_hand_offset = Vec3::new(0.05, -0.3, 0.1);
-    let left_hand_offset = left_model.transpose() * m * right_model * right_hand_offset;
-    skeleton(&[
-        (
-            "Hips",
-            None,
-            joint(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY),
-        ),
-        ("Spine", Some(0), joint(Vec3::new(0.0, 0.2, 0.0), spine)),
-        (
-            "Neck",
-            Some(1),
-            joint(Vec3::new(0.0, 0.3, 0.0), Quat::IDENTITY),
-        ),
-        ("LeftArm", Some(1), joint(left_arm_offset, left_arm)),
-        ("RightArm", Some(1), joint(right_arm_offset, right_arm)),
-        ("LeftHand", Some(3), joint(left_hand_offset, Quat::IDENTITY)),
-        (
-            "RightHand",
-            Some(4),
-            joint(right_hand_offset, Quat::IDENTITY),
-        ),
-    ])
-}
-
-#[test]
-fn a_yawed_spine_and_twins_whose_rests_differ_by_a_rotation_keep_their_rest_pose() {
-    let skeleton = yawed_skeleton();
-    let mirror_x = PoseMirror::new(&skeleton, Vec3::X).unwrap();
-
-    let out = mirror(&mirror_x, &skeleton.rest_pose);
-
-    for (result, rest) in out.iter().zip(skeleton.rest_pose.iter()) {
-        assert!(result.translation.abs_diff_eq(rest.translation, 1e-5));
-        assert!(same_rotation(result.rotation, rest.rotation));
-    }
-}
-
-#[test]
-fn a_yawed_spine_and_twins_whose_rests_differ_by_a_rotation_land_at_their_twins_reflection() {
-    let skeleton = yawed_skeleton();
-    let mirror_x = PoseMirror::new(&skeleton, Vec3::X).unwrap();
-    let m = reflection(Vec3::X);
-    let mut pose = skeleton.rest_pose.to_vec();
-    pose[0].rotation = Quat::from_euler(glam::EulerRot::YXZ, 0.7, 0.1, -0.2);
-    pose[1].rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.2, 0.9, -0.1);
-    pose[3].rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.8, -0.3, 0.5);
-    pose[4].rotation = Quat::from_euler(glam::EulerRot::XYZ, -0.2, 0.6, 0.1);
-
-    let original = skeleton.forward_kinematics(&pose).unwrap();
-    let mirrored = skeleton
-        .forward_kinematics(&mirror(&mirror_x, &pose))
-        .unwrap();
-
-    for (bone, model) in mirrored.iter().enumerate() {
-        let twin = mirror_x.twin(bone).unwrap();
-        let position = model.w_axis.truncate();
-        assert!(
-            position.abs_diff_eq(m * original[twin].w_axis.truncate(), 1e-5),
-            "{}",
-            skeleton.names[bone]
-        );
-    }
 }
