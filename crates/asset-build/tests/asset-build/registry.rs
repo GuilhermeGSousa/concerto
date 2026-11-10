@@ -17,111 +17,153 @@ fn write_asset(path: &Path, id: AssetId, kind: &str) {
     std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
 }
 
-fn written(out: &Path) -> Vec<(AssetId, String, String)> {
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Listed {
+    id: AssetId,
+    address: String,
+    kind: String,
+}
+
+fn listed(address: &str, kind: &str) -> Listed {
+    Listed {
+        id: AssetId::from_path(address),
+        address: address.to_string(),
+        kind: kind.to_string(),
+    }
+}
+
+fn written(out: &Path) -> Vec<Listed> {
     let text = std::fs::read_to_string(out.join("concerto_registry.toml")).unwrap();
     let mut entries: Vec<_> = parse_registry(&text)
         .unwrap()
         .into_iter()
-        .map(|entry| (entry.id, entry.address, entry.kind))
+        .map(|entry| Listed {
+            id: entry.id,
+            address: entry.address,
+            kind: entry.kind,
+        })
         .collect();
     entries.sort();
     entries
 }
 
+struct File {
+    address: &'static str,
+    id_of: &'static str,
+    kind: &'static str,
+}
+
+fn file(address: &'static str, kind: &'static str) -> File {
+    File {
+        address,
+        id_of: address,
+        kind,
+    }
+}
+
+struct Tree {
+    case: &'static str,
+    content_toml: Option<&'static str>,
+    files: Vec<File>,
+    listed: Vec<Listed>,
+    refusal: &'static [&'static str],
+}
+
 #[test]
-fn writes_the_registry_of_the_content_tree() {
-    let project = tempfile::tempdir().unwrap();
-    let out = tempfile::tempdir().unwrap();
-    let mesh = AssetId::new();
-    let scene = AssetId::new();
-    write_asset(
-        &project.path().join("content/hero/body.gasset"),
-        mesh,
-        "Mesh",
-    );
-    write_asset(&project.path().join("content/level.gasset"), scene, "Scene");
-    std::fs::write(project.path().join("content/notes.txt"), "ignored").unwrap();
-
-    write_registry_into(project.path(), out.path()).unwrap();
-
-    let mut expected = vec![
-        (
-            mesh,
-            "content/hero/body.gasset".to_string(),
-            "Mesh".to_string(),
-        ),
-        (
-            scene,
-            "content/level.gasset".to_string(),
-            "Scene".to_string(),
-        ),
+fn the_registry_lists_every_content_asset_of_the_configured_extension_or_names_the_problem() {
+    let cases = [
+        Tree {
+            case: "the default tree, with a file that is not content",
+            content_toml: None,
+            files: vec![
+                file("content/hero/body.gasset", "Mesh"),
+                file("content/level.gasset", "Scene"),
+                file("content/notes.txt", "Text"),
+            ],
+            listed: vec![
+                listed("content/hero/body.gasset", "Mesh"),
+                listed("content/level.gasset", "Scene"),
+            ],
+            refusal: &[],
+        },
+        Tree {
+            case: "an extension set in content.toml",
+            content_toml: Some("extension = \"blob\"\n"),
+            files: vec![
+                file("content/hero.blob", "Mesh"),
+                file("content/other.gasset", "Mesh"),
+            ],
+            listed: vec![listed("content/hero.blob", "Mesh")],
+            refusal: &[],
+        },
+        Tree {
+            case: "a root outside the project",
+            content_toml: Some("root = \"../x\"\n"),
+            files: vec![],
+            listed: vec![],
+            refusal: &["content root must be 'content'"],
+        },
+        Tree {
+            case: "one id at two addresses",
+            content_toml: None,
+            files: vec![
+                File {
+                    address: "content/a.gasset",
+                    id_of: "shared",
+                    kind: "Mesh",
+                },
+                File {
+                    address: "content/b.gasset",
+                    id_of: "shared",
+                    kind: "Mesh",
+                },
+            ],
+            listed: vec![],
+            refusal: &["content/a.gasset", "content/b.gasset"],
+        },
     ];
-    expected.sort();
-    assert_eq!(written(out.path()), expected);
-}
+    for case in &cases {
+        let project = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        if let Some(text) = case.content_toml {
+            std::fs::write(project.path().join("content.toml"), text).unwrap();
+        }
+        for file in &case.files {
+            let path = project.path().join(file.address);
+            if file.address.ends_with(".txt") {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, "ignored").unwrap();
+            } else {
+                write_asset(&path, AssetId::from_path(file.id_of), file.kind);
+            }
+        }
 
-#[test]
-fn honours_the_extension_in_content_toml() {
-    let project = tempfile::tempdir().unwrap();
-    let out = tempfile::tempdir().unwrap();
-    std::fs::write(
-        project.path().join("content.toml"),
-        "extension = \"blob\"\n",
-    )
-    .unwrap();
-    let kept = AssetId::new();
-    write_asset(&project.path().join("content/hero.blob"), kept, "Mesh");
-    write_asset(
-        &project.path().join("content/other.gasset"),
-        AssetId::new(),
-        "Mesh",
-    );
+        let result = write_registry_into(project.path(), out.path());
 
-    write_registry_into(project.path(), out.path()).unwrap();
-
-    assert_eq!(
-        written(out.path()),
-        vec![(kept, "content/hero.blob".to_string(), "Mesh".to_string())]
-    );
-}
-
-#[test]
-fn rejects_a_root_outside_the_project_and_writes_no_registry() {
-    let project = tempfile::tempdir().unwrap();
-    let out = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("content.toml"), "root = \"../x\"\n").unwrap();
-
-    let error = format!(
-        "{:#}",
-        write_registry_into(project.path(), out.path()).unwrap_err()
-    );
-
-    assert!(error.contains("content root must be 'content'"), "{error}");
-    assert!(!out.path().join("concerto_registry.toml").exists());
-}
-
-#[test]
-fn fails_on_a_duplicate_id() {
-    let project = tempfile::tempdir().unwrap();
-    let out = tempfile::tempdir().unwrap();
-    let id = AssetId::new();
-    write_asset(&project.path().join("content/a.gasset"), id, "Mesh");
-    write_asset(&project.path().join("content/b.gasset"), id, "Mesh");
-
-    let error = format!(
-        "{:#}",
-        write_registry_into(project.path(), out.path()).unwrap_err()
-    );
-
-    assert!(error.contains("content/a.gasset"), "{error}");
-    assert!(error.contains("content/b.gasset"), "{error}");
+        if case.refusal.is_empty() {
+            result.unwrap_or_else(|error| panic!("{}: {error:#}", case.case));
+            let mut expected = case.listed.clone();
+            expected.sort();
+            assert_eq!(written(out.path()), expected, "{}", case.case);
+        } else {
+            let error = format!("{:#}", result.expect_err(case.case));
+            for part in case.refusal {
+                assert!(error.contains(part), "{}: {error}", case.case);
+            }
+            assert!(
+                !out.path().join("concerto_registry.toml").exists(),
+                "{}",
+                case.case
+            );
+        }
+    }
 }
 
 #[test]
 fn a_moved_file_is_listed_at_its_new_address_on_the_next_run() {
     let project = tempfile::tempdir().unwrap();
     let out = tempfile::tempdir().unwrap();
-    let id = AssetId::new();
+    let id = AssetId::from_path("content/new/hero.gasset");
     write_asset(&project.path().join("content/old/hero.gasset"), id, "Mesh");
     write_registry_into(project.path(), out.path()).unwrap();
 
@@ -135,10 +177,6 @@ fn a_moved_file_is_listed_at_its_new_address_on_the_next_run() {
 
     assert_eq!(
         written(out.path()),
-        vec![(
-            id,
-            "content/new/hero.gasset".to_string(),
-            "Mesh".to_string()
-        )]
+        vec![listed("content/new/hero.gasset", "Mesh")]
     );
 }
