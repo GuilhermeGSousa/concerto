@@ -6,6 +6,7 @@ use glam::Vec2;
 use std::collections::HashMap;
 
 pub use gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadId, GamepadSettings, GamepadStick};
+pub(crate) use players::update_players;
 pub use players::{
     AssignError, JoinSettings, PlayerDevice, PlayerDevices, PlayerEvent, PlayerIndex, Players,
 };

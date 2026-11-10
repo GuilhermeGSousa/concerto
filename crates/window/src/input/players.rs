@@ -1,9 +1,14 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use concerto_ecs::{component::Component, events::Event, resource::Resource};
+use concerto_ecs::{
+    component::Component,
+    events::{event_reader::EventReader, event_writer::EventWriter, Event},
+    resource::{Res, ResMut, Resource},
+};
 
-use crate::input::{GamepadButton, GamepadId, KeyCode};
+use crate::events::GamepadConnection;
+use crate::input::{GamepadButton, GamepadId, Input, KeyCode, PhysicalKey};
 
 /// One local player's place, from 0.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -266,7 +271,6 @@ impl Players {
             .map(|(player, _)| *player)
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn lose_gamepad(&mut self, gamepad: GamepadId) -> Option<PlayerIndex> {
         let player = self.player_of(PlayerDevice::Gamepad(gamepad))?;
         let slot = self.players.get_mut(&player)?;
@@ -277,7 +281,35 @@ impl Players {
         Some(player)
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
+    fn restore_gamepad(&mut self, player: PlayerIndex, gamepad: GamepadId) {
+        if let Some(slot) = self.players.get_mut(&player) {
+            slot.devices.gamepad = Some(gamepad);
+            slot.lost = None;
+            self.queued
+                .push(PlayerEvent::DeviceRestored { player, gamepad });
+        }
+    }
+
+    fn waiting_on(&self, gamepad: GamepadId) -> Option<PlayerIndex> {
+        self.players
+            .iter()
+            .find(|(_, slot)| slot.lost == Some(gamepad))
+            .map(|(player, _)| *player)
+    }
+
+    fn lowest_empty(&self) -> Option<PlayerIndex> {
+        (0..self.settings.max_players)
+            .map(PlayerIndex::new)
+            .find(|player| !self.players.contains_key(player))
+    }
+
+    fn join(&mut self, device: PlayerDevice) {
+        if let Some(player) = self.lowest_empty() {
+            self.assign(player, device)
+                .expect("an empty place below max_players takes a free device");
+        }
+    }
+
     pub(crate) fn drain_events(&mut self) -> impl Iterator<Item = PlayerEvent> + '_ {
         self.queued.drain(..)
     }
@@ -286,6 +318,64 @@ impl Players {
 impl Default for Players {
     fn default() -> Self {
         Self::new(JoinSettings::new())
+    }
+}
+
+pub(crate) fn update_players(
+    input: Res<Input>,
+    mut players: ResMut<Players>,
+    mut connections: EventReader<GamepadConnection>,
+    mut events: EventWriter<PlayerEvent>,
+) {
+    for connection in connections.read() {
+        match connection {
+            GamepadConnection::Disconnected { id } => {
+                players.lose_gamepad(*id);
+            }
+            GamepadConnection::Connected { id, .. } => {
+                if let Some(player) = players.waiting_on(*id) {
+                    players.restore_gamepad(player, *id);
+                }
+            }
+        }
+    }
+    if players.settings.join_on_press {
+        join_on_press(&input, &mut players);
+    }
+    for event in players.drain_events() {
+        events.write(event);
+    }
+}
+
+fn join_on_press(input: &Input, players: &mut Players) {
+    let pressed: Vec<GamepadId> = input
+        .gamepads()
+        .filter(|pad| players.player_of(PlayerDevice::Gamepad(pad.id())).is_none())
+        .filter(|pad| {
+            players
+                .settings
+                .join_buttons
+                .iter()
+                .any(|button| pad.is_just_pressed(*button))
+        })
+        .map(|pad| pad.id())
+        .collect();
+    for gamepad in pressed {
+        let waiting = players.waiting().next();
+        match waiting {
+            Some(player) => players.restore_gamepad(player, gamepad),
+            None => players.join(PlayerDevice::Gamepad(gamepad)),
+        }
+    }
+    let keyboard_joins = players.settings.keyboard_mouse_joins
+        && players.player_of(PlayerDevice::KeyboardMouse).is_none()
+        && players
+            .settings
+            .join_keys
+            .iter()
+            .any(|key| input.is_just_pressed(PhysicalKey::Code(*key)));
+    if keyboard_joins {
+        players.join(PlayerDevice::KeyboardMouse);
     }
 }
 
@@ -501,5 +591,19 @@ mod tests {
             players.joined().collect::<Vec<_>>(),
             vec![PlayerIndex::new(3)]
         );
+    }
+
+    #[test]
+    fn a_player_above_a_lowered_max_players_cannot_be_given_a_new_device() {
+        let mut players = Players::default();
+        players.assign(P1, PlayerDevice::Gamepad(PAD_A)).unwrap();
+
+        players.set_settings(JoinSettings::new().with_max_players(1));
+
+        assert_eq!(
+            players.assign(P1, PlayerDevice::Gamepad(PAD_B)),
+            Err(AssignError::OutOfRange { max_players: 1 })
+        );
+        assert_eq!(players.devices(P1).unwrap().gamepad, Some(PAD_A));
     }
 }
