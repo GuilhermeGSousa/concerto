@@ -12,6 +12,9 @@ encase = "0.13"
 rand = { version = "0.10.2" }
 serde = { version = "1", features = ["derive"] }
 
+[dev-dependencies]
+proptest.workspace = true
+
 # rand seeds its RNG from OS entropy via getrandom, which has no default
 # backend on wasm32-unknown-unknown; opt in to the browser's
 # crypto.getRandomValues through the JS backend.
