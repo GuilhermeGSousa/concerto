@@ -19,61 +19,60 @@ fn fixture_dir(test: &str) -> PathBuf {
     dir
 }
 
-fn panic_message(result: std::thread::Result<()>) -> String {
-    let payload = result.expect_err("check_encoding should panic");
-    payload
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
-        .unwrap()
+struct Check {
+    name: &'static str,
+    fixture: Option<Gear>,
+    panic: &'static [&'static str],
 }
 
 #[test]
-fn matching_bytes_pass() {
-    let dir = fixture_dir("match");
-    std::fs::write(
-        dir.join("Gear.v2.bin"),
-        bincode::serialize(&Gear { teeth: 12 }).unwrap(),
-    )
-    .unwrap();
-
-    check_encoding(&Gear { teeth: 12 }, &dir);
-}
-
-#[test]
-fn a_missing_fixture_panics_with_the_bless_hint() {
-    let dir = fixture_dir("missing");
-
-    let message = panic_message(std::panic::catch_unwind(|| {
-        check_encoding(&Gear { teeth: 12 }, &dir)
-    }));
-
-    assert!(
-        message.starts_with("no encoding fixture for Gear version 2 at "),
-        "{message}"
-    );
-    assert!(message.contains("Gear.v2.bin"), "{message}");
-    assert!(
-        message.ends_with("; run this test with CONCERTO_BLESS_ENCODING=1 to write it"),
-        "{message}"
-    );
-}
-
-#[test]
-fn differing_bytes_panic_asking_for_a_version_bump() {
-    let dir = fixture_dir("differ");
-    std::fs::write(
-        dir.join("Gear.v2.bin"),
-        bincode::serialize(&Gear { teeth: 13 }).unwrap(),
-    )
-    .unwrap();
-
-    let message = panic_message(std::panic::catch_unwind(|| {
-        check_encoding(&Gear { teeth: 12 }, &dir)
-    }));
-
-    assert_eq!(
-        message,
-        "the encoding of Gear changed but its FORMAT_VERSION is still 2: raise it to 3, add a migration from 2 or accept that version-2 files are rejected (docs/asset-importing.md, \"Changing an asset type's encoding\"), then run with CONCERTO_BLESS_ENCODING=1"
-    );
+fn check_encoding_passes_only_on_identical_bytes_and_says_how_to_fix_a_mismatch() {
+    let cases = [
+        Check {
+            name: "matching bytes",
+            fixture: Some(Gear { teeth: 12 }),
+            panic: &[],
+        },
+        Check {
+            name: "no fixture",
+            fixture: None,
+            panic: &[
+                "no encoding fixture for Gear version 2 at ",
+                "Gear.v2.bin; run this test with CONCERTO_BLESS_ENCODING=1 to write it",
+            ],
+        },
+        Check {
+            name: "differing bytes",
+            fixture: Some(Gear { teeth: 13 }),
+            panic: &[
+                "the encoding of Gear changed but its FORMAT_VERSION is still 2: raise it to 3, add a migration from 2 or accept that version-2 files are rejected (docs/asset-importing.md, \"Changing an asset type's encoding\"), then run with CONCERTO_BLESS_ENCODING=1",
+            ],
+        },
+    ];
+    for case in cases {
+        let dir = fixture_dir("check");
+        if let Some(fixture) = &case.fixture {
+            std::fs::write(
+                dir.join("Gear.v2.bin"),
+                bincode::serialize(fixture).unwrap(),
+            )
+            .unwrap();
+        }
+        let result = std::panic::catch_unwind(|| check_encoding(&Gear { teeth: 12 }, &dir));
+        std::fs::remove_dir_all(&dir).ok();
+        match result {
+            Ok(()) => assert!(case.panic.is_empty(), "{} passed", case.name),
+            Err(payload) => {
+                let message = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap();
+                assert!(!case.panic.is_empty(), "{}: {message}", case.name);
+                for fragment in case.panic {
+                    assert!(message.contains(fragment), "{}: {message}", case.name);
+                }
+            }
+        }
+    }
 }

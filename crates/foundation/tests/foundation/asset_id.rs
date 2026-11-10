@@ -11,18 +11,11 @@ fn uuid_bytes_can_be_embedded_as_a_constant() {
 }
 
 #[test]
-fn from_path_is_deterministic() {
-    let a = AssetId::from_path("models/character.gltf#texture/albedo");
-    let b = AssetId::from_path("models/character.gltf#texture/albedo");
-    assert_eq!(
-        a, b,
-        "the same path string must hash to the same AssetId every time"
+fn from_path_is_the_same_for_the_same_path_and_differs_for_another() {
+    let albedo = "models/character.gltf#texture/albedo";
+    assert_eq!(AssetId::from_path(albedo), AssetId::from_path(albedo));
+    assert_ne!(
+        AssetId::from_path(albedo),
+        AssetId::from_path("models/character.gltf#texture/normal")
     );
-}
-
-#[test]
-fn from_path_differs_for_different_inputs() {
-    let a = AssetId::from_path("models/character.gltf#texture/albedo");
-    let b = AssetId::from_path("models/character.gltf#texture/normal");
-    assert_ne!(a, b, "distinct sub-asset names must hash to distinct IDs");
 }

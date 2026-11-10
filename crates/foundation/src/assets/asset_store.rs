@@ -131,14 +131,19 @@ mod tests {
 
     impl LoadableAsset for Pebble {}
 
-    fn pebble_world() -> (AssetServer, World) {
+    struct Pebbles {
+        server: AssetServer,
+        world: World,
+    }
+
+    fn pebble_world() -> Pebbles {
         let mut server = AssetServer::new();
         let store = AssetStore::<Pebble>::new();
         server.register_asset(&store);
         let mut world = World::new();
         world.insert_resource(store);
         world.insert_resource(server.clone());
-        (server, world)
+        Pebbles { server, world }
     }
 
     fn loaded_pebble(server: &AssetServer, world: &mut World) -> AssetHandle<Pebble> {
@@ -162,74 +167,93 @@ mod tests {
             .contains_key(&id)
     }
 
-    #[test]
-    fn a_handle_requested_before_the_drop_is_processed_keeps_the_asset_loaded() {
-        let (server, mut world) = pebble_world();
-        let handle = loaded_pebble(&server, &mut world);
-        let id = handle.id();
-        drop(handle);
+    enum Step {
+        DropFirst,
+        LoadAgain,
+        DropAgain,
+        SendDuplicateDrop,
+        Drain { dropped: bool },
+    }
 
-        let returned = server.load::<Pebble>(id);
-        let events = drain(&server, &mut world);
-
-        assert!(events.is_empty());
-        assert!(holds(&world, id));
-        assert!(server.is_loaded(&id));
-        assert!(!server.is_loading());
-        drop(returned);
+    struct Lifetime {
+        name: &'static str,
+        steps: &'static [Step],
+        loaded: bool,
     }
 
     #[test]
-    fn a_dropped_asset_with_no_returned_handle_unloads() {
-        let (server, mut world) = pebble_world();
-        let handle = loaded_pebble(&server, &mut world);
-        let id = handle.id();
-        drop(handle);
-
-        let events = drain(&server, &mut world);
-
-        assert!(
-            matches!(events.as_slice(), [AssetLifetimeEvent::Dropped(dropped)] if *dropped == id)
-        );
-        assert!(!holds(&world, id));
-        assert!(!server.is_loaded(&id));
-    }
-
-    #[test]
-    fn dropping_the_returned_handle_unloads_the_asset_on_the_next_drain() {
-        let (server, mut world) = pebble_world();
-        let handle = loaded_pebble(&server, &mut world);
-        let id = handle.id();
-        drop(handle);
-        let returned = server.load::<Pebble>(id);
-        assert!(drain(&server, &mut world).is_empty());
-
-        drop(returned);
-        let events = drain(&server, &mut world);
-
-        assert!(
-            matches!(events.as_slice(), [AssetLifetimeEvent::Dropped(dropped)] if *dropped == id)
-        );
-        assert!(!holds(&world, id));
-        assert!(!server.is_loaded(&id));
-    }
-
-    #[test]
-    fn a_duplicate_drop_event_for_an_unloaded_id_is_ignored() {
-        let (server, mut world) = pebble_world();
-        let handle = loaded_pebble(&server, &mut world);
-        let id = handle.id();
-        let sender = world
-            .get_resource::<AssetStore<Pebble>>()
-            .unwrap()
-            .clone_drop_sender();
-        drop(handle);
-        sender.send(AssetLifetimeEvent::Dropped(id)).unwrap();
-
-        let events = drain(&server, &mut world);
-
-        assert_eq!(events.len(), 1);
-        assert!(!holds(&world, id));
-        assert!(!server.is_loaded(&id));
+    fn an_asset_unloads_once_its_last_handle_drops_and_a_drain_sees_it() {
+        use Step::*;
+        let cases = [
+            Lifetime {
+                name: "a dropped asset with no returned handle",
+                steps: &[DropFirst, Drain { dropped: true }],
+                loaded: false,
+            },
+            Lifetime {
+                name: "a handle requested before the drop is processed",
+                steps: &[DropFirst, LoadAgain, Drain { dropped: false }],
+                loaded: true,
+            },
+            Lifetime {
+                name: "the returned handle dropped before the next drain",
+                steps: &[
+                    DropFirst,
+                    LoadAgain,
+                    Drain { dropped: false },
+                    DropAgain,
+                    Drain { dropped: true },
+                ],
+                loaded: false,
+            },
+            Lifetime {
+                name: "a duplicate drop event for an unloaded id",
+                steps: &[DropFirst, SendDuplicateDrop, Drain { dropped: true }],
+                loaded: false,
+            },
+        ];
+        for case in cases {
+            let Pebbles { server, mut world } = pebble_world();
+            let mut first = Some(loaded_pebble(&server, &mut world));
+            let id = first.as_ref().unwrap().id();
+            let mut again = None;
+            for step in case.steps {
+                match step {
+                    DropFirst => drop(first.take()),
+                    LoadAgain => again = Some(server.load::<Pebble>(id)),
+                    DropAgain => drop(again.take()),
+                    SendDuplicateDrop => world
+                        .get_resource::<AssetStore<Pebble>>()
+                        .unwrap()
+                        .clone_drop_sender()
+                        .send(AssetLifetimeEvent::Dropped(id))
+                        .unwrap(),
+                    Drain { dropped } => {
+                        let events = drain(&server, &mut world);
+                        assert_eq!(
+                            events.len(),
+                            usize::from(*dropped),
+                            "{}: {} events",
+                            case.name,
+                            events.len()
+                        );
+                        assert!(
+                            events.iter().all(|event| matches!(event, AssetLifetimeEvent::Dropped(dropped) if *dropped == id)),
+                            "{}",
+                            case.name
+                        );
+                    }
+                }
+            }
+            assert_eq!(holds(&world, id), case.loaded, "{}", case.name);
+            assert_eq!(
+                server.is_loading_or_loaded(id),
+                case.loaded,
+                "{}",
+                case.name
+            );
+            assert!(!server.is_loading(), "{}", case.name);
+            drop(again);
+        }
     }
 }

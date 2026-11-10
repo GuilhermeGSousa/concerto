@@ -6,6 +6,7 @@ use concerto_foundation::assets::content::{
     ImportProvenance, CONTENT_ASSET_MAGIC,
 };
 use concerto_foundation::assets::AssetId;
+use proptest::prelude::*;
 use serde::Serialize;
 use std::path::Path;
 
@@ -29,6 +30,12 @@ fn section(blob: &[u8]) -> CookedSection<'_> {
         key: 0x0123_4567_89ab_cdef,
         blob,
     }
+}
+
+#[derive(Serialize)]
+struct HeaderV6<'a> {
+    format_version: u32,
+    header: &'a ContentAssetHeader,
 }
 
 #[derive(Serialize)]
@@ -82,103 +89,87 @@ fn written_to_disk(tag: &str, bytes: &[u8]) -> std::path::PathBuf {
     path
 }
 
-#[test]
-fn round_trips_header_and_payload_verbatim() {
-    let payload: Vec<u8> = (0u8..=255).collect();
-    let bytes = write_content_asset(&header(), &payload).expect("write");
+prop_compose! {
+    fn any_provenance()(source in "[a-z/.]{0,16}", sub_asset in "[a-z/]{0,16}") -> ImportProvenance {
+        ImportProvenance { source, sub_asset }
+    }
+}
 
-    assert_eq!(&bytes[..4], &CONTENT_ASSET_MAGIC, "magic leads the file");
+prop_compose! {
+    fn any_header()(
+        id in any::<[u8; 16]>(),
+        references in proptest::collection::vec(any::<[u8; 16]>(), 0..4),
+        kind in "[A-Za-z]{1,12}",
+        kind_version in any::<u32>(),
+        provenance in proptest::option::of(any_provenance()),
+    ) -> ContentAssetHeader {
+        ContentAssetHeader {
+            asset_id: AssetId::from_bytes(id),
+            references: references.into_iter().map(AssetId::from_bytes).collect(),
+            kind,
+            kind_version,
+            provenance,
+            derived: None,
+        }
+    }
+}
 
-    let (decoded, decoded_payload) = read_content_asset(&bytes).expect("read");
-    assert_eq!(decoded, header(), "every header field survives");
-    assert_eq!(decoded_payload, &payload[..], "payload is byte-identical");
+proptest! {
+    #[test]
+    fn a_written_asset_reads_back_its_header_payload_and_derived_blob(
+        header in any_header(),
+        payload in proptest::collection::vec(any::<u8>(), 0..64),
+        blob in proptest::option::of(proptest::collection::vec(any::<u8>(), 0..32)),
+        derived_version in any::<u32>(),
+        key in any::<u64>(),
+    ) {
+        let bytes = match &blob {
+            Some(blob) => write_cooked_content_asset(
+                &header,
+                &payload,
+                CookedSection { derived_version, key, blob },
+            ),
+            None => write_content_asset(&header, &payload),
+        }
+        .unwrap();
+        let expected = ContentAssetHeader {
+            derived: blob.as_ref().map(|blob| DerivedSection {
+                derived_version,
+                key,
+                len: blob.len() as u64,
+            }),
+            ..header
+        };
+
+        prop_assert_eq!(&bytes[..4], &CONTENT_ASSET_MAGIC);
+        let parts = read_content_asset_parts(&bytes).unwrap();
+        prop_assert_eq!(&parts.header, &expected);
+        prop_assert_eq!(parts.payload, &payload[..]);
+        prop_assert_eq!(parts.derived_blob, blob.as_deref());
+        let read = read_content_asset(&bytes).unwrap();
+        prop_assert_eq!(read.0, expected);
+        prop_assert_eq!(read.1, &payload[..]);
+    }
+}
+
+struct Read {
+    name: &'static str,
+    bytes: Vec<u8>,
+    expected: Result<ContentAssetHeader, Vec<String>>,
+    header_from_file: bool,
+}
+
+fn refused(fragments: &[&str]) -> Result<ContentAssetHeader, Vec<String>> {
+    Err(fragments
+        .iter()
+        .map(|fragment| fragment.to_string())
+        .collect())
 }
 
 #[test]
-fn empty_payload_is_valid() {
-    let bytes = write_content_asset(&header(), &[]).expect("write");
-    let (_, payload) = read_content_asset(&bytes).expect("read");
-    assert!(payload.is_empty());
-}
-
-#[test]
-fn rejects_a_buffer_without_the_magic() {
-    let bytes = write_content_asset(&header(), b"payload").expect("write");
-    let mut corrupted = bytes.clone();
-    corrupted[0] = b'X';
-
-    let err = read_content_asset(&corrupted).expect_err("must reject");
-    assert!(
-        err.to_string().contains("GRDY"),
-        "error should name the missing magic, got: {err}"
-    );
-
-    // A headerless raw blob must also be rejected, not misread.
-    assert!(read_content_asset(b"\x01\x02\x03").is_err());
-    assert!(read_content_asset(&[]).is_err());
-}
-
-#[test]
-fn rejects_a_truncated_header() {
-    let bytes = write_content_asset(&header(), b"payload").expect("write");
-    let truncated = &bytes[..bytes.len() - 10];
-
-    let err = read_content_asset(truncated).expect_err("must reject");
-    assert!(
-        err.to_string().contains("truncated"),
-        "error should say the file is truncated, got: {err}"
-    );
-}
-
-#[test]
-fn writes_header_version_6_after_the_length() {
-    let bytes = write_content_asset(&header(), b"payload").expect("write");
-    let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-    assert_eq!(version, 6);
-}
-
-#[test]
-fn a_cooked_file_round_trips_header_payload_and_blob() {
-    let payload: Vec<u8> = (0u8..=255).collect();
-    let blob = b"derived blob bytes";
-    let bytes = write_cooked_content_asset(&header(), &payload, section(blob)).expect("write");
-
-    let parts = read_content_asset_parts(&bytes).expect("read");
-    let expected = ContentAssetHeader {
-        derived: Some(DerivedSection {
-            derived_version: 2,
-            key: 0x0123_4567_89ab_cdef,
-            len: blob.len() as u64,
-        }),
-        ..header()
-    };
-    assert_eq!(parts.header, expected);
-    assert_eq!(parts.payload, &payload[..]);
-    assert_eq!(parts.derived_blob, Some(&blob[..]));
-}
-
-#[test]
-fn read_content_asset_leaves_the_derived_blob_out_of_the_payload() {
-    let bytes = write_cooked_content_asset(&header(), b"payload", section(b"blob")).expect("write");
-
-    let (decoded, payload) = read_content_asset(&bytes).expect("read");
-    assert_eq!(payload, b"payload");
-    assert!(decoded.derived.is_some());
-}
-
-#[test]
-fn a_file_without_a_section_has_no_derived_blob() {
-    let bytes = write_content_asset(&header(), b"payload").expect("write");
-
-    let parts = read_content_asset_parts(&bytes).expect("read");
-    assert_eq!(parts.header, header());
-    assert_eq!(parts.payload, b"payload");
-    assert_eq!(parts.derived_blob, None);
-}
-
-#[test]
-fn a_version_5_header_reads_with_no_derived_section() {
-    let old = HeaderV5 {
+fn each_reader_reads_versions_4_to_6_and_refuses_anything_else_saying_why() {
+    let v4 = version_4_header();
+    let v5 = HeaderV5 {
         format_version: 5,
         asset_id: AssetId::from_path("content/hero/body.gasset"),
         references: vec![AssetId::from_path("content/hero/skin.gasset")],
@@ -186,29 +177,9 @@ fn a_version_5_header_reads_with_no_derived_section() {
         kind_version: 3,
         provenance: None,
     };
-    let bytes = framed(&old, b"payload");
-    let expected = ContentAssetHeader {
-        asset_id: old.asset_id,
-        references: old.references.clone(),
-        kind: old.kind.clone(),
-        kind_version: 3,
-        provenance: None,
-        derived: None,
-    };
-
-    let parts = read_content_asset_parts(&bytes).expect("read");
-    assert_eq!(parts.header, expected);
-    assert_eq!(parts.payload, b"payload");
-    assert_eq!(parts.derived_blob, None);
-
-    let path = written_to_disk("v5", &bytes);
-    let from_file = read_content_asset_header(&path);
-    std::fs::remove_file(&path).ok();
-    assert_eq!(from_file.expect("read header"), expected);
-}
-
-#[test]
-fn rejects_a_section_longer_than_the_file() {
+    let written = write_content_asset(&header(), b"payload").unwrap();
+    let mut no_magic = written.clone();
+    no_magic[0] = b'X';
     let oversized = ContentAssetHeader {
         derived: Some(DerivedSection {
             derived_version: 1,
@@ -217,19 +188,131 @@ fn rejects_a_section_longer_than_the_file() {
         }),
         ..header()
     };
-    let bytes = framed(&(6u32, &oversized), b"payload");
-
-    for message in [
-        format!(
-            "{:#}",
-            read_content_asset_parts(&bytes).expect_err("must reject")
-        ),
-        format!("{:#}", read_content_asset(&bytes).expect_err("must reject")),
-    ] {
-        assert!(
-            message.contains("content asset truncated: derived section claims 1000 bytes"),
-            "error should name the claimed section length, got: {message}"
-        );
+    let version = |format_version: u32| {
+        let mut old = version_4_header();
+        old.format_version = format_version;
+        framed(&old, b"payload")
+    };
+    let cases = [
+        Read {
+            name: "a version 6 cooked file",
+            bytes: write_cooked_content_asset(&header(), b"payload", section(b"blob")).unwrap(),
+            expected: Ok(ContentAssetHeader {
+                derived: Some(DerivedSection {
+                    derived_version: 2,
+                    key: 0x0123_4567_89ab_cdef,
+                    len: 4,
+                }),
+                ..header()
+            }),
+            header_from_file: true,
+        },
+        Read {
+            name: "a version 5 header has no derived section",
+            bytes: framed(&v5, b"payload"),
+            expected: Ok(ContentAssetHeader {
+                asset_id: v5.asset_id,
+                references: v5.references.clone(),
+                kind: v5.kind.clone(),
+                kind_version: 3,
+                provenance: None,
+                derived: None,
+            }),
+            header_from_file: true,
+        },
+        Read {
+            name: "a version 4 header reads as kind version 1",
+            bytes: framed(&v4, b"payload"),
+            expected: Ok(ContentAssetHeader {
+                asset_id: v4.asset_id,
+                references: v4.references.clone(),
+                kind: v4.kind.clone(),
+                kind_version: 1,
+                provenance: v4.provenance.clone(),
+                derived: None,
+            }),
+            header_from_file: true,
+        },
+        Read {
+            name: "version 3",
+            bytes: version(3),
+            expected: refused(&["version 3", "reads versions 4 to 6"]),
+            header_from_file: true,
+        },
+        Read {
+            name: "version 7",
+            bytes: version(7),
+            expected: refused(&["version 7", "reads versions 4 to 6"]),
+            header_from_file: true,
+        },
+        Read {
+            name: "no magic",
+            bytes: no_magic,
+            expected: refused(&["GRDY"]),
+            header_from_file: false,
+        },
+        Read {
+            name: "a raw blob",
+            bytes: b"\x01\x02\x03".to_vec(),
+            expected: refused(&[]),
+            header_from_file: false,
+        },
+        Read {
+            name: "nothing",
+            bytes: Vec::new(),
+            expected: refused(&[]),
+            header_from_file: false,
+        },
+        Read {
+            name: "a truncated header",
+            bytes: written[..written.len() - 10].to_vec(),
+            expected: refused(&["truncated"]),
+            header_from_file: false,
+        },
+        Read {
+            name: "a section longer than the file",
+            bytes: framed(
+                &HeaderV6 {
+                    format_version: 6,
+                    header: &oversized,
+                },
+                b"payload",
+            ),
+            expected: refused(&["content asset truncated: derived section claims 1000 bytes"]),
+            header_from_file: false,
+        },
+    ];
+    for case in cases {
+        let mut outcomes = vec![
+            read_content_asset(&case.bytes).map(|read| {
+                assert_eq!(read.1, b"payload", "{}", case.name);
+                read.0
+            }),
+            read_content_asset_parts(&case.bytes).map(|parts| {
+                assert_eq!(parts.payload, b"payload", "{}", case.name);
+                parts.header
+            }),
+        ];
+        if case.header_from_file {
+            let path = written_to_disk("read", &case.bytes);
+            outcomes.push(read_content_asset_header(&path));
+            std::fs::remove_file(&path).ok();
+        }
+        for outcome in outcomes {
+            match &case.expected {
+                Ok(expected) => assert_eq!(&outcome.unwrap(), expected, "{}", case.name),
+                Err(fragments) => {
+                    let message = format!("{:#}", outcome.expect_err(case.name));
+                    for fragment in fragments {
+                        assert!(
+                            message.contains(fragment.as_str()),
+                            "{}: {message}",
+                            case.name
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -245,26 +328,6 @@ fn write_content_asset_refuses_a_header_with_a_derived_section() {
     };
 
     assert!(write_content_asset(&cooked, b"payload").is_err());
-}
-
-#[test]
-fn read_content_asset_header_reads_a_cooked_header() {
-    let bytes = write_cooked_content_asset(&header(), b"payload", section(b"blob")).expect("write");
-
-    let path = written_to_disk("v6", &bytes);
-    let from_file = read_content_asset_header(&path);
-    std::fs::remove_file(&path).ok();
-    assert_eq!(
-        from_file.expect("read header"),
-        ContentAssetHeader {
-            derived: Some(DerivedSection {
-                derived_version: 2,
-                key: 0x0123_4567_89ab_cdef,
-                len: 4,
-            }),
-            ..header()
-        }
-    );
 }
 
 #[test]
@@ -313,54 +376,4 @@ fn the_cooked_framing_matches_its_fixture() {
         fixture == bytes,
         "the content asset framing changed but CONTENT_FORMAT_VERSION is still 6: raise it to 7 and read version 6 files as before, then run with CONCERTO_BLESS_ENCODING=1"
     );
-}
-
-#[test]
-fn a_version_4_header_reads_as_kind_version_1_through_both_readers() {
-    let old = version_4_header();
-    let bytes = framed(&old, b"payload");
-    let expected = ContentAssetHeader {
-        asset_id: old.asset_id,
-        references: old.references.clone(),
-        kind: old.kind.clone(),
-        kind_version: 1,
-        provenance: old.provenance.clone(),
-        derived: None,
-    };
-
-    let (decoded, payload) = read_content_asset(&bytes).expect("read");
-    assert_eq!(decoded, expected);
-    assert_eq!(payload, b"payload");
-
-    let path = written_to_disk("v4", &bytes);
-    let from_file = read_content_asset_header(&path);
-    std::fs::remove_file(&path).ok();
-    assert_eq!(from_file.expect("read header"), expected);
-}
-
-#[test]
-fn rejects_versions_3_and_7_through_both_readers() {
-    for version in [3u32, 7] {
-        let mut old = version_4_header();
-        old.format_version = version;
-        let bytes = framed(&old, b"payload");
-
-        let err = read_content_asset(&bytes).expect_err("must reject");
-        let message = format!("{err:#}");
-        assert!(
-            message.contains(&format!("version {version}"))
-                && message.contains("reads versions 4 to 6"),
-            "error should name version {version} and the readable versions, got: {message}"
-        );
-
-        let path = written_to_disk(&format!("v{version}"), &bytes);
-        let from_file = read_content_asset_header(&path);
-        std::fs::remove_file(&path).ok();
-        let message = format!("{:#}", from_file.expect_err("must reject"));
-        assert!(
-            message.contains(&format!("version {version}"))
-                && message.contains("reads versions 4 to 6"),
-            "error should name version {version} and the readable versions, got: {message}"
-        );
-    }
 }

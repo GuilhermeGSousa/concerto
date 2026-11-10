@@ -80,12 +80,6 @@ mod tests {
     }
 
     #[test]
-    fn halflife_and_damping_round_trip() {
-        let damping = halflife_to_damping(0.25);
-        assert!((damping_to_halflife(damping) - 0.25).abs() < 1.0e-3);
-    }
-
-    #[test]
     fn decay_matches_the_closed_form() {
         let (x, v) = decay_spring_damper_exact(1.0f32, 0.0, 0.25, 0.25);
         let y = halflife_to_damping(0.25) / 2.0;
@@ -97,20 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn decay_is_framerate_independent() {
-        let (coarse_x, coarse_v) = decay_spring_damper_exact(Vec3::X, Vec3::Y, 0.3, 0.2);
-        let (mut x, mut v) = (Vec3::X, Vec3::Y);
-        for _ in 0..20 {
-            (x, v) = decay_spring_damper_exact(x, v, 0.3, 0.01);
-        }
-        assert_close(coarse_x, x, 1.0e-4);
-        assert_close(coarse_v, v, 1.0e-3);
-    }
-
-    #[test]
-    fn scaled_angle_axis_round_trips() {
-        let v = Vec3::new(0.3, -0.5, 0.2);
-        assert_close(to_scaled_angle_axis(from_scaled_angle_axis(v)), v, 1.0e-5);
+    fn a_scaled_angle_axis_is_the_rotation_angle_along_its_axis() {
         assert_close(
             to_scaled_angle_axis(Quat::from_rotation_z(0.7)),
             Vec3::new(0.0, 0.0, 0.7),
@@ -118,17 +99,6 @@ mod tests {
         );
         assert_eq!(to_scaled_angle_axis(Quat::IDENTITY), Vec3::ZERO);
         assert!(from_scaled_angle_axis(Vec3::ZERO).abs_diff_eq(Quat::IDENTITY, 1.0e-6));
-    }
-
-    #[test]
-    fn a_rotation_of_a_milliradian_keeps_its_angle() {
-        for angle in [1.0e-3_f32, 3.0e-4, 2.0e-5] {
-            assert_close(
-                to_scaled_angle_axis(Quat::from_rotation_y(angle)),
-                Vec3::new(0.0, angle, 0.0),
-                angle * 1.0e-3,
-            );
-        }
     }
 
     #[test]
@@ -157,5 +127,47 @@ mod tests {
     fn damp_adjustment_closes_half_over_one_halflife() {
         let step = damp_adjustment_exact(Vec3::new(2.0, 0.0, 0.0), 0.25, 0.25, 1.0e-8);
         assert_close(step, Vec3::new(1.0, 0.0, 0.0), 1.0e-5);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn halflife_and_damping_convert_back_and_forth(halflife in 0.01f32..10.0) {
+            let back = damping_to_halflife(halflife_to_damping(halflife));
+            proptest::prop_assert!((back - halflife).abs() < 1.0e-3, "{back} vs {halflife}");
+        }
+
+        #[test]
+        fn a_scaled_angle_axis_survives_a_quaternion_round_trip(
+            x in -1.0f32..1.0,
+            y in -1.0f32..1.0,
+            z in -1.0f32..1.0,
+            exponent in -5.0f32..0.45,
+        ) {
+            let direction = Vec3::new(x, y, z);
+            proptest::prop_assume!(direction.length() > 0.1);
+            let v = direction.normalize() * 10.0f32.powf(exponent);
+            let tolerance = (v.length() * 1.0e-3).min(1.0e-5);
+            let back = to_scaled_angle_axis(from_scaled_angle_axis(v));
+            proptest::prop_assert!(back.distance(v) < tolerance, "{back:?} vs {v:?}");
+        }
+
+        #[test]
+        fn one_decay_step_lands_where_many_smaller_steps_do(
+            halflife in 0.05f32..2.0,
+            dt in 0.01f32..0.5,
+            steps in 2usize..30,
+            x in -2.0f32..2.0,
+            v in -2.0f32..2.0,
+        ) {
+            let start = Vec3::new(x, 1.0, -x);
+            let velocity = Vec3::new(v, -v, 0.5);
+            let coarse = decay_spring_damper_exact(start, velocity, halflife, dt);
+            let mut fine = decay_spring_damper_exact(start, velocity, halflife, 0.0);
+            for _ in 0..steps {
+                fine = decay_spring_damper_exact(fine.0, fine.1, halflife, dt / steps as f32);
+            }
+            proptest::prop_assert!(coarse.0.distance(fine.0) < 1.0e-3, "{:?} vs {:?}", coarse.0, fine.0);
+            proptest::prop_assert!(coarse.1.distance(fine.1) < 1.0e-2, "{:?} vs {:?}", coarse.1, fine.1);
+        }
     }
 }

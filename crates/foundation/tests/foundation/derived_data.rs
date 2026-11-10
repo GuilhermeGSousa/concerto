@@ -609,213 +609,290 @@ fn cache_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
-fn a_load_derives_applies_the_blob_and_writes_one_cache_file_at_its_path() {
-    let tag = "derives";
+fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refuses() {
+    let tag = "cache";
     let mut project = Project::new(tag);
     let a = project.leaf("a", 3);
     let b = project.leaf("b", 4);
     let id = project.sum::<1>("sum", tag, a, b);
     let cache = project.cache_dir();
+    let first = key_of(&project, &sum_value::<1>(tag, a, b));
 
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
-    assert_eq!(runtime.load(id), Some(7));
-
-    let key = key_of(&project, &sum_value::<1>(tag, a, b));
-    assert_eq!(cache_files(&cache), vec![entry_path(&cache, 1, key)]);
     assert_eq!(
-        std::fs::read(entry_path(&cache, 1, key)).unwrap(),
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
+        Some(7)
+    );
+    assert_eq!(cache_files(&cache), vec![entry_path(&cache, 1, first)]);
+    assert_eq!(
+        std::fs::read(entry_path(&cache, 1, first)).unwrap(),
         7u64.to_le_bytes()
     );
     assert_eq!(derives(tag), 1);
-}
-
-#[test]
-fn a_second_server_over_the_same_cache_loads_without_deriving() {
-    let tag = "hit";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    let cache = project.cache_dir();
 
     assert_eq!(
         Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
         Some(7)
     );
-    assert_eq!(
-        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
-        Some(7)
-    );
-    assert_eq!(derives(tag), 1);
-}
+    assert_eq!(derives(tag), 1, "a second server hits the cache");
 
-#[test]
-fn changing_an_input_changes_the_key_and_derives_again() {
-    let tag = "input-change";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    let cache = project.cache_dir();
-    let before = key_of(&project, &sum_value::<1>(tag, a, b));
-
-    assert_eq!(
-        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
-        Some(7)
-    );
     project.leaf("b", 10);
-    let after = key_of(&project, &sum_value::<1>(tag, a, b));
-    assert_ne!(before, after);
-
+    let changed = key_of(&project, &sum_value::<1>(tag, a, b));
+    assert_ne!(first, changed);
     assert_eq!(
         Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
         Some(13)
     );
-    assert_eq!(derives(tag), 2);
-}
+    assert_eq!(derives(tag), 2, "a changed input misses");
 
-#[test]
-fn a_raised_derived_version_misses_the_old_entry() {
-    let tag = "version";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    let cache = project.cache_dir();
-
-    assert_eq!(
-        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
-        Some(7)
-    );
     assert_eq!(
         Runtime::<2>::new(&project, DerivedDataCache::at(&cache)).load(id),
-        Some(7)
+        Some(13)
     );
-    assert_eq!(derives(tag), 2);
-    let key = key_of(&project, &sum_value::<2>(tag, a, b));
-    assert!(entry_path(&cache, 2, key).is_file());
-}
+    assert_eq!(derives(tag), 3, "a raised derived version misses");
+    assert!(entry_path(&cache, 2, changed).is_file());
 
-#[test]
-fn a_cached_blob_that_apply_refuses_is_derived_again_and_overwritten() {
-    let tag = "refused";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    let cache = project.cache_dir();
-    let path = entry_path(&cache, 1, key_of(&project, &sum_value::<1>(tag, a, b)));
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, b"bad").unwrap();
-
+    std::fs::write(entry_path(&cache, 1, changed), b"bad").unwrap();
     assert_eq!(
         Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(id),
-        Some(7)
+        Some(13)
     );
-    assert_eq!(derives(tag), 1);
-    assert_eq!(std::fs::read(&path).unwrap(), 7u64.to_le_bytes());
+    assert_eq!(derives(tag), 4, "a blob apply refuses is derived again");
+    assert_eq!(
+        std::fs::read(entry_path(&cache, 1, changed)).unwrap(),
+        13u64.to_le_bytes()
+    );
+}
+
+struct Uncached {
+    tag: &'static str,
+    cache: fn(&Project) -> DerivedDataCache,
+    after: fn(&Project) -> bool,
 }
 
 #[test]
-fn a_missing_input_fails_the_load_naming_it() {
-    let tag = "missing";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let missing = AssetId::new();
-    let id = project.sum::<1>("sum", tag, a, missing);
+fn without_a_writable_cache_every_load_derives_with_the_blob_in_memory() {
+    let cases = [
+        Uncached {
+            tag: "no-cache",
+            cache: |_| DerivedDataCache::none(),
+            after: |project| !project.cache_dir().exists(),
+        },
+        Uncached {
+            tag: "root-is-file",
+            cache: |project| {
+                std::fs::write(project.cache_dir(), b"not a directory").unwrap();
+                DerivedDataCache::at(project.cache_dir())
+            },
+            after: |project| project.cache_dir().is_file(),
+        },
+    ];
+    for case in cases {
+        let mut project = Project::new(case.tag);
+        let a = project.leaf("a", 3);
+        let b = project.leaf("b", 4);
+        let id = project.sum::<1>("sum", case.tag, a, b);
+        let cache = (case.cache)(&project);
 
-    let error = pollster::block_on(DerivedInputs::read(
-        &project.content_root(),
-        &project.registry,
-        &[a, missing],
-    ))
-    .expect_err("a missing input is an error");
-    assert!(
-        format!("{error:#}").contains(&format!("{missing:?}")),
-        "got: {error:#}"
-    );
+        assert_eq!(Runtime::<1>::new(&project, cache.clone()).load(id), Some(7));
+        assert_eq!(Runtime::<1>::new(&project, cache).load(id), Some(7));
+        assert_eq!(derives(case.tag), 2, "{}", case.tag);
+        assert!((case.after)(&project), "{}", case.tag);
+    }
+}
+
+struct Cooked {
+    tag: &'static str,
+    inputs: bool,
+    derived_version: u32,
+    blob: &'static [u8],
+    total: u64,
+    derives: usize,
+}
+
+#[test]
+fn a_cooked_blob_of_the_current_version_loads_without_inputs_and_any_other_is_derived_again() {
+    let cases = [
+        Cooked {
+            tag: "cooked",
+            inputs: false,
+            derived_version: 1,
+            blob: &[42, 0, 0, 0, 0, 0, 0, 0],
+            total: 42,
+            derives: 0,
+        },
+        Cooked {
+            tag: "cooked-version",
+            inputs: true,
+            derived_version: 2,
+            blob: &[42, 0, 0, 0, 0, 0, 0, 0],
+            total: 7,
+            derives: 1,
+        },
+        Cooked {
+            tag: "cooked-refused",
+            inputs: true,
+            derived_version: 1,
+            blob: b"bad",
+            total: 7,
+            derives: 1,
+        },
+    ];
+    for case in cases {
+        let mut project = Project::new(case.tag);
+        let leaf = |project: &mut Project, name: &str, value: u64| {
+            if case.inputs {
+                project.leaf(name, value)
+            } else {
+                AssetId::new()
+            }
+        };
+        let a = leaf(&mut project, "a", 3);
+        let b = leaf(&mut project, "b", 4);
+        let id = project.sum::<1>("sum", case.tag, a, b);
+        project.cook("sum", case.derived_version, case.blob);
+        let cache = project.cache_dir();
+
+        let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+        assert_eq!(runtime.load(id), Some(case.total), "{}", case.tag);
+        assert_eq!(derives(case.tag), case.derives, "{}", case.tag);
+        assert_eq!(cache.exists(), case.derives > 0, "{}", case.tag);
+    }
+}
+
+#[test]
+fn a_derived_section_on_an_asset_or_instance_that_does_not_derive_is_ignored() {
+    let tag = "cooked-plain";
+    let mut project = Project::new(tag);
+    let leaf = project.leaf("leaf", 5);
+    project.cook("leaf", 1, b"stray");
+    let plain = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    project.cook("plain", 1, &42u64.to_le_bytes());
 
     let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load(id), None);
+    assert_eq!(runtime.load_leaf(leaf), Some(5));
+    assert_eq!(runtime.load_maybe(plain), Some(None));
     assert_eq!(derives(tag), 0);
 }
 
-#[test]
-fn a_derived_input_fails_the_load_naming_it() {
-    let tag = "derived-input";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let inner = project.sum::<1>("inner", tag, a, b);
-    let outer = project.sum::<1>("outer", tag, a, inner);
+struct Failing {
+    load: Option<u64>,
+    read_error: anyhow::Result<DerivedInputs>,
+    named: Vec<String>,
+}
 
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    let error = pollster::block_on(DerivedInputs::read(
+struct Failure {
+    tag: &'static str,
+    build: fn(&mut Project, &'static str) -> Failing,
+    derives: usize,
+}
+
+fn read_inputs(project: &Project, ids: &[AssetId]) -> anyhow::Result<DerivedInputs> {
+    pollster::block_on(DerivedInputs::read(
         &project.content_root(),
         &project.registry,
-        &[a, inner],
+        ids,
     ))
-    .expect_err("a derived input is an error");
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("derived assets can't derive from derived assets")
-            && message.contains(&format!("{inner:?}")),
-        "got: {message}"
-    );
-
-    assert_eq!(runtime.load(outer), None);
-    assert_eq!(derives(tag), 0);
 }
 
 #[test]
-fn a_derive_error_fails_the_load() {
-    let tag = "derive-error";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    with_probe(tag, |probe| probe.fail_derive = true);
-    let cache = project.cache_dir();
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
-    assert_eq!(runtime.load(id), None);
-    assert_eq!(derives(tag), 1);
-    assert!(cache_files(&cache).is_empty());
-}
-
-#[test]
-fn a_cache_whose_root_is_a_file_still_loads_with_the_blob_in_memory() {
-    let tag = "root-is-file";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    let cache = project.cache_dir();
-    std::fs::write(&cache, b"not a directory").unwrap();
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
-    assert_eq!(runtime.load(id), Some(7));
-    assert!(cache.is_file());
-}
-
-#[test]
-fn with_no_cache_every_load_derives() {
-    let tag = "no-cache";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-
-    assert_eq!(
-        Runtime::<1>::new(&project, DerivedDataCache::none()).load(id),
-        Some(7)
-    );
-    assert_eq!(
-        Runtime::<1>::new(&project, DerivedDataCache::none()).load(id),
-        Some(7)
-    );
-    assert_eq!(derives(tag), 2);
-    assert!(!project.cache_dir().exists());
+fn a_load_fails_on_a_missing_or_derived_input_or_a_derive_error_naming_the_input() {
+    let cases = [
+        Failure {
+            tag: "missing",
+            build: |project, tag| {
+                let a = project.leaf("a", 3);
+                let missing = AssetId::new();
+                let id = project.sum::<1>("sum", tag, a, missing);
+                Failing {
+                    load: Runtime::<1>::new(project, DerivedDataCache::none()).load(id),
+                    read_error: read_inputs(project, &[a, missing]),
+                    named: vec![format!("{missing:?}")],
+                }
+            },
+            derives: 0,
+        },
+        Failure {
+            tag: "derived-input",
+            build: |project, tag| {
+                let a = project.leaf("a", 3);
+                let b = project.leaf("b", 4);
+                let inner = project.sum::<1>("inner", tag, a, b);
+                let outer = project.sum::<1>("outer", tag, a, inner);
+                Failing {
+                    load: Runtime::<1>::new(project, DerivedDataCache::none()).load(outer),
+                    read_error: read_inputs(project, &[a, inner]),
+                    named: vec![
+                        "derived assets can't derive from derived assets".into(),
+                        format!("{inner:?}"),
+                    ],
+                }
+            },
+            derives: 0,
+        },
+        Failure {
+            tag: "derive-error",
+            build: |project, tag| {
+                let a = project.leaf("a", 3);
+                let b = project.leaf("b", 4);
+                let id = project.sum::<1>("sum", tag, a, b);
+                with_probe(tag, |probe| probe.fail_derive = true);
+                let cache = project.cache_dir();
+                let load = Runtime::<1>::new(project, DerivedDataCache::at(&cache)).load(id);
+                assert!(cache_files(&cache).is_empty());
+                Failing {
+                    load,
+                    read_error: Err(anyhow::anyhow!("the inputs read")),
+                    named: Vec::new(),
+                }
+            },
+            derives: 1,
+        },
+        Failure {
+            tag: "further-missing",
+            build: |project, tag| {
+                let missing = AssetId::new();
+                let pointer = project.pointer("pointer", missing);
+                let id = project.chain("chain", tag, pointer);
+                Failing {
+                    load: Runtime::<1>::new(project, DerivedDataCache::none()).load_chain(id),
+                    read_error: chain_inputs(project, &Chain::new(tag, pointer)),
+                    named: vec![format!("{missing:?}")],
+                }
+            },
+            derives: 0,
+        },
+        Failure {
+            tag: "further-derived",
+            build: |project, tag| {
+                let a = project.leaf("a", 3);
+                let derived = project.maybe("derived", &Maybe::new(tag, true, 6, vec![a]));
+                let pointer = project.pointer("pointer", derived);
+                let id = project.chain("chain", tag, pointer);
+                Failing {
+                    load: Runtime::<1>::new(project, DerivedDataCache::none()).load_chain(id),
+                    read_error: chain_inputs(project, &Chain::new(tag, pointer)),
+                    named: vec![format!("{derived:?}"), "itself derived".into()],
+                }
+            },
+            derives: 0,
+        },
+    ];
+    for case in cases {
+        let mut project = Project::new(case.tag);
+        let failing = (case.build)(&mut project, case.tag);
+        assert_eq!(failing.load, None, "{}", case.tag);
+        assert_eq!(derives(case.tag), case.derives, "{}", case.tag);
+        let message = format!(
+            "{:#}",
+            failing
+                .read_error
+                .err()
+                .unwrap_or_else(|| panic!("{}: the inputs read", case.tag))
+        );
+        for name in &failing.named {
+            assert!(message.contains(name.as_str()), "{}: {message}", case.tag);
+        }
+    }
 }
 
 #[test]
@@ -848,60 +925,7 @@ fn a_handle_never_reads_as_loaded_before_its_blob_is_applied() {
 }
 
 #[test]
-fn a_cooked_blob_loads_without_its_inputs_and_without_deriving() {
-    let tag = "cooked";
-    let mut project = Project::new(tag);
-    let id = project.sum::<1>("sum", tag, AssetId::new(), AssetId::new());
-    project.cook("sum", 1, &42u64.to_le_bytes());
-    let cache = project.cache_dir();
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
-    assert_eq!(runtime.load(id), Some(42));
-    assert_eq!(derives(tag), 0);
-    assert!(!cache.exists());
-}
-
-#[test]
-fn a_cooked_blob_of_another_derived_version_is_derived_again() {
-    let tag = "cooked-version";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    project.cook("sum", 2, &42u64.to_le_bytes());
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load(id), Some(7));
-    assert_eq!(derives(tag), 1);
-}
-
-#[test]
-fn a_cooked_blob_that_apply_refuses_is_derived_again() {
-    let tag = "cooked-refused";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    let id = project.sum::<1>("sum", tag, a, b);
-    project.cook("sum", 1, b"bad");
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load(id), Some(7));
-    assert_eq!(derives(tag), 1);
-}
-
-#[test]
-fn a_derived_section_on_an_asset_that_is_not_derived_is_ignored() {
-    let tag = "cooked-leaf";
-    let mut project = Project::new(tag);
-    let id = project.leaf("leaf", 5);
-    project.cook("leaf", 1, b"stray");
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load_leaf(id), Some(5));
-}
-
-#[test]
-fn a_cook_writes_each_derived_entry_with_its_payload_key_and_blob() {
+fn a_cook_writes_each_derived_entry_with_its_payload_key_and_blob_and_nothing_else() {
     let tag = "cook";
     let mut project = Project::new(tag);
     let a = project.leaf("a", 3);
@@ -910,14 +934,23 @@ fn a_cook_writes_each_derived_entry_with_its_payload_key_and_blob() {
     project.sum::<1>("nested/double", tag, a, a);
     let out = project.root.join("cooked");
 
-    let report = Runtime::<1>::new(&project, DerivedDataCache::none())
-        .server
-        .cook(&out)
-        .unwrap();
+    let server = Runtime::<1>::new(&project, DerivedDataCache::none()).server;
+    assert!(server.can_cook("Sum"));
+    assert!(!server.can_cook("Leaf"));
+    let report = server.cook(&out).unwrap();
 
     assert_eq!(
         report.cooked,
         vec!["content/nested/double.gasset", "content/sum.gasset"]
+    );
+    let mut files = cache_files(&out);
+    files.sort();
+    assert_eq!(
+        files,
+        vec![
+            out.join("content/nested/double.gasset"),
+            out.join("content/sum.gasset")
+        ]
     );
     assert_cooked_from(
         &project,
@@ -936,75 +969,53 @@ fn a_cook_writes_each_derived_entry_with_its_payload_key_and_blob() {
     assert_eq!(derives(tag), 2);
 }
 
-#[test]
-fn a_cook_skips_entries_that_are_not_derived() {
-    let tag = "cook-skip";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    project.sum::<1>("sum", tag, a, b);
-    let out = project.root.join("cooked");
-
-    Runtime::<1>::new(&project, DerivedDataCache::none())
-        .server
-        .cook(&out)
-        .unwrap();
-
-    assert_eq!(cache_files(&out), vec![out.join("content/sum.gasset")]);
+struct CookCached {
+    tag: &'static str,
+    cached: &'static [u8],
+    blob: u64,
+    derives: usize,
 }
 
 #[test]
-fn a_cook_uses_a_cached_blob() {
-    let tag = "cook-hit";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    project.sum::<1>("sum", tag, a, b);
-    let cache = project.cache_dir();
-    let key = key_of(&project, &sum_value::<1>(tag, a, b));
-    put_cached(&cache, key, &99u64.to_le_bytes());
-    let out = project.root.join("cooked");
+fn a_cook_uses_a_cached_blob_unless_apply_refuses_it() {
+    let cases = [
+        CookCached {
+            tag: "cook-hit",
+            cached: &[99, 0, 0, 0, 0, 0, 0, 0],
+            blob: 99,
+            derives: 0,
+        },
+        CookCached {
+            tag: "cook-refused",
+            cached: b"bad",
+            blob: 7,
+            derives: 1,
+        },
+    ];
+    for case in cases {
+        let mut project = Project::new(case.tag);
+        let a = project.leaf("a", 3);
+        let b = project.leaf("b", 4);
+        project.sum::<1>("sum", case.tag, a, b);
+        let cache = project.cache_dir();
+        let key = key_of(&project, &sum_value::<1>(case.tag, a, b));
+        put_cached(&cache, key, case.cached);
+        let out = project.root.join("cooked");
 
-    Runtime::<1>::new(&project, DerivedDataCache::at(&cache))
-        .server
-        .cook(&out)
-        .unwrap();
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache))
+            .server
+            .cook(&out)
+            .unwrap();
 
-    assert_cooked_from(
-        &project,
-        &out,
-        "content/sum.gasset",
-        key,
-        &99u64.to_le_bytes(),
-    );
-    assert_eq!(derives(tag), 0);
-}
-
-#[test]
-fn a_cook_derives_again_over_a_cached_blob_that_apply_refuses() {
-    let tag = "cook-refused";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let b = project.leaf("b", 4);
-    project.sum::<1>("sum", tag, a, b);
-    let cache = project.cache_dir();
-    let key = key_of(&project, &sum_value::<1>(tag, a, b));
-    put_cached(&cache, key, b"bad");
-    let out = project.root.join("cooked");
-
-    Runtime::<1>::new(&project, DerivedDataCache::at(&cache))
-        .server
-        .cook(&out)
-        .unwrap();
-
-    assert_cooked_from(
-        &project,
-        &out,
-        "content/sum.gasset",
-        key,
-        &7u64.to_le_bytes(),
-    );
-    assert_eq!(derives(tag), 1);
+        assert_cooked_from(
+            &project,
+            &out,
+            "content/sum.gasset",
+            key,
+            &case.blob.to_le_bytes(),
+        );
+        assert_eq!(derives(case.tag), case.derives, "{}", case.tag);
+    }
 }
 
 #[test]
@@ -1034,36 +1045,19 @@ fn a_failing_derive_stops_the_cook_naming_its_address() {
 }
 
 #[test]
-fn only_derived_kinds_can_be_cooked() {
-    let project = Project::new("can-cook");
-    let server = Runtime::<1>::new(&project, DerivedDataCache::none()).server;
-
-    assert!(server.can_cook("Sum"));
-    assert!(!server.can_cook("Leaf"));
-}
-
-#[test]
-fn an_instance_that_does_not_derive_loads_without_reading_inputs_or_touching_the_cache() {
-    let tag = "maybe-plain";
+fn an_instance_derives_only_when_it_says_so_and_one_that_does_not_reads_no_inputs() {
+    let tag = "maybe";
     let mut project = Project::new(tag);
-    let id = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    let a = project.leaf("a", 3);
+    let plain = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
+    let derived = project.maybe("derived", &Maybe::new(tag, true, 5, vec![a]));
     let cache = project.cache_dir();
 
     let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
-    assert_eq!(runtime.load_maybe(id), Some(None));
+    assert_eq!(runtime.load_maybe(plain), Some(None));
     assert_eq!(derives(tag), 0);
     assert!(!cache.exists());
-}
-
-#[test]
-fn an_instance_that_derives_loads_with_its_blob() {
-    let tag = "maybe-derived";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let id = project.maybe("derived", &Maybe::new(tag, true, 5, vec![a]));
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load_maybe(id), Some(Some(8)));
+    assert_eq!(runtime.load_maybe(derived), Some(Some(8)));
     assert_eq!(derives(tag), 1);
 }
 
@@ -1077,19 +1071,9 @@ fn an_input_that_does_not_derive_is_accepted_and_one_that_derives_is_refused() {
     let over_plain = project.maybe("over-plain", &Maybe::new(tag, true, 1, vec![plain]));
     let over_derived = project.maybe("over-derived", &Maybe::new(tag, true, 1, vec![derived]));
 
-    pollster::block_on(DerivedInputs::read(
-        &project.content_root(),
-        &project.registry,
-        &[a, plain],
-    ))
-    .expect("an input that does not derive is accepted");
+    read_inputs(&project, &[a, plain]).expect("an input that does not derive is accepted");
 
-    let error = pollster::block_on(DerivedInputs::read(
-        &project.content_root(),
-        &project.registry,
-        &[a, derived],
-    ))
-    .expect_err("an input that derives is refused");
+    let error = read_inputs(&project, &[a, derived]).expect_err("an input that derives is refused");
     let message = format!("{error:#}");
     assert!(
         message.contains(&format!("{derived:?}"))
@@ -1116,12 +1100,7 @@ fn an_input_of_a_derived_kind_that_cannot_be_read_fails_naming_it() {
     )
     .unwrap();
 
-    let error = pollster::block_on(DerivedInputs::read(
-        &project.content_root(),
-        &project.registry,
-        &[plain],
-    ))
-    .expect_err("an unreadable input is refused");
+    let error = read_inputs(&project, &[plain]).expect_err("an unreadable input is refused");
     let message = format!("{error:#}");
     assert!(
         message.contains(&format!("{plain:?}")) && message.contains("content/plain.gasset"),
@@ -1151,18 +1130,6 @@ fn a_cook_writes_and_reports_only_the_instances_that_derive() {
 }
 
 #[test]
-fn a_cooked_section_on_an_instance_that_does_not_derive_is_not_applied() {
-    let tag = "maybe-cooked-plain";
-    let mut project = Project::new(tag);
-    let id = project.maybe("plain", &Maybe::new(tag, false, 5, vec![AssetId::new()]));
-    project.cook("plain", 1, &42u64.to_le_bytes());
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load_maybe(id), Some(None));
-    assert_eq!(derives(tag), 0);
-}
-
-#[test]
 fn file_is_derived_decodes_the_payload_by_default() {
     let tag = "maybe-file";
     let mut project = Project::new(tag);
@@ -1186,16 +1153,25 @@ fn further_inputs_are_read_and_seen_by_the_key_and_the_derive() {
     let pointer = project.pointer("pointer", target);
     let id = project.chain("chain", tag, pointer);
     let cache = project.cache_dir();
+    let before = chain_key(&project, &Chain::new(tag, pointer));
 
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
-    assert_eq!(runtime.load_chain(id), Some(7));
-
-    let key = chain_key(&project, &Chain::new(tag, pointer));
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load_chain(id),
+        Some(7)
+    );
     assert_eq!(
         cache_files(&cache),
-        vec![cache.join(format!("Chain/v1/{key:016x}.blob"))]
+        vec![cache.join(format!("Chain/v1/{before:016x}.blob"))]
     );
     assert_eq!(derives(tag), 1);
+
+    project.leaf("target", 10);
+    assert_ne!(before, chain_key(&project, &Chain::new(tag, pointer)));
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load_chain(id),
+        Some(10)
+    );
+    assert_eq!(derives(tag), 2);
 }
 
 #[test]
@@ -1204,8 +1180,7 @@ fn read_more_skips_ids_already_read() {
     let a = project.leaf("a", 3);
     let b = project.leaf("b", 4);
     let root = project.content_root();
-    let mut inputs =
-        pollster::block_on(DerivedInputs::read(&root, &project.registry, &[a])).unwrap();
+    let mut inputs = read_inputs(&project, &[a]).unwrap();
     project.leaf("a", 30);
 
     pollster::block_on(inputs.read_more(&root, &project.registry, &[a, b])).unwrap();
@@ -1215,74 +1190,7 @@ fn read_more_skips_ids_already_read() {
 }
 
 #[test]
-fn changing_a_further_input_changes_the_key_and_derives_again() {
-    let tag = "further-change";
-    let mut project = Project::new(tag);
-    let target = project.leaf("target", 7);
-    let pointer = project.pointer("pointer", target);
-    let id = project.chain("chain", tag, pointer);
-    let cache = project.cache_dir();
-    let before = chain_key(&project, &Chain::new(tag, pointer));
-
-    assert_eq!(
-        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load_chain(id),
-        Some(7)
-    );
-    project.leaf("target", 10);
-    let after = chain_key(&project, &Chain::new(tag, pointer));
-    assert_ne!(before, after);
-
-    assert_eq!(
-        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load_chain(id),
-        Some(10)
-    );
-    assert_eq!(derives(tag), 2);
-}
-
-#[test]
-fn a_missing_further_input_fails_the_load_naming_it() {
-    let tag = "further-missing";
-    let mut project = Project::new(tag);
-    let missing = AssetId::new();
-    let pointer = project.pointer("pointer", missing);
-    let id = project.chain("chain", tag, pointer);
-
-    let error = chain_inputs(&project, &Chain::new(tag, pointer))
-        .expect_err("a missing further input is an error");
-    assert!(
-        format!("{error:#}").contains(&format!("{missing:?}")),
-        "got: {error:#}"
-    );
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load_chain(id), None);
-    assert_eq!(derives(tag), 0);
-}
-
-#[test]
-fn a_further_input_that_derives_is_refused() {
-    let tag = "further-derived";
-    let mut project = Project::new(tag);
-    let a = project.leaf("a", 3);
-    let derived = project.maybe("derived", &Maybe::new(tag, true, 6, vec![a]));
-    let pointer = project.pointer("pointer", derived);
-    let id = project.chain("chain", tag, pointer);
-
-    let error = chain_inputs(&project, &Chain::new(tag, pointer))
-        .expect_err("a further input that derives is refused");
-    let message = format!("{error:#}");
-    assert!(
-        message.contains(&format!("{derived:?}")) && message.contains("itself derived"),
-        "got: {message}"
-    );
-
-    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
-    assert_eq!(runtime.load_chain(id), None);
-    assert_eq!(derives(tag), 0);
-}
-
-#[test]
-fn a_cook_reads_further_inputs() {
+fn a_cook_reads_further_inputs_and_stops_naming_one_that_is_missing() {
     let tag = "further-cook";
     let mut project = Project::new(tag);
     let target = project.leaf("target", 7);
@@ -1304,10 +1212,7 @@ fn a_cook_reads_further_inputs() {
         &7u64.to_le_bytes(),
     );
     assert_eq!(derives(tag), 1);
-}
 
-#[test]
-fn a_missing_further_input_stops_the_cook_naming_it() {
     let tag = "further-cook-missing";
     let mut project = Project::new(tag);
     let missing = AssetId::new();

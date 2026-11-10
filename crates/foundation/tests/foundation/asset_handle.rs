@@ -13,28 +13,12 @@ impl Asset for FakeAsset {
 }
 
 #[test]
-fn weak_handle_serializes_to_its_id() {
+fn a_handle_encodes_as_its_bare_id_and_decodes_weak() {
     let id = AssetId::from_path("models/character.gltf#texture/albedo");
-    let handle: AssetHandle<FakeAsset> = AssetHandle::weak(id);
+    let bytes = bincode::serialize(&AssetHandle::<FakeAsset>::weak(id)).unwrap();
+    assert_eq!(bytes, bincode::serialize(&id).unwrap());
 
-    let bytes = bincode::serialize(&handle).unwrap();
     let decoded: AssetHandle<FakeAsset> = bincode::deserialize(&bytes).unwrap();
-
-    assert_eq!(
-        decoded.id(),
-        id,
-        "round-tripping a handle must preserve its AssetId"
-    );
-}
-
-#[test]
-fn deserialized_handle_is_weak_and_id_matches() {
-    let id = AssetId::from_path("models/character.gltf#mesh/0");
-    let bytes = bincode::serialize(&id).unwrap();
-    let decoded: AssetHandle<FakeAsset> = bincode::deserialize(&bytes).unwrap();
-    assert_eq!(
-        decoded.id(),
-        id,
-        "deserializing a bare AssetId must produce a handle with that ID"
-    );
+    assert!(matches!(decoded, AssetHandle::Weak(..)));
+    assert_eq!(decoded.id(), id);
 }

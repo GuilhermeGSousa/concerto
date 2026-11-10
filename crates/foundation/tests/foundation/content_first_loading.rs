@@ -34,74 +34,69 @@ fn write_pebble(dir: &std::path::Path, address: &str) {
     std::fs::write(path, write_content_asset(&header, &payload).unwrap()).unwrap();
 }
 
-#[test]
-fn reads_a_content_asset_at_its_literal_address() {
-    let dir = temp_root("reads");
-    let address = "content/x/pebble_0.gasset";
-    write_pebble(&dir, address);
+struct Load {
+    name: &'static str,
+    address: &'static str,
+    write: fn(&std::path::Path),
+    load: fn(&ContentAssetRoot, &str) -> Result<String, String>,
+    expected: Result<String, Vec<&'static str>>,
+}
 
-    let pebble = pollster::block_on(load_content_asset::<Pebble>(
-        &ContentAssetRoot::Directory(dir.clone()),
-        address,
-    ))
-    .expect("load");
-    assert_eq!(pebble, Pebble { weight: 7 });
-
-    std::fs::remove_dir_all(&dir).ok();
+fn load<A: Asset + std::fmt::Debug>(
+    root: &ContentAssetRoot,
+    address: &str,
+) -> Result<String, String> {
+    pollster::block_on(load_content_asset::<A>(root, address))
+        .map(|asset| format!("{asset:?}"))
+        .map_err(|err| format!("{err:#}"))
 }
 
 #[test]
-fn a_kind_mismatch_is_an_error() {
-    let dir = temp_root("kind");
-    let address = "content/x/thing.gasset";
-    write_pebble(&dir, address);
-
-    let err = pollster::block_on(load_content_asset::<Boulder>(
-        &ContentAssetRoot::Directory(dir.clone()),
-        address,
-    ))
-    .expect_err("kind mismatch must be an error");
-    let message = format!("{err:#}");
-    assert!(
-        message.contains("Pebble") && message.contains("Boulder") && message.contains(address),
-        "got: {message}"
-    );
-
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn a_missing_content_asset_is_an_error() {
-    let dir = temp_root("missing");
-
-    let err = pollster::block_on(load_content_asset::<Pebble>(
-        &ContentAssetRoot::Directory(dir.clone()),
-        "content/x/absent.gasset",
-    ))
-    .expect_err("a missing content asset must be an error");
-    assert!(
-        format!("{err:#}").contains("content/x/absent.gasset"),
-        "the error must name the address so a missing asset is traceable"
-    );
-
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn a_directory_at_the_address_is_an_error() {
-    let dir = temp_root("addr-is-dir");
-    let address = "content/x";
-    std::fs::create_dir_all(dir.join(address)).unwrap();
-
-    let err = pollster::block_on(load_content_asset::<Pebble>(
-        &ContentAssetRoot::Directory(dir.clone()),
-        address,
-    ))
-    .expect_err("a directory at the joined path is not a readable content asset");
-    assert!(
-        format!("{err:#}").contains(address),
-        "the error must name the address"
-    );
-
-    std::fs::remove_dir_all(&dir).ok();
+fn a_content_asset_loads_from_its_literal_address_and_a_failure_names_the_address() {
+    let cases = [
+        Load {
+            name: "a content asset of the requested kind",
+            address: "content/x/pebble_0.gasset",
+            write: |dir| write_pebble(dir, "content/x/pebble_0.gasset"),
+            load: load::<Pebble>,
+            expected: Ok(format!("{:?}", Pebble { weight: 7 })),
+        },
+        Load {
+            name: "another kind",
+            address: "content/x/thing.gasset",
+            write: |dir| write_pebble(dir, "content/x/thing.gasset"),
+            load: load::<Boulder>,
+            expected: Err(vec!["Pebble", "Boulder", "content/x/thing.gasset"]),
+        },
+        Load {
+            name: "a missing file",
+            address: "content/x/absent.gasset",
+            write: |_| {},
+            load: load::<Pebble>,
+            expected: Err(vec!["content/x/absent.gasset"]),
+        },
+        Load {
+            name: "a directory at the address",
+            address: "content/x",
+            write: |dir| std::fs::create_dir_all(dir.join("content/x")).unwrap(),
+            load: load::<Pebble>,
+            expected: Err(vec!["content/x"]),
+        },
+    ];
+    for case in cases {
+        let dir = temp_root("load");
+        (case.write)(&dir);
+        let loaded = (case.load)(&ContentAssetRoot::Directory(dir.clone()), case.address);
+        std::fs::remove_dir_all(&dir).ok();
+        let outcome = loaded;
+        match case.expected {
+            Ok(expected) => assert_eq!(outcome, Ok(expected), "{}", case.name),
+            Err(fragments) => {
+                let message = outcome.expect_err(case.name);
+                for fragment in fragments {
+                    assert!(message.contains(fragment), "{}: {message}", case.name);
+                }
+            }
+        }
+    }
 }

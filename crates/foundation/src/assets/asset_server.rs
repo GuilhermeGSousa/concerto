@@ -388,16 +388,6 @@ impl AssetServer {
         true
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_loaded(&self, id: &AssetId) -> bool {
-        self.data.loaded_assets.read().unwrap().contains(id)
-    }
-
-    #[cfg(test)]
-    fn resolve_by_id(&self, id: AssetId) -> Option<String> {
-        self.resolve_asset(id).map(|(_, entry)| entry.address)
-    }
-
     pub(crate) fn content_source(&self) -> (ContentAssetRoot, Arc<AssetRegistry>) {
         let content = self.data.content.read().unwrap();
         (content.root.clone(), Arc::clone(&content.registry))
@@ -636,15 +626,23 @@ mod tests {
         dir
     }
 
-    /// A minimal real asset: written to disk by `save_content_asset_into` and read
-    /// back through the cooked-asset path, so UUID loading is exercised end to
-    /// end rather than against a mock.
     #[derive(serde::Serialize, serde::Deserialize)]
     struct FixtureAsset {
         value: u32,
         #[serde(skip)]
         initialized: bool,
     }
+
+    impl FixtureAsset {
+        fn new(value: u32) -> Self {
+            Self {
+                value,
+                initialized: false,
+            }
+        }
+    }
+
+    const REFUSED: u32 = u32::MAX;
 
     impl Asset for FixtureAsset {
         fn name() -> &'static str {
@@ -654,6 +652,7 @@ mod tests {
 
     impl LoadableAsset for FixtureAsset {
         fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
+            anyhow::ensure!(self.value != REFUSED, "refused");
             self.initialized = true;
             Ok(())
         }
@@ -669,12 +668,6 @@ mod tests {
         }
     }
 
-    /// Runs the load task spawned for `id` to completion.
-    ///
-    /// Taking the real `Task` out of `pending_tasks` and awaiting it makes the
-    /// wait deterministic — the task is a `Future`, so there is no sleeping or
-    /// polling — while still running the genuine `LoadTaskPool` task, registry
-    /// read and deserialization.
     fn drive_pending_load(server: &AssetServer, id: AssetId) {
         let task = server
             .data
@@ -687,68 +680,85 @@ mod tests {
         pollster::block_on(task);
     }
 
-    #[test]
-    fn resolve_by_id_finds_a_registered_asset() {
-        let dir = temp_root("resolve-hit");
-        let id = AssetId::from_path("content/hero/scene.gasset");
-        let mut registry = AssetRegistry::new();
-        registry.insert(scene_entry(id));
-
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        server.publish_registry(registry);
-        let resolved = server.resolve_by_id(id);
-
-        assert_eq!(resolved.as_deref(), Some("content/hero/scene.gasset"));
-        std::fs::remove_dir_all(&dir).ok();
+    struct Fixture {
+        server: AssetServer,
+        world: World,
     }
 
-    #[test]
-    fn resolve_by_id_returns_none_for_an_unregistered_id() {
-        let dir = temp_root("resolve-miss");
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        let resolved = server.resolve_by_id(AssetId::new());
-        assert_eq!(resolved, None);
-        std::fs::remove_dir_all(&dir).ok();
+    impl Fixture {
+        fn new<A: Asset>(dir: &std::path::Path, registry: AssetRegistry) -> Self {
+            let mut server =
+                AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
+            let store = AssetStore::<A>::new();
+            server.register_asset(&store);
+            server.publish_registry(registry);
+            let mut world = World::new();
+            world.insert_resource(store);
+            world.insert_resource(server.clone());
+            Self { server, world }
+        }
+
+        fn value(&self, handle: &AssetHandle<FixtureAsset>) -> Option<u32> {
+            let store = self
+                .world
+                .get_resource::<AssetStore<FixtureAsset>>()
+                .unwrap();
+            store.get(handle).map(|asset| {
+                assert!(asset.initialized, "on_load ran before the asset landed");
+                asset.value
+            })
+        }
     }
 
-    #[test]
-    fn load_reads_a_registered_content_asset() {
-        let dir = temp_root("load-by-id-hit");
-        let address = "content/fixture/value.gasset";
+    struct Saved {
+        id: AssetId,
+        registry: AssetRegistry,
+    }
+
+    fn save<A: Asset>(dir: &std::path::Path, value: &A, address: &str) -> Saved {
         let mut registry = AssetRegistry::new();
-        let id = save_content_asset_into(
-            &FixtureAsset {
-                value: 7,
-                initialized: false,
-            },
-            &dir,
-            address,
-            &mut registry,
+        let id = save_content_asset_into(value, dir, address, &mut registry).unwrap();
+        Saved { id, registry }
+    }
+
+    fn saved_fixture(dir: &std::path::Path, value: u32) -> Saved {
+        save(
+            dir,
+            &FixtureAsset::new(value),
+            "content/fixture/value.gasset",
         )
-        .expect("save content asset");
+    }
 
-        let mut world = World::new();
-        let store = AssetStore::<FixtureAsset>::new();
-        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        server.register_asset::<FixtureAsset>(&store);
-        server.publish_registry(registry);
-        world.insert_resource(store);
-        world.insert_resource(server.clone());
+    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what} never happened"
+            );
+            std::thread::yield_now();
+        }
+    }
 
-        let handle = server.load::<FixtureAsset>(id);
-        drive_pending_load(&server, id);
-        handle_asset_load_events(&mut world);
+    fn wait_for_the_load(server: &AssetServer) {
+        wait_until("the load", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+    }
 
-        assert!(
-            server.data.loaded_assets.read().unwrap().contains(&id),
-            "a registered id must resolve through the registry and finish loading"
-        );
-        let store = world
-            .get_resource::<AssetStore<FixtureAsset>>()
-            .expect("asset store");
-        assert_eq!(store.get(&handle).map(|asset| asset.value), Some(7));
-        assert!(store.get(&handle).unwrap().initialized);
+    #[test]
+    fn load_reads_a_registered_content_asset_through_the_registry() {
+        let dir = temp_root("load-by-id-hit");
+        let saved = saved_fixture(&dir, 7);
+        let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
 
+        let handle = fixture.server.load::<FixtureAsset>(saved.id);
+        drive_pending_load(&fixture.server, saved.id);
+        handle_asset_load_events(&mut fixture.world);
+
+        assert_eq!(fixture.value(&handle), Some(7));
+        assert!(fixture.server.is_loading_or_loaded(saved.id));
+        assert!(!fixture.server.is_loading());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -799,36 +809,26 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    fn handle_type_data(world: &World) -> ReflectAssetHandle {
-        world
-            .get_resource::<concerto_ecs::reflect::AppTypeRegistry>()
-            .unwrap()
-            .get_type_data::<ReflectAssetHandle>(std::any::TypeId::of::<AssetHandle<FixtureAsset>>())
-            .unwrap()
-    }
-
     #[test]
-    fn a_handle_registered_through_its_component_describes_itself_without_naming_its_asset() {
+    fn a_handles_type_data_describes_it_and_sets_it_only_through_a_server_that_registered_its_asset(
+    ) {
         let mut world = World::new();
         world.register_type::<Holder>();
-        let handle = handle_type_data(&world);
+        let handle = world
+            .get_resource::<concerto_ecs::reflect::AppTypeRegistry>()
+            .unwrap()
+            .get_type_data::<ReflectAssetHandle>(TypeId::of::<AssetHandle<FixtureAsset>>())
+            .unwrap();
+        let dir = temp_root("described-handle");
         let id = AssetId::new();
 
         assert_eq!(handle.kind(), "FixtureAsset");
         assert_eq!(handle.id(&AssetHandle::<FixtureAsset>::weak(id)), Some(id));
         assert_eq!(handle.id(&7u32), None);
-    }
 
-    #[test]
-    fn a_described_handle_loads_only_through_a_server_that_registered_its_asset() {
-        let mut world = World::new();
-        world.register_type::<Holder>();
-        let handle = handle_type_data(&world);
-        let dir = temp_root("described-handle");
-        let id = AssetId::new();
         let mut value = AssetHandle::<FixtureAsset>::default();
-
         let bare = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        assert!(!bare.is_registered::<FixtureAsset>());
         assert!(handle.set(&mut value, &bare, id).is_err());
         assert!(value.id().is_nil());
 
@@ -844,193 +844,105 @@ mod tests {
     }
 
     #[test]
-    fn a_handle_written_through_live_leaves_loads_through_the_server() {
+    fn live_leaves_load_a_handle_through_the_server_or_keep_it_weak_without_one_and_keep_entity_references_live(
+    ) {
         use crate::assets::handle::LiveLeaves;
-        use concerto_ecs::reflect::AppTypeRegistry;
-        use std::any::TypeId;
+        use concerto_ecs::{component::scene::SceneEntityRef, reflect::AppTypeRegistry};
 
         let dir = temp_root("live-handle");
         let store = AssetStore::<FixtureAsset>::new();
         let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
         server.register_asset::<FixtureAsset>(&store);
-        let mut world = World::new();
-        world.insert_resource(server.clone());
-        world.register_type::<AssetHandle<FixtureAsset>>();
-        let id = AssetId::new();
-        let mut hook = LiveLeaves::new(&world);
-        let stored = concerto_reflect::json_to_value_with(
-            &serde_json::Value::String(id.simple_hex()),
-            TypeId::of::<AssetHandle<FixtureAsset>>(),
-            &world.get_resource::<AppTypeRegistry>().unwrap().read(),
-            &mut hook,
-        )
-        .unwrap();
-
-        let mut handle = AssetHandle::<FixtureAsset>::default();
-        let warnings = concerto_reflect::apply_value_with(&mut handle, &stored, &mut hook);
-
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(matches!(handle, AssetHandle::Strong(..)));
-        assert_eq!(handle.id(), id);
-        assert!(server.data.pending_tasks.read().unwrap().contains_key(&id));
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn live_leaves_keep_entity_references_live_and_handles_weak_without_a_server() {
-        use crate::assets::handle::LiveLeaves;
-        use concerto_ecs::{component::scene::SceneEntityRef, reflect::AppTypeRegistry};
-        use std::any::TypeId;
-
-        let mut world = World::new();
-        world.register_type::<AssetHandle<FixtureAsset>>();
-        let entity = world.spawn(());
-        let id = AssetId::new();
-        let mut hook = LiveLeaves::new(&world);
-        let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
-        let reference = concerto_reflect::json_to_value_with(
-            &serde_json::Value::String(entity.to_id_string()),
-            TypeId::of::<SceneEntityRef>(),
-            &registry,
-            &mut hook,
-        )
-        .unwrap();
-        let asset = concerto_reflect::json_to_value_with(
-            &serde_json::Value::String(id.simple_hex()),
-            TypeId::of::<AssetHandle<FixtureAsset>>(),
-            &registry,
-            &mut hook,
-        )
-        .unwrap();
-
-        let mut written = SceneEntityRef::default();
-        let mut handle = AssetHandle::<FixtureAsset>::default();
-        assert!(concerto_reflect::apply_value_with(&mut written, &reference, &mut hook).is_empty());
-        assert!(concerto_reflect::apply_value_with(&mut handle, &asset, &mut hook).is_empty());
-
-        assert_eq!(written, SceneEntityRef::Entity(entity));
-        assert!(matches!(handle, AssetHandle::Weak(..)));
-        assert_eq!(handle.id(), id);
-    }
-
-    #[test]
-    fn load_fails_for_an_unregistered_id() {
-        let dir = temp_root("load-by-id-miss");
-        let store = AssetStore::<FixtureAsset>::new();
-        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        server.register_asset::<FixtureAsset>(&store);
-
-        let id = AssetId::new();
-        let _handle = server.load::<FixtureAsset>(id);
-        drive_pending_load(&server, id);
-
-        match server.data.asset_load_event_receiver.try_recv() {
-            Ok(AssetLoadEvent::LoadFailed { id: failed, .. }) => assert_eq!(failed, id),
-            Ok(AssetLoadEvent::Loaded { .. }) => {
-                panic!("an unregistered id must not produce an asset")
+        for with_server in [true, false] {
+            let mut world = World::new();
+            if with_server {
+                world.insert_resource(server.clone());
             }
-            Err(error) => panic!("expected a LoadFailed event, got {error}"),
-        }
-        assert!(!server.data.loaded_assets.read().unwrap().contains(&id));
+            world.register_type::<AssetHandle<FixtureAsset>>();
+            let entity = world.spawn(());
+            let id = AssetId::new();
+            let mut hook = LiveLeaves::new(&world);
+            let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
+            let asset = concerto_reflect::json_to_value_with(
+                &serde_json::Value::String(id.simple_hex()),
+                TypeId::of::<AssetHandle<FixtureAsset>>(),
+                &registry,
+                &mut hook,
+            )
+            .unwrap();
+            let reference = concerto_reflect::json_to_value_with(
+                &serde_json::Value::String(entity.to_id_string()),
+                TypeId::of::<SceneEntityRef>(),
+                &registry,
+                &mut hook,
+            )
+            .unwrap();
 
+            let mut handle = AssetHandle::<FixtureAsset>::default();
+            let mut written = SceneEntityRef::default();
+            assert!(concerto_reflect::apply_value_with(&mut handle, &asset, &mut hook).is_empty());
+            assert!(
+                concerto_reflect::apply_value_with(&mut written, &reference, &mut hook).is_empty()
+            );
+
+            assert_eq!(handle.id(), id);
+            assert_eq!(matches!(handle, AssetHandle::Strong(..)), with_server);
+            assert_eq!(server.is_loading_or_loaded(id), with_server);
+            assert_eq!(written, SceneEntityRef::Entity(entity));
+        }
         std::fs::remove_dir_all(&dir).ok();
-    }
-    fn fixture_server(dir: &std::path::Path, registry: AssetRegistry) -> (AssetServer, World) {
-        let mut server =
-            AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
-        let store = AssetStore::<FixtureAsset>::new();
-        server.register_asset(&store);
-        server.publish_registry(registry);
-        let mut world = World::new();
-        world.insert_resource(store);
-        world.insert_resource(server.clone());
-        (server, world)
     }
 
     #[test]
     fn uuid_requests_share_pending_and_loaded_assets() {
         let dir = temp_root("shared-uuid");
-        let (id, registry) = saved_fixture(&dir, 42);
+        let saved = saved_fixture(&dir, 42);
+        let id = saved.id;
         assert_ne!(id, AssetId::from_path("content/fixture/value.gasset"));
-        let (server, mut world) = fixture_server(&dir, registry);
-        let first = server.load::<FixtureAsset>(id);
-        let second = server.load::<FixtureAsset>(id);
+        let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
+        let first = fixture.server.load::<FixtureAsset>(id);
+        let second = fixture.server.load::<FixtureAsset>(id);
         assert_eq!(first.id(), id);
         assert_eq!(second.id(), id);
-        match (&first, &second) {
-            (AssetHandle::Strong(a, _), AssetHandle::Strong(b, _)) => assert!(Arc::ptr_eq(a, b)),
-            _ => panic!("load returns strong handles"),
+        match &first {
+            AssetHandle::Strong(a, _) => match &second {
+                AssetHandle::Strong(b, _) => assert!(Arc::ptr_eq(a, b)),
+                AssetHandle::Weak(..) => panic!("load returns strong handles"),
+            },
+            AssetHandle::Weak(..) => panic!("load returns strong handles"),
         }
-        assert_eq!(server.data.pending_tasks.read().unwrap().len(), 1);
-        drive_pending_load(&server, id);
-        handle_asset_load_events(&mut world);
-        let third = server.load::<FixtureAsset>(id);
+        assert_eq!(fixture.server.data.pending_tasks.read().unwrap().len(), 1);
+        drive_pending_load(&fixture.server, id);
+        handle_asset_load_events(&mut fixture.world);
+        let third = fixture.server.load::<FixtureAsset>(id);
         assert_eq!(third.id(), id);
-        assert!(server.data.pending_tasks.read().unwrap().is_empty());
-        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        assert!(!fixture.server.is_loading());
+        let store = fixture
+            .world
+            .get_resource::<AssetStore<FixtureAsset>>()
+            .unwrap();
         assert_eq!(store.into_iter().count(), 1);
-        assert_eq!(store.get(&first).unwrap().value, 42);
+        assert_eq!(fixture.value(&first), Some(42));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn serialized_uuid_handle_resolves_on_a_fresh_server() {
         let dir = temp_root("serialized-uuid");
-        let (id, registry) = saved_fixture(&dir, 99);
+        let saved = saved_fixture(&dir, 99);
         let serialized = {
-            let (server, mut world) = fixture_server(&dir, registry.clone());
-            let handle = server.load::<FixtureAsset>(id);
-            drive_pending_load(&server, handle.id());
-            handle_asset_load_events(&mut world);
+            let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry.clone());
+            let handle = fixture.server.load::<FixtureAsset>(saved.id);
+            drive_pending_load(&fixture.server, handle.id());
+            handle_asset_load_events(&mut fixture.world);
             bincode::serialize(&handle).unwrap()
         };
         let weak: AssetHandle<FixtureAsset> = bincode::deserialize(&serialized).unwrap();
-        let (server, mut world) = fixture_server(&dir, registry);
-        let handle = server.load::<FixtureAsset>(weak.id());
-        drive_pending_load(&server, handle.id());
-        handle_asset_load_events(&mut world);
-        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
-        assert_eq!(store.get(&handle).unwrap().value, 99);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    fn saved_fixture(dir: &std::path::Path, value: u32) -> (AssetId, AssetRegistry) {
-        let mut registry = AssetRegistry::new();
-        let id = save_content_asset_into(
-            &FixtureAsset {
-                value,
-                initialized: false,
-            },
-            dir,
-            "content/fixture/value.gasset",
-            &mut registry,
-        )
-        .unwrap();
-        (id, registry)
-    }
-
-    #[test]
-    fn load_fails_without_reading_when_the_registry_names_another_kind() {
-        let dir = temp_root("kind-mismatch");
-        let (id, mut registry) = saved_fixture(&dir, 5);
-        let (server, mut world) = fixture_server(&dir, registry.clone());
-        let entry = registry.get(id).unwrap().clone();
-        registry.insert(AssetEntry {
-            kind: "Mesh".into(),
-            ..entry
-        });
-        server.publish_registry(registry);
-
-        let handle = server.load::<FixtureAsset>(id);
-        drive_pending_load(&server, id);
-        handle_asset_load_events(&mut world);
-
-        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
-        assert!(
-            store.get(&handle).is_none(),
-            "the registry says the id holds a Mesh, so a FixtureAsset load must fail"
-        );
+        let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
+        let handle = fixture.server.load::<FixtureAsset>(weak.id());
+        drive_pending_load(&fixture.server, handle.id());
+        handle_asset_load_events(&mut fixture.world);
+        assert_eq!(fixture.value(&handle), Some(99));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1039,161 +951,170 @@ mod tests {
         use concerto_ecs::{IntoSystem, System};
 
         let dir = temp_root("sync-registry");
-        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
+        let mut fixture = Fixture::new::<FixtureAsset>(&dir, AssetRegistry::new());
         let id = AssetId::new();
+        let address = |server: &AssetServer| {
+            server
+                .registry()
+                .and_then(|registry| registry.get(id).map(|entry| entry.address.clone()))
+        };
         let mut system = sync_asset_registry.into_system();
-        system.initialize(&mut world);
-        world.insert_resource(AssetRegistry::new());
-        system.run_and_apply((), &mut world);
-        assert_eq!(server.resolve_by_id(id), None);
+        system.initialize(&mut fixture.world);
+        fixture.world.insert_resource(AssetRegistry::new());
+        system.run_and_apply((), &mut fixture.world);
+        assert_eq!(address(&fixture.server), None);
 
-        world
+        fixture
+            .world
             .get_resource_mut::<AssetRegistry>()
             .unwrap()
             .insert(scene_entry(id));
-        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut fixture.world);
 
         assert_eq!(
-            server.resolve_by_id(id).as_deref(),
+            address(&fixture.server).as_deref(),
             Some("content/hero/scene.gasset")
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !done() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{what} never happened"
-            );
-            std::thread::yield_now();
+    struct Life {
+        name: &'static str,
+        request: fn(&AssetServer, AssetId) -> AssetHandle<FixtureAsset>,
+        settles: bool,
+        loading: [bool; 3],
+        loading_or_loaded: [bool; 3],
+        value: Option<u32>,
+    }
+
+    #[test]
+    fn a_request_is_in_flight_until_its_asset_or_failure_reaches_the_world() {
+        let dir = temp_root("life");
+        let saved = saved_fixture(&dir, 6);
+        let cases = [
+            Life {
+                name: "a load of a registered id",
+                request: |server, id| server.load(id),
+                settles: true,
+                loading: [true, true, false],
+                loading_or_loaded: [true, true, true],
+                value: Some(6),
+            },
+            Life {
+                name: "a load of an unregistered id",
+                request: |server, _| server.load(AssetId::new()),
+                settles: true,
+                loading: [true, true, false],
+                loading_or_loaded: [true, true, false],
+                value: None,
+            },
+            Life {
+                name: "a load of an id the registry says is another kind",
+                request: |server, id| {
+                    let mut registry = AssetRegistry::clone(&server.registry().unwrap());
+                    let entry = registry.get(id).unwrap().clone();
+                    registry.insert(AssetEntry {
+                        kind: "Mesh".into(),
+                        ..entry
+                    });
+                    server.publish_registry(registry);
+                    server.load(id)
+                },
+                settles: true,
+                loading: [true, true, false],
+                loading_or_loaded: [true, true, false],
+                value: None,
+            },
+            Life {
+                name: "an added asset",
+                request: |server, _| server.add(FixtureAsset::new(5)),
+                settles: false,
+                loading: [true, true, false],
+                loading_or_loaded: [true, true, true],
+                value: Some(5),
+            },
+            Life {
+                name: "an added asset whose on_load fails",
+                request: |server, _| server.add(FixtureAsset::new(REFUSED)),
+                settles: false,
+                loading: [false, false, false],
+                loading_or_loaded: [false, false, false],
+                value: None,
+            },
+        ];
+        for case in cases {
+            let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry.clone());
+            assert!(!fixture.server.is_loading(), "{}", case.name);
+            let handle = (case.request)(&fixture.server, saved.id);
+            let mut loading = Vec::new();
+            let mut loading_or_loaded = Vec::new();
+            let mut observe = |server: &AssetServer| {
+                loading.push(server.is_loading());
+                loading_or_loaded.push(server.is_loading_or_loaded(handle.id()));
+            };
+            observe(&fixture.server);
+            if case.settles {
+                wait_for_the_load(&fixture.server);
+            }
+            observe(&fixture.server);
+            handle_asset_load_events(&mut fixture.world);
+            observe(&fixture.server);
+            assert_eq!(loading, case.loading, "{}", case.name);
+            assert_eq!(loading_or_loaded, case.loading_or_loaded, "{}", case.name);
+            assert_eq!(fixture.value(&handle), case.value, "{}", case.name);
         }
-    }
-
-    #[test]
-    fn a_load_that_finished_but_was_not_yet_handled_is_not_inserted_once_cancelled() {
-        let dir = temp_root("cancel-finished");
-        let (id, registry) = saved_fixture(&dir, 5);
-        let (server, mut world) = fixture_server(&dir, registry);
-        let handle = server.load::<FixtureAsset>(id);
-        wait_until("the load", || {
-            !server.data.asset_load_event_receiver.is_empty()
-        });
-
-        server.cancel_pending();
-        handle_asset_load_events(&mut world);
-
-        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
-        assert!(store.get(&handle).is_none());
-        assert!(server.data.pending_tasks.read().unwrap().is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_load_is_in_flight_until_its_asset_reaches_the_world() {
-        let dir = temp_root("in-flight-load");
-        let (id, registry) = saved_fixture(&dir, 6);
-        let (server, mut world) = fixture_server(&dir, registry);
-        assert!(!server.is_loading());
-
-        let handle = server.load::<FixtureAsset>(id);
-        assert!(server.is_loading());
-        wait_until("the load", || {
-            !server.data.asset_load_event_receiver.is_empty()
-        });
-        assert!(server.is_loading());
-
-        handle_asset_load_events(&mut world);
-        assert!(!server.is_loading());
-        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
-        assert_eq!(store.get(&handle).map(|asset| asset.value), Some(6));
-        std::fs::remove_dir_all(dir).unwrap();
+    struct Cancel {
+        name: &'static str,
+        request: fn(&AssetServer, AssetId) -> AssetHandle<FixtureAsset>,
+        settles: bool,
+        loading: bool,
+        value: Option<u32>,
     }
 
     #[test]
-    fn a_failed_load_is_in_flight_until_its_failure_is_handled() {
-        let dir = temp_root("in-flight-failure");
-        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
+    fn cancelling_drops_every_pending_load_and_keeps_added_assets() {
+        let dir = temp_root("cancel");
+        let saved = saved_fixture(&dir, 4);
+        let cases = [
+            Cancel {
+                name: "a load still running",
+                request: |server, id| server.load(id),
+                settles: false,
+                loading: false,
+                value: None,
+            },
+            Cancel {
+                name: "a load that finished but was not yet handled",
+                request: |server, id| server.load(id),
+                settles: true,
+                loading: false,
+                value: None,
+            },
+            Cancel {
+                name: "an added asset",
+                request: |server, _| server.add(FixtureAsset::new(8)),
+                settles: false,
+                loading: true,
+                value: Some(8),
+            },
+        ];
+        for case in cases {
+            let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry.clone());
+            let handle = (case.request)(&fixture.server, saved.id);
+            if case.settles {
+                wait_for_the_load(&fixture.server);
+            }
 
-        let _handle = server.load::<FixtureAsset>(AssetId::new());
-        wait_until("the failure", || {
-            !server.data.asset_load_event_receiver.is_empty()
-        });
-        assert!(server.is_loading());
+            fixture.server.cancel_pending();
 
-        handle_asset_load_events(&mut world);
-        assert!(!server.is_loading());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn an_added_asset_is_in_flight_until_it_reaches_the_world() {
-        let dir = temp_root("in-flight-added");
-        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
-
-        let _handle = server.add(FixtureAsset {
-            value: 9,
-            initialized: false,
-        });
-        assert!(server.is_loading());
-
-        handle_asset_load_events(&mut world);
-        assert!(!server.is_loading());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn an_id_is_loading_or_loaded_until_its_load_fails() {
-        let dir = temp_root("id-failure");
-        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
-        let id = AssetId::new();
-        assert!(!server.is_loading_or_loaded(id));
-
-        let _handle = server.load::<FixtureAsset>(id);
-        assert!(server.is_loading_or_loaded(id));
-        wait_until("the failure", || {
-            !server.data.asset_load_event_receiver.is_empty()
-        });
-        assert!(server.is_loading_or_loaded(id));
-
-        handle_asset_load_events(&mut world);
-        assert!(!server.is_loading_or_loaded(id));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn an_id_stays_loading_or_loaded_once_its_asset_lands() {
-        let dir = temp_root("id-loaded");
-        let (id, registry) = saved_fixture(&dir, 3);
-        let (server, mut world) = fixture_server(&dir, registry);
-
-        let handle = server.load::<FixtureAsset>(id);
-        wait_until("the load", || {
-            !server.data.asset_load_event_receiver.is_empty()
-        });
-        handle_asset_load_events(&mut world);
-
-        assert!(server.is_loading_or_loaded(id));
-        let added = server.add(FixtureAsset {
-            value: 1,
-            initialized: false,
-        });
-        assert!(server.is_loading_or_loaded(added.id()));
-        drop(handle);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn cancelled_loads_are_no_longer_in_flight() {
-        let dir = temp_root("in-flight-cancelled");
-        let (id, registry) = saved_fixture(&dir, 4);
-        let (server, _world) = fixture_server(&dir, registry);
-        let _handle = server.load::<FixtureAsset>(id);
-
-        server.cancel_pending();
-
-        assert!(!server.is_loading());
+            assert_eq!(fixture.server.is_loading(), case.loading, "{}", case.name);
+            handle_asset_load_events(&mut fixture.world);
+            assert_eq!(fixture.value(&handle), case.value, "{}", case.name);
+            assert!(!fixture.server.is_loading(), "{}", case.name);
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1223,64 +1144,62 @@ mod tests {
         }
     }
 
-    fn probe_server(dir: &std::path::Path) -> (AssetServer, World, AssetId) {
-        let mut registry = AssetRegistry::new();
-        let id = save_content_asset_into(
-            &ProbeAsset { saw_default: false },
-            dir,
-            "content/fixture/probe.gasset",
-            &mut registry,
-        )
-        .unwrap();
-        let mut server =
-            AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
-        let store = AssetStore::<ProbeAsset>::new();
-        server.register_asset(&store);
-        server.publish_registry(registry);
-        let mut world = World::new();
-        world.insert_resource(store);
-        world.insert_resource(server.clone());
-        (server, world, id)
-    }
-
-    fn probe_saw_default(server: &AssetServer, world: &mut World, id: AssetId) -> bool {
-        let handle = server.load::<ProbeAsset>(id);
-        drive_pending_load(server, id);
-        handle_asset_load_events(world);
-        let store = world.get_resource::<AssetStore<ProbeAsset>>().unwrap();
-        store.get(&handle).expect("probe loaded").saw_default
+    struct Shared {
+        name: &'static str,
+        share: fn(&AssetServer),
+        sees: bool,
     }
 
     #[test]
-    fn on_load_reads_type_data_from_the_registry_given_to_the_server() {
+    fn on_load_reads_type_data_from_the_registry_shared_with_the_server_when_it_loads() {
+        let cases = [
+            Shared {
+                name: "a registry holding the type",
+                share: |server| {
+                    let registry = AppTypeRegistry::default();
+                    registry.write().register::<Probed>();
+                    server.set_type_registry(registry);
+                },
+                sees: true,
+            },
+            Shared {
+                name: "no shared registry",
+                share: |_| {},
+                sees: false,
+            },
+            Shared {
+                name: "a type registered after the registry was shared",
+                share: |server| {
+                    let registry = AppTypeRegistry::default();
+                    server.set_type_registry(registry.clone());
+                    registry.write().register::<Probed>();
+                },
+                sees: true,
+            },
+        ];
         let dir = temp_root("on-load-registry");
-        let (server, mut world, id) = probe_server(&dir);
-        let registry = concerto_ecs::reflect::AppTypeRegistry::default();
-        registry.write().register::<Probed>();
-        server.set_type_registry(registry);
-
-        assert!(probe_saw_default(&server, &mut world, id));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn on_load_sees_nothing_in_a_server_without_a_shared_registry() {
-        let dir = temp_root("on-load-empty-registry");
-        let (server, mut world, id) = probe_server(&dir);
-
-        assert!(!probe_saw_default(&server, &mut world, id));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_type_registered_after_the_registry_was_shared_is_visible_to_a_later_load() {
-        let dir = temp_root("on-load-late-type");
-        let (server, mut world, id) = probe_server(&dir);
-        let registry = concerto_ecs::reflect::AppTypeRegistry::default();
-        server.set_type_registry(registry.clone());
-        registry.write().register::<Probed>();
-
-        assert!(probe_saw_default(&server, &mut world, id));
+        let saved = save(
+            &dir,
+            &ProbeAsset { saw_default: false },
+            "content/fixture/probe.gasset",
+        );
+        for case in cases {
+            let mut fixture = Fixture::new::<ProbeAsset>(&dir, saved.registry.clone());
+            (case.share)(&fixture.server);
+            let handle = fixture.server.load::<ProbeAsset>(saved.id);
+            drive_pending_load(&fixture.server, saved.id);
+            handle_asset_load_events(&mut fixture.world);
+            let store = fixture
+                .world
+                .get_resource::<AssetStore<ProbeAsset>>()
+                .unwrap();
+            assert_eq!(
+                store.get(&handle).expect("probe loaded").saw_default,
+                case.sees,
+                "{}",
+                case.name
+            );
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1293,18 +1212,25 @@ mod tests {
         }
     }
 
-    type Gate = (Sender<()>, Receiver<()>);
+    struct Gate {
+        sender: Sender<()>,
+        receiver: Receiver<()>,
+    }
+
     static ENTERED: std::sync::OnceLock<Gate> = std::sync::OnceLock::new();
     static RELEASED: std::sync::OnceLock<Gate> = std::sync::OnceLock::new();
 
     fn gate(cell: &'static std::sync::OnceLock<Gate>) -> &'static Gate {
-        cell.get_or_init(crossbeam_channel::unbounded)
+        cell.get_or_init(|| {
+            let (sender, receiver) = crossbeam_channel::unbounded();
+            Gate { sender, receiver }
+        })
     }
 
     impl LoadableAsset for GatedAsset {
         fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
-            gate(&ENTERED).0.send(()).unwrap();
-            gate(&RELEASED).1.recv().unwrap();
+            gate(&ENTERED).sender.send(()).unwrap();
+            gate(&RELEASED).receiver.recv().unwrap();
             Ok(())
         }
     }
@@ -1312,115 +1238,25 @@ mod tests {
     #[test]
     fn a_load_cancelled_while_it_runs_never_inserts_its_asset() {
         let dir = temp_root("cancel-running");
-        let mut registry = AssetRegistry::new();
-        let id = save_content_asset_into(
-            &GatedAsset(3),
-            &dir,
-            "content/fixture/gated.gasset",
-            &mut registry,
-        )
-        .unwrap();
-        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        let store = AssetStore::<GatedAsset>::new();
-        server.register_asset(&store);
-        server.publish_registry(registry);
-        let mut world = World::new();
-        world.insert_resource(store);
-        world.insert_resource(server.clone());
-        let handle = server.load::<GatedAsset>(id);
-        let running = Arc::clone(&server.data.pending_tasks.read().unwrap()[&id].cancelled);
+        let saved = save(&dir, &GatedAsset(3), "content/fixture/gated.gasset");
+        let mut fixture = Fixture::new::<GatedAsset>(&dir, saved.registry);
+        let handle = fixture.server.load::<GatedAsset>(saved.id);
+        let running =
+            Arc::clone(&fixture.server.data.pending_tasks.read().unwrap()[&saved.id].cancelled);
         gate(&ENTERED)
-            .1
+            .receiver
             .recv_timeout(std::time::Duration::from_secs(10))
             .unwrap();
 
-        server.cancel_pending();
-        gate(&RELEASED).0.send(()).unwrap();
+        fixture.server.cancel_pending();
+        gate(&RELEASED).sender.send(()).unwrap();
         wait_until("the end of the load", || Arc::strong_count(&running) == 1);
-        handle_asset_load_events(&mut world);
+        handle_asset_load_events(&mut fixture.world);
 
-        let store = world.get_resource::<AssetStore<GatedAsset>>().unwrap();
-        assert!(store.get(&handle).is_none());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn cancelling_keeps_an_added_asset() {
-        let dir = temp_root("cancel-added");
-        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
-        let handle = server.add(FixtureAsset {
-            value: 8,
-            initialized: false,
-        });
-
-        server.cancel_pending();
-        handle_asset_load_events(&mut world);
-
-        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
-        assert_eq!(store.get(&handle).map(|asset| asset.value), Some(8));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    fn added_server<A: Asset>(dir: &std::path::Path) -> (AssetServer, World) {
-        let mut server =
-            AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
-        let store = AssetStore::<A>::new();
-        server.register_asset(&store);
-        let mut world = World::new();
-        world.insert_resource(store);
-        world.insert_resource(server.clone());
-        (server, world)
-    }
-
-    #[test]
-    fn add_runs_on_load_before_the_asset_reaches_the_world() {
-        let dir = temp_root("add-on-load");
-        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
-        let handle = server.add(FixtureAsset {
-            value: 5,
-            initialized: false,
-        });
-
-        handle_asset_load_events(&mut world);
-
-        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
-        let asset = store.get(&handle).expect("added asset loaded");
-        assert_eq!(asset.value, 5);
-        assert!(asset.initialized);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct FailingAsset;
-
-    impl Asset for FailingAsset {
-        fn name() -> &'static str {
-            "FailingAsset"
-        }
-    }
-
-    impl LoadableAsset for FailingAsset {
-        fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
-            anyhow::bail!("refused")
-        }
-    }
-
-    #[test]
-    fn add_whose_on_load_fails_sends_no_loaded_event_and_the_handle_never_resolves() {
-        let dir = temp_root("add-on-load-fails");
-        let (server, mut world) = added_server::<FailingAsset>(&dir);
-
-        let handle = server.add(FailingAsset);
-
-        assert!(!server.is_loading());
-        assert!(!server
-            .data
-            .loaded_assets
-            .read()
-            .unwrap()
-            .contains(&handle.id()));
-        handle_asset_load_events(&mut world);
-        let store = world.get_resource::<AssetStore<FailingAsset>>().unwrap();
+        let store = fixture
+            .world
+            .get_resource::<AssetStore<GatedAsset>>()
+            .unwrap();
         assert!(store.get(&handle).is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1449,14 +1285,15 @@ mod tests {
     #[test]
     fn loading_an_added_asset_from_its_own_on_load_spawns_no_task() {
         let dir = temp_root("add-self-load");
-        let (server, mut world) = added_server::<SelfLoadingAsset>(&dir);
+        let mut fixture = Fixture::new::<SelfLoadingAsset>(&dir, AssetRegistry::new());
 
-        let handle = server.add(SelfLoadingAsset {
+        let handle = fixture.server.add(SelfLoadingAsset {
             spawned_a_load: false,
         });
-        handle_asset_load_events(&mut world);
+        handle_asset_load_events(&mut fixture.world);
 
-        let store = world
+        let store = fixture
+            .world
             .get_resource::<AssetStore<SelfLoadingAsset>>()
             .unwrap();
         assert!(
@@ -1465,18 +1302,7 @@ mod tests {
                 .expect("added asset loaded")
                 .spawned_a_load
         );
-        assert!(!server.is_loading());
+        assert!(!fixture.server.is_loading());
         std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_server_knows_only_the_asset_types_registered_with_it() {
-        let mut server = AssetServer::new();
-        assert!(!server.is_registered::<FixtureAsset>());
-
-        server.register_asset(&AssetStore::<FixtureAsset>::new());
-
-        assert!(server.is_registered::<FixtureAsset>());
-        assert!(!server.is_registered::<GatedAsset>());
     }
 }
