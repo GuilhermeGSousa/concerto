@@ -601,6 +601,7 @@ mod tests {
     use concerto_mesh::Skeleton;
     use concerto_name::name;
     use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
+    use proptest::prelude::*;
     use uuid::Uuid;
 
     use super::{AimOffsetNode, AimOffsetState, AimPoint, AimWeights};
@@ -622,101 +623,127 @@ mod tests {
         weights
     }
 
-    fn assert_weights(actual: &[f32], expected: &[f32]) {
-        assert_eq!(actual.len(), expected.len());
-        for (index, (a, e)) in actual.iter().zip(expected).enumerate() {
-            assert!(
-                (a - e).abs() < 1e-5,
-                "weight {index}: {actual:?} != {expected:?}"
-            );
+    struct Weighed {
+        sample: Vec2,
+        weights: Vec<f32>,
+    }
+
+    fn weighed(sample: Vec2, weights: &[f32]) -> Weighed {
+        Weighed {
+            sample,
+            weights: weights.to_vec(),
         }
     }
 
-    fn assert_pitch_line(points: &[Vec2], low: usize, middle: usize, high: usize) {
-        let mut halfway_up = vec![0.0; points.len()];
-        halfway_up[middle] = 0.5;
-        halfway_up[high] = 0.5;
-        assert_weights(&weigh(points, Vec2::new(0.0, 0.25)), &halfway_up);
+    struct PointsCase {
+        name: &'static str,
+        points: Vec<Vec2>,
+        samples: Vec<Weighed>,
+    }
 
-        let mut quarter_down = vec![0.0; points.len()];
-        quarter_down[middle] = 0.5;
-        quarter_down[low] = 0.5;
-        assert_weights(&weigh(points, Vec2::new(0.3, -0.25)), &quarter_down);
+    fn pitch_line(name: &'static str, points: Vec<Vec2>, extra: Vec<Weighed>) -> PointsCase {
+        let at = |weights: [f32; 3]| {
+            let mut all = vec![0.0; points.len()];
+            all[..3].copy_from_slice(&weights);
+            all
+        };
+        let mut samples = vec![
+            weighed(Vec2::new(0.0, 0.25), &at([0.0, 0.5, 0.5])),
+            weighed(Vec2::new(0.3, -0.25), &at([0.5, 0.5, 0.0])),
+            weighed(Vec2::new(0.0, 1.5), &at([0.0, 0.0, 1.0])),
+            weighed(Vec2::new(-0.2, -2.0), &at([1.0, 0.0, 0.0])),
+        ];
+        samples.extend(extra);
+        PointsCase {
+            name,
+            points,
+            samples,
+        }
+    }
 
-        let mut top = vec![0.0; points.len()];
-        top[high] = 1.0;
-        assert_weights(&weigh(points, Vec2::new(0.0, 1.5)), &top);
+    #[test]
+    fn aim_weights_are_barycentric_inside_the_points_and_clamp_to_their_hull() {
+        let cases = [
+            pitch_line(
+                "a pitch only set on a line",
+                vec![
+                    Vec2::new(0.0, -0.5),
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(0.0, 0.5),
+                ],
+                Vec::new(),
+            ),
+            pitch_line(
+                "a point a thousandth of a radian off the line still counts as on it",
+                vec![
+                    Vec2::new(0.0, -0.5),
+                    Vec2::new(1e-3, 0.0),
+                    Vec2::new(0.0, 0.5),
+                ],
+                Vec::new(),
+            ),
+            pitch_line(
+                "a duplicated point is dropped and keeps a zero weight",
+                vec![
+                    Vec2::new(0.0, -0.5),
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(0.0, 0.5),
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(5e-5, 0.0),
+                ],
+                vec![weighed(Vec2::ZERO, &[0.0, 1.0, 0.0, 0.0, 0.0])],
+            ),
+            PointsCase {
+                name: "a sample inside a triangle is weighed by its barycentric coordinates",
+                points: vec![Vec2::ZERO, Vec2::X, Vec2::Y],
+                samples: vec![
+                    weighed(Vec2::new(0.25, 0.25), &[0.5, 0.25, 0.25]),
+                    weighed(Vec2::new(0.1, 0.6), &[0.3, 0.1, 0.6]),
+                ],
+            },
+            PointsCase {
+                name: "a single point takes the whole weight wherever the sample is",
+                points: vec![Vec2::new(0.2, -0.1)],
+                samples: vec![
+                    weighed(Vec2::new(0.2, -0.1), &[1.0]),
+                    weighed(Vec2::new(-3.0, 2.0), &[1.0]),
+                ],
+            },
+        ];
 
-        let mut bottom = vec![0.0; points.len()];
-        bottom[low] = 1.0;
-        assert_weights(&weigh(points, Vec2::new(-0.2, -2.0)), &bottom);
+        for case in cases {
+            for sample in &case.samples {
+                let weights = weigh(&case.points, sample.sample);
 
-        for step in -20..=20 {
-            let sample = Vec2::new(step as f32 * 0.07, step as f32 * 0.05);
-            let weights = weigh(points, sample);
+                assert_eq!(weights.len(), sample.weights.len(), "{}", case.name);
+                for (index, (actual, expected)) in weights.iter().zip(&sample.weights).enumerate() {
+                    assert!(
+                        (actual - expected).abs() < 1e-5,
+                        "{} at {}: weight {index} is {actual}, not {expected}",
+                        case.name,
+                        sample.sample
+                    );
+                }
+            }
+            weigh(&case.points, Vec2::NAN);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn aim_weights_are_not_negative_beyond_rounding_and_sum_to_1(
+            points in prop::collection::vec(
+                prop::array::uniform2(-1.0f32..1.0).prop_map(Vec2::from_array),
+                1..7,
+            ),
+            sample in prop::array::uniform2(-3.0f32..3.0).prop_map(Vec2::from_array),
+        ) {
+            let weights = weigh(&points, sample);
+
             let total: f32 = weights.iter().sum();
-            assert!((total - 1.0).abs() < 1e-5, "{sample}: {weights:?}");
-            assert!(weights.iter().all(|weight| *weight >= 0.0), "{weights:?}");
+            prop_assert!((total - 1.0).abs() < 1e-4, "{sample}: {weights:?}");
+            prop_assert!(weights.iter().all(|weight| *weight >= -1e-4), "{weights:?}");
         }
-        weigh(points, Vec2::NAN);
-    }
-
-    #[test]
-    fn a_pitch_only_set_on_a_line_interpolates_by_pitch_and_clamps_at_the_ends() {
-        let points = [
-            Vec2::new(0.0, 0.0),
-            Vec2::new(0.0, 0.5),
-            Vec2::new(0.0, -0.5),
-        ];
-
-        assert_pitch_line(&points, 2, 0, 1);
-    }
-
-    #[test]
-    fn a_point_a_thousandth_of_a_radian_off_the_line_still_counts_as_on_it() {
-        let points = [
-            Vec2::new(0.0, -0.5),
-            Vec2::new(1e-3, 0.0),
-            Vec2::new(0.0, 0.5),
-        ];
-
-        assert_pitch_line(&points, 0, 1, 2);
-    }
-
-    #[test]
-    fn a_duplicated_point_is_dropped_and_keeps_a_zero_weight() {
-        let points = [
-            Vec2::new(0.0, -0.5),
-            Vec2::new(0.0, 0.0),
-            Vec2::new(0.0, 0.5),
-            Vec2::new(0.0, 0.0),
-            Vec2::new(5e-5, 0.0),
-        ];
-
-        assert_pitch_line(&points, 0, 1, 2);
-        let weights = weigh(&points, Vec2::new(0.0, 0.0));
-        assert_eq!(weights[3], 0.0);
-        assert_eq!(weights[4], 0.0);
-    }
-
-    #[test]
-    fn a_sample_inside_a_triangle_is_weighed_by_its_barycentric_coordinates() {
-        let points = [
-            Vec2::new(0.0, 0.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(0.0, 1.0),
-        ];
-
-        assert_weights(&weigh(&points, Vec2::new(0.25, 0.25)), &[0.5, 0.25, 0.25]);
-        assert_weights(&weigh(&points, Vec2::new(0.1, 0.6)), &[0.3, 0.1, 0.6]);
-    }
-
-    #[test]
-    fn a_single_point_takes_the_whole_weight_wherever_the_sample_is() {
-        let points = [Vec2::new(0.2, -0.1)];
-
-        assert_weights(&weigh(&points, Vec2::new(0.2, -0.1)), &[1.0]);
-        assert_weights(&weigh(&points, Vec2::new(-3.0, 2.0)), &[1.0]);
     }
 
     const HIPS: usize = 0;
@@ -837,13 +864,6 @@ mod tests {
         Delta {
             rotation: Quat::from_rotation_x(-0.5),
             translation: Vec3::new(0.0, 0.04, 0.03),
-        }
-    }
-
-    fn wild() -> Delta {
-        Delta {
-            rotation: Quat::from_rotation_z(1.3),
-            translation: Vec3::new(0.5, 0.5, 0.5),
         }
     }
 
@@ -1122,82 +1142,13 @@ mod tests {
     }
 
     #[test]
-    fn a_target_straight_along_forward_gives_the_full_delta_of_the_point_at_the_origin() {
+    fn a_target_gives_the_deltas_of_its_points_blended_by_their_weights() {
         let mut rig = Rig::new();
         let clips = pitch_clips(&mut rig);
         rig.aim_at(0.0, 0.0);
 
-        let frame = rig.run(&pitch_node(&clips));
-
-        assert_aimed(&rig, &frame, &level().pose());
-    }
-
-    #[test]
-    fn a_target_between_two_pitch_points_blends_their_deltas_and_clamps_past_the_ends() {
-        let mut rig = Rig::new();
-        let clips = pitch_clips(&mut rig);
-
+        assert_aimed(&rig, &rig.run(&pitch_node(&clips)), &level().pose());
         assert_pitch_blend(&mut rig, &pitch_node(&clips));
-    }
-
-    #[test]
-    fn a_pitch_set_a_thousandth_of_a_radian_off_its_line_blends_as_on_it() {
-        let mut rig = Rig::new();
-        let clips = pitch_clips(&mut rig);
-        let node = with_points(&[
-            AimPoint::new(clips.low.clone(), 0.0, -0.5),
-            AimPoint::new(clips.level.clone(), 1e-3, 0.0),
-            AimPoint::new(clips.high.clone(), 0.0, 0.5),
-        ]);
-
-        assert_pitch_blend(&mut rig, &node);
-    }
-
-    #[test]
-    fn a_duplicated_pitch_point_is_left_out_of_the_blend() {
-        let mut rig = Rig::new();
-        let clips = pitch_clips(&mut rig);
-        let twin = rig.add_aim("twin", &wild());
-        let node = with_points(&[
-            AimPoint::new(clips.low.clone(), 0.0, -0.5),
-            AimPoint::new(clips.level.clone(), 0.0, 0.0),
-            AimPoint::new(clips.high.clone(), 0.0, 0.5),
-            AimPoint::new(twin.clone(), 0.0, 0.0),
-            AimPoint::new(twin, 5e-5, 0.0),
-        ]);
-
-        assert_pitch_blend(&mut rig, &node);
-        rig.aim_at(0.0, 0.0);
-        assert_aimed(&rig, &rig.run(&node), &level().pose());
-    }
-
-    #[test]
-    fn a_target_inside_a_triangle_of_points_weighs_them_by_barycentric_coordinates() {
-        let mut rig = Rig::new();
-        let origin = rig.add_aim("origin", &level());
-        let side = rig.add_aim("side", &low());
-        let up = rig.add_aim("up", &high());
-        let node = with_points(&[
-            AimPoint::new(origin, 0.0, 0.0),
-            AimPoint::new(side, 0.5, 0.0),
-            AimPoint::new(up, 0.0, 0.5),
-        ]);
-        rig.aim_at(0.125, 0.125);
-
-        let frame = rig.run(&node);
-
-        let added =
-            level().translation * 0.5 + low().translation * 0.25 + high().translation * 0.25;
-        for bone in [HIPS, CHEST] {
-            let rest = rig.skeleton.rest_pose[bone].translation;
-            assert!(
-                frame.joints()[bone]
-                    .translation
-                    .abs_diff_eq(rest + added, 1e-4),
-                "bone {bone}: {:?}",
-                frame.joints()[bone].translation
-            );
-        }
     }
 
     #[test]
