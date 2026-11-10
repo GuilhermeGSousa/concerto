@@ -4,11 +4,16 @@
 //! That is what lets one key mean different things in different panels, lets a
 //! text field swallow plain letters without every system checking focus, and
 //! lets bindings live in one table instead of scattered through the code.
+use std::collections::BTreeMap;
+
 use concerto_ecs::{define_label, events::Event, intern::Interned, resource::Resource};
 use glam::Vec2;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::input::{Gamepad, GamepadButton, GamepadId, GamepadStick, Input, MouseButton};
+use crate::input::{
+    Gamepad, GamepadButton, GamepadId, GamepadStick, Input, MouseButton, PlayerDevice,
+    PlayerDevices, PlayerIndex, Players,
+};
 
 define_label!(ActionLabel);
 define_label!(ContextLabel);
@@ -260,6 +265,56 @@ impl ButtonReading {
             still_held: self.still_held || other.still_held,
         }
     }
+
+    fn just_pressed(self) -> bool {
+        self.pressed && !self.held_before
+    }
+
+    fn just_released(self) -> bool {
+        self.released && !self.still_held
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Devices {
+    Every,
+    Only(PlayerDevices),
+}
+
+impl Devices {
+    fn keyboard_mouse(self) -> bool {
+        match self {
+            Devices::Every => true,
+            Devices::Only(devices) => devices.keyboard_mouse,
+        }
+    }
+
+    fn pads(self, input: &Input) -> impl Iterator<Item = &Gamepad> {
+        input.gamepads().filter(move |pad| match self {
+            Devices::Every => true,
+            Devices::Only(devices) => devices.gamepad == Some(pad.id()),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Scope {
+    player: Option<PlayerIndex>,
+    devices: Devices,
+}
+
+impl Scope {
+    const SHARED: Scope = Scope {
+        player: None,
+        devices: Devices::Every,
+    };
+
+    fn player(player: PlayerIndex, players: &Players) -> Self {
+        Self {
+            player: Some(player),
+            devices: Devices::Only(players.devices(player).unwrap_or_default()),
+        }
+    }
 }
 
 /// Fired once for each action a key or gamepad button press resolved to.
@@ -268,6 +323,8 @@ pub struct ActionFired {
     pub action: InternedActionLabel,
     /// The pad whose button fired it, or `None` for a key.
     pub gamepad: Option<GamepadId>,
+    /// The player holding the device that fired it, or `None` for an unassigned device.
+    pub player: Option<PlayerIndex>,
 }
 
 impl ActionFired {
@@ -276,6 +333,7 @@ impl ActionFired {
         Self {
             action: action.intern(),
             gamepad: None,
+            player: None,
         }
     }
 
@@ -290,6 +348,7 @@ impl ActionFired {
 pub struct ActionMap {
     bindings: Vec<Binding>,
     contexts: Vec<InternedContextLabel>,
+    player_contexts: BTreeMap<PlayerIndex, Vec<InternedContextLabel>>,
     capturing_text: bool,
 }
 
@@ -395,11 +454,7 @@ impl ActionMap {
     }
 
     pub fn push_context(&mut self, context: impl ContextLabel) {
-        let context = context.intern();
-        // Re-pushing moves a context to the top rather than stacking a
-        // duplicate, so one stray push cannot outlive its pop.
-        self.contexts.retain(|active| *active != context);
-        self.contexts.push(context);
+        push_onto(&mut self.contexts, context.intern());
     }
 
     pub fn pop_context(&mut self, context: impl ContextLabel) {
@@ -409,6 +464,38 @@ impl ActionMap {
 
     pub fn is_active(&self, context: impl ContextLabel) -> bool {
         self.contexts.contains(&context.intern())
+    }
+
+    /// Pushes `context` onto `player`'s own stack, which applies on top of the shared one.
+    pub fn push_context_for(&mut self, player: PlayerIndex, context: impl ContextLabel) {
+        push_onto(
+            self.player_contexts.entry(player).or_default(),
+            context.intern(),
+        );
+    }
+
+    /// Removes `context` from `player`'s own stack.
+    pub fn pop_context_for(&mut self, player: PlayerIndex, context: impl ContextLabel) {
+        let context = context.intern();
+        if let Some(stack) = self.player_contexts.get_mut(&player) {
+            stack.retain(|active| *active != context);
+        }
+    }
+
+    /// Whether `context` is on `player`'s own stack.
+    pub fn is_active_for(&self, player: PlayerIndex, context: impl ContextLabel) -> bool {
+        self.player_stack(Some(player)).contains(&context.intern())
+    }
+
+    /// Empties `player`'s own stack, as a game does when that player leaves.
+    pub fn clear_contexts_for(&mut self, player: PlayerIndex) {
+        self.player_contexts.remove(&player);
+    }
+
+    fn player_stack(&self, player: Option<PlayerIndex>) -> &[InternedContextLabel] {
+        player
+            .and_then(|player| self.player_contexts.get(&player))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// While set, unmodified text keys are being typed into a widget and must
@@ -426,15 +513,28 @@ impl ActionMap {
     /// Contexts are searched innermost-first, then the global bindings, so a
     /// panel can claim a key without knowing what else uses it.
     pub fn resolve(&self, shortcut: Shortcut) -> Option<InternedActionLabel> {
+        self.resolve_key(shortcut, None)
+    }
+
+    fn resolve_key(
+        &self,
+        shortcut: Shortcut,
+        player: Option<PlayerIndex>,
+    ) -> Option<InternedActionLabel> {
         if self.capturing_text && shortcut.is_text_like() {
             return None;
         }
-        self.resolve_button(ButtonBinding::Key(shortcut))
+        self.resolve_button(ButtonBinding::Key(shortcut), player)
     }
 
-    fn resolve_button(&self, button: ButtonBinding) -> Option<InternedActionLabel> {
+    fn resolve_button(
+        &self,
+        button: ButtonBinding,
+        player: Option<PlayerIndex>,
+    ) -> Option<InternedActionLabel> {
         let input = BindingInput::Button(button);
-        for context in self.contexts.iter().rev() {
+        let stacks = self.player_stack(player).iter().rev();
+        for context in stacks.chain(self.contexts.iter().rev()) {
             if let Some(action) = self.matching(input, Some(*context)) {
                 return Some(action);
             }
@@ -453,30 +553,34 @@ impl ActionMap {
             .map(|binding| binding.action)
     }
 
-    /// The actions this frame's key and gamepad button presses fire.
-    pub fn fired(&self, input: &Input) -> Vec<ActionFired> {
+    /// The actions this frame's key and gamepad button presses fire, each with the player holding its device.
+    pub fn fired(&self, input: &Input, players: &Players) -> Vec<ActionFired> {
         let mut fired = Vec::new();
         let modifiers = Modifiers::from_input(input);
+        let keyboard_player = players.player_of(PlayerDevice::KeyboardMouse);
         for key in input.just_pressed_keys() {
             let PhysicalKey::Code(key) = key else {
                 continue;
             };
-            if let Some(action) = self.resolve(Shortcut { key, modifiers }) {
+            if let Some(action) = self.resolve_key(Shortcut { key, modifiers }, keyboard_player) {
                 fired.push(ActionFired {
                     action,
                     gamepad: None,
+                    player: keyboard_player,
                 });
             }
         }
         for pad in input.gamepads() {
+            let player = players.player_of(PlayerDevice::Gamepad(pad.id()));
             for button in GamepadButton::ALL {
                 if !pad.is_just_pressed(button) {
                     continue;
                 }
-                if let Some(action) = self.resolve_button(ButtonBinding::Gamepad(button)) {
+                if let Some(action) = self.resolve_button(ButtonBinding::Gamepad(button), player) {
                     fired.push(ActionFired {
                         action,
                         gamepad: Some(pad.id()),
+                        player,
                     });
                 }
             }
@@ -484,30 +588,47 @@ impl ActionMap {
         fired
     }
 
+    /// Reads actions for `player` alone: only their devices, and their contexts on top of the shared ones.
+    pub fn player<'a>(
+        &'a self,
+        player: PlayerIndex,
+        input: &'a Input,
+        players: &Players,
+    ) -> PlayerActions<'a> {
+        PlayerActions {
+            map: self,
+            input,
+            scope: Scope::player(player, players),
+        }
+    }
+
     /// Whether any live binding of `action` is held.
     pub fn is_held(&self, action: impl ActionLabel, input: &Input) -> bool {
-        self.reading(action.intern(), input).held
+        self.reading(action.intern(), input, Scope::SHARED).held
     }
 
     /// Whether a binding of `action` went down this frame while none of its bindings was already held.
     pub fn is_just_pressed(&self, action: impl ActionLabel, input: &Input) -> bool {
-        let reading = self.reading(action.intern(), input);
-        reading.pressed && !reading.held_before
+        self.reading(action.intern(), input, Scope::SHARED)
+            .just_pressed()
     }
 
     /// Whether a binding of `action` went up this frame and none of its bindings is still held.
     pub fn is_just_released(&self, action: impl ActionLabel, input: &Input) -> bool {
-        let reading = self.reading(action.intern(), input);
-        reading.released && !reading.still_held
+        self.reading(action.intern(), input, Scope::SHARED)
+            .just_released()
     }
 
     /// The two-dimensional value of `action`, of length at most 1.
     pub fn axis2d(&self, action: impl ActionLabel, input: &Input) -> Vec2 {
-        let action = action.intern();
+        self.axis2d_in(action.intern(), input, Scope::SHARED)
+    }
+
+    fn axis2d_in(&self, action: InternedActionLabel, input: &Input, scope: Scope) -> Vec2 {
         let mut seen = Vec::new();
         let mut keys = Vec2::ZERO;
         let mut stick = Vec2::ZERO;
-        for binding in self.live(action) {
+        for binding in self.live(action, scope.player) {
             let BindingInput::Axis2d(axis) = binding.input else {
                 continue;
             };
@@ -518,6 +639,9 @@ impl ActionMap {
                     left,
                     right,
                 } => {
+                    if !scope.devices.keyboard_mouse() {
+                        continue;
+                    }
                     for key in [up, down, left, right] {
                         if seen.contains(&key) || !self.key_held(key, input) {
                             continue;
@@ -535,7 +659,7 @@ impl ActionMap {
                     }
                 }
                 Axis2dBinding::Stick(which) => {
-                    for pad in input.gamepads() {
+                    for pad in scope.devices.pads(input) {
                         let value = pad.stick(which);
                         if value.length() > stick.length() {
                             stick = value;
@@ -552,26 +676,41 @@ impl ActionMap {
         }
     }
 
-    fn live(&self, action: InternedActionLabel) -> impl Iterator<Item = &Binding> + '_ {
+    fn live(
+        &self,
+        action: InternedActionLabel,
+        player: Option<PlayerIndex>,
+    ) -> impl Iterator<Item = &Binding> + '_ {
+        let player_stack = self.player_stack(player);
         self.bindings.iter().filter(move |binding| {
             binding.action == action
-                && binding
-                    .context
-                    .is_none_or(|context| self.contexts.contains(&context))
+                && binding.context.is_none_or(|context| {
+                    self.contexts.contains(&context) || player_stack.contains(&context)
+                })
         })
     }
 
-    fn reading(&self, action: InternedActionLabel, input: &Input) -> ButtonReading {
-        self.live(action)
+    fn reading(&self, action: InternedActionLabel, input: &Input, scope: Scope) -> ButtonReading {
+        self.live(action, scope.player)
             .filter_map(|binding| match binding.input {
-                BindingInput::Button(button) => Some(self.button_reading(button, input)),
+                BindingInput::Button(button) => {
+                    Some(self.button_reading(button, input, scope.devices))
+                }
                 BindingInput::Axis2d(_) => None,
             })
             .fold(ButtonReading::default(), ButtonReading::merge)
     }
 
-    fn button_reading(&self, button: ButtonBinding, input: &Input) -> ButtonReading {
+    fn button_reading(
+        &self,
+        button: ButtonBinding,
+        input: &Input,
+        devices: Devices,
+    ) -> ButtonReading {
         match button {
+            ButtonBinding::Key(_) | ButtonBinding::Mouse(_) if !devices.keyboard_mouse() => {
+                ButtonReading::default()
+            }
             ButtonBinding::Key(shortcut) => {
                 if self.capturing_text && shortcut.is_text_like() {
                     return ButtonReading::default();
@@ -589,8 +728,8 @@ impl ActionMap {
                 input.is_mouse_button_just_pressed(button),
                 input.is_mouse_button_just_released(button),
             ),
-            ButtonBinding::Gamepad(button) => input
-                .gamepads()
+            ButtonBinding::Gamepad(button) => devices
+                .pads(input)
                 .map(|pad| pad_reading(pad, button))
                 .fold(ButtonReading::default(), ButtonReading::merge),
         }
@@ -602,6 +741,57 @@ impl ActionMap {
         }
         input.is_held(PhysicalKey::Code(key))
     }
+}
+
+/// One player's view of the actions, from [`ActionMap::player`].
+pub struct PlayerActions<'a> {
+    map: &'a ActionMap,
+    input: &'a Input,
+    scope: Scope,
+}
+
+impl PlayerActions<'_> {
+    /// Whether any of this player's live bindings of `action` is held.
+    pub fn is_held(&self, action: impl ActionLabel) -> bool {
+        self.map
+            .reading(action.intern(), self.input, self.scope)
+            .held
+    }
+
+    /// Whether this player pressed `action` this frame while none of its bindings was already held.
+    pub fn is_just_pressed(&self, action: impl ActionLabel) -> bool {
+        self.map
+            .reading(action.intern(), self.input, self.scope)
+            .just_pressed()
+    }
+
+    /// Whether this player released `action` this frame and none of its bindings is still held.
+    pub fn is_just_released(&self, action: impl ActionLabel) -> bool {
+        self.map
+            .reading(action.intern(), self.input, self.scope)
+            .just_released()
+    }
+
+    /// The two-dimensional value of `action` from this player's devices, of length at most 1.
+    pub fn axis2d(&self, action: impl ActionLabel) -> Vec2 {
+        self.map.axis2d_in(action.intern(), self.input, self.scope)
+    }
+
+    /// The mouse motion this frame if this player holds the keyboard and mouse, otherwise zero.
+    pub fn mouse_delta(&self) -> Vec2 {
+        if self.scope.devices.keyboard_mouse() {
+            self.input.mouse_delta()
+        } else {
+            Vec2::ZERO
+        }
+    }
+}
+
+fn push_onto(stack: &mut Vec<InternedContextLabel>, context: InternedContextLabel) {
+    // Re-pushing moves a context to the top rather than stacking a
+    // duplicate, so one stray push cannot outlive its pop.
+    stack.retain(|active| *active != context);
+    stack.push(context);
 }
 
 fn modifiers_held(required: Modifiers, input: &Input) -> bool {
@@ -624,9 +814,10 @@ fn pad_reading(pad: &Gamepad, button: GamepadButton) -> ButtonReading {
 pub(crate) fn resolve_actions(
     input: concerto_ecs::resource::Res<Input>,
     map: concerto_ecs::resource::Res<ActionMap>,
+    players: concerto_ecs::resource::Res<Players>,
     mut writer: concerto_ecs::events::event_writer::EventWriter<ActionFired>,
 ) {
-    for fired in map.fired(&input) {
+    for fired in map.fired(&input, &players) {
         writer.write(fired);
     }
 }

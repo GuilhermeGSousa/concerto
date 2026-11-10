@@ -5,6 +5,7 @@ use concerto_window::input::actions::{
 };
 use concerto_window::input::{
     GamepadAxis, GamepadButton, GamepadId, GamepadStick, Input, KeyCode, MouseButton, PhysicalKey,
+    PlayerDevice, PlayerIndex, Players,
 };
 use concerto_window::{define_action, define_context};
 use glam::Vec2;
@@ -19,6 +20,7 @@ define_action!(Crouch);
 
 define_context!(Viewport);
 define_context!(Browser);
+define_context!(Driving);
 
 fn map() -> ActionMap {
     ActionMap::default()
@@ -196,17 +198,18 @@ fn a_pad_button_fires_its_action_with_the_pads_id_under_context_rules() {
     input.update_gamepad_button(OTHER_PAD, GamepadButton::South, 1.0);
 
     assert!(
-        map.fired(&input).is_empty(),
+        map.fired(&input, &Players::default()).is_empty(),
         "a context binding must not fire while its context is inactive"
     );
 
     map.push_context(Viewport);
     map.set_capturing_text(true);
     assert_eq!(
-        map.fired(&input),
+        map.fired(&input, &Players::default()),
         vec![ActionFired {
             action: Jump.intern(),
             gamepad: Some(OTHER_PAD),
+            player: None,
         }],
         "a pad press fires with the id of the pad that pressed, and is never text"
     );
@@ -383,4 +386,230 @@ fn a_press_on_a_second_device_does_not_press_again() {
     input.update_gamepad_button(PAD, GamepadButton::South, 0.0);
     assert!(map.is_just_released(Jump, &input));
     assert!(!map.is_held(Jump, &input));
+}
+
+const P0: PlayerIndex = PlayerIndex::new(0);
+const P1: PlayerIndex = PlayerIndex::new(1);
+const P2: PlayerIndex = PlayerIndex::new(2);
+const LONE_PAD: GamepadId = GamepadId::new(2);
+
+fn two_players() -> Players {
+    let mut players = Players::default();
+    players.assign(P0, PlayerDevice::Gamepad(PAD)).unwrap();
+    players.assign(P0, PlayerDevice::KeyboardMouse).unwrap();
+    players
+        .assign(P1, PlayerDevice::Gamepad(OTHER_PAD))
+        .unwrap();
+    players
+}
+
+fn input_with_three_pads() -> Input {
+    let mut input = input_with_pads();
+    input.connect_gamepad(LONE_PAD, "Lone pad");
+    input
+}
+
+#[test]
+fn each_players_stick_reads_only_their_own_pad() {
+    let map = movement_map();
+    let players = two_players();
+    let mut input = input_with_three_pads();
+    input.update_gamepad_axis(OTHER_PAD, GamepadAxis::LeftStickX, 1.0);
+
+    assert_eq!(map.player(P0, &input, &players).axis2d(Move), Vec2::ZERO);
+    assert!(close(
+        map.player(P1, &input, &players).axis2d(Move),
+        Vec2::X
+    ));
+
+    let mut input = input_with_three_pads();
+    input.update_gamepad_axis(LONE_PAD, GamepadAxis::LeftStickY, 1.0);
+    assert_eq!(
+        map.player(P0, &input, &players).axis2d(Move),
+        Vec2::ZERO,
+        "an unassigned pad moves no player"
+    );
+    assert_eq!(map.player(P1, &input, &players).axis2d(Move), Vec2::ZERO);
+    assert!(
+        close(map.axis2d(Move, &input), Vec2::Y),
+        "an unassigned pad still moves the read without a player"
+    );
+}
+
+#[test]
+fn a_key_binding_reads_only_for_the_keyboards_player() {
+    let mut map = movement_map();
+    map.bind_global(Jump, Shortcut::key(KeyCode::Space));
+    let players = two_players();
+    let mut input = input_with_pads();
+    press(&mut input, KeyCode::Space);
+    press(&mut input, KeyCode::KeyD);
+
+    let keyboard = map.player(P0, &input, &players);
+    assert!(keyboard.is_held(Jump));
+    assert!(keyboard.is_just_pressed(Jump));
+    assert!(close(keyboard.axis2d(Move), Vec2::X));
+
+    let pad_only = map.player(P1, &input, &players);
+    assert!(!pad_only.is_held(Jump));
+    assert!(!pad_only.is_just_pressed(Jump));
+    assert_eq!(pad_only.axis2d(Move), Vec2::ZERO);
+
+    input.update();
+    input.update_key_input(PhysicalKey::Code(KeyCode::Space), false);
+    assert!(map.player(P0, &input, &players).is_just_released(Jump));
+    assert!(!map.player(P1, &input, &players).is_just_released(Jump));
+}
+
+#[test]
+fn the_mouse_delta_belongs_to_the_keyboard_and_mouse_player() {
+    let map = map();
+    let players = two_players();
+    let mut input = input_with_pads();
+    input.update_mouse_delta((3.0, -2.0));
+
+    assert_eq!(
+        map.player(P0, &input, &players).mouse_delta(),
+        Vec2::new(3.0, -2.0)
+    );
+    assert_eq!(
+        map.player(P1, &input, &players).mouse_delta(),
+        Vec2::ZERO,
+        "a pad-only player does not turn with the mouse"
+    );
+}
+
+#[test]
+fn a_players_context_changes_only_that_player_and_a_shared_one_both() {
+    let mut map = map();
+    map.bind(Jump, GamepadButton::South, Driving);
+    let players = two_players();
+    let mut input = input_with_pads();
+    input.update_gamepad_button(PAD, GamepadButton::South, 1.0);
+    input.update_gamepad_button(OTHER_PAD, GamepadButton::South, 1.0);
+
+    map.push_context_for(P0, Driving);
+    assert!(map.is_active_for(P0, Driving));
+    assert!(!map.is_active_for(P1, Driving));
+    assert!(!map.is_active(Driving));
+    assert!(map.player(P0, &input, &players).is_held(Jump));
+    assert!(
+        !map.player(P1, &input, &players).is_held(Jump),
+        "player 0's context must not reach player 1"
+    );
+    assert!(
+        !map.is_held(Jump, &input),
+        "a player's context does not reach the read without a player"
+    );
+
+    map.pop_context_for(P0, Driving);
+    map.push_context(Driving);
+    assert!(map.player(P0, &input, &players).is_held(Jump));
+    assert!(
+        map.player(P1, &input, &players).is_held(Jump),
+        "a shared context applies to every player"
+    );
+}
+
+#[test]
+fn fired_carries_the_player_that_pressed() {
+    let mut map = map();
+    map.bind_global(Jump, GamepadButton::South);
+    map.bind_global(Save, Shortcut::key(KeyCode::Enter));
+    let players = two_players();
+    let mut input = input_with_three_pads();
+    input.update_gamepad_button(OTHER_PAD, GamepadButton::South, 1.0);
+    input.update_gamepad_button(LONE_PAD, GamepadButton::South, 1.0);
+    press(&mut input, KeyCode::Enter);
+
+    let fired = map.fired(&input, &players);
+    assert!(fired.contains(&ActionFired {
+        action: Save.intern(),
+        gamepad: None,
+        player: Some(P0),
+    }));
+    assert!(fired.contains(&ActionFired {
+        action: Jump.intern(),
+        gamepad: Some(OTHER_PAD),
+        player: Some(P1),
+    }));
+    assert!(
+        fired.contains(&ActionFired {
+            action: Jump.intern(),
+            gamepad: Some(LONE_PAD),
+            player: None,
+        }),
+        "an unassigned pad still fires, with no player"
+    );
+    assert_eq!(fired.len(), 3);
+}
+
+#[test]
+fn a_players_context_beats_the_shared_one_when_firing() {
+    let mut map = map();
+    map.bind(DeleteFile, GamepadButton::South, Browser);
+    map.bind(Jump, GamepadButton::South, Driving);
+    map.bind_global(Crouch, GamepadButton::South);
+    map.push_context_for(P1, Driving);
+    map.push_context(Browser);
+    let players = two_players();
+    let mut input = input_with_pads();
+    input.update_gamepad_button(PAD, GamepadButton::South, 1.0);
+    input.update_gamepad_button(OTHER_PAD, GamepadButton::South, 1.0);
+
+    assert_eq!(
+        map.fired(&input, &players),
+        vec![
+            ActionFired {
+                action: DeleteFile.intern(),
+                gamepad: Some(PAD),
+                player: Some(P0),
+            },
+            ActionFired {
+                action: Jump.intern(),
+                gamepad: Some(OTHER_PAD),
+                player: Some(P1),
+            },
+        ],
+        "player 1's own context is searched before the shared stack"
+    );
+}
+
+#[test]
+fn clearing_a_players_contexts_leaves_the_others() {
+    let mut map = map();
+    map.push_context_for(P0, Driving);
+    map.push_context_for(P0, Viewport);
+    map.push_context_for(P1, Driving);
+    map.push_context(Browser);
+
+    map.clear_contexts_for(P0);
+
+    assert!(!map.is_active_for(P0, Driving));
+    assert!(!map.is_active_for(P0, Viewport));
+    assert!(map.is_active_for(P1, Driving));
+    assert!(map.is_active(Browser));
+}
+
+#[test]
+fn an_empty_place_reads_false_and_zero() {
+    let mut map = movement_map();
+    map.bind_global(Jump, Shortcut::key(KeyCode::Space));
+    map.bind_global(Jump, GamepadButton::South);
+    let players = two_players();
+    let mut input = input_with_three_pads();
+    press(&mut input, KeyCode::Space);
+    press(&mut input, KeyCode::KeyW);
+    input.update_mouse_delta((1.0, 1.0));
+    for pad in [PAD, OTHER_PAD, LONE_PAD] {
+        input.update_gamepad_button(pad, GamepadButton::South, 1.0);
+        input.update_gamepad_axis(pad, GamepadAxis::LeftStickX, 1.0);
+    }
+
+    let empty = map.player(P2, &input, &players);
+    assert!(!empty.is_held(Jump));
+    assert!(!empty.is_just_pressed(Jump));
+    assert!(!empty.is_just_released(Jump));
+    assert_eq!(empty.axis2d(Move), Vec2::ZERO);
+    assert_eq!(empty.mouse_delta(), Vec2::ZERO);
 }
