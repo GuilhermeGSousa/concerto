@@ -156,3 +156,23 @@ Measured 2026-11-09 on the cloud container (4 cores, 15 GB RAM):
 
 Disk is tight in this container: implementers build with
 `CARGO_INCREMENTAL=0`.
+
+## Status after the first pass (2026-11-10)
+
+The owner stopped the first pass during task 8. The second pass resumes here.
+
+- **Done:** tasks 0-7, each with its report in
+  `2026-11-09-test-suite-rewrite-reports.md`.
+- **Task 8, partly done:** two commits and no report.
+  - `92d0cc1`: `procedural-animation`, 136 tests down to 50. It looks finished
+    but has no `DELETED:` list.
+  - `895f952`: in `motion-matching`, `search.rs`, `simulation.rs`,
+    `tests/motion-matching/filter.rs` and `tests/motion-matching/staleness.rs`
+    were rewritten. The crate is at 241 of its 272 tests.
+  - The rest of `motion-matching` is not started; work on `displacement.rs`
+    and `systems.rs` was discarded mid-edit.
+  - The second pass finishes `motion-matching`, then writes the task 8 report
+    for both commits. It names what covers each test deleted in `92d0cc1` and
+    `895f952` (`git show <commit>` lists them).
+- **Not started:** tasks 9-15.
+- **Tests:** 2,935 `#[test]` functions remain of the 4,055 in the baseline.
