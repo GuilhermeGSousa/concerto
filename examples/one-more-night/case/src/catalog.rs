@@ -55,7 +55,7 @@ impl Catalog {
         Self::default()
     }
 
-    /// Reads the rooms, anchors, doors and keys of an exported `level_manifest.ron`.
+    /// Reads the rooms, anchors, doors, keys and features of an exported `level_manifest.ron`.
     pub fn from_level_manifest(text: &str) -> Result<Self, CaseError> {
         let file = Self::LEVEL_MANIFEST;
         let manifest: LevelManifest = ron::from_str(text).map_err(|error| CaseError::Syntax {
@@ -79,9 +79,14 @@ impl Catalog {
             features: Names::build(file, manifest.features.iter().map(|row| row.id.as_str()))?,
             ..Self::default()
         };
-        for key in manifest.doors.iter().filter_map(|door| door.key.as_deref()) {
-            catalog.keys.insert(key);
-        }
+        let mut keys: Vec<&str> = manifest
+            .doors
+            .iter()
+            .filter_map(|door| door.key.as_deref())
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        catalog.keys = Names::build(file, keys.into_iter())?;
         Ok(catalog)
     }
 

@@ -49,6 +49,7 @@ pub enum Problem {
     NotInConversation,
     EntriesOutOfOrder,
     NegativeDuration,
+    NumberOutOfRange,
     BlankCountMismatch,
     StagedTwice,
     FeatureNotSet,
@@ -64,6 +65,7 @@ impl fmt::Display for Problem {
             Problem::NotInConversation => "names a conversation its character takes no part in",
             Problem::EntriesOutOfOrder => "has entries of one phase that are not in order of start",
             Problem::NegativeDuration => "has a line whose seconds are not zero or more",
+            Problem::NumberOutOfRange => "has a facing or an earshot that is not a usable number",
             Problem::BlankCountMismatch => {
                 "has a template whose `___` count is not its blank count"
             }

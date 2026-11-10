@@ -34,7 +34,7 @@ let case = Case::load_dir(Path::new("cases/test"), &catalog)?;
 
 ## Ids
 
-A file names things with strings. Three rules cover all of them:
+A file names things with strings. These rules cover all of them:
 
 - **Ids the case defines** are unique within their kind: strings, characters,
   conversations, facts, terms, term banks, deductions, placements.
@@ -75,14 +75,18 @@ The rules `Invalid` reports:
 - The entries of one phase of a schedule are in strictly increasing order of
   `start`.
 - A line's `seconds` are zero or more.
+- A `facing` is a finite number, and an `earshot` is zero or more.
 - A blank's answer is in its bank.
-- A deduction's template has one `___` for each blank.
+- A deduction's template has one run of three or more underscores for each
+  blank.
 - The finale stages a character once.
 - Every feature of the level is on or off.
 
 Everything else is the validator's job: that a conversation is started by
 every participant at the same time, that schedules can be walked, that facts
-can be found and that the case can be solved.
+can be found and that the case can be solved. So are repeats the loader lets
+through: a deduction used by two finale statements, a term listed twice in a
+bank, a door listed twice in `staff_opens`.
 
 ## Notation
 
@@ -259,7 +263,7 @@ A list of `Deduction`. The finale's statements are deductions too.
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | id | The deduction's id. |
-| `template` | string id | The sentence, with `___` for each blank in order. |
+| `template` | string id | The sentence, with `___` (three or more underscores) for each blank in order. |
 | `blanks` | list of `Blank(bank, answer)` | For each blank, the bank it picks from and the right term, which must be in that bank. |
 | `appears_with` | list of fact ids, optional | It appears in the casebook once any of these is found. |
 | `prerequisite_for_finale` | bool, optional, false | The finale needs it confirmed. |
@@ -338,7 +342,7 @@ Doors(
 | `state` | `Open`, `Closed` or `Locked` | The state each loop starts with. |
 | `key` | key id | The key that opens it. |
 | `zone` | `Public`, `Service` or `Private` | Who may pass. |
-| `locked` | list of `TimeWindow` | Spans in which it is locked whatever its state. |
+| `locked` | list of `TimeWindow` | Spans in which it is locked whatever its state. Left out, the case adds none. |
 
 `key` can replace a door's key and cannot remove it.
 

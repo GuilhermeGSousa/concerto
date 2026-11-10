@@ -243,6 +243,13 @@ impl<'a> At<'a> {
     }
 }
 
+fn gaps(template: &str) -> usize {
+    template
+        .split(|c| c != '_')
+        .filter(|run| run.len() >= 3)
+        .count()
+}
+
 fn find<I: Id>(names: &Names<I>, name: &str, at: &At) -> Result<I, CaseError> {
     if !is_id(name) {
         return Err(CaseError::NotAnId {
@@ -336,6 +343,12 @@ impl CaseNames<'_> {
                 })
             })
             .collect::<Result<Vec<ScheduleEntry>, CaseError>>()?;
+        if entries
+            .iter()
+            .any(|entry| entry.facing.is_some_and(|facing| !facing.is_finite()))
+        {
+            return Err(at.invalid(Problem::NumberOutOfRange));
+        }
         let outsider = entries
             .iter()
             .filter_map(|entry| entry.conversation)
@@ -378,6 +391,12 @@ impl CaseNames<'_> {
 
     fn conversation(&self, row: &raw::Conversation) -> Result<Conversation, CaseError> {
         let at = At::new(CONVERSATIONS, "conversation", &row.id);
+        if row
+            .earshot
+            .is_some_and(|earshot| !(earshot >= 0.0 && earshot.is_finite()))
+        {
+            return Err(at.invalid(Problem::NumberOutOfRange));
+        }
         let conversation = Conversation {
             participants: find_all(&self.characters, &row.participants, &at)?,
             private: row.private,
@@ -486,7 +505,7 @@ impl CaseNames<'_> {
             })
             .collect::<Result<Vec<_>, CaseError>>()?;
         let template = find(&self.strings, &row.template, &at)?;
-        if strings.0[template.index()].text.matches("___").count() != blanks.len() {
+        if gaps(&strings.0[template.index()].text) != blanks.len() {
             return Err(at.invalid(Problem::BlankCountMismatch));
         }
         Ok(Deduction {

@@ -488,7 +488,14 @@ fn text_where_an_id_belongs_is_refused_without_being_shown() {
     )
     .err()
     .unwrap();
-    assert!(!format!("{error} {error:?}").contains("secret"));
+    assert_eq!(
+        error,
+        CaseError::NotAnId {
+            file: "schedules",
+            owner: "schedule `?`".to_string(),
+            kind: "character",
+        }
+    );
 }
 
 #[test]
@@ -648,4 +655,37 @@ fn a_level_manifest_with_a_repeated_id_or_another_version_is_refused() {
             ..
         })
     ));
+}
+
+#[test]
+fn a_facing_or_an_earshot_that_is_no_usable_number_is_refused() {
+    assert_eq!(
+        load_with("schedules", "facing: 90.0", "facing: NaN").err(),
+        invalid("schedules", "schedule `npc_a`", Problem::NumberOutOfRange)
+    );
+    assert_eq!(
+        load_with("conversations", "earshot: 4.0", "earshot: -3.0").err(),
+        invalid(
+            "conversations",
+            "conversation `conv_1`",
+            Problem::NumberOutOfRange
+        )
+    );
+}
+
+#[test]
+fn a_longer_run_of_underscores_is_one_gap() {
+    assert!(load_with("strings", "\"It was ___.\"", "\"It was ______.\"").is_ok());
+}
+
+#[test]
+fn a_level_manifest_key_is_shaped_like_an_id() {
+    assert_eq!(
+        manifest_with("Some(\"k_service\")", "Some(\"A key with a name.\")").err(),
+        Some(CaseError::NotAnId {
+            file: "level_manifest",
+            owner: "key number 1".to_string(),
+            kind: "key",
+        })
+    );
 }
