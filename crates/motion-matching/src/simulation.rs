@@ -148,7 +148,7 @@ mod tests {
             spin in -1.0f32..1.0,
             desired_velocity in horizontal(5.0),
             climb in -9.0f32..9.0,
-            desired_facing in -3.0f32..3.0,
+            turn in -2.5f32..2.5,
             start in prop::array::uniform3(-5.0f32..5.0),
             halflives in prop::array::uniform2(0.05f32..1.0),
             sample_dt in 0.1f32..0.5,
@@ -168,7 +168,7 @@ mod tests {
             simulation.facing.velocity = Vec3::new(0.0, spin, 0.0);
             let desired = DesiredMotion {
                 velocity: desired_velocity.with_y(climb),
-                rotation: Quat::from_rotation_y(desired_facing),
+                rotation: Quat::from_rotation_y(facing + turn),
             };
             let start = Vec3::from_array(start);
 
@@ -192,7 +192,16 @@ mod tests {
                 prop_assert!((sample.position.y - start.y).abs() < EPS);
                 prop_assert!((sample.velocity - velocity).length() < EPS);
                 prop_assert!(sample.velocity.y.abs() < EPS);
-                prop_assert!(sample.rotation.abs_diff_eq(simulation.facing.value, EPS));
+                let facing = if sample.rotation.dot(simulation.facing.value) < 0.0 {
+                    -simulation.facing.value
+                } else {
+                    simulation.facing.value
+                };
+                prop_assert!(
+                    sample.rotation.abs_diff_eq(facing, EPS),
+                    "{:?} vs {facing:?}",
+                    sample.rotation
+                );
             }
         }
     }
