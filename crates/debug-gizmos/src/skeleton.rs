@@ -68,7 +68,13 @@ mod tests {
         };
     }
 
-    fn segments(world: &mut World) -> Vec<(Vec3, Vec3)> {
+    #[derive(Debug, PartialEq)]
+    struct Segment {
+        start: Vec3,
+        end: Vec3,
+    }
+
+    fn segments(world: &mut World) -> Vec<Segment> {
         world.insert_resource(GizmoStorage::default());
         let mut system = draw_skeleton_gizmos.into_system();
         system.initialize(world);
@@ -78,11 +84,9 @@ mod tests {
             .unwrap()
             .vertices
             .chunks(2)
-            .map(|pair| {
-                (
-                    Vec3::from_array(pair[0].position),
-                    Vec3::from_array(pair[1].position),
-                )
+            .map(|pair| Segment {
+                start: Vec3::from_array(pair[0].position),
+                end: Vec3::from_array(pair[1].position),
             })
             .collect()
     }
@@ -95,84 +99,58 @@ mod tests {
         [owner, hip, knee, foot]
     }
 
-    #[test]
-    fn each_bone_is_joined_to_its_parent_bone_only() {
+    fn draw(gizmo: Option<SkeletonGizmo>) -> Vec<Segment> {
         let mut world = World::default();
         let [_, hip, knee, foot] = chain(&mut world);
-        skeleton(
-            &mut world,
-            &[hip, knee, foot],
-            Some(SkeletonGizmo::default()),
-        );
+        skeleton(&mut world, &[hip, knee, foot], gizmo);
+        segments(&mut world)
+    }
 
-        let segments = segments(&mut world);
-
-        let hip_at = Vec3::new(0.0, 1.0, 0.0);
-        let knee_at = Vec3::new(0.0, 0.5, 0.0);
-        let foot_at = Vec3::new(0.0, 0.0, 0.1);
-        assert!(segments.contains(&(hip_at, knee_at)));
-        assert!(segments.contains(&(knee_at, foot_at)));
+    #[test]
+    fn a_skeleton_gizmo_joins_each_bone_to_its_parent_bone_and_draws_what_it_asks_for() {
+        let drawn = draw(Some(SkeletonGizmo::default()));
+        let hip = Vec3::new(0.0, 1.0, 0.0);
+        let knee = Vec3::new(0.0, 0.5, 0.0);
+        let foot = Vec3::new(0.0, 0.0, 0.1);
+        assert!(drawn.contains(&Segment {
+            start: hip,
+            end: knee
+        }));
+        assert!(drawn.contains(&Segment {
+            start: knee,
+            end: foot
+        }));
         assert!(
-            !segments
+            !drawn
                 .iter()
-                .any(|&(start, end)| start == Vec3::ZERO || end == Vec3::ZERO),
+                .any(|segment| segment.start == Vec3::ZERO || segment.end == Vec3::ZERO),
             "the hip's parent is not a bone, so no line reaches it"
         );
-        let joint = segments.len() - 2;
+        let joint = drawn.len() - 2;
         assert_eq!(joint % 3, 0, "one sphere per joint");
         assert!(joint > 0);
-    }
 
-    #[test]
-    fn a_skeleton_without_the_gizmo_draws_nothing() {
-        let mut world = World::default();
-        let [_, hip, knee, foot] = chain(&mut world);
-        skeleton(&mut world, &[hip, knee, foot], None);
+        let with_axes = draw(Some(SkeletonGizmo {
+            axes: true,
+            ..Default::default()
+        }));
+        assert_eq!(with_axes.len(), drawn.len() + 3 * 3, "three axes per bone");
 
-        assert!(segments(&mut world).is_empty());
-    }
+        assert!(draw(None).is_empty(), "no gizmo, no lines");
 
-    #[test]
-    fn axes_add_three_lines_per_bone() {
-        let mut world = World::default();
-        let [_, hip, knee, foot] = chain(&mut world);
-        skeleton(
-            &mut world,
-            &[hip, knee, foot],
-            Some(SkeletonGizmo::default()),
-        );
-        let without = segments(&mut world).len();
-
-        let mut world = World::default();
-        let [_, hip, knee, foot] = chain(&mut world);
-        skeleton(
-            &mut world,
-            &[hip, knee, foot],
-            Some(SkeletonGizmo {
-                axes: true,
-                ..Default::default()
-            }),
-        );
-
-        assert_eq!(segments(&mut world).len(), without + 3 * 3);
-    }
-
-    #[test]
-    fn a_bone_that_is_not_spawned_yet_is_skipped() {
         let mut world = World::default();
         let [_, hip, _, _] = chain(&mut world);
-        let skeleton_component = SkeletonComponent::new(
-            Default::default(),
-            vec![SceneEntityRef::Entity(hip), SceneEntityRef::Index(7)],
-            None,
-        );
-        world.spawn((skeleton_component, SkeletonGizmo::default()));
-
-        let segments = segments(&mut world);
-
+        world.spawn((
+            SkeletonComponent::new(
+                Default::default(),
+                vec![SceneEntityRef::Entity(hip), SceneEntityRef::Index(7)],
+                None,
+            ),
+            SkeletonGizmo::default(),
+        ));
         assert!(
-            !segments.is_empty(),
-            "the spawned bone still draws its joint"
+            !segments(&mut world).is_empty(),
+            "a bone not spawned yet is skipped and the spawned one still draws"
         );
     }
 }

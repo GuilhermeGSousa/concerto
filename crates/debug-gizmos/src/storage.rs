@@ -133,10 +133,10 @@ mod tests {
         storage.push_line(Vec3::ZERO, Vec3::X, Color::WHITE, Color::BLACK, 4.0);
         assert!(storage.vertices.is_empty());
         assert_eq!(storage.segment_count(), 1);
-        let corners: std::collections::HashSet<(i32, i32)> = storage
+        let corners: std::collections::HashSet<[i32; 2]> = storage
             .wide
             .iter()
-            .map(|vertex| (vertex.corner[0] as i32, vertex.corner[1] as i32))
+            .map(|vertex| [vertex.corner[0] as i32, vertex.corner[1] as i32])
             .collect();
         assert_eq!(corners.len(), 4);
         for vertex in &storage.wide {
