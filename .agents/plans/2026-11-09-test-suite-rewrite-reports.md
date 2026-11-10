@@ -596,3 +596,276 @@ CONCERNS:
 - **`a_panel_that_keeps_its_place_keeps_its_resolved_side_unchanged`** now proves the layout ran by the resized row's height instead of `layout_passes + 1`.
 - **`UILayoutDiagnostics` and `UIRenderDiagnostics`** are public production counters, used by the editor and the ui showcase. They stay. The GPU tests that assert work happens when it must (rebinding, re-preparing) still read them.
 - **The elements.rs deletions are aggressive.** Thirty builder and constructor tests went as trivia under the testing.md rule against constructor and default tests. The reviewer should confirm that call.
+
+## Task 6: rendering and import crates
+
+STATUS: DONE WITH CONCERNS
+
+COMMIT: (task 6 is 11 commits plus this report, oldest first)
+- a272491 Turn the colour conversion tests into two tables and a round-trip property
+- c232b8c Replace the noise test family with range and continuity properties
+- d590c6f Turn the mesh ray, bounds, primitive and skeleton families into tables and scenarios
+- 6be39e0 Turn the BVH importer tests into one table of inputs and a scenario per output
+- 72c56e4 Turn the OBJ dependency and unreadable-library tests into one table
+- 63d4f89 Turn the glTF importer tests into one table of inputs and a scenario per output
+- 10ce220 Turn the import pipeline tests into tables of outcomes and one scenario per step
+- 191891b Turn the clip name and import context tests into a table, a property and two scenarios
+- d3d3fe1 Turn the asset registry tests into one table and fold the content.toml fixtures into one Cargo scenario
+- 6022831 Merge the skeleton gizmo tests into one scenario and the luma ramp tests into one table
+- 0ca678d Turn the render crate's non-GPU test families into tables and merge the importer and shader tests
+
+The deletions of crates/render/tests/render/image_importer.rs and render_sets.rs were staged with `git rm` when the owner committed ec9c01a ("Add the spec's removal as the plan's last step"), so they landed in that commit. Their `mod` lines are only removed in 0ca678d. The render test binary therefore does not build at ec9c01a, but it builds at the tip. I did not rewrite history.
+
+GATE (CARGO_INCREMENTAL=0; crates: concerto-render, concerto-render-macros, concerto-terminal-renderer, concerto-world-grid, concerto-debug-gizmos, concerto-mesh, concerto-color, concerto-noise, concerto-bvh, concerto-obj, concerto-gltf, concerto-import, concerto-asset-import, concerto-asset-build):
+- `cargo fmt --all -- --check`: pass
+- `cargo clippy --locked -p <each crate above> --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings`: pass
+- `cargo test --locked -p <each crate above>`: pass. Lib and integration binaries: render 56 + 29, render-macros 1, terminal-renderer 2, world-grid 1, debug-gizmos 4, mesh 0 + 15, color 3, noise 3, bvh 0 + 9, obj 0 + 2, gltf 0 + 7, import 8 + 18, asset-import 2 + 2, asset-build 0 + 4, plus the asset-build doctest. GPU tests return early here with no adapter.
+- Each crate was also gated on its own (fmt, clippy, test) before its commit.
+
+COUNTS (`#[test]` before at e6b0a8e → after; proptest `#[test]`s included):
+- render (with render/macros): 139 → 86
+- terminal-renderer: 4 → 2
+- world-grid: 1 → 1
+- debug-gizmos: 7 → 4
+- mesh: 42 → 15
+- color: 13 → 3 (one property)
+- noise: 10 → 3 (two properties)
+- bvh: 43 → 9
+- obj: 3 → 2
+- gltf: 17 → 7
+- import: 62 → 26 (one property)
+- asset-import: 18 → 4 (one property)
+- asset-build: 9 → 4
+- Total: 368 → 166.
+
+KEPT AS THEY WERE (no change of body):
+- Every GPU test, that is anything that calls `Gpu::request_for_test`, directly or through a helper. In src/: the mesh.rs extraction tests, skeleton.rs palette tests, shadows.rs app tests, batching.rs `a_view_buffer_grows_past_capacity_and_keeps_every_transform`, and the material_plugin.rs draw tests. In tests/render: camera_environment_edit, camera_render_target, camera_viewport, exclusive_camera, hosted_target (except the no-GPU refusal), readback, skeleton_gizmo, and required_sync's two camera tests. In terminal-renderer: readback.rs.
+- Encoding fixtures (`check_encoding`): mesh's `mesh_encoding_matches_its_fixture` and `skeleton_encoding_matches_its_fixture`, and render's `texture_encoding_matches_its_fixture` and `standard_material_encoding_matches_its_fixture`. No fixture was blessed or changed.
+- Uniform layouts: `camera_uniform_keeps_its_wgsl_layout`, `render_light_keeps_its_wgsl_layout`, `lights_uniform_puts_the_count_after_every_light`, `shadow_view_projs_are_packed_column_major_matrices`, `the_identity_palette_fills_one_skin_slot_with_packed_matrices`.
+- Maths: `pool_capacity_is_capped_by_texture_array_layers`, `padded_rows_are_aligned_and_hold_the_row`, `fog_starts_at_start_and_thickens`, mesh's `a_transformed_ray_keeps_its_distances`, `joint_pose_to_mat4_scales_then_rotates_then_translates` and `a_capsule_spreads_texture_height_by_length`.
+- Scenarios:
+  - render: `editing_a_camera_environment_changes_the_filled_uniform`, `aspect_follows_the_viewport` (it gained the empty-viewport camera), `extracting_a_still_light_does_not_mark_its_render_light_changed`, `a_material_added_with_added_textures_keeps_them_and_requests_no_load`, `a_material_plugin_registers_its_component_and_the_handle_it_holds`, `an_app_without_a_gpu_is_refused`, and `render_assets_settle_after_a_frame_that_prepared_and_deferred_nothing` (it gained the no-limiter assertion).
+  - world-grid: `a_world_grid_is_neither_frustum_culled_nor_a_shadow_caster`.
+  - debug-gizmos: `the_plugin_draws_skeleton_gizmos_in_late_update_at_edit_time`, `the_render_copy_mirrors_the_latest_frame_only`, and `a_wide_segment_is_a_quad_that_spans_both_endpoints_and_both_sides` (its tuple set became `[i32; 2]`).
+  - asset-build: `cargo_rebuilds_uuid_constants_and_reports_invalid_asset_inputs` and `a_moved_file_is_listed_at_its_new_address_on_the_next_run`.
+  - gltf: `multi_primitive_skinned_mesh_binds_every_primitive_child`.
+  - bvh: `neighbouring_rotation_keys_stay_in_one_hemisphere`.
+  - import: `pruning_warns_only_for_referrers_the_import_does_not_rewrite`, `a_staging_failure_leaves_the_obsolete_file_in_place`, `copies_keep_the_permissions_of_their_sources`, `a_re_import_overwrites_a_resaved_clip_and_rebuilds_its_events_from_the_sidecar`, `an_imports_returned_entries_bring_a_scanned_registry_up_to_date`, `reimport_updates_a_moved_output_in_place_and_preserves_its_uuid`, `reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest`, `moving_a_source_with_its_sidecar_preserves_existing_outputs`, `same_stem_sources_in_different_directories_have_independent_outputs`, `a_bvh_reimport_over_an_index_named_clip_keeps_its_id_and_file`, `imported_uuid_handle_resolves_after_serialization_and_content_move`.
+  - obj: `import_emits_mesh_material_and_flat_scene`, without its dependency assertion, which moved to the table.
+- Private non-maths tests kept as the only cover (see CONCERNS): import `a_dependency_whose_parent_steps_are_already_resolved_keeps_its_relative_position` (`planned_copies`), render `shadowed_lights_take_layers_in_entity_order_in_their_pool_up_to_its_limit` (`assign_layers`), and light.rs `no_slot_is_handed_out_past_max_lights` (`next_light_slot`).
+
+CHANGED:
+- crates/color/Cargo.toml, crates/noise/Cargo.toml, crates/import/Cargo.toml, crates/asset-import/Cargo.toml, Cargo.lock: proptest added as a dev-dependency.
+- color: hsl.rs has a to-sRGB table, a from-sRGB table (out-of-gamut rows included) and a round-trip property; lib.rs lost its test module.
+- noise: lib.rs has a gradient property (non-finite inputs included), a fractal property, and one distribution test.
+- mesh tests: ray tables for `ray_entry` and `ray_hit`, one bounds scenario, a shape table, a round-shape table, a flat-face test, merged AABB, refusal and FK tests, and one JointName encoding test.
+- bvh: parser.rs lost its test module. bvh_importer.rs has:
+  - one table of 47 source and settings rows
+  - skeleton, clip, channel-table, hemisphere, trim, naming/events, additive and scene tests
+  - `import_ok` returns an `Imported` struct instead of a tuple.
+- obj: one table of sources (dependency or unreadable path) and the scene scenario.
+- gltf: one table of 23 fixture/settings rows (emitted, omitted, dependency or refusal), plus scenarios for a single primitive, multi-primitive, skins, multi-primitive skin, events and additive. `import_fixture`'s tuple return became the `Imported` struct.
+- import:
+  - config.rs: a name table and a cap property.
+  - lib.rs:
+    - an extension table, the `planned_copies` test, a rename scenario and a pruning table
+    - the `Entry` tuple alias became an `Emit` builder struct, and the log tuple became `LogLine`
+  - tests:
+    - end_to_end.rs removed; its tests merged into import_gltf.rs.
+    - import_into.rs: a copy table, a refusal table and a re-import scenario.
+    - persistent_identity.rs: a refusal table and a legacy table.
+    - rename_hints.rs: a gltf table; its `&[(&str, &str)]` parameter became `&[Rename]`.
+    - runtime_identity.rs: `runtime` returns a `Runtime` struct instead of a tuple.
+    - source_metadata.rs: one sidecar test.
+- asset-import: clip_names.rs has a table and a property. The tests are now one emit scenario and one resolver scenario.
+- asset-build: registry.rs has one table and the moved-file test, with a `Listed` struct in place of tuple rows. In cargo_tracking.rs:
+  - the registry fixture prints its project root and then the registry
+  - one scenario covers rebuilds, invalid content.toml and the project root
+  - `registry` returns `Vec<Listed>`.
+- terminal-renderer: ascii.rs has one luma table with a monotonic check.
+- debug-gizmos: skeleton.rs has one scenario with a `Segment` struct; storage.rs's tuple set became an array set.
+- render (src):
+  - tables replace the families in frustum.rs, shader.rs, gpu.rs, camera.rs, camera_environment.rs, light.rs, mesh.rs, shadows.rs, render_asset/mod.rs, batching.rs and macros/src/lib.rs
+  - render_entity.rs has one lifecycle scenario
+  - batching.rs's `batch_keys` tuple became a `Batch` struct
+- render (tests):
+  - image_importer.rs and render_sets.rs removed
+  - texture_pipeline_e2e.rs absorbs the importer checks
+  - material_serialization.rs, required_sync.rs, scene_component_impls.rs and webgl2_shaders.rs are merged into tables. The `(&str, ShaderStage)` and `(ReflectedValue, ReflectedValue, Vec<AssetId>)` tuples became structs.
+
+BREAK-AND-REVERT (each edit was reverted before committing; proptest-regressions directories were deleted):
+- color:
+  - to-sRGB table: no hue wrap in `From<Hsla>`.
+  - from-sRGB table: zero denominator gives saturation 1.
+  - round-trip property: green sector computed with r−b.
+- noise:
+  - gradient property: `b = g1 * t` (a discontinuity), and dropping the non-finite guard.
+  - fractal property: octaves only floored at 1.
+  - distribution test: `unit_from_seed` shifting by 41.
+- mesh:
+  - box table: `near` starting at −∞.
+  - hit table: farthest triangle wins, and `return None` on a malformed triangle.
+  - shapes table: `half_height == 0.0` (negative heights no longer a sphere), and `rings.max(0)`.
+  - round table: radius scaled by 1.01.
+  - bounds scenario: any `AabbSource` counted as current, and a stale box not removed.
+  - refusal table: parent check `>` instead of `>=`.
+- bvh:
+  - source table: the slash check looking for `\`, and `end - start < 1`.
+  - skeleton scenario: path ids joined with `.`.
+  - channel table: X rotation pre-multiplied.
+- obj table: texture dependency not tracked; unreadable error naming the .obj.
+- gltf table: the parents-first check disabled; the external buffer not tracked; `deny_unknown_fields` removed.
+- import:
+  - extension table: no lowercasing.
+  - name table and cap property: `<` at the cap; `#` not sanitised.
+  - pruning table: editor-saved outputs deleted.
+  - rename scenario: the old key kept after a rename.
+  - import_into refusal table: the outside-the-project check disabled.
+  - identity refusal table: the owned-by-another-asset check disabled. Disabling the copied-sidecar check alone did not fail it, because the destination check also refuses that case, as it did before.
+  - rename-hint table: every clip hinted.
+- asset-import:
+  - name table and property: case-sensitive uniqueness, and `#` not reserved.
+  - name table: fallback "clip" instead of the index.
+  - resolver scenario: self-hints recorded.
+- asset-build:
+  - registry table: content.toml ignored.
+  - Cargo scenario: content.toml not watched.
+- terminal-renderer: `div_ceil` in the ramp.
+- debug-gizmos: the parent filter removed.
+- render:
+  - frustum table: the plane test against 1.5.
+  - viewport table: `floor` for `round`.
+  - environment table: fog params swapped.
+  - attenuation table: a linear range window.
+  - visibility table: SKINNED no longer exempt.
+  - budget table: half the bytes counted.
+  - shadow layer table: the sort removed.
+  - batching table: skinned instances merged into one batch.
+  - render-entity scenario: the stale filter inverted.
+  - gpu table: the `require` assert inverted.
+  - shader table: shader defs dropped.
+  - macros table: the concerto branch first.
+  - webgl2 table: `NO_CUBE_ARRAY_TEXTURES_SUPPORT` not defined.
+  - scene-component table: the handle capture not recording its reference.
+  - required-sync test: the skeleton requirement removed.
+
+DELETED (each with what still covers it):
+
+crates/color/src/hsl.rs and lib.rs
+- `pure_green_is_hue_120`, `hsl_210_half_half_is_a_steel_blue`, `zero_saturation_is_grey_of_lightness`, `hue_360_equals_hue_0`, `negative_hue_wraps`: rows of `hsl_converts_to_the_srgb_it_names`. The 360 and -90 rows now pin exact sRGB values instead of comparing two conversions.
+- `srgba_round_trips_over_a_grid`, `linear_rgba_round_trips_over_a_grid`, `linear_conversion_goes_through_srgb`, `alpha_passes_through`, lib.rs `srgba_to_hsl_converts_directly`: the property `hsl_round_trips_in_gamut_with_its_hue_below_360`.
+- `hue_from_srgba_is_in_degrees_below_360`: the property (hue range) and the 240/330 rows of `srgb_converts_to_hsl_in_degrees_even_out_of_gamut`.
+- `hdr_srgba_round_trips`, `zero_denominator_gives_zero_saturation`: rows of `srgb_converts_to_hsl_in_degrees_even_out_of_gamut` (the zero-denominator row also pins its round trip to white).
+
+crates/noise/src/lib.rs
+- `gradient_noise_is_zero_at_integers`, `gradient_noise_is_continuous_across_integers`, `gradient_noise_holds_far_from_the_origin`, `gradient_noise_of_non_finite_is_zero`: property `gradient_noise_stays_in_range_vanishes_at_integers_and_is_continuous` (x up to ±1e12 plus NaN and both infinities, any seed).
+- `fractal_noise_stays_in_range`, `fractal_noise_clamps_octaves`, `fractal_noise_with_one_octave_is_shifted_gradient_noise`: property `fractal_noise_stays_in_range_with_its_octaves_clamped`.
+- `gradient_noise_spans_the_unit_range`, `gradient_noise_depends_on_seed_alone`, `unit_from_seed_is_uniform_in_unit_interval`: `draws_spread_over_their_range_and_differ_by_seed`; the range halves of the first and last are in the gradient property.
+
+crates/mesh/tests/mesh
+- ray.rs `a_ray_starting_inside_enters_at_zero`, `a_box_beside_or_behind_the_ray_is_missed`, `a_ray_along_a_face_still_hits`: rows of `a_box_is_entered_where_the_ray_first_touches_it`.
+- ray.rs `the_nearest_triangle_wins_regardless_of_index_order_or_facing`, `a_ray_outside_the_triangles_edges_or_pointing_away_misses`, `malformed_indices_are_skipped`: `a_mesh_is_hit_at_its_nearest_triangle_from_either_side`.
+- bounds.rs all five (`the_box_appears_once_the_mesh_has_loaded_and_not_before`, `the_box_follows_a_changed_handle`, `a_hand_set_box_is_left_alone`, `a_computed_box_is_removed_with_the_mesh`, `an_empty_mesh_gets_no_box_and_drops_a_stale_one`): the scenario `a_mesh_entity_gets_the_box_of_its_loaded_mesh_unless_it_set_its_own`.
+- primitives.rs `a_plane_faces_up_from_the_xz_plane`, `a_cuboid_has_its_own_vertices_on_each_face`, `a_cuboid_draws_its_side_faces_upright`: rows of `every_shape_is_well_formed_with_its_counts_bounds_and_texture_directions` plus `flat_faces_have_their_own_vertices_facing_out_with_upright_texture`.
+- primitives.rs `a_sphere_keeps_a_usable_shape_at_the_smallest_counts`, `a_capsule_runs_along_y_past_its_half_height_by_its_radius`, `a_capsule_with_no_height_is_a_sphere`, `a_capsule_keeps_a_usable_shape_at_the_smallest_counts`, `a_capsule_with_a_negative_height_is_a_sphere`, `texture_coordinates_start_at_the_top_left_of_every_shape`, `a_shape_of_no_size_keeps_finite_texture_coordinates`: rows of the shapes table. Every row now also checks well-formedness and UV direction, which the negative-height and smallest-count shapes were not checked for before.
+- primitives.rs `a_sphere_has_every_vertex_at_its_radius_with_a_radial_normal`, `a_capsule_has_every_vertex_at_its_radius_from_its_axis_segment`, `a_seam_joins_at_identical_positions`: rows of `a_round_shape_puts_every_vertex_at_its_radius_from_its_axis_and_closes_its_seam`.
+- mesh_serialization.rs `local_aabb_handles_empty_and_nonempty_meshes`, `transformed_aabb_contains_all_rotated_and_scaled_corners`: `an_aabb_spans_the_vertices_and_its_transform_spans_the_moved_corners`.
+- skeleton.rs `new_rejects_unequal_lengths`, `new_rejects_a_parent_that_does_not_precede_its_child`, `forward_kinematics_rejects_a_pose_of_the_wrong_length`: rows of `a_skeleton_refuses_mismatched_lengths_unordered_parents_and_poses_of_the_wrong_length` (the own-parent row now pins its exact error).
+- skeleton.rs `bone_index_finds_the_first_bone_by_name`, `forward_kinematics_composes_parent_transforms`, `forward_kinematics_applies_parent_rotation_to_children`: `forward_kinematics_places_each_joint_under_its_parent`.
+- skeleton.rs `a_joint_name_reflects_as_a_leaf_holding_the_bytes_of_its_text`, `a_joint_name_writes_and_reads_json_as_a_string`, `a_joint_name_registers_its_default_and_json_form`, `a_joint_name_round_trips_through_bincode_as_its_text`: `a_joint_name_encodes_as_its_text_in_reflection_json_and_bincode`.
+
+crates/bvh
+- src/parser.rs `joints_are_stored_parents_first_with_channel_offsets`, `motion_values_and_frame_time_are_read`, `end_site_adds_no_joint` (private, non-maths): `the_skeleton_holds_the_hierarchy_rest_pose_inverse_bind_poses_and_path_ids` (names, parents, offsets, two bones) and `the_clip_gives_the_authored_pose_at_each_frame` (channel layout and motion values).
+- src/parser.rs `braces_without_surrounding_whitespace_are_tokens`: the "a brace on the joint's line" row of the source table.
+- `supports_the_bvh_extension`: trivia (a constant); the `bvh`/`BVH` rows of `supported_extensions_are_matched_without_regard_to_case` in concerto-import also cover it.
+- `crlf_line_endings_parse`, `a_non_positive_or_nan_frame_time_is_rejected`, `a_joint_name_containing_a_slash_is_rejected`, `an_unknown_channel_is_rejected`, `a_frame_line_with_the_wrong_value_count_is_rejected`, `fewer_frame_lines_than_declared_are_rejected`, `a_huge_frame_count_is_rejected_without_allocating`, `a_huge_channel_count_is_rejected_without_allocating`, `a_deeply_nested_hierarchy_is_rejected`, `unbalanced_braces_are_rejected`, `duplicate_sibling_names_are_rejected`, `a_file_without_a_root_is_rejected`, `more_than_one_root_is_rejected`, `a_missing_hierarchy_header_is_rejected`, `invalid_settings_are_rejected`, `fewer_than_two_frames_are_rejected`, `invalid_event_settings_are_rejected`, `invalid_additive_settings_are_rejected`: rows of `a_source_and_its_settings_import_or_are_refused_naming_the_problem` (47 rows, each with the same expected message fragment as before).
+- `end_sites_produce_no_bone`, `a_bone_id_is_the_hash_of_the_joint_name_path`, `scale_applies_to_offsets_and_translation_keys`: `the_skeleton_holds_the_hierarchy_rest_pose_inverse_bind_poses_and_path_ids`.
+- `sampling_at_each_frame_time_gives_the_authored_pose`, `the_clip_stores_the_frame_rate_from_the_frame_time`, `a_sidecar_without_an_additive_table_imports_a_plain_clip`: `the_clip_gives_the_authored_pose_at_each_frame`.
+- `rotation_channels_compose_in_the_order_they_are_listed`, `a_joint_with_some_position_axes_keeps_the_rest_offset_on_the_others`: rows of `channels_compose_in_the_order_they_are_listed_over_the_rest_offset`.
+- `a_trimmed_clip_stores_the_frame_rate`, `event_times_count_from_the_first_kept_frame`: `a_frame_range_trims_the_clip_and_rebases_its_times_and_events`.
+- `the_clip_is_named_after_the_source_file_stem`, `event_settings_add_sorted_animation_events_to_the_clip`, `event_settings_are_keyed_by_the_sanitised_clip_name`: `the_clip_is_named_after_the_sanitised_file_stem_and_takes_the_events_under_that_name`.
+- `the_scene_has_one_node_per_joint_with_parents_first`, `each_scene_node_carries_the_rest_pose_transform`, `the_root_node_carries_the_rooted_skeleton_component`: `the_scene_has_a_node_per_joint_with_its_rest_pose_and_the_root_holds_the_skeleton`.
+
+crates/obj/tests/obj/obj_importer.rs
+- `a_texture_the_material_library_names_is_tracked_even_when_it_cannot_be_read`, `a_missing_material_library_is_reported_unreadable_at_its_path`, and the square.mtl dependency assertion of `import_emits_mesh_material_and_flat_scene`: rows of `a_source_tracks_the_files_it_names_or_reports_the_one_it_cannot_read`.
+
+crates/gltf/tests/gltf/gltf_importer.rs
+- `import_emits_mesh_material_and_scene_sub_assets`, `import_emits_light_and_ignores_extras`: `a_single_primitive_node_carries_its_mesh_material_and_light_by_stable_id` plus the triangle row of the input table (sub-asset names).
+- `import_tracks_external_buffer_as_dependency`, `import_names_animation_clips_after_the_gltf`, `skin_with_an_unreachable_joint_emits_no_skeleton`, `joint_listed_before_its_parent_fails_the_import`, `invalid_event_settings_fail_the_import`, `an_unknown_settings_key_fails_the_import`, `invalid_additive_settings_fail_the_import`: rows of `a_source_and_its_settings_import_their_sub_assets_or_are_refused_naming_the_problem`. The clip-naming row lists the three emitted names and two index names that must not appear, instead of the exact sorted list.
+- `import_flattens_multi_primitive_mesh_into_child_nodes`: renamed `a_multi_primitive_mesh_becomes_a_parent_with_one_child_per_primitive`, same assertions; the sub-asset names moved to its table row.
+- `import_emits_skeleton_and_animation_sub_assets`, `skeleton_asset_carries_names_parents_rest_pose_and_ids`, `parent_outside_the_skin_makes_the_joint_a_root`: `a_skin_becomes_a_parents_first_skeleton_that_the_scene_binds`.
+- `a_sidecar_without_an_additive_table_imports_plain_clips`: the `animation/Wiggle` and `animation/1` assertions of `an_additive_table_makes_only_the_named_clip_additive_against_its_base`.
+
+crates/import
+- src/config.rs `a_short_name_keeps_its_address`, `a_file_name_of_exactly_the_cap_is_unchanged`, `a_long_multi_byte_name_is_cut_on_a_char_boundary`, `a_hash_in_a_sub_asset_name_is_sanitized_out_of_the_address`, `long_names_differing_in_the_last_character_stay_distinct`: rows and the distinctness assertion of `a_sub_asset_name_becomes_a_sanitised_file_name_capped_on_a_char_boundary` (the multi-byte row now pins the exact capped name).
+- src/config.rs `a_file_name_one_byte_over_the_cap_is_capped`, `a_long_name_is_capped_and_keeps_its_extension`, `the_same_long_name_gives_the_same_address`: property `a_file_name_fits_the_cap_keeps_its_extension_and_names_no_directory`.
+- src/lib.rs `a_normalised_path_stays_under_the_canonical_directory_it_was_joined_to` (private `metadata::normalize`): the "one folder up" row of `a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_else`, whose dependency path holds a `..` step.
+- src/lib.rs `a_second_import_after_a_rename_keeps_the_same_id`, `two_names_hinting_one_old_name_fail_without_writing`: `a_renamed_sub_asset_keeps_its_id_file_and_references_and_a_clashing_hint_writes_nothing`.
+- src/lib.rs `an_output_the_importer_stops_emitting_is_deleted`, `an_obsolete_output_saved_from_the_editor_is_kept`, `an_obsolete_output_whose_file_is_missing_only_loses_its_key`, `an_editor_saved_file_under_a_hinted_rename_keeps_its_file_and_key`: rows of `an_output_the_importer_stops_emitting_is_deleted_unless_the_editor_saved_it`.
+- tests/import/end_to_end.rs (file removed): `imported_content_assets_load_back_as_their_type` and `a_baked_reference_resolves_to_the_minted_id_of_its_target` merged into `import_gltf::an_imported_gltf_writes_content_assets_that_load_back_and_reference_each_other_by_minted_id`; `an_editor_saved_scene_round_trips`: foundation's `save_content_asset::a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it` (save, read back, minted id) and `persistent_identity::reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest` (an editor save carries no provenance).
+- import_gltf.rs `writes_content_assets_with_content_path_cross_references`: renamed and extended as above. `re_importing_reuses_the_ids_already_on_disk`: `import_into::importing_again_keeps_every_asset_id_and_replaces_the_copied_files` (an in-place re-import equals the first import) and the bvh re-import scenario.
+- import_bvh.rs `the_bvh_extension_is_supported`: the `bvh`/`BVH` rows of `supported_extensions_are_matched_without_regard_to_case`. `importing_a_bvh_writes_skeleton_clip_scene_and_a_sidecar`, `re_importing_after_a_scale_edit_changes_the_outputs_and_keeps_their_ids`: `a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_under_the_same_ids`. `an_invalid_scale_in_the_sidecar_fails_the_import_and_writes_nothing`: the "an invalid setting in the sidecar" row of `persistent_identity::an_import_that_would_lose_an_identity_or_break_a_setting_writes_nothing` (snapshot of the whole project instead of "no content directory").
+- import_into.rs `an_external_gltf_brings_its_buffer_along`, `an_external_obj_brings_its_material_library_along`, `a_sibling_in_a_parent_folder_keeps_its_relative_position`, `a_source_already_at_its_destination_is_imported_in_place`, `a_destination_at_the_project_root_needs_no_parent_directory`, `copies_leave_no_staging_files_behind`: rows of `a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_else`; every row checks the exact files outside `content/`, which covers stray staging files for all of them.
+- import_into.rs `a_sibling_that_would_land_outside_the_project_fails_and_writes_nothing`, `a_failed_import_copies_nothing`, `a_failed_import_keeps_what_was_already_at_the_destination`, `a_destination_that_is_not_a_file_inside_the_project_is_refused`, `import_source_rejects_an_invalid_config`, `import_source_into_rejects_an_invalid_config`: rows of `an_import_that_cannot_complete_writes_nothing_and_keeps_what_was_there` (13 rows; each destination refusal now runs in its own project).
+- import_into.rs `a_copied_source_can_be_imported_again_where_it_landed`, `importing_again_replaces_the_source_and_its_siblings_and_keeps_every_asset_id`: `importing_again_keeps_every_asset_id_and_replaces_the_copied_files`.
+- persistent_identity.rs `an_output_owned_by_another_source_rejects_import_before_any_writes`, `a_corrupt_existing_header_fails_without_modifying_content_or_metadata`, `copying_a_sidecar_cannot_claim_another_live_sources_outputs`: rows of `an_import_that_would_lose_an_identity_or_break_a_setting_writes_nothing`.
+- persistent_identity.rs `legacy_content_bootstraps_metadata_and_retains_its_uuid_and_address`, `external_legacy_source_bootstraps_without_changing_its_identity`: rows of `legacy_content_bootstraps_a_sidecar_and_keeps_its_uuid_and_address` (the external row now also checks the sidecar's version, importer and output id).
+- rename_hints.rs `a_gltf_reimport_over_index_named_clips_keeps_their_ids`, `a_gltf_clip_named_like_another_clips_index_is_not_hinted`: rows of `a_gltf_reimport_over_index_named_clips_hints_only_the_clips_still_unnamed` (both rows now check that every output has its own id and what was pruned).
+- source_metadata.rs `settings_round_trip_through_load_and_the_writer`, `a_sidecar_without_settings_parses_with_an_empty_table_and_writes_none`, `an_unknown_importer_name_is_still_rejected`: `a_sidecar_round_trips_its_settings_and_refuses_an_unknown_importer`.
+
+crates/asset-import
+- src/clip_names.rs the nine one-case tests (`keeps_plain_names`, `sanitises_reserved_characters`, `trims_whitespace_and_dots`, `missing_and_empty_names_use_the_index`, `duplicate_gets_index_suffix`, `duplicate_is_case_insensitive`, `name_equal_to_earlier_fallback_is_suffixed`, `name_taken_by_later_fallback_keeps_the_earlier_claim`, `colliding_suffix_is_extended`): rows of `each_clip_gets_a_sanitised_unique_name_or_its_index`, plus the property `clip_names_are_one_per_clip_non_empty_unique_and_free_of_reserved_characters`.
+- tests import_context.rs `sub_asset_id_is_stable_and_scoped_to_the_source_file`, `emit_records_sub_asset_with_serialized_bytes_and_references`, `emit_records_the_type_version`: `emit_records_the_named_sub_asset_with_its_source_scoped_id_type_version_references_and_bytes`. `a_context_built_without_settings_returns_an_empty_table`: trivia (a getter's default).
+- tests sub_asset_id_resolver.rs `default_resolver_addresses_sub_assets_against_the_source`, `custom_resolver_replaces_the_addressing_scheme`, `emitted_sub_assets_carry_the_resolved_id`, `resolver_receives_the_hinted_old_name`, `self_hint_is_ignored_and_default_addressing_ignores_hints`: `a_resolver_decides_every_id_and_receives_the_rename_hint`.
+
+crates/asset-build/tests/asset-build
+- registry.rs `writes_the_registry_of_the_content_tree`, `honours_the_extension_in_content_toml`, `rejects_a_root_outside_the_project_and_writes_no_registry`, `fails_on_a_duplicate_id`: rows of `the_registry_lists_every_content_asset_of_the_configured_extension_or_names_the_problem` (the duplicate-id row now also checks that no registry is written).
+- cargo_tracking.rs `cargo_fails_the_build_on_an_invalid_content_toml`, `cargo_gives_the_package_its_project_root`, `cargo_rebuilds_the_registry_from_the_root_content_toml_names`: `cargo_rebuilds_the_registry_from_the_root_content_toml_and_fails_on_an_invalid_one` (the fixture prints its project root on the first line, so one Cargo fixture covers all three).
+
+crates/terminal-renderer/src/ascii.rs
+- `test_luma_to_char_black`, `test_luma_to_char_white`, `test_luma_midrange`: rows of `luma_walks_the_ramp_from_a_space_for_black_to_an_at_for_white`, which also checks the ramp never goes back over all 256 values.
+
+crates/debug-gizmos/src/skeleton.rs
+- `each_bone_is_joined_to_its_parent_bone_only`, `a_skeleton_without_the_gizmo_draws_nothing`, `axes_add_three_lines_per_bone`, `a_bone_that_is_not_spawned_yet_is_skipped`: `a_skeleton_gizmo_joins_each_bone_to_its_parent_bone_and_draws_what_it_asks_for`.
+
+crates/render
+- src/frustum.rs the five box tests: rows of `a_box_intersects_a_frustum_when_any_part_of_it_is_inside`.
+- src/shader.rs `ifdef_picks_the_else_branch_when_undefined`, `ifdef_and_if_follow_the_defs`, `invalid_shader_reports_the_label`: `ifdef_and_if_follow_the_defs_and_an_error_names_the_shader`.
+- src/gpu.rs `a_found_gpu_is_returned`, `a_missing_gpu_skips_when_not_required`, `a_missing_gpu_panics_with_its_reason_when_required`: `a_missing_gpu_skips_unless_required_and_then_panics_with_its_reason` (the panic is caught and its message checked). `the_high_performance_adapter_is_preferred_by_default`: trivia (a flag default).
+- src/components/camera.rs `halves_tile_an_odd_width`, `out_of_range_fractions_clamp_to_the_target`, `inverted_and_non_finite_rects_are_empty`, `viewport_rect_without_a_viewport_is_the_whole_target`: rows of `a_viewport_covers_its_fraction_of_the_target_in_whole_pixels` (each row also pins the rect's aspect). `a_window_camera_with_an_empty_viewport_keeps_its_aspect`: an extra camera in `aspect_follows_the_viewport`.
+- src/components/camera_environment.rs `no_environment_means_no_fog_and_default_ambient`, `a_default_environment_has_the_default_ambient_not_white`, `a_uniform_with_no_environment_has_the_default_ambient`, `fog_and_ambient_reach_the_uniform`: `an_environment_fills_the_uniform_with_its_fog_and_ambient_and_none_restores_the_default`.
+- src/components/light.rs `syncing_an_unchanged_light_yields_an_equal_render_light`: `extracting_a_still_light_does_not_mark_its_render_light_changed` (a still light is not changed, a moved one is). `point_light_falls_off_with_the_square_of_distance`, `range_reaches_zero_at_the_limit`, `spot_light_only_reaches_inside_its_cone`, `directional_light_is_unattenuated`: rows of `attenuation_falls_off_with_distance_to_the_range_and_stays_inside_a_spot_cone`.
+- src/components/mesh.rs the four `is_visible_in` tests: rows of `an_instance_is_culled_only_when_its_bounds_are_known_outside_the_frustum`.
+- src/components/render_entity.rs all four: `a_synced_entity_keeps_one_mirror_for_as_long_as_it_lives`.
+- src/components/shadows.rs `a_light_ticked_on_gets_layer_zero`, `turning_shadows_off_gives_no_layer`, `spot_to_point_moves_the_light_between_pools`, `spot_and_directional_share_the_spot_pool`, `the_point_limit_of_one_keeps_the_first_point_light`, `spot_casters_past_the_limit_get_no_layer`, `the_order_is_stable`: rows of `shadowed_lights_take_layers_in_entity_order_in_their_pool_up_to_its_limit` (each row also checks that assigning twice gives the same result).
+- src/render_asset/mod.rs `a_budget_lets_through_the_asset_that_crosses_it_and_defers_the_rest`, `an_asset_larger_than_the_budget_is_still_prepared`, `without_a_budget_every_asset_is_prepared_in_one_frame`, `an_asset_without_a_byte_length_is_never_deferred`, `assets_that_fail_to_prepare_do_not_use_up_the_budget`: rows of `a_frame_prepares_assets_until_one_crosses_the_byte_budget_and_defers_the_rest` (every row now checks the deferred flag each frame). `an_app_without_a_limiter_counts_as_settled`: an assertion in `render_assets_settle_after_a_frame_that_prepared_and_deferred_nothing`.
+- src/batching.rs `instances_sharing_a_key_form_one_batch`, `instances_with_different_keys_form_one_batch_each_in_key_order`, `a_skinned_instance_forms_its_own_batch_after_the_unskinned_ones`, `culled_instances_are_counted_and_not_drawn`, `a_batch_holds_its_instances_transforms_in_order`: rows of `visible_instances_bin_into_one_batch_per_key_in_key_order_with_skinned_ones_last` (every row checks stats, batches with their skeleton offsets, and the drawn transforms in order).
+- macros/src/lib.rs `a_crate_depending_on_concerto_reaches_render_through_it`, `a_crate_depending_on_concerto_render_uses_it_directly`: rows of `the_render_path_goes_through_concerto_render_when_the_crate_depends_on_it`.
+- tests/render/image_importer.rs (file removed) `import_produces_one_main_sub_asset_with_correct_pixels`: `texture_pipeline_e2e::an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_address` (now a 2×2 image, with the sub-asset name and type checked).
+- tests/render/render_sets.rs (file removed) `the_shadow_chain_runs_each_system_once_in_order`: trivia. It configured its own chain of two `RenderSet` labels and checked what the ECS does with them, which ecs's `ordering.rs` table covers (chains and sets); it never touched the render plugin's set configuration.
+- tests/render/material_serialization.rs `round_trips_through_bincode_with_weak_texture_handles`, `referenced_sub_assets_lists_present_textures_only`: `a_material_decodes_with_weak_texture_handles_and_lists_only_its_present_textures`.
+- tests/render/required_sync.rs `a_bare_mesh_gets_the_marker`, `a_bare_skeleton_gets_the_marker`: `a_bare_mesh_or_skeleton_gets_the_marker`.
+- tests/render/scene_component_impls.rs `a_mesh_and_its_material_keep_their_asset_ids`, `a_spot_light_keeps_its_cone`, `a_camera_keeps_its_texture_target`, `a_camera_environment_keeps_its_fog_and_ambient`, `a_transform_and_a_marker_round_trip`: rows of `a_component_spawned_from_its_stored_value_captures_back_to_it_with_its_asset_ids` (every row now checks its referenced ids, empty ones included). The `LightType::default()` assertion went as trivia (a `Default`).
+- tests/render/webgl2_shaders.rs `standard_material_shader_translates_for_webgl2`, `shadow_shader_translates_for_webgl2`, `viewport_clear_shader_translates_for_webgl2`, `webgl2_defines_no_cube_array_support`: `every_shader_translates_to_glsl_es_300_under_the_webgl2_defines`, with the same shaders, entry points, validator flags and GLSL ES 3.00 writer.
+
+NOT VERIFIED:
+- The GPU tests return early here because there is no adapter. I left their bodies unchanged, so this costs nothing new, but none of them ran. That includes the render tests listed under KEPT and terminal-renderer's `test_headless_gpu_render_produces_output`.
+- No rendering behaviour changed, so I made no visual check.
+
+CONCERNS:
+- **content.toml created after the first build is not noticed.** `track_assets` watches `content.toml` only when it exists (`crates/asset-build/src/lib.rs:66-81`, `watched_paths` canonicalises the path and skips it on failure). In a fixture whose content.toml had been removed, writing a new one did not rerun the build script. My first ordering of the merged Cargo scenario caught this, and I reordered it so the invalid content.toml steps run before the removal. The doc comment at `lib.rs:25-27` says "one created later is read the next time the build script runs", so this matches what is documented. It still means adding a content.toml to an existing project needs a manual rebuild. The owner may want an issue for it.
+- **Private, non-maths tests kept as the only cover:**
+  - `planned_copies` (`crates/import/src/lib.rs`): an already-resolved dependency path. Public importers pass unresolved `..` paths, so nothing public reaches this case.
+  - `next_light_slot` (`crates/render/src/components/light.rs`): the MAX_LIGHTS boundary.
+  - `assign_layers` (`crates/render/src/components/shadows.rs`): shadow layer allocation. The GPU app tests cover the same allocation but skip in CI, which leaves the table as the only cover there. I count it as an algorithm under testing.md.
+  - The scripted-importer scenarios in import's lib.rs test the private `import_with`. They are the only cover of rename hints and pruning that does not depend on what a real importer emits.
+- **Production tuples remain, out of scope:** `assign_layers` takes and returns tuples (`(Entity, u32, bool)` and `(Vec<Entity>, Vec<Entity>)`), `planned_copies` returns `Vec<(PathBuf, PathBuf)>`, and `ImportOutputs::renames` is `Vec<(String, String)>`. The tests map into and out of them.
+- **The gltf clip-naming row is weaker than before.** It lists the three names that must be emitted and two index names that must not appear, where the old test compared the exact sorted list. A stray extra clip with another name would now pass.
+- **The bvh source table runs every row on the file name `events.bvh`,** so the events and additive rows key on `events`. The old tests used a different file name per case. Only the message fragments matter, and they are unchanged.
+- **Deleted as trivia:**
+  - render's `render_sets.rs`, which checked ECS chain ordering on two `RenderSet` labels it configured itself.
+  - gpu.rs `the_high_performance_adapter_is_preferred_by_default` (a default).
+  - asset-import `a_context_built_without_settings_returns_an_empty_table` (a getter default).
+  - bvh `supports_the_bvh_extension` (a constant).
+  The reviewer should confirm these calls.
+- **The asset-build tests drive real `cargo run --offline` fixture builds.** Merging two of them removed one fixture build, and the binary took about 11 s here.
