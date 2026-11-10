@@ -72,7 +72,7 @@ mod tests {
         ) {
             let mut reachability = Reachability::new(nodes);
             let mut accepted = Vec::new();
-            for pair in ends.chunks_exact(2) {
+            for pair in ends.as_chunks::<2>().0 {
                 let edge = Edge {
                     from: pair[0].index(nodes),
                     to: pair[1].index(nodes),
