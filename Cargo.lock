@@ -1563,6 +1563,9 @@ dependencies = [
 [[package]]
 name = "concerto-noise"
 version = "0.1.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "concerto-obj"
