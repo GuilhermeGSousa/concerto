@@ -320,6 +320,7 @@ mod tests {
 
     use super::AnimationPlayer;
     use crate::{
+        blackboard::AnimationBlackboard,
         clip::AnimationClip,
         evaluation::AnimationGraphContext,
         graph::{AnimationGraph, made_live},
@@ -436,85 +437,64 @@ mod tests {
         assert_eq!(replayable_resets(&mut player, &walks), [1]);
     }
 
-    #[test]
-    fn for_each_state_mut_visits_exactly_the_live_nodes_of_the_type() {
-        let mut fixture = fixture();
+    #[derive(Debug, PartialEq)]
+    struct Board {
+        flag: Option<bool>,
+        speed: Option<f32>,
+    }
 
-        let mut clip_nodes = 0;
-        fixture.player.for_each_state_mut::<AnimationClipNode>(
-            fixture.walks.graphs(),
-            |_, _, _| {
-                clip_nodes += 1;
-            },
-        );
+    fn board(blackboard: &AnimationBlackboard) -> Board {
+        Board {
+            flag: blackboard.get_bool(name!("flag")),
+            speed: blackboard.get_float(name!("speed")),
+        }
+    }
+
+    fn set_board() -> Board {
+        Board {
+            flag: Some(true),
+            speed: Some(3.0),
+        }
+    }
+
+    #[test]
+    fn for_each_state_and_for_each_state_mut_visit_only_the_live_nodes_of_the_type_with_the_blackboard()
+     {
+        let mut fixture = fixture();
+        let mut uninitialized = AnimationPlayer::new(1);
+        fixture.player.set_bool_param(name!("flag"), true);
+        fixture.player.set_float_param(name!("speed"), 3.0);
+        let graphs = fixture.walks.graphs();
+
+        let mut mutable = Vec::new();
+        fixture
+            .player
+            .for_each_state_mut::<AnimationClipNode>(graphs, |_, state, blackboard| {
+                state.play();
+                mutable.push(board(blackboard));
+            });
+        let mut shared = Vec::new();
+        fixture
+            .player
+            .for_each_state::<AnimationClipNode>(graphs, |_, _, blackboard| {
+                shared.push(board(blackboard))
+            });
         let mut result_nodes = 0;
         fixture
             .player
-            .for_each_state_mut::<ResultNode>(fixture.walks.graphs(), |_, _, _| {
-                result_nodes += 1;
-            });
+            .for_each_state::<ResultNode>(graphs, |_, _, _| result_nodes += 1);
         let mut blend_nodes = 0;
         fixture
             .player
-            .for_each_state_mut::<BlendNode>(fixture.walks.graphs(), |_, _, _| {
-                blend_nodes += 1;
-            });
+            .for_each_state_mut::<BlendNode>(graphs, |_, _, _| blend_nodes += 1);
+        let mut before_initialization = 0;
+        uninitialized
+            .for_each_state_mut::<AnimationClipNode>(graphs, |_, _, _| before_initialization += 1);
 
-        assert_eq!(clip_nodes, 2);
+        assert_eq!(mutable, [set_board(), set_board()]);
+        assert_eq!(shared, mutable);
         assert_eq!(result_nodes, 1);
         assert_eq!(blend_nodes, 0);
-    }
-
-    #[test]
-    fn for_each_state_visits_the_live_nodes_of_the_type_through_a_shared_player() {
-        let mut fixture = fixture();
-        fixture.player.set_float_param(name!("speed"), 3.0);
-        let player = &fixture.player;
-
-        let mut speeds = Vec::new();
-        player.for_each_state::<AnimationClipNode>(fixture.walks.graphs(), |_, _, board| {
-            speeds.push(board.get_float(name!("speed")));
-        });
-        let mut blend_nodes = 0;
-        player.for_each_state::<BlendNode>(fixture.walks.graphs(), |_, _, _| {
-            blend_nodes += 1;
-        });
-
-        assert_eq!(speeds, [Some(3.0); 2]);
-        assert_eq!(blend_nodes, 0);
-    }
-
-    #[test]
-    fn for_each_state_mut_hands_each_node_its_state_and_the_blackboard() {
-        let mut fixture = fixture();
-        fixture.player.set_bool_param(name!("flag"), true);
-        fixture.player.set_float_param(name!("speed"), 3.0);
-
-        let mut seen = Vec::new();
-        fixture.player.for_each_state_mut::<AnimationClipNode>(
-            fixture.walks.graphs(),
-            |_, state, board| {
-                state.play();
-                seen.push((
-                    board.get_bool(name!("flag")),
-                    board.get_float(name!("speed")),
-                ));
-            },
-        );
-
-        assert_eq!(seen, vec![(Some(true), Some(3.0)); 2]);
-    }
-
-    #[test]
-    fn for_each_state_mut_visits_nothing_before_the_graph_is_initialized() {
-        let fixture = fixture();
-        let mut player = AnimationPlayer::new(1);
-
-        let mut visits = 0;
-        player.for_each_state_mut::<AnimationClipNode>(fixture.walks.graphs(), |_, _, _| {
-            visits += 1;
-        });
-
-        assert_eq!(visits, 0);
+        assert_eq!(before_initialization, 0);
     }
 }

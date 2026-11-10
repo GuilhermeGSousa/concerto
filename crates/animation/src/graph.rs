@@ -886,62 +886,68 @@ mod tests {
     }
 
     #[test]
-    fn with_layer_input_hands_the_layer_its_base_first_and_its_overlay_second() {
+    fn with_layer_input_hands_the_layer_its_base_first_and_its_overlay_second_and_a_load_keeps_them()
+     {
         let mut layered = Layered::new();
-        let graph = layered.graph();
-
-        assert_base_then_overlay(&layered.evaluate(graph));
-    }
-
-    #[test]
-    fn a_saved_and_loaded_layer_keeps_its_base_first_and_its_overlay_second() {
-        let mut layered = Layered::new();
+        let built = layered.graph();
         let bytes = bincode::serialize(&layered.graph()).unwrap();
         let loaded: AnimationGraph = bincode::deserialize(&bytes).unwrap();
 
+        assert_base_then_overlay(&layered.evaluate(built));
         assert_base_then_overlay(&layered.evaluate(loaded));
     }
 
-    #[test]
-    #[should_panic(expected = "the base closure added 0 inputs")]
-    fn with_layer_input_panics_when_the_base_adds_no_input() {
-        let mut graph = AnimationGraph::new();
-        graph.result_node().with_layer_input(
-            LayerNode::default(),
-            |_| {},
-            |mut overlay| {
-                overlay.with_input(BlendNode {}, |_| {});
-            },
-        );
+    struct Misbuilt {
+        base: usize,
+        overlay: usize,
+        panic: &'static str,
     }
 
     #[test]
-    #[should_panic(expected = "the overlay closure added 0 inputs")]
-    fn with_layer_input_panics_when_the_overlay_adds_no_input() {
-        let mut graph = AnimationGraph::new();
-        graph.result_node().with_layer_input(
-            LayerNode::default(),
-            |mut base| {
-                base.with_input(BlendNode {}, |_| {});
+    fn with_layer_input_panics_unless_each_closure_adds_one_input() {
+        let cases = [
+            Misbuilt {
+                base: 0,
+                overlay: 1,
+                panic: "the base closure added 0 inputs",
             },
-            |_| {},
-        );
-    }
+            Misbuilt {
+                base: 1,
+                overlay: 0,
+                panic: "the overlay closure added 0 inputs",
+            },
+            Misbuilt {
+                base: 1,
+                overlay: 2,
+                panic: "the overlay closure added 2 inputs",
+            },
+        ];
 
-    #[test]
-    #[should_panic(expected = "the overlay closure added 2 inputs")]
-    fn with_layer_input_panics_when_the_overlay_adds_two_inputs() {
-        let mut graph = AnimationGraph::new();
-        graph.result_node().with_layer_input(
-            LayerNode::default(),
-            |mut base| {
-                base.with_input(BlendNode {}, |_| {});
-            },
-            |mut overlay| {
-                overlay
-                    .with_input(BlendNode {}, |_| {})
-                    .with_input(BlendNode {}, |_| {});
-            },
-        );
+        for case in cases {
+            let panicked = std::panic::catch_unwind(|| {
+                let mut graph = AnimationGraph::new();
+                graph.result_node().with_layer_input(
+                    LayerNode::default(),
+                    |mut base| {
+                        for _ in 0..case.base {
+                            base.with_input(BlendNode {}, |_| {});
+                        }
+                    },
+                    |mut overlay| {
+                        for _ in 0..case.overlay {
+                            overlay.with_input(BlendNode {}, |_| {});
+                        }
+                    },
+                );
+            })
+            .expect_err(case.panic);
+
+            let message = panicked
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panicked.downcast_ref::<&str>().copied())
+                .unwrap_or_default();
+            assert!(message.contains(case.panic), "{message}");
+        }
     }
 }

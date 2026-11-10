@@ -52,15 +52,16 @@ mod tests {
         lean: f32,
     }
 
-    fn read_stance(context: &AnimationGraphContext<'_>) -> Option<(bool, f32)> {
+    fn read_stance(context: &AnimationGraphContext<'_>) -> Option<Stance> {
         let stance = context.blackboard().get::<Stance>(name!("stance"))?;
-        Some((stance.crouched, stance.lean))
+        Some(Stance {
+            crouched: stance.crouched,
+            lean: stance.lean,
+        })
     }
 
     #[test]
-    fn a_custom_reflect_type_round_trips_through_the_graph_context() {
-        let clips = AssetStore::new();
-        let graphs = AssetStore::new();
+    fn a_value_reads_back_through_the_graph_context_only_as_its_own_type() {
         let mut blackboard = AnimationBlackboard::default();
         blackboard.set(
             name!("stance"),
@@ -69,18 +70,18 @@ mod tests {
                 lean: 0.5,
             },
         );
-        let walks = Walks::new(clips, graphs);
+        blackboard.set(name!("speed"), 2.0_f32);
+        let walks = Walks::new(AssetStore::new(), AssetStore::new());
 
         let stance = walks.update(&blackboard, read_stance);
 
-        assert_eq!(stance, Some((true, 0.5)));
-    }
-
-    #[test]
-    fn a_value_of_another_type_reads_as_none() {
-        let mut blackboard = AnimationBlackboard::default();
-        blackboard.set(name!("speed"), 2.0_f32);
-
+        assert_eq!(
+            stance,
+            Some(Stance {
+                crouched: true,
+                lean: 0.5,
+            })
+        );
         assert_eq!(blackboard.get::<f32>(name!("speed")), Some(&2.0));
         assert!(blackboard.get::<bool>(name!("speed")).is_none());
         assert!(blackboard.get_int(name!("speed")).is_none());
