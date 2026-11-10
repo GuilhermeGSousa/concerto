@@ -2,11 +2,11 @@
 //! mesh, material, and scene sub-assets (this fixture has no textures),
 //! with the scene's node referencing the mesh/material by stable AssetId
 //! through serialized component payloads.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
 use concerto_animation::event::AnimationEvent;
-use concerto_asset_import::{ImportContext, ImportOutputs, Importer};
+use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_gltf::gltf_importer::GltfImporter;
@@ -35,260 +35,320 @@ fn has_component_ending_in(node: &SceneNode, suffix: &str) -> bool {
         .any(|c| c.type_name.ends_with(suffix))
 }
 
-#[test]
-fn import_emits_mesh_material_and_scene_sub_assets() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/triangle.gltf");
-    let relative_source = Path::new("triangle.gltf");
-    let mut ctx = ImportContext::new(relative_source.to_path_buf());
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
 
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("importing the triangle fixture should succeed");
-    let outputs = ctx.into_parts();
+struct Imported {
+    result: Result<(), ImportError>,
+    outputs: ImportOutputs,
+}
 
-    let names: Vec<&str> = outputs.sub_assets.iter().map(|s| s.name.as_str()).collect();
-    assert!(
-        names.contains(&"mesh/0"),
-        "expected a mesh/0 sub-asset, got: {names:?}"
-    );
-    assert!(
-        names.contains(&"material/0"),
-        "expected a material/0 sub-asset, got: {names:?}"
-    );
-    assert!(
-        names.contains(&"scene"),
-        "expected a scene sub-asset, got: {names:?}"
-    );
+fn import(name: &str, settings: &str) -> Imported {
+    let mut ctx = ImportContext::new(PathBuf::from(name)).with_settings(settings.parse().unwrap());
+    let result = GltfImporter.import(&fixture(name), &mut ctx);
+    Imported {
+        result,
+        outputs: ctx.into_parts(),
+    }
+}
 
-    let scene_entry = outputs
+fn imported(name: &str, settings: &str) -> ImportOutputs {
+    let imported = import(name, settings);
+    imported.result.expect("the import should succeed");
+    imported.outputs
+}
+
+fn emitted<T: serde::de::DeserializeOwned>(outputs: &ImportOutputs, name: &str) -> T {
+    let entry = outputs
         .sub_assets
         .iter()
-        .find(|s| s.name == "scene")
-        .unwrap();
-    let cooked_scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
-    assert_eq!(cooked_scene.nodes.len(), 1);
-    assert_eq!(cooked_scene.nodes[0].name, "Triangle");
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
+    bincode::deserialize(&entry.bytes).expect("the sub-asset must decode")
+}
+
+struct Case {
+    source: &'static str,
+    settings: String,
+    emits: &'static [&'static str],
+    omits: &'static [&'static str],
+    depends_on: &'static [&'static str],
+    refusal: &'static [&'static str],
+}
+
+fn emits(
+    source: &'static str,
+    emits: &'static [&'static str],
+    omits: &'static [&'static str],
+    depends_on: &'static [&'static str],
+) -> Case {
+    Case {
+        source,
+        settings: String::new(),
+        emits,
+        omits,
+        depends_on,
+        refusal: &[],
+    }
+}
+
+fn refuses(source: &'static str, settings: String, refusal: &'static [&'static str]) -> Case {
+    Case {
+        source,
+        settings,
+        emits: &[],
+        omits: &[],
+        depends_on: &[],
+        refusal,
+    }
+}
+
+const BASE_ID: &str = "d6e76e64-a888-49cd-bc16-61f0566f36ab";
+
+fn additive(rest: &str) -> String {
+    format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\n{rest}")
+}
+
+#[test]
+fn a_source_and_its_settings_import_their_sub_assets_or_are_refused_naming_the_problem() {
+    let mut cases = vec![
+        emits(
+            "triangle.gltf",
+            &["mesh/0", "material/0", "scene"],
+            &[],
+            &[],
+        ),
+        emits(
+            "triangle_ext.gltf",
+            &["mesh/0", "scene"],
+            &[],
+            &["triangle_ext.bin"],
+        ),
+        emits(
+            "triangle_two_prims.gltf",
+            &["mesh/0", "mesh/1", "material/0", "scene"],
+            &[],
+            &[],
+        ),
+        emits(
+            "skinned.gltf",
+            &["skeleton/0", "animation/Wiggle", "scene"],
+            &[],
+            &[],
+        ),
+        emits(
+            "animations_named.gltf",
+            &["animation/1", "animation/Wiggle", "animation/Wiggle_2"],
+            &["animation/0", "animation/2"],
+            &[],
+        ),
+        emits(
+            "skinned_unreachable_joint.gltf",
+            &["scene"],
+            &["skeleton/0"],
+            &[],
+        ),
+        Case {
+            omits: &["skeleton/0"],
+            ..refuses(
+                "skinned_out_of_order.gltf",
+                String::new(),
+                &["skin 0", "joint 2"],
+            )
+        },
+        refuses(
+            "animations_named.gltf",
+            "scale = 0.01\n".to_string(),
+            &["scale"],
+        ),
+        refuses(
+            "animations_named.gltf",
+            "[events.Wobble]\nhit = [0.5]\n".to_string(),
+            &["Wobble"],
+        ),
+        refuses(
+            "animations_named.gltf",
+            format!("[additive.Wobble]\nbase = \"{BASE_ID}\"\n"),
+            &["Wobble"],
+        ),
+        refuses(
+            "animations_named.gltf",
+            "[additive.Wiggle]\nbase = \"not-an-id\"\n".to_string(),
+            &["UUID"],
+        ),
+        refuses(
+            "animations_named.gltf",
+            additive("weight = 1.0\n"),
+            &["weight"],
+        ),
+        refuses(
+            "animations_named.gltf",
+            additive("range = { start = 0.0, end = 0.5, step = 0.1 }\n"),
+            &["step"],
+        ),
+    ];
+    for time in ["-0.5", "nan", "inf", "1.5"] {
+        cases.push(refuses(
+            "animations_named.gltf",
+            format!("[events.Wiggle]\nhit = [{time}]\n"),
+            &["hit"],
+        ));
+    }
+    for range in [
+        "[0.0, 1.5]",
+        "[0.5, 0.5]",
+        "[0.75, 0.25]",
+        "[-0.25, 0.5]",
+        "[nan, 0.5]",
+        "[0.0, inf]",
+    ] {
+        cases.push(refuses(
+            "animations_named.gltf",
+            additive(&format!("range = {range}\n")),
+            &["range"],
+        ));
+    }
+
+    for case in &cases {
+        let Imported { result, outputs } = import(case.source, &case.settings);
+        let label = format!("{} with {:?}", case.source, case.settings);
+        match result {
+            Ok(()) => assert!(case.refusal.is_empty(), "{label}: expected a refusal"),
+            Err(error) => {
+                let message = format!("{error:?}");
+                assert!(
+                    !case.refusal.is_empty()
+                        && case.refusal.iter().all(|part| message.contains(part)),
+                    "{label}: got {message}"
+                );
+            }
+        }
+        let names: Vec<&str> = outputs.sub_assets.iter().map(|s| s.name.as_str()).collect();
+        for name in case.emits {
+            assert!(names.contains(name), "{label}: no {name} in {names:?}");
+        }
+        for name in case.omits {
+            assert!(!names.contains(name), "{label}: {name} in {names:?}");
+        }
+        for file in case.depends_on {
+            assert!(
+                outputs.dependencies.iter().any(|dep| dep
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    == Some(*file)),
+                "{label}: {file} is not a dependency"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_single_primitive_node_carries_its_mesh_material_and_light_by_stable_id() {
+    let outputs = imported("triangle.gltf", "");
+    let scene: Scene = emitted(&outputs, "scene");
+    assert_eq!(scene.nodes.len(), 1);
+    let node = &scene.nodes[0];
+    assert_eq!(node.name, "Triangle");
     assert_eq!(
-        mesh_handle_id(&cooked_scene.nodes[0]),
-        Some(AssetId::from_path("triangle.gltf#mesh/0")),
-        "the scene node's MeshComponent must carry the exact same AssetId a runtime load of 'triangle.gltf#mesh/0' would compute"
+        mesh_handle_id(node),
+        Some(AssetId::from_path("triangle.gltf#mesh/0"))
+    );
+    assert!(has_component_ending_in(node, "MaterialComponent"));
+    assert!(has_component_ending_in(node, "light::Light"));
+    assert!(
+        !has_component_ending_in(node, "MeshCollider"),
+        "Blender extras are not read"
     );
     assert!(
-        has_component_ending_in(&cooked_scene.nodes[0], "MaterialComponent"),
-        "the drawable node must also carry a MaterialComponent payload"
-    );
-    assert!(
-        cooked_scene
+        scene
             .referenced_assets
-            .contains(&AssetId::from_path("triangle.gltf#mesh/0")),
-        "the mesh id must be recorded in referenced_assets for import-time validation"
+            .contains(&AssetId::from_path("triangle.gltf#mesh/0"))
     );
 }
 
 #[test]
-fn import_emits_light_and_ignores_extras() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/triangle.gltf");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("triangle.gltf"));
+fn a_multi_primitive_mesh_becomes_a_parent_with_one_child_per_primitive() {
+    let outputs = imported("triangle_two_prims.gltf", "");
+    let scene: Scene = emitted(&outputs, "scene");
+    assert_eq!(scene.nodes.len(), 3);
 
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("import should succeed");
-    let outputs = ctx.into_parts();
+    let parent = &scene.nodes[0];
+    assert_eq!(parent.name, "Triangle");
+    assert!(mesh_handle_id(parent).is_none());
+    assert!(!has_component_ending_in(parent, "MaterialComponent"));
+    assert_eq!(parent.children, vec![1, 2]);
 
-    let scene_entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == "scene")
-        .unwrap();
-    let cooked_scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
-    let names: Vec<&str> = cooked_scene.nodes[0]
-        .components
-        .iter()
-        .map(|c| c.type_name.as_str())
-        .collect();
+    for (child, address) in scene.nodes[1..].iter().zip([
+        "triangle_two_prims.gltf#mesh/0",
+        "triangle_two_prims.gltf#mesh/1",
+    ]) {
+        assert!(child.children.is_empty());
+        assert!(has_component_ending_in(child, "MaterialComponent"));
+        assert_eq!(mesh_handle_id(child), Some(AssetId::from_path(address)));
+    }
+}
 
-    // `Component::name()` is the fully-qualified path, so match on the suffix
-    // the way `has_component_ending_in` does elsewhere in this file.
-    assert!(
-        names.iter().any(|n| n.ends_with("light::Light")),
-        "the punctual light must become a Light component, got: {names:?}"
-    );
-    assert!(
-        !names.iter().any(|n| n.ends_with("MeshCollider")),
-        "Blender extras are no longer read, got: {names:?}"
-    );
+struct Skin {
+    source: &'static str,
+    names: [&'static str; 2],
 }
 
 #[test]
-fn import_emits_skeleton_and_animation_sub_assets() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skinned.gltf");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("skinned.gltf"));
+fn a_skin_becomes_a_parents_first_skeleton_that_the_scene_binds() {
+    let skins = [
+        Skin {
+            source: "skinned.gltf",
+            names: ["Root", "Joint"],
+        },
+        Skin {
+            source: "skinned_parent_outside_skin.gltf",
+            names: ["Joint", "Tip"],
+        },
+    ];
+    for skin in &skins {
+        let skeleton: Skeleton = emitted(&imported(skin.source, ""), "skeleton/0");
+        assert_eq!(
+            &*skeleton.names,
+            skin.names.map(String::from),
+            "{}",
+            skin.source
+        );
+        assert_eq!(&*skeleton.parents, [None, Some(0)], "{}", skin.source);
+    }
 
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("importing the skinned fixture should succeed");
-    let outputs = ctx.into_parts();
-
-    let names: Vec<&str> = outputs.sub_assets.iter().map(|s| s.name.as_str()).collect();
-    assert!(
-        names.contains(&"skeleton/0"),
-        "expected a skeleton sub-asset, got: {names:?}"
+    let outputs = imported("skinned.gltf", "");
+    let skeleton: Skeleton = emitted(&outputs, "skeleton/0");
+    assert_eq!(skeleton.rest_pose[0], JointPose::IDENTITY);
+    assert_eq!(
+        skeleton.rest_pose[1].translation,
+        glam::Vec3::new(0.0, 1.0, 0.0)
     );
-    assert!(
-        names.contains(&"animation/Wiggle"),
-        "expected an animation sub-asset, got: {names:?}"
-    );
+    assert_eq!(skeleton.bone_index("Joint".into()), Some(1));
+    assert_ne!(skeleton.bone_ids[0], skeleton.bone_ids[1]);
 
-    let scene_entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == "scene")
-        .unwrap();
-    let cooked_scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
-
-    let skinned_node = cooked_scene
+    let scene: Scene = emitted(&outputs, "scene");
+    let bound: SkeletonComponent = scene
         .nodes
         .iter()
-        .find(|node| {
-            node.components
-                .iter()
-                .any(|c| c.type_name == SkeletonComponent::name())
-        })
-        .expect("a skinned node must carry a SkeletonComponent");
-
-    let payload = skinned_node
-        .components
-        .iter()
+        .flat_map(|node| node.components.iter())
         .find(|c| c.type_name == SkeletonComponent::name())
-        .unwrap();
-    let scene_skeleton: SkeletonComponent = decode(payload);
-
+        .map(decode)
+        .expect("a skinned node must carry a SkeletonComponent");
     assert_eq!(
-        scene_skeleton.skeleton.id(),
-        AssetId::from_path("skinned.gltf#skeleton/0"),
-        "the skeleton handle must address the emitted skeleton sub-asset"
+        bound.skeleton.id(),
+        AssetId::from_path("skinned.gltf#skeleton/0")
     );
-    assert!(
-        !scene_skeleton.bones.is_empty(),
-        "the fixture's skin has joints, so bones must not be empty"
-    );
-    assert_eq!(
-        scene_skeleton.bones.len(),
-        emitted_skeleton(&outputs, "skeleton/0").bone_count(),
-        "every bone must have a matching entry in the skeleton asset"
-    );
-}
-
-#[test]
-fn import_tracks_external_buffer_as_dependency() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/triangle_ext.gltf");
-    let relative_source = Path::new("triangle_ext.gltf");
-    let mut ctx = ImportContext::new(relative_source.to_path_buf());
-
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("importing the external-buffer fixture should succeed");
-
-    let dependencies = ctx.into_parts().dependencies;
-    assert!(
-        dependencies
-            .iter()
-            .any(|dep| dep.path.file_name().and_then(|n| n.to_str()) == Some("triangle_ext.bin")),
-        "the external .bin buffer must be tracked as an import dependency so a stale \
-         incremental re-import can't ship old geometry, got: {:?}",
-        dependencies
-            .iter()
-            .map(|d| d.path.display().to_string())
-            .collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn import_flattens_multi_primitive_mesh_into_child_nodes() {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/triangle_two_prims.gltf");
-    let relative_source = Path::new("triangle_two_prims.gltf");
-    let mut ctx = ImportContext::new(relative_source.to_path_buf());
-
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("importing the two-primitive fixture should succeed");
-    let outputs = ctx.into_parts();
-
-    let names: Vec<&str> = outputs.sub_assets.iter().map(|s| s.name.as_str()).collect();
-    for expected in ["mesh/0", "mesh/1", "material/0", "scene"] {
-        assert!(
-            names.contains(&expected),
-            "expected a {expected} sub-asset, got: {names:?}"
-        );
-    }
-
-    let scene_entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == "scene")
-        .unwrap();
-    let cooked_scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
-    assert_eq!(
-        cooked_scene.nodes.len(),
-        3,
-        "one parent node plus one appended child node per primitive"
-    );
-
-    let parent = &cooked_scene.nodes[0];
-    assert_eq!(parent.name, "Triangle", "parent keeps the glTF node name");
-    assert!(
-        mesh_handle_id(parent).is_none(),
-        "a multi-primitive parent node holds no mesh of its own"
-    );
-    assert!(
-        !has_component_ending_in(parent, "MaterialComponent"),
-        "a multi-primitive parent node holds no material of its own"
-    );
-    assert_eq!(
-        parent.children,
-        vec![1, 2],
-        "parent points at the two appended primitive child nodes"
-    );
-
-    for (child_index, expected_mesh_addr) in [
-        (1usize, "triangle_two_prims.gltf#mesh/0"),
-        (2usize, "triangle_two_prims.gltf#mesh/1"),
-    ] {
-        let child = &cooked_scene.nodes[child_index];
-        assert!(
-            child.children.is_empty(),
-            "primitive child node {child_index} is a leaf"
-        );
-        assert!(
-            has_component_ending_in(child, "MaterialComponent"),
-            "primitive child node {child_index} carries a material component"
-        );
-        assert_eq!(
-            mesh_handle_id(child),
-            Some(AssetId::from_path(expected_mesh_addr)),
-            "primitive child node {child_index} must reference {expected_mesh_addr} by stable AssetId"
-        );
-    }
+    assert_eq!(bound.bones.len(), skeleton.bone_count());
 }
 
 #[test]
 fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skinned_two_prims.gltf");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("skinned_two_prims.gltf"));
-
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("importing the two-primitive skinned fixture should succeed");
-    let outputs = ctx.into_parts();
-
-    let scene_entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == "scene")
-        .unwrap();
-    let scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
+    let outputs = imported("skinned_two_prims.gltf", "");
+    let scene: Scene = emitted(&outputs, "scene");
 
     let skeletons: Vec<SkeletonComponent> = scene
         .nodes
@@ -309,153 +369,19 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
     assert_eq!(
         bindings.len(),
         2,
-        "one rootless SkeletonComponent per primitive child, got {}",
-        bindings.len()
+        "one rootless binding per primitive child"
     );
     for binding in &bindings {
-        assert_eq!(
-            binding.bones, source_skel.bones,
-            "primitive child binding must share the source skeleton's bones"
-        );
+        assert_eq!(binding.bones, source_skel.bones);
         assert_eq!(binding.skeleton.id(), source_skel.skeleton.id());
     }
 
-    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
-
-    // The Wiggle clip's channel key must be one of those bone ids, or animation
-    // silently does nothing.
-    let clip_entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == "animation/Wiggle")
-        .unwrap();
-    let clip: concerto_animation::clip::AnimationClip =
-        bincode::deserialize(&clip_entry.bytes).unwrap();
+    let skeleton: Skeleton = emitted(&outputs, "skeleton/0");
+    let clip: AnimationClip = emitted(&outputs, "animation/Wiggle");
     assert!(
         clip.target_ids().any(|id| skeleton.bone_ids.contains(id)),
         "the animation clip must key at least one channel by a skeleton bone id"
     );
-}
-
-fn import_fixture(
-    name: &str,
-) -> (
-    Result<(), concerto_asset_import::ImportError>,
-    ImportContext,
-) {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name);
-    let mut ctx = ImportContext::new(std::path::PathBuf::from(name));
-    let result = GltfImporter.import(&fixture, &mut ctx);
-    (result, ctx)
-}
-
-fn emitted_skeleton(outputs: &ImportOutputs, name: &str) -> Skeleton {
-    let entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == name)
-        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
-    bincode::deserialize(&entry.bytes).expect("the skeleton sub-asset must decode")
-}
-
-#[test]
-fn skeleton_asset_carries_names_parents_rest_pose_and_ids() {
-    let (result, ctx) = import_fixture("skinned.gltf");
-    result.expect("importing the skinned fixture should succeed");
-    let outputs = ctx.into_parts();
-    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
-
-    assert_eq!(skeleton.bone_count(), 2);
-    assert_eq!(&*skeleton.names, ["Root".to_string(), "Joint".to_string()]);
-    assert_eq!(&*skeleton.parents, [None, Some(0)]);
-    assert_eq!(skeleton.rest_pose[0], JointPose::IDENTITY);
-    assert_eq!(
-        skeleton.rest_pose[1].translation,
-        glam::Vec3::new(0.0, 1.0, 0.0)
-    );
-    assert_eq!(skeleton.bone_index("Joint".into()), Some(1));
-    assert_ne!(skeleton.bone_ids[0], skeleton.bone_ids[1]);
-}
-
-#[test]
-fn joint_listed_before_its_parent_fails_the_import() {
-    let (result, ctx) = import_fixture("skinned_out_of_order.gltf");
-    let error = result.expect_err("a skin that is not parents-first must be rejected");
-    let message = format!("{error:?}");
-    assert!(
-        message.contains("skin 0") && message.contains("joint 2"),
-        "the error must name the skin and the joint, got: {message}"
-    );
-    assert!(
-        ctx.into_parts()
-            .sub_assets
-            .iter()
-            .all(|s| s.name != "skeleton/0"),
-        "a rejected skin must emit no skeleton"
-    );
-}
-
-#[test]
-fn parent_outside_the_skin_makes_the_joint_a_root() {
-    let (result, ctx) = import_fixture("skinned_parent_outside_skin.gltf");
-    result.expect("importing should succeed");
-    let skeleton = emitted_skeleton(&ctx.into_parts(), "skeleton/0");
-
-    assert_eq!(&*skeleton.names, ["Joint".to_string(), "Tip".to_string()]);
-    assert_eq!(&*skeleton.parents, [None, Some(0)]);
-}
-
-#[test]
-fn skin_with_an_unreachable_joint_emits_no_skeleton() {
-    let (result, ctx) = import_fixture("skinned_unreachable_joint.gltf");
-    result.expect("a skipped skin is not an import error");
-    let names: Vec<String> = ctx
-        .into_parts()
-        .sub_assets
-        .into_iter()
-        .map(|s| s.name)
-        .collect();
-    assert!(
-        !names.iter().any(|n| n.starts_with("skeleton/")),
-        "a skipped skin must emit nothing, got: {names:?}"
-    );
-}
-
-#[test]
-fn import_names_animation_clips_after_the_gltf() {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/animations_named.gltf");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("animations_named.gltf"));
-
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("importing the animations fixture should succeed");
-    let outputs = ctx.into_parts();
-
-    let mut clips: Vec<&str> = outputs
-        .sub_assets
-        .iter()
-        .map(|s| s.name.as_str())
-        .filter(|n| n.starts_with("animation/"))
-        .collect();
-    clips.sort();
-    assert_eq!(
-        clips,
-        vec!["animation/1", "animation/Wiggle", "animation/Wiggle_2"]
-    );
-}
-
-fn import_named_animations(
-    settings: &str,
-) -> Result<ImportOutputs, concerto_asset_import::ImportError> {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/animations_named.gltf");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("animations_named.gltf"))
-        .with_settings(settings.parse().unwrap());
-    GltfImporter.import(&fixture, &mut ctx)?;
-    Ok(ctx.into_parts())
 }
 
 #[derive(Debug, PartialEq)]
@@ -472,12 +398,7 @@ fn named_key(time: f32, name: &str) -> NamedKey {
 }
 
 fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<NamedKey> {
-    let entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == name)
-        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
-    let clip: AnimationClip = bincode::deserialize(&entry.bytes).unwrap();
+    let clip: AnimationClip = emitted(outputs, name);
     clip.events()
         .iter()
         .map(|key| {
@@ -493,25 +414,12 @@ fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<NamedKey> {
         .collect()
 }
 
-fn assert_import_fails(settings: &str, expected: &str) {
-    match import_named_animations(settings) {
-        Err(error) => {
-            let message = format!("{error:?}");
-            assert!(
-                message.contains(expected),
-                "expected {expected:?} in {message}"
-            );
-        }
-        Ok(_) => panic!("expected the import to fail for settings {settings:?}"),
-    }
-}
-
 #[test]
 fn event_settings_add_sorted_animation_events_to_the_named_clip() {
-    let outputs = import_named_animations(
+    let outputs = imported(
+        "animations_named.gltf",
         "[events.Wiggle_2]\nhit = [0.75, 0.25, 0.75]\nstart = [0.0]\n[events.1]\nend = [1.0]\n",
-    )
-    .expect("the import should succeed");
+    );
     assert_eq!(
         event_keys(&outputs, "animation/Wiggle_2"),
         [
@@ -525,36 +433,14 @@ fn event_settings_add_sorted_animation_events_to_the_named_clip() {
 }
 
 #[test]
-fn invalid_event_settings_fail_the_import() {
-    assert_import_fails("[events.Wobble]\nhit = [0.5]\n", "Wobble");
-    for time in ["-0.5", "nan", "inf", "1.5"] {
-        assert_import_fails(&format!("[events.Wiggle]\nhit = [{time}]\n"), "hit");
-    }
-}
-
-#[test]
-fn an_unknown_settings_key_fails_the_import() {
-    assert_import_fails("scale = 0.01\n", "scale");
-}
-
-const BASE_ID: &str = "d6e76e64-a888-49cd-bc16-61f0566f36ab";
-
-fn emitted_clip(outputs: &ImportOutputs, name: &str) -> AnimationClip {
-    let entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == name)
-        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
-    bincode::deserialize(&entry.bytes).expect("the clip sub-asset must decode")
-}
-
-#[test]
-fn an_additive_table_makes_the_named_clip_additive_against_its_base() {
-    let outputs = import_named_animations(&format!(
-        "[additive.Wiggle_2]\nbase = \"{BASE_ID}\"\nbase_range = [0.5, 1.5]\nrange = {{ start = 0.25, end = 0.75 }}\n"
-    ))
-    .expect("the import should succeed");
-    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
+fn an_additive_table_makes_only_the_named_clip_additive_against_its_base() {
+    let outputs = imported(
+        "animations_named.gltf",
+        &format!(
+            "[additive.Wiggle_2]\nbase = \"{BASE_ID}\"\nbase_range = [0.5, 1.5]\nrange = {{ start = 0.25, end = 0.75 }}\n"
+        ),
+    );
+    let skeleton: Skeleton = emitted(&outputs, "skeleton/0");
     let mut expected = AdditiveBase::new(AssetHandle::weak(
         AssetId::from_simple_hex(BASE_ID).unwrap(),
     ))
@@ -566,56 +452,11 @@ fn an_additive_table_makes_the_named_clip_additive_against_its_base() {
         }
     }
     assert!(!expected.roots.is_empty());
+    let additive = |name: &str| emitted::<AnimationClip>(&outputs, name).additive().clone();
     assert_eq!(
-        emitted_clip(&outputs, "animation/Wiggle_2").additive(),
-        &Additive::LocalSpace(expected)
+        additive("animation/Wiggle_2"),
+        Additive::LocalSpace(expected)
     );
-    assert_eq!(
-        emitted_clip(&outputs, "animation/Wiggle").additive(),
-        &Additive::None
-    );
-    assert_eq!(
-        emitted_clip(&outputs, "animation/1").additive(),
-        &Additive::None
-    );
-}
-
-#[test]
-fn a_sidecar_without_an_additive_table_imports_plain_clips() {
-    let outputs = import_named_animations("").expect("the import should succeed");
-    for name in ["animation/1", "animation/Wiggle", "animation/Wiggle_2"] {
-        assert_eq!(emitted_clip(&outputs, name).additive(), &Additive::None);
-    }
-}
-
-#[test]
-fn invalid_additive_settings_fail_the_import() {
-    assert_import_fails(
-        &format!("[additive.Wobble]\nbase = \"{BASE_ID}\"\n"),
-        "Wobble",
-    );
-    assert_import_fails("[additive.Wiggle]\nbase = \"not-an-id\"\n", "UUID");
-    assert_import_fails(
-        &format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\nweight = 1.0\n"),
-        "weight",
-    );
-    assert_import_fails(
-        &format!(
-            "[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = {{ start = 0.0, end = 0.5, step = 0.1 }}\n"
-        ),
-        "step",
-    );
-    for range in [
-        "[0.0, 1.5]",
-        "[0.5, 0.5]",
-        "[0.75, 0.25]",
-        "[-0.25, 0.5]",
-        "[nan, 0.5]",
-        "[0.0, inf]",
-    ] {
-        assert_import_fails(
-            &format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = {range}\n"),
-            "range",
-        );
-    }
+    assert_eq!(additive("animation/Wiggle"), Additive::None);
+    assert_eq!(additive("animation/1"), Additive::None);
 }
