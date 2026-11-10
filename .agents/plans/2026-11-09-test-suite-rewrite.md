@@ -137,6 +137,12 @@ and in the PR description.
 
 `branch-reviewer` over the whole branch, with every task's `DELETED:` list.
 
+### 15. Clean up (session)
+
+Once the review's findings are dealt with, delete
+`.agents/specs/2026-11-09-test-suite-rewrite-design.md` from the branch, as
+the owner asked. Ask the owner whether this plan and its reports file go too.
+
 ## Baseline
 
 Measured 2026-11-09 on the cloud container (4 cores, 15 GB RAM):
