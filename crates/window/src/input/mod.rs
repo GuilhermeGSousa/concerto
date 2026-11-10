@@ -1,10 +1,14 @@
 pub mod actions;
 mod gamepad;
+mod players;
 use concerto_ecs::resource::Resource;
 use glam::Vec2;
 use std::collections::HashMap;
 
 pub use gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadId, GamepadSettings, GamepadStick};
+pub use players::{
+    AssignError, JoinSettings, PlayerDevice, PlayerDevices, PlayerEvent, PlayerIndex, Players,
+};
 pub use winit::event::MouseButton;
 pub use winit::keyboard::{KeyCode, PhysicalKey};
 
