@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    clip::{AnimationChannel, AnimationClip},
+    clip::{AnimationChannel, AnimationClip, ClipRange},
     evaluation::{AnimationGraphContext, RootBone},
     pose::{
         AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion, twist_about,
@@ -21,6 +21,7 @@ pub mod layer;
 pub mod model_space;
 pub mod state_machine;
 pub mod two_bone_ik;
+mod warp;
 
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
@@ -30,6 +31,8 @@ pub use definition::{
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
+use warp::WarpAim;
+pub use warp::{RootMotionWarp, WarpTarget};
 
 /// The rate a node plays at: `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None` or holds no `f32`; never negative.
 pub fn effective_play_rate(
@@ -376,11 +379,17 @@ impl AnimationNode for AnimationClipNode {
                 }
             });
 
+        let aim = context.root().and_then(|root| {
+            self.warp
+                .as_ref()?
+                .aim(context.blackboard(), root.space, animation_clip.duration())
+        });
         output.set_root_motion(root_motion(
             &state.clock,
             animation_clip,
             context.root(),
             bone_ids,
+            aim.as_ref(),
         ));
     }
 
@@ -405,6 +414,7 @@ fn root_motion(
     clip: &AnimationClip,
     root: Option<&RootBone>,
     bone_ids: &[Uuid],
+    aim: Option<&WarpAim>,
 ) -> RootMotion {
     let Some((root, channels)) = root.and_then(|root| {
         let channels = clip.get_channels(bone_ids.get(root.index)?)?;
@@ -421,10 +431,18 @@ fn root_motion(
         )
     };
 
+    let bend = |from: f32, to: f32| {
+        let delta = stretch(from, to);
+        match aim {
+            Some(aim) => aim.bend(delta, ClipRange::new(from, to), stretch),
+            None => delta,
+        }
+    };
+
     if clock.wrapped {
-        stretch(clock.previous_time, clip.duration()).then(stretch(clock.start_time, clock.time))
+        bend(clock.previous_time, clip.duration()).then(stretch(clock.start_time, clock.time))
     } else {
-        stretch(clock.previous_time, clock.time)
+        bend(clock.previous_time, clock.time)
     }
 }
 
@@ -444,6 +462,7 @@ pub struct AnimationClipNode {
     start_time: f32,
     play_rate: f32,
     play_rate_param: Option<Name>,
+    warp: Option<RootMotionWarp>,
 }
 
 impl Default for AnimationClipNode {
@@ -460,6 +479,7 @@ impl AnimationClipNode {
             start_time: 0.0,
             play_rate: 1.0,
             play_rate_param: None,
+            warp: None,
         }
     }
 
@@ -489,6 +509,12 @@ impl AnimationClipNode {
         self.play_rate_param = Some(param);
         self
     }
+
+    /// Warps the clip's root motion toward a target, as `warp` describes.
+    pub fn with_warp(mut self, warp: RootMotionWarp) -> Self {
+        self.warp = Some(warp);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -498,22 +524,23 @@ mod tests {
         AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use concerto_name::{Name, name};
-    use glam::{Quat, Vec3};
+    use glam::{Affine3A, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, AnimationPlayMode, BlendNode,
-        effective_play_rate, effective_weight,
+        RootMotionWarp, WarpTarget, effective_play_rate, effective_weight,
     };
     use crate::{
         blackboard::AnimationBlackboard,
-        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip, ClipRange},
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
+            twist_about,
         },
-        test_walks::Walks,
+        test_walks::{Walks, displaced},
     };
 
     const ROOT: Uuid = Uuid::from_u128(1);
@@ -532,6 +559,7 @@ mod tests {
         blackboard: AnimationBlackboard,
         rest: JointPose,
         up: Vec3,
+        space: Affine3A,
         clip: AssetHandle<AnimationClip>,
     }
 
@@ -548,6 +576,7 @@ mod tests {
                 blackboard: AnimationBlackboard::default(),
                 rest,
                 up: Vec3::Y,
+                space: Affine3A::IDENTITY,
                 clip: handle,
             }
         }
@@ -557,11 +586,17 @@ mod tests {
             self
         }
 
+        fn with_space(mut self, space: Affine3A) -> Self {
+            self.space = space;
+            self
+        }
+
         fn root(&self) -> RootBone {
             RootBone {
                 index: 0,
                 rest: self.rest.clone(),
                 up: self.up,
+                space: self.space,
             }
         }
 
@@ -620,6 +655,27 @@ mod tests {
                 node.update(state, delta_time, clips(context), context)
             });
             self.motion(node, state)
+        }
+
+        fn walk(&mut self, node: &AnimationClipNode, steps: &[f32]) -> Affine3A {
+            let mut state = self.create(node);
+            for step in steps {
+                let motion = self.step(node, &mut state, *step);
+                self.space = displaced(self.space, motion);
+            }
+            self.space
+        }
+
+        fn motions(&mut self, node: &AnimationClipNode, steps: &[f32]) -> Vec<RootMotion> {
+            let mut state = self.create(node);
+            steps
+                .iter()
+                .map(|step| {
+                    let motion = self.step(node, &mut state, *step);
+                    self.space = displaced(self.space, motion);
+                    motion
+                })
+                .collect()
         }
 
         fn fire(
@@ -1235,6 +1291,287 @@ mod tests {
             effective_weight(0.5, Some(name!("crouched")), &blackboard),
             0.5
         );
+    }
+
+    const EIGHTHS: [f32; 6] = [0.125; 6];
+
+    fn warp_target(position: Vec3, rotation: Quat) -> WarpTarget {
+        WarpTarget { position, rotation }
+    }
+
+    fn walking() -> Rig {
+        Rig::new(
+            clip(vec![
+                translation_channel(Vec3::ZERO, Vec3::new(0.5, 0.2, 3.0)),
+                rotation_channel(Quat::IDENTITY, Quat::from_rotation_y(0.4)),
+            ]),
+            at_rest(Quat::IDENTITY),
+        )
+    }
+
+    fn turning_in_place() -> Rig {
+        Rig::new(
+            clip(vec![
+                AnimationChannel::new(
+                    vec![0.0, 0.25, 1.0],
+                    AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::Z, Vec3::Z]),
+                ),
+                AnimationChannel::new(
+                    vec![0.0, 0.25, 1.0],
+                    AnimationChanelOutput::Rotation(vec![
+                        Quat::IDENTITY,
+                        Quat::IDENTITY,
+                        Quat::from_rotation_y(0.8),
+                    ]),
+                ),
+            ]),
+            at_rest(Quat::IDENTITY),
+        )
+    }
+
+    fn door() -> RootMotionWarp {
+        RootMotionWarp::new(name!("door")).with_window(ClipRange::new(0.25, 0.75))
+    }
+
+    fn once(rig: &Rig) -> AnimationClipNode {
+        rig.node().with_play_mode(AnimationPlayMode::PlayOnce)
+    }
+
+    fn walked_plainly(mut rig: Rig, steps: &[f32]) -> Affine3A {
+        let node = once(&rig);
+        rig.walk(&node, steps)
+    }
+
+    fn steps_reaching(pattern: &[f32], end: f32) -> Vec<f32> {
+        let mut time = 0.0;
+        pattern
+            .iter()
+            .cycle()
+            .copied()
+            .take_while(|step| {
+                let before = time;
+                time += step;
+                before < end
+            })
+            .collect()
+    }
+
+    fn ground(space: Affine3A) -> Vec3 {
+        Vec3::from(space.translation).with_y(0.0)
+    }
+
+    fn yaw(rotation: Quat) -> Quat {
+        twist_about(rotation, Vec3::Y)
+    }
+
+    fn space_yaw(space: Affine3A) -> Quat {
+        yaw(space.to_scale_rotation_translation().1)
+    }
+
+    fn assert_ground(space: Affine3A, expected: Vec3) {
+        let actual = ground(space);
+        let expected = expected.with_y(0.0);
+        assert!(
+            actual.distance(expected) < 1e-3,
+            "expected the ground point {expected}, got {actual}"
+        );
+    }
+
+    fn assert_yaw(space: Affine3A, expected: Quat) {
+        let actual = space_yaw(space);
+        let expected = yaw(expected);
+        assert!(
+            actual.angle_between(expected) < 1e-3,
+            "expected the yaw {expected}, got {actual}"
+        );
+    }
+
+    fn assert_lands(space: Affine3A, target: WarpTarget) {
+        assert_ground(space, target.position);
+        assert_yaw(space, target.rotation);
+    }
+
+    fn lands(mut rig: Rig, steps: &[f32]) {
+        let target = warp_target(Vec3::new(-1.5, 0.7, 1.0), Quat::from_rotation_y(0.3));
+        rig.blackboard.set(name!("door"), target);
+        let node = once(&rig).with_warp(door());
+
+        assert_lands(rig.walk(&node, steps), target);
+    }
+
+    fn warps_nothing(mut rig: Rig, warp: RootMotionWarp) {
+        let plain = once(&rig);
+        let warped = once(&rig).with_warp(warp);
+        let steps = [0.125; 8];
+
+        assert_eq!(rig.motions(&warped, &steps), rig.motions(&plain, &steps));
+    }
+
+    fn sideways(mut rig: Rig) -> Rig {
+        rig.blackboard.set(
+            name!("door"),
+            warp_target(Vec3::new(-1.5, 0.0, 1.0), Quat::from_rotation_y(0.3)),
+        );
+        rig
+    }
+
+    #[test]
+    fn a_warped_clip_lands_its_root_space_on_the_target_at_the_end_of_its_window() {
+        lands(walking(), &EIGHTHS);
+    }
+
+    #[test]
+    fn a_warped_clip_lands_from_a_space_turned_90_degrees_about_x() {
+        let space = Affine3A::from_rotation_translation(
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            Vec3::new(1.0, 0.5, -2.0),
+        );
+
+        lands(walking().with_space(space), &EIGHTHS);
+    }
+
+    #[test]
+    fn a_warped_clip_lands_from_a_uniformly_scaled_space() {
+        let space = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(2.0),
+            Quat::from_rotation_y(-0.8),
+            Vec3::new(3.0, 0.0, 1.0),
+        );
+
+        lands(walking().with_space(space), &EIGHTHS);
+    }
+
+    #[test]
+    fn a_warped_clip_turns_its_root_space_to_the_yaw_of_a_target_turned_90_degrees() {
+        let mut rig = walking();
+        let target = warp_target(
+            Vec3::new(2.0, 0.0, 0.5),
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.3),
+        );
+        rig.blackboard.set(name!("door"), target);
+        let node = once(&rig).with_warp(door());
+
+        assert_lands(rig.walk(&node, &EIGHTHS), target);
+    }
+
+    #[test]
+    fn a_warp_without_rotation_lands_on_the_target_at_the_yaw_of_the_clip() {
+        let mut rig = walking();
+        let target = warp_target(
+            Vec3::new(2.0, 0.0, 0.5),
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+        );
+        rig.blackboard.set(name!("door"), target);
+        let node = once(&rig).with_warp(door().with_rotation(false));
+
+        let space = rig.walk(&node, &EIGHTHS);
+
+        assert_ground(space, target.position);
+        assert_yaw(space, space_yaw(walked_plainly(walking(), &EIGHTHS)));
+    }
+
+    #[test]
+    fn a_warp_without_translation_turns_to_the_target_on_the_ground_point_of_the_clip() {
+        let mut rig = turning_in_place();
+        let target = warp_target(
+            Vec3::new(2.0, 0.0, 0.5),
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+        );
+        rig.blackboard.set(name!("door"), target);
+        let node = once(&rig).with_warp(door().with_translation(false));
+
+        let space = rig.walk(&node, &EIGHTHS);
+
+        assert_ground(space, ground(walked_plainly(turning_in_place(), &EIGHTHS)));
+        assert_yaw(space, target.rotation);
+    }
+
+    #[test]
+    fn a_warp_leaves_the_root_motion_alone_before_and_after_its_window() {
+        let mut rig = sideways(walking());
+        let steps = [0.125; 8];
+        let plain = rig.motions(&once(&rig), &steps);
+        let warped = rig.motions(&once(&rig).with_warp(door()), &steps);
+
+        assert_eq!(warped[..2], plain[..2]);
+        assert_eq!(warped[6..], plain[6..]);
+        for frame in 2..6 {
+            assert_ne!(
+                warped[frame], plain[frame],
+                "frame {frame} is in the window"
+            );
+        }
+    }
+
+    #[test]
+    fn a_warp_with_no_target_gives_the_root_motion_of_the_clip() {
+        warps_nothing(walking(), door());
+    }
+
+    #[test]
+    fn a_warp_whose_param_holds_another_type_gives_the_root_motion_of_the_clip() {
+        let mut rig = walking();
+        rig.blackboard.set(name!("door"), 1.0_f32);
+
+        warps_nothing(rig, door());
+    }
+
+    #[test]
+    fn a_warp_to_a_target_that_is_not_finite_gives_the_root_motion_of_the_clip() {
+        let mut rig = walking();
+        rig.blackboard.set(
+            name!("door"),
+            warp_target(Vec3::new(f32::NAN, 0.0, 1.0), Quat::IDENTITY),
+        );
+        warps_nothing(rig, door());
+
+        let mut rig = walking();
+        rig.blackboard.set(
+            name!("door"),
+            warp_target(Vec3::X, Quat::from_xyzw(0.0, f32::INFINITY, 0.0, 1.0)),
+        );
+        warps_nothing(rig, door());
+    }
+
+    #[test]
+    fn a_warp_over_a_window_that_ends_before_it_starts_gives_the_root_motion_of_the_clip() {
+        let window = |start: f32, end: f32| {
+            RootMotionWarp::new(name!("door")).with_window(ClipRange::new(start, end))
+        };
+
+        warps_nothing(sideways(walking()), window(0.6, 0.4));
+        warps_nothing(sideways(walking()), window(0.5, 0.5));
+        warps_nothing(sideways(walking()), window(1.5, 2.0));
+    }
+
+    #[test]
+    fn a_warp_from_a_space_that_cannot_be_inverted_gives_the_root_motion_of_the_clip() {
+        let flat = Affine3A::from_scale(Vec3::new(1.0, 0.0, 1.0));
+
+        warps_nothing(sideways(walking()).with_space(flat), door());
+    }
+
+    #[test]
+    fn a_warped_clip_stepped_unevenly_lands_on_the_target() {
+        lands(walking(), &steps_reaching(&[0.016, 0.05, 0.033], 0.75));
+    }
+
+    #[test]
+    fn a_looping_warped_clip_lands_on_the_frame_that_wraps_at_the_end_of_its_window() {
+        let mut rig = walking();
+        let target = warp_target(Vec3::new(-1.0, 0.0, 2.5), Quat::from_rotation_y(-0.6));
+        rig.blackboard.set(name!("door"), target);
+        let warp = RootMotionWarp::new(name!("door")).with_window(ClipRange::new(0.5, 1.0));
+        let node = rig.node().with_warp(warp);
+        let mut state = rig.create(&node);
+
+        for _ in 0..4 {
+            let motion = rig.step(&node, &mut state, 0.3);
+            rig.space = displaced(rig.space, motion);
+        }
+
+        assert!(state.current_time() < 0.5, "the clip wrapped");
+        assert_lands(rig.space, target);
     }
 
     fn weighted(translation: Vec3, weight: f32) -> EvaluatedFrame {

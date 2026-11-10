@@ -245,7 +245,7 @@ mod tests {
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_mesh::Skeleton;
     use concerto_name::{Name, name};
-    use glam::{Mat4, Quat, Vec3};
+    use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{LayerNode, LayerSpace, LayerState};
@@ -472,6 +472,7 @@ mod tests {
             index: 0,
             rest: JointPose::IDENTITY,
             up: Vec3::Y,
+            space: Affine3A::IDENTITY,
         }
     }
 

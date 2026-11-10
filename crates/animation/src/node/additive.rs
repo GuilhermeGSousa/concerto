@@ -226,7 +226,7 @@ mod tests {
     use concerto_ecs::Res;
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_name::{Name, name};
-    use glam::{Quat, Vec3};
+    use glam::{Affine3A, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{AdditiveNode, AdditiveNodeState};
@@ -441,6 +441,7 @@ mod tests {
             index: 0,
             rest: rest()[0].clone(),
             up: Vec3::Y,
+            space: Affine3A::IDENTITY,
         }
     }
 

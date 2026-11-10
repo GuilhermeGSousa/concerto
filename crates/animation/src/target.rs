@@ -15,6 +15,7 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform},
 };
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use glam::Affine3A;
 
 use crate::{
     clip::{AnimationClip, ClipEventData},
@@ -65,6 +66,11 @@ pub fn animate_targets(
                         &root_bones,
                         &parents,
                         &globals,
+                        globals
+                            .get_entity(entity)
+                            .map_or(Affine3A::IDENTITY, |global| {
+                                Affine3A::from_mat4(global.matrix())
+                            }),
                     )
                 });
         if evaluated {
@@ -646,7 +652,11 @@ mod tests {
             self.world.insert(ChildOf::new(parent), self.root);
         }
 
-        fn model_to_world_seen(mut self) -> Option<Affine3A> {
+        fn place_owner(&mut self, space: Mat4) {
+            self.world.insert(GlobalTransform::new(space), self.owner);
+        }
+
+        fn seen(mut self) -> Seen {
             let graphs = self
                 .world
                 .remove_resource::<AssetStore<AnimationGraph>>()
@@ -655,9 +665,17 @@ mod tests {
                 .world
                 .get_component_for_entity_mut::<AnimationPlayer>(self.owner)
                 .unwrap();
-            let mut seen = None;
+            let mut seen = Seen::default();
             player.for_each_state_mut::<Probe>(&graphs, |_, state, _| seen = *state);
             seen
+        }
+
+        fn model_to_world_seen(self) -> Option<Affine3A> {
+            self.seen().model_to_world
+        }
+
+        fn root_space_seen(self) -> Option<Affine3A> {
+            self.seen().root_space
         }
 
         fn root(&self) -> &Transform {
@@ -673,25 +691,31 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Default)]
+    struct Seen {
+        model_to_world: Option<Affine3A>,
+        root_space: Option<Affine3A>,
+    }
+
     #[derive(Default, Reflect)]
     #[reflect(AnimationNode)]
     struct Probe {}
 
     impl AnimationNode for Probe {
-        type State = Option<Affine3A>;
+        type State = Seen;
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
 
-        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
-            None
+        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Seen {
+            Seen::default()
         }
 
-        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+        fn update(&self, _: &mut Seen, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
         fn evaluate(
             &self,
-            seen: &mut Option<Affine3A>,
+            seen: &mut Seen,
             _: &(),
             context: &AnimationGraphContext<'_>,
             _: &[Uuid],
@@ -699,10 +723,13 @@ mod tests {
             _: &mut FramePool,
             _: &mut AnimationFrame,
         ) {
-            *seen = context.model_to_world();
+            *seen = Seen {
+                model_to_world: context.model_to_world(),
+                root_space: context.root().map(|root| root.space),
+            };
         }
 
-        fn reset(&self, _: &mut Option<Affine3A>) {}
+        fn reset(&self, _: &mut Seen) {}
     }
 
     fn probed_bones() -> TwoBones {
@@ -1048,6 +1075,34 @@ mod tests {
             seen.abs_diff_eq(Affine3A::from_mat4(space), 1e-5),
             "got {seen:?}"
         );
+    }
+
+    #[test]
+    fn a_graph_sees_the_global_of_the_players_entity_as_its_root_space() {
+        let space = Mat4::from_scale_rotation_translation(
+            Vec3::splat(1.5),
+            Quat::from_rotation_y(0.7) * Quat::from_rotation_x(0.2),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let mut bones = probed_bones();
+        bones.place_owner(space);
+
+        bones.animate();
+
+        let seen = bones.root_space_seen().unwrap();
+        assert!(
+            seen.abs_diff_eq(Affine3A::from_mat4(space), 1e-5),
+            "got {seen:?}"
+        );
+    }
+
+    #[test]
+    fn a_graph_sees_identity_as_its_root_space_when_the_players_entity_has_no_global() {
+        let mut bones = probed_bones();
+
+        bones.animate();
+
+        assert_eq!(bones.root_space_seen(), Some(Affine3A::IDENTITY));
     }
 
     #[test]

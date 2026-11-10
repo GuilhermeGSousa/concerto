@@ -6,7 +6,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
-use glam::Affine3A;
+use glam::{Affine3A, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
@@ -17,8 +17,20 @@ use crate::{
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
     player::AnimationPlayer,
     plugin::register_animation_node_inputs,
+    pose::{RootMotion, twist_about},
     retarget::RetargetRig,
 };
+
+pub(crate) fn displaced(space: Affine3A, motion: RootMotion) -> Affine3A {
+    let (scale, rotation, translation) = space.to_scale_rotation_translation();
+    let moved = rotation * (scale * motion.translation);
+    let turned = twist_about(rotation * motion.rotation * rotation.inverse(), Vec3::Y);
+    Affine3A::from_scale_rotation_translation(
+        scale,
+        (turned * rotation).normalize(),
+        translation + moved.with_y(0.0),
+    )
+}
 
 type Walk<K> = RefCell<InputState<InputSet<'static, 'static, K>>>;
 

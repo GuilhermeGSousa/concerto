@@ -137,7 +137,9 @@ mod tests {
 
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use concerto_animation::graph::AnimationGraph;
-    use concerto_animation::node::AnimationClipNode;
+    use concerto_animation::node::{
+        AnimationClipNode, AnimationPlayMode, RootMotionWarp, WarpTarget,
+    };
     use concerto_animation::player::AnimationHandleComponent;
     use concerto_animation::plugin::AnimationPlugin;
     use concerto_app::main_schedule::MainSchedulePlugin;
@@ -154,6 +156,7 @@ mod tests {
     use concerto_foundation::math::spring_damper::halflife_to_damping;
     use concerto_foundation::transform::Transform;
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
+    use concerto_name::name;
     use concerto_physics::collider::{register_colliders, Collider, ColliderOffset};
     use concerto_physics::physics_pipeline::PhysicsPipeline;
     use concerto_physics::plugin::PhysicsPlugin;
@@ -1067,6 +1070,94 @@ mod tests {
             turned.angle_between(Quat::from_rotation_y(elapsed)) < 0.1 * elapsed,
             "{turned:?} in {elapsed}"
         );
+    }
+
+    #[test]
+    fn a_warped_clip_lands_a_synchronized_character_on_its_target() {
+        let mut app = app_with_every_plugin();
+        let root_id = Uuid::from_u128(23);
+        let server = app.get_resource::<AssetServer>().unwrap().clone();
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            root_id,
+            AnimationChannel::new(
+                vec![0.0, 0.25],
+                AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)]),
+            ),
+        );
+        clip.add_channel(
+            root_id,
+            AnimationChannel::new(
+                vec![0.0, 0.25],
+                AnimationChanelOutput::Rotation(vec![Quat::IDENTITY, Quat::from_rotation_y(0.4)]),
+            ),
+        );
+        let clip = server.add(clip);
+        let node = AnimationClipNode::new(clip)
+            .with_play_mode(AnimationPlayMode::PlayOnce)
+            .with_warp(RootMotionWarp::new(name!("door")));
+        let graph = server.add(AnimationGraph::from_node(node));
+        let skeleton = server.add(
+            Skeleton::new(
+                vec![Mat4::IDENTITY],
+                vec![None],
+                vec!["Root".into()],
+                vec![JointPose::IDENTITY],
+                vec![root_id],
+            )
+            .unwrap(),
+        );
+        app.update();
+
+        let target = WarpTarget {
+            position: Vec3::new(0.8, 3.0, 1.5),
+            rotation: Quat::from_rotation_y(0.9) * Quat::from_rotation_x(0.2),
+        };
+        let world = app.main_mut().world_mut();
+        let capsule = spawn_capsule(world, Vec3::ZERO);
+        let holder = world.spawn(Transform::IDENTITY);
+        let character =
+            spawn_linked_character(world, capsule, holder, synchronization(1.0), Vec3::ZERO);
+        world.insert(ChildOf::new(character), holder);
+        let root = world.spawn((
+            Transform::IDENTITY,
+            AnimationRootBone::default(),
+            ChildOf::new(holder),
+        ));
+        world.insert(
+            (
+                AnimationPlayer::new(1),
+                AnimationHandleComponent::new(graph),
+                SkeletonComponent::new(
+                    skeleton,
+                    vec![SceneEntityRef::Entity(root)],
+                    Some(SceneEntityRef::Entity(root)),
+                ),
+            ),
+            holder,
+        );
+        app.update();
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<AnimationPlayer>(holder)
+            .unwrap()
+            .set_param(name!("door"), target);
+
+        let mut elapsed = 0.0;
+        while elapsed < 0.4 {
+            thread::sleep(Duration::from_millis(5));
+            app.update();
+            elapsed += app.get_resource::<Time>().unwrap().delta().as_secs_f32();
+        }
+
+        let world = app.main().world();
+        let placed = position_of(world, character).with_y(0.0);
+        let expected = target.position.with_y(0.0);
+        assert!(
+            placed.distance(expected) < 1.0e-3,
+            "{placed:?} vs {expected:?}"
+        );
+        assert_yaw(rotation_of(world, character), 0.9);
     }
 
     #[test]

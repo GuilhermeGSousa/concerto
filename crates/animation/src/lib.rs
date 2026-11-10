@@ -29,7 +29,7 @@ mod tests {
         LoadableAsset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use concerto_name::{Name, name};
-    use glam::Vec3;
+    use glam::{Affine3A, Vec3};
     use uuid::Uuid;
 
     use crate::blackboard::AnimationBlackboard;
@@ -576,6 +576,7 @@ mod tests {
                 index: 0,
                 rest: JointPose::IDENTITY,
                 up: Vec3::X,
+                space: Affine3A::IDENTITY,
             };
             self.walks.update(&self.blackboard, |context| {
                 self.fsm

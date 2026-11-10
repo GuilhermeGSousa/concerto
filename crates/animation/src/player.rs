@@ -193,6 +193,7 @@ impl AnimationPlayer {
         root_bones: &Query<&mut AnimationRootBone>,
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
+        space: Affine3A,
     ) -> bool {
         self.fired.clear();
         let bone_ids = &skeleton.bone_ids;
@@ -211,6 +212,7 @@ impl AnimationPlayer {
                     index,
                     rest: rest_pose.get(index)?.clone(),
                     up: up_of(entity, parents, globals),
+                    space,
                 })
             });
         let context = AnimationGraphContext {

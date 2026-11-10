@@ -10,7 +10,7 @@ use concerto_mesh::{
 };
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Affine3A, Mat4, Quat, Vec3};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -1159,6 +1159,7 @@ impl Running {
                 index: self.source_root,
                 rest: self.source_root_reference.clone(),
                 up: root.up,
+                space: root.space * Affine3A::from_scale(Vec3::splat(self.retarget.scale())),
             }),
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
@@ -1504,7 +1505,7 @@ mod tests {
     use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonError};
     use concerto_name::{Name, name};
     use concerto_reflect::{Reflect, TypeRegistry};
-    use glam::{Mat4, Quat, Vec3};
+    use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{
@@ -1513,19 +1514,20 @@ mod tests {
         RetargetRig, RetargetSide, RigError,
     };
     use crate::{
-        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip, ClipRange},
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         graph::{AnimationGraph, made_live},
         ik::{TwoBoneChain, solve_two_bone},
         node::{
             AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
-            ReflectAnimationNode, state_machine::AnimationStateMachine,
+            ReflectAnimationNode, RootMotionWarp, WarpTarget, register_node_inputs,
+            state_machine::AnimationStateMachine,
         },
         player::AnimationPlayer,
         plugin::register_animation_types,
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
-        test_walks::Walks,
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, twist_about},
+        test_walks::{Walks, displaced},
     };
 
     const NAMES: [&str; 14] = [
@@ -4070,6 +4072,7 @@ mod tests {
             index: 0,
             rest: target.rest_pose[0].clone(),
             up: Vec3::Y,
+            space: Affine3A::IDENTITY,
         };
 
         played.advance();
@@ -4081,6 +4084,58 @@ mod tests {
             Vec3::new(0.2, 0.0, 0.4) * source_to_target().scale(),
         );
         assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
+    }
+
+    #[test]
+    fn a_warped_clip_inside_a_retarget_node_at_half_scale_lands_on_the_target() {
+        let source_skeleton = source_skeleton();
+        let hips = bone(&source_skeleton, "hips");
+        let mut walking = AnimationClip::default();
+        walking.add_channel(
+            source_skeleton.bone_ids[hips],
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::Translation(vec![
+                    Vec3::new(0.0, 1.0, 0.0),
+                    Vec3::new(2.0, 1.0, 4.0),
+                ]),
+            ),
+        );
+        let warp = RootMotionWarp::new(name!("door")).with_window(ClipRange::new(0.25, 0.75));
+        let inner = inner_clip()
+            .with_play_mode(AnimationPlayMode::PlayOnce)
+            .with_warp(warp);
+        let mut played = Played::playing(node_source_rig(), walking, inner);
+        let target = WarpTarget {
+            position: Vec3::new(-1.0, 0.0, 0.5),
+            rotation: Quat::from_rotation_y(1.2),
+        };
+        played.player.set_param(name!("door"), target);
+        let rest = target_skeleton().rest_pose[0].clone();
+        let mut space = Affine3A::from_rotation_translation(
+            Quat::from_rotation_y(0.4),
+            Vec3::new(1.0, 0.0, 2.0),
+        );
+
+        assert!((source_to_target().scale() - 0.5).abs() < 1e-5);
+        for _ in 0..6 {
+            played.advance_by(0.125);
+            let root = RootBone {
+                index: 0,
+                rest: rest.clone(),
+                up: Vec3::Y,
+                space,
+            };
+            space = displaced(space, played.frame(Some(root)).root_motion());
+        }
+
+        let ground = Vec3::from(space.translation).with_y(0.0);
+        let yaw = twist_about(space.to_scale_rotation_translation().1, Vec3::Y);
+        assert!(
+            ground.distance(target.position.with_y(0.0)) < 1e-3,
+            "landed on {ground}"
+        );
+        assert!(yaw.angle_between(target.rotation) < 1e-3, "turned to {yaw}");
     }
 
     #[test]
@@ -4326,6 +4381,73 @@ mod tests {
         played.advance();
 
         assert_eq!(played.shared_visits::<AnimationClipNode>(), 1);
+    }
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct SpaceProbe {}
+
+    impl AnimationNode for SpaceProbe {
+        type State = Option<Affine3A>;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
+            None
+        }
+
+        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            seen: &mut Option<Affine3A>,
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+            *seen = context.root().map(|root| root.space);
+        }
+
+        fn reset(&self, _: &mut Option<Affine3A>) {}
+    }
+
+    #[test]
+    fn the_inner_root_space_is_the_outer_space_scaled_by_the_retarget() {
+        let mut played = Played::registering(target_skeleton(), register_node_inputs::<SpaceProbe>);
+        played.load_rigs(node_target_rig());
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<SpaceProbe>();
+        let mut inner = AnimationGraph::from_node(SpaceProbe {});
+        inner.make_live(&registry, None).unwrap();
+        played.insert_inner(inner);
+        let space = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(2.0),
+            Quat::from_rotation_y(0.7) * Quat::from_rotation_x(-0.4),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let target = target_skeleton();
+        let outer_root = RootBone {
+            index: 0,
+            rest: target.rest_pose[0].clone(),
+            up: Vec3::Y,
+            space,
+        };
+
+        played.advance();
+        played.frame(Some(outer_root));
+
+        let mut seen = None;
+        played
+            .player
+            .for_each_state_mut::<SpaceProbe>(played.walks.graphs(), |_, state, _| seen = *state);
+        let expected = space * Affine3A::from_scale(Vec3::splat(source_to_target().scale()));
+        let seen = seen.expect("the inner graph saw a root");
+        assert!(seen.abs_diff_eq(expected, 1e-5), "got {seen:?}");
     }
 
     #[derive(Resource)]
