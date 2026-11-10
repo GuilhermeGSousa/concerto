@@ -5,6 +5,8 @@ mod leg;
 pub mod look_at;
 pub mod plugin;
 pub mod procedural_motion;
+#[cfg(test)]
+mod testing;
 
 pub use aim::{AimBone, AimNode, AimState, Muzzle};
 pub use foot_lock::{FootLockLeg, FootLockNode, FootLockState, LegLock, LockPhase};

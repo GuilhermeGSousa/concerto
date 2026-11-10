@@ -524,30 +524,26 @@ mod tests {
         graph::AnimationGraph,
         look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
         node::{AnimationNode, ReflectAnimationNode},
-        player::{AnimationHandleComponent, AnimationPlayer},
-        plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion},
+        player::AnimationPlayer,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
     };
-    use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
-    use concerto_ecs::{
-        Entity,
-        component::scene::SceneEntityRef,
-        entity::hierarchy::ChildOf,
-        system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
-        world::World,
-    };
+    use concerto_app::{App, schedule_groups::LateUpdate};
+    use concerto_ecs::{Entity, entity::hierarchy::ChildOf, world::World};
     use concerto_foundation::{
-        assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
-        time::Time,
-        transform::{GlobalTransform, Transform},
+        assets::{AssetId, asset_store::AssetStore},
+        transform::GlobalTransform,
     };
-    use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+    use concerto_mesh::skeleton::Skeleton;
     use concerto_name::{Name, name};
-    use concerto_reflect::{Reflect, TypeRegistry};
+    use concerto_reflect::Reflect;
     use glam::{Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{AimBone, AimNode, AimState, Muzzle};
+    use crate::testing::{
+        Frame, angle, app_with, assert_near, bone, captured, captured_graph, compile, input_event,
+        input_motion, insert_asset, read_state, skeleton_of, spawn_rigged, write_state,
+    };
 
     const SPINE: usize = 1;
     const CHEST: usize = 2;
@@ -562,95 +558,44 @@ mod tests {
     const SETTLE_STEPS: usize = 300;
     const KICK: f32 = 0.05;
 
-    struct RigBone {
-        name: &'static str,
-        parent: Option<u16>,
-        joint: JointPose,
-    }
-
-    fn rig_bone(
-        name: &'static str,
-        parent: Option<u16>,
-        translation: Vec3,
-        rotation: Quat,
-    ) -> RigBone {
-        RigBone {
-            name,
-            parent,
-            joint: JointPose {
-                translation,
-                rotation,
-                scale: Vec3::ONE,
-            },
-        }
-    }
-
-    fn build(bones: &[RigBone]) -> Skeleton {
-        Skeleton::new(
-            vec![Mat4::IDENTITY; bones.len()],
-            bones.iter().map(|bone| bone.parent).collect(),
-            bones.iter().map(|bone| bone.name.into()).collect(),
-            bones.iter().map(|bone| bone.joint.clone()).collect(),
-            (0..bones.len() as u128).map(Uuid::from_u128).collect(),
-        )
-        .unwrap()
-    }
-
     fn spine_rig() -> Skeleton {
-        build(&[
-            rig_bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
-            rig_bone(
+        skeleton_of(&[
+            bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
+            bone(
                 "spine",
                 Some(0),
                 Vec3::new(0.0, 0.1, 0.0),
                 Quat::from_rotation_x(0.1),
             ),
-            rig_bone(
+            bone(
                 "chest",
                 Some(1),
                 Vec3::new(0.0, 0.25, 0.0),
                 Quat::from_rotation_x(-0.1),
             ),
-            rig_bone(
+            bone(
                 "hand",
                 Some(2),
                 Vec3::new(0.1, 0.0, 0.5),
                 Quat::from_rotation_y(0.3),
             ),
-            rig_bone(
+            bone(
                 "arm",
                 Some(1),
                 Vec3::new(0.2, 0.2, 0.0),
                 Quat::from_rotation_z(-1.2),
             ),
-            rig_bone("prop", None, Vec3::X, Quat::from_rotation_x(0.3)),
+            bone("prop", None, Vec3::X, Quat::from_rotation_x(0.3)),
         ])
     }
 
     fn straight_rig() -> Skeleton {
-        build(&[
-            rig_bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
-            rig_bone("low", Some(0), Vec3::new(0.0, 0.2, 0.0), Quat::IDENTITY),
-            rig_bone("high", Some(1), Vec3::new(0.0, 0.0, 0.25), Quat::IDENTITY),
-            rig_bone("gun", Some(2), Vec3::new(0.0, 0.0, 0.5), Quat::IDENTITY),
+        skeleton_of(&[
+            bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
+            bone("low", Some(0), Vec3::new(0.0, 0.2, 0.0), Quat::IDENTITY),
+            bone("high", Some(1), Vec3::new(0.0, 0.0, 0.25), Quat::IDENTITY),
+            bone("gun", Some(2), Vec3::new(0.0, 0.0, 0.5), Quat::IDENTITY),
         ])
-    }
-
-    fn input_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.1, 0.0, 0.3),
-            rotation: Quat::from_rotation_y(0.05),
-        }
-    }
-
-    fn input_event() -> FiredEvent {
-        FiredEvent {
-            clip: AssetId::from_path("aim_input"),
-            key: 1,
-            time: 0.3,
-            weight: 0.5,
-            mirrored: false,
-        }
     }
 
     #[derive(Default, Reflect)]
@@ -691,73 +636,13 @@ mod tests {
         fn reset(&self, _: &mut ()) {}
     }
 
-    struct Frame {
-        joints: Vec<JointPose>,
-        root_motion: RootMotion,
-        events: Vec<FiredEvent>,
-    }
-
-    #[derive(Default, Reflect)]
-    #[reflect(AnimationNode)]
-    struct Capture {}
-
-    impl AnimationNode for Capture {
-        type State = Option<Frame>;
-        type CreateInput = ();
-        type UpdateInput = ();
-        type EvaluateInput = ();
-
-        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> Option<Frame> {
-            None
-        }
-
-        fn update(&self, _: &mut Option<Frame>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
-
-        fn evaluate(
-            &self,
-            state: &mut Option<Frame>,
-            _: &(),
-            _: &AnimationGraphContext<'_>,
-            _: &[Uuid],
-            evaluated_inputs: &[EvaluatedFrame],
-            _: &mut FramePool,
-            output: &mut AnimationFrame,
-        ) {
-            let Some(input) = evaluated_inputs.first() else {
-                return;
-            };
-            output.copy_from(&input.frame);
-            *state = Some(Frame {
-                joints: input.frame.joints().to_vec(),
-                root_motion: input.frame.root_motion(),
-                events: input.frame.events().to_vec(),
-            });
-        }
-
-        fn reset(&self, state: &mut Option<Frame>) {
-            *state = None;
-        }
-    }
-
     fn graph_of(node: AimNode, rotations: &[Quat]) -> AnimationGraph {
-        let mut registry = TypeRegistry::default();
-        register_animation_types(&mut registry);
-        registry.register::<AimNode>();
-        registry.register::<InputPose>();
-        registry.register::<Capture>();
-        let mut graph = AnimationGraph::new();
-        graph.result_node().with_input(Capture {}, |mut capture| {
-            capture.with_input(node, |mut aim| {
-                aim.with_input(
-                    InputPose {
-                        rotations: rotations.to_vec(),
-                    },
-                    |_| {},
-                );
-            });
-        });
-        graph.make_live(&registry, None).unwrap();
-        graph
+        captured_graph(
+            node,
+            InputPose {
+                rotations: rotations.to_vec(),
+            },
+        )
     }
 
     struct Barrel {
@@ -867,6 +752,13 @@ mod tests {
             Stage::new(self, node.clone()).step(DT)
         }
 
+        fn aimed(target: Vec3) -> Self {
+            Self {
+                target: Some(target),
+                ..Self::new()
+            }
+        }
+
         fn kicked(&self) -> Vec<Quat> {
             let mut rotations = self.rotations();
             rotations[SPINE] *= Quat::from_rotation_x(-KICK);
@@ -896,64 +788,35 @@ mod tests {
 
     impl Stage {
         fn new(rig: &Rig, node: AimNode) -> Self {
-            let mut app = App::new();
-            app.register_plugin(AssetManagerPlugin);
-            app.insert_resource(Time::new());
-            app.register_plugin(AnimationPlugin);
-            app.register_animation_node::<AimNode>();
-            app.register_animation_node::<InputPose>();
-            app.register_animation_node::<Capture>();
-
+            let mut app = app_with::<InputPose>();
             let bone_count = rig.skeleton.bone_count();
             let world = app.main_mut().world_mut();
-            world.register_component::<Transform>();
-            let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
-            world
-                .get_resource_mut::<AssetStore<Skeleton>>()
-                .unwrap()
-                .insert(skeleton_handle.id(), (rig.shape)());
-            let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
-            let graph = graph_handle.id();
-            world
-                .get_resource_mut::<AssetStore<AnimationGraph>>()
-                .unwrap()
-                .insert(graph, graph_of(node.clone(), &rig.rotations()));
-            let bones: Vec<Entity> = (0..bone_count)
-                .map(|_| world.spawn(Transform::IDENTITY))
-                .collect();
-            let space = world.spawn(GlobalTransform::new(Mat4::IDENTITY));
-            world.insert(ChildOf::new(space), bones[0]);
+            let skeleton = insert_asset(world, AssetId::new(), (rig.shape)());
+            let graph = insert_asset(
+                world,
+                AssetId::new(),
+                graph_of(node.clone(), &rig.rotations()),
+            );
             let mut player = AnimationPlayer::new(bone_count);
             player.set_paused(true);
             if let Some(target) = rig.target {
                 player.set_param(name!("aim_target"), target);
             }
-            let player = world.spawn((
-                player,
-                AnimationHandleComponent::new(graph_handle),
-                SkeletonComponent::new(
-                    skeleton_handle,
-                    bones
-                        .iter()
-                        .map(|bone| SceneEntityRef::Entity(*bone))
-                        .collect(),
-                    None,
-                ),
-            ));
-            let schedules = world.remove_resource::<Schedules>().unwrap();
-            let compiled = schedules.compile::<SingleThreadedExecutor>(world);
-            world.insert_resource(compiled);
+            let rigged = spawn_rigged(world, &skeleton, &graph, player, bone_count);
+            let space = world.spawn(GlobalTransform::new(Mat4::IDENTITY));
+            world.insert(ChildOf::new(space), rigged.bones[0]);
+            compile(world);
             world.run_schedule(LateUpdate);
             world
-                .get_component_for_entity_mut::<AnimationPlayer>(player)
+                .get_component_for_entity_mut::<AnimationPlayer>(rigged.player)
                 .unwrap()
                 .set_paused(false);
 
             Self {
                 app,
                 node,
-                graph,
-                player,
+                graph: graph.id(),
+                player: rigged.player,
             }
         }
 
@@ -982,38 +845,23 @@ mod tests {
                 .insert(id, graph);
         }
 
-        fn state_of<N: AnimationNode, R>(
-            &mut self,
-            read: impl FnOnce(&mut N::State) -> R,
-        ) -> Option<R> {
+        fn write<R>(&mut self, write: impl FnOnce(&AimNode, &mut AimState) -> R) -> R {
             let player = self.player;
-            let mut read = Some(read);
-            let mut result = None;
-            self.world()
-                .resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
-                    world
-                        .get_component_for_entity_mut::<AnimationPlayer>(player)
-                        .unwrap()
-                        .for_each_state_mut::<N>(graphs, |_, state, _| {
-                            if let Some(read) = read.take() {
-                                result = Some(read(state));
-                            }
-                        });
-                });
-            result
+            write_state::<AimNode, _>(self.world(), player, write)
+                .expect("the graph holds an aim node")
         }
 
-        fn with_state<R>(&mut self, read: impl FnOnce(&mut AimState) -> R) -> R {
-            self.state_of::<AimNode, R>(read)
+        fn warned(&mut self) -> bool {
+            let player = self.player;
+            read_state::<AimNode, _>(self.world(), player, |_, state| state.warned)
                 .expect("the graph holds an aim node")
         }
 
         fn step(&mut self, delta_time: f32) -> Frame {
-            self.with_state(|state| state.elapsed += delta_time);
+            self.write(|_, state| state.elapsed += delta_time);
             self.world().run_schedule(LateUpdate);
-            self.state_of::<Capture, _>(|state: &mut Option<Frame>| state.take())
-                .flatten()
-                .expect("the aim node was evaluated")
+            let player = self.player;
+            captured(self.world(), player)
         }
 
         fn settle(&mut self) -> Frame {
@@ -1022,14 +870,6 @@ mod tests {
                 frame = self.step(DT);
             }
             frame
-        }
-
-        fn weight(&mut self) -> f32 {
-            self.with_state(|state| state.weight.value)
-        }
-
-        fn offsets(&mut self) -> Vec<Quat> {
-            self.with_state(|state| state.offsets.iter().map(|offset| offset.value).collect())
         }
     }
 
@@ -1046,13 +886,6 @@ mod tests {
             .with_bone(low.with_share(1.0))
             .with_bone(AimBone::new("high").with_share(3.0).with_limits(wide, wide))
             .with_weight_halflife(0.0)
-    }
-
-    fn assert_near(actual: f32, expected: f32, tolerance: f32) {
-        assert!(
-            (actual - expected).abs() < tolerance,
-            "expected {expected}, got {actual}"
-        );
     }
 
     fn assert_unchanged(rig: &Rig, frame: &Frame) {
@@ -1073,6 +906,17 @@ mod tests {
         }
         assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
+    }
+
+    fn assert_weighted(rig: &Rig, frame: &Frame, full: &Frame, weight: f32) {
+        let input = rig.input();
+        for bone in [SPINE, CHEST] {
+            let expected = input[bone]
+                .rotation
+                .slerp(full.joints[bone].rotation, weight);
+            let off = angle(frame.joints[bone].rotation, expected);
+            assert!(off < 1e-3, "bone {bone} is {off} rad off weight {weight}");
+        }
     }
 
     struct Aim {
@@ -1098,42 +942,21 @@ mod tests {
     }
 
     #[test]
-    fn the_barrel_passes_within_5_mm_of_targets_at_2_and_3_m() {
+    fn the_barrel_passes_within_5_mm_of_targets_at_2_and_3_m_where_one_pass_would_miss() {
         for case in parallax_cases() {
-            let mut rig = Rig::new();
+            let rig = Rig::new();
             let target = rig.toward(case.yaw, case.pitch, case.distance);
-            rig.target = Some(target);
+            let rig = Rig::aimed(target);
 
-            let frame = rig.solve(&aim());
-
-            let miss = rig.miss(&frame.joints, target);
-            assert!(
-                miss < MISS,
-                "{} m at yaw {} and pitch {}: missed by {miss} m",
-                case.distance,
-                case.yaw,
-                case.pitch
-            );
-        }
-    }
-
-    #[test]
-    fn one_pass_misses_by_more_than_three_passes_allow() {
-        let rig = Rig::new();
-        for case in parallax_cases() {
-            let target = rig.toward(case.yaw, case.pitch, case.distance);
-
+            let solved = rig.miss(&rig.solve(&aim()).joints, target);
             let once = rig.miss(&rig.solve_directly(&aim(), 1, target), target);
-            let thrice = rig.miss(&rig.solve_directly(&aim(), 3, target), target);
 
-            assert!(
-                once > MISS,
-                "{} m at yaw {} and pitch {}: one pass missed by only {once} m",
-                case.distance,
-                case.yaw,
-                case.pitch
+            let at = format!(
+                "{} m at yaw {} and pitch {}",
+                case.distance, case.yaw, case.pitch
             );
-            assert!(thrice < MISS, "three passes missed by {thrice} m");
+            assert!(solved < MISS, "{at}: missed by {solved} m");
+            assert!(once > MISS, "{at}: one pass missed by only {once} m");
         }
     }
 
@@ -1182,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bone_held_at_its_limit_leaves_the_rest_to_the_next() {
+    fn a_bone_held_at_its_limit_leaves_the_rest_to_the_next_until_every_bone_is_at_its_limits() {
         let mut rig = Rig::straight();
         let target = rig.toward(40.0_f32.to_radians(), 0.0, 100.0);
         rig.target = Some(target);
@@ -1193,14 +1016,10 @@ mod tests {
 
         assert_near(rig.turn(&frame.joints, LOW).yaw, limit, 1e-3);
         let barrel = rig.barrel(&frame.joints);
-        let angle = barrel.direction.angle_between(target - barrel.point);
-        assert!(angle < 1e-3, "the barrel points {angle} rad off the target");
-    }
+        let off = barrel.direction.angle_between(target - barrel.point);
+        assert!(off < 1e-3, "the barrel points {off} rad off the target");
 
-    #[test]
-    fn a_target_past_the_summed_limits_leaves_each_bone_at_its_limits() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(70.0_f32.to_radians(), 0.0, 3.0));
+        let rig = Rig::aimed(Rig::new().toward(70.0_f32.to_radians(), 0.0, 3.0));
         let limit = 10.0_f32.to_radians();
         let mut node = aim();
         for link in &mut node.chain {
@@ -1225,41 +1044,41 @@ mod tests {
     }
 
     #[test]
-    fn an_unsolvable_target_holds_the_last_solve() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(20.0_f32.to_radians(), 10.0_f32.to_radians(), 2.0));
-
+    fn an_unsolvable_target_holds_the_last_solve_or_before_any_solve_leaves_the_input_pose() {
+        let rig = Rig::aimed(Rig::new().toward(20.0_f32.to_radians(), 10.0_f32.to_radians(), 2.0));
         for target in unsolvable(&rig) {
             let mut stage = Stage::new(&rig, aim());
             let solved = stage.step(DT);
-            let offsets = stage.with_state(|state| state.offsets.clone());
             assert_ne!(solved.joints, rig.input());
             stage.set_param(name!("aim_target"), target);
 
             let held = stage.step(DT);
+            let still_held = stage.step(DT);
 
             assert_eq!(held.joints, solved.joints);
-            assert_eq!(stage.with_state(|state| state.offsets.clone()), offsets);
+            assert_eq!(still_held.joints, solved.joints);
         }
-    }
 
-    #[test]
-    fn an_unsolvable_target_before_any_solve_leaves_the_input_pose() {
         let mut rig = Rig::new();
         for target in unsolvable(&rig) {
             rig.target = Some(target);
             assert_unturned(&rig, &rig.solve(&aim()));
         }
-
         rig.target = Some(rig.toward(0.2, 0.1, 2.0));
         let along_barrel = rig.barrel(&rig.input()).direction;
         assert_unturned(&rig, &rig.solve(&aim().with_up(along_barrel)));
     }
 
+    struct Untouched {
+        node: AimNode,
+        aimed: bool,
+        warns: bool,
+    }
+
     #[test]
-    fn bones_the_node_cannot_resolve_leave_the_input_pose_and_mark_the_warning() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+    fn a_node_that_cannot_aim_leaves_the_input_bit_for_bit_and_warns_only_for_bones_it_cannot_resolve()
+     {
+        let rig = Rig::new();
         let muzzle = rig.muzzle.clone();
         let with_chain = |names: &[&str]| {
             names.iter().fold(
@@ -1267,72 +1086,78 @@ mod tests {
                 |node, name| node.with_bone(AimBone::new(*name)),
             )
         };
-        let unresolvable = [
-            AimNode {
+        let unresolvable = |node| Untouched {
+            node,
+            aimed: true,
+            warns: true,
+        };
+        let rows = [
+            unresolvable(AimNode {
                 muzzle: Muzzle::new("arm"),
                 ..aim()
-            },
-            AimNode {
+            }),
+            unresolvable(AimNode {
                 muzzle: Muzzle::new("prop"),
                 ..aim()
-            },
-            AimNode {
+            }),
+            unresolvable(AimNode {
                 muzzle: Muzzle::new("missing"),
                 ..aim()
-            },
-            with_chain(&["spine", "spine"]),
-            with_chain(&["chest", "spine"]),
-            with_chain(&["spine", "missing"]),
-            with_chain(&["prop"]),
-            AimNode {
+            }),
+            unresolvable(with_chain(&["spine", "spine"])),
+            unresolvable(with_chain(&["chest", "spine"])),
+            unresolvable(with_chain(&["spine", "missing"])),
+            unresolvable(with_chain(&["prop"])),
+            unresolvable(AimNode {
                 muzzle: muzzle.clone().with_direction(Vec3::ZERO),
                 ..aim()
-            },
-            AimNode {
+            }),
+            unresolvable(AimNode {
                 muzzle: muzzle.clone().with_direction(Vec3::new(f32::NAN, 0.0, 1.0)),
                 ..aim()
+            }),
+            Untouched {
+                node: aim(),
+                aimed: false,
+                warns: false,
+            },
+            Untouched {
+                node: with_chain(&[]),
+                aimed: true,
+                warns: false,
+            },
+            Untouched {
+                node: aim().with_weight(0.0),
+                aimed: true,
+                warns: false,
             },
         ];
 
-        for node in unresolvable {
-            let mut stage = Stage::new(&rig, node.clone());
+        for row in rows {
+            let rig = if row.aimed {
+                Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0))
+            } else {
+                Rig::new()
+            };
+            let mut stage = Stage::new(&rig, row.node.clone());
+
             let first = stage.step(DT);
-            let second = stage.step(DT);
+            let settled = stage.settle();
 
             assert_unchanged(&rig, &first);
-            assert_unchanged(&rig, &second);
-            assert!(stage.with_state(|state| state.warned), "{node:?}");
+            assert_unchanged(&rig, &settled);
+            assert_eq!(stage.warned(), row.warns, "{:?}", row.node);
         }
     }
 
     #[test]
-    fn a_resolvable_node_does_not_warn() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+    fn root_motion_events_translations_and_other_bones_pass_through() {
+        let rig = Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0));
         let mut stage = Stage::new(&rig, aim());
 
-        stage.step(DT);
+        let frame = stage.step(DT);
 
-        assert!(!stage.with_state(|state| state.warned));
-    }
-
-    #[test]
-    fn a_missing_target_or_an_empty_chain_leaves_the_input_pose() {
-        let mut rig = Rig::new();
-        assert_unchanged(&rig, &rig.solve(&aim()));
-
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
-        let empty = AimNode::new(name!("aim_target"), rig.muzzle.clone());
-        assert_unchanged(&rig, &rig.solve(&empty));
-    }
-
-    #[test]
-    fn root_motion_events_translations_and_other_bones_pass_through() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
-
-        let frame = rig.solve(&aim());
-
+        assert!(!stage.warned());
         let input = rig.input();
         assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
@@ -1354,72 +1179,68 @@ mod tests {
         }
     }
 
-    fn angle(from: Quat, to: Quat) -> f32 {
-        let between = from.inverse() * to;
-        2.0 * between.xyz().length().atan2(between.w.abs())
+    struct Kick {
+        node: AimNode,
+        scale: Option<f32>,
+        recovers_in: f32,
     }
 
-    fn assert_recovers_at(stage: &mut Stage, rig: &Rig, target: Vec3, halflife: f32) {
-        stage.settle();
-        stage.kick(&rig.kicked());
+    #[test]
+    fn a_kick_between_frames_recovers_at_the_scaled_reacquire_halflife_or_at_once_without_one() {
+        let rows = [
+            Kick {
+                node: aim().with_reacquire_halflife(0.1),
+                scale: None,
+                recovers_in: 0.1,
+            },
+            Kick {
+                node: aim()
+                    .with_reacquire_halflife(0.05)
+                    .with_reacquire_param(name!("reacquire_scale")),
+                scale: Some(2.0),
+                recovers_in: 0.1,
+            },
+            Kick {
+                node: aim(),
+                scale: None,
+                recovers_in: 0.0,
+            },
+        ];
+        let target = Rig::new().toward(0.3, 0.1, 2.0);
+        let rig = Rig::aimed(target);
 
-        let struck = stage.step(0.0);
-        let recovering = stage.step(halflife);
-        let recovered = stage.settle();
+        for row in rows {
+            let mut stage = Stage::new(&rig, row.node);
+            if let Some(scale) = row.scale {
+                stage.set_param(name!("reacquire_scale"), scale);
+            }
+            stage.settle();
+            stage.kick(&rig.kicked());
 
-        assert!(
-            rig.miss(&struck.joints, target) > MISS,
-            "the kick did not move the barrel"
-        );
-        assert!(rig.miss(&recovered.joints, target) < MISS);
-        for bone in [SPINE, CHEST] {
-            let solved = recovered.joints[bone].rotation;
-            let before = angle(struck.joints[bone].rotation, solved);
-            let after = angle(recovering.joints[bone].rotation, solved);
-            assert!(before > 5e-3, "bone {bone} was {before} rad off the solve");
-            assert_near(after / before, 0.5, 0.01);
+            if row.recovers_in == 0.0 {
+                let struck = stage.step(DT);
+                assert_ne!(struck.joints[SPINE], rig.solve(&aim()).joints[SPINE]);
+                let miss = rig.miss(&struck.joints, target);
+                assert!(miss < MISS, "missed by {miss} m through the kick");
+                continue;
+            }
+            let struck = stage.step(0.0);
+            let recovering = stage.step(row.recovers_in);
+            let recovered = stage.settle();
+
+            assert!(
+                rig.miss(&struck.joints, target) > MISS,
+                "the kick did not move the barrel"
+            );
+            assert!(rig.miss(&recovered.joints, target) < MISS);
+            for bone in [SPINE, CHEST] {
+                let solved = recovered.joints[bone].rotation;
+                let before = angle(struck.joints[bone].rotation, solved);
+                let after = angle(recovering.joints[bone].rotation, solved);
+                assert!(before > 5e-3, "bone {bone} was {before} rad off the solve");
+                assert_near(after / before, 0.5, 0.01);
+            }
         }
-    }
-
-    #[test]
-    fn a_kick_between_frames_recovers_at_the_reacquire_halflife() {
-        let halflife = 0.1;
-        let mut rig = Rig::new();
-        let target = rig.toward(0.3, 0.1, 2.0);
-        rig.target = Some(target);
-        let mut stage = Stage::new(&rig, aim().with_reacquire_halflife(halflife));
-
-        assert_recovers_at(&mut stage, &rig, target, halflife);
-    }
-
-    #[test]
-    fn the_reacquire_param_scales_the_halflife() {
-        let mut rig = Rig::new();
-        let target = rig.toward(0.3, 0.1, 2.0);
-        rig.target = Some(target);
-        let node = aim()
-            .with_reacquire_halflife(0.05)
-            .with_reacquire_param(name!("reacquire_scale"));
-        let mut stage = Stage::new(&rig, node);
-        stage.set_param(name!("reacquire_scale"), 2.0_f32);
-
-        assert_recovers_at(&mut stage, &rig, target, 0.1);
-    }
-
-    #[test]
-    fn at_a_reacquire_halflife_of_zero_the_barrel_stays_on_the_target_through_a_kick() {
-        let mut rig = Rig::new();
-        let target = rig.toward(0.3, 0.1, 2.0);
-        rig.target = Some(target);
-        let mut stage = Stage::new(&rig, aim());
-        stage.settle();
-        stage.kick(&rig.kicked());
-
-        let struck = stage.step(DT);
-
-        assert_ne!(struck.joints[SPINE], rig.solve(&aim()).joints[SPINE]);
-        let miss = rig.miss(&struck.joints, target);
-        assert!(miss < MISS, "missed by {miss} m through the kick");
     }
 
     #[test]
@@ -1427,35 +1248,24 @@ mod tests {
         let halflife = 0.1;
         let rig = Rig::new();
         let target = rig.toward(0.3, 0.1, 2.0);
+        let full = Rig::aimed(target).solve(&aim());
         let mut stage = Stage::new(&rig, aim().with_weight_halflife(halflife));
-        stage.settle();
-        assert_eq!(stage.weight(), 0.0);
+        assert_unchanged(&rig, &stage.settle());
 
         stage.set_param(name!("aim_target"), target);
-        stage.step(halflife);
-        assert_near(stage.weight(), 0.5, 1e-3);
+        let easing_in = stage.step(halflife);
+        assert_weighted(&rig, &easing_in, &full, 0.5);
 
         stage.settle();
-        let held = stage.offsets();
         stage.forget_target();
-        let easing = stage.step(halflife);
-        let weight = stage.weight();
-        assert_near(weight, 0.5, 1e-3);
-        assert_eq!(stage.offsets(), held);
-        let input = rig.input();
-        for (bone, offset) in [SPINE, CHEST].into_iter().zip(&held) {
-            let expected = input[bone].rotation * Quat::IDENTITY.slerp(*offset, weight);
-            assert!(
-                easing.joints[bone].rotation.abs_diff_eq(expected, 1e-6),
-                "bone {bone}"
-            );
-        }
+        let easing_out = stage.step(halflife);
+        assert_weighted(&rig, &easing_out, &full, 0.5);
     }
 
     #[test]
     fn the_weight_param_scales_the_weight_within_zero_and_one() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+        let rig = Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0));
+        let full = rig.solve(&aim());
         let node = aim()
             .with_weight(0.8)
             .with_weight_param(name!("aim_weight"));
@@ -1463,29 +1273,16 @@ mod tests {
         for scale in [0.5_f32, 3.0] {
             let mut stage = Stage::new(&rig, node.clone());
             stage.set_param(name!("aim_weight"), scale);
-            stage.step(DT);
 
-            assert_near(stage.weight(), (0.8 * scale).min(1.0), 1e-6);
+            let frame = stage.step(DT);
+
+            assert_weighted(&rig, &frame, &full, (0.8 * scale).min(1.0));
         }
     }
 
     #[test]
-    fn weight_zero_leaves_the_input_bit_for_bit() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
-        let mut stage = Stage::new(&rig, aim().with_weight(0.0));
-
-        let first = stage.step(DT);
-        let settled = stage.settle();
-
-        assert_unchanged(&rig, &first);
-        assert_unchanged(&rig, &settled);
-    }
-
-    #[test]
     fn a_target_gone_missing_eases_the_aim_out_then_leaves_the_input_bit_for_bit() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
+        let rig = Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0));
         let mut stage = Stage::new(&rig, aim().with_weight_halflife(0.05));
         let aimed = stage.settle();
         assert_ne!(aimed.joints, rig.input());
@@ -1496,22 +1293,16 @@ mod tests {
 
         assert_ne!(easing.joints, rig.input());
         assert_unchanged(&rig, &settled);
-        assert_eq!(stage.weight(), 0.0);
-        assert_eq!(stage.offsets(), [Quat::IDENTITY; 2]);
     }
 
     #[test]
     fn a_reset_aim_starts_again_from_the_input_pose() {
-        let mut rig = Rig::new();
-        rig.target = Some(rig.toward(0.3, 0.1, 2.0));
-        let node = aim().with_weight_halflife(0.1);
-        let mut stage = Stage::new(&rig, node.clone());
+        let rig = Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0));
+        let mut stage = Stage::new(&rig, aim().with_weight_halflife(0.1));
         stage.settle();
 
-        stage.with_state(|state| node.reset(state));
+        stage.write(|node, state| node.reset(state));
 
-        assert_eq!(stage.weight(), 0.0);
-        assert_eq!(stage.offsets(), [Quat::IDENTITY; 2]);
         assert_unchanged(&rig, &stage.step(DT));
         assert_ne!(stage.step(DT).joints, rig.input());
     }

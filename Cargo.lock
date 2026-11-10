@@ -1623,6 +1623,7 @@ dependencies = [
  "concerto-reflect",
  "glam 0.33.12",
  "log",
+ "proptest",
  "serde",
  "uuid",
 ]

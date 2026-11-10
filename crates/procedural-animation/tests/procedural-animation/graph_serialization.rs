@@ -1,25 +1,16 @@
 use concerto_animation::graph::AnimationGraph;
 use concerto_animation::mask::BoneMask;
 use concerto_animation::node::{AnimationNode, ErasedAnimationNode};
-use concerto_animation::plugin::register_animation_types;
+use concerto_animation::plugin::AnimationPlugin;
+use concerto_app::{App, plugins::AssetManagerPlugin};
+use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_name::name;
 use concerto_procedural_animation::{
     AimBone, AimNode, FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, LookAtBone,
-    LookAtEye, LookAtNode, Muzzle, ProceduralMotionChannel, ProceduralMotionNode, Waveform,
+    LookAtEye, LookAtNode, Muzzle, ProceduralAnimationPlugin, ProceduralMotionChannel,
+    ProceduralMotionNode, Waveform,
 };
-use concerto_reflect::TypeRegistry;
-
-fn registry() -> TypeRegistry {
-    let mut registry = TypeRegistry::default();
-    register_animation_types(&mut registry);
-    registry.register::<FootPlacementNode>();
-    registry.register::<FootLockNode>();
-    registry.register::<LookAtNode>();
-    registry.register::<AimNode>();
-    registry.register::<ProceduralMotionNode>();
-    registry
-}
 
 fn round_trip(graph: &AnimationGraph) -> AnimationGraph {
     let bytes = bincode::serialize(graph).expect("serialize");
@@ -32,8 +23,7 @@ fn live_node<T: AnimationNode>(graph: &AnimationGraph) -> Option<&T> {
         .find_map(|node: &dyn ErasedAnimationNode| node.as_reflect().downcast_ref::<T>())
 }
 
-#[test]
-fn a_foot_placement_node_keeps_every_field_through_a_round_trip() {
+fn foot_placement() -> FootPlacementNode {
     let node = FootPlacementNode::new("Hips")
         .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
         .with_leg(FootPlacementLeg::new("RightFoot"))
@@ -61,22 +51,10 @@ fn a_foot_placement_node_keeps_every_field_through_a_round_trip() {
     assert_ne!(node.softness, defaults.softness);
     assert_ne!(node.weight, defaults.weight);
     assert_ne!(node.weight_halflife, defaults.weight_halflife);
-    let mut graph = AnimationGraph::from_node(node.clone());
-    graph.make_live(&registry(), None).unwrap();
-
-    let mut restored = round_trip(&graph);
-    restored.make_live(&registry(), None).unwrap();
-
-    assert!(
-        restored.load_warnings().is_empty(),
-        "{:?}",
-        restored.load_warnings()
-    );
-    assert_eq!(live_node::<FootPlacementNode>(&restored), Some(&node));
+    node
 }
 
-#[test]
-fn a_look_at_node_keeps_every_field_through_a_round_trip() {
+fn look_at() -> LookAtNode {
     let node = LookAtNode {
         chain: vec![
             LookAtBone {
@@ -117,22 +95,10 @@ fn a_look_at_node_keeps_every_field_through_a_round_trip() {
         max_angle: 1.5,
     };
     assert_ne!(node, LookAtNode::default());
-    let mut graph = AnimationGraph::from_node(node.clone());
-    graph.make_live(&registry(), None).unwrap();
-
-    let mut restored = round_trip(&graph);
-    restored.make_live(&registry(), None).unwrap();
-
-    assert!(
-        restored.load_warnings().is_empty(),
-        "{:?}",
-        restored.load_warnings()
-    );
-    assert_eq!(live_node::<LookAtNode>(&restored), Some(&node));
+    node
 }
 
-#[test]
-fn an_aim_node_keeps_every_field_through_a_round_trip() {
+fn aim() -> AimNode {
     let node = AimNode::new(
         name!("aim_target"),
         Muzzle::new("hand_r")
@@ -163,22 +129,10 @@ fn an_aim_node_keeps_every_field_through_a_round_trip() {
     assert_ne!(node.weight, defaults.weight);
     assert_ne!(node.weight_halflife, defaults.weight_halflife);
     assert_ne!(node.reacquire_halflife, defaults.reacquire_halflife);
-    let mut graph = AnimationGraph::from_node(node.clone());
-    graph.make_live(&registry(), None).unwrap();
-
-    let mut restored = round_trip(&graph);
-    restored.make_live(&registry(), None).unwrap();
-
-    assert!(
-        restored.load_warnings().is_empty(),
-        "{:?}",
-        restored.load_warnings()
-    );
-    assert_eq!(live_node::<AimNode>(&restored), Some(&node));
+    node
 }
 
-#[test]
-fn a_procedural_motion_node_keeps_every_field_through_a_round_trip() {
+fn procedural_motion() -> ProceduralMotionNode {
     let mask = |path: &str| AssetHandle::<BoneMask>::weak(AssetId::from_path(path));
     let changed = |channel: ProceduralMotionChannel, path: &str, waveform: Waveform| {
         let changed = channel
@@ -200,7 +154,7 @@ fn a_procedural_motion_node_keeps_every_field_through_a_round_trip() {
         assert_ne!(changed.magnitude_halflife, channel.magnitude_halflife);
         changed
     };
-    let node = ProceduralMotionNode::new()
+    ProceduralMotionNode::new()
         .with_channel(changed(
             ProceduralMotionChannel::breathing(mask("chest")),
             "spine",
@@ -217,23 +171,10 @@ fn a_procedural_motion_node_keeps_every_field_through_a_round_trip() {
             Waveform::Noise { octaves: 5 },
         ))
         .with_seed(7)
-        .with_seed_param(name!("character_seed"));
-    let mut graph = AnimationGraph::from_node(node.clone());
-    graph.make_live(&registry(), None).unwrap();
-
-    let mut restored = round_trip(&graph);
-    restored.make_live(&registry(), None).unwrap();
-
-    assert!(
-        restored.load_warnings().is_empty(),
-        "{:?}",
-        restored.load_warnings()
-    );
-    assert_eq!(live_node::<ProceduralMotionNode>(&restored), Some(&node));
+        .with_seed_param(name!("character_seed"))
 }
 
-#[test]
-fn a_foot_lock_node_keeps_every_field_through_a_round_trip() {
+fn foot_lock() -> FootLockNode {
     let node = FootLockNode::new()
         .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
         .with_leg(FootLockLeg::new("RightFoot"))
@@ -255,16 +196,47 @@ fn a_foot_lock_node_keeps_every_field_through_a_round_trip() {
     assert_ne!(node.weight, defaults.weight);
     assert_ne!(node.weight_param, defaults.weight_param);
     assert_ne!(node.weight_halflife, defaults.weight_halflife);
-    let mut graph = AnimationGraph::from_node(node.clone());
-    graph.make_live(&registry(), None).unwrap();
+    node
+}
+
+#[test]
+fn a_graph_of_every_node_the_plugin_registers_keeps_every_field_through_a_round_trip() {
+    let mut app = App::new();
+    app.register_plugin(AssetManagerPlugin);
+    app.register_plugin(AnimationPlugin);
+    app.register_plugin(ProceduralAnimationPlugin);
+    let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
+    let mut graph = AnimationGraph::new();
+    graph
+        .result_node()
+        .with_input(foot_placement(), |mut node| {
+            node.with_input(foot_lock(), |mut node| {
+                node.with_input(look_at(), |mut node| {
+                    node.with_input(aim(), |mut node| {
+                        node.with_input(procedural_motion(), |_| {});
+                    });
+                });
+            });
+        });
+    graph.make_live(&registry, None).unwrap();
 
     let mut restored = round_trip(&graph);
-    restored.make_live(&registry(), None).unwrap();
+    restored.make_live(&registry, None).unwrap();
 
     assert!(
         restored.load_warnings().is_empty(),
         "{:?}",
         restored.load_warnings()
     );
-    assert_eq!(live_node::<FootLockNode>(&restored), Some(&node));
+    assert_eq!(
+        live_node::<FootPlacementNode>(&restored),
+        Some(&foot_placement())
+    );
+    assert_eq!(live_node::<FootLockNode>(&restored), Some(&foot_lock()));
+    assert_eq!(live_node::<LookAtNode>(&restored), Some(&look_at()));
+    assert_eq!(live_node::<AimNode>(&restored), Some(&aim()));
+    assert_eq!(
+        live_node::<ProceduralMotionNode>(&restored),
+        Some(&procedural_motion())
+    );
 }
