@@ -276,57 +276,68 @@ mod tests {
             .load(Ordering::Relaxed)
     }
 
-    #[test]
-    fn a_budget_lets_through_the_asset_that_crosses_it_and_defers_the_rest() {
-        let mut app = app(Some(10), &[Some(4); 4]);
+    struct Budget {
+        case: &'static str,
+        max_bytes: Option<usize>,
+        payloads: Vec<Payload>,
+        prepared: &'static [usize],
+        deferred: &'static [bool],
+    }
 
-        app.update();
-        assert_eq!(prepared(&app), 3);
-        assert!(deferred(&app));
-
-        app.update();
-        assert_eq!(prepared(&app), 4);
-        assert!(!deferred(&app));
+    fn sized(sizes: &[Option<usize>]) -> Vec<Payload> {
+        sizes.iter().map(|&size| Payload(size, false)).collect()
     }
 
     #[test]
-    fn an_asset_larger_than_the_budget_is_still_prepared() {
-        let mut app = app(Some(10), &[Some(100)]);
-
-        app.update();
-
-        assert_eq!(prepared(&app), 1);
-    }
-
-    #[test]
-    fn without_a_budget_every_asset_is_prepared_in_one_frame() {
-        let mut app = app(None, &[Some(4); 4]);
-
-        app.update();
-
-        assert_eq!(prepared(&app), 4);
-        assert!(!deferred(&app));
-    }
-
-    #[test]
-    fn an_asset_without_a_byte_length_is_never_deferred() {
-        let mut app = app(Some(10), &[Some(100), Some(100), None, None]);
-
-        app.update();
-
-        assert_eq!(prepared(&app), 3);
-    }
-
-    #[test]
-    fn assets_that_fail_to_prepare_do_not_use_up_the_budget() {
-        let mut payloads: Vec<Payload> = (0..20).map(|_| Payload(Some(10), true)).collect();
-        payloads.push(Payload(Some(4), false));
-        let mut app = app_of(Some(10), payloads);
-
-        app.update();
-
-        assert_eq!(prepared(&app), 1);
-        assert!(!deferred(&app));
+    fn a_frame_prepares_assets_until_one_crosses_the_byte_budget_and_defers_the_rest() {
+        let mut failing: Vec<Payload> = (0..20).map(|_| Payload(Some(10), true)).collect();
+        failing.push(Payload(Some(4), false));
+        let cases = [
+            Budget {
+                case: "the asset that crosses the budget gets through",
+                max_bytes: Some(10),
+                payloads: sized(&[Some(4); 4]),
+                prepared: &[3, 4],
+                deferred: &[true, false],
+            },
+            Budget {
+                case: "an asset larger than the budget",
+                max_bytes: Some(10),
+                payloads: sized(&[Some(100)]),
+                prepared: &[1],
+                deferred: &[false],
+            },
+            Budget {
+                case: "no budget",
+                max_bytes: None,
+                payloads: sized(&[Some(4); 4]),
+                prepared: &[4],
+                deferred: &[false],
+            },
+            Budget {
+                case: "assets without a byte length",
+                max_bytes: Some(10),
+                payloads: sized(&[Some(100), Some(100), None, None]),
+                prepared: &[3],
+                deferred: &[true],
+            },
+            Budget {
+                case: "assets that fail to prepare use none of it",
+                max_bytes: Some(10),
+                payloads: failing,
+                prepared: &[1],
+                deferred: &[false],
+            },
+        ];
+        for case in cases {
+            let mut app = app_of(case.max_bytes, case.payloads);
+            for (frame, (&count, &deferral)) in case.prepared.iter().zip(case.deferred).enumerate()
+            {
+                app.update();
+                assert_eq!(prepared(&app), count, "{} frame {frame}", case.case);
+                assert_eq!(deferred(&app), deferral, "{} frame {frame}", case.case);
+            }
+        }
     }
 
     #[test]
@@ -339,10 +350,9 @@ mod tests {
         assert!(!render_assets_settled(&app));
         app.update();
         assert!(render_assets_settled(&app));
-    }
-
-    #[test]
-    fn an_app_without_a_limiter_counts_as_settled() {
-        assert!(render_assets_settled(&App::new()));
+        assert!(
+            render_assets_settled(&App::new()),
+            "an app without a limiter counts as settled"
+        );
     }
 }

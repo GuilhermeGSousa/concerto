@@ -691,23 +691,34 @@ pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
 mod tests {
     use super::render_root_for;
 
-    #[test]
-    fn a_crate_depending_on_concerto_reaches_render_through_it() {
-        assert_eq!(
-            render_root_for(&["concerto"]).to_string(),
-            ":: concerto :: render"
-        );
+    struct Root {
+        dependencies: &'static [&'static str],
+        path: &'static str,
     }
 
     #[test]
-    fn a_crate_depending_on_concerto_render_uses_it_directly() {
-        assert_eq!(
-            render_root_for(&["concerto-render"]).to_string(),
-            ":: concerto_render"
-        );
-        assert_eq!(
-            render_root_for(&["concerto-render", "concerto"]).to_string(),
-            ":: concerto_render"
-        );
+    fn the_render_path_goes_through_concerto_render_when_the_crate_depends_on_it() {
+        let cases = [
+            Root {
+                dependencies: &["concerto"],
+                path: ":: concerto :: render",
+            },
+            Root {
+                dependencies: &["concerto-render"],
+                path: ":: concerto_render",
+            },
+            Root {
+                dependencies: &["concerto-render", "concerto"],
+                path: ":: concerto_render",
+            },
+        ];
+        for case in &cases {
+            assert_eq!(
+                render_root_for(case.dependencies).to_string(),
+                case.path,
+                "{:?}",
+                case.dependencies
+            );
+        }
     }
 }

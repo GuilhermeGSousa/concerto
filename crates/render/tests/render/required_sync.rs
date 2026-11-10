@@ -105,31 +105,15 @@ fn bare_app() -> App {
 }
 
 #[test]
-fn a_bare_mesh_gets_the_marker() {
+fn a_bare_mesh_or_skeleton_gets_the_marker() {
     let mut app = bare_app();
-    let mesh = app
-        .main_mut()
-        .world_mut()
-        .spawn(concerto_mesh::MeshComponent::default());
+    let world = app.main_mut().world_mut();
+    let mesh = world.spawn(concerto_mesh::MeshComponent::default());
+    let skeleton = world.spawn(concerto_mesh::SkeletonComponent::default());
 
-    assert!(app
-        .main_mut()
-        .world_mut()
-        .get_component_for_entity::<SyncWithRenderWorld>(mesh)
-        .is_some());
-}
-
-#[test]
-fn a_bare_skeleton_gets_the_marker() {
-    let mut app = bare_app();
-    let skeleton = app
-        .main_mut()
-        .world_mut()
-        .spawn(concerto_mesh::SkeletonComponent::default());
-
-    assert!(app
-        .main_mut()
-        .world_mut()
-        .get_component_for_entity::<SyncWithRenderWorld>(skeleton)
-        .is_some());
+    for entity in [mesh, skeleton] {
+        assert!(world
+            .get_component_for_entity::<SyncWithRenderWorld>(entity)
+            .is_some());
+    }
 }

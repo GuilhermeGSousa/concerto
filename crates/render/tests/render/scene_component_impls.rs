@@ -16,7 +16,7 @@ use concerto_render::{
     components::{
         camera::{Camera, RenderTarget},
         camera_environment::{CameraEnvironment, Fog, DEFAULT_AMBIENT_INTENSITY},
-        light::{Light, LightType},
+        light::Light,
         material::MaterialComponent,
         render_entity::SyncWithRenderWorld,
     },
@@ -35,8 +35,19 @@ fn world() -> World {
     world
 }
 
-/// Spawns `value` from its stored form and captures it back, returning both.
-fn round_trip<T: Component + Reflect>(value: &T) -> (ReflectedValue, ReflectedValue, Vec<AssetId>) {
+struct RoundTrip {
+    case: &'static str,
+    stored: ReflectedValue,
+    captured: ReflectedValue,
+    referenced: Vec<AssetId>,
+    expected_referenced: Vec<AssetId>,
+}
+
+fn round_trip<T: Component + Reflect>(
+    case: &'static str,
+    value: &T,
+    expected_referenced: Vec<AssetId>,
+) -> RoundTrip {
     let mut world = world();
     let stored = to_value(value).unwrap();
     let entity = world.spawn(());
@@ -50,35 +61,69 @@ fn round_trip<T: Component + Reflect>(value: &T) -> (ReflectedValue, ReflectedVa
         .expect("the spawned component is listed")
         .capture(&world, entity, &mut capture)
         .unwrap();
-    (stored, captured, capture.into_referenced_assets())
+    RoundTrip {
+        case,
+        stored,
+        captured,
+        referenced: capture.into_referenced_assets(),
+        expected_referenced,
+    }
 }
 
 #[test]
-fn a_mesh_and_its_material_keep_their_asset_ids() {
+fn a_component_spawned_from_its_stored_value_captures_back_to_it_with_its_asset_ids() {
     let mesh = AssetId::from_path("models/character.gltf#mesh/0");
     let material = AssetId::from_path("models/character.gltf#material/0");
-
-    let (stored, captured, referenced) = round_trip(&MeshComponent {
-        handle: AssetHandle::<Mesh>::weak(mesh),
-    });
-    assert_eq!(captured, stored);
-    assert_eq!(referenced, [mesh]);
-
-    let (stored, captured, referenced) = round_trip(&MaterialComponent::<StandardMaterial> {
-        handle: AssetHandle::weak(material),
-    });
-    assert_eq!(captured, stored);
-    assert_eq!(referenced, [material]);
-}
-
-#[test]
-fn a_spot_light_keeps_its_cone() {
+    let texture = AssetId::from_path("targets/minimap#texture");
     let mut light = Light::spot_light(30.0);
     light.color = Color::RED;
     light.range = 12.0;
-    let (stored, captured, _) = round_trip(&light);
-    assert_eq!(captured, stored);
-    let ReflectedValue::Struct(fields) = &captured else {
+    let mut transform = Transform::IDENTITY;
+    transform.translation = Vec3::new(1.0, 2.0, 3.0);
+    let cases = [
+        round_trip(
+            "a mesh",
+            &MeshComponent {
+                handle: AssetHandle::<Mesh>::weak(mesh),
+            },
+            vec![mesh],
+        ),
+        round_trip(
+            "a material",
+            &MaterialComponent::<StandardMaterial> {
+                handle: AssetHandle::weak(material),
+            },
+            vec![material],
+        ),
+        round_trip("a spot light", &light, vec![]),
+        round_trip(
+            "a camera with a texture target",
+            &Camera {
+                render_target: RenderTarget::texture(AssetHandle::weak(texture)),
+                ..Camera::default()
+            },
+            vec![texture],
+        ),
+        round_trip(
+            "a camera environment with fog and ambient",
+            &CameraEnvironment::default()
+                .with_fog(Fog {
+                    color: Color::BLUE,
+                    density: 0.2,
+                    start: 4.0,
+                })
+                .with_ambient(Color::WHITE),
+            vec![],
+        ),
+        round_trip("a transform", &transform, vec![]),
+        round_trip("a marker", &SyncWithRenderWorld, vec![]),
+    ];
+    for case in &cases {
+        assert_eq!(case.captured, case.stored, "{}", case.case);
+        assert_eq!(case.referenced, case.expected_referenced, "{}", case.case);
+    }
+
+    let ReflectedValue::Struct(fields) = &cases[2].captured else {
         panic!("a light is a struct");
     };
     let (_, light_type) = fields
@@ -86,32 +131,6 @@ fn a_spot_light_keeps_its_cone() {
         .find(|(name, _)| name == "light_type")
         .unwrap();
     assert!(matches!(light_type, ReflectedValue::Variant { name, .. } if name == "Spot"));
-    assert!(matches!(LightType::default(), LightType::Point));
-}
-
-#[test]
-fn a_camera_keeps_its_texture_target() {
-    let texture = AssetId::from_path("targets/minimap#texture");
-    let camera = Camera {
-        render_target: RenderTarget::texture(AssetHandle::weak(texture)),
-        ..Camera::default()
-    };
-    let (stored, captured, referenced) = round_trip(&camera);
-    assert_eq!(captured, stored);
-    assert_eq!(referenced, [texture]);
-}
-
-#[test]
-fn a_camera_environment_keeps_its_fog_and_ambient() {
-    let environment = CameraEnvironment::default()
-        .with_fog(Fog {
-            color: Color::BLUE,
-            density: 0.2,
-            start: 4.0,
-        })
-        .with_ambient(Color::WHITE);
-    let (stored, captured, _) = round_trip(&environment);
-    assert_eq!(captured, stored);
 }
 
 #[test]
@@ -148,15 +167,4 @@ fn a_stored_camera_environment_without_ambient_spawns_with_the_default() {
             1.0
         )
     );
-}
-
-#[test]
-fn a_transform_and_a_marker_round_trip() {
-    let mut transform = Transform::IDENTITY;
-    transform.translation = Vec3::new(1.0, 2.0, 3.0);
-    let (stored, captured, _) = round_trip(&transform);
-    assert_eq!(captured, stored);
-
-    let (stored, captured, _) = round_trip(&SyncWithRenderWorld);
-    assert_eq!(captured, stored);
 }

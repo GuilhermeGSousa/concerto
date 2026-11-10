@@ -3,18 +3,18 @@
 use concerto_asset_import::{ImportContext, Importer};
 use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
 use concerto_foundation::assets::utils::load_content_asset;
-use concerto_foundation::assets::ContentAssetRoot;
+use concerto_foundation::assets::{Asset, ContentAssetRoot};
 use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
 use concerto_render::importers::image_importer::ImageImporter;
 
 #[test]
-fn an_imported_texture_is_reachable_at_its_conventional_address() {
+fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_address() {
     let temp_dir = std::env::temp_dir().join(format!("texture-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
 
     let source_path = temp_dir.join("swatch.png");
-    let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([9, 9, 9, 255]));
+    let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([9, 9, 9, 255]));
     img.save(&source_path)
         .expect("failed to save fixture texture");
 
@@ -29,6 +29,8 @@ fn an_imported_texture_is_reachable_at_its_conventional_address() {
         "one image yields one sub-asset"
     );
     let sub_asset = &outputs.sub_assets[0];
+    assert_eq!(sub_asset.name, "main");
+    assert_eq!(sub_asset.type_name, Texture::name());
 
     let address = "content/swatch/main.gasset";
     let header = ContentAssetHeader {
@@ -51,11 +53,11 @@ fn an_imported_texture_is_reachable_at_its_conventional_address() {
         address,
     ))
     .expect("the imported texture must load back through the runtime byte path");
-    assert_eq!(texture.width, 1);
-    assert_eq!(texture.height, 1);
+    assert_eq!(texture.width, 2);
+    assert_eq!(texture.height, 2);
     assert_eq!(texture.format, TextureFormat::Rgba8UnormSrgb);
     assert_eq!(texture.kind, TextureKind::Sampled);
-    assert_eq!(texture.data, vec![9, 9, 9, 255]);
+    assert_eq!(texture.data, [9, 9, 9, 255].repeat(4));
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

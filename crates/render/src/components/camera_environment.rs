@@ -99,68 +99,65 @@ mod tests {
     use super::*;
     use crate::components::camera::Camera;
 
-    #[test]
-    fn no_environment_means_no_fog_and_default_ambient() {
-        let mut uniform = CameraUniform::new();
-        CameraEnvironment::default().fill(&mut uniform);
-        assert_eq!(uniform.fog_color.w, 0.0);
-        assert_eq!(uniform.ambient.w, 1.0);
-        assert_eq!(
-            CameraEnvironment::default().ambient_light().r,
-            DEFAULT_AMBIENT_INTENSITY
-        );
+    struct Filled {
+        case: &'static str,
+        environment: CameraEnvironment,
+        fog_color: Vec4,
+        fog_params: Vec4,
+        ambient: Vec4,
     }
 
     #[test]
-    fn a_default_environment_has_the_default_ambient_not_white() {
-        assert_eq!(
-            CameraEnvironment::default().ambient.to_linear(),
-            LinearRgba::new(
-                DEFAULT_AMBIENT_INTENSITY,
-                DEFAULT_AMBIENT_INTENSITY,
-                DEFAULT_AMBIENT_INTENSITY,
-                1.0,
-            )
-        );
-    }
-
-    #[test]
-    fn a_uniform_with_no_environment_has_the_default_ambient() {
-        let default = Vec4::new(
+    fn an_environment_fills_the_uniform_with_its_fog_and_ambient_and_none_restores_the_default() {
+        let default_ambient = Vec4::new(
             DEFAULT_AMBIENT_INTENSITY,
             DEFAULT_AMBIENT_INTENSITY,
             DEFAULT_AMBIENT_INTENSITY,
             1.0,
         );
-        let mut uniform = CameraUniform::new();
-        assert_eq!(uniform.ambient, default);
+        let cases = [
+            Filled {
+                case: "the default environment",
+                environment: CameraEnvironment::default(),
+                fog_color: Vec4::ZERO,
+                fog_params: Vec4::ZERO,
+                ambient: default_ambient,
+            },
+            Filled {
+                case: "fog and a white ambient",
+                environment: CameraEnvironment::default()
+                    .with_fog(Fog {
+                        color: Color::BLACK,
+                        density: 0.1,
+                        start: 4.0,
+                    })
+                    .with_ambient(Color::WHITE),
+                fog_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                fog_params: Vec4::new(0.1, 4.0, 0.0, 0.0),
+                ambient: Vec4::ONE,
+            },
+        ];
+        for case in &cases {
+            let mut uniform = CameraUniform::new();
+            case.environment.fill(&mut uniform);
+            assert_eq!(uniform.fog_color, case.fog_color, "{}", case.case);
+            assert_eq!(uniform.fog_params, case.fog_params, "{}", case.case);
+            assert_eq!(uniform.ambient, case.ambient, "{}", case.case);
+        }
+        assert_eq!(
+            CameraEnvironment::default().ambient_light().r,
+            DEFAULT_AMBIENT_INTENSITY,
+            "the default ambient is not white"
+        );
 
-        CameraEnvironment::default()
-            .with_ambient(Color::WHITE)
-            .fill(&mut uniform);
+        let mut uniform = CameraUniform::new();
+        cases[1].environment.fill(&mut uniform);
         uniform.update_view_proj(
             &Camera::default(),
             None,
             &GlobalTransform::new(Mat4::IDENTITY),
         );
-        assert_eq!(uniform.ambient, default);
-    }
-
-    #[test]
-    fn fog_and_ambient_reach_the_uniform() {
-        let environment = CameraEnvironment::default()
-            .with_fog(Fog {
-                color: Color::BLACK,
-                density: 0.1,
-                start: 4.0,
-            })
-            .with_ambient(Color::WHITE);
-        let mut uniform = CameraUniform::new();
-        environment.fill(&mut uniform);
-        assert_eq!(uniform.fog_color.w, 1.0);
-        assert_eq!(uniform.fog_params.x, 0.1);
-        assert_eq!(uniform.fog_params.y, 4.0);
-        assert_eq!(uniform.ambient, Vec4::ONE);
+        assert_eq!(uniform.ambient, default_ambient, "no environment");
     }
 
     #[test]

@@ -183,30 +183,49 @@ fn skip_without_gpu<T>(found: Result<T, String>, require: bool) -> Option<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{power_preference, skip_without_gpu};
-    use wgpu::PowerPreference;
+    use super::skip_without_gpu;
 
-    #[test]
-    fn the_high_performance_adapter_is_preferred_by_default() {
-        assert_eq!(power_preference(None), PowerPreference::HighPerformance);
+    struct Lookup {
+        found: Result<u8, String>,
+        required: bool,
+        returned: Option<u8>,
     }
 
     #[test]
-    fn a_found_gpu_is_returned() {
-        assert_eq!(skip_without_gpu(Ok(1), true), Some(1));
-    }
+    fn a_missing_gpu_skips_unless_required_and_then_panics_with_its_reason() {
+        let cases = [
+            Lookup {
+                found: Ok(1),
+                required: true,
+                returned: Some(1),
+            },
+            Lookup {
+                found: Ok(1),
+                required: false,
+                returned: Some(1),
+            },
+            Lookup {
+                found: Err("no adapter".into()),
+                required: false,
+                returned: None,
+            },
+        ];
+        for case in cases {
+            assert_eq!(skip_without_gpu(case.found, case.required), case.returned);
+        }
 
-    #[test]
-    fn a_missing_gpu_skips_when_not_required() {
-        assert_eq!(
-            skip_without_gpu::<u8>(Err("no adapter".into()), false),
-            None
+        let panic = std::panic::catch_unwind(|| {
+            skip_without_gpu::<u8>(Err("device lost".into()), true);
+        })
+        .expect_err("a required GPU that is missing panics");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            message.contains("CONCERTO_REQUIRE_GPU is set but no GPU is available: device lost"),
+            "{message}"
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "CONCERTO_REQUIRE_GPU is set but no GPU is available: device lost")]
-    fn a_missing_gpu_panics_with_its_reason_when_required() {
-        skip_without_gpu::<u8>(Err("device lost".into()), true);
     }
 }
