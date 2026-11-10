@@ -1134,6 +1134,7 @@ dependencies = [
  "bincode",
  "concerto-foundation",
  "log",
+ "proptest",
  "serde",
  "toml",
 ]
