@@ -51,14 +51,6 @@ fn collect_every_frame(mut reader: EventReader<Ping>, mut collected: ResMut<Coll
     }
 }
 
-fn run_frames(order: RegistrationOrder, frames: usize) -> Vec<usize> {
-    run_with(order, frames, collect_every_other_frame)
-}
-
-fn run_frames_reading_every_frame(order: RegistrationOrder, frames: usize) -> Vec<usize> {
-    run_with(order, frames, collect_every_frame)
-}
-
 fn run_with<M>(
     order: RegistrationOrder,
     frames: usize,
@@ -93,25 +85,18 @@ fn run_with<M>(
 
 #[test]
 fn event_lifetime_does_not_depend_on_when_the_event_was_registered() {
-    let before = run_frames(RegistrationOrder::BeforeSystems, 6);
-    let after = run_frames(RegistrationOrder::AfterSystems, 6);
-
-    assert_eq!(before, after);
-
-    // An event written in `LateUpdate` of frame N is readable for the whole of frame
-    // N+1 and expires at the `EventUpdate` of frame N+2, so a reader that skips a frame
-    // sees every other event.
-    assert_eq!(before, vec![0, 2, 4]);
-}
-
-#[test]
-fn a_reader_that_runs_every_frame_misses_nothing_whatever_the_registration_order() {
-    assert_eq!(
-        run_frames_reading_every_frame(RegistrationOrder::BeforeSystems, 6),
-        vec![0, 1, 2, 3, 4]
-    );
-    assert_eq!(
-        run_frames_reading_every_frame(RegistrationOrder::AfterSystems, 6),
-        vec![0, 1, 2, 3, 4]
-    );
+    for order in [
+        RegistrationOrder::BeforeSystems,
+        RegistrationOrder::AfterSystems,
+    ] {
+        let skipping = run_with(order, 6, collect_every_other_frame);
+        assert_eq!(skipping, vec![0, 2, 4]);
+    }
+    for order in [
+        RegistrationOrder::BeforeSystems,
+        RegistrationOrder::AfterSystems,
+    ] {
+        let every_frame = run_with(order, 6, collect_every_frame);
+        assert_eq!(every_frame, vec![0, 1, 2, 3, 4]);
+    }
 }

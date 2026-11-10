@@ -19,6 +19,11 @@ struct Inner(App);
 #[derive(Resource, Default)]
 struct Steps(usize);
 
+struct Stepped {
+    outer: usize,
+    inner: usize,
+}
+
 fn count(mut steps: ResMut<Steps>) {
     steps.0 += 1;
 }
@@ -61,12 +66,16 @@ fn an_app_stepped_inside_another_apps_system_finishes_on_one_worker() {
             .get_resource::<Steps>()
             .unwrap()
             .0;
-        done.send((outer_steps, inner_steps)).unwrap();
+        done.send(Stepped {
+            outer: outer_steps,
+            inner: inner_steps,
+        })
+        .unwrap();
     });
 
-    let (outer_steps, inner_steps) = finished
+    let stepped = finished
         .recv_timeout(Duration::from_secs(20))
         .expect("the nested frame deadlocked");
-    assert_eq!(outer_steps, 2);
-    assert_eq!(inner_steps, 2);
+    assert_eq!(stepped.outer, 2);
+    assert_eq!(stepped.inner, 2);
 }

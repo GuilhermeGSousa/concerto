@@ -147,22 +147,16 @@ mod tests {
     }
 
     #[test]
-    fn registering_an_inspected_asset_records_each_kind_once() {
+    fn registering_an_inspected_asset_records_each_kind_once_and_registers_the_asset_and_its_type()
+    {
         let mut app = app();
+        app.register_asset::<Tag>();
 
         app.register_inspected_asset::<Note>()
             .register_inspected_asset::<Tag>()
             .register_inspected_asset::<Note>();
 
         assert_eq!(kinds(&app), vec!["TestNote", "TestTag"]);
-    }
-
-    #[test]
-    fn registering_an_inspected_asset_registers_the_asset_and_its_type() {
-        let mut app = app();
-
-        app.register_inspected_asset::<Note>();
-
         assert!(app
             .get_resource::<AssetServer>()
             .unwrap()
@@ -176,21 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn an_asset_registered_before_is_still_recorded() {
-        let mut app = app();
-        app.register_asset::<Note>();
-
-        app.register_inspected_asset::<Note>();
-
-        assert_eq!(kinds(&app), vec!["TestNote"]);
-        assert!(app
-            .get_resource::<AssetServer>()
-            .unwrap()
-            .is_registered::<Note>());
-    }
-
-    #[test]
-    fn a_record_creates_decodes_and_saves_its_asset() {
+    fn a_record_creates_decodes_and_saves_its_asset_and_refuses_another_type() {
         let mut app = app();
         app.register_inspected_asset::<Note>();
         let record = app
@@ -228,30 +208,13 @@ mod tests {
                 weight: 1.5,
             }
         );
-        std::fs::remove_dir_all(root).unwrap();
-    }
 
-    #[test]
-    fn a_record_refuses_to_save_another_type() {
-        let mut app = app();
-        app.register_inspected_asset::<Note>();
-        let record = app
-            .get_resource::<InspectedAssets>()
-            .unwrap()
-            .iter()
-            .next()
-            .copied()
-            .unwrap();
-        let root =
-            std::env::temp_dir().join(format!("inspected-asset-{}", AssetId::new().simple_hex()));
         let wrong = Tag {
             label: "tag".into(),
         };
-
-        let error = (record.save)(&wrong, &root, "content/x.gasset", &mut AssetRegistry::new())
-            .unwrap_err();
-
+        let error = (record.save)(&wrong, &root, "content/x.gasset", &mut registry).unwrap_err();
         assert!(format!("{error:#}").contains("TestNote"), "got: {error:#}");
-        assert!(!root.exists());
+        assert!(!root.join("content/x.gasset").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
