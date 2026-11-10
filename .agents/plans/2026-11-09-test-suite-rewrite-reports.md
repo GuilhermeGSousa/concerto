@@ -869,3 +869,253 @@ CONCERNS:
   - bvh `supports_the_bvh_extension` (a constant).
   The reviewer should confirm these calls.
 - **The asset-build tests drive real `cargo run --offline` fixture builds.** Merging two of them removed one fixture build, and the binary took about 11 s here.
+
+## Task 7: animation
+
+STATUS: DONE WITH CONCERNS
+
+COMMIT: (task 7 is 10 commits plus this report, oldest first)
+- 06e5bb0 Turn the retarget validation, chain, root motion and node failure families into tables and properties
+- 5316f53 Replace the IK, inertialization, look-at and pose families with properties and the mask cases with one table
+- 40029ed Merge the player, blackboard, graph, node definition and state machine test families into scenarios and tables
+- fa7e59e Turn the transition blender, root display, root motion, event and model space families into tables
+- adc1e8d Turn the clip node event, root pose, root motion, rate, weight and blend families into tables
+- d78aeda Turn the additive, aim offset, layer and two-bone IK node families into tables and drop the duplicate delta setter
+- 3750d0e Turn the clip event window, frame rate and velocity families into tables
+- 8a96ea4 Move the made_live fixture out of graph.rs into the crate's testing module
+- 2f87e34 Replace the mirror pose family with one property and its refusals with one table
+- eb3a8c6 Merge the graph round-trip, placeholder, stored play rate, clip loader and skeleton store tests into scenarios and tables
+
+GATE (CARGO_INCREMENTAL=0, concerto-animation only):
+- `cargo fmt --all -- --check`: pass
+- `cargo clippy --locked -p concerto-animation --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings`: pass
+- `cargo test --locked -p concerto-animation`: pass. The lib has 169 tests and the integration binary has 30. Doctests: 0.
+- `cargo check --locked --workspace --all-targets`: not run. Nothing public was removed or changed:
+  - `build_delta_against` was `#[cfg(test)] pub(crate)`.
+  - `made_live` was `#[cfg(test)] pub(crate)`.
+  - `test_walks` was a private `#[cfg(test)]` module.
+  - The `test-support` items that procedural-animation uses are untouched.
+
+COUNTS: `#[test]` in crates/animation went from 401 before (354 in src/, 47 in tests/) to 199 after (169 in src/, 30 in tests/). These counts include the `#[test]` functions inside `proptest!` blocks, of which there are 13.
+
+Counts by file, before → after:
+- retarget 91 → 33
+- clip 41 → 25
+- node/mod 40 → 10
+- target 24 → 11
+- aim_offset 21 → 14
+- additive 20 → 16
+- lib 15 → 9
+- two_bone_ik 15 → 7
+- pose 13 → 6
+- layer 13 → 10
+- ik 11 → 4
+- inertialization 10 → 4
+- mask 10 → 3
+- definition 7 → 4
+- look_at 5 → 3
+- graph 5 → 2
+- player 5 → 2
+- state_machine 3 → 2
+- blackboard 2 → 1
+- plugin (src) 2 → 2
+- blend_space 1 → 1
+- tests/graph_serialization 26 → 18
+- tests/mirror 12 → 4
+- tests/plugin 9 → 8
+
+WORK 3 ITEMS:
+- `graph.rs:748 made_live`: moved out of production code. It was a free `#[cfg(test)]` fixture that builds a live graph through the public `make_live`, so it was never on a production type. It now lives in the crate's `#[cfg(test)]` fixture module. That module is `test_walks.rs` renamed to `testing.rs`, as the plan names it. Every unit test imports it from there.
+- `clip.rs:724 build_delta_against`: removed. It was a second setter for the same state as `with_delta_against`, and additive.rs now uses `with_delta_against`.
+- `clip.rs:1052 #[cfg(test)] impl AnimationClip { with_delta_against }`: kept as a test-only setter. A clip holds a built additive delta only through `DerivedData::derive` + `apply_derived`:
+  - `derive` takes `DerivedInputs`, and `DerivedInputs` can only be read from a `ContentAssetRoot` and an `AssetRegistry` on disk.
+  - `apply_derived` takes a blob of the private `AdditiveDelta`.
+  - So no public path reaches the state for an in-memory clip in a unit test. The integration tests in tests/animation/plugin.rs cover the public load path, through a temporary project and an `App`. See CONCERNS.
+
+CHANGED:
+- crates/animation/Cargo.toml: adds `proptest.workspace = true` as a dev-dependency.
+- Cargo.lock: one line, proptest for concerto-animation.
+- src/test_walks.rs → src/testing.rs: gains `made_live`. Every `test_walks::Walks` import now reads `testing::Walks`.
+- src/graph.rs: loses `made_live`. Its tests are now one layer-order scenario and one panic table.
+- src/clip.rs: loses `build_delta_against`. Its tests now have tables for the event window, frame rates and velocity.
+- src/retarget.rs:
+  - A rig refusal table, a pair refusal table, a pose length table, a chain sampling table and a root motion table.
+  - Three properties: reference retargets to reference, turning about up, and goal weight clamping.
+  - A node failure table and a last-setting table. The rest are kept as they were.
+  - The fixture skeletons take their rest rotations as a parameter (`*_turned`).
+- src/ik.rs, src/inertialization.rs, src/look_at.rs, src/pose.rs, src/mask.rs: properties and tables. ik.rs's `(Vec3, Vec3)` return became a `Solved` struct.
+- src/player.rs, src/blackboard.rs, src/node/definition.rs, src/node/state_machine.rs: merged scenarios. Tuple types in them became structs, and a tuple assert was split.
+- src/lib.rs, src/target.rs: tables of transition blenders, root display, root motion, triggered events and model space.
+- src/node/mod.rs: tables of event firing, root pose, root motion, effective rate, effective weight and blending.
+- src/node/additive.rs, aim_offset.rs, layer.rs, two_bone_ik.rs: weight, tip rotation, unreachable and pole tables, plus aim-weight table and property. In two_bone_ik.rs the `(&str, Option<u16>, JointPose)` fixture tuple became a `Bone` struct.
+- tests/animation/mirror.rs: one property and one refusal table. The `&[(&str, Option<u16>, JointPose)]` parameter became `&[Bone]`.
+- tests/animation/graph_serialization.rs: merged round-trip scenarios and a stored play-rate table. The `(ReflectedValue, Vec<ValueWarning>)` return became `LoadedNode`.
+- tests/animation/plugin.rs: one merged skeleton store test.
+- No encoding fixture under tests/encoding was touched or blessed. `AnimationGraph.v1.bin` and the other fixtures pass unchanged.
+
+BREAK-AND-REVERT (each edit was made in production code, watched fail, then reverted from a backup; proptest-regressions directories were deleted):
+- retarget:
+  - rig refusal table: a motion root equal to the root accepted.
+  - chain table: the sample alpha halved.
+  - root motion table: a generated motion root keeps the source height.
+  - pose length table: the output length checked with `>`.
+  - pair refusal table: an empty chain accepted.
+  - reference property: `source_delta` without the reference inverse.
+  - turned property: the goal offset not twisted with the source root.
+  - weight property: no upper clamp.
+  - node failure table: `failed` warns nothing.
+  - last-setting table: settings applied in reverse.
+- ik:
+  - reach property: full reach clamped 1 cm short. Separately, the aim nudged 0.01 along x.
+  - continuity test: easing doubled.
+  - degenerate table: the zero-length-bone guard removed.
+  - pole test: swing angle negated.
+  - A first break (dropping the lower clamp of the soft reach) did not fail the property. It turned out not to be observable, because the solver cannot fold closer than the shortest reach anyway.
+- inertialization property: negative dt decays. Separately, the output ignores the rotation offset.
+- look_at property: pitch sign flipped. Separately, up not made perpendicular.
+- mask table: depth ramp off by one level.
+- pose: composition property drops the first stretch's turn; twist table normalizes a zero quaternion.
+- definition table: the erased update calls the typed update twice.
+- graph panic table: `added >= 1` accepted.
+- lib blender table: the cross-fade layer blended at full weight.
+- target:
+  - root display table: a non-finite parent up kept.
+  - trigger table: threshold compared with `>=`.
+  - model-to-world table: no parent gives a scale of 2.
+  - no-root-motion table: an unposed player keeps its root motion.
+- node/mod:
+  - event table: a fresh wrap never counts its start as fired.
+  - root pose table: height read along y whatever the up.
+  - motion table: a wrap measured as one jump back.
+  - rate table: non-finite rates kept.
+  - weight table: no lower clamp.
+  - blend table: weights over total+1.
+  - blend event test: zero-weight inputs kept.
+- additive weight table: delta applied at the square root of the weight.
+- aim_offset:
+  - weights table: line interpolation squares t.
+  - weights property: a clamped end weighs 0.9.
+  - node blend scenario: t halved.
+- layer table: layer weight applied as its square root. Separately, an overlay event pushed at weight 0.
+- two_bone_ik:
+  - tip table: a goal without rotation gives identity.
+  - unreachable table: a second skeleton root accepted.
+  - pole table: the pole ignored.
+- clip:
+  - detected-rate table: tie broken on the larger spacing.
+  - events_in table: from included when not asked.
+  - velocity table: start not clamped to the clip.
+  - set_frame_rate table: snapping within 0.05.
+- mirror:
+  - property: the rotation's after-matrix dropped. Separately, the translation not reflected.
+  - refusal table: an asymmetry tolerance of 1 m.
+- graph_serialization:
+  - placeholder scenario: a placeholder never rebuilt.
+  - mixed-graph scenario: blend times doubled.
+  - stored play-rate table: concerto-reflect drops its "different kind of value" warning.
+  - node-fields scenario: `#[reflect(skip)]` on `AimOffsetNode::angle_halflife`.
+
+DELETED (each with what still covers it):
+
+retarget.rs
+- `resolves_the_root_motion_root_and_chains_to_bone_indices`, `a_goal_resolves_to_its_tip_its_parent_and_its_grandparent`: `a_rig_resolves_its_root_motion_root_chains_and_goals_to_bone_indices`.
+- `a_correction_turns_its_bone_in_its_own_space_and_moves_the_bones_below`, `two_corrections_on_one_bone_compose_in_list_order`: `corrections_turn_their_bone_in_its_own_space_in_list_order_and_move_the_bones_below`.
+- 27 rig refusals are rows of `a_rig_that_does_not_fit_its_skeleton_is_refused_naming_why`:
+  - the empty root, unknown root, unknown motion root and empty motion root
+  - the motion root below or equal to the root
+  - the empty, unknown start and unknown end chain bones
+  - the chain end above its start or on a sibling branch
+  - unnamed and duplicate chains
+  - the empty and unknown correction bones
+  - unnamed and duplicate goals
+  - the unknown and empty goal bones
+  - a goal too high, and a goal that would bend the root
+  - a missing clip, a NaN time, a clip for no bone, and the root height
+  - a short rest pose, and a parent after its child
+- Seven pair refusals are rows of `a_pose_retarget_refuses_rigs_that_do_not_fit_their_skeletons_or_share_no_chain`:
+  - `rigs_sharing_no_chain_name_share_no_chain`
+  - `a_source_rig_beside_the_target_skeleton_is_not_for_it` and `a_target_rig_beside_the_source_skeleton_is_not_for_it`
+  - `a_rig_whose_root_is_past_the_last_bone_is_not_for_its_skeleton` and `a_rig_with_an_empty_chain_is_not_for_its_skeleton`
+  - `a_goal_tip_past_the_last_bone_is_not_for_its_skeleton` and `a_goal_mid_that_is_not_the_tips_parent_is_not_for_its_skeleton`
+- `a_short_source_pose_is_the_wrong_length_and_writes_nothing`, `a_short_output_is_the_wrong_length_and_is_left_alone`: rows of `a_pose_of_the_wrong_length_is_refused_and_nothing_is_written`.
+- The property `a_source_at_its_reference_gives_the_target_reference_both_ways` covers four tests, now with random rest rotations on both skeletons, with and without goals:
+  - `the_source_reference_gives_the_target_reference`
+  - `the_target_reference_gives_the_source_reference`
+  - `with_goals_on_the_source_reference_still_gives_the_target_reference`
+  - `with_goals_on_the_target_reference_still_gives_the_source_reference`
+- Rows of `a_target_chain_turns_as_the_source_chain_sampled_along_its_length`:
+  - `equal_chains_turn_as_the_source_turns`. Its extra arm-direction assertion follows from equal deltas on aligned rests and was dropped.
+  - `a_longer_target_chain_samples_between_the_source_bones`, `a_shorter_target_chain_samples_between_the_source_bones` and `a_single_bone_target_chain_takes_the_source_start`.
+  - `the_root_turns_as_the_source_root_turns`. The row turns the posed hips, not the hips' local rotation.
+- `the_root_moves_by_the_scaled_source_root_offset`, `a_generated_motion_root_takes_the_ground_part_of_the_root_motion`, `a_source_motion_root_is_copied_onto_the_target_motion_root`, `a_motion_root_onto_a_target_without_one_moves_the_root`: rows of `the_root_and_motion_root_carry_the_scaled_source_root_motion`.
+- `a_source_turned_about_up_turns_the_solved_target_limb_with_it`: now the property of the same name, over any angle.
+- `a_goal_at_weight_0_leaves_the_fk_pose`, `a_nan_or_negative_weight_counts_as_0_and_a_weight_above_1_as_1`: the property `a_goal_weight_counts_as_clamped_to_0_and_1_and_nan_as_0`.
+- `a_goal_named_on_one_rig_only_is_not_solved`, `a_goal_not_on_both_rigs_is_unknown_and_changes_nothing`: `a_goal_not_on_both_rigs_is_not_solved_and_its_settings_are_refused`.
+- `a_retarget_node_plays_its_inner_graph_retargeted_onto_the_player_skeleton`: the last step of `a_retarget_node_holds_the_rest_pose_until_its_rigs_and_inner_graph_load` asserts the same pose.
+- Eight tests are rows of `a_retarget_node_that_cannot_honour_its_assets_warns_once_naming_why_and_holds_a_pose`. Each row now also asserts the warning text and whether the node is finished:
+  - `a_target_rig_on_another_skeleton_than_the_player_gives_the_rest_pose_and_one_warning`
+  - `rigs_sharing_no_chain_give_the_target_reference_pose_and_one_warning`
+  - `an_inner_graph_holding_a_retarget_node_is_refused` and `an_inner_state_machine_state_holding_a_retarget_node_is_refused`. Their visit-count assertions (`visits::<RetargetNode>() == 1`, `visits::<AnimationStateMachine>() == 0`) were dropped; the pose, warning and finished state show the refusal.
+  - `an_inner_node_whose_create_input_is_not_an_update_input_fails_the_node_with_one_warning` and `an_inner_state_machine_state_node_whose_create_input_is_not_an_update_input_fails_the_node`
+  - `a_player_skeleton_changed_while_playing_gives_the_rest_pose_and_one_warning`
+  - `a_retarget_node_whose_settings_name_an_unknown_goal_still_plays_with_one_warning_naming_it`
+- `a_retarget_node_whose_settings_give_a_shared_goal_weight_0_plays_the_fk_pose`, `a_later_setting_for_the_same_goal_wins`: rows of `a_retarget_node_applies_its_last_setting_for_each_goal`.
+- `a_retarget_node_finishes_with_its_inner_one_shot_clip_and_not_while_pending`, `reset_clears_a_finished_inner_graph_before_the_next_update`: `a_retarget_node_finishes_with_its_inner_one_shot_clip_and_not_while_pending_or_after_a_reset`.
+- `for_each_state_mut_visits_a_node_inside_the_inner_graph`, `for_each_state_visits_a_node_inside_the_inner_graph`: `for_each_state_and_for_each_state_mut_visit_a_node_inside_the_inner_graph`.
+
+- Kept in retarget.rs as they were:
+  - Rigs and goals: loading_a_rig_loads_its_skeleton_and_its_reference_clip, the_rest_reference_is_the_rest_pose_and_its_forward_kinematics, a_clip_frame_reference_samples_each_bone_and_skips_one_key_channels, unpaired_bones_and_chains_keep_the_reference, a_source_ankle_at_its_reference_height_puts_the_target_ankle_at_its_own, a_source_tip_moved_from_its_reference_moves_the_target_tip_by_the_scaled_distance, a_goal_with_softness_eases_its_reach, a_goal_at_half_weight_moves_the_tip_halfway_from_the_fk_tip_to_its_goal, the_tip_keeps_its_fk_rotation_and_carries_the_bones_below_it, a_goal_out_of_reach_straightens_the_limb_toward_it, goals_solve_in_order_and_a_later_goal_sees_an_earlier_ones_result.
+  - The retarget node: a_retarget_node_holds_the_rest_pose_until_its_rigs_and_inner_graph_load, an_outer_root_nets_the_inner_pose_against_the_source_reference_and_scales_its_root_motion, a_clip_event_fired_in_the_inner_graph_reaches_the_output_frame, reset_restarts_the_inner_graph_clip, the_inner_clip_reads_its_play_rate_from_the_player_blackboard, an_output_shorter_than_the_target_skeleton_keeps_its_rest_pose_and_passes_events_with_one_warning, a_retarget_node_stays_pending_until_its_reference_clip_loads.
+
+Other files (the disposition of every test: merged, tabled, replaced by a property, deleted with its cover, or kept):
+- ik.rs 11 -> 4:
+  - The property the_tip_lies_toward_the_target_at_the_reach_the_chain_has replaces a_target_within_reach_is_reached_without_changing_bone_lengths, a_target_past_full_length_straightens_the_chain_toward_it, a_target_inside_the_shortest_reach_puts_the_tip_at_that_reach and softness_past_full_length_stays_within_the_chain_range.
+  - the_reach_grows_continuously_with_the_target_distance_and_softness_keeps_it_short_of_full_length replaces reach_does_not_pop_at_full_extension and softness_eases_reach_toward_full_length.
+  - the_mid_bends_toward_the_pole_or_without_one_stays_on_its_side_of_the_input_plane merges without_a_pole_the_mid_stays_on_its_side_of_the_input_plane and a_pole_on_the_other_side_bends_the_mid_toward_it.
+  - The table a_degenerate_chain_or_target_gives_finite_rotations_and_a_broken_chain_none replaces a_fully_folded_chain_unfolds_to_reach_its_target, a_chain_with_a_joint_that_is_not_finite_is_left_as_it_is and degenerate_inputs_give_finite_rotations.
+- inertialization.rs 10 -> 4: between_gives_the_linear_and_angular_velocity_over_dt (merges between_gives_linear_difference_over_dt, between_gives_angular_velocity_about_the_rotation_axis); property one_update_decays_a_still_offset_by_the_critically_damped_closed_form (replaces transition_frame_output_equals_source, zero_velocity_offset_follows_the_closed_form_after_one_halflife, non_positive_dt_does_not_decay, tiny_halflife_is_clamped_and_stays_finite); kept converges_to_the_destination_and_settles, transition_during_a_decay_starts_from_the_output_pose. DELETED zero_has_one_entry_per_bone (trivia: constructor), between_asserts_on_length_mismatch (trivia: a debug_assert on a precondition, not a promise).
+- look_at.rs 5 -> 3: property a_frame_is_orthonormal_and_its_yaw_and_pitch_turn_forward_onto_the_direction (replaces look_rotation_turns_forward_onto_the_direction, a_skewed_up_is_made_perpendicular_to_forward); toward_the_side_yaws_positive_toward_up_pitches_a_right_angle_and_nowhere_gives_no_turn (merges toward_the_side_yaws_positive_and_toward_up_pitches_a_right_angle and a_zero_direction_gives_no_turn); kept a_frame_needs_a_finite_forward_and_an_up_off_its_line.
+- mask.rs 10 -> 3:
+  - The table a_mask_resolves_to_one_weight_per_bone replaces a_branch_at_depth_0_gives_its_weight_to_the_bone_and_every_descendant, a_branch_at_depth_2_ramps_in_over_three_levels_and_stays_full_below, an_entry_without_descendants_changes_its_own_bone_alone, a_child_entry_overrides_its_ancestor_and_a_weight_0_child_cuts_its_branch_out, unknown_names_are_listed_empty_names_skipped_and_the_later_duplicate_wins, a_nan_entry_weight_counts_as_0, the_root_has_weight_0_even_when_an_entry_names_it and weights_outside_0_to_1_are_clamped.
+  - Kept: a_bone_whose_parent_is_not_below_it_has_no_parent and a_reused_buffer_resolves_the_same_and_shrinks_to_a_shorter_skeleton.
+- pose.rs 13 -> 6: table twist_about_keeps_the_part_of_a_turn_about_the_axis (replaces a_turn_about_the_axis_is_all_twist, a_turn_square_to_the_axis_has_no_twist, a_mix_gives_the_twist_it_starts_with, a_half_turn_about_the_axis_is_all_twist, a_half_turn_across_the_axis_has_no_twist_to_find); copy_from_carries_the_root_motion_and_the_events_and_drops_its_own (merges copy_from_carries_root_motion, copy_from_carries_the_events_and_drops_its_own); blend_lerps_and_slerps_the_root_motion_and_weighs_the_events_of_both_frames (merges blend_lerps_root_translation_and_slerps_root_rotation, blend_scales_its_own_events_by_the_rest_and_appends_the_others_scaled_by_the_weight); acquire_clears_the_root_motion_and_the_events_of_a_recycled_frame (merges the two acquire tests); kept set_rest_with_another_length_resizes_the_pool; property two_stretches_compose_to_the_whole_journey (was one fixed case).
+- player.rs 5 -> 2: kept play_restarts_any_node_type_through_its_reset; for_each_state_and_for_each_state_mut_visit_only_the_live_nodes_of_the_type_with_the_blackboard (merges for_each_state_mut_visits_exactly_the_live_nodes_of_the_type, for_each_state_visits_the_live_nodes_of_the_type_through_a_shared_player, for_each_state_mut_hands_each_node_its_state_and_the_blackboard, for_each_state_mut_visits_nothing_before_the_graph_is_initialized); its `(Option<bool>, Option<f32>)` tuple became a Board struct.
+- blackboard.rs 2 -> 1: a_value_reads_back_through_the_graph_context_only_as_its_own_type (merges a_custom_reflect_type_round_trips_through_the_graph_context, a_value_of_another_type_reads_as_none); the `Option<(bool, f32)>` return became `Option<Stance>`.
+- graph.rs 5 -> 2:
+  - with_layer_input_hands_the_layer_its_base_first_and_its_overlay_second_and_a_load_keeps_them merges with_layer_input_hands_the_layer_its_base_first_and_its_overlay_second and a_saved_and_loaded_layer_keeps_its_base_first_and_its_overlay_second.
+  - The table with_layer_input_panics_unless_each_closure_adds_one_input uses catch_unwind. It replaces the three should_panic tests: with_layer_input_panics_when_the_base_adds_no_input, with_layer_input_panics_when_the_overlay_adds_no_input and with_layer_input_panics_when_the_overlay_adds_two_inputs.
+- definition.rs 7 -> 4: kept from_value_and_to_value_round_trip, erased_calls_reach_the_typed_methods_with_their_inputs (its tuple assert split); table a_node_reads_its_update_input_from_the_world_and_is_not_updated_without_it (replaces a_node_reads_its_update_input_from_the_world, a_node_whose_inputs_were_not_registered_is_not_updated, a_node_whose_input_resource_is_missing_is_not_updated); placeholder_passes_the_first_input_through_and_without_one_leaves_the_rest_pose (merges the two placeholder tests).
+- state_machine.rs 3 -> 2:
+  - Kept: only_the_current_states_graph_is_updated.
+  - for_each_state_and_for_each_state_mut_reach_a_node_inside_a_state_graph merges for_each_state_mut_reaches_a_node_inside_a_state_graph and for_each_state_reaches_a_node_inside_a_state_graph.
+- lib.rs 15 -> 9: a_clip_node_starts_at_its_start_time_wraps_when_looping_finishes_once_and_resets_to_it (merges looping_clip_starts_and_wraps_at_start_time, play_once_clip_starts_at_start_time_and_finishes); inertialize_outputs_the_source_pose_on_the_transition_frame_then_converges_to_the_destination (merges inertialize_outputs_the_source_pose_on_the_transition_frame, inertialize_converges_to_the_destination); a_skeleton_swap_drops_an_unsettled_inertializer_and_a_later_transition_inertializes_on_the_new_one (merges a_skeleton_swap_drops_an_unsettled_inertializer, a_later_transition_inertializes_on_the_swapped_skeleton); table on_the_transition_frame_each_blender_weighs_root_motion_and_events_its_own_way (replaces a_cross_fade_blends_root_motion_by_the_weight_of_the_fade, inertialization_gives_the_destination_root_motion_from_the_transition_frame, a_cross_fade_gives_each_event_the_weight_of_its_state_in_the_fade, inertialization_fires_the_start_of_the_entered_state_at_full_weight); kept state_entered_mid_transition_is_not_superseded_by_the_older_fade, transition_cross_fades_then_settles_on_the_target, re_entering_a_state_replays_its_clip_from_the_start, inertialize_velocity_step_is_bounded_by_the_destination_velocity, inertialize_into_the_current_state_changes_nothing.
+- target.rs 24 -> 11: table a_root_shows_its_clip_without_its_yaw_or_ground_translation (replaces a_root_shows_its_pitch_and_its_yaw_does_not_reach_the_transform, a_roots_height_follows_the_clip_and_its_ground_translation_stays_at_rest, a_root_with_a_scale_channel_shows_its_scale, under_a_rotated_parent_a_roots_height_is_read_along_the_parents_up, under_a_parent_scaled_to_nothing_a_roots_height_is_read_along_y); table a_player_that_poses_nothing_leaves_no_root_motion_on_any_root_bone (replaces a_paused_player_leaves_no_root_motion_on_the_root, a_paused_player_clears_a_root_bone_the_skeleton_does_not_name_as_its_root, a_paused_player_clears_every_root_bone, an_unloaded_skeleton_leaves_no_root_motion_on_the_root, a_swap_to_an_unloaded_graph_leaves_no_root_motion_on_the_root); table a_player_triggers_what_it_fired_once_on_itself_above_its_threshold (replaces a_crossed_event_reaches_the_listener_on_the_player_with_its_weight_and_time, a_threshold_drops_the_sources_at_or_below_it, a_paused_player_clears_what_it_fired_and_triggers_nothing, a_player_whose_graph_is_not_loaded_clears_what_it_fired_and_triggers_nothing); table a_graph_sees_the_global_of_bone_zeros_parent_as_model_to_world_or_identity_without_one (replaces a_graph_sees_the_global_of_bone_zeros_parent_as_model_to_world, a_graph_sees_identity_as_model_to_world_when_bone_zero_has_no_parent, a_graph_sees_identity_as_model_to_world_when_bone_zeros_parent_has_no_global); kept rooted_skeleton_initializes_its_player_and_root_marker, a_player_whose_skeleton_asset_is_not_loaded_waits_and_runs_once_it_is, a_child_joint_with_no_position_channel_keeps_its_rest_translation, a_joint_with_no_channels_in_a_second_clip_shows_rest_not_the_first_clips_value, a_blend_space_gives_the_weighted_delta_of_its_inputs, a_nested_graph_delta_reaches_the_root_bone_measured_from_the_skeleton_rest, a_two_bone_ik_graph_puts_the_hand_on_a_world_target_under_the_skeletons_parent.
+- node/mod.rs 40 -> 10: table a_clip_node_fires_each_event_it_crosses_once (replaces a_step_fires_the_events_after_the_previous_time_up_to_the_new_one, the_first_update_after_play_fires_the_start_time, a_reset_clip_fires_its_start_time_again, a_loop_wrap_fires_to_the_end_and_then_the_start, a_fresh_loop_that_wraps_on_its_first_update_fires_its_start_time_once, a_play_once_clip_fires_up_to_its_end_and_then_nothing, a_paused_clip_fires_nothing_and_drops_what_it_fired_before, a_clip_at_rate_zero_fires_nothing_and_keeps_its_start_for_later, a_clip_that_is_not_loaded_fires_nothing_and_keeps_its_start_for_later, a_clip_that_stops_resolving_fires_nothing_on_the_next_update, an_event_exactly_at_the_new_time_fires_once; the not-loaded row now shows the kept start by loading the clip, instead of reading `state.clock.fresh`); kept a_fired_event_names_its_clip_and_key_at_full_weight; table a_clip_root_keeps_its_pitch_and_height_and_gives_up_its_yaw_and_ground_translation (replaces a_clip_gives_up_the_yaw_of_its_root_and_keeps_the_pitch, a_clip_measures_its_yaw_about_the_up_of_the_root, a_clip_keeps_the_height_of_its_root_and_leaves_the_ground_translation_at_rest, a_clip_reads_the_height_of_its_root_along_up); kept a_joint_that_is_not_the_root_keeps_what_the_clip_gives_it, blending_two_clips_that_turn_differently_leaves_no_yaw; table a_clip_root_motion_is_the_delta_of_its_root_since_the_last_frame_read_from_where_it_faced (replaces a_clip_delta_is_the_difference_of_two_samples_measured_from_a_turned_rest, a_root_with_no_rotation_channel_reads_as_its_rest, a_root_with_a_one_key_rotation_channel_reads_as_its_rest, a_clip_with_no_channels_for_the_root_gives_no_root_motion, a_delta_turned_by_the_root_reads_forward_from_the_way_it_faced_last_frame, a_loop_delta_across_the_wrap_is_the_distance_covered_and_not_a_jump_back, a_clip_restarted_after_a_wrap_gives_no_root_motion, a_start_time_gives_no_delta_on_the_first_evaluation, a_play_once_clip_gives_its_last_delta_and_then_none, a_float_param_multiplies_the_play_rate_of_a_clip, a_negative_play_rate_holds_the_clip; the last two no longer read `state.current_time()`, the motion shows the rate); table the_effective_play_rate_is_the_rate_times_a_float_param_and_zero_when_not_finite (replaces no_param_or_one_that_is_missing_or_not_a_float_leaves_the_play_rate_alone, a_play_rate_that_is_not_finite_is_zero); table the_effective_weight_is_the_weight_times_a_float_param_clamped_to_0_and_1 (replaces the_effective_weight_is_the_weight_times_the_param_clamped_to_0_and_1, no_param_or_one_that_is_missing_or_not_a_float_leaves_the_weight_alone); table a_blend_is_the_weighted_average_of_its_inputs (replaces a_blend_of_two_inputs_at_equal_weight_lands_halfway, a_blend_leans_toward_its_heavier_input, a_blend_of_three_inputs_is_their_weighted_average, an_input_at_zero_weight_has_no_part_in_the_blend, a_blend_with_no_weighted_input_keeps_the_rest_pose); a_blend_gives_each_input_event_the_weight_of_its_input_and_drops_those_of_unweighted_ones (merges a_blend_gives_each_input_event_the_weight_of_its_input, an_input_at_zero_weight_fires_nothing).
+- node/additive.rs 20 -> 16: table the_child_turns_and_moves_by_the_weight_times_the_delta (replaces at_weight_1_the_delta_turns_the_neutral_pose_into_the_affected_one, at_half_weight_the_child_turns_and_moves_by_half_the_delta); the_clock_runs_over_the_span_of_the_delta_and_wraps_or_resets_to_the_start_time (merges the_clock_runs_over_the_span_of_the_delta_and_wraps_to_the_start_time, a_reset_returns_the_clock_to_the_start_time). DELETED at_weight_0_no_event_of_the_clip_is_added: at_weight_0_the_output_is_the_base_bit_for_bit_events_included steps cold() over its 0.25 "shiver" event and asserts the events are the base's alone. DELETED animation_player_play_restarts_an_additive_node: player.rs play_restarts_any_node_type_through_its_reset (play resets any node) plus the reset half of the_clock_runs_over_the_span_of_the_delta_and_wraps_or_resets_to_the_start_time. The rest kept.
+- node/aim_offset.rs 21 -> 14: table aim_weights_are_barycentric_inside_the_points_and_clamp_to_their_hull (replaces a_pitch_only_set_on_a_line_interpolates_by_pitch_and_clamps_at_the_ends, a_point_a_thousandth_of_a_radian_off_the_line_still_counts_as_on_it, a_duplicated_point_is_dropped_and_keeps_a_zero_weight, a_sample_inside_a_triangle_is_weighed_by_its_barycentric_coordinates, a_single_point_takes_the_whole_weight_wherever_the_sample_is); property aim_weights_are_not_negative_beyond_rounding_and_sum_to_1 (replaces the 41-sample sum/sign sweep, now over random point sets); a_target_gives_the_deltas_of_its_points_blended_by_their_weights (merges a_target_straight_along_forward_gives_the_full_delta_of_the_point_at_the_origin, a_target_between_two_pitch_points_blends_their_deltas_and_clamps_past_the_ends). DELETED a_pitch_set_a_thousandth_of_a_radian_off_its_line_blends_as_on_it, a_duplicated_pitch_point_is_left_out_of_the_blend, a_target_inside_a_triangle_of_points_weighs_them_by_barycentric_coordinates: the node blends by AimWeights, whose table rows cover each point set, and a_target_gives_the_deltas_of_its_points_blended_by_their_weights covers the node applying those weights to deltas. Rest kept.
+- node/layer.rs 13 -> 10: table the_masked_arm_moves_by_the_layer_weight_times_its_param_and_the_rest_keeps_the_base (replaces local_at_full_weight_lays_the_overlay_on_the_masked_arm_alone, half_layer_weight_puts_a_masked_joint_halfway, the_layer_weight_is_the_weight_times_the_param_and_clamps_above_1, a_nan_layer_weight_gives_the_base_and_infinity_gives_the_overlay_on_masked_bones; it also asserts the events and root motion of every row). Rest kept.
+- node/two_bone_ik.rs 15 -> 7: a_bone_goal_puts_the_tip_on_the_goal_and_leaves_every_other_bone_and_the_events_alone (merges an_event_on_the_input_survives_the_ik_node); table the_tip_keeps_its_input_model_rotation_or_takes_the_goals (replaces keep_input_keeps_the_model_rotation_of_the_tip, from_target_gives_the_tip_the_grip_rotation_times_the_goal_rotation, from_target_with_a_param_goal_that_has_no_rotation_keeps_the_input_tip_rotation, from_target_with_a_param_goal_maps_its_rotation_into_the_model); table a_node_that_cannot_reach_leaves_the_input_pose (replaces a_target_param_that_is_missing_or_of_another_type_leaves_the_input_pose, a_param_goal_under_a_model_scaled_to_nothing_leaves_the_input_pose, zero_weight_leaves_the_input_pose, a_chain_the_node_cannot_resolve_leaves_the_input_pose); table a_pole_puts_the_mid_on_its_world_side (replaces a_param_pole_under_a_turned_model_puts_the_mid_on_its_world_side, a_bone_pole_puts_the_mid_on_its_side); kept a_param_goal_reaches_its_world_position_under_a_turned_model, a_missing_pole_param_solves_as_no_pole, a_partial_weight_slerps_each_chain_bone_from_the_input_toward_the_solve.
+- clip.rs 41 -> 25: table events_in_holds_the_events_after_from_or_at_it_when_asked_up_to_and_at_to (replaces events_in_excludes_from_unless_asked_and_includes_to, events_in_a_single_instant_holds_its_event_only_when_from_is_included, events_in_is_empty_past_the_last_event_and_for_a_reversed_window); table set_frame_rate_snaps_float_noise_to_a_whole_rate_and_keeps_one_that_is_not_whole (replaces set_frame_rate_stores_the_rate, set_frame_rate_snaps_float_noise_to_a_whole_rate, set_frame_rate_keeps_a_rate_that_is_not_whole); table detected_frame_rate_is_the_reciprocal_of_the_middle_spacing_of_the_channel_with_the_most_keys (replaces the nine detected_frame_rate_* tests); table sample_velocity_is_the_slope_of_a_clip_one_sided_at_its_start_and_zero_without_channels (replaces the three sample_velocity_* tests); sample_additive_clamps_to_the_delta_and_is_identity_without_one_or_once_the_setting_changes (merges changing_the_additive_setting_drops_the_built_delta). DELETED frame_rate_is_none_by_default (trivia: a Default). Rest kept, encoding and delta tests included.
+- tests/animation/mirror.rs 12 -> 4: kept left_and_right_joints_are_twins_and_the_rest_are_their_own, a_short_pose_does_not_fit_the_mirror; property mirroring_keeps_the_rest_pose_puts_each_joint_at_its_twins_reflection_and_undoes_itself, over random poses of the three fixture skeletons (replaces mirroring_the_rest_pose_returns_the_rest_pose, mirroring_twice_returns_the_original_pose, each_joint_lands_at_the_reflection_of_its_twin, with_identity_rest_rotations_the_model_rotation_is_conjugated_by_the_reflection, a_yawed_spine_and_twins_whose_rests_differ_by_a_rotation_keep_their_rest_pose, a_yawed_spine_and_twins_whose_rests_differ_by_a_rotation_land_at_their_twins_reflection); table a_skeleton_that_is_not_mirror_symmetric_about_the_axis_is_refused_naming_why (replaces a_skeleton_symmetric_across_z_mirrors_across_z_and_not_x, a_left_joint_without_a_right_twin_is_missing_its_twin, twins_under_parents_that_are_not_twins_are_rejected, a_zero_axis_is_invalid). The `&[(&str, Option<u16>, JointPose)]` fixture parameter became `&[Bone]`.
+- tests/animation/graph_serialization.rs 26 -> 18: a_mixed_graph_loaded_from_its_bytes_matches_the_one_built_in_code_node_for_node (merges a_registered_custom_node_survives_a_round_trip_next_to_built_ins, a_blend_space_keeps_its_input_param_and_points, a_state_machine_keeps_trigger_payloads_blender_and_blend_times, a_graph_built_in_code_and_one_loaded_from_its_bytes_match; the `Some((param, value))` tuple became a `matches!` guard); an_unregistered_node_type_loads_as_a_placeholder_with_a_warning_and_builds_once_registered (merges an_unregistered_node_type_loads_with_a_warning_and_is_kept_on_save, a_placeholder_builds_once_its_type_is_registered); the_ik_layer_and_aim_offset_nodes_keep_every_field_and_their_inputs_through_a_round_trip (merges a_two_bone_ik_node_keeps_every_field_through_a_round_trip, a_layer_node_keeps_every_field_and_its_inputs_through_a_round_trip, an_aim_offset_node_keeps_every_field_and_its_points_through_a_round_trip); table a_stored_clip_node_whose_play_rate_param_is_missing_or_a_string_loads_with_no_param (replaces the two a_stored_clip_node_* tests; `load_clip_node` returns a LoadedNode struct instead of a tuple); a_clip_added_to_the_asset_server_makes_its_stored_events_live_with_their_handles_strong (merges a_clip_added_to_the_asset_server_makes_its_stored_events_live, a_handle_inside_a_game_event_comes_back_strong_when_its_clip_loads). Kept unchanged: every encoding fixture test (animation_clip_encoding_matches_its_fixture, animation_graph_encoding_matches_its_fixture, bone_mask_encoding_matches_its_fixture, retarget_rig_encoding_matches_its_fixture), both clip migrations, the rig migration, a_clip_handle_in_a_node_comes_back_strong, the additive and retarget node round trips, and the three made-live event tests.
+- tests/animation/plugin.rs 9 -> 8: animation_plugin_alone_provides_the_skeleton_store_and_registering_it_again_keeps_it_usable (merges animation_plugin_alone_provides_the_skeleton_store, registering_the_skeleton_asset_twice_keeps_it_usable). Rest kept.
+
+NOT VERIFIED: nothing. This change is to tests and fixtures only, so no display is needed.
+
+CONCERNS:
+- **`with_delta_against` stays (clip.rs, `#[cfg(test)] impl AnimationClip`).** A public path to a built delta does exist: tests/animation/plugin.rs loads an additive clip with its base through a temporary project, an `App` and the asset server. That path needs a content root on disk, though, and the in-crate unit tests of the additive and aim-offset nodes need in-memory clips. So I treated it as a setter that no public path reaches in a unit test. The branch reviewer should confirm that reading. The other way out is a public in-memory `DerivedInputs` constructor. That would change foundation, which is outside this task.
+- **`test-support` items are not in the Work 3 table.** Production types still carry these `#[cfg(any(test, feature = "test-support"))]` items:
+  - `AnimationPlayer::for_each_state_mut`
+  - `AnimationGraphState::{for_each_state_mut, visit_states_mut, iter_mut}`
+  - `RetargetNodeState::inner_mut`
+  - `inner_states_mut` on `AnimationNode`, `RetargetNode` and `AnimationStateMachine`
+
+  procedural-animation's tests use them through the `test-support` feature. I left them and the tests that exercise them. Whether they count as the "getters of internal state" that `docs/testing.md` forbids is a question for the owner or for task 8.
+- **Some kept node tests still read node-state fields.** In additive, aim_offset, layer and node/mod, tests read `state.clock.*`, `state.warned_*`, `state.angles`, `state.weight` and `typed(&state).warned_*`. These are `pub(crate)` fields of node states, read by in-crate tests. I left them where the outcome has no other observable form, such as warn-once flags and the eased angle. The event table still sets `state.clock.is_paused = true` for its pause row, as the original test did, because a clip node state has no public pause. I removed such reads only where an outcome showed the same thing:
+  - The not-loaded clip row now loads the clip and checks the start time fires.
+  - The play-rate rows check root motion instead of `current_time()`.
+- **The aim-weights property allows weights down to -1e-4.** proptest found a nearly collinear triple of points (a sliver triangle) that gives a weight of -2.2e-6 from rounding. The fixed tables keep their exact 1e-5 checks. If weights must never be negative at all, that is a production fix in `AimPlane::weigh`, not a test change.
+- **One merged scenario moved its setup.** In `a_skeleton_swap_drops_an_unsettled_inertializer_and_a_later_transition_inertializes_on_the_new_one`, the second half now runs after a swap made while the inertializer was unsettled. The old `a_later_transition_inertializes_on_the_swapped_skeleton` swapped after the inertializer had settled. Both reach a transition on the resized pool.
+- **The graph panic table prints panics to stderr.** `with_layer_input_panics_unless_each_closure_adds_one_input` uses `catch_unwind`, so the three expected panic messages go to stderr when run with `--nocapture`.
+- **Known issues.** `gh` is not usable in this session, so I could not read #615, #691, #692, #694 or #723. No test I wrote asserts behaviour around them, as far as the code shows. The reviewer should check against their titles.
+- **Prior state.** Before this task the crate had no proptest. Cargo.lock gains one line.
