@@ -1055,6 +1055,7 @@ dependencies = [
  "glam 0.33.12",
  "log",
  "petgraph",
+ "proptest",
  "serde",
  "uuid",
 ]
