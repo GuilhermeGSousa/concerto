@@ -142,7 +142,7 @@ impl ImportContext {
         Ok(())
     }
 
-    /// Records a file the source refers to, which an import from outside the project copies beside it.
+    /// Records a file the source refers to, which an import from outside the project copies beside it when it can be read.
     pub fn track_dependency(&mut self, path: PathBuf) {
         self.dependencies.push(DependencyEntry { path });
     }

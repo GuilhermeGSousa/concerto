@@ -108,6 +108,19 @@ fn an_external_obj_brings_its_material_library_along() {
     );
 }
 
+#[test]
+fn an_external_obj_whose_texture_is_missing_imports_and_copies_the_rest() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let imported = import_source_into(
+        &fixtures("obj").join("unread_texture.obj"),
+        "assets/unread_texture.obj",
+        project.path(),
+        &config(),
+    )
+    .expect("the import succeeds");
+    assert_eq!(imported.siblings, ["assets/unread_texture.mtl"]);
+}
+
 fn gltf_with_buffer_one_folder_up() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(dir.path().join("models")).expect("models");
