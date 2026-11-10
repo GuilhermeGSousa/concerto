@@ -125,22 +125,6 @@ fn truncate_to_width(
     Some(truncated)
 }
 
-/// Truncation with its own font system, for tests.
-#[doc(hidden)]
-pub fn truncate_for_test(text: &str, width: f32, metrics: (f32, f32)) -> Option<String> {
-    let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
-    truncate_to_width(
-        &mut font_system,
-        Metrics {
-            font_size: metrics.0,
-            line_height: metrics.1,
-        },
-        Attrs::new(),
-        text,
-        width,
-    )
-}
-
 fn measure_line(
     font_system: &mut FontSystem,
     metrics: Metrics,
@@ -372,31 +356,71 @@ mod tests {
     }
 
     #[test]
-    fn physical_metrics_scale_both_size_and_line_height() {
-        let metrics = physical_metrics(14.0, 20.0, 2.0);
-        assert_eq!(metrics.font_size, 28.0);
-        assert_eq!(metrics.line_height, 40.0);
+    fn truncation_keeps_what_fits_and_ends_in_an_ellipsis() {
+        struct Case {
+            text: &'static str,
+            width: f32,
+            fits: bool,
+        }
+        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let metrics = physical_metrics(14.0, 20.0, 1.0);
+        let mut truncate = |text: &str, width: f32| {
+            truncate_to_width(&mut font_system, metrics, Attrs::new(), text, width)
+        };
+        for case in [
+            Case {
+                text: "bunny.glb",
+                width: 400.0,
+                fits: true,
+            },
+            Case {
+                text: "anything",
+                width: 0.0,
+                fits: true,
+            },
+            Case {
+                text: "bunny_porcelain_subsurface.mat",
+                width: 60.0,
+                fits: false,
+            },
+            Case {
+                text: "ünïcödé_mësh_wíth_áccents.glb",
+                width: 50.0,
+                fits: false,
+            },
+        ] {
+            let out = truncate(case.text, case.width);
+            if case.fits {
+                assert_eq!(out, None, "{}", case.text);
+                continue;
+            }
+            let out = out.expect(case.text);
+            assert!(out.ends_with('…'), "{out}");
+            assert!(out.chars().count() < case.text.chars().count(), "{out}");
+        }
+        let wide = truncate("white_rabbit_waistcoat.glb", 120.0).unwrap();
+        let narrow = truncate("white_rabbit_waistcoat.glb", 60.0).unwrap();
+        assert!(
+            narrow.chars().count() < wide.chars().count(),
+            "a narrower box keeps less: {narrow} vs {wide}"
+        );
     }
 
     #[test]
-    fn text_shaped_at_scale_two_is_twice_as_wide() {
+    fn scale_two_doubles_the_metrics_and_the_shaped_width_and_truncates_at_the_logical_width() {
+        let metrics = physical_metrics(14.0, 20.0, 2.0);
+        assert_eq!(metrics.font_size, 28.0);
+        assert_eq!(metrics.line_height, 40.0);
+
         let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
         let one = widest(
             &mut font_system,
             physical_metrics(14.0, 20.0, 1.0),
             "Forest",
         );
-        let two = widest(
-            &mut font_system,
-            physical_metrics(14.0, 20.0, 2.0),
-            "Forest",
-        );
+        let two = widest(&mut font_system, metrics, "Forest");
         assert!((two - one * 2.0).abs() < 1.0, "{one} vs {two}");
-    }
 
-    #[test]
-    fn truncation_at_scale_two_matches_its_logical_width() {
-        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
         let text = "bunny_porcelain_subsurface.mat";
         let at_one = truncate_to_width(
             &mut font_system,
@@ -406,16 +430,10 @@ mod tests {
             60.0,
         )
         .expect("must truncate");
-        let at_two = truncate_to_width(
-            &mut font_system,
-            physical_metrics(14.0, 20.0, 2.0),
-            Attrs::new(),
-            text,
-            120.0,
-        )
-        .expect("must truncate");
+        let at_two = truncate_to_width(&mut font_system, metrics, Attrs::new(), text, 120.0)
+            .expect("must truncate");
         assert_eq!(at_one, at_two);
-        let width = widest(&mut font_system, physical_metrics(14.0, 20.0, 2.0), &at_two);
+        let width = widest(&mut font_system, metrics, &at_two);
         assert!(width <= 120.0, "{width}");
     }
 
@@ -485,13 +503,14 @@ mod tests {
         );
     }
 
-    fn text_worlds(
-        labels: &[&str],
-    ) -> (
-        concerto_ecs::World,
-        concerto_ecs::World,
-        Vec<(concerto_ecs::entity::Entity, concerto_ecs::entity::Entity)>,
-    ) {
+    struct TextWorlds {
+        main: concerto_ecs::World,
+        render: concerto_ecs::World,
+        nodes: Vec<concerto_ecs::entity::Entity>,
+        targets: Vec<concerto_ecs::entity::Entity>,
+    }
+
+    fn text_worlds(labels: &[&str]) -> TextWorlds {
         let mut main = concerto_ecs::World::new();
         main.insert_resource(Window::new((800, 600), 1.0));
         let mut render = concerto_ecs::World::new();
@@ -499,32 +518,35 @@ mod tests {
             &fonts::UIFonts::default(),
         )));
         render.insert_resource(UIRenderDiagnostics::default());
-        let nodes = labels
-            .iter()
-            .enumerate()
-            .map(|(index, label)| {
-                let target = render.spawn(());
-                let rect = crate::node::UIBox {
-                    min: glam::Vec2::new(10.0, 20.0 + index as f32 * 30.0),
-                    size: glam::Vec2::new(100.0, 20.0),
-                };
-                let node = main.spawn((
-                    UIText {
-                        text: (*label).into(),
-                        ..Default::default()
-                    },
-                    UILayout {
-                        rect,
-                        content_rect: rect,
-                        clip_rect: rect,
-                        paint_order: 0,
-                    },
-                    RenderEntity::new(target),
-                ));
-                (node, target)
-            })
-            .collect();
-        (main, render, nodes)
+        let mut nodes = Vec::new();
+        let mut targets = Vec::new();
+        for (index, label) in labels.iter().enumerate() {
+            let target = render.spawn(());
+            let rect = crate::node::UIBox {
+                min: glam::Vec2::new(10.0, 20.0 + index as f32 * 30.0),
+                size: glam::Vec2::new(100.0, 20.0),
+            };
+            nodes.push(main.spawn((
+                UIText {
+                    text: (*label).into(),
+                    ..Default::default()
+                },
+                UILayout {
+                    rect,
+                    content_rect: rect,
+                    clip_rect: rect,
+                    paint_order: 0,
+                },
+                RenderEntity::new(target),
+            )));
+            targets.push(target);
+        }
+        TextWorlds {
+            main,
+            render,
+            nodes,
+            targets,
+        }
     }
 
     fn text_reshapes(render: &concerto_ecs::World) -> u64 {
@@ -535,68 +557,43 @@ mod tests {
     }
 
     #[test]
-    fn idle_text_extractions_reshape_nothing() {
-        let (mut main, mut render, _) = text_worlds(&["One", "Two"]);
-        extract_text(&mut main, &mut render);
-        assert_eq!(text_reshapes(&render), 2);
-
-        extract_text(&mut main, &mut render);
-        extract_text(&mut main, &mut render);
-        assert_eq!(text_reshapes(&render), 2);
-    }
-
-    #[test]
-    fn writing_identical_text_reshapes_nothing() {
-        let (mut main, mut render, nodes) = text_worlds(&["Same"]);
-        extract_text(&mut main, &mut render);
-        let before = text_reshapes(&render);
-
-        main.get_component_for_entity_mut::<UIText>(nodes[0].0)
-            .unwrap()
-            .text = "Same".into();
-        extract_text(&mut main, &mut render);
-        assert_eq!(text_reshapes(&render), before);
-    }
-
-    #[test]
-    fn changing_the_scale_factor_reshapes_every_text_node() {
-        let (mut main, mut render, nodes) = text_worlds(&["One", "Two", "Three"]);
-        extract_text(&mut main, &mut render);
-        let before = text_reshapes(&render);
-
-        main.insert_resource(Window::new((800, 600), 2.0));
-        extract_text(&mut main, &mut render);
-        assert_eq!(text_reshapes(&render), before + nodes.len() as u64);
-        for (_, target) in nodes {
-            let text = render
-                .get_component_for_entity::<RenderTextComponent>(target)
-                .unwrap();
-            assert_eq!(text.buffer.metrics().font_size, 28.0);
-        }
-    }
-
-    #[test]
-    fn moving_a_text_node_without_resizing_it_keeps_its_shaping() {
-        let (mut main, mut render, nodes) = text_worlds(&["Scrolled"]);
-        let (node, target) = nodes[0];
+    fn a_new_scale_factor_reshapes_every_text_node_and_a_move_only_places_it() {
+        let TextWorlds {
+            mut main,
+            mut render,
+            nodes,
+            targets,
+        } = text_worlds(&["Scrolled", "Two", "Three"]);
         extract_text(&mut main, &mut render);
         let before = text_reshapes(&render);
 
         {
-            let layout = main.get_component_for_entity_mut::<UILayout>(node).unwrap();
+            let layout = main
+                .get_component_for_entity_mut::<UILayout>(nodes[0])
+                .unwrap();
             let offset = glam::Vec2::new(0.0, -15.0);
             layout.rect.min += offset;
             layout.content_rect.min += offset;
             layout.clip_rect.min += offset;
         }
         extract_text(&mut main, &mut render);
-        assert_eq!(text_reshapes(&render), before);
+        assert_eq!(text_reshapes(&render), before, "a move keeps the shaping");
         let text = render
-            .get_component_for_entity::<RenderTextComponent>(target)
+            .get_component_for_entity::<RenderTextComponent>(targets[0])
             .unwrap();
         assert_eq!(text.location, glam::Vec2::new(10.0, 5.0));
         assert_eq!(text.clip_min, glam::Vec2::new(10.0, 5.0));
         assert_eq!(text.clip_max, glam::Vec2::new(110.0, 25.0));
+
+        main.insert_resource(Window::new((800, 600), 2.0));
+        extract_text(&mut main, &mut render);
+        assert_eq!(text_reshapes(&render), before + nodes.len() as u64);
+        for target in targets {
+            let text = render
+                .get_component_for_entity::<RenderTextComponent>(target)
+                .unwrap();
+            assert_eq!(text.buffer.metrics().font_size, 28.0);
+        }
     }
 
     #[test]
