@@ -453,7 +453,7 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
                 );
             }
             Scanned::Refused(named) => {
-                let message = format!("{:#}", result.err().expect(case.name));
+                let message = format!("{:#}", result.expect_err(case.name));
                 for name in named {
                     assert!(message.contains(name), "{}: {message}", case.name);
                 }
