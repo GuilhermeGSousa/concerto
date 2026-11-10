@@ -234,24 +234,23 @@ mod tests {
             .push_event(event);
     }
 
+    fn key(pressed: bool, text: Option<&str>) -> WindowEvent {
+        WindowEvent::Key {
+            key: KEY,
+            pressed,
+            text: text.map(Into::into),
+        }
+    }
+
+    fn button(button: MouseButton, pressed: bool) -> WindowEvent {
+        WindowEvent::MouseButton { button, pressed }
+    }
+
     #[test]
-    fn a_pushed_press_reads_as_just_pressed_through_late_update_then_as_held() {
+    fn a_press_reads_as_just_pressed_through_late_update_then_as_held_until_released() {
         let mut app = app();
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: Some("w".into()),
-            },
-        );
-        push(
-            &mut app,
-            WindowEvent::MouseButton {
-                button: MouseButton::Left,
-                pressed: true,
-            },
-        );
+        push(&mut app, key(true, Some("w")));
+        push(&mut app, button(MouseButton::Left, true));
         app.finish_plugin_build();
 
         app.update();
@@ -268,6 +267,10 @@ mod tests {
         let input = app.get_resource::<Input>().unwrap();
         assert!(input.is_held(KEY));
         assert!(input.is_mouse_button_held(MouseButton::Left));
+
+        push(&mut app, key(false, None));
+        app.update();
+        assert!(!app.get_resource::<Input>().unwrap().is_held(KEY));
     }
 
     #[test]
@@ -305,32 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn a_release_event_releases_the_key() {
-        let mut app = app();
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: None,
-            },
-        );
-        app.finish_plugin_build();
-        app.update();
-        assert!(app.get_resource::<Input>().unwrap().is_held(KEY));
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: false,
-                text: None,
-            },
-        );
-        app.update();
-        assert!(!app.get_resource::<Input>().unwrap().is_held(KEY));
-    }
-
-    #[test]
     fn a_pushed_resize_updates_the_window() {
         let mut app = app();
         app.insert_resource(Window::new((800, 600), 1.0))
@@ -348,24 +325,14 @@ mod tests {
     }
 
     #[test]
-    fn losing_focus_releases_every_held_key_and_button() {
+    fn losing_focus_releases_every_held_key_and_button_and_gaining_it_changes_nothing() {
         let mut app = app();
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: None,
-            },
-        );
-        push(
-            &mut app,
-            WindowEvent::MouseButton {
-                button: MouseButton::Right,
-                pressed: true,
-            },
-        );
+        push(&mut app, key(true, None));
+        push(&mut app, button(MouseButton::Right, true));
         app.finish_plugin_build();
+        app.update();
+
+        push(&mut app, WindowEvent::Focused(true));
         app.update();
         let input = app.get_resource::<Input>().unwrap();
         assert!(input.is_held(KEY));
@@ -373,94 +340,9 @@ mod tests {
 
         push(&mut app, WindowEvent::Focused(false));
         app.update();
-
         let input = app.get_resource::<Input>().unwrap();
         assert!(!input.is_held(KEY));
         assert!(!input.is_mouse_button_held(MouseButton::Right));
-    }
-
-    #[test]
-    fn gaining_focus_leaves_input_alone() {
-        let mut app = app();
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: None,
-            },
-        );
-        app.finish_plugin_build();
-        app.update();
-
-        push(&mut app, WindowEvent::Focused(true));
-        app.update();
-
-        assert!(app.get_resource::<Input>().unwrap().is_held(KEY));
-    }
-
-    #[test]
-    fn a_closed_gate_drops_keys_and_buttons_but_keeps_the_cursor() {
-        let mut app = app();
-        app.get_resource_mut::<InputGate>().unwrap().open = false;
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: Some("w".into()),
-            },
-        );
-        push(
-            &mut app,
-            WindowEvent::MouseButton {
-                button: MouseButton::Left,
-                pressed: true,
-            },
-        );
-        push(
-            &mut app,
-            WindowEvent::MouseMotion {
-                delta: Vec2::new(2.0, 1.0),
-            },
-        );
-        push(
-            &mut app,
-            WindowEvent::CursorMoved {
-                position: Vec2::new(5.0, 6.0),
-            },
-        );
-        app.finish_plugin_build();
-        app.update();
-
-        let seen = app.get_resource::<Seen>().unwrap();
-        assert!(!seen.key_pressed);
-        assert!(!seen.button_pressed);
-        assert_eq!(seen.typed, "");
-        assert_eq!(seen.motion, Vec2::ZERO);
-        let input = app.get_resource::<Input>().unwrap();
-        assert!(!input.is_held(KEY));
-        assert_eq!(input.mouse_position(), Vec2::new(5.0, 6.0));
-    }
-
-    #[test]
-    fn closing_the_gate_releases_held_input_on_the_next_fold() {
-        let mut app = app();
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: None,
-            },
-        );
-        app.finish_plugin_build();
-        app.update();
-        assert!(app.get_resource::<Input>().unwrap().is_held(KEY));
-
-        app.get_resource_mut::<InputGate>().unwrap().open = false;
-        app.update();
-        assert!(!app.get_resource::<Input>().unwrap().is_held(KEY));
     }
 
     fn connect(app: &mut App) {
@@ -473,65 +355,102 @@ mod tests {
         );
     }
 
-    fn push_stick(app: &mut App, value: f32) {
+    fn push_stick(app: &mut App, id: GamepadId, value: f32) {
         push(
             app,
             WindowEvent::GamepadAxis {
-                id: PAD,
+                id,
                 axis: GamepadAxis::LeftStickX,
                 value,
             },
         );
     }
 
-    #[test]
-    fn pad_events_fold_with_the_gate_closed() {
-        let mut app = app();
-        app.get_resource_mut::<InputGate>().unwrap().open = false;
-        connect(&mut app);
+    fn push_south(app: &mut App, id: GamepadId) {
         push(
-            &mut app,
+            app,
             WindowEvent::GamepadButton {
-                id: PAD,
+                id,
                 button: GamepadButton::South,
                 value: 1.0,
             },
         );
-        push_stick(&mut app, 1.0);
-        app.finish_plugin_build();
-        app.update();
+    }
 
-        let input = app.get_resource::<Input>().unwrap();
-        let pad = input.gamepad(PAD).unwrap();
-        assert!(pad.is_held(GamepadButton::South));
-        assert_eq!(pad.stick(GamepadStick::Left), Vec2::new(1.0, 0.0));
+    fn set_gate(app: &mut App, open: bool) {
+        app.get_resource_mut::<InputGate>().unwrap().open = open;
     }
 
     #[test]
-    fn closing_the_gate_keeps_a_held_sticks_value() {
+    fn a_closed_gate_releases_and_drops_keys_and_buttons_but_keeps_the_cursor_and_pads() {
         let mut app = app();
         connect(&mut app);
-        push_stick(&mut app, 1.0);
+        push_stick(&mut app, PAD, 1.0);
+        push(&mut app, key(true, None));
         app.finish_plugin_build();
         app.update();
+        assert!(app.get_resource::<Input>().unwrap().is_held(KEY));
 
-        app.get_resource_mut::<InputGate>().unwrap().open = false;
+        set_gate(&mut app, false);
         app.update();
-
         let input = app.get_resource::<Input>().unwrap();
+        assert!(!input.is_held(KEY), "closing the gate releases held input");
         assert_eq!(
             input.gamepad(PAD).unwrap().stick(GamepadStick::Left),
-            Vec2::new(1.0, 0.0)
+            Vec2::new(1.0, 0.0),
+            "closing the gate keeps a held stick's value"
         );
+
+        push(&mut app, key(true, Some("w")));
+        push(&mut app, button(MouseButton::Left, true));
+        push(
+            &mut app,
+            WindowEvent::MouseMotion {
+                delta: Vec2::new(2.0, 1.0),
+            },
+        );
+        push(
+            &mut app,
+            WindowEvent::CursorMoved {
+                position: Vec2::new(5.0, 6.0),
+            },
+        );
+        push_south(&mut app, PAD);
+        app.update();
+        let seen = app.get_resource::<Seen>().unwrap();
+        assert!(!seen.key_pressed);
+        assert!(!seen.button_pressed);
+        assert_eq!(seen.typed, "");
+        assert_eq!(seen.motion, Vec2::ZERO);
+        let input = app.get_resource::<Input>().unwrap();
+        assert!(!input.is_held(KEY));
+        assert_eq!(input.mouse_position(), Vec2::new(5.0, 6.0));
+        assert!(input.gamepad(PAD).unwrap().is_held(GamepadButton::South));
+
+        set_gate(&mut app, true);
+        push(&mut app, key(true, None));
+        app.update();
+        assert!(app.get_resource::<Input>().unwrap().is_held(KEY));
     }
 
     #[test]
-    fn connecting_and_disconnecting_write_one_connection_event_each() {
+    fn a_pad_connects_and_disconnects_once_and_events_for_a_pad_not_connected_are_ignored() {
+        let other = GamepadId::new(1);
         let mut app = app();
         connect(&mut app);
         connect(&mut app);
+        push_south(&mut app, other);
+        push_stick(&mut app, other, 1.0);
         app.finish_plugin_build();
         app.update();
+
+        let input = app.get_resource::<Input>().unwrap();
+        assert!(input.gamepad(other).is_none());
+        assert_eq!(input.gamepads().count(), 1);
+        let pad = input.gamepad(PAD).unwrap();
+        assert!(!pad.is_held(GamepadButton::South));
+        assert_eq!(pad.stick(GamepadStick::Left), Vec2::ZERO);
+
         push(&mut app, WindowEvent::GamepadDisconnected { id: PAD });
         push(&mut app, WindowEvent::GamepadDisconnected { id: PAD });
         app.update();
@@ -547,57 +466,5 @@ mod tests {
             ]
         );
         assert!(app.get_resource::<Input>().unwrap().gamepad(PAD).is_none());
-    }
-
-    #[test]
-    fn events_for_a_pad_that_is_not_connected_are_ignored() {
-        let other = GamepadId::new(1);
-        let mut app = app();
-        connect(&mut app);
-        push(
-            &mut app,
-            WindowEvent::GamepadButton {
-                id: other,
-                button: GamepadButton::South,
-                value: 1.0,
-            },
-        );
-        push(
-            &mut app,
-            WindowEvent::GamepadAxis {
-                id: other,
-                axis: GamepadAxis::LeftStickX,
-                value: 1.0,
-            },
-        );
-        app.finish_plugin_build();
-        app.update();
-
-        let input = app.get_resource::<Input>().unwrap();
-        assert!(input.gamepad(other).is_none());
-        assert_eq!(input.gamepads().count(), 1);
-        let pad = input.gamepad(PAD).unwrap();
-        assert!(!pad.is_held(GamepadButton::South));
-        assert_eq!(pad.stick(GamepadStick::Left), Vec2::ZERO);
-        assert!(app.get_resource::<Seen>().unwrap().connections.len() == 1);
-    }
-
-    #[test]
-    fn reopening_the_gate_folds_input_again() {
-        let mut app = app();
-        app.get_resource_mut::<InputGate>().unwrap().open = false;
-        app.finish_plugin_build();
-        app.update();
-        app.get_resource_mut::<InputGate>().unwrap().open = true;
-        push(
-            &mut app,
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: None,
-            },
-        );
-        app.update();
-        assert!(app.get_resource::<Input>().unwrap().is_held(KEY));
     }
 }
