@@ -8,7 +8,9 @@ use concerto_ecs::{
     events::{event_channel::EventChannel, event_reader::EventReader},
     resource::{ResMut, Resource},
 };
+use concerto_window::define_action;
 use concerto_window::events::WindowEvent;
+use concerto_window::input::actions::{ActionFired, ActionMap};
 use concerto_window::input::{
     GamepadButton, GamepadId, JoinSettings, KeyCode, PhysicalKey, PlayerDevice, PlayerEvent,
     PlayerIndex, Players,
@@ -26,6 +28,13 @@ struct Seen {
     events: Vec<PlayerEvent>,
 }
 
+define_action!(Jump);
+
+#[derive(Resource, Default)]
+struct Fired {
+    actions: Vec<ActionFired>,
+}
+
 #[derive(Resource, Default)]
 struct PendingAssign {
     gamepad: Option<GamepadId>,
@@ -33,6 +42,10 @@ struct PendingAssign {
 
 fn observe(mut events: EventReader<PlayerEvent>, mut seen: ResMut<Seen>) {
     seen.events.extend(events.read().copied());
+}
+
+fn observe_fired(mut fired: EventReader<ActionFired>, mut seen: ResMut<Fired>) {
+    seen.actions.extend(fired.read().copied());
 }
 
 fn assign_pending(mut pending: ResMut<PendingAssign>, mut players: ResMut<Players>) {
@@ -49,8 +62,10 @@ fn app(settings: JoinSettings) -> App {
         .insert_resource(Players::new(settings))
         .insert_resource(Seen::default())
         .insert_resource(PendingAssign::default())
+        .insert_resource(Fired::default())
         .add_system(Update, assign_pending)
-        .add_system(LateUpdate, observe);
+        .add_system(LateUpdate, observe)
+        .add_system(LateUpdate, observe_fired);
     app.finish_plugin_build();
     app
 }
@@ -432,4 +447,54 @@ fn a_waiting_player_above_a_lowered_max_players_still_gets_their_pad_back() {
             gamepad: PAD_A
         }]
     );
+}
+
+#[test]
+fn the_press_that_joins_fires_its_action_for_the_new_player() {
+    let mut app = app(joining());
+    app.get_resource_mut::<ActionMap>()
+        .unwrap()
+        .bind_global(Jump, GamepadButton::South);
+    connect(&mut app, PAD_A);
+    app.update();
+
+    tap(&mut app, PAD_A, GamepadButton::South);
+    app.update();
+
+    let fired = std::mem::take(&mut app.get_resource_mut::<Fired>().unwrap().actions);
+    assert_eq!(
+        fired,
+        vec![ActionFired {
+            gamepad: Some(PAD_A),
+            player: Some(P0),
+            ..ActionFired::new(Jump)
+        }]
+    );
+}
+
+#[test]
+fn a_join_press_skips_a_waiting_place_above_a_lowered_max_players() {
+    let mut app = app(joining());
+    connect(&mut app, PAD_A);
+    connect(&mut app, PAD_B);
+    app.get_resource_mut::<Players>()
+        .unwrap()
+        .assign(P1, PlayerDevice::Gamepad(PAD_A))
+        .unwrap();
+    app.update();
+    disconnect(&mut app, PAD_A);
+    app.update();
+    app.get_resource_mut::<Players>()
+        .unwrap()
+        .set_settings(joining().with_max_players(1));
+    events(&mut app);
+
+    tap(&mut app, PAD_B, GamepadButton::South);
+
+    assert!(players(&app).is_waiting(P1));
+    assert_eq!(
+        players(&app).player_of(PlayerDevice::Gamepad(PAD_B)),
+        Some(P0)
+    );
+    assert_eq!(events(&mut app), vec![joined(P0, PAD_B)]);
 }

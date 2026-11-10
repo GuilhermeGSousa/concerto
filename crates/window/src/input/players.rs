@@ -304,9 +304,13 @@ impl Players {
     }
 
     fn join(&mut self, device: PlayerDevice) {
-        if let Some(player) = self.lowest_empty() {
-            self.assign(player, device)
-                .expect("an empty place below max_players takes a free device");
+        let place = self
+            .waiting()
+            .find(|player| player.index() < self.settings.max_players)
+            .filter(|_| matches!(device, PlayerDevice::Gamepad(_)))
+            .or_else(|| self.lowest_empty());
+        if let Some(player) = place {
+            let _ = self.assign(player, device);
         }
     }
 
@@ -361,11 +365,7 @@ fn join_on_press(input: &Input, players: &mut Players) {
         .map(|pad| pad.id())
         .collect();
     for gamepad in pressed {
-        let waiting = players.waiting().next();
-        match waiting {
-            Some(player) => players.restore_gamepad(player, gamepad),
-            None => players.join(PlayerDevice::Gamepad(gamepad)),
-        }
+        players.join(PlayerDevice::Gamepad(gamepad));
     }
     let keyboard_joins = players.settings.keyboard_mouse_joins
         && players.player_of(PlayerDevice::KeyboardMouse).is_none()

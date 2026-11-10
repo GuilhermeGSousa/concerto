@@ -212,12 +212,14 @@ Space join the keyboard too. A game's own assignment screen calls
 `players.assign(index, device)` and `unassign` instead. When a player's pad
 disconnects they keep their index and `players.waiting()` lists them, so the
 game can pause; the same pad reconnecting gives it back, and with
-`join_on_press` another pad pressing a join button can take the place.
+`join_on_press` another pad pressing a join button can take the place, as
+long as it is below `max_players`.
 `PlayerEvent` says when a player joins, leaves, loses or regains a pad.
 `actions.player(index, &input, &players)` reads one player's actions: only
 that player's devices count, `mouse_delta()` is zero for anyone without the
 mouse, and `push_context_for(index, context)` gives that player a context the
-other doesn't share. `ActionFired` carries the player whose device fired it.
+other doesn't share. Context stacks are kept by index, so clear one with
+`clear_contexts_for` when `PlayerEvent::Left` says its player left. `ActionFired` carries the player whose device fired it.
 
 ```rust
 fn walk_each(
