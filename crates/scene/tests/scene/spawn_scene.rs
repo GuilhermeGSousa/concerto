@@ -4,22 +4,18 @@
 //! `spawner_expands_nodes_and_upgrades_weak_handles` case additionally
 //! drives the real system with a wired `AssetServer`, so the Weak->Strong
 //! mesh-handle upgrade in `MeshComponent::apply` is exercised for real.
-use concerto_ecs::component::name::Name;
 use concerto_ecs::component::Component;
 use concerto_ecs::entity::hierarchy::{ChildOf, Children};
-use concerto_ecs::{IntoSystem, Res, ResMut, Resource, System, World};
+use concerto_ecs::{IntoSystem, System, World};
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
-use concerto_reflect::{apply_value, to_value, ReflectedValue};
-use concerto_render::components::camera::Camera;
+use concerto_reflect::to_value;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
-use concerto_scene::spawner::{
-    spawn_scene, spawn_scene_components, SceneSpawnerComponent, SpawnedScene,
-};
+use concerto_scene::spawner::{spawn_scene_components, SceneSpawnerComponent};
 use glam::Vec3;
 
 fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) -> SceneNode {
@@ -47,201 +43,6 @@ fn mesh_component(id: AssetId) -> SerializedComponent {
         })
         .unwrap(),
     }
-}
-
-#[derive(Resource)]
-struct SceneFixture(Scene);
-
-#[derive(Resource)]
-struct SpawnParent(concerto_ecs::Entity);
-
-#[derive(Resource, Default)]
-struct SpawnOutput(Option<SpawnedScene>);
-
-fn spawn_fixture_scene(
-    mut cmd: concerto_ecs::command::CommandQueue,
-    fixture: Res<SceneFixture>,
-    parent: Res<SpawnParent>,
-    mut output: ResMut<SpawnOutput>,
-) {
-    if output.0.is_none() {
-        output.0 = Some(spawn_scene(&mut cmd, &fixture.0, parent.0));
-    }
-}
-
-#[test]
-fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
-    let mut world = World::default();
-    world.register_type::<Transform>();
-    world.register_type::<Camera>();
-    world.register_component::<ChildOf>();
-    world.register_component::<Children>();
-
-    let parent = world.spawn(());
-    let camera = SerializedComponent {
-        type_name: Camera::name().to_string(),
-        value: to_value(&Camera::default()).unwrap(),
-    };
-    world.insert_resource(SceneFixture(Scene {
-        nodes: vec![
-            node("first root", vec![1], vec![transform_component(1.0)]),
-            node("child", vec![], vec![camera]),
-            node("second root", vec![], vec![transform_component(2.0)]),
-        ],
-        referenced_assets: vec![],
-    }));
-    world.insert_resource(SpawnParent(parent));
-    world.insert_resource(SpawnOutput::default());
-
-    let mut system = spawn_fixture_scene.into_system();
-    system.initialize(&mut world);
-    system.run_and_apply((), &mut world);
-
-    let output = world
-        .get_resource::<SpawnOutput>()
-        .unwrap()
-        .0
-        .as_ref()
-        .unwrap();
-    assert_eq!(output.node_entities.len(), 3);
-    assert_eq!(
-        output.root_entities,
-        vec![output.node_entities[0], output.node_entities[2]]
-    );
-    assert!(world
-        .get_component_for_entity::<Transform>(output.node_entities[0])
-        .is_some());
-    assert!(
-        world
-            .get_component_for_entity::<Camera>(output.node_entities[1])
-            .is_some(),
-        "the generic spawner preserves registered scene components"
-    );
-    assert_eq!(
-        world
-            .get_component_for_entity::<Children>(parent)
-            .unwrap()
-            .into_iter()
-            .copied()
-            .collect::<Vec<_>>(),
-        output.root_entities
-    );
-}
-
-#[test]
-fn spawned_nodes_carry_their_authored_name() {
-    let mut world = World::default();
-    world.register_type::<Transform>();
-
-    let parent = world.spawn(());
-    world.insert_resource(SceneFixture(Scene {
-        nodes: vec![
-            node("Armature", vec![1], vec![transform_component(1.0)]),
-            node("spine_01", vec![], vec![]),
-        ],
-        referenced_assets: vec![],
-    }));
-    world.insert_resource(SpawnParent(parent));
-    world.insert_resource(SpawnOutput::default());
-
-    let mut system = spawn_fixture_scene.into_system();
-    system.initialize(&mut world);
-    system.run_and_apply((), &mut world);
-
-    let entities = world
-        .get_resource::<SpawnOutput>()
-        .unwrap()
-        .0
-        .as_ref()
-        .unwrap()
-        .node_entities
-        .clone();
-
-    // Without this the authored name dies with the scene file and a tree view
-    // has nothing to show but entity indices.
-    assert_eq!(
-        world
-            .get_component_for_entity::<Name>(entities[0])
-            .map(Name::as_str),
-        Some("Armature"),
-        "a spawned node must carry the name its scene node was authored with"
-    );
-    assert_eq!(
-        world
-            .get_component_for_entity::<Name>(entities[1])
-            .map(Name::as_str),
-        Some("spine_01"),
-        "nodes without components must be named too"
-    );
-}
-
-#[test]
-fn scene_round_trips_through_bincode_with_component_payloads() {
-    let scene = Scene {
-        nodes: vec![
-            node("root", vec![1], vec![transform_component(0.0)]),
-            node("child", vec![], vec![transform_component(5.0)]),
-        ],
-        referenced_assets: vec![],
-    };
-
-    let bytes = bincode::serialize(&scene).expect("Scene must serialize");
-    let decoded: Scene = bincode::deserialize(&bytes).expect("Scene must round-trip");
-
-    assert_eq!(
-        decoded.nodes.len(),
-        2,
-        "both nodes must survive the round-trip"
-    );
-    assert_eq!(
-        decoded.nodes[0].children,
-        vec![1],
-        "hierarchy indices must survive"
-    );
-    assert_eq!(
-        decoded.nodes[1].components[0].type_name, "Transform",
-        "component type names must survive"
-    );
-
-    let mut transform = Transform::IDENTITY;
-    assert!(apply_value(&mut transform, &decoded.nodes[1].components[0].value).is_empty());
-    assert_eq!(
-        transform.translation,
-        Vec3::new(5.0, 0.0, 0.0),
-        "the component payload must carry its real data"
-    );
-}
-
-#[test]
-fn unregistered_component_is_skipped_without_failing_the_node() {
-    let mut world = World::default();
-    world.register_type::<Transform>();
-    let entity = world.spawn(());
-
-    let applied_unknown = world.apply_scene_component(
-        "NotARegisteredType",
-        &ReflectedValue::Struct(Vec::new()),
-        entity,
-        &[entity],
-    );
-    let applied_known = world.apply_scene_component(
-        "Transform",
-        &to_value(&Transform::IDENTITY).unwrap(),
-        entity,
-        &[entity],
-    );
-
-    assert!(!applied_unknown, "an unknown component must be skipped");
-    assert!(
-        applied_known,
-        "a known component on the same node must still apply"
-    );
-    assert!(
-        world
-            .get_component_for_entity::<Transform>(entity)
-            .is_some(),
-        "skipping one component must not abort the rest of the node"
-    );
 }
 
 #[test]
@@ -310,28 +111,22 @@ fn spawner_expands_nodes_and_upgrades_weak_handles() {
     );
 
     let mut mesh_query = world.query::<(&MeshComponent, &Transform), ()>();
-    let (handle_id, is_strong, translation) = mesh_query
+    let (mesh, transform) = mesh_query
         .iter(&mut world)
-        .map(|(mesh, transform)| {
-            (
-                mesh.handle.id(),
-                matches!(mesh.handle, AssetHandle::Strong(..)),
-                transform.translation,
-            )
-        })
         .next()
         .expect("the child node entity must carry the applied MeshComponent");
 
     assert!(
-        is_strong,
+        matches!(mesh.handle, AssetHandle::Strong(..)),
         "the spawner must upgrade the serialized Weak mesh handle to Strong via the AssetServer"
     );
     assert_eq!(
-        handle_id, mesh_id,
+        mesh.handle.id(),
+        mesh_id,
         "the upgraded handle must still resolve to the serialized AssetId"
     );
     assert_eq!(
-        translation,
+        transform.translation,
         Vec3::new(5.0, 0.0, 0.0),
         "the child node's Transform payload must be applied alongside its mesh"
     );

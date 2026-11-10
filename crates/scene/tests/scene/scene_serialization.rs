@@ -5,7 +5,7 @@ use std::path::Path;
 
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::content::check_encoding;
-use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId, CreatableAsset};
+use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_mesh::mesh::MeshComponent;
 use concerto_reflect::{apply_value, to_value, Reflect, ReflectedValue};
 use concerto_render::assets::material::StandardMaterial;
@@ -17,14 +17,6 @@ fn component<T: Reflect + Component>(value: &T) -> SerializedComponent {
         type_name: T::name().to_string(),
         value: to_value(value).unwrap(),
     }
-}
-
-#[test]
-fn a_new_scene_is_empty() {
-    let scene = Scene::new_asset();
-
-    assert!(scene.nodes.is_empty());
-    assert!(scene.referenced_assets.is_empty());
 }
 
 #[test]

@@ -53,19 +53,34 @@ fn decode<T: Reflect + Default>(component: &SerializedComponent) -> T {
     value
 }
 
-fn comparable(scene: &Scene) -> Vec<(String, Vec<usize>, Vec<(String, ReflectedValue)>)> {
+#[derive(Debug, PartialEq)]
+struct Stored {
+    type_name: String,
+    value: ReflectedValue,
+}
+
+#[derive(Debug, PartialEq)]
+struct Comparable {
+    name: String,
+    children: Vec<usize>,
+    components: Vec<Stored>,
+}
+
+fn comparable(scene: &Scene) -> Vec<Comparable> {
     scene
         .nodes
         .iter()
-        .map(|node| {
-            (
-                node.name.clone(),
-                node.children.clone(),
-                node.components
-                    .iter()
-                    .map(|component| (component.type_name.clone(), component.value.clone()))
-                    .collect(),
-            )
+        .map(|node| Comparable {
+            name: node.name.clone(),
+            children: node.children.clone(),
+            components: node
+                .components
+                .iter()
+                .map(|component| Stored {
+                    type_name: component.type_name.clone(),
+                    value: component.value.clone(),
+                })
+                .collect(),
         })
         .collect()
 }
@@ -84,28 +99,6 @@ fn spawn(world: &mut World, scene: Scene) -> Entity {
     system.initialize(world);
     system.run_and_apply((), world);
     root
-}
-
-#[test]
-fn a_spawned_scene_captures_back_to_what_was_spawned() {
-    let mut world = world();
-    let mut components = vec![serialized(&Camera::default()), serialized(&transform(3.0))];
-    components.sort_by(|a, b| a.type_name.cmp(&b.type_name));
-    let scene = Scene {
-        nodes: vec![
-            node("first root", vec![1, 2], vec![serialized(&transform(1.0))]),
-            node("child", vec![], components),
-            node("sibling", vec![], vec![]),
-            node("second root", vec![], vec![serialized(&transform(2.0))]),
-        ],
-        referenced_assets: vec![],
-    };
-    let root = spawn(&mut world, scene.clone());
-
-    let captured = capture_scene(&world, root).unwrap();
-
-    assert_eq!(comparable(&captured), comparable(&scene));
-    assert!(captured.referenced_assets.is_empty());
 }
 
 #[test]
@@ -223,7 +216,7 @@ fn skinned(world: &mut World, parent: Entity, bones_inside: bool) -> Entity {
 }
 
 #[test]
-fn a_subtree_capture_starts_at_the_entity_and_remaps_inner_references() {
+fn a_subtree_capture_starts_at_the_entity_remaps_inner_references_and_refuses_outer_ones() {
     let mut world = world();
     let root = world.spawn(());
     let sibling = world.spawn(Name::new("sibling"));
@@ -241,23 +234,19 @@ fn a_subtree_capture_starts_at_the_entity_and_remaps_inner_references() {
     assert_eq!(captured.nodes[0].children, [1, 2]);
     let skeleton: SkeletonComponent = decode(&captured.nodes[1].components[0]);
     assert_eq!(skeleton.bones, [SceneEntityRef::Index(2)]);
+
+    let outside = skinned(&mut world, root, false);
+    assert!(capture_subtree(&world, outside).is_err());
 }
 
 #[test]
-fn a_subtree_referring_outside_itself_cannot_be_captured() {
-    let mut world = world();
-    let root = world.spawn(());
-    let group = skinned(&mut world, root, false);
-
-    assert!(capture_subtree(&world, group).is_err());
-}
-
-#[test]
-fn spawning_through_the_world_matches_the_queued_spawner() {
+fn a_scene_spawned_by_command_or_in_the_world_captures_back_to_what_was_spawned() {
+    let mut components = vec![serialized(&Camera::default()), serialized(&transform(3.0))];
+    components.sort_by(|a, b| a.type_name.cmp(&b.type_name));
     let scene = Scene {
         nodes: vec![
             node("first root", vec![1, 2], vec![serialized(&transform(1.0))]),
-            node("child", vec![], vec![serialized(&Camera::default())]),
+            node("child", vec![], components),
             node("sibling", vec![], vec![]),
             node("second root", vec![], vec![serialized(&transform(2.0))]),
         ],
@@ -274,12 +263,9 @@ fn spawning_through_the_world_matches_the_queued_spawner() {
         spawned.root_entities,
         [spawned.node_entities[0], spawned.node_entities[3]]
     );
-    assert_eq!(
-        comparable(&capture_scene(&world, direct).unwrap()),
-        comparable(&capture_scene(&world, queued).unwrap())
-    );
-    assert_eq!(
-        comparable(&capture_scene(&world, direct).unwrap()),
-        comparable(&scene)
-    );
+    for root in [queued, direct] {
+        let captured = capture_scene(&world, root).unwrap();
+        assert_eq!(comparable(&captured), comparable(&scene));
+        assert!(captured.referenced_assets.is_empty());
+    }
 }

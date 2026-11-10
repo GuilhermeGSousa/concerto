@@ -1515,6 +1515,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "concerto-reflect",
+ "proptest",
  "serde",
  "serde_json",
 ]
