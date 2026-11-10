@@ -96,7 +96,12 @@ fn read_changes(
     seen.0.push(values.iter().count());
 }
 
-fn ordering_case<E: SystemExecutor + 'static>(writer_first: bool) -> (Vec<bool>, Vec<usize>) {
+struct Observed {
+    resource_changed: Vec<bool>,
+    components_changed: Vec<usize>,
+}
+
+fn ordering_case<E: SystemExecutor + 'static>(writer_first: bool) -> Observed {
     let mut world = World::new();
     world.spawn(Value(0));
     world.insert_resource(Level::default());
@@ -123,15 +128,18 @@ fn ordering_case<E: SystemExecutor + 'static>(writer_first: bool) -> (Vec<bool>,
         schedule.run(&mut world);
         world.tick();
     }
-    (
-        world.remove_resource::<Flags>().unwrap().0,
-        world.remove_resource::<Seen>().unwrap().0,
-    )
+    Observed {
+        resource_changed: world.remove_resource::<Flags>().unwrap().0,
+        components_changed: world.remove_resource::<Seen>().unwrap().0,
+    }
 }
 
 fn assert_each_order_sees_the_write_once<E: SystemExecutor + 'static>() {
     for writer_first in [true, false] {
-        let (flags, seen) = ordering_case::<E>(writer_first);
+        let Observed {
+            resource_changed: flags,
+            components_changed: seen,
+        } = ordering_case::<E>(writer_first);
         assert_eq!(
             flags.iter().filter(|changed| **changed).count(),
             1,
