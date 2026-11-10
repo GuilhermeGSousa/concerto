@@ -310,7 +310,7 @@ mod tests {
     use glam::Vec3;
 
     use super::*;
-    use crate::{blackboard::AnimationBlackboard, pose::JointPose, test_walks::Walks};
+    use crate::{blackboard::AnimationBlackboard, pose::JointPose, testing::Walks};
 
     #[derive(Resource)]
     struct Step(u32);

@@ -21,7 +21,7 @@ pub use target::{animate_targets, update_animation_players};
 pub use transition::TransitionBlender;
 
 #[cfg(test)]
-mod test_walks;
+mod testing;
 
 #[cfg(test)]
 mod tests {
@@ -36,7 +36,7 @@ mod tests {
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use crate::evaluation::RootBone;
     use crate::event::AnimationEvent;
-    use crate::graph::{AnimationGraph, made_live};
+    use crate::graph::AnimationGraph;
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
         AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
@@ -45,7 +45,7 @@ mod tests {
         AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
     };
     use crate::pose::{FiredEvent, FramePool, JointPose, RootMotion};
-    use crate::test_walks::Walks;
+    use crate::testing::{Walks, made_live};
     use crate::transition::TransitionBlender;
 
     fn unit_duration_clip() -> AnimationClip {

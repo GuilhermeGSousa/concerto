@@ -614,7 +614,7 @@ mod tests {
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
             apply_additive,
         },
-        test_walks::Walks,
+        testing::Walks,
     };
 
     fn weigh(points: &[Vec2], sample: Vec2) -> Vec<f32> {

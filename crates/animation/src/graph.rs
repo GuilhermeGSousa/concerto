@@ -745,28 +745,20 @@ impl AnimationGraphStates {
 }
 
 #[cfg(test)]
-pub(crate) fn made_live(mut graph: AnimationGraph) -> AnimationGraph {
-    let mut registry = TypeRegistry::default();
-    crate::plugin::register_animation_types(&mut registry);
-    graph.make_live(&registry, None).unwrap();
-    graph
-}
-
-#[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_mesh::Skeleton;
     use glam::Mat4;
     use uuid::Uuid;
 
-    use super::{AnimationGraph, AnimationGraphState, made_live};
+    use super::{AnimationGraph, AnimationGraphState};
     use crate::{
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         mask::{BoneMask, BoneMaskBranch},
         node::{AnimationClipNode, BlendNode, LayerNode, LayerSpace},
         pose::{FramePool, JointPose},
-        test_walks::Walks,
+        testing::{Walks, made_live},
     };
 
     const HIP: Uuid = Uuid::from_u128(1);

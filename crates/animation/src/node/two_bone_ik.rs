@@ -312,7 +312,7 @@ mod tests {
         evaluation::AnimationGraphContext,
         node::AnimationNode,
         pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, Pose, RootMotion},
-        test_walks::Walks,
+        testing::Walks,
     };
 
     const UPPER: usize = 1;

@@ -6,6 +6,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
+use concerto_reflect::TypeRegistry;
 use glam::Affine3A;
 
 use crate::{
@@ -212,4 +213,11 @@ fn walk<K: 'static, R>(
         inputs: &inputs,
     };
     f(&context)
+}
+
+pub(crate) fn made_live(mut graph: AnimationGraph) -> AnimationGraph {
+    let mut registry = TypeRegistry::default();
+    crate::plugin::register_animation_types(&mut registry);
+    graph.make_live(&registry, None).unwrap();
+    graph
 }

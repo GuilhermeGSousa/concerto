@@ -257,7 +257,7 @@ mod tests {
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
         },
-        test_walks::Walks,
+        testing::Walks,
     };
 
     const NAMES: [&str; 10] = [

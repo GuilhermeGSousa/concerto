@@ -513,7 +513,7 @@ mod tests {
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
         },
-        test_walks::Walks,
+        testing::Walks,
     };
 
     const ROOT: Uuid = Uuid::from_u128(1);

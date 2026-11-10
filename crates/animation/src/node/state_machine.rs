@@ -489,12 +489,12 @@ mod tests {
     use crate::{
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
-        graph::{AnimationGraph, GraphId, made_live},
+        graph::{AnimationGraph, GraphId},
         node::{AnimationNode, ErasedAnimationNode, ReflectAnimationNode, register_node_inputs},
         player::AnimationPlayer,
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
-        test_walks::Walks,
+        testing::{Walks, made_live},
     };
 
     #[derive(Default, Reflect)]

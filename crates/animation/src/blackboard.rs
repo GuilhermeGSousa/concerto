@@ -44,7 +44,7 @@ mod tests {
     use concerto_reflect::Reflect;
 
     use super::AnimationBlackboard;
-    use crate::{evaluation::AnimationGraphContext, test_walks::Walks};
+    use crate::{evaluation::AnimationGraphContext, testing::Walks};
 
     #[derive(Debug, PartialEq, Reflect)]
     struct Stance {

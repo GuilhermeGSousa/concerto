@@ -1517,7 +1517,7 @@ mod tests {
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
-        graph::{AnimationGraph, made_live},
+        graph::AnimationGraph,
         ik::{TwoBoneChain, solve_two_bone},
         node::{
             AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
@@ -1526,7 +1526,7 @@ mod tests {
         player::AnimationPlayer,
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
-        test_walks::Walks,
+        testing::{Walks, made_live},
     };
 
     const NAMES: [&str; 14] = [

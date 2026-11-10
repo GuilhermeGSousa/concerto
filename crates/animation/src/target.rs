@@ -166,7 +166,7 @@ mod tests {
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::AnimationGraphContext,
         event::{AnimationEvent, AnimationSignal},
-        graph::{AnimationGraph, AnimationNodeIndex, made_live},
+        graph::{AnimationGraph, AnimationNodeIndex},
         node::{
             AnimationClipNode, AnimationNode, BlendNode, IkGoal, IkTarget, ReflectAnimationNode,
             TwoBoneIkNode, register_node_inputs, state_machine::AnimationStateMachine,
@@ -175,7 +175,7 @@ mod tests {
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, RootMotion},
         root::AnimationRootBone,
-        test_walks::Walks,
+        testing::{Walks, made_live},
     };
 
     #[test]

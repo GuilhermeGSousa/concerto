@@ -323,14 +323,14 @@ mod tests {
         blackboard::AnimationBlackboard,
         clip::AnimationClip,
         evaluation::AnimationGraphContext,
-        graph::{AnimationGraph, made_live},
+        graph::AnimationGraph,
         node::{
             AnimationClipNode, AnimationNode, BlendNode, ReflectAnimationNode, ResultNode,
             register_node_inputs,
         },
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
-        test_walks::Walks,
+        testing::{Walks, made_live},
     };
 
     #[derive(Default, Reflect)]
