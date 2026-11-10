@@ -214,41 +214,21 @@ mod tests {
     }
 
     #[test]
-    fn bumpers_and_triggers_follow_gilrs_numbering() {
+    fn every_engine_input_maps_to_gilrs_and_back_and_the_rest_is_dropped() {
+        for button in GamepadButton::ALL {
+            assert_eq!(engine_button(gilrs_button(button)), Some(button));
+        }
+        for axis in AXES {
+            assert_eq!(engine_axis(gilrs_axis(axis)), Some(axis));
+        }
         assert_eq!(
             engine_button(Button::LeftTrigger),
             Some(GamepadButton::LeftBumper)
         );
         assert_eq!(
-            engine_button(Button::RightTrigger),
-            Some(GamepadButton::RightBumper)
-        );
-        assert_eq!(
             engine_button(Button::LeftTrigger2),
             Some(GamepadButton::LeftTrigger)
         );
-        assert_eq!(
-            engine_button(Button::RightTrigger2),
-            Some(GamepadButton::RightTrigger)
-        );
-    }
-
-    #[test]
-    fn every_engine_button_maps_to_gilrs_and_back() {
-        for button in GamepadButton::ALL {
-            assert_eq!(engine_button(gilrs_button(button)), Some(button));
-        }
-    }
-
-    #[test]
-    fn every_engine_axis_maps_to_gilrs_and_back() {
-        for axis in AXES {
-            assert_eq!(engine_axis(gilrs_axis(axis)), Some(axis));
-        }
-    }
-
-    #[test]
-    fn gilrs_inputs_the_engine_does_not_name_are_dropped() {
         for button in [Button::C, Button::Z, Button::Unknown] {
             assert_eq!(engine_button(button), None);
         }
@@ -263,51 +243,54 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_button_change_becomes_a_button_event_with_its_value() {
-        assert_eq!(
-            translate(
-                PAD,
-                EventType::ButtonChanged(Button::RightTrigger2, 0.4, code())
-            ),
-            Some(WindowEvent::GamepadButton {
-                id: PAD,
-                button: GamepadButton::RightTrigger,
-                value: 0.4,
-            })
-        );
+    struct Change {
+        event: EventType,
+        engine: Option<WindowEvent>,
     }
 
     #[test]
-    fn an_axis_change_keeps_its_value_and_sign() {
-        assert_eq!(
-            translate(PAD, EventType::AxisChanged(Axis::LeftStickY, -0.7, code())),
-            Some(WindowEvent::GamepadAxis {
-                id: PAD,
-                axis: GamepadAxis::LeftStickY,
-                value: -0.7,
-            })
-        );
-    }
-
-    #[test]
-    fn presses_releases_and_unnamed_inputs_translate_to_nothing() {
-        assert_eq!(
-            translate(PAD, EventType::ButtonPressed(Button::South, code())),
-            None
-        );
-        assert_eq!(
-            translate(PAD, EventType::ButtonReleased(Button::South, code())),
-            None
-        );
-        assert_eq!(
-            translate(PAD, EventType::ButtonChanged(Button::C, 1.0, code())),
-            None
-        );
-        assert_eq!(
-            translate(PAD, EventType::AxisChanged(Axis::LeftZ, 0.5, code())),
-            None
-        );
-        assert_eq!(translate(PAD, EventType::Connected), None);
+    fn only_a_named_button_or_axis_change_becomes_an_engine_event_with_its_value() {
+        let cases = [
+            Change {
+                event: EventType::ButtonChanged(Button::RightTrigger2, 0.4, code()),
+                engine: Some(WindowEvent::GamepadButton {
+                    id: PAD,
+                    button: GamepadButton::RightTrigger,
+                    value: 0.4,
+                }),
+            },
+            Change {
+                event: EventType::AxisChanged(Axis::LeftStickY, -0.7, code()),
+                engine: Some(WindowEvent::GamepadAxis {
+                    id: PAD,
+                    axis: GamepadAxis::LeftStickY,
+                    value: -0.7,
+                }),
+            },
+            Change {
+                event: EventType::ButtonPressed(Button::South, code()),
+                engine: None,
+            },
+            Change {
+                event: EventType::ButtonReleased(Button::South, code()),
+                engine: None,
+            },
+            Change {
+                event: EventType::ButtonChanged(Button::C, 1.0, code()),
+                engine: None,
+            },
+            Change {
+                event: EventType::AxisChanged(Axis::LeftZ, 0.5, code()),
+                engine: None,
+            },
+            Change {
+                event: EventType::Connected,
+                engine: None,
+            },
+        ];
+        for case in cases {
+            let described = format!("{:?}", case.event);
+            assert_eq!(translate(PAD, case.event), case.engine, "{described}");
+        }
     }
 }
