@@ -59,6 +59,7 @@ pub struct NightClock {
     start: GameTime,
     end: GameTime,
     scale: f64,
+    started: bool,
 }
 
 impl Default for NightClock {
@@ -68,6 +69,7 @@ impl Default for NightClock {
             start: GameTime::hm(18, 0),
             end: GameTime::hm(24, 0),
             scale: 20.0,
+            started: false,
         }
     }
 }
@@ -139,6 +141,7 @@ impl NightClock {
     pub fn with_start(mut self, start: GameTime) -> Self {
         self.start = start;
         self.now = start;
+        self.started = false;
         self
     }
 
@@ -170,7 +173,8 @@ impl NightClock {
             return step;
         }
         let from = self.now;
-        let first = from == self.start;
+        let first = !self.started;
+        self.started = true;
         let to = GameTime((from.0 + real.as_secs_f64() * self.scale).min(self.end.0.max(from.0)));
         self.now = to;
         step.reached = schedule
@@ -427,6 +431,24 @@ mod tests {
             vec![name!("early"), name!("opening")]
         );
         assert!(second.reached.is_empty());
+    }
+
+    #[test]
+    fn a_moment_at_the_start_fires_once_even_while_the_clock_stands_still() {
+        let mut clock = NightClock::default().with_scale(0.0);
+        let mut schedule = NightSchedule::default();
+        schedule.at(GameTime::hm(18, 0), name!("opening"));
+
+        let fired: Vec<usize> = (0..3)
+            .map(|_| {
+                clock
+                    .advance(Duration::from_millis(16), false, &schedule)
+                    .reached
+                    .len()
+            })
+            .collect();
+
+        assert_eq!(fired, vec![1, 0, 0]);
     }
 
     fn world_after_one_frame(paused: bool) -> World {
