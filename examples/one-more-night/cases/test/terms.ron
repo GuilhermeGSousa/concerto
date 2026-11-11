@@ -1,0 +1,20 @@
+Terms(
+    terms: [
+        Term(id: "t_ashby", text: "t_ashby.text"),
+        Term(id: "t_corwin", text: "t_corwin.text"),
+        Term(id: "t_hobbs", text: "t_hobbs.text"),
+        Term(id: "t_study", text: "t_study.text"),
+        Term(id: "t_corridor", text: "t_corridor.text"),
+        Term(id: "t_drawing", text: "t_drawing.text"),
+        Term(id: "t_box", text: "t_box.text"),
+        Term(id: "t_basket", text: "t_basket.text"),
+        Term(id: "t_debt", text: "t_debt.text"),
+        Term(id: "t_cup", text: "t_cup.text"),
+    ],
+    banks: [
+        TermBank(id: "bank_people", terms: ["t_ashby", "t_corwin", "t_hobbs"]),
+        TermBank(id: "bank_places", terms: ["t_study", "t_corridor", "t_drawing"]),
+        TermBank(id: "bank_things", terms: ["t_box", "t_basket", "t_cup"]),
+        TermBank(id: "bank_motives", terms: ["t_debt", "t_box", "t_cup"]),
+    ],
+)

@@ -1,0 +1,13 @@
+[
+    Placement(id: "p_case", prop: "prop_case", anchor: "b_shelf", name: "p_case.name", interaction: Inspect(hotspots: [
+        Hotspot(label: "p_case.h1"),
+        Hotspot(label: "p_case.h2", grants: ["f_01"]),
+    ])),
+    Placement(id: "p_note", prop: "prop_note", anchor: "b_desk", name: "p_note.name", interaction: Document(pages: ["p_note.page_1"], grants: ["f_02"])),
+    Placement(id: "p_basket", prop: "prop_basket", anchor: "c_basket", name: "p_basket.name", interaction: Inspect(hotspots: [
+        Hotspot(label: "p_basket.h1"),
+        Hotspot(label: "p_basket.h2", grants: ["f_05"]),
+    ])),
+    Placement(id: "p_key", prop: "prop_key", anchor: "c_hook", name: "p_key.name", interaction: Carry(key: "k_service")),
+    Placement(id: "p_cup", prop: "prop_cup", anchor: "a_table", name: "p_cup.name", interaction: Carry()),
+]
