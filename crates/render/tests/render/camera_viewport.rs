@@ -12,6 +12,7 @@ use concerto_render::{
     components::{
         camera::{Camera, Viewport},
         camera_environment::CameraEnvironment,
+        visibility::RenderLayers,
     },
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
@@ -179,6 +180,55 @@ fn draws_stay_inside_their_camera_rect() {
 
     assert_ne!(hosted.pixel(8, 16), BLUE);
     assert_eq!(hosted.pixel(56, 16), BLACK);
+}
+
+#[test]
+fn a_camera_draws_only_the_layers_it_has() {
+    let Some(gpu) = Gpu::request_for_test() else {
+        return;
+    };
+    let mut hosted = Hosted::new(&gpu);
+    let sees = hosted.camera(blue(), left_half());
+    let skips = hosted.camera(green(), right_half());
+    let bright = CameraEnvironment {
+        fog: None,
+        ambient: Color::rgba(1.0, 1.0, 1.0, 1.0),
+    };
+    let world = hosted.app.main_mut().world_mut();
+    world.insert((bright, RenderLayers::DEFAULT.with(1)), sees);
+    world.insert(bright, skips);
+    let (mesh, material) = {
+        let server = hosted.app.get_resource::<AssetServer>().unwrap();
+        (
+            server.add(cuboid(Vec3::new(10.0, 10.0, 1.0))),
+            server.add(StandardMaterial::default()),
+        )
+    };
+    hosted.app.main_mut().world_mut().spawn((
+        MeshComponent { handle: mesh },
+        MaterialComponent::<StandardMaterial> { handle: material },
+        Transform::from_translation(Vec3::new(0.0, 0.0, -3.0)),
+        RenderLayers::layer(1),
+    ));
+    hosted.app.finish_plugin_build();
+
+    for _ in 0..100 {
+        hosted.app.update();
+        if hosted.shared.get().is_some() && hosted.pixel(8, 16) != BLUE {
+            break;
+        }
+    }
+
+    assert_ne!(
+        hosted.pixel(8, 16),
+        BLUE,
+        "the camera with layer 1 draws the box"
+    );
+    assert_eq!(
+        hosted.pixel(56, 16),
+        GREEN,
+        "the camera on layer 0 alone sees only its clear colour"
+    );
 }
 
 #[test]

@@ -19,7 +19,7 @@ use crate::{
     batching::{BatchedInstanceBuffers, InstanceInputUniformBuffer},
     components::{
         render_entity::{MainEntity, MainEntityHashMap},
-        visibility::{NoFrustumCulling, NotShadowCaster},
+        visibility::{NoFrustumCulling, NotShadowCaster, RenderLayers},
     },
     frustum::Frustum,
 };
@@ -29,6 +29,7 @@ pub(crate) struct RenderMeshInstance {
     pub(crate) flags: RenderMeshInstanceFlags,
     pub(crate) current_uniform_index: u32,
     pub(crate) world_aabb: Option<Aabb>,
+    pub(crate) layers: RenderLayers,
 }
 
 bitflags! {
@@ -63,6 +64,7 @@ type MeshExtractionQuery = (
     Option<&'static Aabb>,
     Option<&'static NoFrustumCulling>,
     Option<&'static NotShadowCaster>,
+    Option<&'static RenderLayers>,
 );
 
 type ChangedMeshFilter = Or<(
@@ -72,10 +74,11 @@ type ChangedMeshFilter = Or<(
     Changed<Aabb>,
     Changed<NoFrustumCulling>,
     Changed<NotShadowCaster>,
+    Changed<RenderLayers>,
 )>;
 
 fn extract_mesh(
-    (entity, mesh, transform, skeleton, aabb, no_frustum_culling, not_shadow_caster): (
+    (entity, mesh, transform, skeleton, aabb, no_frustum_culling, not_shadow_caster, layers): (
         Entity,
         &MeshComponent,
         &GlobalTransform,
@@ -83,6 +86,7 @@ fn extract_mesh(
         Option<&Aabb>,
         Option<&NoFrustumCulling>,
         Option<&NotShadowCaster>,
+        Option<&RenderLayers>,
     ),
     render_mesh_instances: &mut RenderMeshInstances,
     input: &mut InstanceInputUniformBuffer<GlobalTransformRaw>,
@@ -97,6 +101,7 @@ fn extract_mesh(
         RenderMeshInstanceFlags::SHADOW_CASTER,
         not_shadow_caster.is_none(),
     );
+    let layers = layers.copied().unwrap_or_default();
     let world_aabb = aabb.map(|aabb| aabb.transformed(transform.matrix()));
     let raw_transform = if flags.contains(RenderMeshInstanceFlags::SKINNED) {
         GlobalTransform::new(Mat4::IDENTITY).to_raw()
@@ -109,6 +114,7 @@ fn extract_mesh(
         instance.mesh_asset_id = mesh.handle.id();
         instance.world_aabb = world_aabb;
         instance.flags = flags;
+        instance.layers = layers;
         input.set(instance.current_uniform_index, raw_transform);
         return;
     }
@@ -121,6 +127,7 @@ fn extract_mesh(
             flags,
             current_uniform_index,
             world_aabb,
+            layers,
         },
     );
 }
@@ -133,6 +140,7 @@ pub(crate) fn extract_meshes(
     mut removed_aabbs: Extracted<RemovedComponents<Aabb>>,
     mut removed_no_frustum_culling: Extracted<RemovedComponents<NoFrustumCulling>>,
     mut removed_not_shadow_casters: Extracted<RemovedComponents<NotShadowCaster>>,
+    mut removed_layers: Extracted<RemovedComponents<RenderLayers>>,
     mut render_mesh_instances: ResMut<RenderMeshInstances>,
     mut buffers: ResMut<BatchedInstanceBuffers>,
 ) {
@@ -147,6 +155,7 @@ pub(crate) fn extract_meshes(
         .chain(removed_aabbs.read())
         .chain(removed_no_frustum_culling.read())
         .chain(removed_not_shadow_casters.read())
+        .chain(removed_layers.read())
         .collect();
     for entity in removed {
         if changed_meshes.contains_entity(entity) {
@@ -475,6 +484,7 @@ mod tests {
             flags,
             current_uniform_index: 0,
             world_aabb,
+            layers: RenderLayers::default(),
         }
     }
 
