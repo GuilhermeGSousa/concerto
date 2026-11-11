@@ -48,6 +48,14 @@ define_action!(
 );
 
 define_action!(
+    /// Turns to the casebook's page before: the left bumper, or Page Up.
+    PagePrev
+);
+define_action!(
+    /// Turns to the casebook's next page: the right bumper, or Page Down.
+    PageNext
+);
+define_action!(
     /// Holds and releases the night for both players: Start, or Escape.
     Pause
 );
@@ -75,6 +83,10 @@ pub fn bind_controls(actions: &mut ActionMap) {
     actions.bind_global(Watch, key(KeyCode::KeyC));
     actions.bind_global(Listen, GamepadButton::RightBumper);
     actions.bind_global(Listen, key(KeyCode::KeyR));
+    actions.bind_global(PagePrev, GamepadButton::LeftBumper);
+    actions.bind_global(PagePrev, key(KeyCode::PageUp));
+    actions.bind_global(PageNext, GamepadButton::RightBumper);
+    actions.bind_global(PageNext, key(KeyCode::PageDown));
     actions.bind_global(Pause, GamepadButton::Start);
     actions.bind_global(Pause, key(KeyCode::Escape));
 }

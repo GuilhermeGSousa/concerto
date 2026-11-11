@@ -1,6 +1,7 @@
 use concerto::{DefaultPlugins, app::App, asset_id};
 
 pub mod book;
+pub mod book_ui;
 pub mod casefile;
 pub mod controls;
 pub mod house;

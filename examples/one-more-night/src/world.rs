@@ -11,7 +11,6 @@ use concerto::{
         schedule_groups::{FixedUpdate, Startup, Update},
     },
     asset_id,
-    color::Color,
     ecs::{
         CommandQueue, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
         Without,
@@ -52,12 +51,13 @@ use concerto::{
 use glam::{Quat, Vec2, Vec3};
 
 use crate::book::Casebook;
+use crate::book_ui::{BookPanel, PANEL, book_panel_node, show_book};
 use crate::case::{Id, NpcId, PlacementId, Role};
 use crate::casefile::CaseData;
 use crate::clock::{GameTime, Midnight, NightClock, NightPaused};
 use crate::controls::{
-    Back, Confirm, Interact, Listen, MenuDown, MenuLeft, MenuRight, MenuUp, OpenBook, Pause, Watch,
-    bind_controls,
+    Back, Confirm, Interact, Listen, MenuDown, MenuLeft, MenuRight, MenuUp, OpenBook, PageNext,
+    PagePrev, Pause, Watch, bind_controls,
 };
 use crate::house::{House, Interactable, ItemPlace, end_night};
 use crate::players::{PLAYER_COUNT, SeatEntity, Seated};
@@ -267,6 +267,7 @@ pub fn install(app: &mut App, saves: Option<PathBuf>) {
         .add_system(Update, overhear.after(play))
         .add_system(Update, turn_night.after(overhear))
         .add_system(Update, show_hud.after(turn_night))
+        .add_system(Update, show_book.after(turn_night))
         .add_system(Update, swing_doors.after(play))
         .add_system(Update, place_items.after(play))
         .add_system(Update, face_npcs)
@@ -512,12 +513,20 @@ fn build_huds(
             .add_child(UINode::default().with_size(UIValue::Percent(100.0), UIValue::Px(34.0)));
         cmd.entity(root).add_child(text(HudPart::Info, 16.0));
         cmd.entity(root).add_child((
+            book_panel_node(),
+            UIMaterial {
+                corner_radius: 8.0,
+                ..UIMaterial::flat(PANEL)
+            },
+            BookPanel::new(player),
+        ));
+        cmd.entity(root).add_child((
             UINode::default()
                 .with_padding(UIRect::all(14.0))
                 .with_visible(false),
             UIMaterial {
                 corner_radius: 8.0,
-                ..UIMaterial::flat(Color::srgba(0.04, 0.04, 0.07, 0.88))
+                ..UIMaterial::flat(PANEL)
             },
             hud_text(19.0),
             HudText {
@@ -651,6 +660,8 @@ fn play(
             (pad.is_just_pressed(Confirm), Press::Confirm),
             (pad.is_just_pressed(Back), Press::Back),
             (pad.is_just_pressed(OpenBook), Press::Book),
+            (pad.is_just_pressed(PagePrev), Press::PagePrev),
+            (pad.is_just_pressed(PageNext), Press::PageNext),
         ];
         for (pressed, press) in presses {
             if pressed {
@@ -824,6 +835,9 @@ fn show_hud(
 ) {
     let time = case_time(now_seconds(&clock));
     let screens: [Option<String>; SEATS] = std::array::from_fn(|seat| {
+        if matches!(session.mode(seat as u8), Mode::Book { .. }) {
+            return None;
+        }
         session
             .view(seat as u8, &book, &data, time, data.case.phase_at(time))
             .map(|screen| screen.laid_out(SCREEN_ROWS))

@@ -20,6 +20,8 @@ pub enum Press {
     Confirm,
     Back,
     Book,
+    PagePrev,
+    PageNext,
 }
 
 /// A page of the casebook.
@@ -145,6 +147,50 @@ pub struct Seat {
 pub enum Effect {
     EndNight,
 }
+
+/// A person, room or object the casebook lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Subject {
+    pub label: String,
+    /// The index of the portrait to show beside it.
+    pub portrait: Option<usize>,
+    /// How many found facts are about it.
+    pub count: usize,
+}
+
+/// What a casebook page holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BookBody {
+    /// A list of subjects and the facts about the selected one.
+    Subjects {
+        subjects: Vec<Subject>,
+        selected: usize,
+        facts: Vec<String>,
+    },
+    /// Rooms across, hours down; `counts` holds a row of rooms for each hour, and `facts` those in the selected cell.
+    Timeline {
+        rooms: Vec<String>,
+        hours: Vec<String>,
+        counts: Vec<usize>,
+        selected: usize,
+        facts: Vec<String>,
+    },
+    Lines {
+        lines: Vec<String>,
+        cursor: Option<usize>,
+    },
+}
+
+/// A player's open casebook.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BookScreen {
+    pub page: Page,
+    pub body: BookBody,
+    pub hint: String,
+}
+
+const FIRST_HOUR: u16 = 18;
+const HOURS: usize = 6;
 
 /// What a player's screen shows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -414,7 +460,11 @@ impl Session {
     ) -> Vec<Effect> {
         let seat = player as usize;
         let present = self.present();
-        let rows = self.row_count(player, book, data, now);
+        let rows = match self.mode(player) {
+            Mode::Book { page, .. } => Self::book_rows(*page, book, data),
+            _ => self.row_count(player, book, data, now),
+        };
+        let rooms = data.catalog.rooms.len().max(1);
         let step = |row: usize, down: bool| {
             if down {
                 (row + 1).min(rows.saturating_sub(1))
@@ -440,6 +490,42 @@ impl Session {
                 };
                 match (editing, press) {
                     (_, Press::Book) | (None, Press::Back) => next = Mode::Walking,
+                    (None, Press::PagePrev | Press::PageNext) => {
+                        next = Mode::Book {
+                            page: page.step(press == Press::PageNext),
+                            row: 0,
+                            editing: None,
+                            blank: 0,
+                        }
+                    }
+                    (Some(_), Press::PagePrev | Press::PageNext) => {}
+                    (None, Press::Left | Press::Right) if page == Page::Timeline => {
+                        let column = row % rooms;
+                        let column = if press == Press::Right {
+                            (column + 1).min(rooms - 1)
+                        } else {
+                            column.saturating_sub(1)
+                        };
+                        next = Mode::Book {
+                            page,
+                            row: row - row % rooms + column,
+                            editing,
+                            blank,
+                        }
+                    }
+                    (None, Press::Up | Press::Down) if page == Page::Timeline => {
+                        let moved = if press == Press::Down {
+                            row + rooms
+                        } else {
+                            row.wrapping_sub(rooms)
+                        };
+                        next = Mode::Book {
+                            page,
+                            row: if moved < rows { moved } else { row },
+                            editing,
+                            blank,
+                        }
+                    }
                     (Some(_), Press::Back) => {
                         next = Mode::Book {
                             page,
@@ -579,7 +665,7 @@ impl Session {
                         }
                     }
                 }
-                Press::Book => {}
+                Press::Book | Press::PagePrev | Press::PageNext => {}
             },
             Mode::Reading { placement, page } => {
                 if let Interaction::Document { pages, grants } =
@@ -606,7 +692,7 @@ impl Session {
                                 page: page.saturating_sub(1),
                             }
                         }
-                        Press::Book => {}
+                        Press::Book | Press::PagePrev | Press::PageNext => {}
                     }
                 }
             }
@@ -726,6 +812,173 @@ impl Session {
             .filter(|fact| keep(fact))
             .map(|fact| format!("  {}", data.text(fact.text)))
             .collect()
+    }
+
+    fn objects_noted(book: &Casebook, data: &CaseData) -> Vec<crate::case::PlacementId> {
+        data.case
+            .placements
+            .ids()
+            .filter(|placement| {
+                book.facts()
+                    .iter()
+                    .any(|fact| data.case.facts.get(*fact).object == Some(*placement))
+            })
+            .collect()
+    }
+
+    fn book_rows(page: Page, book: &Casebook, data: &CaseData) -> usize {
+        match page {
+            Page::People => data.case.characters.len(),
+            Page::Timeline => HOURS * data.catalog.rooms.len(),
+            Page::Places => data.catalog.rooms.len(),
+            Page::Objects => Self::objects_noted(book, data).len(),
+            Page::Deductions => book.visible_deductions(&data.case).len(),
+        }
+        .max(1)
+    }
+
+    fn trimmed(
+        book: &Casebook,
+        data: &CaseData,
+        keep: impl Fn(&crate::case::Fact) -> bool,
+    ) -> Vec<String> {
+        Self::facts_where(book, data, keep)
+            .into_iter()
+            .map(|line| line.trim_start().to_string())
+            .collect()
+    }
+
+    /// `player`'s open casebook as a layout: its page, what the page lists and the selection. `None` unless the casebook is open.
+    pub fn book_screen(&self, player: u8, book: &Casebook, data: &CaseData) -> Option<BookScreen> {
+        let Mode::Book {
+            page,
+            row,
+            editing,
+            blank,
+        } = self.mode(player)
+        else {
+            return None;
+        };
+        let case = &data.case;
+        let subject = |label: &str, portrait: Option<usize>, facts: &[String]| Subject {
+            label: label.to_string(),
+            portrait,
+            count: facts.len(),
+        };
+        let listed = |subjects: Vec<Subject>, facts: Vec<Vec<String>>| BookBody::Subjects {
+            selected: (*row).min(subjects.len().saturating_sub(1)),
+            facts: facts.get(*row).cloned().unwrap_or_default(),
+            subjects,
+        };
+        let move_hint = "Up/Down: choose   LB/RB: page   B: close";
+        let (body, hint) = match (page, editing) {
+            (_, Some(deduction)) => {
+                let screen =
+                    self.deduction_screen(String::new(), player, *deduction, *blank, book, data);
+                (
+                    BookBody::Lines {
+                        lines: screen.lines,
+                        cursor: screen.cursor,
+                    },
+                    screen.hint,
+                )
+            }
+            (Page::People, None) => {
+                let facts: Vec<Vec<String>> = case
+                    .characters
+                    .ids()
+                    .map(|npc| Self::trimmed(book, data, |fact| fact.people.contains(&npc)))
+                    .collect();
+                let subjects = case
+                    .characters
+                    .ids()
+                    .zip(&facts)
+                    .enumerate()
+                    .map(|(index, (npc, facts))| subject(name_of(case, npc), Some(index), facts))
+                    .collect();
+                (listed(subjects, facts), move_hint.to_string())
+            }
+            (Page::Places, None) => {
+                let facts: Vec<Vec<String>> = data
+                    .catalog
+                    .rooms
+                    .ids()
+                    .map(|room| Self::trimmed(book, data, |fact| fact.place == Some(room)))
+                    .collect();
+                let subjects = data
+                    .catalog
+                    .rooms
+                    .ids()
+                    .zip(&facts)
+                    .map(|(room, facts)| {
+                        subject(room_title(data.catalog.rooms.name(room)), None, facts)
+                    })
+                    .collect();
+                (listed(subjects, facts), move_hint.to_string())
+            }
+            (Page::Objects, None) => {
+                let objects = Self::objects_noted(book, data);
+                let facts: Vec<Vec<String>> = objects
+                    .iter()
+                    .map(|object| Self::trimmed(book, data, |fact| fact.object == Some(*object)))
+                    .collect();
+                let subjects = objects
+                    .iter()
+                    .zip(&facts)
+                    .map(|(object, facts)| {
+                        subject(data.text(case.placements.get(*object).name), None, facts)
+                    })
+                    .collect();
+                (listed(subjects, facts), move_hint.to_string())
+            }
+            (Page::Timeline, None) => {
+                let rooms: Vec<_> = data.catalog.rooms.ids().collect();
+                let cell = |hour: usize, room: crate::case::RoomId| {
+                    Self::trimmed(book, data, |fact| {
+                        fact.place == Some(room)
+                            && fact
+                                .time
+                                .is_some_and(|time| time.hour() == FIRST_HOUR + hour as u16)
+                    })
+                };
+                let counts = (0..HOURS)
+                    .flat_map(|hour| rooms.iter().map(move |room| (hour, *room)))
+                    .map(|(hour, room)| cell(hour, room).len())
+                    .collect();
+                let selected = (*row).min(HOURS * rooms.len().max(1) - 1);
+                let facts = rooms
+                    .get(selected % rooms.len().max(1))
+                    .map(|room| cell(selected / rooms.len().max(1), *room))
+                    .unwrap_or_default();
+                (
+                    BookBody::Timeline {
+                        rooms: rooms
+                            .iter()
+                            .map(|room| room_title(data.catalog.rooms.name(*room)).to_string())
+                            .collect(),
+                        hours: (0..HOURS)
+                            .map(|hour| format!("{:02}:00", FIRST_HOUR as usize + hour))
+                            .collect(),
+                        counts,
+                        selected,
+                        facts,
+                    },
+                    "D-pad: move   LB/RB: page   B: close".to_string(),
+                )
+            }
+            (Page::Deductions, None) => (
+                BookBody::Lines {
+                    lines: Self::book_lines(Page::Deductions, book, data, player),
+                    cursor: Some(*row),
+                },
+                "Up/Down: choose   A: fill in   LB/RB: page   B: close".to_string(),
+            ),
+        };
+        Some(BookScreen {
+            page: *page,
+            body,
+            hint,
+        })
     }
 
     fn book_lines(page: Page, book: &Casebook, data: &CaseData, player: u8) -> Vec<String> {
@@ -1232,6 +1485,78 @@ mod tests {
         t.press(0, &[Press::Confirm, Press::Confirm]);
         assert!(t.session.finished);
         assert!(t.session.is_walking(0) && t.session.is_walking(1));
+    }
+
+    #[test]
+    fn the_casebook_lists_subjects_and_moves_cell_by_cell_on_the_timeline() {
+        use super::{BookBody, Subject};
+        let mut t = Table::new();
+        t.fact("f_03");
+        t.fact("f_08");
+        t.session.open_book(0);
+
+        t.press(0, &[Press::Down]);
+        let people = t.session.book_screen(0, &t.book, &t.data).unwrap();
+        let BookBody::Subjects {
+            subjects,
+            selected,
+            facts,
+        } = people.body
+        else {
+            panic!("People lists subjects");
+        };
+        assert_eq!(selected, 1);
+        assert_eq!(
+            subjects[1],
+            Subject {
+                label: "Mr Corwin".into(),
+                portrait: Some(1),
+                count: 2
+            }
+        );
+        assert_eq!(facts.len(), 2);
+
+        t.press(
+            0,
+            &[
+                Press::PageNext,
+                Press::Down,
+                Press::Right,
+                Press::Right,
+                Press::Right,
+            ],
+        );
+        let timeline = t.session.book_screen(0, &t.book, &t.data).unwrap();
+        assert_eq!(timeline.page, Page::Timeline);
+        let BookBody::Timeline {
+            rooms,
+            counts,
+            selected,
+            facts,
+            ..
+        } = timeline.body
+        else {
+            panic!("Timeline is a grid");
+        };
+        assert_eq!(rooms, ["Drawing room", "Study", "Service corridor"]);
+        assert_eq!(selected, 5, "one hour down, and held at the last room");
+        assert_eq!(counts[4], 1, "the argument is at 19:00 in the study");
+        assert!(facts.is_empty());
+        t.press(0, &[Press::Left]);
+        let BookBody::Timeline { facts, .. } =
+            t.session.book_screen(0, &t.book, &t.data).unwrap().body
+        else {
+            panic!("Timeline is a grid");
+        };
+        assert_eq!(
+            facts,
+            ["Lady Ashby and Mr Corwin argued in the study at seven about a debt."]
+        );
+        t.press(0, &[Press::Up, Press::Up]);
+        assert!(
+            matches!(t.session.mode(0), Mode::Book { row: 1, .. }),
+            "it stops at the top"
+        );
     }
 
     #[test]

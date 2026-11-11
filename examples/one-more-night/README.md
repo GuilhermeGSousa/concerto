@@ -30,6 +30,7 @@ them swap.
 | Y | Tab | Open and close the casebook |
 | A | Enter | Pick the highlighted row; go on |
 | D-pad | Arrow keys | Move on a screen |
+| LB / RB | Page Up / Page Down | Turn the casebook's pages |
 | LB, held | C | Pocket watch |
 | RB, held | R | The Staff listens at a door they stand by |
 | Start | Escape | Pause for both players; it also frees the mouse |
@@ -39,7 +40,11 @@ them swap.
   its details.
 - **Facts** are found by looking a prop over, reading, overhearing and asking.
   Both players get a fact at once, and it is never lost.
-- **The casebook** has People, Timeline, Places, Objects and Deductions. A
+- **The casebook** has People, Timeline, Places, Objects and Deductions.
+  People, Places and Objects list their subjects on the left, with the number
+  of facts about each, and the facts about the chosen one on the right. The
+  Timeline is a grid of rooms across and hours down; the d-pad moves cell by
+  cell and the facts of the chosen cell show under it. A
   deduction is a sentence with blanks; each player fills their own copy and
   locks it, and when both are locked the casebook says whether they agree and
   whether it is right. A player alone judges their own copy.
@@ -80,6 +85,7 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | `schedule` | Where a schedule puts a character at a time; which line of a conversation is being said |
 | `rules` | Dialogue topics on offer; who may pass a door |
 | `session` | Each player's screen as a state machine over button presses |
+| `book_ui` | The open casebook drawn as tabs, lists and the timeline grid |
 | `house` | Doors, items, bells, the dumbwaiter, beds and the gong; ending a night |
 | `save` | The save file and its backups |
 | `world` | The systems that run all of it: fixtures, characters, props, targeting, the HUD and the loop |
