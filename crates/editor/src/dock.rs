@@ -421,16 +421,28 @@ fn build_dock(
     window.settings.title = "Concerto".to_string();
     window.settings.min_size = Some(Vec2::new(900.0, 600.0));
 
-    let surface = || theme.panel().radius(0.0);
-    let root = cmd
+    let backdrop = cmd
         .spawn(
-            surface()
+            theme
+                .canvas()
                 .size(UIValue::Percent(100.0), UIValue::Percent(100.0))
                 .column()
                 .clipped(),
         )
         .entity();
-    registry.root = Some(root);
+    registry.root = Some(backdrop);
+    let root = cmd
+        .entity(backdrop)
+        .spawn_child(
+            theme
+                .panel()
+                .radius(0.0)
+                .grow()
+                .min_height(UIValue::Px(0.0))
+                .column()
+                .clipped(),
+        )
+        .entity();
 
     let bar = cmd
         .entity(root)
