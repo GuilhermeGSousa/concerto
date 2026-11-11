@@ -33,7 +33,7 @@ them swap.
 | A | Enter | Pick the highlighted row; go on |
 | D-pad | Arrow keys | Move on a screen |
 | LB / RB | Page Up / Page Down | Turn the casebook's pages |
-| LB, held | C | Pocket watch |
+| LB, held | C | Pocket watch; when every player holds theirs, time runs twelve times faster, unless someone is overhearing a conversation |
 | RB, held | R | The Staff listens at a door they stand by |
 | Start | Escape | Pause for both players; it also frees the mouse |
 

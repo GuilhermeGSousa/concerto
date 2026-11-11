@@ -59,6 +59,7 @@ pub struct NightClock {
     start: GameTime,
     end: GameTime,
     scale: f64,
+    haste: f64,
     started: bool,
 }
 
@@ -69,6 +70,7 @@ impl Default for NightClock {
             start: GameTime::hm(18, 0),
             end: GameTime::hm(24, 0),
             scale: 20.0,
+            haste: 1.0,
             started: false,
         }
     }
@@ -161,6 +163,16 @@ impl NightClock {
         self.scale
     }
 
+    /// Runs the clock `haste` times faster than its scale, for players who are waiting; 1 is the usual pace.
+    pub fn set_haste(&mut self, haste: f64) {
+        self.haste = haste.max(1.0);
+    }
+
+    /// How many times faster than its scale the clock is running.
+    pub fn haste(&self) -> f64 {
+        self.haste
+    }
+
     /// Puts the clock back at the night's start, as a new night begins.
     pub fn restart(&mut self) {
         self.now = self.start;
@@ -189,7 +201,8 @@ impl NightClock {
         let from = self.now;
         let first = !self.started;
         self.started = true;
-        let to = GameTime((from.0 + real.as_secs_f64() * self.scale).min(self.end.0.max(from.0)));
+        let passed = real.as_secs_f64() * self.scale * self.haste;
+        let to = GameTime((from.0 + passed).min(self.end.0.max(from.0)));
         self.now = to;
         step.reached = schedule
             .events
@@ -412,6 +425,23 @@ mod tests {
             .collect();
 
         assert_eq!(hours, vec![19, 20, 21, 22, 23, 0]);
+    }
+
+    #[test]
+    fn haste_runs_the_night_faster_and_still_strikes_the_hours() {
+        let mut clock = NightClock::default();
+        clock.set_haste(12.0);
+
+        let step = clock.advance(Duration::from_secs(20), false, &NightSchedule::default());
+
+        assert_eq!(clock.now(), GameTime::hm(19, 20));
+        assert_eq!(step.hours, [HourStruck { hour: 19 }]);
+        clock.set_haste(0.0);
+        assert_eq!(
+            clock.haste(),
+            1.0,
+            "the clock never runs slower than its scale"
+        );
     }
 
     #[test]

@@ -77,6 +77,7 @@ const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
 const NPC_DOOR_REACH: f32 = 1.1;
+const PASSING_HASTE: f64 = 12.0;
 const HELD_SIZE: f32 = 0.15;
 const HELD_NEAR: f32 = 0.32;
 const HELD_FAR: f32 = 0.8;
@@ -266,6 +267,7 @@ struct Held {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HudPart {
     Info,
+    Guide,
     Prompt,
     Subtitle,
 }
@@ -284,6 +286,8 @@ struct HudBuilt;
 pub struct Sight {
     pub targets: [Option<Interactable>; SEATS],
     pub heard: [Option<String>; SEATS],
+    /// The Staff stands at a door with a conversation behind it and is not listening.
+    pub could_listen: [bool; SEATS],
     pub night_over: bool,
     was_present: [bool; SEATS],
 }
@@ -341,6 +345,7 @@ pub fn install(app: &mut App, saves: Option<PathBuf>) {
                 .after(concerto::gameplay::first_person::place_first_person_views),
         )
         .add_system(Update, pause_for_screens.after(play))
+        .add_system(Update, pass_time.after(overhear))
         .add_system(FixedUpdate, move_npcs);
     #[cfg(feature = "debug")]
     app.add_system(Update, debug_keys.before(turn_night));
@@ -545,6 +550,7 @@ fn build_huds(
         cmd.entity(root)
             .add_child(UINode::default().with_size(UIValue::Percent(100.0), UIValue::Px(34.0)));
         cmd.entity(root).add_child(text(HudPart::Info, 16.0));
+        cmd.entity(root).add_child(text(HudPart::Guide, 16.0));
         cmd.entity(root).add_child((
             book_panel_node(),
             UIMaterial {
@@ -735,6 +741,7 @@ fn overhear(
 ) {
     session.age_notices(time.real_delta().as_secs_f32());
     let mut heard: [Option<String>; SEATS] = Default::default();
+    let mut could_listen = [false; SEATS];
     let listeners: Vec<(u8, Vec3)> = walkers
         .iter()
         .map(|(player, transform)| (player.index(), transform.translation))
@@ -769,10 +776,10 @@ fn overhear(
             };
             for (player, at) in &listeners {
                 let near = data.level.room_at(*at) == room && at.distance(place) <= earshot;
-                let at_door = session.role(*player) == Role::Staff
-                    && actions
-                        .player(PlayerIndex::new(*player), &input, &players)
-                        .is_held(Listen)
+                let listening = actions
+                    .player(PlayerIndex::new(*player), &input, &players)
+                    .is_held(Listen);
+                let by_door = session.role(*player) == Role::Staff
                     && data.level.doors().any(|door| {
                         let rule = data.level.door(door);
                         data.level.door_position(door).is_some_and(|position| {
@@ -781,6 +788,10 @@ fn overhear(
                                 && position.distance(place) <= earshot * 1.5
                         })
                     });
+                let at_door = by_door && listening;
+                if by_door && !listening && !near {
+                    could_listen[*player as usize] = true;
+                }
                 if near || at_door {
                     heard[*player as usize] = Some(format!(
                         "{}: {}",
@@ -794,6 +805,9 @@ fn overhear(
     }
     if sight.heard != heard {
         sight.heard = heard;
+    }
+    if sight.could_listen != could_listen {
+        sight.could_listen = could_listen;
     }
 }
 
@@ -833,6 +847,30 @@ fn turn_night(
     }
 }
 
+fn pass_time(
+    session: Res<Session>,
+    sight: Res<Sight>,
+    input: Res<Input>,
+    actions: Res<ActionMap>,
+    players: Res<Players>,
+    mut clock: ResMut<NightClock>,
+) {
+    let mut present = session.present_players().peekable();
+    let waiting = present.peek().is_some()
+        && !session.paused
+        && sight.heard.iter().all(Option::is_none)
+        && present.all(|player| {
+            session.is_walking(player)
+                && actions
+                    .player(PlayerIndex::new(player), &input, &players)
+                    .is_held(Watch)
+        });
+    let haste = if waiting { PASSING_HASTE } else { 1.0 };
+    if clock.haste() != haste {
+        clock.set_haste(haste);
+    }
+}
+
 fn pause_for_screens(
     session: Res<Session>,
     debug: Res<DebugPause>,
@@ -850,6 +888,7 @@ fn readout(time: GameTime) -> String {
 
 fn show_hud(
     session: Res<Session>,
+    book: Res<Casebook>,
     data: Res<CaseData>,
     house: Res<House>,
     clock: Res<NightClock>,
@@ -880,9 +919,24 @@ fn show_hud(
                         .player(PlayerIndex::new(hud.player), &input, &players)
                         .is_held(Watch);
                     if watch {
-                        info.push_str(&format!("  Pocket watch: {}", readout(clock.now())));
+                        info.push_str(&format!("  Pocket watch: {}.", readout(clock.now())));
+                        info.push_str(if clock.haste() > 1.0 {
+                            "  Time flies."
+                        } else {
+                            "  Hold both watches to pass the time."
+                        });
                     }
                     info
+                }
+            }
+            HudPart::Guide => {
+                if sight.could_listen[hud.player as usize] {
+                    "Someone is talking behind this door. Hold RB to listen.".to_string()
+                } else {
+                    session
+                        .guide(hud.player, &book, &data)
+                        .unwrap_or_default()
+                        .to_string()
                 }
             }
             HudPart::Prompt => match sight.targets[hud.player as usize] {
@@ -1511,6 +1565,27 @@ mod tests {
         app.get_resource_mut::<Session>().unwrap().seats[0].mode = Mode::Walking;
         frames(&mut app, 3);
         assert_eq!(held_props(&mut app), 0, "and put away when they are done");
+
+        for pad in PADS {
+            app.get_resource_mut::<Input>()
+                .unwrap()
+                .update_gamepad_button(pad, GamepadButton::LeftBumper, 1.0);
+        }
+        frames(&mut app, 3);
+        assert_eq!(
+            app.get_resource::<NightClock>().unwrap().haste(),
+            12.0,
+            "both watches held pass the time"
+        );
+        app.get_resource_mut::<Input>()
+            .unwrap()
+            .update_gamepad_button(PADS[0], GamepadButton::LeftBumper, 0.0);
+        frames(&mut app, 3);
+        assert_eq!(app.get_resource::<NightClock>().unwrap().haste(), 1.0);
+        app.get_resource_mut::<Input>()
+            .unwrap()
+            .update_gamepad_button(PADS[1], GamepadButton::LeftBumper, 0.0);
+        frames(&mut app, 1);
 
         tap(&mut app, 1, GamepadButton::Start);
         let held = app.get_resource::<NightClock>().unwrap().now();
