@@ -730,5 +730,47 @@ mod tests {
                 }
             }
         }
+
+        struct Fit {
+            window: WindowSize,
+            left: f32,
+            right: f32,
+        }
+        let narrow = WindowSize {
+            width: 800,
+            height: 600,
+        };
+        let fits = [
+            Fit {
+                window: small,
+                left: 260.0,
+                right: 310.0,
+            },
+            Fit {
+                window: narrow,
+                left: 250.0,
+                right: 220.0,
+            },
+        ];
+        for fit in fits {
+            let mut world = World::new();
+            world.insert_resource(fit.window.window());
+            world.insert_resource(EditorLayout::default());
+            world.insert_resource(PanelStates::default());
+            world.add_listener(resize_panel);
+
+            world.trigger(ResizePanel {
+                panel: Bottom,
+                size: 200.0,
+            });
+
+            let stored = *world.get_resource::<EditorLayout>().unwrap();
+            let window = world.get_resource::<Window>().unwrap().logical_size();
+            let shown = stored.shown(&PanelStates::default(), window);
+            assert_eq!(shown.left, fit.left, "{:?}", fit.window);
+            assert_eq!(shown.right, fit.right, "{:?}", fit.window);
+            assert_eq!(stored.left, 260.0, "{:?}", fit.window);
+            assert_eq!(stored.right, 320.0, "{:?}", fit.window);
+        }
     }
 }
