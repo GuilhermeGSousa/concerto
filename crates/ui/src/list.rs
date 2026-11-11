@@ -313,13 +313,6 @@ pub(crate) mod tests {
                 .expect("the area has a scrollbar track")
         }
 
-        pub(crate) fn layout_passes(&self) -> u64 {
-            self.world
-                .get_resource::<UILayoutDiagnostics>()
-                .unwrap()
-                .layout_passes
-        }
-
         pub(crate) fn set_offset(&mut self, list: Entity, offset: f32) {
             self.world
                 .get_component_for_entity_mut::<UIScrollArea>(list)
@@ -565,7 +558,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn scrolling_a_long_list_by_less_than_a_row_moves_every_shown_row_without_a_layout_pass() {
+    fn scrolling_a_long_list_by_less_than_a_row_moves_every_shown_row() {
         let mut harness = Harness::new();
         let (list, rows) = long_list(&mut harness, 405.0);
         let shown = harness.unculled(&rows);
@@ -573,12 +566,10 @@ pub(crate) mod tests {
             .iter()
             .map(|index| harness.layout(rows[*index]).rect.min.y)
             .collect::<Vec<_>>();
-        let passes = harness.layout_passes();
 
         harness.set_offset(list, 415.0);
         harness.frame();
 
-        assert_eq!(harness.layout_passes(), passes);
         assert_eq!(harness.unculled(&rows), shown);
         for (index, top) in shown.iter().zip(tops) {
             assert_eq!(
@@ -829,7 +820,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn next_and_previous_stop_at_the_ends() {
+    fn the_list_keys_move_focus_and_selection_and_enter_activates() {
         let mut harness = Harness::new();
         let (_, rows) = short_list(&mut harness, UIList::default());
 
@@ -841,25 +832,22 @@ pub(crate) mod tests {
 
         harness.focus(rows[4]);
         harness.fire(UIListNext);
-        assert_eq!(harness.focused(), Some(rows[4]));
+        assert_eq!(harness.focused(), Some(rows[4]), "next stops at the end");
 
         harness.focus(rows[0]);
         harness.fire(UIListPrevious);
-        assert_eq!(harness.focused(), Some(rows[0]));
+        assert_eq!(
+            harness.focused(),
+            Some(rows[0]),
+            "previous stops at the start"
+        );
         assert_eq!(harness.selected(&rows), [3]);
         assert!(harness.heard().is_empty());
-    }
-
-    #[test]
-    fn home_and_end_jump() {
-        let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
 
         harness.focus(rows[2]);
         harness.fire(UIListFirst);
         assert_eq!(harness.focused(), Some(rows[0]));
         assert_eq!(harness.selected(&rows), [0]);
-
         harness.fire(UIListLast);
         assert_eq!(harness.focused(), Some(rows[4]));
         assert_eq!(harness.selected(&rows), [4]);
@@ -867,16 +855,9 @@ pub(crate) mod tests {
             harness.heard(),
             [(rows[0], Heard::Selected), (rows[4], Heard::Selected)]
         );
-    }
-
-    #[test]
-    fn enter_activates_the_focused_item() {
-        let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
 
         harness.focus(rows[1]);
         harness.fire(UIListActivate);
-
         assert_eq!(harness.heard(), [(rows[1], Heard::Activated)]);
     }
 

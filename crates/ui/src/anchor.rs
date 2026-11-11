@@ -657,62 +657,58 @@ mod dismiss_tests {
     use super::{EscapeDismissal, should_dismiss_on_escape};
 
     #[test]
-    fn does_nothing_without_a_press() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: false,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
-
-    #[test]
-    fn a_focused_text_field_keeps_first_claim_on_escape() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: true,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
-
-    #[test]
-    fn nothing_to_close_is_a_no_op() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: false,
-        }));
-    }
-
-    #[test]
-    fn a_focused_field_with_nothing_open_is_still_a_no_op() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: true,
-            field_cancelled_this_frame: false,
-            stack_open: false,
-        }));
-    }
-
-    #[test]
-    fn closes_the_top_panel_otherwise() {
-        assert!(should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
-
-    #[test]
-    fn frame_n_a_same_frame_cancel_does_not_also_close_the_panel() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: true,
-            stack_open: true,
-        }));
+    fn escape_closes_the_top_panel_only_when_no_text_field_claims_it() {
+        struct Case {
+            name: &'static str,
+            input: EscapeDismissal,
+            closes: bool,
+        }
+        let case =
+            |name, dismissed, field_focused, field_cancelled_this_frame, stack_open, closes| Case {
+                name,
+                input: EscapeDismissal {
+                    dismissed,
+                    field_focused,
+                    field_cancelled_this_frame,
+                    stack_open,
+                },
+                closes,
+            };
+        for case in [
+            case("without a press", false, false, false, true, false),
+            case(
+                "a focused field claims it first",
+                true,
+                true,
+                false,
+                true,
+                false,
+            ),
+            case("nothing to close", true, false, false, false, false),
+            case(
+                "a focused field and nothing open",
+                true,
+                true,
+                false,
+                false,
+                false,
+            ),
+            case(
+                "a field cancelled this frame",
+                true,
+                false,
+                true,
+                true,
+                false,
+            ),
+            case("otherwise", true, false, false, true, true),
+        ] {
+            assert_eq!(
+                should_dismiss_on_escape(case.input),
+                case.closes,
+                "{}",
+                case.name
+            );
+        }
     }
 }

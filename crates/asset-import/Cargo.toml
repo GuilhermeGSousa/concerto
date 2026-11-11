@@ -15,4 +15,5 @@ log = "0.4.27"
 toml = "0.8"
 
 [dev-dependencies]
+proptest.workspace = true
 serde = { version = "1", features = ["derive"] }

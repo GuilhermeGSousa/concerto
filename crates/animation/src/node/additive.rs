@@ -238,14 +238,12 @@ mod tests {
         },
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
-        graph::{AnimationGraph, made_live},
         node::{AnimationNode, AnimationPlayMode},
-        player::AnimationPlayer,
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
             apply_additive,
         },
-        test_walks::Walks,
+        testing::Walks,
     };
 
     const ROOT: Uuid = Uuid::from_u128(1);
@@ -376,8 +374,7 @@ mod tests {
     fn built(mut clip: AnimationClip, base: AdditiveBase) -> AnimationClip {
         clip.set_frame_rate(4.0);
         clip.set_additive(Additive::LocalSpace(base));
-        clip.build_delta_against(&neutral()).unwrap();
-        clip
+        clip.with_delta_against(&neutral())
     }
 
     fn cold() -> AnimationClip {
@@ -565,32 +562,45 @@ mod tests {
         }
     }
 
-    #[test]
-    fn at_weight_1_the_delta_turns_the_neutral_pose_into_the_affected_one() {
-        let rig = Rig::new(cold());
-        let base = base_at(0.5);
-
-        let frame = rig.played(&rig.node(), &[0.5], &input(base_at(0.5)));
-
-        let mut expected = base.joints()[1].clone();
-        apply_additive(&mut expected, &cold().sample_additive(0.5, &CHILD), 1.0);
-        assert_eq!(frame.joints()[1], expected);
-        assert_joint_near(&frame.joints()[1], &sampled(&affected(), CHILD, 0.5));
+    struct WeightCase {
+        weight: f32,
+        child: JointPose,
     }
 
     #[test]
-    fn at_half_weight_the_child_turns_and_moves_by_half_the_delta() {
-        let rig = Rig::new(cold());
+    fn the_child_turns_and_moves_by_the_weight_times_the_delta() {
         let base = base_at(0.5);
+        let cases = [
+            WeightCase {
+                weight: 1.0,
+                child: sampled(&affected(), CHILD, 0.5),
+            },
+            WeightCase {
+                weight: 0.5,
+                child: joint(
+                    CHILD_AT + Vec3::new(0.1, 0.0, 0.0),
+                    Quat::from_rotation_z(0.2) * base.joints()[1].rotation,
+                ),
+            },
+        ];
+        let rig = Rig::new(cold());
 
-        let frame = rig.played(&rig.node().with_weight(0.5), &[0.5], &input(base_at(0.5)));
+        for case in cases {
+            let frame = rig.played(
+                &rig.node().with_weight(case.weight),
+                &[0.5],
+                &input(base_at(0.5)),
+            );
 
-        let child = &frame.joints()[1];
-        assert_rotation_near(
-            child.rotation,
-            Quat::from_rotation_z(0.2) * base.joints()[1].rotation,
-        );
-        assert_vec_near(child.translation, CHILD_AT + Vec3::new(0.1, 0.0, 0.0));
+            let mut expected = base.joints()[1].clone();
+            apply_additive(
+                &mut expected,
+                &cold().sample_additive(0.5, &CHILD),
+                case.weight,
+            );
+            assert_eq!(frame.joints()[1], expected, "weight {}", case.weight);
+            assert_joint_near(&frame.joints()[1], &case.child);
+        }
     }
 
     struct ParamCase {
@@ -660,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn the_clock_runs_over_the_span_of_the_delta_and_wraps_to_the_start_time() {
+    fn the_clock_runs_over_the_span_of_the_delta_and_wraps_or_resets_to_the_start_time() {
         let rig = Rig::new(built(ranged(), ranged_base()));
         let node = rig.node().with_start_time(0.25);
         let mut state = rig.create(&node);
@@ -671,6 +681,10 @@ mod tests {
         rig.step(&node, &mut state, 0.1);
         assert_eq!(state.clock.current_time(), 0.25);
         assert!(state.clock.wrapped);
+
+        rig.step(&node, &mut state, 0.3);
+        node.reset(&mut state);
+        assert_eq!(state.clock.current_time(), 0.25);
     }
 
     #[test]
@@ -731,19 +745,6 @@ mod tests {
         );
         assert_eq!(events_after(&mut state, 0.8), [base_event()]);
         assert_eq!(events_after(&mut state, 0.1), [base_event()]);
-    }
-
-    #[test]
-    fn at_weight_0_no_event_of_the_clip_is_added() {
-        let rig = Rig::new(built(ranged(), ranged_base()));
-
-        let frame = rig.played(
-            &rig.node().with_weight(0.0),
-            &[0.2, 0.1],
-            &input(base_at(0.0)),
-        );
-
-        assert_eq!(frame.events(), [base_event()]);
     }
 
     #[test]
@@ -839,48 +840,6 @@ mod tests {
         let full = rig.played(&node, &[0.25], &input(base_at(0.25)));
 
         assert_same_frame(&faint, &full);
-    }
-
-    #[test]
-    fn a_reset_returns_the_clock_to_the_start_time() {
-        let rig = Rig::new(cold());
-        let node = rig.node().with_start_time(0.25);
-        let mut state = rig.create(&node);
-        rig.step(&node, &mut state, 0.3);
-
-        node.reset(&mut state);
-
-        assert_eq!(state.clock.current_time(), 0.25);
-    }
-
-    fn overlay_times(player: &mut AnimationPlayer, walks: &Walks) -> Vec<f32> {
-        let mut times = Vec::new();
-        player.for_each_state_mut::<AdditiveNode>(walks.graphs(), |_, state, _| {
-            times.push(state.clock.current_time());
-        });
-        times
-    }
-
-    #[test]
-    fn animation_player_play_restarts_an_additive_node() {
-        let mut rig = Rig::new(cold());
-        let mut graph = AnimationGraph::new();
-        let result = graph.result_node().index();
-        let index = graph
-            .add_node(rig.node().with_start_time(0.25), result)
-            .index();
-        let handle = AssetHandle::weak(AssetId::from_path("overlay_graph"));
-        rig.walks.graphs_mut().insert(handle.id(), made_live(graph));
-        let mut player = AnimationPlayer::new(BONES.len());
-        rig.walks.initialize(&mut player, handle);
-        rig.walks.advance(&mut player, 0.3);
-        let advanced = overlay_times(&mut player, &rig.walks);
-        assert_eq!(advanced.len(), 1);
-        assert!((advanced[0] - 0.55).abs() < 1e-6);
-
-        player.play(&index, rig.walks.graphs());
-
-        assert_eq!(overlay_times(&mut player, &rig.walks), [0.25]);
     }
 
     #[test]

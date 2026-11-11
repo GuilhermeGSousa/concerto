@@ -1,0 +1,5 @@
+[
+    Fact(id: "f_1", text: "f_1.text", category: Object, source: Seen, place: "room_a", object: "p_1", unlocks_terms: ["t_a"]),
+    Fact(id: "f_2", text: "f_2.text", category: Event, source: Heard, people: ["npc_a", "npc_b"], place: "room_b", time: "19:30", unlocks_terms: ["t_room"]),
+    Fact(id: "f_3", text: "f_3.text", category: Person, source: Told, people: ["npc_b"], unlocks_terms: ["t_b"]),
+]

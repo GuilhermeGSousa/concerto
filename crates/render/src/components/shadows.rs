@@ -954,11 +954,6 @@ mod tests {
         }
     }
 
-    fn entities() -> (Entity, Entity, Entity) {
-        let mut world = World::new();
-        (world.spawn(()), world.spawn(()), world.spawn(()))
-    }
-
     fn spot() -> u32 {
         LightType::Spot { cone_angle: 0.6 }.index()
     }
@@ -973,109 +968,136 @@ mod tests {
 
     const LIMIT: u32 = MAX_SHADOW_CASTERS;
 
-    #[test]
-    fn a_light_ticked_on_gets_layer_zero() {
-        let (a, _, _) = entities();
-
-        let (spots, points) = assign_layers(&[(a, spot(), false)], LIMIT, LIMIT);
-        assert!(spots.is_empty());
-        assert!(points.is_empty());
-        assert_eq!(layer_of(&spots, a), -1);
-
-        let (spots, points) = assign_layers(&[(a, spot(), true)], LIMIT, LIMIT);
-        assert_eq!(spots, vec![a]);
-        assert!(points.is_empty());
-        assert_eq!(layer_of(&spots, a), 0);
+    #[derive(Clone, Copy)]
+    struct Caster {
+        entity: Entity,
+        light_type: u32,
+        shadows: bool,
     }
 
-    #[test]
-    fn turning_shadows_off_gives_no_layer() {
-        let (a, b, _) = entities();
-
-        let (spots, _) = assign_layers(&[(a, spot(), true), (b, spot(), true)], LIMIT, LIMIT);
-        assert_eq!(spots, vec![a, b]);
-
-        let (spots, _) = assign_layers(&[(a, spot(), false), (b, spot(), true)], LIMIT, LIMIT);
-        assert_eq!(spots, vec![b]);
-        assert_eq!(layer_of(&spots, a), -1);
-        assert_eq!(layer_of(&spots, b), 0);
+    fn caster(entity: Entity, light_type: u32, shadows: bool) -> Caster {
+        Caster {
+            entity,
+            light_type,
+            shadows,
+        }
     }
 
-    #[test]
-    fn spot_to_point_moves_the_light_between_pools() {
-        let (a, b, _) = entities();
-
-        let (spots, points) =
-            assign_layers(&[(a, spot(), true), (b, directional(), true)], LIMIT, LIMIT);
-        assert_eq!(spots, vec![a, b]);
-        assert!(points.is_empty());
-
-        let (spots, points) = assign_layers(
-            &[(a, point(), true), (b, directional(), true)],
-            LIMIT,
-            LIMIT,
-        );
-        assert_eq!(spots, vec![b]);
-        assert_eq!(points, vec![a]);
-        assert_eq!(layer_of(&spots, b), 0);
-        assert_eq!(layer_of(&points, a), 0);
-
-        let (spots, points) =
-            assign_layers(&[(a, spot(), true), (b, directional(), true)], LIMIT, LIMIT);
-        assert_eq!(spots, vec![a, b]);
-        assert!(points.is_empty());
+    struct Assignment {
+        case: &'static str,
+        lights: Vec<Caster>,
+        spot_limit: u32,
+        point_limit: u32,
+        spots: Vec<Entity>,
+        points: Vec<Entity>,
     }
 
-    #[test]
-    fn spot_and_directional_share_the_spot_pool() {
-        let (a, _, _) = entities();
-
-        for light_type in [spot(), directional()] {
-            let (spots, points) = assign_layers(&[(a, light_type, true)], LIMIT, LIMIT);
-            assert_eq!(spots, vec![a]);
-            assert!(points.is_empty());
+    fn assignment(case: &'static str, lights: Vec<Caster>, spots: Vec<Entity>) -> Assignment {
+        Assignment {
+            case,
+            lights,
+            spot_limit: LIMIT,
+            point_limit: LIMIT,
+            spots,
+            points: Vec::new(),
         }
     }
 
     #[test]
-    fn the_point_limit_of_one_keeps_the_first_point_light() {
-        let (a, b, c) = entities();
-
-        let (_, points) = assign_layers(
-            &[(c, point(), true), (a, point(), true), (b, point(), true)],
-            LIMIT,
-            1,
-        );
-        assert_eq!(points, vec![a]);
-        assert_eq!(layer_of(&points, b), -1);
-        assert_eq!(layer_of(&points, c), -1);
-    }
-
-    #[test]
-    fn spot_casters_past_the_limit_get_no_layer() {
-        let (a, b, c) = entities();
-
-        let (spots, _) = assign_layers(
-            &[(a, spot(), true), (b, spot(), true), (c, spot(), true)],
-            2,
-            LIMIT,
-        );
-        assert_eq!(spots, vec![a, b]);
-        assert_eq!(layer_of(&spots, c), -1);
-    }
-
-    #[test]
-    fn the_order_is_stable() {
-        let (a, b, c) = entities();
-        let shuffled = [(c, spot(), true), (a, spot(), true), (b, spot(), true)];
-        let rotated = [(b, spot(), true), (c, spot(), true), (a, spot(), true)];
-
-        assert_eq!(assign_layers(&shuffled, LIMIT, LIMIT).0, vec![a, b, c]);
-        assert_eq!(assign_layers(&rotated, LIMIT, LIMIT).0, vec![a, b, c]);
-        assert_eq!(
-            assign_layers(&shuffled, LIMIT, LIMIT),
-            assign_layers(&shuffled, LIMIT, LIMIT)
-        );
+    fn shadowed_lights_take_layers_in_entity_order_in_their_pool_up_to_its_limit() {
+        let mut world = World::new();
+        let [a, b, c] = [world.spawn(()), world.spawn(()), world.spawn(())];
+        let cases = [
+            assignment("shadows off", vec![caster(a, spot(), false)], vec![]),
+            assignment("shadows on", vec![caster(a, spot(), true)], vec![a]),
+            assignment(
+                "two spots",
+                vec![caster(a, spot(), true), caster(b, spot(), true)],
+                vec![a, b],
+            ),
+            assignment(
+                "the first turned off",
+                vec![caster(a, spot(), false), caster(b, spot(), true)],
+                vec![b],
+            ),
+            assignment(
+                "a spot and a directional share a pool",
+                vec![caster(a, spot(), true), caster(b, directional(), true)],
+                vec![a, b],
+            ),
+            assignment(
+                "a directional alone",
+                vec![caster(a, directional(), true)],
+                vec![a],
+            ),
+            Assignment {
+                points: vec![a],
+                ..assignment(
+                    "a point light in its own pool",
+                    vec![caster(a, point(), true), caster(b, directional(), true)],
+                    vec![b],
+                )
+            },
+            Assignment {
+                point_limit: 1,
+                points: vec![a],
+                ..assignment(
+                    "a point limit of one keeps the first",
+                    vec![
+                        caster(c, point(), true),
+                        caster(a, point(), true),
+                        caster(b, point(), true),
+                    ],
+                    vec![],
+                )
+            },
+            Assignment {
+                spot_limit: 2,
+                ..assignment(
+                    "spots past the limit",
+                    vec![
+                        caster(a, spot(), true),
+                        caster(b, spot(), true),
+                        caster(c, spot(), true),
+                    ],
+                    vec![a, b],
+                )
+            },
+            assignment(
+                "a shuffled order",
+                vec![
+                    caster(c, spot(), true),
+                    caster(a, spot(), true),
+                    caster(b, spot(), true),
+                ],
+                vec![a, b, c],
+            ),
+            assignment(
+                "a rotated order",
+                vec![
+                    caster(b, spot(), true),
+                    caster(c, spot(), true),
+                    caster(a, spot(), true),
+                ],
+                vec![a, b, c],
+            ),
+        ];
+        for case in &cases {
+            let lights: Vec<_> = case
+                .lights
+                .iter()
+                .map(|light| (light.entity, light.light_type, light.shadows))
+                .collect();
+            let (spots, points) = assign_layers(&lights, case.spot_limit, case.point_limit);
+            assert_eq!(spots, case.spots, "{}", case.case);
+            assert_eq!(points, case.points, "{}", case.case);
+            assert_eq!(
+                assign_layers(&lights, case.spot_limit, case.point_limit),
+                (spots, points),
+                "{}: the same lights give the same layers",
+                case.case
+            );
+        }
     }
 
     #[test]

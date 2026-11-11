@@ -143,134 +143,173 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_press_carries_its_text() {
-        assert_eq!(
-            key(KEY, ElementState::Pressed, Some("a")),
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: Some("a".into()),
-            }
-        );
+    struct Typed {
+        state: ElementState,
+        text: &'static str,
+        carries: Option<&'static str>,
     }
 
     #[test]
-    fn a_release_carries_no_text() {
-        assert_eq!(
-            key(KEY, ElementState::Released, Some("a")),
-            WindowEvent::Key {
-                key: KEY,
-                pressed: false,
-                text: None,
-            }
-        );
-    }
-
-    #[test]
-    fn control_characters_are_dropped_from_text() {
-        assert_eq!(
-            key(KEY, ElementState::Pressed, Some("\r")),
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: None,
-            }
-        );
-        assert_eq!(
-            key(KEY, ElementState::Pressed, Some("a\u{8}b")),
-            WindowEvent::Key {
-                key: KEY,
-                pressed: true,
-                text: Some("ab".into()),
-            }
-        );
-    }
-
-    #[test]
-    fn window_facts_translate() {
-        assert_eq!(
-            translate(&WinitEvent::SurfaceResized(PhysicalSize::new(800, 600))),
-            Some(WindowEvent::Resized {
-                width: 800,
-                height: 600,
-            })
-        );
-        assert_eq!(
-            translate(&WinitEvent::Focused(false)),
-            Some(WindowEvent::Focused(false))
-        );
-        assert_eq!(
-            translate(&WinitEvent::CloseRequested),
-            Some(WindowEvent::CloseRequested)
-        );
-    }
-
-    #[test]
-    fn pointer_events_translate() {
-        assert_eq!(
-            translate(&WinitEvent::PointerButton {
-                device_id: None,
+    fn a_key_press_carries_its_text_without_control_characters_and_a_release_carries_none() {
+        let cases = [
+            Typed {
+                state: ElementState::Pressed,
+                text: "a",
+                carries: Some("a"),
+            },
+            Typed {
                 state: ElementState::Released,
-                position: PhysicalPosition::new(3.0, 4.0),
-                primary: true,
-                button: ButtonSource::Mouse(MouseButton::Right),
-                is_macos_activation_click: false,
-            }),
-            Some(WindowEvent::MouseButton {
-                button: MouseButton::Right,
-                pressed: false,
-            })
-        );
-        assert_eq!(
-            translate(&moved(PointerSource::Mouse)),
-            Some(WindowEvent::CursorMoved {
-                position: Vec2::new(3.0, 4.0),
-            })
-        );
+                text: "a",
+                carries: None,
+            },
+            Typed {
+                state: ElementState::Pressed,
+                text: "\r",
+                carries: None,
+            },
+            Typed {
+                state: ElementState::Pressed,
+                text: "a\u{8}b",
+                carries: Some("ab"),
+            },
+        ];
+        for case in cases {
+            assert_eq!(
+                key(KEY, case.state, Some(case.text)),
+                WindowEvent::Key {
+                    key: KEY,
+                    pressed: case.state == ElementState::Pressed,
+                    text: case.carries.map(Into::into),
+                },
+                "{:?}",
+                case.text
+            );
+        }
     }
 
-    #[test]
-    fn a_pen_moves_the_cursor_as_the_mouse_does() {
-        assert_eq!(
-            translate(&moved(PointerSource::TabletTool {
-                kind: TabletToolKind::Pen,
-                data: TabletToolData::default(),
-            })),
-            Some(WindowEvent::CursorMoved {
-                position: Vec2::new(3.0, 4.0),
-            })
-        );
+    struct Translated {
+        event: WinitEvent,
+        engine: Option<WindowEvent>,
+        waiting: Option<Waiting>,
     }
 
-    #[test]
-    fn a_touch_does_not_move_the_cursor() {
-        assert_eq!(
-            translate(&moved(PointerSource::Touch {
-                finger_id: FingerId::from_raw(0),
-                force: None,
-            })),
-            None
-        );
-    }
-
-    #[test]
-    fn a_mouse_or_pen_press_is_a_mouse_button() {
-        let left = Some(WindowEvent::MouseButton {
+    fn left_press() -> Option<WindowEvent> {
+        Some(WindowEvent::MouseButton {
             button: MouseButton::Left,
             pressed: true,
-        });
-        assert_eq!(
-            translate(&pressed(ButtonSource::Mouse(MouseButton::Left))),
-            left
-        );
-        assert_eq!(translate(&pressed(pen(TabletToolButton::Contact))), left);
+        })
+    }
+
+    fn cursor_moved() -> Option<WindowEvent> {
+        Some(WindowEvent::CursorMoved {
+            position: Vec2::new(3.0, 4.0),
+        })
     }
 
     #[test]
-    fn a_touch_or_unknown_press_is_dropped() {
-        assert_eq!(translate(&pressed(touch())), None);
-        assert_eq!(translate(&pressed(ButtonSource::Unknown(7))), None);
+    fn a_winit_event_becomes_its_engine_event_or_nothing_and_while_waiting_only_redraws_and_closes()
+    {
+        let cases = [
+            Translated {
+                event: WinitEvent::SurfaceResized(PhysicalSize::new(800, 600)),
+                engine: Some(WindowEvent::Resized {
+                    width: 800,
+                    height: 600,
+                }),
+                waiting: None,
+            },
+            Translated {
+                event: WinitEvent::Focused(false),
+                engine: Some(WindowEvent::Focused(false)),
+                waiting: None,
+            },
+            Translated {
+                event: WinitEvent::CloseRequested,
+                engine: Some(WindowEvent::CloseRequested),
+                waiting: Some(Waiting::Exit),
+            },
+            Translated {
+                event: WinitEvent::RedrawRequested,
+                engine: None,
+                waiting: Some(Waiting::Redraw),
+            },
+            Translated {
+                event: WinitEvent::PointerButton {
+                    device_id: None,
+                    state: ElementState::Released,
+                    position: PhysicalPosition::new(3.0, 4.0),
+                    primary: true,
+                    button: ButtonSource::Mouse(MouseButton::Right),
+                    is_macos_activation_click: false,
+                },
+                engine: Some(WindowEvent::MouseButton {
+                    button: MouseButton::Right,
+                    pressed: false,
+                }),
+                waiting: None,
+            },
+            Translated {
+                event: pressed(ButtonSource::Mouse(MouseButton::Left)),
+                engine: left_press(),
+                waiting: None,
+            },
+            Translated {
+                event: pressed(pen(TabletToolButton::Contact)),
+                engine: left_press(),
+                waiting: None,
+            },
+            Translated {
+                event: pressed(touch()),
+                engine: None,
+                waiting: None,
+            },
+            Translated {
+                event: pressed(ButtonSource::Unknown(7)),
+                engine: None,
+                waiting: None,
+            },
+            Translated {
+                event: moved(PointerSource::Mouse),
+                engine: cursor_moved(),
+                waiting: None,
+            },
+            Translated {
+                event: moved(PointerSource::TabletTool {
+                    kind: TabletToolKind::Pen,
+                    data: TabletToolData::default(),
+                }),
+                engine: cursor_moved(),
+                waiting: None,
+            },
+            Translated {
+                event: moved(PointerSource::Touch {
+                    finger_id: FingerId::from_raw(0),
+                    force: None,
+                }),
+                engine: None,
+                waiting: None,
+            },
+            Translated {
+                event: wheel(MouseScrollDelta::LineDelta(1.0, -2.0)),
+                engine: Some(WindowEvent::MouseWheel {
+                    delta: ScrollDelta::Lines(Vec2::new(1.0, -2.0)),
+                }),
+                waiting: None,
+            },
+            Translated {
+                event: wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+                    5.0, 6.0,
+                ))),
+                engine: Some(WindowEvent::MouseWheel {
+                    delta: ScrollDelta::Pixels(Vec2::new(5.0, 6.0)),
+                }),
+                waiting: None,
+            },
+        ];
+        for case in cases {
+            assert_eq!(translate(&case.event), case.engine, "{:?}", case.event);
+            assert_eq!(while_waiting(&case.event), case.waiting, "{:?}", case.event);
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -280,58 +319,5 @@ mod tests {
         assert!(is_mouse_left(&pen(TabletToolButton::Contact)));
         assert!(!is_mouse_left(&touch()));
         assert!(!is_mouse_left(&ButtonSource::Mouse(MouseButton::Right)));
-    }
-
-    #[test]
-    fn both_wheel_units_translate() {
-        assert_eq!(
-            translate(&wheel(MouseScrollDelta::LineDelta(1.0, -2.0))),
-            Some(WindowEvent::MouseWheel {
-                delta: ScrollDelta::Lines(Vec2::new(1.0, -2.0)),
-            })
-        );
-        assert_eq!(
-            translate(&wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
-                5.0, 6.0
-            )))),
-            Some(WindowEvent::MouseWheel {
-                delta: ScrollDelta::Pixels(Vec2::new(5.0, 6.0)),
-            })
-        );
-    }
-
-    #[test]
-    fn events_with_no_engine_meaning_are_dropped() {
-        assert_eq!(translate(&WinitEvent::RedrawRequested), None);
-    }
-
-    #[test]
-    fn a_redraw_is_asked_for_again_while_there_is_no_app() {
-        assert_eq!(
-            while_waiting(&WinitEvent::RedrawRequested),
-            Some(Waiting::Redraw)
-        );
-    }
-
-    #[test]
-    fn the_close_button_exits_while_there_is_no_app() {
-        assert_eq!(
-            while_waiting(&WinitEvent::CloseRequested),
-            Some(Waiting::Exit)
-        );
-    }
-
-    #[test]
-    fn input_and_window_facts_are_dropped_while_there_is_no_app() {
-        assert_eq!(
-            while_waiting(&WinitEvent::SurfaceResized(PhysicalSize::new(800, 600))),
-            None
-        );
-        assert_eq!(while_waiting(&WinitEvent::Focused(true)), None);
-        assert_eq!(
-            while_waiting(&pressed(ButtonSource::Mouse(MouseButton::Left))),
-            None
-        );
-        assert_eq!(while_waiting(&moved(PointerSource::Mouse)), None);
     }
 }

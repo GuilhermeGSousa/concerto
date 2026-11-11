@@ -974,13 +974,9 @@ mod tests {
     }
 
     #[test]
-    fn row_content_is_indented_by_depth() {
+    fn row_content_is_indented_by_depth_without_a_cap() {
         let mut harness = Harness::new();
         assert_eq!(content_inset(&mut harness, 3), 4.0 + 48.0 + 16.0);
-    }
-
-    #[test]
-    fn no_indent_cap() {
         let mut harness = Harness::new();
         assert_eq!(content_inset(&mut harness, 20), 4.0 + 320.0 + 16.0);
     }
@@ -1616,51 +1612,56 @@ mod tests {
     }
 
     #[test]
-    fn a_middle_child_gets_a_full_vertical_and_a_tick() {
-        assert_eq!(
-            segments_of(&tree_row(1, false, false, &[])),
-            [
-                segment(12.0, 0.0, 1.0, 24.0),
-                segment(12.0, 12.0, 22.0, 1.0)
-            ]
-        );
-    }
-
-    #[test]
-    fn a_last_child_gets_an_elbow() {
-        assert_eq!(
-            segments_of(&tree_row(1, false, true, &[])),
-            [
-                segment(12.0, 0.0, 1.0, 12.0),
-                segment(12.0, 12.0, 22.0, 1.0)
-            ]
-        );
-    }
-
-    #[test]
-    fn a_parent_child_tick_is_six_pixels() {
-        assert_eq!(
-            segments_of(&tree_row(1, true, false, &[])),
-            [segment(12.0, 0.0, 1.0, 24.0), segment(12.0, 12.0, 6.0, 1.0)]
-        );
-    }
-
-    #[test]
-    fn ancestor_lines_continue_only_while_the_ancestor_has_siblings_below() {
-        assert_eq!(
-            segments_of(&tree_row(3, false, false, &[true, false])),
-            [
-                segment(12.0, 0.0, 1.0, 24.0),
-                segment(44.0, 0.0, 1.0, 24.0),
-                segment(44.0, 12.0, 22.0, 1.0)
-            ]
-        );
-    }
-
-    #[test]
-    fn roots_have_no_connectors() {
-        assert!(segments_of(&tree_row(0, false, false, &[])).is_empty());
-        assert!(segments_of(&tree_row(0, true, true, &[])).is_empty());
+    fn connectors_draw_a_vertical_and_a_tick_for_each_child_and_continue_ancestor_lines() {
+        struct Case {
+            name: &'static str,
+            row: TreeRow,
+            segments: Vec<UIBox>,
+        }
+        for case in [
+            Case {
+                name: "a middle child gets a full vertical and a tick",
+                row: tree_row(1, false, false, &[]),
+                segments: vec![
+                    segment(12.0, 0.0, 1.0, 24.0),
+                    segment(12.0, 12.0, 22.0, 1.0),
+                ],
+            },
+            Case {
+                name: "a last child gets an elbow",
+                row: tree_row(1, false, true, &[]),
+                segments: vec![
+                    segment(12.0, 0.0, 1.0, 12.0),
+                    segment(12.0, 12.0, 22.0, 1.0),
+                ],
+            },
+            Case {
+                name: "a parent's tick is six pixels",
+                row: tree_row(1, true, false, &[]),
+                segments: vec![segment(12.0, 0.0, 1.0, 24.0), segment(12.0, 12.0, 6.0, 1.0)],
+            },
+            Case {
+                name: "ancestor lines continue only while the ancestor has siblings below",
+                row: tree_row(3, false, false, &[true, false]),
+                segments: vec![
+                    segment(12.0, 0.0, 1.0, 24.0),
+                    segment(44.0, 0.0, 1.0, 24.0),
+                    segment(44.0, 12.0, 22.0, 1.0),
+                ],
+            },
+            Case {
+                name: "a root has none",
+                row: tree_row(0, false, false, &[]),
+                segments: vec![],
+            },
+            Case {
+                name: "a last root parent has none",
+                row: tree_row(0, true, true, &[]),
+                segments: vec![],
+            },
+        ] {
+            assert_eq!(segments_of(&case.row), case.segments, "{}", case.name);
+        }
     }
 
     fn connectors(harness: &Harness, entity: Entity) -> Vec<UIBox> {

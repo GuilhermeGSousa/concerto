@@ -112,7 +112,8 @@ fn unit(v: Vec3) -> Option<Vec3> {
 
 #[cfg(test)]
 mod tests {
-    use glam::{Quat, Vec3};
+    use glam::Vec3;
+    use proptest::prelude::*;
 
     use super::{TwoBoneChain, TwoBoneSolution, solve_two_bone};
 
@@ -128,218 +129,243 @@ mod tests {
         }
     }
 
-    fn apply(chain: &TwoBoneChain, solution: &TwoBoneSolution) -> (Vec3, Vec3) {
+    struct Solved {
+        mid: Vec3,
+        tip: Vec3,
+    }
+
+    fn apply(chain: &TwoBoneChain, solution: &TwoBoneSolution) -> Solved {
         let mid = chain.root + solution.root * (chain.mid - chain.root);
         let tip = mid + solution.mid * (chain.tip - chain.mid);
-        (mid, tip)
+        Solved { mid, tip }
     }
 
     fn tip_distance(target: Vec3, softness: f32) -> f32 {
         let chain = bent();
-        let (_, tip) = apply(&chain, &solve_two_bone(&chain, target, None, softness));
-        tip.distance(chain.root)
+        apply(&chain, &solve_two_bone(&chain, target, None, softness))
+            .tip
+            .distance(chain.root)
     }
 
     fn is_finite(solution: &TwoBoneSolution) -> bool {
         solution.root.is_finite() && solution.mid.is_finite()
     }
 
-    #[test]
-    fn a_target_within_reach_is_reached_without_changing_bone_lengths() {
-        let chain = bent();
-        let target = Vec3::new(1.2, 0.5, 0.3);
-
-        let (mid, tip) = apply(&chain, &solve_two_bone(&chain, target, None, 0.0));
-
-        assert!(tip.distance(target) < 1e-4, "tip {tip}, target {target}");
-        assert!((mid.distance(chain.root) - L1).abs() < 1e-4);
-        assert!((tip.distance(mid) - L2).abs() < 1e-4);
+    fn any_vec3(range: f32) -> impl Strategy<Value = Vec3> {
+        prop::array::uniform3(-range..range).prop_map(Vec3::from_array)
     }
 
-    #[test]
-    fn a_target_past_full_length_straightens_the_chain_toward_it() {
-        let chain = bent();
-        let target = Vec3::new(3.0, 1.0, 0.5);
+    proptest! {
+        #[test]
+        fn the_tip_lies_toward_the_target_at_the_reach_the_chain_has(
+            target in any_vec3(3.0).prop_filter("off the root", |target| target.length() > 1e-2),
+            pole in prop::option::of(any_vec3(2.0)),
+            softness in prop_oneof![Just(0.0f32), 0.0f32..10.0],
+        ) {
+            let chain = bent();
 
-        let (_, tip) = apply(&chain, &solve_two_bone(&chain, target, None, 0.0));
+            let solution = solve_two_bone(&chain, target, pole, softness);
 
-        let expected = chain.root + target.normalize() * FULL;
-        assert!(
-            tip.distance(expected) < 1e-4,
-            "tip {tip}, expected {expected}"
-        );
-    }
-
-    #[test]
-    fn reach_does_not_pop_at_full_extension() {
-        let direction = Vec3::new(1.0, 0.3, -0.2).normalize();
-        let step = 0.005;
-        let mut previous = tip_distance(direction * 1.5, 0.0);
-        for i in 1..=120 {
-            let distance = tip_distance(direction * (1.5 + step * i as f32), 0.0);
-            assert!(distance >= previous - 1e-5, "{distance} after {previous}");
-            assert!(
-                distance - previous <= step + 1e-5,
-                "{distance} after {previous}"
+            prop_assert!(is_finite(&solution));
+            let solved = apply(&chain, &solution);
+            let distance = solved.tip.distance(chain.root);
+            prop_assert!((solved.mid.distance(chain.root) - L1).abs() < 1e-4);
+            prop_assert!(distance <= FULL + 1e-4, "{distance}");
+            prop_assert!(distance >= (L1 - L2).abs() - 1e-4, "{distance}");
+            prop_assert!(
+                (solved.tip - chain.root).normalize().distance(target.normalize()) < 1e-3,
+                "tip {} toward target {target}",
+                solved.tip
             );
-            previous = distance;
-        }
-    }
-
-    #[test]
-    fn softness_eases_reach_toward_full_length() {
-        let softness = 0.3;
-        let direction = Vec3::new(0.4, 1.0, 0.2).normalize();
-        let step = 0.01;
-        let mut previous = tip_distance(direction * 0.5, softness);
-        for i in 1..=200 {
-            let target_distance = 0.5 + step * i as f32;
-            let distance = tip_distance(direction * target_distance, softness);
-            assert!(distance < FULL, "{distance} at {target_distance}");
-            if target_distance <= FULL - softness - 1e-3 {
-                let hard = tip_distance(direction * target_distance, 0.0);
-                assert!((distance - hard).abs() < 1e-4, "{distance} vs {hard}");
+            let hard = target.length().clamp((L1 - L2).abs(), FULL);
+            if softness == 0.0 || target.length() <= FULL - softness.min(FULL - (L1 - L2).abs()) - 1e-3 {
+                prop_assert!((distance - hard).abs() < 1e-3, "{distance} != {hard}");
             }
-            if target_distance > FULL {
-                assert!(distance > previous, "{distance} after {previous}");
+        }
+    }
+
+    #[test]
+    fn the_reach_grows_continuously_with_the_target_distance_and_softness_keeps_it_short_of_full_length()
+     {
+        for softness in [0.0, 0.3] {
+            let direction = Vec3::new(0.4, 1.0, 0.2).normalize();
+            let step = 0.005;
+            let mut previous = tip_distance(direction * 0.5, softness);
+            for i in 1..=400 {
+                let target_distance = 0.5 + step * i as f32;
+                let distance = tip_distance(direction * target_distance, softness);
+                assert!(
+                    distance >= previous - 1e-5,
+                    "softness {softness}: {distance} after {previous}"
+                );
+                assert!(
+                    distance - previous <= step + 1e-5,
+                    "softness {softness}: {distance} after {previous}"
+                );
+                if softness > 0.0 {
+                    assert!(distance < FULL, "{distance} at {target_distance}");
+                    if target_distance > FULL {
+                        assert!(distance > previous, "{distance} after {previous}");
+                    }
+                }
+                previous = distance;
             }
-            assert!(
-                (distance - previous).abs() <= step + 1e-5,
-                "{distance} after {previous}"
-            );
-            previous = distance;
         }
     }
 
     #[test]
-    fn softness_past_full_length_stays_within_the_chain_range() {
-        let chain = bent();
-        for target_distance in [0.0, 0.1, 0.5, 1.0, 1.8, 3.0] {
-            let target = Vec3::new(0.6, 0.8, 0.0) * target_distance;
-            let solution = solve_two_bone(&chain, target, None, 10.0);
-            assert!(is_finite(&solution));
-            let (_, tip) = apply(&chain, &solution);
-            let distance = tip.distance(chain.root);
-            assert!(distance <= FULL + 1e-4, "{distance} at {target_distance}");
-            assert!(
-                distance >= (L1 - L2).abs() - 1e-4,
-                "{distance} at {target_distance}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_target_inside_the_shortest_reach_puts_the_tip_at_that_reach() {
-        let chain = bent();
-        let target = Vec3::new(0.05, 0.08, 0.02);
-
-        let (_, tip) = apply(&chain, &solve_two_bone(&chain, target, None, 0.0));
-
-        let expected = chain.root + target.normalize() * (L1 - L2).abs();
-        assert!(
-            tip.distance(expected) < 1e-3,
-            "tip {tip}, expected {expected}"
-        );
-    }
-
-    #[test]
-    fn without_a_pole_the_mid_stays_on_its_side_of_the_input_plane() {
+    fn the_mid_bends_toward_the_pole_or_without_one_stays_on_its_side_of_the_input_plane() {
         let chain = bent();
         let target = Vec3::new(1.1, 0.2, 0.0);
 
-        let (mid, tip) = apply(&chain, &solve_two_bone(&chain, target, None, 0.0));
+        let unpoled = apply(&chain, &solve_two_bone(&chain, target, None, 0.0));
 
-        assert!(tip.distance(target) < 1e-4);
-        assert!(mid.z.abs() < 1e-4, "mid {mid}");
+        assert!(unpoled.tip.distance(target) < 1e-4);
+        assert!(unpoled.mid.z.abs() < 1e-4, "mid {}", unpoled.mid);
         let side = (chain.tip - chain.root).cross(chain.mid - chain.root);
-        assert!((target - chain.root).cross(mid - chain.root).dot(side) > 0.0);
-    }
+        assert!(
+            (target - chain.root)
+                .cross(unpoled.mid - chain.root)
+                .dot(side)
+                > 0.0
+        );
 
-    #[test]
-    fn a_pole_on_the_other_side_bends_the_mid_toward_it() {
-        let chain = bent();
-        let target = Vec3::new(1.1, 0.2, 0.0);
         let pole = Vec3::new(0.5, -1.0, -0.7);
+        let poled = apply(&chain, &solve_two_bone(&chain, target, Some(pole), 0.0));
 
-        let (mid, tip) = apply(&chain, &solve_two_bone(&chain, target, Some(pole), 0.0));
-
-        assert!(tip.distance(target) < 1e-4);
+        assert!(poled.tip.distance(target) < 1e-4);
         let normal = target.cross(pole).normalize();
-        assert!(mid.dot(normal).abs() < 1e-4, "mid {mid}");
+        assert!(poled.mid.dot(normal).abs() < 1e-4, "mid {}", poled.mid);
         let axis = target.normalize();
-        let mid_across = mid - axis * mid.dot(axis);
+        let mid_across = poled.mid - axis * poled.mid.dot(axis);
         let pole_across = pole - axis * pole.dot(axis);
-        assert!(mid_across.dot(pole_across) > 0.0, "mid {mid}");
+        assert!(mid_across.dot(pole_across) > 0.0, "mid {}", poled.mid);
+    }
+
+    enum Outcome {
+        Reaches(Vec3),
+        Finite,
+        Identity,
+    }
+
+    struct Degenerate {
+        name: &'static str,
+        chain: TwoBoneChain,
+        target: Vec3,
+        pole: Option<Vec3>,
+        softness: f32,
+        outcome: Outcome,
     }
 
     #[test]
-    fn a_fully_folded_chain_unfolds_to_reach_its_target() {
-        let folded = TwoBoneChain {
-            root: Vec3::ZERO,
-            mid: Vec3::new(0.0, L1, 0.0),
-            tip: Vec3::ZERO,
-        };
-        let target = Vec3::new(0.5, 0.5, 0.2);
-
-        let solution = solve_two_bone(&folded, target, None, 0.0);
-
-        assert!(is_finite(&solution));
-        let (mid, tip) = apply(&folded, &solution);
-        assert!(tip.distance(target) < 1e-4, "tip {tip}");
-        assert!((mid.length() - L1).abs() < 1e-4, "mid {mid}");
-    }
-
-    #[test]
-    fn a_chain_with_a_joint_that_is_not_finite_is_left_as_it_is() {
-        let mut broken = bent();
-        broken.mid.x = f32::NAN;
-        assert_eq!(
-            solve_two_bone(&broken, Vec3::X, None, 0.2),
-            TwoBoneSolution::IDENTITY
-        );
-
-        let mut far = bent();
-        far.tip = Vec3::splat(f32::INFINITY);
-        assert_eq!(
-            solve_two_bone(&far, Vec3::X, None, 0.2),
-            TwoBoneSolution::IDENTITY
-        );
-    }
-
-    #[test]
-    fn degenerate_inputs_give_finite_rotations() {
-        let straight = TwoBoneChain {
-            root: Vec3::ZERO,
-            mid: Vec3::new(0.0, L1, 0.0),
-            tip: Vec3::new(0.0, FULL, 0.0),
-        };
-        let target = Vec3::new(0.5, 1.0, 0.0);
-        let solution = solve_two_bone(&straight, target, None, 0.0);
-        assert!(is_finite(&solution));
-        assert!(apply(&straight, &solution).1.distance(target) < 1e-4);
-
-        let chain = bent();
-        let pole = Vec3::new(0.0, 0.0, 1.0);
-        assert!(is_finite(&solve_two_bone(&chain, Vec3::ZERO, None, 0.0)));
-        assert!(is_finite(&solve_two_bone(
-            &chain,
-            Vec3::ZERO,
-            Some(pole),
-            0.0
-        )));
-
+    fn a_degenerate_chain_or_target_gives_finite_rotations_and_a_broken_chain_none() {
         let target = Vec3::new(1.0, 0.5, 0.0);
-        let solution = solve_two_bone(&chain, target, Some(target * 0.5), 0.0);
-        assert!(is_finite(&solution));
-        assert!(apply(&chain, &solution).1.distance(target) < 1e-4);
-
-        let zero_length = TwoBoneChain {
-            root: Vec3::ZERO,
-            mid: Vec3::ZERO,
-            tip: Vec3::new(L2, 0.0, 0.0),
+        let mut nan_mid = bent();
+        nan_mid.mid.x = f32::NAN;
+        let mut infinite_tip = bent();
+        infinite_tip.tip = Vec3::splat(f32::INFINITY);
+        let case = |name, chain, target, pole, outcome| Degenerate {
+            name,
+            chain,
+            target,
+            pole,
+            softness: 0.0,
+            outcome,
         };
-        let solution = solve_two_bone(&zero_length, target, Some(pole), 0.3);
-        assert_eq!(solution.root, Quat::IDENTITY);
-        assert_eq!(solution.mid, Quat::IDENTITY);
+        let cases = [
+            case(
+                "a fully folded chain",
+                TwoBoneChain {
+                    root: Vec3::ZERO,
+                    mid: Vec3::new(0.0, L1, 0.0),
+                    tip: Vec3::ZERO,
+                },
+                Vec3::new(0.5, 0.5, 0.2),
+                None,
+                Outcome::Reaches(Vec3::new(0.5, 0.5, 0.2)),
+            ),
+            case(
+                "a straight chain",
+                TwoBoneChain {
+                    root: Vec3::ZERO,
+                    mid: Vec3::new(0.0, L1, 0.0),
+                    tip: Vec3::new(0.0, FULL, 0.0),
+                },
+                Vec3::new(0.5, 1.0, 0.0),
+                None,
+                Outcome::Reaches(Vec3::new(0.5, 1.0, 0.0)),
+            ),
+            case(
+                "a target at the root",
+                bent(),
+                Vec3::ZERO,
+                None,
+                Outcome::Finite,
+            ),
+            case(
+                "a target at the root with a pole",
+                bent(),
+                Vec3::ZERO,
+                Some(Vec3::Z),
+                Outcome::Finite,
+            ),
+            case(
+                "a pole on the line to the target",
+                bent(),
+                target,
+                Some(target * 0.5),
+                Outcome::Reaches(target),
+            ),
+            Degenerate {
+                softness: 0.3,
+                ..case(
+                    "a bone of zero length",
+                    TwoBoneChain {
+                        root: Vec3::ZERO,
+                        mid: Vec3::ZERO,
+                        tip: Vec3::new(L2, 0.0, 0.0),
+                    },
+                    target,
+                    Some(Vec3::Z),
+                    Outcome::Identity,
+                )
+            },
+            Degenerate {
+                softness: 0.2,
+                ..case(
+                    "a joint that is NaN",
+                    nan_mid,
+                    Vec3::X,
+                    None,
+                    Outcome::Identity,
+                )
+            },
+            Degenerate {
+                softness: 0.2,
+                ..case(
+                    "a joint that is infinite",
+                    infinite_tip,
+                    Vec3::X,
+                    None,
+                    Outcome::Identity,
+                )
+            },
+        ];
+
+        for case in cases {
+            let solution = solve_two_bone(&case.chain, case.target, case.pole, case.softness);
+
+            match case.outcome {
+                Outcome::Reaches(goal) => {
+                    assert!(is_finite(&solution), "{}", case.name);
+                    let tip = apply(&case.chain, &solution).tip;
+                    assert!(tip.distance(goal) < 1e-4, "{}: tip {tip}", case.name);
+                }
+                Outcome::Finite => assert!(is_finite(&solution), "{}", case.name),
+                Outcome::Identity => {
+                    assert_eq!(solution, TwoBoneSolution::IDENTITY, "{}", case.name)
+                }
+            }
+        }
     }
 }

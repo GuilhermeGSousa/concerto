@@ -453,35 +453,27 @@ mod tests {
 
     use concerto_animation::{
         evaluation::AnimationGraphContext,
-        graph::AnimationGraph,
         mask::{BoneMask, BoneMaskBranch},
         node::{AnimationNode, ReflectAnimationNode},
-        player::{AnimationHandleComponent, AnimationPlayer},
-        plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion},
+        player::AnimationPlayer,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
         root::AnimationRootBone,
     };
-    use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
-    use concerto_ecs::{
-        Entity,
-        component::scene::SceneEntityRef,
-        system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
-        world::World,
-    };
-    use concerto_foundation::{
-        assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
-        time::Time,
-        transform::Transform,
-    };
-    use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+    use concerto_app::{App, schedule_groups::LateUpdate};
+    use concerto_ecs::{Entity, world::World};
+    use concerto_foundation::assets::{AssetId, handle::AssetHandle};
+    use concerto_mesh::skeleton::Skeleton;
     use concerto_name::{Name, name};
     use concerto_noise::{mix_seed, unit_from_seed};
-    use concerto_reflect::{Reflect, TypeRegistry};
-    use glam::{Mat4, Quat, Vec3};
+    use concerto_reflect::Reflect;
+    use glam::{Quat, Vec3};
     use uuid::Uuid;
 
     use super::{ProceduralMotionChannel, ProceduralMotionNode, Waveform};
-    use crate::plugin::ProceduralAnimationPlugin;
+    use crate::testing::{
+        Bone, Frame, app_with, bone, captured, captured_graph, compile, input_event, input_motion,
+        insert_asset, read_state, skeleton_of, spawn_rigged, write_state,
+    };
 
     const HIPS: usize = 0;
     const SPINE: usize = 1;
@@ -494,82 +486,51 @@ mod tests {
     const ABOVE_CHEST: [usize; 5] = [CHEST, NECK, HEAD, ARM, HAND];
     const TOLERANCE: f32 = 1e-5;
 
-    struct RigBone {
-        name: &'static str,
-        parent: Option<u16>,
-        joint: JointPose,
-    }
-
-    fn rig_bone(
-        name: &'static str,
-        parent: Option<u16>,
-        translation: Vec3,
-        rotation: Quat,
-    ) -> RigBone {
-        RigBone {
-            name,
-            parent,
-            joint: JointPose {
-                translation,
-                rotation,
-                scale: Vec3::ONE,
-            },
-        }
-    }
-
-    fn rig() -> Vec<RigBone> {
+    fn rig() -> Vec<Bone> {
         vec![
-            rig_bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
-            rig_bone(
+            bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
+            bone(
                 "spine",
                 Some(0),
                 Vec3::new(0.0, 0.2, 0.0),
                 Quat::from_rotation_x(0.1),
             ),
-            rig_bone(
+            bone(
                 "chest",
                 Some(1),
                 Vec3::new(0.0, 0.25, 0.0),
                 Quat::from_euler(glam::EulerRot::XYZ, 0.3, -0.5, 0.7),
             ),
-            rig_bone(
+            bone(
                 "neck",
                 Some(2),
                 Vec3::new(0.0, 0.3, 0.0),
                 Quat::from_rotation_z(0.15),
             ),
-            rig_bone(
+            bone(
                 "head",
                 Some(3),
                 Vec3::new(0.0, 0.15, 0.0),
                 Quat::from_rotation_y(-0.2),
             ),
-            rig_bone(
+            bone(
                 "arm",
                 Some(2),
                 Vec3::new(0.2, 0.2, 0.0),
                 Quat::from_rotation_z(-1.2),
             ),
-            rig_bone(
+            bone(
                 "hand",
                 Some(5),
                 Vec3::new(0.3, 0.0, 0.0),
                 Quat::from_rotation_x(0.25),
             ),
-            rig_bone("prop", None, Vec3::X, Quat::from_rotation_x(0.3)),
+            bone("prop", None, Vec3::X, Quat::from_rotation_x(0.3)),
         ]
     }
 
     fn skeleton() -> Skeleton {
-        let bones = rig();
-        Skeleton::new(
-            vec![Mat4::IDENTITY; bones.len()],
-            bones.iter().map(|bone| bone.parent).collect(),
-            bones.iter().map(|bone| bone.name.into()).collect(),
-            bones.iter().map(|bone| bone.joint.clone()).collect(),
-            (0..bones.len() as u128).map(Uuid::from_u128).collect(),
-        )
-        .unwrap()
+        skeleton_of(&rig())
     }
 
     fn input_joints() -> Vec<JointPose> {
@@ -583,23 +544,6 @@ mod tests {
                 scale: Vec3::splat(1.0 + 0.1 * index as f32),
             })
             .collect()
-    }
-
-    fn input_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.1, 0.0, 0.3),
-            rotation: Quat::from_rotation_y(0.05),
-        }
-    }
-
-    fn input_event() -> FiredEvent {
-        FiredEvent {
-            clip: AssetId::from_path("motion_input"),
-            key: 1,
-            time: 0.3,
-            weight: 0.5,
-            mirrored: false,
-        }
     }
 
     #[derive(Default, Reflect)]
@@ -636,71 +580,6 @@ mod tests {
         }
 
         fn reset(&self, _: &mut ()) {}
-    }
-
-    #[derive(Clone, Debug, PartialEq)]
-    struct Frame {
-        joints: Vec<JointPose>,
-        root_motion: RootMotion,
-        events: Vec<FiredEvent>,
-    }
-
-    #[derive(Default, Reflect)]
-    #[reflect(AnimationNode)]
-    struct Capture {}
-
-    impl AnimationNode for Capture {
-        type State = Option<Frame>;
-        type CreateInput = ();
-        type UpdateInput = ();
-        type EvaluateInput = ();
-
-        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> Option<Frame> {
-            None
-        }
-
-        fn update(&self, _: &mut Option<Frame>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
-
-        fn evaluate(
-            &self,
-            state: &mut Option<Frame>,
-            _: &(),
-            _: &AnimationGraphContext<'_>,
-            _: &[Uuid],
-            evaluated_inputs: &[EvaluatedFrame],
-            _: &mut FramePool,
-            output: &mut AnimationFrame,
-        ) {
-            let Some(input) = evaluated_inputs.first() else {
-                return;
-            };
-            output.copy_from(&input.frame);
-            *state = Some(Frame {
-                joints: input.frame.joints().to_vec(),
-                root_motion: input.frame.root_motion(),
-                events: input.frame.events().to_vec(),
-            });
-        }
-
-        fn reset(&self, state: &mut Option<Frame>) {
-            *state = None;
-        }
-    }
-
-    fn graph_of(node: ProceduralMotionNode) -> AnimationGraph {
-        let mut registry = TypeRegistry::default();
-        register_animation_types(&mut registry);
-        registry.register::<ProceduralMotionNode>();
-        registry.register::<InputPose>();
-        registry.register::<Capture>();
-        let mut graph = AnimationGraph::new();
-        graph.result_node().with_input(Capture {}, |mut capture| {
-            capture.with_input(node, |mut motion| {
-                motion.with_input(InputPose {}, |_| {});
-            });
-        });
-        graph.make_live(&registry, None).unwrap();
-        graph
     }
 
     struct NamedMask {
@@ -746,67 +625,32 @@ mod tests {
 
     struct Stage {
         app: App,
-        node: ProceduralMotionNode,
-        graph: AssetHandle<AnimationGraph>,
+        graph: AssetId,
         players: Vec<Entity>,
     }
 
     impl Stage {
         fn new(node: ProceduralMotionNode, seeds: &[u64]) -> Self {
-            let mut app = App::new();
-            app.register_plugin(AssetManagerPlugin);
-            app.insert_resource(Time::new());
-            app.register_plugin(AnimationPlugin);
-            app.register_plugin(ProceduralAnimationPlugin);
-            app.register_animation_node::<InputPose>();
-            app.register_animation_node::<Capture>();
-
+            let mut app = app_with::<InputPose>();
             let bone_count = skeleton().bone_count();
             let world = app.main_mut().world_mut();
-            world.register_component::<Transform>();
             for named in masks() {
-                world
-                    .get_resource_mut::<AssetStore<BoneMask>>()
-                    .unwrap()
-                    .insert(AssetId::from_path(named.path), named.mask);
+                insert_asset(world, AssetId::from_path(named.path), named.mask);
             }
-            let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
-            world
-                .get_resource_mut::<AssetStore<Skeleton>>()
-                .unwrap()
-                .insert(skeleton_handle.id(), skeleton());
-            let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
-            world
-                .get_resource_mut::<AssetStore<AnimationGraph>>()
-                .unwrap()
-                .insert(graph_handle.id(), graph_of(node.clone()));
-            let players = seeds
+            let skeleton = insert_asset(world, AssetId::new(), skeleton());
+            let graph = insert_asset(world, AssetId::new(), captured_graph(node, InputPose {}));
+            let players: Vec<Entity> = seeds
                 .iter()
                 .map(|seed| {
-                    let bones: Vec<Entity> = (0..bone_count)
-                        .map(|_| world.spawn(Transform::IDENTITY))
-                        .collect();
-                    world.insert(AnimationRootBone::default(), bones[HIPS]);
                     let mut player = AnimationPlayer::new(bone_count);
                     player.set_paused(true);
                     player.set_param(name!("seed"), *seed);
-                    world.spawn((
-                        player,
-                        AnimationHandleComponent::new(graph_handle.clone()),
-                        SkeletonComponent::new(
-                            skeleton_handle.clone(),
-                            bones
-                                .iter()
-                                .map(|bone| SceneEntityRef::Entity(*bone))
-                                .collect(),
-                            None,
-                        ),
-                    ))
+                    let rigged = spawn_rigged(world, &skeleton, &graph, player, bone_count);
+                    world.insert(AnimationRootBone::default(), rigged.bones[HIPS]);
+                    rigged.player
                 })
-                .collect::<Vec<Entity>>();
-            let schedules = world.remove_resource::<Schedules>().unwrap();
-            let compiled = schedules.compile::<SingleThreadedExecutor>(world);
-            world.insert_resource(compiled);
+                .collect();
+            compile(world);
             world.run_schedule(LateUpdate);
             for player in &players {
                 world
@@ -817,8 +661,7 @@ mod tests {
 
             Self {
                 app,
-                node,
-                graph: graph_handle,
+                graph: graph.id(),
                 players,
             }
         }
@@ -832,20 +675,25 @@ mod tests {
         }
 
         fn edit(&mut self, node: ProceduralMotionNode) {
-            let id = self.graph.id();
-            self.world()
-                .get_resource_mut::<AssetStore<AnimationGraph>>()
-                .unwrap()
-                .insert(id, graph_of(node.clone()));
-            self.node = node;
+            let id = self.graph;
+            insert_asset(self.world(), id, captured_graph(node, InputPose {}));
         }
 
         fn magnitude(&mut self, channel: usize) -> f32 {
             let player = self.players[0];
-            self.state_of::<ProceduralMotionNode, _>(player, |_, state| {
+            read_state::<ProceduralMotionNode, _>(self.world(), player, |_, state| {
                 state.channels[channel].magnitude.value
             })
-            .unwrap()
+            .expect("the graph holds a procedural motion node")
+        }
+
+        fn advance(&mut self, delta_time: f32) {
+            for player in self.players.clone() {
+                write_state::<ProceduralMotionNode, _>(self.world(), player, |node, state| {
+                    state.advance(node, delta_time)
+                })
+                .expect("the graph holds a procedural motion node");
+            }
         }
 
         fn set_param<T: Reflect + Clone>(&mut self, key: Name, value: T) {
@@ -857,43 +705,13 @@ mod tests {
             }
         }
 
-        fn state_of<N: AnimationNode, R>(
-            &mut self,
-            player: Entity,
-            read: impl FnOnce(&N, &mut N::State) -> R,
-        ) -> Option<R> {
-            let mut read = Some(read);
-            let mut result = None;
-            self.world()
-                .resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
-                    world
-                        .get_component_for_entity_mut::<AnimationPlayer>(player)
-                        .unwrap()
-                        .for_each_state_mut::<N>(graphs, |node, state, _| {
-                            if let Some(read) = read.take() {
-                                result = Some(read(node, state));
-                            }
-                        });
-                });
-            result
-        }
-
         fn step_all(&mut self, delta_time: f32) -> Vec<Frame> {
-            for player in self.players.clone() {
-                self.state_of::<ProceduralMotionNode, _>(player, |node, state| {
-                    state.advance(node, delta_time)
-                })
-                .expect("the graph holds a procedural motion node");
-            }
+            self.advance(delta_time);
             self.world().run_schedule(LateUpdate);
             self.players
                 .clone()
                 .into_iter()
-                .map(|player| {
-                    self.state_of::<Capture, _>(player, |_, state: &mut Option<Frame>| state.take())
-                        .flatten()
-                        .expect("the procedural motion node was evaluated")
-                })
+                .map(|player| captured(self.world(), player))
                 .collect()
         }
 
@@ -944,6 +762,11 @@ mod tests {
         assert_eq!(frame.events, [input_event()]);
     }
 
+    fn named(name: &str, check: impl FnOnce()) {
+        let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check));
+        assert!(checked.is_ok(), "{name}");
+    }
+
     fn sine_value(player_seed: u64, node_seed: u64, channel: u64, phase: f32) -> f32 {
         let offset = unit_from_seed(mix_seed(mix_seed(player_seed, node_seed), channel));
         (TAU * (phase + offset)).sin()
@@ -967,140 +790,250 @@ mod tests {
         ProceduralMotionNode::new().with_channel(channel)
     }
 
+    fn breathing() -> ProceduralMotionChannel {
+        sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0))
+    }
+
     fn breathing_turn(scale: f32) -> Quat {
         Quat::from_rotation_x(scale * 0.1 * sine_value(0, 0, 0, 0.25 * 1.3))
     }
 
-    #[test]
-    fn breathing_pitches_the_chest_and_everything_above_it_about_model_x() {
-        let node = single(sine("chest", 0.25, Vec3::new(0.1, 0.0, 0.0)));
-        let frame = Stage::one(node).step(1.3);
+    struct Turned {
+        bone: usize,
+        turn: Quat,
+    }
 
-        let turn = breathing_turn(1.0);
-        assert!(turn.angle_between(Quat::IDENTITY) > 0.01);
-        for bone in ABOVE_CHEST {
-            assert_turned(&frame, bone, turn);
-        }
-        for bone in [NECK, HEAD, ARM, HAND] {
-            assert_quat(frame.joints[bone].rotation, input_joints()[bone].rotation);
-        }
-        for bone in [HIPS, SPINE, PROP] {
-            assert_eq!(frame.joints[bone], input_joints()[bone]);
-        }
+    struct Motion {
+        name: &'static str,
+        node: ProceduralMotionNode,
+        turned: Vec<Turned>,
+        local: &'static [usize],
+        untouched: &'static [usize],
     }
 
     #[test]
-    fn the_amplitude_turns_about_model_axes_whatever_the_bone_local_axes() {
-        let node = single(sine("chest", 0.25, Vec3::new(0.0, 0.1, 0.0)));
-        let frame = Stage::one(node).step(1.3);
+    fn each_masked_bone_turns_about_model_axes_by_its_channels_scaled_by_its_mask_weight() {
+        let at = |amplitude: Vec3, channel: u64, frequency: f32| {
+            Quat::from_scaled_axis(amplitude * sine_value(0, 0, channel, frequency * 1.3))
+        };
+        let turned = |bones: &[usize], turn: Quat| {
+            bones
+                .iter()
+                .map(|bone| Turned { bone: *bone, turn })
+                .collect::<Vec<Turned>>()
+        };
+        let ramp = Vec3::new(0.1, 0.05, 0.02);
+        let rows = [
+            Motion {
+                name: "breathing pitches the chest and everything above it",
+                node: single(sine("chest", 0.25, Vec3::new(0.1, 0.0, 0.0))),
+                turned: turned(&ABOVE_CHEST, breathing_turn(1.0)),
+                local: &[NECK, HEAD, ARM, HAND],
+                untouched: &[HIPS, SPINE, PROP],
+            },
+            Motion {
+                name: "a branch without descendants turns its bone and its children follow",
+                node: single(breathing()),
+                turned: turned(&ABOVE_CHEST, breathing_turn(1.0)),
+                local: &[NECK, HEAD, ARM, HAND],
+                untouched: &[HIPS, SPINE, PROP],
+            },
+            Motion {
+                name: "the amplitude turns about model axes whatever the bone's local axes",
+                node: single(sine("chest_only", 0.25, Vec3::new(0.0, 0.1, 0.0))),
+                turned: turned(&[CHEST], at(Vec3::new(0.0, 0.1, 0.0), 0, 0.25)),
+                local: &[],
+                untouched: &[HIPS, SPINE, PROP],
+            },
+            Motion {
+                name: "each bone turns by its own mask weight",
+                node: single(sine("spine_ramp", 0.25, ramp)),
+                turned: [SPINE, CHEST, NECK, HEAD, ARM, HAND]
+                    .into_iter()
+                    .zip([1.0 / 3.0, 2.0 / 3.0, 1.0, 1.0, 1.0, 1.0])
+                    .map(|(bone, weight)| Turned {
+                        bone,
+                        turn: at(ramp * weight, 0, 0.25),
+                    })
+                    .collect(),
+                local: &[],
+                untouched: &[HIPS, PROP],
+            },
+            Motion {
+                name: "a mask on the root bone turns its joint",
+                node: single(sine("hips_only", 0.25, Vec3::new(0.1, 0.0, 0.0))),
+                turned: turned(&[HIPS], breathing_turn(1.0)),
+                local: &[SPINE],
+                untouched: &[PROP],
+            },
+            Motion {
+                name: "a nan amplitude component adds nothing on its axis",
+                node: single(sine("chest_only", 0.25, Vec3::new(f32::NAN, 0.1, 0.0))),
+                turned: turned(&[CHEST], at(Vec3::new(0.0, 0.1, 0.0), 0, 0.25)),
+                local: &[],
+                untouched: &[HIPS, SPINE, PROP],
+            },
+            Motion {
+                name: "a mask naming a missing bone still moves the bones it has",
+                node: single(sine("chest_and_tail", 0.25, Vec3::new(0.1, 0.0, 0.0))),
+                turned: turned(&[CHEST], breathing_turn(1.0)),
+                local: &[NECK],
+                untouched: &[HIPS, SPINE, PROP],
+            },
+            Motion {
+                name: "later channels compose on the left",
+                node: ProceduralMotionNode::new()
+                    .with_channel(sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0)))
+                    .with_channel(sine("chest_only", 0.4, Vec3::new(0.0, 0.1, 0.05))),
+                turned: turned(
+                    &[CHEST],
+                    at(Vec3::new(0.0, 0.1, 0.05), 1, 0.4) * at(Vec3::new(0.1, 0.0, 0.0), 0, 0.25),
+                ),
+                local: &[],
+                untouched: &[HIPS, SPINE, PROP],
+            },
+        ];
 
-        let turn = Quat::from_rotation_y(0.1 * sine_value(0, 0, 0, 0.25 * 1.3));
-        assert!(turn.angle_between(Quat::IDENTITY) > 0.01);
-        assert_turned(&frame, CHEST, turn);
-    }
+        for row in rows {
+            let frame = Stage::one(row.node).step(1.3);
 
-    #[test]
-    fn each_bone_turns_by_its_own_mask_weight() {
-        let amplitude = Vec3::new(0.1, 0.05, 0.02);
-        let node = single(sine("spine_ramp", 0.25, amplitude));
-        let frame = Stage::one(node).step(1.3);
-
-        let rotation = amplitude * sine_value(0, 0, 0, 0.25 * 1.3);
-        let bones = [SPINE, CHEST, NECK, HEAD, ARM, HAND];
-        let weights = [1.0 / 3.0, 2.0 / 3.0, 1.0, 1.0, 1.0, 1.0];
-        for (bone, weight) in bones.into_iter().zip(weights) {
-            assert_turned(&frame, bone, Quat::from_scaled_axis(weight * rotation));
+            named(row.name, || {
+                let input = input_joints();
+                for turned in &row.turned {
+                    assert!(turned.turn.angle_between(Quat::IDENTITY) > 0.005);
+                    assert_turned(&frame, turned.bone, turned.turn);
+                }
+                for bone in row.local {
+                    assert_quat(frame.joints[*bone].rotation, input[*bone].rotation);
+                }
+                for bone in row.untouched {
+                    assert_eq!(frame.joints[*bone], input[*bone]);
+                }
+                assert_eq!(frame.root_motion, input_motion());
+            });
         }
-        assert_eq!(frame.joints[HIPS], input_joints()[HIPS]);
+    }
+
+    struct Inert {
+        name: &'static str,
+        node: ProceduralMotionNode,
+        strength: Option<f32>,
     }
 
     #[test]
-    fn a_branch_without_descendants_turns_its_bone_and_its_children_follow() {
-        let node = single(sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0)));
-        let frame = Stage::one(node).step(1.3);
+    fn channels_that_cannot_move_leave_the_input_pose() {
+        let amplitude = Vec3::new(0.1, 0.0, 0.0);
+        let inert = |name, channel| Inert {
+            name,
+            node: single(channel),
+            strength: None,
+        };
+        let weak = |name, strength| Inert {
+            name,
+            node: single(breathing().with_magnitude_param(name!("strength"))),
+            strength: Some(strength),
+        };
+        let rows = [
+            inert("a zero frequency", sine("chest", 0.0, amplitude)),
+            inert("a negative frequency", sine("chest", -1.0, amplitude)),
+            inert("a nan frequency", sine("chest", f32::NAN, amplitude)),
+            inert(
+                "a mask that is not loaded",
+                sine("unloaded", 0.25, amplitude),
+            ),
+            Inert {
+                name: "no channels",
+                node: ProceduralMotionNode::new(),
+                strength: None,
+            },
+            weak("a zero magnitude", 0.0),
+            weak("a negative magnitude", -1.0),
+            weak("a nan magnitude", f32::NAN),
+            weak("an infinite magnitude", f32::INFINITY),
+        ];
 
-        let turn = breathing_turn(1.0);
-        for bone in ABOVE_CHEST {
-            assert_turned(&frame, bone, turn);
+        for row in rows {
+            let mut stage = Stage::one(row.node);
+            if let Some(strength) = row.strength {
+                stage.set_param(name!("strength"), strength);
+            }
+
+            let frame = stage.step(1.3);
+
+            named(row.name, || assert_input(&frame));
         }
-        for bone in [NECK, HEAD, ARM, HAND] {
-            assert_eq!(frame.joints[bone].rotation, input_joints()[bone].rotation);
+    }
+
+    enum Strength {
+        Missing,
+        Float(f32),
+        NotAFloat,
+    }
+
+    struct Scaled {
+        strength: Strength,
+        scale: f32,
+    }
+
+    #[test]
+    fn the_magnitude_param_scales_the_turn_and_counts_as_one_when_missing_or_not_a_float() {
+        let scaled = |strength, scale| Scaled { strength, scale };
+        let rows = [
+            scaled(Strength::Float(0.5), 0.5),
+            scaled(Strength::Float(2.0), 2.0),
+            scaled(Strength::Missing, 1.0),
+            scaled(Strength::NotAFloat, 1.0),
+        ];
+
+        for row in rows {
+            let mut stage = Stage::one(single(breathing().with_magnitude_param(name!("strength"))));
+            match row.strength {
+                Strength::Missing => {}
+                Strength::Float(value) => stage.set_param(name!("strength"), value),
+                Strength::NotAFloat => stage.set_param(name!("strength"), Vec3::ONE),
+            }
+
+            let frame = stage.step(1.3);
+
+            assert_turned(&frame, CHEST, breathing_turn(row.scale));
         }
     }
 
-    #[test]
-    fn a_mask_on_the_root_bone_moves_its_joint_and_keeps_the_root_motion() {
-        let node = single(sine("hips_only", 0.25, Vec3::new(0.1, 0.0, 0.0)));
-        let frame = Stage::one(node).step(1.3);
-
-        assert_turned(&frame, HIPS, breathing_turn(1.0));
-        assert_ne!(frame.joints[HIPS].rotation, input_joints()[HIPS].rotation);
-        assert_eq!(frame.root_motion, input_motion());
+    enum Seed {
+        Missing,
+        Wide(u64),
+        Int(u32),
+        Float(f32),
     }
 
     #[test]
-    fn later_channels_compose_on_the_left() {
-        let first = Vec3::new(0.1, 0.0, 0.0);
-        let second = Vec3::new(0.0, 0.1, 0.05);
-        let node = ProceduralMotionNode::new()
-            .with_channel(sine("chest_only", 0.25, first))
-            .with_channel(sine("chest_only", 0.4, second));
-        let frame = Stage::one(node).step(1.3);
-
-        let first_turn = Quat::from_scaled_axis(first * sine_value(0, 0, 0, 0.25 * 1.3));
-        let second_turn = Quat::from_scaled_axis(second * sine_value(0, 0, 1, 0.4 * 1.3));
-        assert_turned(&frame, CHEST, second_turn * first_turn);
-    }
-
-    #[test]
-    fn players_with_the_same_seeds_move_alike_and_other_seeds_differ() {
+    fn the_seeds_and_the_channel_index_choose_the_motion() {
         let node = single(noise("chest")).with_seed_param(name!("seed"));
-
         let same = Stage::new(node.clone(), &[0, 0]).step_all(1.3);
         assert_eq!(same[0], same[1]);
-
         let seeded = Stage::new(node.clone(), &[0, 1]).step_all(1.3);
         assert_ne!(seeded[0].joints, seeded[1].joints);
-
-        let unseeded = Stage::one(node.clone()).step(1.3);
-        let node_seeded = Stage::one(node.with_seed(1)).step(1.3);
+        let unseeded = Stage::one(single(noise("chest"))).step(1.3);
+        let node_seeded = Stage::one(single(noise("chest")).with_seed(1)).step(1.3);
         assert_ne!(unseeded.joints, node_seeded.joints);
-    }
 
-    #[test]
-    fn the_seed_param_reads_a_u64_or_an_int_and_anything_else_as_zero() {
-        let node = single(noise("chest")).with_seed_param(name!("character_seed"));
-        let with = |value: Option<Box<dyn Fn(&mut Stage)>>| {
-            let mut stage = Stage::one(node.clone());
-            if let Some(set) = value {
-                set(&mut stage);
+        let by_seed = |seed: Seed| {
+            let node = single(noise("chest")).with_seed_param(name!("character_seed"));
+            let mut stage = Stage::one(node);
+            match seed {
+                Seed::Missing => {}
+                Seed::Wide(value) => stage.set_param(name!("character_seed"), value),
+                Seed::Int(value) => stage.set_param(name!("character_seed"), value),
+                Seed::Float(value) => stage.set_param(name!("character_seed"), value),
             }
-            stage.step(1.3)
+            stage.step(1.3).joints
         };
+        let wide = by_seed(Seed::Wide(5));
+        assert_eq!(by_seed(Seed::Int(5)), wide);
+        assert_ne!(by_seed(Seed::Missing), wide);
+        assert_eq!(by_seed(Seed::Float(5.0)), unseeded.joints);
+        assert_eq!(by_seed(Seed::Missing), unseeded.joints);
 
-        let wide = with(Some(Box::new(|stage| {
-            stage.set_param(name!("character_seed"), 5_u64)
-        })));
-        let int = with(Some(Box::new(|stage| {
-            stage.set_param(name!("character_seed"), 5_u32)
-        })));
-        let float = with(Some(Box::new(|stage| {
-            stage.set_param(name!("character_seed"), 5.0_f32)
-        })));
-        let missing = with(None);
-
-        assert_eq!(wide.joints, int.joints);
-        assert_ne!(wide.joints, missing.joints);
-        assert_eq!(float.joints, missing.joints);
-        assert_eq!(
-            missing.joints,
-            Stage::one(single(noise("chest"))).step(1.3).joints
-        );
-    }
-
-    #[test]
-    fn identical_noise_channels_at_different_indices_differ() {
-        let first = Stage::one(single(noise("chest_only"))).step(1.3);
         let second = Stage::one(
             ProceduralMotionNode::new()
                 .with_channel(ProceduralMotionChannel {
@@ -1110,7 +1043,7 @@ mod tests {
                 .with_channel(noise("chest_only")),
         )
         .step(1.3);
-
+        let first = Stage::one(single(noise("chest_only"))).step(1.3);
         assert_ne!(first.joints[CHEST], input_joints()[CHEST]);
         assert_ne!(second.joints[CHEST], input_joints()[CHEST]);
         assert_ne!(first.joints[CHEST], second.joints[CHEST]);
@@ -1132,70 +1065,6 @@ mod tests {
         }
     }
 
-    fn with_magnitude(param: Name) -> ProceduralMotionNode {
-        single(sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0)).with_magnitude_param(param))
-    }
-
-    #[test]
-    fn the_magnitude_param_scales_the_rotation() {
-        for scale in [0.5, 2.0] {
-            let mut stage = Stage::one(with_magnitude(name!("strength")));
-            stage.set_param(name!("strength"), scale);
-            let frame = stage.step(1.3);
-            assert_turned(&frame, CHEST, breathing_turn(scale));
-        }
-    }
-
-    #[test]
-    fn a_zero_negative_or_non_finite_magnitude_leaves_the_input_pose() {
-        for scale in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            let mut stage = Stage::one(with_magnitude(name!("strength")));
-            stage.set_param(name!("strength"), scale);
-            assert_input(&stage.step(1.3));
-        }
-    }
-
-    #[test]
-    fn a_missing_or_non_float_magnitude_param_acts_as_one() {
-        let frame = Stage::one(with_magnitude(name!("strength"))).step(1.3);
-        assert_turned(&frame, CHEST, breathing_turn(1.0));
-
-        let mut stage = Stage::one(with_magnitude(name!("strength")));
-        stage.set_param(name!("strength"), Vec3::ONE);
-        assert_turned(&stage.step(1.3), CHEST, breathing_turn(1.0));
-    }
-
-    #[test]
-    fn channels_that_cannot_move_add_nothing() {
-        let amplitude = Vec3::new(0.1, 0.0, 0.0);
-        let inert = [
-            sine("chest", 0.0, amplitude),
-            sine("chest", -1.0, amplitude),
-            sine("chest", f32::NAN, amplitude),
-            sine("unloaded", 0.25, amplitude),
-        ];
-        for channel in inert {
-            assert_input(&Stage::one(single(channel)).step(1.3));
-        }
-    }
-
-    #[test]
-    fn a_nan_amplitude_component_adds_nothing_on_its_axis() {
-        let node = single(sine("chest_only", 0.25, Vec3::new(f32::NAN, 0.1, 0.0)));
-        let frame = Stage::one(node).step(1.3);
-
-        let turn = Quat::from_rotation_y(0.1 * sine_value(0, 0, 0, 0.25 * 1.3));
-        assert_turned(&frame, CHEST, turn);
-    }
-
-    #[test]
-    fn a_mask_naming_a_missing_bone_still_moves_the_bones_it_has() {
-        let node = single(sine("chest_and_tail", 0.25, Vec3::new(0.1, 0.0, 0.0)));
-        let frame = Stage::one(node).step(1.3);
-
-        assert_turned(&frame, CHEST, breathing_turn(1.0));
-    }
-
     #[test]
     fn root_motion_events_translations_scales_and_unmasked_bones_pass_through() {
         let frame = Stage::one(single(noise("chest"))).run(10, 0.1);
@@ -1214,39 +1083,45 @@ mod tests {
     }
 
     #[test]
-    fn a_node_without_channels_passes_its_input_through() {
-        assert_input(&Stage::one(ProceduralMotionNode::new()).step(1.3));
-    }
+    fn a_channel_added_live_starts_fresh_and_the_others_carry_on_through_its_removal() {
+        let first = breathing().with_magnitude_halflife(0.2);
+        let added = sine("prop", 0.6, Vec3::new(0.1, 0.2, 0.0)).with_magnitude_halflife(0.2);
+        let original = single(first);
+        let mut edited = Stage::one(original.clone());
+        let mut untouched = Stage::one(original.clone());
+        for stage in [&mut edited, &mut untouched] {
+            stage.step(0.5);
+            stage.step(0.5);
+        }
 
-    #[test]
-    fn a_channel_added_since_the_state_was_made_is_kept_up_with() {
-        let mut stage = Stage::one(single(sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0))));
-        let player = stage.players[0];
-        let original = stage.node.clone();
-        let grown = original.clone().with_channel(noise("prop"));
-        stage
-            .state_of::<ProceduralMotionNode, _>(player, |_, state| {
-                state.advance(&grown, 0.5);
-                assert_eq!(state.channels.len(), 2);
-                assert_eq!(state.channels[0].phase, 0.125);
-                assert_eq!(state.channels[1].phase, 0.5 * 0.7_f32 as f64);
-                state.advance(&original, 0.5);
-                assert_eq!(state.channels.len(), 1);
-                assert_eq!(state.channels[0].phase, 0.25);
-            })
-            .unwrap();
+        edited.edit(original.clone().with_channel(added));
+        let frame = edited.step(0.3);
+        let reference = untouched.step(0.3);
+
+        assert_eq!(frame.joints[CHEST], reference.joints[CHEST]);
+        assert_eq!(edited.magnitude(1), 1.0);
+        let turn =
+            Quat::from_scaled_axis(Vec3::new(0.1, 0.2, 0.0) * sine_value(0, 0, 1, 0.6 * 0.3));
+        assert!(turn.angle_between(Quat::IDENTITY) > 0.01);
+        assert_turned(&frame, PROP, turn);
+
+        edited.edit(original);
+        let frame = edited.step(0.4);
+        let reference = untouched.step(0.4);
+
+        assert_eq!(frame.joints, reference.joints);
     }
 
     fn eased(halflife: f32) -> ProceduralMotionNode {
         single(
-            sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0))
+            breathing()
                 .with_magnitude_param(name!("strength"))
                 .with_magnitude_halflife(halflife),
         )
     }
 
     #[test]
-    fn the_magnitude_eases_toward_the_param_over_its_halflife() {
+    fn the_magnitude_eases_toward_the_param_over_its_halflife_and_back_to_the_input_pose() {
         let mut stage = Stage::one(eased(0.2));
         stage.set_param(name!("strength"), 0.0_f32);
         assert_input(&stage.step(0.1));
@@ -1259,33 +1134,9 @@ mod tests {
             (magnitude - 0.5).abs() < 0.01,
             "expected about half the goal one halflife later, got {magnitude}"
         );
-    }
 
-    #[test]
-    fn a_fresh_channel_applies_its_goal_on_the_first_evaluate() {
-        let mut stage = Stage::one(eased(0.2));
-        stage.set_param(name!("strength"), 1.0_f32);
-        let player = stage.players[0];
-        stage
-            .state_of::<ProceduralMotionNode, _>(player, |node, state| {
-                state.advance(node, 0.5);
-                state.advance(node, 0.5);
-            })
-            .unwrap();
-
-        let frame = stage.step(0.3);
-
-        assert_eq!(stage.magnitude(0), 1.0);
-        assert_turned(&frame, CHEST, breathing_turn(1.0));
-    }
-
-    #[test]
-    fn easing_back_to_zero_ends_on_the_input_pose() {
-        let mut stage = Stage::one(eased(0.2));
-        stage.set_param(name!("strength"), 1.0_f32);
         stage.run(5, 0.2);
         stage.set_param(name!("strength"), 0.0_f32);
-
         let mut settled = false;
         for _ in 0..100 {
             let frame = stage.step(0.2);
@@ -1305,27 +1156,16 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_added_live_starts_fresh_and_the_others_carry_on() {
-        let first = sine("chest_only", 0.25, Vec3::new(0.1, 0.0, 0.0)).with_magnitude_halflife(0.2);
-        let added = sine("prop", 0.6, Vec3::new(0.1, 0.2, 0.0)).with_magnitude_halflife(0.2);
-        let original = single(first.clone());
-        let mut edited = Stage::one(original.clone());
-        let mut untouched = Stage::one(original.clone());
-        for stage in [&mut edited, &mut untouched] {
-            stage.step(0.5);
-            stage.step(0.5);
-        }
+    fn a_fresh_channel_applies_its_goal_on_the_first_evaluate() {
+        let mut stage = Stage::one(eased(0.2));
+        stage.set_param(name!("strength"), 1.0_f32);
+        stage.advance(0.5);
+        stage.advance(0.5);
 
-        edited.edit(original.with_channel(added));
-        let frame = edited.step(0.3);
-        let reference = untouched.step(0.3);
+        let frame = stage.step(0.3);
 
-        assert_eq!(frame.joints[CHEST], reference.joints[CHEST]);
-        assert_eq!(edited.magnitude(1), 1.0);
-        let turn =
-            Quat::from_scaled_axis(Vec3::new(0.1, 0.2, 0.0) * sine_value(0, 0, 1, 0.6 * 0.3));
-        assert!(turn.angle_between(Quat::IDENTITY) > 0.01);
-        assert_turned(&frame, PROP, turn);
+        assert_eq!(stage.magnitude(0), 1.0);
+        assert_turned(&frame, CHEST, breathing_turn(1.0));
     }
 
     #[test]
@@ -1335,12 +1175,11 @@ mod tests {
         stage.step(0.5);
         stage.step(0.5);
         let player = stage.players[0];
-        stage
-            .state_of::<ProceduralMotionNode, _>(player, |node, state| {
-                node.reset(state);
-                state.advance(node, 0.2);
-            })
-            .unwrap();
+        write_state::<ProceduralMotionNode, _>(stage.world(), player, |node, state| {
+            node.reset(state);
+            state.advance(node, 0.2);
+        })
+        .unwrap();
         stage.set_param(name!("strength"), 0.5_f32);
 
         let frame = stage.step(0.1);

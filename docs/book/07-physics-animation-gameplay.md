@@ -203,6 +203,40 @@ action and `axis2d` a 2D one, each against `Input`. `GameplayPlugin` binds
 `concerto::gameplay::actions`; the `walk` system above reads `Move`, so a
 half-pushed stick walks at half speed.
 
+Those reads merge every device. A couch game reads each local player's own:
+the `Players` resource maps a `PlayerIndex` to that player's pad and, during
+development, the keyboard and mouse. `WindowPlugin` inserts it with joining
+off; after the plugins are added, call `players.set_settings(..)` with
+`JoinSettings` that turn on `join_on_press`, and an unassigned pad that presses
+South or Start joins at the lowest free index, up to `max_players`.
+`keyboard_mouse_joins` lets Enter or Space join the keyboard too. A game's own
+assignment screen calls `players.assign(index, device)` and `unassign`
+instead. When a player's pad disconnects they keep their index and
+`players.waiting()` lists them, so the game can pause; the same pad
+reconnecting gives it back, and with `join_on_press` another pad pressing a
+join button can take the place, as long as it is below `max_players`.
+`PlayerEvent` says when a player joins, leaves, loses or regains a pad.
+`actions.player(index, &input, &players)` reads one player's actions: only
+that player's devices count, `mouse_delta()` is zero for anyone without the
+mouse, and `push_context_for(index, context)` gives that player a context the
+other doesn't share. Context stacks are kept by index, so clear one with
+`clear_contexts_for` when `PlayerEvent::Left` says its player left.
+`ActionFired` carries the player whose device fired it.
+
+```rust
+fn walk_each(
+    input: Res<Input>,
+    actions: Res<ActionMap>,
+    joined: Res<Players>,
+    players: Query<(&PlayerIndex, &mut DesiredMotion)>,
+) {
+    for (index, mut desired) in players.iter() {
+        let push = actions.player(*index, &input, &joined).axis2d(Move);
+        desired.velocity = Vec3::new(push.x, 0.0, -push.y) * 5.0;
+    }
+}
+```
+
 The physics step runs in `LateFixedUpdate`, at a fixed rate; transforms of
 simulated bodies are interpolated between steps for display.
 
@@ -577,7 +611,7 @@ A node can read its playback rate from a float parameter: the rate is the
 node's own rate times the parameter, and no parameter (`None`, the default), or
 one that is missing or holds another type, leaves the node's rate alone. A product that is negative or not
 finite holds the node at rate 0.
-`crates/animation/tests/graph_serialization.rs` builds a graph with a blend
+`crates/animation/tests/animation/graph_serialization.rs` builds a graph with a blend
 space and a state machine. The tech demo's character plays no authored graph:
 `examples/tech-demo/src/character.rs` gives it one `MotionMatchingNode`, which
 plays a motion database, and the

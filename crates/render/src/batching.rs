@@ -279,204 +279,176 @@ mod tests {
         }
     }
 
-    fn candidate(key: u32, instance: &RenderMeshInstance) -> BinCandidate<'_, u32> {
-        BinCandidate {
-            key,
-            instance,
-            skeleton_offset: None,
-        }
-    }
-
     fn matrix(value: GlobalTransformRaw) -> Mat4 {
         Mat4::from_cols_slice(bytemuck::cast_slice(&[value]))
     }
 
-    fn batch_keys(bins: &ViewBins<u32>) -> Vec<(u32, Range<u32>)> {
-        bins.batches
-            .iter()
-            .map(|batch| (batch.key, batch.instances.clone()))
-            .collect()
+    #[derive(Debug, PartialEq)]
+    struct Batch {
+        key: u32,
+        instances: Range<u32>,
+        skeleton_offset: u32,
+    }
+
+    fn batch(key: u32, instances: Range<u32>) -> Batch {
+        Batch {
+            key,
+            instances,
+            skeleton_offset: 0,
+        }
+    }
+
+    struct Candidate {
+        key: u32,
+        at: Vec3,
+        skeleton_offset: Option<u32>,
+    }
+
+    fn at(key: u32, x: f32, y: f32, z: f32) -> Candidate {
+        Candidate {
+            key,
+            at: Vec3::new(x, y, z),
+            skeleton_offset: None,
+        }
+    }
+
+    struct Binning {
+        case: &'static str,
+        candidates: Vec<Candidate>,
+        stats: ViewDrawStats,
+        batches: Vec<Batch>,
+        drawn: Vec<Vec3>,
+    }
+
+    fn stats(draws: u32, culled: u32) -> ViewDrawStats {
+        ViewDrawStats { draws, culled }
     }
 
     #[test]
-    fn instances_sharing_a_key_form_one_batch() {
-        let mut input = InstanceInputUniformBuffer::new();
-        let instances: Vec<RenderMeshInstance> = (0..3)
-            .map(|i| {
-                instance(
-                    &mut input,
-                    Vec3::new(i as f32, 0.0, -10.0),
-                    RenderMeshInstanceFlags::empty(),
-                )
-            })
-            .collect();
-        let mut bins = ViewBins::default();
-
-        let stats = bins.rebuild(
-            instances.iter().map(|instance| candidate(7, instance)),
-            &frustum(),
-            &input,
-        );
-
-        assert_eq!(
-            stats,
-            ViewDrawStats {
-                draws: 1,
-                culled: 0
-            }
-        );
-        assert_eq!(batch_keys(&bins), [(7, 0..3)]);
-    }
-
-    #[test]
-    fn instances_with_different_keys_form_one_batch_each_in_key_order() {
-        let mut input = InstanceInputUniformBuffer::new();
-        let instances: Vec<RenderMeshInstance> = (0..4)
-            .map(|i| {
-                instance(
-                    &mut input,
-                    Vec3::new(i as f32, 0.0, -10.0),
-                    RenderMeshInstanceFlags::empty(),
-                )
-            })
-            .collect();
-        let keys = [3, 1, 3, 2];
-        let mut bins = ViewBins::default();
-
-        let stats = bins.rebuild(
-            instances
+    fn visible_instances_bin_into_one_batch_per_key_in_key_order_with_skinned_ones_last() {
+        let cases = [
+            Binning {
+                case: "one key",
+                candidates: vec![
+                    at(7, -1.0, 0.0, -10.0),
+                    at(7, 0.0, 1.0, -10.0),
+                    at(7, 1.0, 0.0, -10.0),
+                ],
+                stats: stats(1, 0),
+                batches: vec![batch(7, 0..3)],
+                drawn: vec![
+                    Vec3::new(-1.0, 0.0, -10.0),
+                    Vec3::new(0.0, 1.0, -10.0),
+                    Vec3::new(1.0, 0.0, -10.0),
+                ],
+            },
+            Binning {
+                case: "several keys",
+                candidates: vec![
+                    at(3, 0.0, 0.0, -10.0),
+                    at(1, 1.0, 0.0, -10.0),
+                    at(3, 2.0, 0.0, -10.0),
+                    at(2, 3.0, 0.0, -10.0),
+                ],
+                stats: stats(3, 0),
+                batches: vec![batch(1, 0..1), batch(2, 1..2), batch(3, 2..4)],
+                drawn: vec![
+                    Vec3::new(1.0, 0.0, -10.0),
+                    Vec3::new(3.0, 0.0, -10.0),
+                    Vec3::new(0.0, 0.0, -10.0),
+                    Vec3::new(2.0, 0.0, -10.0),
+                ],
+            },
+            Binning {
+                case: "skinned instances",
+                candidates: vec![
+                    Candidate {
+                        skeleton_offset: Some(256),
+                        ..at(5, 0.0, 0.0, 0.0)
+                    },
+                    at(9, 0.0, 0.0, -10.0),
+                    Candidate {
+                        skeleton_offset: Some(512),
+                        ..at(5, 0.0, 0.0, 0.0)
+                    },
+                ],
+                stats: stats(3, 0),
+                batches: vec![
+                    batch(9, 0..1),
+                    Batch {
+                        skeleton_offset: 256,
+                        ..batch(5, 1..2)
+                    },
+                    Batch {
+                        skeleton_offset: 512,
+                        ..batch(5, 2..3)
+                    },
+                ],
+                drawn: vec![Vec3::new(0.0, 0.0, -10.0), Vec3::ZERO, Vec3::ZERO],
+            },
+            Binning {
+                case: "culled instances",
+                candidates: vec![
+                    at(1, 0.0, 0.0, -10.0),
+                    at(1, 0.0, 0.0, 10.0),
+                    at(1, 0.0, 0.0, -500.0),
+                ],
+                stats: stats(1, 2),
+                batches: vec![batch(1, 0..1)],
+                drawn: vec![Vec3::new(0.0, 0.0, -10.0)],
+            },
+        ];
+        for case in &cases {
+            let mut input = InstanceInputUniformBuffer::new();
+            let instances: Vec<RenderMeshInstance> = case
+                .candidates
                 .iter()
-                .zip(keys)
-                .map(|(instance, key)| candidate(key, instance)),
-            &frustum(),
-            &input,
-        );
+                .map(|candidate| {
+                    let flags = if candidate.skeleton_offset.is_some() {
+                        RenderMeshInstanceFlags::SKINNED
+                    } else {
+                        RenderMeshInstanceFlags::empty()
+                    };
+                    instance(&mut input, candidate.at, flags)
+                })
+                .collect();
+            let mut bins = ViewBins::default();
 
-        assert_eq!(
-            stats,
-            ViewDrawStats {
-                draws: 3,
-                culled: 0
-            }
-        );
-        assert_eq!(batch_keys(&bins), [(1, 0..1), (2, 1..2), (3, 2..4)]);
-    }
+            let stats = bins.rebuild(
+                case.candidates
+                    .iter()
+                    .zip(&instances)
+                    .map(|(candidate, instance)| BinCandidate {
+                        key: candidate.key,
+                        instance,
+                        skeleton_offset: candidate.skeleton_offset,
+                    }),
+                &frustum(),
+                &input,
+            );
 
-    #[test]
-    fn a_skinned_instance_forms_its_own_batch_after_the_unskinned_ones() {
-        let mut input = InstanceInputUniformBuffer::new();
-        let skinned = [
-            instance(&mut input, Vec3::ZERO, RenderMeshInstanceFlags::SKINNED),
-            instance(&mut input, Vec3::ZERO, RenderMeshInstanceFlags::SKINNED),
-        ];
-        let unskinned = instance(
-            &mut input,
-            Vec3::new(0.0, 0.0, -10.0),
-            RenderMeshInstanceFlags::empty(),
-        );
-        let mut bins = ViewBins::default();
-
-        let stats = bins.rebuild(
-            [
-                BinCandidate {
-                    key: 5,
-                    instance: &skinned[0],
-                    skeleton_offset: Some(256),
-                },
-                candidate(9, &unskinned),
-                BinCandidate {
-                    key: 5,
-                    instance: &skinned[1],
-                    skeleton_offset: Some(512),
-                },
-            ],
-            &frustum(),
-            &input,
-        );
-
-        assert_eq!(
-            stats,
-            ViewDrawStats {
-                draws: 3,
-                culled: 0
-            }
-        );
-        assert_eq!(batch_keys(&bins), [(9, 0..1), (5, 1..2), (5, 2..3)]);
-        assert_eq!(
-            bins.batches
+            assert_eq!(stats, case.stats, "{}", case.case);
+            let batches: Vec<Batch> = bins
+                .batches
                 .iter()
-                .map(|batch| batch.skeleton_offset)
-                .collect::<Vec<_>>(),
-            [0, 256, 512]
-        );
-    }
-
-    #[test]
-    fn culled_instances_are_counted_and_not_drawn() {
-        let mut input = InstanceInputUniformBuffer::new();
-        let instances = [
-            instance(
-                &mut input,
-                Vec3::new(0.0, 0.0, -10.0),
-                RenderMeshInstanceFlags::empty(),
-            ),
-            instance(
-                &mut input,
-                Vec3::new(0.0, 0.0, 10.0),
-                RenderMeshInstanceFlags::empty(),
-            ),
-            instance(
-                &mut input,
-                Vec3::new(0.0, 0.0, -500.0),
-                RenderMeshInstanceFlags::empty(),
-            ),
-        ];
-        let mut bins = ViewBins::default();
-
-        let stats = bins.rebuild(
-            instances.iter().map(|instance| candidate(1, instance)),
-            &frustum(),
-            &input,
-        );
-
-        assert_eq!(
-            stats,
-            ViewDrawStats {
-                draws: 1,
-                culled: 2
-            }
-        );
-        assert_eq!(batch_keys(&bins), [(1, 0..1)]);
-        assert_eq!(
-            matrix(bins.values[0]),
-            Mat4::from_translation(Vec3::new(0.0, 0.0, -10.0))
-        );
-    }
-
-    #[test]
-    fn a_batch_holds_its_instances_transforms_in_order() {
-        let mut input = InstanceInputUniformBuffer::new();
-        let translations = [
-            Vec3::new(-1.0, 0.0, -10.0),
-            Vec3::new(0.0, 1.0, -10.0),
-            Vec3::new(1.0, 0.0, -10.0),
-        ];
-        let instances: Vec<RenderMeshInstance> = translations
-            .iter()
-            .map(|&translation| instance(&mut input, translation, RenderMeshInstanceFlags::empty()))
-            .collect();
-        let mut bins = ViewBins::default();
-
-        bins.rebuild(
-            instances.iter().map(|instance| candidate(2, instance)),
-            &frustum(),
-            &input,
-        );
-
-        assert_eq!(
-            bins.values.iter().copied().map(matrix).collect::<Vec<_>>(),
-            translations.map(Mat4::from_translation)
-        );
+                .map(|batch| Batch {
+                    key: batch.key,
+                    instances: batch.instances.clone(),
+                    skeleton_offset: batch.skeleton_offset,
+                })
+                .collect();
+            assert_eq!(batches, case.batches, "{}", case.case);
+            assert_eq!(
+                bins.values.iter().copied().map(matrix).collect::<Vec<_>>(),
+                case.drawn
+                    .iter()
+                    .copied()
+                    .map(Mat4::from_translation)
+                    .collect::<Vec<_>>(),
+                "{}",
+                case.case
+            );
+        }
     }
 
     fn read_back(gpu: &Gpu, buffer: &wgpu::Buffer, len: usize) -> Vec<Mat4> {

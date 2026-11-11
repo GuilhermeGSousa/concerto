@@ -129,129 +129,107 @@ impl CharacterSimulation {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
-    use crate::definition::TrajectorySettings;
 
     const EPS: f32 = 1.0e-3;
 
-    fn moving_simulation() -> CharacterSimulation {
-        let mut simulation = CharacterSimulation::default();
-        simulation.velocity.value = Vec3::new(0.5, 0.0, 1.0);
-        simulation.velocity.velocity = Vec3::new(-0.2, 0.0, 0.3);
-        simulation.facing.value = Quat::from_rotation_y(0.4);
-        simulation.facing.velocity = Vec3::new(0.0, 0.7, 0.0);
-        simulation
+    fn horizontal(range: f32) -> impl Strategy<Value = Vec3> {
+        (-range..range, -range..range).prop_map(|(x, z)| Vec3::new(x, 0.0, z))
     }
 
-    fn moving_desired() -> DesiredMotion {
-        DesiredMotion {
-            velocity: Vec3::new(3.0, 0.0, 4.0),
-            rotation: Quat::from_rotation_y(1.5),
-        }
-    }
+    proptest! {
+        #[test]
+        fn the_prediction_is_where_the_simulation_goes_while_the_desired_motion_holds(
+            velocity in horizontal(2.0),
+            acceleration in horizontal(1.0),
+            facing in -3.0f32..3.0,
+            spin in -1.0f32..1.0,
+            desired_velocity in horizontal(5.0),
+            climb in -9.0f32..9.0,
+            turn in -2.5f32..2.5,
+            start in prop::array::uniform3(-5.0f32..5.0),
+            halflives in prop::array::uniform2(0.05f32..1.0),
+            sample_dt in 0.1f32..0.5,
+            sample_count in 1usize..5,
+        ) {
+            const STEPS: usize = 300;
+            let mut simulation = CharacterSimulation {
+                velocity_halflife: halflives[0],
+                rotation_halflife: halflives[1],
+                sample_dt,
+                sample_count,
+                ..CharacterSimulation::default()
+            };
+            simulation.velocity.value = velocity;
+            simulation.velocity.velocity = acceleration;
+            simulation.facing.value = Quat::from_rotation_y(facing);
+            simulation.facing.velocity = Vec3::new(0.0, spin, 0.0);
+            let desired = DesiredMotion {
+                velocity: desired_velocity.with_y(climb),
+                rotation: Quat::from_rotation_y(facing + turn),
+            };
+            let start = Vec3::from_array(start);
 
-    #[test]
-    fn prediction_is_where_the_simulation_goes_while_the_desired_motion_holds() {
-        const STEPS: usize = 300;
-        let mut simulation = moving_simulation();
-        let desired = moving_desired();
-        let start = Vec3::new(1.0, 0.5, -2.0);
-        let samples = simulation.predict(start, &desired);
-        assert_eq!(samples.len(), simulation.sample_count);
+            let samples = simulation.predict(start, &desired);
 
-        let dt = simulation.sample_dt / STEPS as f32;
-        let mut position = start;
-        let mut velocity = simulation.velocity.value;
-        for sample in &samples {
-            for _ in 0..STEPS {
-                let next = simulation.advance(&desired, dt);
-                position += (velocity + next) * 0.5 * dt;
-                velocity = next;
+            prop_assert_eq!(samples.len(), sample_count);
+            let dt = sample_dt / STEPS as f32;
+            let mut position = start;
+            let mut velocity = simulation.velocity.value;
+            for sample in &samples {
+                for _ in 0..STEPS {
+                    let next = simulation.advance(&desired, dt);
+                    position += (velocity + next) * 0.5 * dt;
+                    velocity = next;
+                }
+                prop_assert!(
+                    (sample.position - position).length() < EPS,
+                    "{:?} vs {position:?}",
+                    sample.position
+                );
+                prop_assert!((sample.position.y - start.y).abs() < EPS);
+                prop_assert!((sample.velocity - velocity).length() < EPS);
+                prop_assert!(sample.velocity.y.abs() < EPS);
+                let facing = if sample.rotation.dot(simulation.facing.value) < 0.0 {
+                    -simulation.facing.value
+                } else {
+                    simulation.facing.value
+                };
+                prop_assert!(
+                    sample.rotation.abs_diff_eq(facing, EPS),
+                    "{:?} vs {facing:?}",
+                    sample.rotation
+                );
             }
+        }
+    }
+
+    #[test]
+    fn a_spring_covers_forty_percent_of_the_way_in_one_halflife() {
+        for halflife in [CharacterSimulation::default().velocity_halflife, 0.54] {
+            let mut simulation = CharacterSimulation {
+                velocity_halflife: halflife,
+                rotation_halflife: halflife,
+                ..CharacterSimulation::default()
+            };
+            let desired = DesiredMotion {
+                velocity: Vec3::X,
+                rotation: Quat::from_rotation_y(1.0),
+            };
+
+            let velocity = simulation.advance(&desired, halflife);
+
             assert!(
-                (sample.position - position).length() < EPS,
-                "{:?} vs {position:?}",
-                sample.position
+                (velocity.x - 0.4034).abs() < EPS,
+                "{halflife}: {velocity:?}"
             );
-            assert!((sample.velocity - velocity).length() < EPS);
-            assert!(sample.rotation.abs_diff_eq(simulation.facing.value, EPS));
+            let rotated = Quat::from_rotation_y(0.4034);
+            assert!(
+                simulation.facing.value.abs_diff_eq(rotated, EPS),
+                "{halflife}"
+            );
         }
-    }
-
-    #[test]
-    fn zero_desired_velocity_from_rest_stays_at_the_start() {
-        let start = Vec3::new(4.0, 1.0, -3.0);
-        let samples = CharacterSimulation::default().predict(start, &DesiredMotion::default());
-        assert_eq!(samples.len(), 3);
-        for sample in samples {
-            assert!((sample.position - start).length() < EPS);
-            assert!(sample.velocity.length() < EPS);
-            assert!(sample.rotation.abs_diff_eq(Quat::IDENTITY, EPS));
-        }
-    }
-
-    #[test]
-    fn prediction_follows_sample_count_and_ignores_desired_vertical_velocity() {
-        let simulation = CharacterSimulation {
-            sample_count: 5,
-            ..CharacterSimulation::default()
-        };
-        let desired = DesiredMotion {
-            velocity: Vec3::new(0.0, 9.0, 0.0),
-            rotation: Quat::IDENTITY,
-        };
-        let samples = simulation.predict(Vec3::new(0.0, 2.0, 0.0), &desired);
-        assert_eq!(samples.len(), 5);
-        for sample in samples {
-            assert!((sample.position.y - 2.0).abs() < EPS);
-            assert!(sample.velocity.y.abs() < EPS);
-        }
-    }
-
-    #[test]
-    fn the_default_halflife_covers_forty_percent_of_the_distance_in_one_halflife() {
-        let mut simulation = CharacterSimulation::default();
-        let desired = DesiredMotion {
-            velocity: Vec3::X,
-            rotation: Quat::IDENTITY,
-        };
-
-        let velocity = simulation.advance(&desired, 0.27);
-
-        assert!((velocity.x - 0.4034).abs() < EPS, "was {velocity:?}");
-    }
-
-    #[test]
-    fn changed_halflives_take_effect_in_steps_and_in_predictions() {
-        let simulation = CharacterSimulation {
-            velocity_halflife: 0.54,
-            rotation_halflife: 0.54,
-            sample_dt: 0.54,
-            sample_count: 1,
-            ..CharacterSimulation::default()
-        };
-        let desired = DesiredMotion {
-            velocity: Vec3::X,
-            rotation: Quat::from_rotation_y(1.0),
-        };
-        let rotated = Quat::from_rotation_y(0.4034);
-
-        let sample = simulation.predict(Vec3::ZERO, &desired)[0];
-        assert!((sample.velocity.x - 0.4034).abs() < EPS);
-        assert!(sample.rotation.abs_diff_eq(rotated, EPS));
-
-        let mut stepped = simulation;
-        let velocity = stepped.advance(&desired, 0.54);
-        assert!((velocity.x - 0.4034).abs() < EPS);
-        assert!(stepped.facing.value.abs_diff_eq(rotated, EPS));
-    }
-
-    #[test]
-    fn the_default_sampling_is_the_default_of_a_motion_database() {
-        let simulation = CharacterSimulation::default();
-        let database = TrajectorySettings::default();
-
-        assert_eq!(simulation.sample_dt, database.sample_dt);
-        assert_eq!(simulation.sample_count, database.sample_count);
     }
 }

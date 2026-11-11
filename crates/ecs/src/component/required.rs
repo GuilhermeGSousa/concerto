@@ -159,8 +159,10 @@ fn visit<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
     use super::*;
-    use crate::world::World;
+    use crate::{entity::Entity, world::World};
 
     #[derive(Component, Default)]
     struct Leaf;
@@ -200,113 +202,253 @@ mod tests {
     #[require(SelfCycle)]
     struct SelfCycle;
 
-    fn ids(world: &World, id: ComponentId) -> Vec<ComponentId> {
-        world
-            .required_components(id)
-            .unwrap()
-            .iter()
-            .map(RequiredComponent::id)
-            .collect()
+    struct ListingCase {
+        register: fn(&mut World),
+        of: fn() -> ComponentId,
+        listed: Option<&'static [&'static str]>,
+    }
+
+    fn short(name: &str) -> &str {
+        name.rsplit("::").next().unwrap()
     }
 
     #[test]
-    fn unregistered_type_has_no_table() {
-        let world = World::new();
+    fn a_requirement_table_lists_every_requirement_once_deepest_first() {
+        let cases = [
+            ListingCase {
+                register: |_| {},
+                of: ComponentId::of::<Chain>,
+                listed: None,
+            },
+            ListingCase {
+                register: |world| world.register_component::<Leaf>(),
+                of: ComponentId::of::<Leaf>,
+                listed: Some(&[]),
+            },
+            ListingCase {
+                register: |world| world.register_component::<Chain>(),
+                of: ComponentId::of::<Chain>,
+                listed: Some(&["Leaf"]),
+            },
+            ListingCase {
+                register: |world| world.register_component::<Deep>(),
+                of: ComponentId::of::<Deep>,
+                listed: Some(&["Leaf", "Chain"]),
+            },
+            ListingCase {
+                register: |world| world.register_component::<Top>(),
+                of: ComponentId::of::<Top>,
+                listed: Some(&["Mid", "Leaf"]),
+            },
+            ListingCase {
+                register: |world| world.register_component::<Deep>(),
+                of: ComponentId::of::<Chain>,
+                listed: Some(&["Leaf"]),
+            },
+            ListingCase {
+                register: |world| world.register_component::<Deep>(),
+                of: ComponentId::of::<Leaf>,
+                listed: Some(&[]),
+            },
+        ];
+        for (row, case) in cases.into_iter().enumerate() {
+            let mut world = World::new();
+            (case.register)(&mut world);
 
-        assert!(
-            world
-                .required_components(ComponentId::of::<Chain>())
-                .is_none()
-        );
+            let listed: Option<Vec<&str>> = world
+                .required_components((case.of)())
+                .map(|table| table.iter().map(|entry| short(entry.name())).collect());
+
+            assert_eq!(listed.as_deref(), case.listed, "row {row}");
+        }
+    }
+
+    struct CycleCase {
+        register: fn(&mut World),
+        names: &'static str,
     }
 
     #[test]
-    fn component_without_requirements_has_an_empty_table() {
-        let mut world = World::new();
-        world.register_component::<Leaf>();
+    fn a_requirement_cycle_panics_naming_the_types() {
+        let cases = [
+            CycleCase {
+                register: |world| world.register_component::<CycleA>(),
+                names: "CycleA",
+            },
+            CycleCase {
+                register: |world| world.register_component::<SelfCycle>(),
+                names: "SelfCycle",
+            },
+        ];
+        for case in cases {
+            let mut world = World::new();
 
-        assert!(
-            world
-                .required_components(ComponentId::of::<Leaf>())
-                .unwrap()
-                .is_empty()
-        );
+            let payload = catch_unwind(AssertUnwindSafe(|| (case.register)(&mut world)))
+                .expect_err(case.names);
+
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap();
+            assert!(message.contains(case.names), "{message}");
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct Holds {
+        mid: Option<u32>,
+        leaf: bool,
+        chain: bool,
+    }
+
+    struct SpawnCase {
+        name: &'static str,
+        build: fn(&mut World) -> Entity,
+        holds: Holds,
+    }
+
+    fn holds(world: &World, entity: Entity) -> Holds {
+        Holds {
+            mid: world
+                .get_component_for_entity::<Mid>(entity)
+                .map(|mid| mid.0),
+            leaf: world.get_component_for_entity::<Leaf>(entity).is_some(),
+            chain: world.get_component_for_entity::<Chain>(entity).is_some(),
+        }
     }
 
     #[test]
-    fn direct_requirement_is_listed() {
-        let mut world = World::new();
-        world.register_component::<Chain>();
+    fn spawn_and_insert_fill_in_missing_requirements_and_keep_given_values() {
+        let cases = [
+            SpawnCase {
+                name: "spawn adds a default requirement",
+                build: |world| world.spawn(Chain),
+                holds: Holds {
+                    mid: None,
+                    leaf: true,
+                    chain: true,
+                },
+            },
+            SpawnCase {
+                name: "spawn adds transitive requirements",
+                build: |world| world.spawn(Deep),
+                holds: Holds {
+                    mid: None,
+                    leaf: true,
+                    chain: true,
+                },
+            },
+            SpawnCase {
+                name: "spawn uses the declared constructor",
+                build: |world| world.spawn(Near),
+                holds: Holds {
+                    mid: Some(1),
+                    leaf: false,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "the nearest constructor wins",
+                build: |world| world.spawn(Wins),
+                holds: Holds {
+                    mid: Some(2),
+                    leaf: false,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "a bundle value after the requirer wins",
+                build: |world| world.spawn((Near, Mid(7))),
+                holds: Holds {
+                    mid: Some(7),
+                    leaf: false,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "a bundle value before the requirer wins",
+                build: |world| world.spawn((Mid(8), Near)),
+                holds: Holds {
+                    mid: Some(8),
+                    leaf: false,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "insert adds a default requirement",
+                build: |world| {
+                    let entity = world.spawn(Leaf);
+                    world.insert(Near, entity);
+                    entity
+                },
+                holds: Holds {
+                    mid: Some(1),
+                    leaf: true,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "insert keeps a requirement already present",
+                build: |world| {
+                    let entity = world.spawn(Mid(7));
+                    world.insert(Near, entity);
+                    entity
+                },
+                holds: Holds {
+                    mid: Some(7),
+                    leaf: false,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "an inserted bundle value wins over the default",
+                build: |world| {
+                    let entity = world.spawn(Leaf);
+                    world.insert((Mid(9), Near), entity);
+                    entity
+                },
+                holds: Holds {
+                    mid: Some(9),
+                    leaf: true,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "a value inserted after the requirer replaces the default",
+                build: |world| {
+                    let entity = world.spawn(Leaf);
+                    world.insert(Near, entity);
+                    world.insert(Mid(5), entity);
+                    entity
+                },
+                holds: Holds {
+                    mid: Some(5),
+                    leaf: true,
+                    chain: false,
+                },
+            },
+            SpawnCase {
+                name: "removing the requirer leaves the requirement",
+                build: |world| {
+                    let entity = world.spawn(Chain);
+                    world.remove_component::<Chain>(entity);
+                    entity
+                },
+                holds: Holds {
+                    mid: None,
+                    leaf: true,
+                    chain: false,
+                },
+            },
+        ];
+        for case in cases {
+            let mut world = World::new();
 
-        assert_eq!(
-            ids(&world, ComponentId::of::<Chain>()),
-            vec![ComponentId::of::<Leaf>()]
-        );
-    }
+            let entity = (case.build)(&mut world);
 
-    #[test]
-    fn requirements_are_flattened_deepest_first() {
-        let mut world = World::new();
-        world.register_component::<Deep>();
-
-        assert_eq!(
-            ids(&world, ComponentId::of::<Deep>()),
-            vec![ComponentId::of::<Leaf>(), ComponentId::of::<Chain>()]
-        );
-    }
-
-    #[test]
-    fn duplicate_requirements_appear_once() {
-        let mut world = World::new();
-        world.register_component::<Top>();
-
-        let listed = ids(&world, ComponentId::of::<Top>());
-
-        assert_eq!(listed.len(), 2);
-        assert!(listed.contains(&ComponentId::of::<Mid>()));
-        assert!(listed.contains(&ComponentId::of::<Leaf>()));
-    }
-
-    #[test]
-    fn requiring_a_type_registers_its_table() {
-        let mut world = World::new();
-        world.register_component::<Deep>();
-
-        assert!(
-            world
-                .required_components(ComponentId::of::<Chain>())
-                .is_some()
-        );
-        assert!(
-            world
-                .required_components(ComponentId::of::<Leaf>())
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn nearest_constructor_wins() {
-        let mut world = World::new();
-        world.register_component::<Wins>();
-
-        let entry = world
-            .required_components(ComponentId::of::<Wins>())
-            .unwrap()
-            .iter()
-            .find(|entry| entry.id() == ComponentId::of::<Mid>())
-            .unwrap()
-            .clone();
-        let mut table = Table::new();
-        entry.add_column(&mut table);
-        let mut archetype = Archetype::new(
-            table,
-            vec![ComponentId::of::<Mid>()],
-            crate::archetype::ArchetypeId::from(0),
-        );
-        entry.write(&mut archetype, TableRowIndex::new(0), 1);
-
-        let value = unsafe { archetype.get_component_unsafe::<Mid>(TableRowIndex::new(0)) };
-        assert_eq!(value.unwrap().0, 2);
+            assert_eq!(holds(&world, entity), case.holds, "{}", case.name);
+        }
     }
 
     #[test]
@@ -336,108 +478,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "CycleA")]
-    fn cycle_panics_naming_the_types() {
-        let mut world = World::new();
-        world.register_component::<CycleA>();
-    }
-
-    #[test]
-    #[should_panic(expected = "SelfCycle")]
-    fn self_requirement_panics() {
-        let mut world = World::new();
-        world.register_component::<SelfCycle>();
-    }
-
-    fn mid(world: &World, entity: crate::entity::Entity) -> Option<u32> {
-        world
-            .get_component_for_entity::<Mid>(entity)
-            .map(|mid| mid.0)
-    }
-
-    #[test]
-    fn spawn_adds_a_default_required_component() {
-        let mut world = World::new();
-
-        let entity = world.spawn(Chain);
-
-        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
-    }
-
-    #[test]
-    fn spawn_adds_transitive_requirements() {
-        let mut world = World::new();
-
-        let entity = world.spawn(Deep);
-
-        assert!(world.get_component_for_entity::<Chain>(entity).is_some());
-        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
-    }
-
-    #[test]
-    fn spawn_uses_the_declared_constructor() {
-        let mut world = World::new();
-
-        let near = world.spawn(Near);
-        let wins = world.spawn(Wins);
-
-        assert_eq!(mid(&world, near), Some(1));
-        assert_eq!(mid(&world, wins), Some(2));
-    }
-
-    #[test]
-    fn bundle_value_wins_in_either_order() {
-        let mut world = World::new();
-
-        let first = world.spawn((Near, Mid(7)));
-        let second = world.spawn((Mid(8), Near));
-
-        assert_eq!(mid(&world, first), Some(7));
-        assert_eq!(mid(&world, second), Some(8));
-    }
-
-    #[test]
-    fn insert_adds_a_default_required_component() {
-        let mut world = World::new();
-        let entity = world.spawn(Leaf);
-
-        world.insert(Near, entity);
-
-        assert_eq!(mid(&world, entity), Some(1));
-        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
-    }
-
-    #[test]
-    fn insert_keeps_an_existing_required_component() {
-        let mut world = World::new();
-        let entity = world.spawn(Mid(7));
-
-        world.insert(Near, entity);
-
-        assert_eq!(mid(&world, entity), Some(7));
-    }
-
-    #[test]
-    fn insert_bundle_value_wins_over_the_default() {
-        let mut world = World::new();
-        let entity = world.spawn(Leaf);
-
-        world.insert((Mid(9), Near), entity);
-
-        assert_eq!(mid(&world, entity), Some(9));
-    }
-
-    #[test]
-    fn removing_the_requirer_leaves_the_required_component() {
-        let mut world = World::new();
-        let entity = world.spawn(Chain);
-
-        world.remove_component::<Chain>(entity);
-
-        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
-    }
-
-    #[test]
     fn added_matches_a_required_component() {
         use crate::query::filter::Added;
 
@@ -445,19 +485,8 @@ mod tests {
         world.tick();
         world.spawn(Chain);
 
-        let mut state = world.query::<crate::entity::Entity, Added<Leaf>>();
+        let mut state = world.query::<Entity, Added<Leaf>>();
 
         assert_eq!(state.iter(&mut world).count(), 1);
-    }
-
-    #[test]
-    fn requirer_inserted_before_the_required_value_ends_with_the_stored_value() {
-        let mut world = World::new();
-        let entity = world.spawn(Leaf);
-
-        world.insert(Near, entity);
-        world.insert(Mid(5), entity);
-
-        assert_eq!(mid(&world, entity), Some(5));
     }
 }

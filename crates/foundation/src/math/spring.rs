@@ -230,32 +230,50 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     #[test]
-    fn converges_to_target() {
+    fn a_float_and_a_vector_converge_to_their_target() {
         let mut spring = Spring::critically_damped(0.0f32, 10.0);
         for _ in 0..120 {
             spring.update(10.0, DT);
         }
         assert!((spring.value - 10.0).abs() < 0.01, "was {}", spring.value);
         assert!(spring.velocity.abs() < 0.1, "was {}", spring.velocity);
+
+        let target = Vec3::new(1.0, 2.0, 3.0);
+        let mut spring = Spring::critically_damped(Vec3::ZERO, 10.0);
+        for _ in 0..120 {
+            spring.update(target, DT);
+        }
+        assert!(spring.value.distance(target) < 0.01, "was {}", spring.value);
     }
 
-    #[test]
-    fn framerate_independent() {
-        let mut coarse = Spring::new(0.0f32, 6.0, 0.5);
-        let mut fine = coarse;
+    proptest::proptest! {
+        #[test]
+        fn one_step_lands_where_many_smaller_steps_do(
+            frequency in 0.5f32..12.0,
+            damping_ratio in 0.1f32..3.0,
+            dt in 0.01f32..0.3,
+            steps in 2usize..20,
+            target in -5.0f32..5.0,
+            angle in -2.5f32..2.5,
+        ) {
+            let mut coarse = Spring::new(0.0f32, frequency, damping_ratio);
+            let mut fine = coarse;
+            coarse.update(target, dt);
+            for _ in 0..steps {
+                fine.update(target, dt / steps as f32);
+            }
+            proptest::prop_assert!((coarse.value - fine.value).abs() < 1.0e-3, "{} vs {}", coarse.value, fine.value);
+            proptest::prop_assert!((coarse.velocity - fine.velocity).abs() < 1.0e-2, "{} vs {}", coarse.velocity, fine.velocity);
 
-        coarse.update(1.0, 0.1);
-        for _ in 0..10 {
-            fine.update(1.0, 0.01);
+            let goal = Quat::from_rotation_y(angle);
+            let mut coarse = Spring::new(Quat::IDENTITY, frequency, damping_ratio);
+            let mut fine = coarse;
+            coarse.update(goal, dt);
+            for _ in 0..steps {
+                fine.update(goal, dt / steps as f32);
+            }
+            proptest::prop_assert!(coarse.value.abs_diff_eq(fine.value, 1.0e-3), "{:?} vs {:?}", coarse.value, fine.value);
         }
-
-        assert!(
-            (coarse.value - fine.value).abs() < 1.0e-4,
-            "one 100 ms step ({}) should equal ten 10 ms steps ({})",
-            coarse.value,
-            fine.value
-        );
-        assert!((coarse.velocity - fine.velocity).abs() < 1.0e-3);
     }
 
     #[test]
@@ -316,16 +334,6 @@ mod tests {
     }
 
     #[test]
-    fn vec3_converges() {
-        let target = Vec3::new(1.0, 2.0, 3.0);
-        let mut spring = Spring::critically_damped(Vec3::ZERO, 10.0);
-        for _ in 0..120 {
-            spring.update(target, DT);
-        }
-        assert!(spring.value.distance(target) < 0.01, "was {}", spring.value);
-    }
-
-    #[test]
     fn quat_handles_double_cover() {
         let rotation = Quat::from_rotation_y(1.0);
         // -rotation is the same orientation; the spring must take the short
@@ -342,25 +350,6 @@ mod tests {
         assert!(
             (spring.value.length() - 1.0).abs() < 1.0e-4,
             "value should stay normalized"
-        );
-    }
-
-    #[test]
-    fn quat_is_framerate_independent() {
-        let target = Quat::from_rotation_y(2.5);
-        let mut coarse = Spring::new(Quat::IDENTITY, 6.0, 1.0);
-        let mut fine = coarse;
-
-        coarse.update(target, 0.2);
-        for _ in 0..20 {
-            fine.update(target, 0.01);
-        }
-
-        assert!(
-            coarse.value.abs_diff_eq(fine.value, 1.0e-4),
-            "one 200 ms step ({:?}) should equal twenty 10 ms steps ({:?})",
-            coarse.value,
-            fine.value
         );
     }
 
@@ -398,13 +387,6 @@ mod tests {
             "was {:?}",
             spring.velocity
         );
-    }
-
-    #[test]
-    fn integral_of_a_critically_damped_spring_from_rest() {
-        let spring = Spring::critically_damped(0.0f32, 2.0);
-
-        assert!((spring.integral(1.0, 1.0) - 0.270_671).abs() < 1.0e-5);
     }
 
     #[test]

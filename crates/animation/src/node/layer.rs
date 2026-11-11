@@ -257,7 +257,7 @@ mod tests {
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
         },
-        test_walks::Walks,
+        testing::Walks,
     };
 
     const NAMES: [&str; 10] = [
@@ -517,66 +517,61 @@ mod tests {
         LayerNode::new(mask).with_space(LayerSpace::Local)
     }
 
-    #[test]
-    fn local_at_full_weight_lays_the_overlay_on_the_masked_arm_alone() {
-        let mut rig = Rig::new();
-        let node = local(rig.left_arm());
-
-        let frame = rig.layer(&node, &layered());
-
-        let overlay = overlay_joints();
-        let base = base_joints();
-        for bone in 0..BONES {
-            if LEFT_ARM.contains(&bone) {
-                assert_joint_near(&frame.joints()[bone], &overlay[bone]);
-            } else {
-                assert_eq!(frame.joints()[bone], base[bone], "bone {bone}");
-            }
-        }
-    }
-
-    #[test]
-    fn half_layer_weight_puts_a_masked_joint_halfway() {
-        let mut rig = Rig::new();
-        let node = local(rig.left_arm()).with_weight(0.5);
-
-        let frame = rig.layer(&node, &layered());
-
-        for bone in LEFT_ARM {
-            assert_joint_near(&frame.joints()[bone], &blended(bone, 0.5));
-        }
-    }
-
-    struct ParamCase {
-        param: Name,
+    struct LayerWeightCase {
+        name: &'static str,
+        node: LayerNode,
         weight: f32,
     }
 
-    impl ParamCase {
-        fn new(param: Name, weight: f32) -> Self {
-            Self { param, weight }
-        }
-    }
-
     #[test]
-    fn the_layer_weight_is_the_weight_times_the_param_and_clamps_above_1() {
+    fn the_masked_arm_moves_by_the_layer_weight_times_its_param_and_the_rest_keeps_the_base() {
         let mut rig = Rig::new();
         let mask = rig.left_arm();
         rig.blackboard.set(name!("aim"), 0.5_f32);
         rig.blackboard.set(name!("boost"), 3.0_f32);
         rig.blackboard.set(name!("flag"), true);
-        let node = local(mask).with_weight(0.8);
+        let weighted_by = |weight: f32| local(mask.clone()).with_weight(weight);
+        let param = |param: Name| {
+            local(mask.clone())
+                .with_weight(0.8)
+                .with_weight_param(param)
+        };
+        let case = |name, node, weight| LayerWeightCase { name, node, weight };
         let cases = [
-            ParamCase::new(name!("aim"), 0.8 * 0.5),
-            ParamCase::new(name!("unset"), 0.8),
-            ParamCase::new(name!("flag"), 0.8),
-            ParamCase::new(name!("boost"), 1.0),
+            case("full weight", weighted_by(1.0), 1.0),
+            case("half weight", weighted_by(0.5), 0.5),
+            case("a float param", param(name!("aim")), 0.8 * 0.5),
+            case("a missing param", param(name!("unset")), 0.8),
+            case("a param that is not a float", param(name!("flag")), 0.8),
+            case("a product above 1", param(name!("boost")), 1.0),
+            case("a NaN weight", weighted_by(f32::NAN), 0.0),
+            case("an infinite weight", weighted_by(f32::INFINITY), 1.0),
         ];
 
         for case in cases {
-            let frame = rig.layer(&node.clone().with_weight_param(case.param), &layered());
+            let frame = rig.layer(&case.node, &layered());
 
-            assert_joint_near(&frame.joints()[4], &blended(4, case.weight));
+            for bone in 0..BONES {
+                if LEFT_ARM.contains(&bone) {
+                    assert_joint_near(&frame.joints()[bone], &blended(bone, case.weight));
+                } else {
+                    assert_eq!(
+                        frame.joints()[bone],
+                        base_joints()[bone],
+                        "{}: bone {bone}",
+                        case.name
+                    );
+                }
+            }
+            let mut events = vec![base_event()];
+            if case.weight > 0.0 {
+                events.push(FiredEvent {
+                    weight: overlay_event().weight * case.weight,
+                    ..overlay_event()
+                });
+            }
+            assert_eq!(frame.events(), events, "{}", case.name);
+            assert_eq!(frame.root_motion(), base_motion(), "{}", case.name);
         }
     }
 
@@ -682,21 +677,6 @@ mod tests {
         rig.with_skeleton = false;
         let frame = rig.layer(&local(faint).with_weight(0.5), &layered());
         assert_eq!(frame.events(), expected);
-    }
-
-    #[test]
-    fn a_nan_layer_weight_gives_the_base_and_infinity_gives_the_overlay_on_masked_bones() {
-        let mut rig = Rig::new();
-        let mask = rig.left_arm();
-
-        let nan = rig.layer(&local(mask.clone()).with_weight(f32::NAN), &layered());
-        let infinite = rig.layer(&local(mask).with_weight(f32::INFINITY), &layered());
-
-        assert_base_pose(&nan);
-        assert_eq!(nan.events(), [base_event()]);
-        for bone in LEFT_ARM {
-            assert_joint_near(&infinite.joints()[bone], &overlay_joints()[bone]);
-        }
     }
 
     #[test]

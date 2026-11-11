@@ -1,4 +1,7 @@
-use concerto_ecs::resource::{ResMut, Resource};
+use concerto_ecs::{
+    resource::{ResMut, Resource},
+    IntoSystemConfig,
+};
 use glam::Vec2;
 
 use crate::{
@@ -6,7 +9,7 @@ use crate::{
     events::{fold_input, fold_window, FoldInput, GamepadConnection, InputGate, WindowEvent},
     input::{
         actions::{resolve_actions, ActionFired, ActionMap},
-        Input,
+        update_players, Input, PlayerEvent, Players,
     },
 };
 use concerto_app::{
@@ -72,6 +75,9 @@ impl Plugin for WindowPlugin {
         app.register_event::<ActionFired>();
         app.add_system(First, fold_input.at_edit_time().in_set(FoldInput));
         app.add_system(First, fold_window.at_edit_time());
+        app.insert_resource(Players::default());
+        app.register_event::<PlayerEvent>();
+        app.add_system(First, update_players.after(FoldInput));
         app.add_system(LateUpdate, resolve_actions);
         app.insert_resource(WindowClipboard::default());
         app.register_event::<ClipboardPasted>();
@@ -95,63 +101,69 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_point_inside_a_zone_returns_its_gesture() {
-        let region = WindowGestureRegion {
-            zones: vec![zone(
-                Vec2::new(0.0, 0.0),
-                Vec2::new(10.0, 10.0),
-                Some(east()),
-            )],
-        };
-        assert_eq!(region.gesture_at(Vec2::new(5.0, 5.0)), Some(east()));
-        assert_eq!(region.gesture_at(Vec2::new(10.0, 0.0)), Some(east()));
+    struct Hit {
+        name: &'static str,
+        zones: Vec<WindowGestureZone>,
+        point: Vec2,
+        gesture: Option<WindowGesture>,
     }
 
     #[test]
-    fn a_point_outside_every_zone_returns_none() {
-        let region = WindowGestureRegion {
-            zones: vec![zone(
-                Vec2::new(0.0, 0.0),
-                Vec2::new(10.0, 10.0),
-                Some(WindowGesture::Move),
-            )],
-        };
-        assert_eq!(region.gesture_at(Vec2::new(11.0, 5.0)), None);
-        assert_eq!(region.gesture_at(Vec2::new(5.0, -1.0)), None);
-    }
-
-    #[test]
-    fn the_first_of_two_overlapping_zones_decides() {
-        let region = WindowGestureRegion {
-            zones: vec![
-                zone(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0), Some(east())),
-                zone(
-                    Vec2::new(0.0, 0.0),
-                    Vec2::new(10.0, 10.0),
-                    Some(WindowGesture::Move),
-                ),
-            ],
-        };
-        assert_eq!(region.gesture_at(Vec2::new(5.0, 5.0)), Some(east()));
-    }
-
-    #[test]
-    fn a_zone_without_a_gesture_blocks_the_zone_under_it() {
-        let region = WindowGestureRegion {
-            zones: vec![
-                zone(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0), None),
-                zone(
-                    Vec2::new(0.0, 0.0),
-                    Vec2::new(20.0, 20.0),
-                    Some(WindowGesture::Move),
-                ),
-            ],
-        };
-        assert_eq!(region.gesture_at(Vec2::new(5.0, 5.0)), None);
-        assert_eq!(
-            region.gesture_at(Vec2::new(15.0, 15.0)),
-            Some(WindowGesture::Move)
-        );
+    fn a_point_takes_the_gesture_of_the_first_zone_holding_it() {
+        let square = |gesture| zone(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0), gesture);
+        let cases = [
+            Hit {
+                name: "inside",
+                zones: vec![square(Some(east()))],
+                point: Vec2::new(5.0, 5.0),
+                gesture: Some(east()),
+            },
+            Hit {
+                name: "on the edge",
+                zones: vec![square(Some(east()))],
+                point: Vec2::new(10.0, 0.0),
+                gesture: Some(east()),
+            },
+            Hit {
+                name: "past the right",
+                zones: vec![square(Some(WindowGesture::Move))],
+                point: Vec2::new(11.0, 5.0),
+                gesture: None,
+            },
+            Hit {
+                name: "above the top",
+                zones: vec![square(Some(WindowGesture::Move))],
+                point: Vec2::new(5.0, -1.0),
+                gesture: None,
+            },
+            Hit {
+                name: "the first of two overlapping zones",
+                zones: vec![square(Some(east())), square(Some(WindowGesture::Move))],
+                point: Vec2::new(5.0, 5.0),
+                gesture: Some(east()),
+            },
+            Hit {
+                name: "a zone without a gesture blocks the one under it",
+                zones: vec![
+                    square(None),
+                    zone(Vec2::ZERO, Vec2::new(20.0, 20.0), Some(WindowGesture::Move)),
+                ],
+                point: Vec2::new(5.0, 5.0),
+                gesture: None,
+            },
+            Hit {
+                name: "past a blocking zone",
+                zones: vec![
+                    square(None),
+                    zone(Vec2::ZERO, Vec2::new(20.0, 20.0), Some(WindowGesture::Move)),
+                ],
+                point: Vec2::new(15.0, 15.0),
+                gesture: Some(WindowGesture::Move),
+            },
+        ];
+        for case in cases {
+            let region = WindowGestureRegion { zones: case.zones };
+            assert_eq!(region.gesture_at(case.point), case.gesture, "{}", case.name);
+        }
     }
 }

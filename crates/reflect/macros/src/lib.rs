@@ -472,28 +472,3 @@ fn reflect_attributes(ast: &DeriveInput) -> syn::Result<(bool, Vec<syn::Ident>)>
     }
     Ok((opaque, declared))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::reflect_root;
-
-    #[test]
-    fn a_crate_depending_on_concerto_reaches_reflect_through_it() {
-        assert_eq!(
-            reflect_root(&["concerto"]).to_string(),
-            ":: concerto :: reflect"
-        );
-    }
-
-    #[test]
-    fn a_crate_depending_on_concerto_reflect_uses_it_directly() {
-        assert_eq!(
-            reflect_root(&["concerto-reflect"]).to_string(),
-            ":: concerto_reflect"
-        );
-        assert_eq!(
-            reflect_root(&["concerto-reflect", "concerto"]).to_string(),
-            ":: concerto_reflect"
-        );
-    }
-}

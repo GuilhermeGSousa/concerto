@@ -61,90 +61,49 @@ fn fade(t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
-    const SEEDS: [u64; 2] = [0, 0xDEAD_BEEF];
-
-    fn sample_x(n: u32) -> f64 {
-        -50.0 + n as f64 * 0.0137
+    fn any_x() -> impl Strategy<Value = f64> {
+        prop_oneof![
+            8 => -1e12f64..1e12,
+            1 => Just(f64::NAN),
+            1 => Just(f64::INFINITY),
+            1 => Just(f64::NEG_INFINITY),
+        ]
     }
 
-    #[test]
-    fn gradient_noise_is_zero_at_integers() {
-        for seed in SEEDS {
-            for i in -3..=3 {
-                assert_eq!(gradient_noise(seed, i as f64), 0.0, "seed {seed} at {i}");
+    proptest! {
+        #[test]
+        fn gradient_noise_stays_in_range_vanishes_at_integers_and_is_continuous(
+            seed in any::<u64>(),
+            x in any_x(),
+            i in -1_000_000i64..1_000_000,
+        ) {
+            let value = gradient_noise(seed, x);
+            if x.is_finite() {
+                prop_assert!((-1.0..=1.0).contains(&value), "{} out of range at {}", value, x);
+            } else {
+                prop_assert_eq!(value, 0.0);
             }
+            prop_assert_eq!(gradient_noise(seed, i as f64), 0.0);
+            let below = gradient_noise(seed, i as f64 - 1e-6);
+            let above = gradient_noise(seed, i as f64 + 1e-6);
+            prop_assert!((below - above).abs() < 1e-4, "jump at {}: {} {}", i, below, above);
+            let unit = unit_from_seed(seed);
+            prop_assert!((0.0..1.0).contains(&unit), "{} out of range", unit);
         }
-    }
 
-    #[test]
-    fn gradient_noise_spans_the_unit_range() {
-        for seed in SEEDS {
-            let mut peak = 0.0f32;
-            for n in 0..10_000 {
-                let value = gradient_noise(seed, sample_x(n));
-                assert!((-1.0..=1.0).contains(&value), "{value} out of range");
-                peak = peak.max(value.abs());
-            }
-            assert!(peak > 0.5, "peak {peak} never passed 0.5 for seed {seed}");
-        }
-    }
-
-    #[test]
-    fn gradient_noise_is_continuous_across_integers() {
-        for seed in SEEDS {
-            for i in -3..=3 {
-                let below = gradient_noise(seed, i as f64 - 1e-6);
-                let above = gradient_noise(seed, i as f64 + 1e-6);
-                assert!((below - above).abs() < 1e-4, "jump at {i}: {below} {above}");
-            }
-        }
-    }
-
-    #[test]
-    fn gradient_noise_depends_on_seed_alone() {
-        assert_eq!(gradient_noise(7, 2.375), gradient_noise(7, 2.375));
-        let differing = (0..10u64)
-            .filter(|&pair| gradient_noise(2 * pair, 0.5) != gradient_noise(2 * pair + 1, 0.5))
-            .count();
-        assert!(differing >= 9, "only {differing} of 10 seed pairs differ");
-    }
-
-    #[test]
-    fn gradient_noise_holds_far_from_the_origin() {
-        for seed in SEEDS {
-            let value = gradient_noise(seed, 1e9 + 0.25);
-            assert!(value.is_finite());
-            assert!((-1.0..=1.0).contains(&value));
-        }
-    }
-
-    #[test]
-    fn gradient_noise_of_non_finite_is_zero() {
-        assert_eq!(gradient_noise(3, f64::NAN), 0.0);
-        assert_eq!(gradient_noise(3, f64::INFINITY), 0.0);
-    }
-
-    #[test]
-    fn fractal_noise_stays_in_range() {
-        for octaves in [1, 3, 8] {
-            for n in 0..10_000 {
-                let value = fractal_noise(11, sample_x(n), octaves);
-                assert!(
-                    (-1.0..=1.0).contains(&value),
-                    "{value} out of range with {octaves} octaves"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn fractal_noise_with_one_octave_is_shifted_gradient_noise() {
-        let seed = 5;
-        let shift = 1024.0 * unit_from_seed(mix_seed(seed, 1024)) as f64;
-        for n in 0..100 {
-            let x = sample_x(n * 37);
-            assert_eq!(
+        #[test]
+        fn fractal_noise_stays_in_range_with_its_octaves_clamped(
+            seed in any::<u64>(),
+            x in -1e6f64..1e6,
+            octaves in 0u32..20,
+        ) {
+            let value = fractal_noise(seed, x, octaves);
+            prop_assert!((-1.0..=1.0).contains(&value), "{} out of range", value);
+            prop_assert_eq!(value, fractal_noise(seed, x, octaves.clamp(1, 8)));
+            let shift = 1024.0 * unit_from_seed(mix_seed(seed, 1024)) as f64;
+            prop_assert_eq!(
                 fractal_noise(seed, x, 1),
                 gradient_noise(mix_seed(seed, 0), x + shift)
             );
@@ -152,23 +111,21 @@ mod tests {
     }
 
     #[test]
-    fn fractal_noise_clamps_octaves() {
-        for n in 0..100 {
-            let x = sample_x(n * 53);
-            assert_eq!(fractal_noise(9, x, 0), fractal_noise(9, x, 1));
-            assert_eq!(fractal_noise(9, x, 20), fractal_noise(9, x, 8));
+    fn draws_spread_over_their_range_and_differ_by_seed() {
+        for seed in [0, 0xDEAD_BEEF] {
+            let peak = (0..10_000)
+                .map(|n| gradient_noise(seed, -50.0 + n as f64 * 0.0137).abs())
+                .fold(0.0f32, f32::max);
+            assert!(peak > 0.5, "peak {peak} never passed 0.5 for seed {seed}");
         }
-    }
-
-    #[test]
-    fn unit_from_seed_is_uniform_in_unit_interval() {
-        let mut sum = 0.0f64;
-        for seed in 0..10_000u64 {
-            let value = unit_from_seed(seed);
-            assert!((0.0..1.0).contains(&value), "{value} out of range");
-            sum += value as f64;
-        }
-        let mean = sum / 10_000.0;
+        let differing = (0..10u64)
+            .filter(|&pair| gradient_noise(2 * pair, 0.5) != gradient_noise(2 * pair + 1, 0.5))
+            .count();
+        assert!(differing >= 9, "only {differing} of 10 seed pairs differ");
+        let mean = (0..10_000u64)
+            .map(|seed| unit_from_seed(seed) as f64)
+            .sum::<f64>()
+            / 10_000.0;
         assert!((mean - 0.5).abs() < 0.02, "mean {mean}");
     }
 }

@@ -44,3 +44,6 @@ web-sys = { version = "0.3", features = [
 futures-channel = "0.3.31"
 wasm-bindgen-futures = "0.4"
 web-time = { version = "1.1", default-features = false }
+
+[dev-dependencies]
+proptest.workspace = true

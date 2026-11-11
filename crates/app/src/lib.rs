@@ -570,51 +570,83 @@ mod tests {
         app.get_resource::<Count>().unwrap().0
     }
 
-    #[test]
-    fn an_app_for_editing_reports_its_role() {
-        assert!(App::for_editing().is_editing());
-        assert!(!App::for_editing().is_previewing());
-        assert!(!App::new().is_editing());
-        assert!(!App::new().is_previewing());
+    struct Role {
+        name: &'static str,
+        app: fn() -> App,
+        editing: bool,
+        previewing: bool,
+        runs: Runs,
+    }
+
+    struct Runs {
+        unmarked: u32,
+        edit: u32,
+        preview: u32,
     }
 
     #[test]
-    fn an_app_for_previewing_is_also_editing() {
-        assert!(App::for_previewing().is_editing());
-        assert!(App::for_previewing().is_previewing());
-    }
-
-    #[test]
-    fn only_marked_systems_run_in_an_edit_app() {
-        assert_eq!(counted_after_one_frame(App::new(), Mark::None), 1);
-        assert_eq!(counted_after_one_frame(App::new(), Mark::Edit), 1);
-        assert_eq!(counted_after_one_frame(App::for_editing(), Mark::None), 0);
-        assert_eq!(counted_after_one_frame(App::for_editing(), Mark::Edit), 1);
-    }
-
-    #[test]
-    fn preview_time_systems_run_in_game_and_preview_apps_only() {
-        assert_eq!(counted_after_one_frame(App::new(), Mark::Preview), 1);
-        assert_eq!(
-            counted_after_one_frame(App::for_previewing(), Mark::Preview),
-            1
-        );
-        assert_eq!(
-            counted_after_one_frame(App::for_editing(), Mark::Preview),
-            0
-        );
-    }
-
-    #[test]
-    fn a_preview_app_runs_edit_time_systems_and_not_unmarked_ones() {
-        assert_eq!(
-            counted_after_one_frame(App::for_previewing(), Mark::Edit),
-            1
-        );
-        assert_eq!(
-            counted_after_one_frame(App::for_previewing(), Mark::None),
-            0
-        );
+    fn edit_and_preview_marks_decide_which_systems_and_listeners_each_kind_of_app_runs() {
+        let cases = [
+            Role {
+                name: "a game app runs everything",
+                app: App::new,
+                editing: false,
+                previewing: false,
+                runs: Runs {
+                    unmarked: 1,
+                    edit: 1,
+                    preview: 1,
+                },
+            },
+            Role {
+                name: "an edit app runs edit-time work only",
+                app: App::for_editing,
+                editing: true,
+                previewing: false,
+                runs: Runs {
+                    unmarked: 0,
+                    edit: 1,
+                    preview: 0,
+                },
+            },
+            Role {
+                name: "a preview app runs edit-time and preview-time work",
+                app: App::for_previewing,
+                editing: true,
+                previewing: true,
+                runs: Runs {
+                    unmarked: 0,
+                    edit: 1,
+                    preview: 1,
+                },
+            },
+        ];
+        for case in cases {
+            assert_eq!((case.app)().is_editing(), case.editing, "{}", case.name);
+            assert_eq!(
+                (case.app)().is_previewing(),
+                case.previewing,
+                "{}",
+                case.name
+            );
+            let check = |mark: Mark, runs: u32| {
+                assert_eq!(
+                    counted_after_one_frame((case.app)(), mark),
+                    runs,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    heard_after_one_ping((case.app)(), mark),
+                    runs,
+                    "{}",
+                    case.name
+                );
+            };
+            check(Mark::None, case.runs.unmarked);
+            check(Mark::Edit, case.runs.edit);
+            check(Mark::Preview, case.runs.preview);
+        }
     }
 
     fn count_ten(mut count: ResMut<Count>) {
@@ -631,30 +663,6 @@ mod tests {
         app.finish_plugin_build();
         app.update();
         assert_eq!(app.get_resource::<Count>().unwrap().0, 11);
-    }
-
-    #[test]
-    fn only_marked_listeners_are_added_to_an_edit_app() {
-        assert_eq!(heard_after_one_ping(App::new(), Mark::None), 1);
-        assert_eq!(heard_after_one_ping(App::new(), Mark::Edit), 1);
-        assert_eq!(heard_after_one_ping(App::for_editing(), Mark::None), 0);
-        assert_eq!(heard_after_one_ping(App::for_editing(), Mark::Edit), 1);
-    }
-
-    #[test]
-    fn preview_time_listeners_are_added_to_game_and_preview_apps_only() {
-        assert_eq!(heard_after_one_ping(App::new(), Mark::Preview), 1);
-        assert_eq!(
-            heard_after_one_ping(App::for_previewing(), Mark::Preview),
-            1
-        );
-        assert_eq!(heard_after_one_ping(App::for_editing(), Mark::Preview), 0);
-    }
-
-    #[test]
-    fn a_preview_app_adds_edit_time_listeners_and_not_unmarked_ones() {
-        assert_eq!(heard_after_one_ping(App::for_previewing(), Mark::Edit), 1);
-        assert_eq!(heard_after_one_ping(App::for_previewing(), Mark::None), 0);
     }
 
     #[derive(Resource, Default)]
@@ -869,16 +877,7 @@ mod thread_safety_tests {
     }
 
     #[test]
-    fn a_registered_plugin_is_reported_as_added() {
-        let mut app = App::new();
-        app.register_plugin(Marked);
-
-        assert!(app.is_plugin_added::<Marked>());
-        assert!(!app.is_plugin_added::<Absent>());
-    }
-
-    #[test]
-    fn a_plugin_registered_by_another_plugin_is_reported_as_added() {
+    fn a_plugin_registered_directly_or_by_another_plugin_is_reported_as_added() {
         struct Outer;
         impl Plugin for Outer {
             fn build(&self, app: &mut App) {
@@ -886,10 +885,12 @@ mod thread_safety_tests {
             }
         }
         let mut app = App::new();
+        assert!(!app.is_plugin_added::<Marked>());
         app.register_plugin(Outer);
 
         assert!(app.is_plugin_added::<Marked>());
         assert!(app.is_plugin_added::<Outer>());
+        assert!(!app.is_plugin_added::<Absent>());
     }
 }
 

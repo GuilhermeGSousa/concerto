@@ -47,33 +47,66 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_box_in_front_of_a_perspective_camera_intersects_its_frustum() {
-        assert!(perspective().intersects_aabb(&cube(Vec3::new(0.0, 0.0, -10.0), 1.0)));
-    }
-
-    #[test]
-    fn a_box_behind_a_perspective_camera_is_outside_its_frustum() {
-        assert!(!perspective().intersects_aabb(&cube(Vec3::new(0.0, 0.0, 10.0), 1.0)));
-    }
-
-    #[test]
-    fn a_box_beyond_the_far_plane_is_outside_its_frustum() {
-        assert!(!perspective().intersects_aabb(&cube(Vec3::new(0.0, 0.0, -200.0), 1.0)));
-    }
-
-    #[test]
-    fn a_box_straddling_a_side_plane_intersects_its_frustum() {
-        assert!(perspective().intersects_aabb(&cube(Vec3::new(10.0, 0.0, -10.0), 1.0)));
-    }
-
-    #[test]
-    fn an_orthographic_frustum_keeps_a_box_inside_its_extent_and_drops_one_outside() {
+    fn orthographic() -> Frustum {
         let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
         let proj = glam::camera::rh::proj::directx::orthographic(-5.0, 5.0, -5.0, 5.0, 0.1, 50.0);
-        let frustum = Frustum::from_clip_from_world(proj * view);
+        Frustum::from_clip_from_world(proj * view)
+    }
 
-        assert!(frustum.intersects_aabb(&cube(Vec3::new(3.0, -3.0, -20.0), 1.0)));
-        assert!(!frustum.intersects_aabb(&cube(Vec3::new(8.0, 0.0, -20.0), 1.0)));
+    struct Case {
+        case: &'static str,
+        frustum: Frustum,
+        center: Vec3,
+        intersects: bool,
+    }
+
+    #[test]
+    fn a_box_intersects_a_frustum_when_any_part_of_it_is_inside() {
+        let cases = [
+            Case {
+                case: "in front of a perspective camera",
+                frustum: perspective(),
+                center: Vec3::new(0.0, 0.0, -10.0),
+                intersects: true,
+            },
+            Case {
+                case: "behind a perspective camera",
+                frustum: perspective(),
+                center: Vec3::new(0.0, 0.0, 10.0),
+                intersects: false,
+            },
+            Case {
+                case: "beyond the far plane",
+                frustum: perspective(),
+                center: Vec3::new(0.0, 0.0, -200.0),
+                intersects: false,
+            },
+            Case {
+                case: "straddling a side plane",
+                frustum: perspective(),
+                center: Vec3::new(10.0, 0.0, -10.0),
+                intersects: true,
+            },
+            Case {
+                case: "inside an orthographic extent",
+                frustum: orthographic(),
+                center: Vec3::new(3.0, -3.0, -20.0),
+                intersects: true,
+            },
+            Case {
+                case: "outside an orthographic extent",
+                frustum: orthographic(),
+                center: Vec3::new(8.0, 0.0, -20.0),
+                intersects: false,
+            },
+        ];
+        for case in &cases {
+            assert_eq!(
+                case.frustum.intersects_aabb(&cube(case.center, 1.0)),
+                case.intersects,
+                "{}",
+                case.case
+            );
+        }
     }
 }

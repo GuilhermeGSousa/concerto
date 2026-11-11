@@ -21,7 +21,7 @@ pub use target::{animate_targets, update_animation_players};
 pub use transition::TransitionBlender;
 
 #[cfg(test)]
-mod test_walks;
+mod testing;
 
 #[cfg(test)]
 mod tests {
@@ -36,7 +36,7 @@ mod tests {
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use crate::evaluation::RootBone;
     use crate::event::AnimationEvent;
-    use crate::graph::{AnimationGraph, made_live};
+    use crate::graph::AnimationGraph;
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
         AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
@@ -45,7 +45,7 @@ mod tests {
         AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
     };
     use crate::pose::{FiredEvent, FramePool, JointPose, RootMotion};
-    use crate::test_walks::Walks;
+    use crate::testing::{Walks, made_live};
     use crate::transition::TransitionBlender;
 
     fn unit_duration_clip() -> AnimationClip {
@@ -82,7 +82,7 @@ mod tests {
     }
 
     #[test]
-    fn looping_clip_starts_and_wraps_at_start_time() {
+    fn a_clip_node_starts_at_its_start_time_wraps_when_looping_finishes_once_and_resets_to_it() {
         let mut server = AssetServer::new();
         let mut clips = AssetStore::<AnimationClip>::new();
         server.register_asset(&clips);
@@ -94,57 +94,44 @@ mod tests {
             walks.update(&blackboard, |context| node.update(node_state, dt, context));
         };
 
-        let node = erased(AnimationClipNode::new(handle).with_start_time(0.4));
+        let looping = erased(AnimationClipNode::new(handle.clone()).with_start_time(0.4));
         let mut node_state = walks
-            .create(&blackboard, |context| node.create_state(context))
+            .create(&blackboard, |context| looping.create_state(context))
             .unwrap();
         assert_eq!(current_time(&node_state), 0.4);
 
-        update(node.as_ref(), &mut node_state, 0.3);
+        update(looping.as_ref(), &mut node_state, 0.3);
         assert!((current_time(&node_state) - 0.7).abs() < 1e-5);
-        assert!(!node.is_finished(&node_state));
+        assert!(!looping.is_finished(&node_state));
 
-        update(node.as_ref(), &mut node_state, 0.4);
+        update(looping.as_ref(), &mut node_state, 0.4);
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(node.is_finished(&node_state));
+        assert!(looping.is_finished(&node_state));
 
-        update(node.as_ref(), &mut node_state, 0.1);
+        update(looping.as_ref(), &mut node_state, 0.1);
         assert!((current_time(&node_state) - 0.5).abs() < 1e-5);
-        assert!(!node.is_finished(&node_state));
+        assert!(!looping.is_finished(&node_state));
 
-        node.reset(&mut node_state);
+        looping.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(!node.is_finished(&node_state));
-    }
+        assert!(!looping.is_finished(&node_state));
 
-    #[test]
-    fn play_once_clip_starts_at_start_time_and_finishes() {
-        let mut server = AssetServer::new();
-        let mut clips = AssetStore::<AnimationClip>::new();
-        server.register_asset(&clips);
-        let handle = server.add(AnimationClip::default());
-        clips.insert(handle.id(), unit_duration_clip());
-        let walks = Walks::new(clips, AssetStore::<AnimationGraph>::new());
-        let blackboard = AnimationBlackboard::default();
-
-        let node = erased(
+        let once = erased(
             AnimationClipNode::new(handle)
                 .with_play_mode(PlayOnce)
                 .with_start_time(0.4),
         );
         let mut node_state = walks
-            .create(&blackboard, |context| node.create_state(context))
+            .create(&blackboard, |context| once.create_state(context))
             .unwrap();
         assert_eq!(current_time(&node_state), 0.4);
 
-        walks.update(&blackboard, |context| {
-            node.update(&mut node_state, 0.7, context)
-        });
-        assert!(node.is_finished(&node_state));
+        update(once.as_ref(), &mut node_state, 0.7);
+        assert!(once.is_finished(&node_state));
 
-        node.reset(&mut node_state);
+        once.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(!node.is_finished(&node_state));
+        assert!(!once.is_finished(&node_state));
     }
 
     fn clip_with_duration(duration: f32) -> AnimationClip {
@@ -626,12 +613,14 @@ mod tests {
     }
 
     #[test]
-    fn inertialize_outputs_the_source_pose_on_the_transition_frame() {
-        let mut machine = inertialize_machine(0.3);
+    fn inertialize_outputs_the_source_pose_on_the_transition_frame_then_converges_to_the_destination()
+     {
+        let mut machine = inertialize_machine(0.1);
         let before = machine.run(10);
 
         machine.set(name!("to_b"), true);
         let on_transition = machine.step();
+        machine.set(name!("to_b"), false);
 
         assert_eq!(machine.state(), "b");
         assert!(
@@ -639,27 +628,12 @@ mod tests {
             "expected the source pose {before}, got {on_transition}"
         );
         assert!((on_transition - 10.0).abs() > 1.0);
-    }
-
-    #[test]
-    fn inertialize_converges_to_the_destination() {
-        let mut machine = inertialize_machine(0.1);
-        machine.run(10);
-        machine.set(name!("to_b"), true);
-        machine.step();
-        machine.set(name!("to_b"), false);
-
         let mut previous_distance = f32::MAX;
-        let mut distances = Vec::new();
         for _ in 0..30 {
             let distance = (machine.step() - 10.0).abs();
-            distances.push(distance);
-        }
-        for distance in distances {
             assert!(distance <= previous_distance + 1e-4);
             previous_distance = distance;
         }
-
         let settled = machine.run(600);
         assert!((settled - 10.0).abs() < 1e-3, "settled at {settled}");
     }
@@ -704,8 +678,9 @@ mod tests {
     }
 
     #[test]
-    fn a_skeleton_swap_drops_an_unsettled_inertializer() {
-        let mut machine = inertialize_machine(0.3);
+    fn a_skeleton_swap_drops_an_unsettled_inertializer_and_a_later_transition_inertializes_on_the_new_one()
+     {
+        let mut machine = inertialize_machine(0.1);
         machine.run(10);
         machine.set(name!("to_b"), true);
         machine.step();
@@ -716,71 +691,13 @@ mod tests {
         let x = machine.step();
 
         assert!((x - 10.0).abs() < 1e-4, "expected the destination, got {x}");
-    }
-
-    #[test]
-    fn a_later_transition_inertializes_on_the_swapped_skeleton() {
-        let mut machine = inertialize_machine(0.1);
-        machine.run(10);
-        machine.set(name!("to_b"), true);
-        machine.step();
-        machine.set(name!("to_b"), false);
-        let before = machine.run(600);
-
-        machine.pool.set_rest(&[JointPose::IDENTITY; 2]);
-        machine.run(2);
+        let before = machine.run(2);
         machine.set(name!("to_c"), true);
         let on_transition = machine.step();
-
         assert_eq!(machine.state(), "c");
         assert!(
             (on_transition - before).abs() < 1e-3,
             "expected the source pose {before}, got {on_transition}"
-        );
-    }
-
-    fn machine_moving_at(a_speed: f32, b_speed: f32, blender: TransitionBlender) -> Machine {
-        let bone = Uuid::new_v4();
-        Machine::new(
-            bone,
-            linear_x_clip(bone, a_speed),
-            linear_x_clip(bone, b_speed),
-            constant_x_clip(bone, 0.0),
-            0.1,
-            blender,
-        )
-    }
-
-    #[test]
-    fn a_cross_fade_blends_root_motion_by_the_weight_of_the_fade() {
-        let mut machine = machine_moving_at(2.0, 8.0, TransitionBlender::CrossFade);
-        machine.run(5);
-        machine.set(name!("to_b"), true);
-
-        machine.step();
-
-        let weight = MACHINE_FRAME / 0.1;
-        let expected = (2.0 + (8.0 - 2.0) * weight) * MACHINE_FRAME;
-        assert!(
-            (machine.root_motion.translation.x - expected).abs() < 1e-4,
-            "expected {expected}, got {}",
-            machine.root_motion.translation.x
-        );
-    }
-
-    #[test]
-    fn inertialization_gives_the_destination_root_motion_from_the_transition_frame() {
-        let mut machine = machine_moving_at(2.0, 8.0, TransitionBlender::Inertialization);
-        machine.run(5);
-        machine.set(name!("to_b"), true);
-
-        machine.step();
-
-        let expected = 8.0 * MACHINE_FRAME;
-        assert!(
-            (machine.root_motion.translation.x - expected).abs() < 1e-4,
-            "expected {expected}, got {}",
-            machine.root_motion.translation.x
         );
     }
 
@@ -837,32 +754,46 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_cross_fade_gives_each_event_the_weight_of_its_state_in_the_fade() {
-        let mut machine = machine_firing(TransitionBlender::CrossFade);
-        machine.run(5);
-        machine.set(name!("to_b"), true);
-
-        machine.step();
-
-        let entered = MACHINE_FRAME / 0.1;
-        assert_fired(
-            &fired_by_time(&machine),
-            &[
-                time_weight(0.0, entered),
-                time_weight(5.5 * MACHINE_FRAME, 1.0 - entered),
-            ],
-        );
+    struct BlenderCase {
+        blender: TransitionBlender,
+        root_x: f32,
+        fired: Vec<TimeWeight>,
     }
 
     #[test]
-    fn inertialization_fires_the_start_of_the_entered_state_at_full_weight() {
-        let mut machine = machine_firing(TransitionBlender::Inertialization);
-        machine.run(5);
-        machine.set(name!("to_b"), true);
+    fn on_the_transition_frame_each_blender_weighs_root_motion_and_events_its_own_way() {
+        let entered = MACHINE_FRAME / 0.1;
+        let cases = [
+            BlenderCase {
+                blender: TransitionBlender::CrossFade,
+                root_x: (2.0 + (8.0 - 2.0) * entered) * MACHINE_FRAME,
+                fired: vec![
+                    time_weight(0.0, entered),
+                    time_weight(5.5 * MACHINE_FRAME, 1.0 - entered),
+                ],
+            },
+            BlenderCase {
+                blender: TransitionBlender::Inertialization,
+                root_x: 8.0 * MACHINE_FRAME,
+                fired: vec![time_weight(0.0, 1.0)],
+            },
+        ];
 
-        machine.step();
+        for case in cases {
+            let mut machine = machine_firing(case.blender);
+            machine.run(5);
+            machine.set(name!("to_b"), true);
 
-        assert_fired(&fired_by_time(&machine), &[time_weight(0.0, 1.0)]);
+            machine.step();
+
+            assert!(
+                (machine.root_motion.translation.x - case.root_x).abs() < 1e-4,
+                "{:?}: expected {}, got {}",
+                case.blender,
+                case.root_x,
+                machine.root_motion.translation.x
+            );
+            assert_fired(&fired_by_time(&machine), &case.fired);
+        }
     }
 }

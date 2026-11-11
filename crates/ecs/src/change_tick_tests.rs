@@ -6,12 +6,10 @@ use crate::{
     signal::{On, Signal},
     system::{
         executor::{SystemExecutor, single_thread::SingleThreadedExecutor},
-        input::{
-            ForeignTicks,
-            test_support::{Gate, GateOpen},
-        },
+        input::ForeignTicks,
         schedule::{ScheduleLabel, Schedules},
     },
+    testing::{Gate, GateOpen},
 };
 
 #[derive(Component, PartialEq)]
@@ -98,7 +96,12 @@ fn read_changes(
     seen.0.push(values.iter().count());
 }
 
-fn ordering_case<E: SystemExecutor + 'static>(writer_first: bool) -> (Vec<bool>, Vec<usize>) {
+struct Observed {
+    resource_changed: Vec<bool>,
+    components_changed: Vec<usize>,
+}
+
+fn ordering_case<E: SystemExecutor + 'static>(writer_first: bool) -> Observed {
     let mut world = World::new();
     world.spawn(Value(0));
     world.insert_resource(Level::default());
@@ -125,15 +128,18 @@ fn ordering_case<E: SystemExecutor + 'static>(writer_first: bool) -> (Vec<bool>,
         schedule.run(&mut world);
         world.tick();
     }
-    (
-        world.remove_resource::<Flags>().unwrap().0,
-        world.remove_resource::<Seen>().unwrap().0,
-    )
+    Observed {
+        resource_changed: world.remove_resource::<Flags>().unwrap().0,
+        components_changed: world.remove_resource::<Seen>().unwrap().0,
+    }
 }
 
 fn assert_each_order_sees_the_write_once<E: SystemExecutor + 'static>() {
     for writer_first in [true, false] {
-        let (flags, seen) = ordering_case::<E>(writer_first);
+        let Observed {
+            resource_changed: flags,
+            components_changed: seen,
+        } = ordering_case::<E>(writer_first);
         assert_eq!(
             flags.iter().filter(|changed| **changed).count(),
             1,
@@ -304,30 +310,6 @@ fn world_query_sees_changes_since_the_last_world_tick() {
     assert_eq!(changed.iter(&mut world).count(), 0);
 }
 
-fn record_level_change(level: Res<Level>, mut flags: ResMut<Flags>) {
-    flags.0.push(level.is_changed());
-}
-
-#[test]
-fn get_resource_mut_stamps_a_change() {
-    let mut world = World::new();
-    world.insert_resource(Level::default());
-    world.insert_resource(Flags::default());
-    let mut reader = record_level_change.into_system();
-    reader.initialize(&mut world);
-
-    reader.run_and_apply((), &mut world);
-    reader.run_and_apply((), &mut world);
-    world.get_resource_mut::<Level>().unwrap().0 = 1;
-    reader.run_and_apply((), &mut world);
-    reader.run_and_apply((), &mut world);
-
-    assert_eq!(
-        world.get_resource::<Flags>().unwrap().0,
-        [true, false, true, false]
-    );
-}
-
 #[derive(Resource, Default)]
 struct Idle(Vec<usize>);
 
@@ -393,20 +375,6 @@ fn value_changed_tick(world: &World, entity: Entity) -> Tick {
 }
 
 #[test]
-fn check_change_ticks_does_nothing_below_the_threshold() {
-    let mut world = World::new();
-    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD - 1));
-    assert!(world.check_change_ticks().is_none());
-
-    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD));
-    let check = world.check_change_ticks().unwrap();
-    assert_eq!(check.present_tick(), Tick::new(CHECK_TICK_THRESHOLD));
-
-    world.set_change_tick(Tick::new(2 * CHECK_TICK_THRESHOLD - 1));
-    assert!(world.check_change_ticks().is_none());
-}
-
-#[test]
 fn check_change_ticks_runs_from_a_schedule_run() {
     let mut world = World::new();
     let entity = world.spawn(Value(0));
@@ -422,46 +390,6 @@ fn check_change_ticks_runs_from_a_schedule_run() {
 
     let stamp = value_changed_tick(&world, entity);
     assert_eq!(*present.relative_to(stamp), MAX_CHANGE_AGE);
-}
-
-#[test]
-fn a_check_change_ticks_listener_receives_the_check() {
-    let mut world = World::new();
-    world.insert_resource(Checks::default());
-    world.add_listener(record_check);
-    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD + 5));
-    let present = world.change_tick();
-
-    let check = world.check_change_ticks().unwrap();
-
-    assert_eq!(check.present_tick(), present);
-    assert_eq!(world.get_resource::<Checks>().unwrap().0, [present]);
-}
-
-#[test]
-fn resource_stamps_are_clamped_without_a_per_type_registry() {
-    let mut world = World::new();
-    world.insert_resource(Level::default());
-    world.insert_resource(Flags::default());
-    let mut schedules = Schedules::default();
-    schedules.add_system(Frame, level_reader);
-    let compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
-    world.insert_resource(compiled);
-
-    world.run_schedule(Frame);
-    world.set_change_tick(Tick::new(u32::MAX - 5));
-    for _ in 0..8 {
-        world.run_schedule(Frame);
-    }
-    assert!(*world.change_tick() < 100);
-    let mut once = vec![false; 9];
-    once[0] = true;
-    assert_eq!(take_flags(&mut world), once);
-
-    world.get_resource_mut::<Level>().unwrap().0 = 1;
-    world.run_schedule(Frame);
-    world.run_schedule(Frame);
-    assert_eq!(take_flags(&mut world), [true, false]);
 }
 
 #[test]
@@ -544,125 +472,6 @@ fn ticks_survive_wrap_around() {
     assert_eq!(take_seen(&mut world), [2]);
 }
 
-#[derive(Resource, Default)]
-struct RefLog(Vec<(bool, bool)>);
-
-fn log_ref(values: Query<Ref<Value>>, mut log: ResMut<RefLog>) {
-    for value in values.iter() {
-        log.0.push((value.is_added(), value.is_changed()));
-    }
-}
-
-#[test]
-fn ref_reports_added_then_changed() {
-    let mut world = World::new();
-    let entity = world.spawn(Value(0));
-    world.insert_resource(RefLog::default());
-    let mut system = log_ref.into_system();
-    system.initialize(&mut world);
-
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-    world
-        .get_component_for_entity_mut::<Value>(entity)
-        .unwrap()
-        .0 = 1;
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-
-    assert_eq!(
-        world.get_resource::<RefLog>().unwrap().0,
-        [(true, true), (false, false), (false, true), (false, false)]
-    );
-}
-
-fn deref_ref(values: Query<Ref<Value>>, mut seen: ResMut<Seen>) {
-    for value in values.iter() {
-        let plain: &Value = &value;
-        seen.0.push(plain.0 as usize);
-    }
-}
-
-#[test]
-fn ref_derefs_to_the_component() {
-    let mut world = World::new();
-    world.spawn(Value(7));
-    world.insert_resource(Seen::default());
-    let mut system = deref_ref.into_system();
-    system.initialize(&mut world);
-    system.run_and_apply((), &mut world);
-    assert_eq!(world.get_resource::<Seen>().unwrap().0, [7]);
-}
-
-#[derive(Resource, Default)]
-struct Wrote(Vec<bool>);
-
-#[derive(Resource, Default)]
-struct Stamps(Vec<bool>);
-
-fn set_component(values: Query<&mut Value>, mut wrote: ResMut<Wrote>, mut stamps: ResMut<Stamps>) {
-    for mut value in values.iter() {
-        wrote.0.push(value.set_if_neq(Value(5)));
-        stamps.0.push(value.is_changed());
-    }
-}
-
-#[test]
-fn set_if_neq_writes_only_a_different_value() {
-    let mut world = World::new();
-    world.spawn(Value(0));
-    world.insert_resource(Wrote::default());
-    world.insert_resource(Stamps::default());
-    let mut system = set_component.into_system();
-    system.initialize(&mut world);
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-    assert_eq!(world.get_resource::<Wrote>().unwrap().0, [true, false]);
-    assert_eq!(world.get_resource::<Stamps>().unwrap().0, [true, false]);
-}
-
-fn set_resource(mut level: ResMut<Level>, mut wrote: ResMut<Wrote>, mut stamps: ResMut<Stamps>) {
-    wrote.0.push(level.set_if_neq(Level(3)));
-    stamps.0.push(level.is_changed());
-}
-
-#[test]
-fn res_mut_set_if_neq_writes_only_a_different_value() {
-    let mut world = World::new();
-    world.insert_resource(Level(0));
-    world.insert_resource(Wrote::default());
-    world.insert_resource(Stamps::default());
-    let mut system = set_resource.into_system();
-    system.initialize(&mut world);
-    system.run_and_apply((), &mut world);
-    let first = world.resource_changed_tick::<Level>().unwrap();
-    system.run_and_apply((), &mut world);
-    assert_eq!(world.get_resource::<Wrote>().unwrap().0, [true, false]);
-    assert_eq!(world.get_resource::<Stamps>().unwrap().0, [true, false]);
-    assert_eq!(world.resource_changed_tick::<Level>().unwrap(), first);
-    assert_eq!(world.get_resource::<Level>().unwrap().0, 3);
-}
-
-fn log_res(level: Res<Level>, mut flags: ResMut<Flags>) {
-    flags.0.push(level.is_added());
-}
-
-#[test]
-fn res_is_added_once() {
-    let mut world = World::new();
-    world.insert_resource(Level::default());
-    world.insert_resource(Flags::default());
-    let mut system = log_res.into_system();
-    system.initialize(&mut world);
-    for _ in 0..3 {
-        system.run_and_apply((), &mut world);
-    }
-    assert_eq!(
-        world.get_resource::<Flags>().unwrap().0,
-        [true, false, false]
-    );
-}
-
 #[test]
 fn foreign_ticks_commit_only_when_asked_and_clamp_an_old_last_run() {
     let world = World::new();
@@ -683,115 +492,6 @@ fn foreign_ticks_commit_only_when_asked_and_clamp_an_old_last_run() {
     world.set_change_tick(Tick::new(*world.change_tick() + MAX_CHANGE_AGE + 10));
     let late = ticks.begin(&world);
     assert_eq!(*late.this_run.relative_to(late.last_run), MAX_CHANGE_AGE);
-}
-
-#[derive(Resource, Default)]
-struct ResLog(Vec<(bool, bool)>);
-
-fn log_mut(values: Query<&mut Value>, mut log: ResMut<RefLog>) {
-    for value in values.iter() {
-        log.0.push((value.is_added(), value.is_changed()));
-    }
-}
-
-#[test]
-fn mut_tells_added_from_changed() {
-    let mut world = World::new();
-    let entity = world.spawn(Value(0));
-    world.insert_resource(RefLog::default());
-    let mut system = log_mut.into_system();
-    system.initialize(&mut world);
-
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-    world
-        .get_component_for_entity_mut::<Value>(entity)
-        .unwrap()
-        .0 = 1;
-    system.run_and_apply((), &mut world);
-
-    assert_eq!(
-        world.get_resource::<RefLog>().unwrap().0,
-        [(true, true), (false, false), (false, true)]
-    );
-}
-
-fn log_res_mut(level: ResMut<Level>, mut log: ResMut<ResLog>) {
-    log.0.push((level.is_added(), level.is_changed()));
-}
-
-#[test]
-fn res_mut_tells_added_from_changed() {
-    let mut world = World::new();
-    world.insert_resource(Level::default());
-    world.insert_resource(ResLog::default());
-    let mut system = log_res_mut.into_system();
-    system.initialize(&mut world);
-
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-    world.get_resource_mut::<Level>().unwrap().0 = 1;
-    system.run_and_apply((), &mut world);
-
-    assert_eq!(
-        world.get_resource::<ResLog>().unwrap().0,
-        [(true, true), (false, false), (false, true)]
-    );
-}
-
-#[test]
-fn overwriting_a_component_marks_it_changed_but_not_added() {
-    let mut world = World::new();
-    let entity = world.spawn(Value(0));
-    world.insert_resource(RefLog::default());
-    let mut system = log_ref.into_system();
-    system.initialize(&mut world);
-
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-    world.insert(Value(1), entity);
-    system.run_and_apply((), &mut world);
-    world.insert((Value(2), Marker), entity);
-    system.run_and_apply((), &mut world);
-
-    assert_eq!(
-        world.get_resource::<RefLog>().unwrap().0,
-        [(true, true), (false, false), (false, true), (false, true)]
-    );
-}
-
-fn log_res_ref(level: Res<Level>, mut log: ResMut<ResLog>) {
-    log.0.push((level.is_added(), level.is_changed()));
-}
-
-#[test]
-fn overwriting_a_resource_marks_it_changed_but_not_added() {
-    let mut world = World::new();
-    world.insert_resource(Level::default());
-    world.insert_resource(ResLog::default());
-    let mut system = log_res_ref.into_system();
-    system.initialize(&mut world);
-
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-    world.insert_resource(Level(1));
-    system.run_and_apply((), &mut world);
-    system.run_and_apply((), &mut world);
-    world.remove_resource::<Level>();
-    world.insert_resource(Level(2));
-    system.run_and_apply((), &mut world);
-
-    assert_eq!(
-        world.get_resource::<ResLog>().unwrap().0,
-        [
-            (true, true),
-            (false, false),
-            (false, true),
-            (false, false),
-            (true, true)
-        ]
-    );
-    assert_eq!(world.get_resource::<Level>().unwrap().0, 2);
 }
 
 #[test]
@@ -815,4 +515,258 @@ fn a_first_run_does_not_see_a_stamp_clamped_to_max_change_age() {
     fresh.initialize(&mut world);
     fresh.run_and_apply((), &mut world);
     assert_eq!(take_seen(&mut world), [1, 1]);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Stamp {
+    added: bool,
+    changed: bool,
+}
+
+const NEW: Stamp = Stamp {
+    added: true,
+    changed: true,
+};
+const SAME: Stamp = Stamp {
+    added: false,
+    changed: false,
+};
+const CHANGED: Stamp = Stamp {
+    added: false,
+    changed: true,
+};
+
+#[derive(Resource, Default)]
+struct StampLog(Vec<Stamp>);
+
+fn log_ref(values: Query<Ref<Value>>, mut log: ResMut<StampLog>) {
+    for value in values.iter() {
+        log.0.push(Stamp {
+            added: value.is_added(),
+            changed: value.is_changed(),
+        });
+    }
+}
+
+fn log_mut(values: Query<&mut Value>, mut log: ResMut<StampLog>) {
+    for value in values.iter() {
+        log.0.push(Stamp {
+            added: value.is_added(),
+            changed: value.is_changed(),
+        });
+    }
+}
+
+fn log_res(level: Res<Level>, mut log: ResMut<StampLog>) {
+    log.0.push(Stamp {
+        added: level.is_added(),
+        changed: level.is_changed(),
+    });
+}
+
+fn log_res_mut(level: ResMut<Level>, mut log: ResMut<StampLog>) {
+    log.0.push(Stamp {
+        added: level.is_added(),
+        changed: level.is_changed(),
+    });
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Access {
+    Ref,
+    Mut,
+    Res,
+    ResMut,
+}
+
+impl Access {
+    fn reads_a_component(self) -> bool {
+        matches!(self, Access::Ref | Access::Mut)
+    }
+
+    fn reader(self) -> crate::system::BoxedSystem {
+        match self {
+            Access::Ref => log_ref.into_boxed_system(),
+            Access::Mut => log_mut.into_boxed_system(),
+            Access::Res => log_res.into_boxed_system(),
+            Access::ResMut => log_res_mut.into_boxed_system(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Step {
+    Look,
+    Write,
+    Overwrite,
+    OverwriteInBundle,
+    Reinsert,
+}
+
+struct StampCase {
+    access: Access,
+    steps: &'static [Step],
+    seen: &'static [Stamp],
+}
+
+fn write(world: &mut World, entity: Entity, access: Access, step: Step, value: u32) {
+    match (step, access.reads_a_component()) {
+        (Step::Write, true) => {
+            world
+                .get_component_for_entity_mut::<Value>(entity)
+                .unwrap()
+                .0 = value
+        }
+        (Step::Write, false) => world.get_resource_mut::<Level>().unwrap().0 = value,
+        (Step::Overwrite, true) => world.insert(Value(value), entity),
+        (Step::Overwrite, false) => world.insert_resource(Level(value)),
+        (Step::OverwriteInBundle, true) => world.insert((Value(value), Marker), entity),
+        (Step::Reinsert, false) => {
+            world.remove_resource::<Level>();
+            world.insert_resource(Level(value));
+        }
+        (step, _) => unreachable!("{step:?} does not apply to {access:?}"),
+    }
+}
+
+#[test]
+fn added_and_changed_follow_each_write() {
+    use Step::*;
+    let cases = [
+        StampCase {
+            access: Access::Ref,
+            steps: &[Look, Look, Write, Look, Look],
+            seen: &[NEW, SAME, CHANGED, SAME],
+        },
+        StampCase {
+            access: Access::Mut,
+            steps: &[Look, Look, Write, Look],
+            seen: &[NEW, SAME, CHANGED],
+        },
+        StampCase {
+            access: Access::Res,
+            steps: &[Look, Look, Write, Look, Look],
+            seen: &[NEW, SAME, CHANGED, SAME],
+        },
+        StampCase {
+            access: Access::ResMut,
+            steps: &[Look, Look, Write, Look],
+            seen: &[NEW, SAME, CHANGED],
+        },
+        StampCase {
+            access: Access::Ref,
+            steps: &[Look, Look, Overwrite, Look, OverwriteInBundle, Look],
+            seen: &[NEW, SAME, CHANGED, CHANGED],
+        },
+        StampCase {
+            access: Access::Res,
+            steps: &[Look, Look, Overwrite, Look, Look, Reinsert, Look],
+            seen: &[NEW, SAME, CHANGED, SAME, NEW],
+        },
+    ];
+    for case in cases {
+        let mut world = World::new();
+        let entity = world.spawn(Value(0));
+        world.insert_resource(Level(0));
+        world.insert_resource(StampLog::default());
+        let mut reader = case.access.reader();
+        reader.initialize(&mut world);
+        let mut writes = 0;
+        for step in case.steps {
+            if let Look = step {
+                reader.run_and_apply((), &mut world);
+            } else {
+                writes += 1;
+                write(&mut world, entity, case.access, *step, writes);
+            }
+        }
+
+        let label = format!("{:?} over {:?}", case.access, case.steps);
+        assert_eq!(
+            world.get_resource::<StampLog>().unwrap().0,
+            case.seen,
+            "{label}"
+        );
+        let value = if case.access.reads_a_component() {
+            world.get_component_for_entity::<Value>(entity).unwrap().0
+        } else {
+            world.get_resource::<Level>().unwrap().0
+        };
+        assert_eq!(value, writes, "{label}");
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SetIfNeq {
+    wrote: bool,
+    changed: bool,
+}
+
+#[derive(Resource, Default)]
+struct Wrote(Vec<SetIfNeq>);
+
+fn set_both(values: Query<&mut Value>, mut level: ResMut<Level>, mut wrote: ResMut<Wrote>) {
+    for mut value in values.iter() {
+        let written = value.set_if_neq(Value(5));
+        wrote.0.push(SetIfNeq {
+            wrote: written,
+            changed: value.is_changed(),
+        });
+    }
+    let written = level.set_if_neq(Level(3));
+    wrote.0.push(SetIfNeq {
+        wrote: written,
+        changed: level.is_changed(),
+    });
+}
+
+#[test]
+fn set_if_neq_writes_only_a_different_value() {
+    let mut world = World::new();
+    world.spawn(Value(0));
+    world.insert_resource(Level(0));
+    world.insert_resource(Wrote::default());
+    let mut system = set_both.into_system();
+    system.initialize(&mut world);
+
+    system.run_and_apply((), &mut world);
+    let first = world.resource_changed_tick::<Level>().unwrap();
+    system.run_and_apply((), &mut world);
+
+    let wrote = SetIfNeq {
+        wrote: true,
+        changed: true,
+    };
+    let kept = SetIfNeq {
+        wrote: false,
+        changed: false,
+    };
+    assert_eq!(
+        world.get_resource::<Wrote>().unwrap().0,
+        [wrote, wrote, kept, kept]
+    );
+    assert_eq!(world.resource_changed_tick::<Level>().unwrap(), first);
+    assert_eq!(world.get_resource::<Level>().unwrap().0, 3);
+}
+
+#[test]
+fn check_change_ticks_runs_once_per_threshold_and_tells_its_listeners() {
+    let mut world = World::new();
+    world.insert_resource(Checks::default());
+    world.add_listener(record_check);
+
+    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD - 1));
+    assert!(world.check_change_ticks().is_none());
+
+    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD));
+    let check = world.check_change_ticks().unwrap();
+    assert_eq!(check.present_tick(), Tick::new(CHECK_TICK_THRESHOLD));
+
+    world.set_change_tick(Tick::new(2 * CHECK_TICK_THRESHOLD - 1));
+    assert!(world.check_change_ticks().is_none());
+
+    assert_eq!(
+        world.get_resource::<Checks>().unwrap().0,
+        [Tick::new(CHECK_TICK_THRESHOLD)]
+    );
 }

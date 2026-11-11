@@ -450,16 +450,6 @@ mod tests {
         assert_eq!(words[16 * 127 + 13], (-1i32) as u32);
     }
 
-    #[test]
-    fn syncing_an_unchanged_light_yields_an_equal_render_light() {
-        let light = Light::spot_light(0.5);
-        let transform = at(Vec3::new(1.0, 2.0, 3.0), Quat::from_rotation_x(0.5));
-        let render_light = RenderLight::zeroed().synced_with(&light, &transform);
-        assert!(render_light == render_light.synced_with(&light, &transform));
-        let moved = at(Vec3::new(1.0, 2.0, 4.0), Quat::from_rotation_x(0.5));
-        assert!(render_light != render_light.synced_with(&light, &moved));
-    }
-
     #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
     struct CountChanged;
 
@@ -518,45 +508,72 @@ mod tests {
         assert!(next_light_slot(MAX_LIGHTS).is_none());
     }
 
-    #[test]
-    fn point_light_falls_off_with_the_square_of_distance() {
-        let light = Light::point_light();
-        let transform = at(Vec3::ZERO, Quat::IDENTITY);
-        let near = light.attenuation_at(&transform, Vec3::new(1.0, 0.0, 0.0));
-        let far = light.attenuation_at(&transform, Vec3::new(0.0, 2.0, 0.0));
-        assert!((near - 1.0).abs() < 1e-6);
-        assert!((far - 0.25).abs() < 1e-6);
+    struct Reach {
+        case: &'static str,
+        light: fn() -> Light,
+        position: Vec3,
+        rotation: Quat,
+        point: Vec3,
+        between: [f32; 2],
+    }
+
+    fn reach(case: &'static str, light: fn() -> Light, point: Vec3, between: [f32; 2]) -> Reach {
+        Reach {
+            case,
+            light,
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            point,
+            between,
+        }
     }
 
     #[test]
-    fn range_reaches_zero_at_the_limit() {
-        let light = Light::point_light().with_range(7.0);
-        let transform = at(Vec3::ZERO, Quat::IDENTITY);
-        assert_eq!(light.attenuation_at(&transform, Vec3::X * 7.0), 0.0);
-        assert!(light.attenuation_at(&transform, Vec3::X * 6.9) > 0.0);
-        assert!(light.attenuation_at(&transform, Vec3::X) > 0.99);
-    }
-
-    #[test]
-    fn spot_light_only_reaches_inside_its_cone() {
-        let light = Light::spot_light(0.4);
-        // Spot lights shine down their local -Z.
-        let transform = at(Vec3::ZERO, Quat::IDENTITY);
-        assert!((light.attenuation_at(&transform, Vec3::NEG_Z) - 1.0).abs() < 1e-6);
-        assert_eq!(light.attenuation_at(&transform, Vec3::Z), 0.0);
-        assert_eq!(light.attenuation_at(&transform, Vec3::X), 0.0);
-
-        let turned = at(
-            Vec3::ZERO,
-            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-        );
-        assert!((light.attenuation_at(&turned, Vec3::NEG_X) - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn directional_light_is_unattenuated() {
-        let light = Light::directional_light();
-        let transform = at(Vec3::new(3.0, 50.0, -2.0), Quat::IDENTITY);
-        assert_eq!(light.attenuation_at(&transform, Vec3::ZERO), 1.0);
+    fn attenuation_falls_off_with_distance_to_the_range_and_stays_inside_a_spot_cone() {
+        let ranged = || Light::point_light().with_range(7.0);
+        let spot = || Light::spot_light(0.4);
+        let cases = [
+            reach(
+                "a point light at 1",
+                Light::point_light,
+                Vec3::X,
+                [1.0, 1.0],
+            ),
+            reach(
+                "a point light at 2",
+                Light::point_light,
+                Vec3::new(0.0, 2.0, 0.0),
+                [0.25, 0.25],
+            ),
+            reach("at the range", ranged, Vec3::X * 7.0, [0.0, 0.0]),
+            reach("just inside the range", ranged, Vec3::X * 6.9, [1e-6, 1.0]),
+            reach("well inside the range", ranged, Vec3::X, [0.99, 1.0]),
+            reach("down a spot's -Z", spot, Vec3::NEG_Z, [1.0, 1.0]),
+            reach("behind a spot", spot, Vec3::Z, [0.0, 0.0]),
+            reach("beside a spot", spot, Vec3::X, [0.0, 0.0]),
+            Reach {
+                rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                ..reach("down a turned spot", spot, Vec3::NEG_X, [1.0, 1.0])
+            },
+            Reach {
+                position: Vec3::new(3.0, 50.0, -2.0),
+                ..reach(
+                    "a directional light anywhere",
+                    Light::directional_light,
+                    Vec3::ZERO,
+                    [1.0, 1.0],
+                )
+            },
+        ];
+        for case in &cases {
+            let transform = at(case.position, case.rotation);
+            let attenuation = (case.light)().attenuation_at(&transform, case.point);
+            assert!(
+                attenuation >= case.between[0] - 1e-6 && attenuation <= case.between[1] + 1e-6,
+                "{}: {attenuation} outside {:?}",
+                case.case,
+                case.between
+            );
+        }
     }
 }

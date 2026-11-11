@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn an_input_set_declares_the_union_of_its_members() {
+    fn an_input_set_declares_the_union_of_its_own_members_only() {
         let mut world = registered();
         let set = access_of(&mut world, reads);
 
@@ -264,6 +264,10 @@ mod tests {
         assert!(!SystemAccess::are_disjoint(&set, &first));
         assert!(!SystemAccess::are_disjoint(&set, &second));
         assert!(SystemAccess::are_disjoint(&set, &other));
+
+        struct Elsewhere;
+        let elsewhere = access_of(&mut world, |_: InputSet<Elsewhere>| {});
+        assert!(SystemAccess::are_disjoint(&elsewhere, &first));
     }
 
     #[test]
@@ -361,16 +365,6 @@ mod tests {
             .run(&mut world);
 
         assert_eq!(seen(&world)[2], "both 11");
-    }
-
-    #[test]
-    fn an_input_set_of_another_marker_sees_none_of_these_members() {
-        struct Elsewhere;
-        let mut world = registered();
-        let elsewhere = access_of(&mut world, |_: InputSet<Elsewhere>| {});
-        let first = access_of(&mut world, |_: ResMut<First>| {});
-
-        assert!(SystemAccess::are_disjoint(&elsewhere, &first));
     }
 
     #[test]

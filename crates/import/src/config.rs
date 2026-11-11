@@ -52,6 +52,7 @@ fn cap_file_name(sanitized: &str, original: &str, extension: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn file_name(address: &str) -> &str {
         address.rsplit('/').next().unwrap()
@@ -61,39 +62,39 @@ mod tests {
         content_address(&ContentConfig::default(), Path::new("hero.obj"), name)
     }
 
-    #[test]
-    fn a_short_name_keeps_its_address() {
-        assert_eq!(
-            address_for("material_steel"),
-            "content/hero/material_steel.gasset"
-        );
+    struct Case {
+        name: String,
+        file_name: String,
     }
 
     #[test]
-    fn a_file_name_of_exactly_the_cap_is_unchanged() {
-        let name = "a".repeat(200 - ".gasset".len());
-        let address = address_for(&name);
-        assert_eq!(file_name(&address), format!("{name}.gasset"));
-        assert_eq!(file_name(&address).len(), 200);
-    }
-
-    #[test]
-    fn a_file_name_one_byte_over_the_cap_is_capped() {
-        let name = "a".repeat(200 - ".gasset".len() + 1);
-        let address = address_for(&name);
-        assert!(file_name(&address).len() <= 200, "got: {address}");
-        assert_ne!(file_name(&address), format!("{name}.gasset"));
-    }
-
-    #[test]
-    fn a_long_name_is_capped_and_keeps_its_extension() {
-        let address = address_for(&"a".repeat(300));
-        assert!(file_name(&address).len() <= 200, "got: {address}");
-        assert!(file_name(&address).ends_with(".gasset"), "got: {address}");
-    }
-
-    #[test]
-    fn long_names_differing_in_the_last_character_stay_distinct() {
+    fn a_sub_asset_name_becomes_a_sanitised_file_name_capped_on_a_char_boundary() {
+        let at_cap = "a".repeat(200 - ".gasset".len());
+        let multi_byte = format!("aa{}", "あ".repeat(100));
+        let cases = [
+            Case {
+                name: "material_steel".to_string(),
+                file_name: "material_steel.gasset".to_string(),
+            },
+            Case {
+                name: "material/steel#main".to_string(),
+                file_name: "material_steel_main.gasset".to_string(),
+            },
+            Case {
+                name: at_cap.clone(),
+                file_name: format!("{at_cap}.gasset"),
+            },
+            Case {
+                name: multi_byte.clone(),
+                file_name: format!("aa{}_{:08x}.gasset", "あ".repeat(60), fnv1a32(&multi_byte)),
+            },
+        ];
+        for case in &cases {
+            assert_eq!(
+                address_for(&case.name),
+                format!("content/hero/{}", case.file_name)
+            );
+        }
         let prefix = "a".repeat(299);
         assert_ne!(
             address_for(&format!("{prefix}x")),
@@ -101,27 +102,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_same_long_name_gives_the_same_address() {
-        let name = "b".repeat(300);
-        assert_eq!(address_for(&name), address_for(&name));
-    }
-
-    #[test]
-    fn a_long_multi_byte_name_is_cut_on_a_char_boundary() {
-        let address = address_for(&format!("aa{}", "あ".repeat(100)));
-        let name = file_name(&address);
-        assert_eq!(name.len(), 198, "got: {address}");
-        assert!(name.ends_with(".gasset"), "got: {address}");
-    }
-
-    #[test]
-    fn a_hash_in_a_sub_asset_name_is_sanitized_out_of_the_address() {
-        let address = content_address(
-            &ContentConfig::default(),
-            Path::new("hero.obj"),
-            "material/steel#main",
-        );
-        assert!(!address.contains('#'), "got: {address}");
+    proptest! {
+        #[test]
+        fn a_file_name_fits_the_cap_keeps_its_extension_and_names_no_directory(
+            name in "[a-z/#\\\\あ]{0,300}",
+        ) {
+            let address = address_for(&name);
+            let file = file_name(&address);
+            prop_assert!(file.len() <= 200, "{}", address);
+            prop_assert!(file.ends_with(".gasset"), "{}", address);
+            prop_assert!(address.starts_with("content/hero/"), "{}", address);
+            prop_assert!(!file.contains('#') && !file.contains('\\'), "{}", address);
+            prop_assert_eq!(&address, &address_for(&name));
+            let sanitized = name.replace(['/', '\\', '#'], "_");
+            if sanitized.len() + ".gasset".len() <= 200 {
+                prop_assert_eq!(file, format!("{sanitized}.gasset"));
+            }
+        }
     }
 }

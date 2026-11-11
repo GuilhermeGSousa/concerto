@@ -93,6 +93,8 @@ impl From<Hsla> for LinearRgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Color;
+    use proptest::prelude::*;
 
     const EPS: f32 = 1e-5;
 
@@ -106,120 +108,123 @@ mod tests {
         );
     }
 
-    fn assert_linear_near(a: LinearRgba, b: LinearRgba, eps: f32) {
+    fn assert_hsla_near(a: Hsla, b: Hsla) {
         assert!(
-            (a.r - b.r).abs() <= eps
-                && (a.g - b.g).abs() <= eps
-                && (a.b - b.b).abs() <= eps
-                && (a.a - b.a).abs() <= eps,
+            (a.h - b.h).abs() <= 1e-4
+                && (a.s - b.s).abs() <= EPS
+                && (a.l - b.l).abs() <= EPS
+                && (a.a - b.a).abs() <= EPS,
             "{a:?} != {b:?}"
         );
     }
 
-    #[test]
-    fn pure_green_is_hue_120() {
-        let c = Srgba::from(Hsla::new(120.0, 1.0, 0.5, 1.0));
-        assert_srgba_near(c, Srgba::from_hex("#00ff00").unwrap(), EPS);
+    fn linear_near(a: LinearRgba, b: LinearRgba, eps: f32) -> bool {
+        (a.r - b.r).abs() <= eps
+            && (a.g - b.g).abs() <= eps
+            && (a.b - b.b).abs() <= eps
+            && (a.a - b.a).abs() <= eps
+    }
+
+    struct ToSrgb {
+        hsla: Hsla,
+        srgba: Srgba,
     }
 
     #[test]
-    fn hsl_210_half_half_is_a_steel_blue() {
-        let c = Srgba::from(Hsla::new(210.0, 0.5, 0.5, 1.0));
-        assert_srgba_near(c, Srgba::new(0.25, 0.5, 0.75, 1.0), EPS);
-        assert_srgba_near(c, Srgba::from_hex("#4080bf").unwrap(), 0.005);
-    }
-
-    #[test]
-    fn zero_saturation_is_grey_of_lightness() {
-        let c = Srgba::from(Hsla::new(0.0, 0.0, 0.5, 1.0));
-        assert_srgba_near(c, Srgba::new(0.5, 0.5, 0.5, 1.0), EPS);
-    }
-
-    #[test]
-    fn srgba_round_trips_over_a_grid() {
-        let steps = [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0];
-        for &r in &steps {
-            for &g in &steps {
-                for &b in &steps {
-                    let c = Srgba::new(r, g, b, 0.7);
-                    let back = Srgba::from(Hsla::from(c));
-                    assert_srgba_near(c, back, EPS);
-                }
-            }
+    fn hsl_converts_to_the_srgb_it_names() {
+        let cases = [
+            ToSrgb {
+                hsla: Hsla::new(120.0, 1.0, 0.5, 1.0),
+                srgba: Srgba::from_hex("#00ff00").unwrap(),
+            },
+            ToSrgb {
+                hsla: Hsla::new(210.0, 0.5, 0.5, 1.0),
+                srgba: Srgba::new(0.25, 0.5, 0.75, 1.0),
+            },
+            ToSrgb {
+                hsla: Hsla::new(0.0, 0.0, 0.5, 1.0),
+                srgba: Srgba::new(0.5, 0.5, 0.5, 1.0),
+            },
+            ToSrgb {
+                hsla: Hsla::new(0.0, 0.6, 0.4, 1.0),
+                srgba: Srgba::new(0.64, 0.16, 0.16, 1.0),
+            },
+            ToSrgb {
+                hsla: Hsla::new(360.0, 0.6, 0.4, 1.0),
+                srgba: Srgba::new(0.64, 0.16, 0.16, 1.0),
+            },
+            ToSrgb {
+                hsla: Hsla::new(-90.0, 0.6, 0.4, 0.25),
+                srgba: Srgba::new(0.4, 0.16, 0.64, 0.25),
+            },
+        ];
+        for case in cases {
+            assert_srgba_near(Srgba::from(case.hsla), case.srgba, EPS);
         }
     }
 
+    struct FromSrgb {
+        srgba: Srgba,
+        hsla: Hsla,
+        back: Srgba,
+    }
+
     #[test]
-    fn linear_rgba_round_trips_over_a_grid() {
-        let steps = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0];
-        for &r in &steps {
-            for &g in &steps {
-                for &b in &steps {
-                    let c = LinearRgba::new(r, g, b, 0.7);
-                    let back = LinearRgba::from(Hsla::from(c));
-                    assert_linear_near(c, back, 1e-4);
-                }
-            }
+    fn srgb_converts_to_hsl_in_degrees_even_out_of_gamut() {
+        let cases = [
+            FromSrgb {
+                srgba: Srgba::new(0.0, 0.0, 1.0, 1.0),
+                hsla: Hsla::new(240.0, 1.0, 0.5, 1.0),
+                back: Srgba::new(0.0, 0.0, 1.0, 1.0),
+            },
+            FromSrgb {
+                srgba: Srgba::new(1.0, 0.0, 0.5, 1.0),
+                hsla: Hsla::new(330.0, 1.0, 0.5, 1.0),
+                back: Srgba::new(1.0, 0.0, 0.5, 1.0),
+            },
+            FromSrgb {
+                srgba: Srgba::new(1.5, 0.2, 0.2, 1.0),
+                hsla: Hsla::new(0.0, 1.3 / 0.3, 0.85, 1.0),
+                back: Srgba::new(1.5, 0.2, 0.2, 1.0),
+            },
+            FromSrgb {
+                srgba: Srgba::new(1.5, 0.5, 0.5, 1.0),
+                hsla: Hsla::new(0.0, 0.0, 1.0, 1.0),
+                back: Srgba::new(1.0, 1.0, 1.0, 1.0),
+            },
+        ];
+        for case in cases {
+            let hsla = Hsla::from(case.srgba);
+            assert_hsla_near(hsla, case.hsla);
+            assert_srgba_near(Srgba::from(hsla), case.back, 1e-4);
         }
     }
 
-    #[test]
-    fn linear_conversion_goes_through_srgb() {
-        let linear = LinearRgba::new(0.2, 0.4, 0.6, 1.0);
-        let expected = Hsla::from(Srgba::from(linear));
-        assert_eq!(linear.to_hsl(), expected);
-        assert_eq!(expected.to_linear(), LinearRgba::from(expected.to_srgba()));
-    }
+    proptest! {
+        #[test]
+        fn hsl_round_trips_in_gamut_with_its_hue_below_360(
+            r in 0.0f32..=1.0,
+            g in 0.0f32..=1.0,
+            b in 0.0f32..=1.0,
+            a in 0.0f32..=1.0,
+        ) {
+            let srgba = Srgba::new(r, g, b, a);
+            let hsla = Hsla::from(srgba);
+            prop_assert!((0.0..360.0).contains(&hsla.h), "hue {}", hsla.h);
+            prop_assert_eq!(hsla.a, a);
+            let back = Srgba::from(hsla);
+            prop_assert!(
+                (back.r - r).abs() <= EPS && (back.g - g).abs() <= EPS && (back.b - b).abs() <= EPS,
+                "{:?} != {:?}", back, srgba
+            );
+            prop_assert_eq!(back.a, a);
+            prop_assert_eq!(Color::Srgba(srgba).to_hsl(), srgba.to_hsl());
 
-    #[test]
-    fn hue_360_equals_hue_0() {
-        let a = Srgba::from(Hsla::new(360.0, 0.6, 0.4, 1.0));
-        let b = Srgba::from(Hsla::new(0.0, 0.6, 0.4, 1.0));
-        assert_srgba_near(a, b, EPS);
-    }
-
-    #[test]
-    fn negative_hue_wraps() {
-        let a = Srgba::from(Hsla::new(-90.0, 0.6, 0.4, 1.0));
-        let b = Srgba::from(Hsla::new(270.0, 0.6, 0.4, 1.0));
-        assert_srgba_near(a, b, EPS);
-    }
-
-    #[test]
-    fn hue_from_srgba_is_in_degrees_below_360() {
-        let steps = [0.0, 0.2, 0.5, 0.8, 1.0];
-        for &r in &steps {
-            for &g in &steps {
-                for &b in &steps {
-                    let h = Hsla::from(Srgba::new(r, g, b, 1.0)).h;
-                    assert!((0.0..360.0).contains(&h), "hue {h} for ({r}, {g}, {b})");
-                }
-            }
+            let linear = LinearRgba::new(r, g, b, a);
+            prop_assert_eq!(linear.to_hsl(), Hsla::from(Srgba::from(linear)));
+            let linear_back = LinearRgba::from(linear.to_hsl());
+            prop_assert!(linear_near(linear_back, linear, 1e-4), "{:?} != {:?}", linear_back, linear);
+            prop_assert_eq!(linear.to_hsl().to_linear(), LinearRgba::from(linear.to_hsl().to_srgba()));
         }
-        assert!((Hsla::from(Srgba::new(0.0, 0.0, 1.0, 1.0)).h - 240.0).abs() < EPS);
-        assert!((Hsla::from(Srgba::new(1.0, 0.0, 0.5, 1.0)).h - 330.0).abs() < EPS);
-    }
-
-    #[test]
-    fn alpha_passes_through() {
-        let hsla = Hsla::from(Srgba::new(0.3, 0.6, 0.9, 0.25));
-        assert_eq!(hsla.a, 0.25);
-        assert_eq!(Srgba::from(hsla).a, 0.25);
-        assert_eq!(LinearRgba::from(hsla).a, 0.25);
-    }
-
-    #[test]
-    fn hdr_srgba_round_trips() {
-        let c = Srgba::new(1.5, 0.2, 0.2, 1.0);
-        let hsla = Hsla::from(c);
-        assert!((hsla.l - 0.85).abs() < EPS);
-        assert_srgba_near(Srgba::from(hsla), c, 1e-4);
-    }
-
-    #[test]
-    fn zero_denominator_gives_zero_saturation() {
-        let hsla = Hsla::from(Srgba::new(1.5, 0.5, 0.5, 1.0));
-        assert!(hsla.s.is_finite());
-        assert_eq!(hsla.s, 0.0);
     }
 }

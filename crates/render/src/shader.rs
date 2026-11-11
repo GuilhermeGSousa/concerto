@@ -115,32 +115,39 @@ fn fs_main() -> @location(0) vec4<f32> {
             .any(|(_, f)| f.name.as_deref() == Some(name))
     }
 
-    #[test]
-    fn ifdef_picks_the_else_branch_when_undefined() {
-        let mut defs = ShaderDefs::default();
-        defs.insert("COUNT", ShaderDefValue::Int(1));
-
-        let module = compose_shader("branching", BRANCHING, &defs).unwrap();
-
-        assert_eq!(returned_literal(&module), Some(1));
-        assert!(!has_function(&module, "count_is_three"));
+    struct Branch {
+        defs: ShaderDefs,
+        picked: i32,
+        count_is_three: bool,
     }
 
     #[test]
-    fn ifdef_and_if_follow_the_defs() {
-        let mut defs = ShaderDefs::default();
-        defs.define("USE_B").insert("COUNT", ShaderDefValue::Int(3));
+    fn ifdef_and_if_follow_the_defs_and_an_error_names_the_shader() {
+        let mut undefined = ShaderDefs::default();
+        undefined.insert("COUNT", ShaderDefValue::Int(1));
+        let mut defined = ShaderDefs::default();
+        defined
+            .define("USE_B")
+            .insert("COUNT", ShaderDefValue::Int(3));
+        let cases = [
+            Branch {
+                defs: undefined,
+                picked: 1,
+                count_is_three: false,
+            },
+            Branch {
+                defs: defined,
+                picked: 2,
+                count_is_three: true,
+            },
+        ];
+        for case in &cases {
+            let module = compose_shader("branching", BRANCHING, &case.defs).unwrap();
+            assert_eq!(returned_literal(&module), Some(case.picked));
+            assert_eq!(has_function(&module, "count_is_three"), case.count_is_three);
+        }
 
-        let module = compose_shader("branching", BRANCHING, &defs).unwrap();
-
-        assert_eq!(returned_literal(&module), Some(2));
-        assert!(has_function(&module, "count_is_three"));
-    }
-
-    #[test]
-    fn invalid_shader_reports_the_label() {
         let err = compose_shader("broken.wgsl", "fn oops( {", &ShaderDefs::default()).unwrap_err();
-
         assert!(err.contains("broken.wgsl"), "{err}");
     }
 }

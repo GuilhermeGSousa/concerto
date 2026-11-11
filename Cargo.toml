@@ -28,7 +28,7 @@ multithreaded = ["concerto-app/multithreaded"]
 tracy = ["profiling/profile-with-tracy"]
 
 [workspace]
-members = ["crates/*", "examples/*", "examples/*/editor"]
+members = ["crates/*", "examples/*", "examples/*/case", "examples/*/editor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -84,6 +84,7 @@ concerto-winit = { path = "crates/winit", version = "0.1.0" }
 concerto-world-grid = { path = "crates/world-grid", version = "0.1.0" }
 parking_lot = "0.12"
 glam = "0.33.9"
+proptest = "1"
 
 [lints.rust]
 warnings = "deny"
