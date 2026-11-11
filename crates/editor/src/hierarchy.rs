@@ -132,7 +132,7 @@ impl Plugin for HierarchyPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Warren",
-            region: Region::Rail,
+            region: Region::Left,
         });
         install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);

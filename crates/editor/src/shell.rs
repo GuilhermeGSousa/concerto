@@ -42,7 +42,7 @@ impl Plugin for ShellPlugin {
         app.add_panel(PanelDescriptor {
             id: CHATTER_ID,
             title: "Chatter",
-            region: Region::Foot,
+            region: Region::Status,
         });
         app.add_system(Startup, build_chrome)
             .add_system(LateUpdate, refresh_chrome);
@@ -128,7 +128,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
         cmd.entity(chatter).add_child_with(
             theme
                 .panel()
-                .radius_md()
+                .radius(0.0)
                 .height(UIValue::Px(30.0))
                 .fixed()
                 .align_items(taffy::AlignItems::Center)

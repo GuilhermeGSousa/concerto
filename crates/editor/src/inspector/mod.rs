@@ -155,7 +155,7 @@ impl Plugin for InspectorPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
-            region: Region::Side,
+            region: Region::Right,
         });
         app.forward_hosted_event::<PropertyCommitted>();
         install_listeners(app.main_mut().world_mut());

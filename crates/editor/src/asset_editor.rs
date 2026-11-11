@@ -32,7 +32,7 @@ pub trait AssetEditor: Send + Sync + 'static {
     fn preview(&self) -> Option<PreviewSpec> {
         None
     }
-    /// Whether this editor's documents get a host along the bottom of the viewport.
+    /// Whether this editor's documents get a host in the bottom strip, beside the Asset Browser.
     fn bottom_host(&self) -> bool {
         false
     }

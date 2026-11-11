@@ -49,7 +49,7 @@ impl Plugin for ViewportPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Scene",
-            region: Region::Scene,
+            region: Region::Centre,
         });
         app.add_system(Startup, build_panel)
             .add_system(Update, viewport_shortcuts)

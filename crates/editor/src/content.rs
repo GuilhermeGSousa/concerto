@@ -169,7 +169,7 @@ impl Plugin for ContentPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Asset Browser",
-            region: Region::Rail,
+            region: Region::Bottom,
         });
         app.add_system(Startup, build_panel)
             .add_system(

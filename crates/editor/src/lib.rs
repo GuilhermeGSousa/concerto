@@ -34,6 +34,7 @@ use concerto_mesh::MeshComponent;
 pub use run::{run, run_with};
 
 use concerto_app::{App, Plugin};
+use concerto_ecs::IntoSystemConfig;
 use std::path::PathBuf;
 
 use crate::asset_picker::AssetPickerPlugin;
@@ -93,7 +94,7 @@ impl Plugin for EditorPlugin {
         );
         app.add_system(
             concerto_app::schedule_groups::Update,
-            workspace::sync_workspace,
+            workspace::sync_workspace.before(dock::apply_layout),
         );
         app.add_system(
             concerto_app::schedule_groups::Update,

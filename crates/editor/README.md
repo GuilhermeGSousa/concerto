@@ -378,6 +378,39 @@ steps, and drops. The crate has three parts:
 - The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
   editor's `App`.
 
+The dock (`src/dock.rs`) tiles the window; nothing is drawn over anything
+else. From the top: a bar with the brand, the tabs, the stats and the window
+buttons; a row of the `Left`, `Centre` and `Right` regions; the `Bottom` strip
+across the full width; and the `Status` line. The hierarchy is in `Left`, the
+viewport in `Centre`, the inspector in `Right`, the Asset Browser in `Bottom`
+and Chatter in `Status`. The viewport, and so the game while it plays, is
+exactly the space the panels leave. A panel declares its region in its
+`PanelDescriptor`, and `PanelRegistry::region` gives a region's node.
+
+Four splitters resize the panels: between `Left` and `Centre`, between
+`Centre` and `Right`, above the `Bottom` strip, and, on a tab with a bottom
+host, between the Asset Browser and that host. The sizes are the
+`EditorLayout` resource, in logical pixels: `left` 260, `right` 320, `bottom`
+220 and `browser` 420 to begin with. They are the same on every tab and last
+for the session; no file holds them. `ResizePanel { panel, size }`, with
+`panel` a `LayoutPanel` (`Left`, `Right`, `Bottom` or `Browser`), is the one
+signal that changes them, and a splitter's drag triggers it. Its listener
+clamps the size for the window as it is: `Left` no less than 180 and `Right`
+no less than 220, each no more than leaves the `Centre` 320 wide; `Bottom`
+from 120 to what leaves the `Centre` 240 high; `Browser` from 200 to what
+leaves its bottom host 240 wide. In a window too small for the stored sizes
+the dock shows smaller ones, `Right` giving way before `Left`, and the stored
+sizes come back when the window grows; `EditorLayout::shown` gives the sizes
+on screen.
+
+`PanelStates` says what each of the four is on the front tab: `Sized`, which
+shows its stored size and can be resized; `Hidden`, collapsed with its
+splitter; or `Fill`, taking the space that is left, with no splitter. The
+workspace (`src/workspace.rs`) decides it from what the tab shows: a side
+region with no visible panel and no host is `Hidden`, and the Asset Browser is
+`Fill` unless the tab has a bottom host. `ResizePanel` for a panel that is not
+`Sized` changes nothing.
+
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
 same function the game's own `main` hands to `concerto::run`. Each scene's edit
@@ -588,8 +621,8 @@ mouse button, wheel turn, and mouse motion goes to it wherever the pointer is,
 Esc included, and the editor's panels and shortcuts see none of them. The
 viewport has an accent border and says "Shift+F1 to release". Three things give
 input back to the editor: a click anywhere but the viewport's picture, which
-then lands on whatever is under the pointer, the tab strip and the panels drawn
-over the viewport included; Shift+F1; and the editor window losing focus. The
+then lands on whatever is under the pointer, the tab strip, the panels and the
+splitters beside the viewport included; Shift+F1; and the editor window losing focus. The
 game is told it lost focus, so nothing stays held in it, and any cursor grab it
 asked for is let go. The border turns muted and the viewport says "Click to
 play"; the game keeps running but gets no input, and the editor works as usual.
@@ -1093,11 +1126,14 @@ roots with `EditorOwned(document)` so closing the editor cleans them up
 recursively. Headless hosts have no UI containers.
 
 An editor that returns `true` from `AssetEditor::bottom_host`, which is `false`
-unless it says otherwise, also gets `EditorHosts::bottom`: a panel 132 px high
-in the `Foot` region, above Chatter, shown while its document is active. It
-spans the space between the cards and sits over the viewport, which keeps its
-full size, as it does under the cards. Chatter stays visible on every tab. A
-Scene document gets no `bottom` host.
+unless it says otherwise, also gets `EditorHosts::bottom`: a panel in the
+`Bottom` strip, to the right of the Asset Browser, shown while its document is
+active. It is as high as the strip, and a splitter between it and the Asset
+Browser sets the browser's width, `EditorLayout::browser`; on a tab with no
+bottom host the Asset Browser takes the whole strip. The `left` host stands in
+`Left` in place of the hierarchy, `inspector` in `Right` above the inspector
+panel, and `canvas` in `Centre`. Chatter stays visible on every tab. A Scene
+document gets no `bottom` host.
 
 The [custom asset example](examples/custom_asset.rs) writes no editor of its
 own. Its game marks a non-Clone `Dialogue { text: String, spin_speed: f32 }`
