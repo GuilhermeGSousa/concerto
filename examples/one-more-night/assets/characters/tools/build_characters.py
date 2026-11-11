@@ -56,6 +56,31 @@ LOOKS = {
         "buttons": True,
         "collar": True,
     },
+    "guest": {
+        "hair": (0.32, 0.14, 0.08),
+        "coat": (0.09, 0.13, 0.27),
+        "arms": (0.09, 0.13, 0.27),
+        "forearms": (0.09, 0.13, 0.27),
+        "hands": SKIN,
+        "thighs": (0.33, 0.33, 0.35),
+        "calves": (0.33, 0.33, 0.35),
+        "shoes": (0.22, 0.12, 0.06),
+        "shirt": True,
+    },
+    "maid": {
+        "hair": (0.24, 0.15, 0.09),
+        "coat": BLACK,
+        "arms": BLACK,
+        "forearms": BLACK,
+        "hands": SKIN,
+        "thighs": BLACK,
+        "calves": BLACK,
+        "shoes": BLACK,
+        "skirt": BLACK,
+        "collar": True,
+        "apron": True,
+        "cap": True,
+    },
 }
 
 
@@ -248,6 +273,11 @@ def figure(name, look, armature, joints):
         for row in range(3):
             for side in (-1, 1):
                 made.ball((side * 0.05, -0.118, chest.z - 0.1 + row * 0.09), (0.014, 0.014, 0.014), BRASS, "spine_03" if row else "spine_02", metallic=1.0, segments=6)
+    if look.get("apron"):
+        made.box((0, -0.125, chest.z - 0.02), (0.2, 0.02, 0.26), WHITE, "spine_02")
+        made.box((0, -0.19, 0.72), (0.3, 0.02, 0.5), WHITE, "pelvis")
+    if look.get("cap"):
+        made.ball(head + Vector((0, 0.02, 0.1)), (0.085, 0.085, 0.04), WHITE, "Head", segments=8)
     if look.get("brooch"):
         made.ball((0, -0.12, chest.z + 0.07), (0.02, 0.012, 0.02), BRASS, "spine_03", metallic=1.0, segments=6)
     return made.join()
@@ -307,7 +337,7 @@ def lineup(bodies):
     camera.rotation_euler = (math.radians(90), 0, 0)
     camera.data.lens = 85
     os.makedirs(os.path.join(HERE, "portraits"), exist_ok=True)
-    for number, body in enumerate(bodies, start=1):
+    for number, body in enumerate(bodies[:3], start=1):
         for other in bodies:
             other.hide_render = other is not body
         scene.render.filepath = os.path.join(HERE, "portraits", f"portrait_{number:02}.png")

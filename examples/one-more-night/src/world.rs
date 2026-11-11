@@ -217,6 +217,23 @@ fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
     }
 }
 
+fn player_art(role: Role) -> CharacterArt {
+    match role {
+        Role::Guest => CharacterArt {
+            scene: asset_id!("content/characters/export/guest/scene.gasset"),
+            idle: asset_id!("content/characters/export/guest/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/guest/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/guest/animation_Sitting_Idle_Loop.gasset"),
+        },
+        Role::Staff => CharacterArt {
+            scene: asset_id!("content/characters/export/maid/scene.gasset"),
+            idle: asset_id!("content/characters/export/maid/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/maid/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/maid/animation_Sitting_Idle_Loop.gasset"),
+        },
+    }
+}
+
 fn character_graph(assets: &AssetServer, art: &CharacterArt) -> AnimationGraph {
     let look = LookAtNode {
         chain: vec![
@@ -247,6 +264,15 @@ fn character_graph(assets: &AssetServer, art: &CharacterArt) -> AnimationGraph {
         });
     });
     graph
+}
+
+#[derive(Component)]
+struct PlayerVisual {
+    walker: Entity,
+    role: Role,
+    animator: Option<Entity>,
+    gait: Vec2,
+    graph: AssetHandle<AnimationGraph>,
 }
 
 #[derive(Component)]
@@ -336,6 +362,7 @@ pub fn install(app: &mut App, saves: Option<PathBuf>) {
         .add_system(Update, swing_doors.after(play))
         .add_system(Update, place_items.after(play))
         .add_system(Update, face_npcs)
+        .add_system(Update, dress_players)
         .add_system(Update, hold_doors_for_npcs.before(swing_doors))
         .add_system(Update, capture_mouse.after(play))
         .add_system(
@@ -1181,6 +1208,77 @@ fn hold_up_props(
                 Quat::IDENTITY,
                 Vec3::splat(scale),
             ),
+        ));
+    }
+}
+
+fn dress_players(
+    walkers: Query<(Entity, &PlayerIndex, &FirstPersonWalker, &Transform), Without<PlayerVisual>>,
+    visuals: Query<(Entity, &mut PlayerVisual, &mut Transform)>,
+    children: Query<&Children>,
+    players: Query<&mut AnimationPlayer>,
+    session: Res<Session>,
+    assets: Res<AssetServer>,
+    time: Res<Time>,
+    mut cmd: CommandQueue,
+) {
+    let dt = time.delta().as_secs_f32();
+    let mut dressed = Vec::new();
+    for (entity, mut visual, mut transform) in visuals.iter() {
+        let Some((_, player, walker, body)) = walkers.get_entity(visual.walker) else {
+            cmd.despawn(entity);
+            continue;
+        };
+        if session.role(player.index()) != visual.role {
+            cmd.despawn(entity);
+            continue;
+        }
+        dressed.push(visual.walker);
+        transform.translation = body.translation;
+        transform.rotation = Quat::from_rotation_y(walker.yaw() + MODEL_TURN);
+        if visual.animator.is_none()
+            && let Some(animator) = animator_under(entity, &children, &players)
+        {
+            visual.animator = Some(animator);
+            cmd.insert(
+                AnimationHandleComponent::new(visual.graph.clone()),
+                animator,
+            );
+        }
+        if let Some(mut player) = visual
+            .animator
+            .and_then(|player| players.get_entity(player))
+        {
+            let gait = if walker.desired_velocity().length() > 0.1 {
+                GAIT_WALK
+            } else {
+                GAIT_IDLE
+            };
+            let step = (gait - visual.gait).clamp_length_max(GAIT_BLEND_RATE * dt);
+            if step != Vec2::ZERO {
+                visual.gait += step;
+            }
+            player.set_vec2_param(name!("gait"), visual.gait);
+            player.set_float_param(name!("look_weight"), 0.0);
+        }
+    }
+    for (walker, player, _, body) in walkers.iter() {
+        if dressed.contains(&walker) {
+            continue;
+        }
+        let role = session.role(player.index());
+        let art = player_art(role);
+        cmd.spawn((
+            PlayerVisual {
+                walker,
+                role,
+                animator: None,
+                gait: GAIT_IDLE,
+                graph: assets.add(character_graph(&assets, &art)),
+            },
+            SceneSpawnerComponent(assets.load::<Scene>(art.scene)),
+            Transform::from_translation(body.translation),
+            SeatEntity,
         ));
     }
 }

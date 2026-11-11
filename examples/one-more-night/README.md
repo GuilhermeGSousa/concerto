@@ -40,6 +40,11 @@ them swap.
 - **Looking a prop over** brings it up in front of you: the right stick turns
   it, the left stick moves it nearer and farther, and the d-pad steps through
   its details.
+- **You can see each other.** Each player has a body, by role: the Guest in a
+  navy suit, the Staff as a maid. It follows the roles when they are swapped.
+- **The first night explains itself.** Its card lists the basics, and a line
+  under your role says what to try next until you confirm a deduction. When
+  the Staff stands at a door with talk behind it, the line says to hold RB.
 - **Facts** are found by looking a prop over, reading, overhearing and asking.
   Both players get a fact at once, and it is never lost.
 - **The casebook** has People, Timeline, Places, Objects and Deductions.

@@ -30,6 +30,7 @@ use concerto::{
 use glam::{EulerRot, Vec2};
 
 const DIVIDER_WIDTH: f32 = 3.0;
+const EYE_FORWARD: f32 = 0.22;
 const NIGHT_SKY: Color = Color::srgba(0.01, 0.012, 0.03, 1.0);
 const NIGHT_AMBIENT: Color = Color::rgba(0.07, 0.085, 0.13, 1.0);
 
@@ -133,7 +134,9 @@ fn seat_players(
             &mut cmd,
             player,
             Transform::from_translation(transform.translation),
-            FirstPersonWalker::default().with_yaw(yaw),
+            FirstPersonWalker::default()
+                .with_yaw(yaw)
+                .with_eye_forward(EYE_FORWARD),
         );
         cmd.insert(SeatEntity, walker);
         let camera = cmd
