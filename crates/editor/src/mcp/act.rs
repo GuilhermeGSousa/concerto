@@ -26,6 +26,7 @@ use serde::Deserialize;
 use super::observe::{SceneEntities, resolve};
 use crate::{
     asset_editor::{AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument},
+    content::{self, AssetCreation},
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
@@ -54,6 +55,17 @@ pub struct OpenAsset {
     pub asset: String,
     /// What to do with unsaved changes the call would lose; without it such a call fails with unsaved_changes.
     pub unsaved: Option<UnsavedChoice>,
+}
+
+/// Creates an empty asset of a creatable kind in the project, as the Asset Browser's New does, and answers its address and id; open_asset then opens it.
+#[derive(Deserialize, JsonSchema)]
+pub struct CreateAsset {
+    /// The kind of asset, such as Scene; an unknown kind answers the kinds that can be created.
+    pub kind: String,
+    /// The asset's name without an extension: letters, digits, spaces, - and _.
+    pub name: String,
+    /// The folder to create it in, such as content/rooms, made if it is missing; the content root without one.
+    pub folder: Option<String>,
 }
 
 /// Closes an open document.
@@ -125,6 +137,12 @@ struct OpeningAsset {
 }
 
 #[derive(Component)]
+struct CreatingAsset {
+    kind: &'static str,
+    name: String,
+}
+
+#[derive(Component)]
 struct ClosingDocument(Entity);
 
 #[derive(Component)]
@@ -150,6 +168,10 @@ struct AwaitingPose {
 pub(super) fn build(app: &mut App) {
     app.add_tool::<OpenProject, _>(McpTool::new("open_project"), open_project)
         .add_tool::<OpenAsset, _>(McpTool::new("open_asset").needs(Needs::Project), open_asset)
+        .add_tool::<CreateAsset, _>(
+            McpTool::new("create_asset").needs(Needs::Project),
+            create_asset,
+        )
         .add_tool::<CloseDocument, _>(McpTool::new("close_document"), close_document)
         .add_tool::<Select, _>(McpTool::new("select").needs(Needs::Scene), select)
         .add_tool::<Frame, _>(McpTool::new("frame").needs(Needs::Scene), frame)
@@ -168,6 +190,7 @@ pub(super) fn build(app: &mut App) {
                 answer_failed_saves,
                 answer_project_opens,
                 answer_asset_opens,
+                answer_asset_creations,
                 answer_closes,
             ),
         );
@@ -413,6 +436,85 @@ fn answer_asset_opens(
                 .err(ToolError::new("open_failed", document.status.clone()));
             cmd.despawn(entity);
         }
+    }
+}
+
+fn create_asset(
+    mut calls: ToolCalls<CreateAsset>,
+    state: Res<ProjectState>,
+    editors: Res<AssetEditorRegistry>,
+    commands: Res<EditorCommands>,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        if project_opening(&state, &commands) {
+            reply.err(busy());
+            continue;
+        }
+        if state.project.is_none() {
+            continue;
+        }
+        let Some(kind) = editors
+            .creatable()
+            .map(|(kind, _)| kind)
+            .find(|kind| kind.eq_ignore_ascii_case(&arguments.kind))
+        else {
+            let kinds: Vec<&str> = editors.creatable().map(|(kind, _)| kind).collect();
+            reply.err(ToolError::new(
+                "unknown_kind",
+                format!(
+                    "No asset of kind `{}` can be created; the kinds that can are: {}.",
+                    arguments.kind,
+                    kinds.join(", ")
+                ),
+            ));
+            continue;
+        };
+        cmd.trigger(content::CreateAsset {
+            kind: kind.into(),
+            folder: arguments.folder.clone(),
+            name: arguments.name.clone(),
+            open: false,
+        });
+        cmd.spawn((
+            PendingCall::new(reply, "the asset to be created"),
+            CreatingAsset {
+                kind,
+                name: arguments.name.clone(),
+            },
+        ));
+    }
+}
+
+fn answer_asset_creations(
+    mut creations: EventReader<AssetCreation>,
+    waiting: Query<(Entity, &PendingCall, &CreatingAsset)>,
+    mut cmd: CommandQueue,
+) {
+    for creation in creations.read() {
+        let Some((entity, pending, creating)) = waiting.iter().find(|(_, _, creating)| {
+            creating.kind == creation.kind
+                && creation
+                    .address
+                    .ends_with(&format!("/{}.gasset", creating.name))
+        }) else {
+            continue;
+        };
+        match &creation.result {
+            Ok(id) => pending.reply.ok(format!(
+                "Created {} · {} · {}. Open it with open_asset.",
+                creation.address,
+                creating.kind,
+                id.simple_hex()
+            )),
+            Err(message) => pending.reply.err(ToolError::new(
+                "create_failed",
+                format!(
+                    "{message}. Give a name of letters, digits, spaces, - and _ that list_assets does not show in that folder, and a folder inside the content root."
+                ),
+            )),
+        }
+        cmd.despawn(entity);
     }
 }
 

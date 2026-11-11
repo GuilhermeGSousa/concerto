@@ -1721,6 +1721,78 @@ fn open_project_waits_for_the_project_and_reports_a_failure() {
 }
 
 #[test]
+fn create_asset_writes_an_empty_scene_that_open_asset_opens() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let created = ok_with(
+            &client,
+            "create_asset",
+            json!({ "kind": "scene", "name": "Hall", "folder": "content/rooms" }),
+        )
+        .await;
+        let listed = ok_with(&client, "list_assets", json!({ "query": "Hall" })).await;
+        let opened = ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/rooms/Hall.gasset" }),
+        )
+        .await;
+        let errors = vec![
+            error_with(
+                &client,
+                "create_asset",
+                json!({ "kind": "Mesh", "name": "Rock" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "create_asset",
+                json!({ "kind": "Scene", "name": "Hall", "folder": "content/rooms" }),
+            )
+            .await,
+        ];
+        client.cancel().await.unwrap();
+        (created, listed, opened, errors)
+    }) else {
+        return;
+    };
+
+    let (created, listed, opened, errors) = served.result;
+    assert!(
+        created.starts_with("Created content/rooms/Hall.gasset · Scene · "),
+        "{created}"
+    );
+    assert!(created.ends_with(". Open it with open_asset."), "{created}");
+    assert!(root.join("content/rooms/Hall.gasset").is_file());
+    assert!(
+        listed.contains("content/rooms/Hall.gasset · Scene"),
+        "{listed}"
+    );
+    assert!(
+        opened.starts_with("Opened content/rooms/Hall.gasset in document "),
+        "{opened}"
+    );
+    assert_eq!(errors[0]["code"], "unknown_kind");
+    assert!(
+        errors[0]["message"].as_str().unwrap().contains("Scene"),
+        "{}",
+        errors[0]
+    );
+    assert_eq!(errors[1]["code"], "create_failed");
+    assert!(
+        errors[1]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("content/rooms/Hall.gasset already exists"),
+        "{}",
+        errors[1]
+    );
+}
+
+#[test]
 fn open_asset_waits_for_a_scene_and_answers_at_once_when_it_is_shown() {
     let fixture = Fixture::new();
     let level = fixture.scene;
