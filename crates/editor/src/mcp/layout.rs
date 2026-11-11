@@ -118,7 +118,7 @@ fn refused(panel: LayoutPanel, state: PanelState) -> ToolError {
     ToolError::new(
         "refused",
         format!(
-            "The {} panel {is} on the front tab and has no size to set; bring {sized_on} to the front to size it.",
+            "The {} panel {is} on the front tab and has no size to set; it is sized on {sized_on}.",
             name(panel)
         ),
     )
