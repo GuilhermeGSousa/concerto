@@ -61,7 +61,11 @@ them swap.
 - **Props**: one item is carried at a time. The dumbwaiter has three stops;
   using a stop calls the car, and then sends or takes an item.
 - **Bells**: a bell pull raises its room's flag on the board in the corridor
-  and tells the Staff; the Staff reading the board drops the flags.
+  and tells the Staff; the Staff reading the board drops the flags. Characters
+  ring too, at times the case sets, and a flag they raised tells the Staff who
+  reads it a fact.
+- **Showing an item**: a character may have something to say about what you
+  carry; the topic appears when you talk to them with it in hand.
 - **The night ends** at midnight, or when both players lie in their own beds.
   The house goes back to six o'clock and the next night's card lists what was
   learned. The game saves then, in `saves/` under the working directory or in

@@ -341,6 +341,11 @@ impl CaseNames<'_> {
                     phase: entry.phase,
                     critical: entry.critical,
                     conversation: find_optional(&self.conversations, &entry.conversation, &at)?,
+                    rings: entry
+                        .rings
+                        .as_ref()
+                        .map(|facts| find_all(&self.facts, facts, &at))
+                        .transpose()?,
                 })
             })
             .collect::<Result<Vec<ScheduleEntry>, CaseError>>()?;
@@ -426,6 +431,7 @@ impl CaseNames<'_> {
                     raw::Ask::Question(text) => Ask::Question(find(&self.strings, text, &at)?),
                     raw::Ask::Fact(fact) => Ask::Fact(find(&self.facts, fact, &at)?),
                     raw::Ask::Person(npc) => Ask::Person(find(&self.characters, npc, &at)?),
+                    raw::Ask::Item(item) => Ask::Item(find(&self.placements, item, &at)?),
                 };
                 let responses = topic
                     .responses

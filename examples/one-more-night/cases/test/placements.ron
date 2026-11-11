@@ -9,5 +9,6 @@
         Hotspot(label: "p_basket.h2", grants: ["f_05"]),
     ])),
     Placement(id: "p_key", prop: "prop_key", anchor: "c_hook", name: "p_key.name", interaction: Carry(key: "k_service")),
+    Placement(id: "p_cufflink", prop: "prop_cufflink", anchor: "c_floor", name: "p_cufflink.name", interaction: Carry()),
     Placement(id: "p_cup", prop: "prop_cup", anchor: "a_table", name: "p_cup.name", interaction: Carry()),
 ]

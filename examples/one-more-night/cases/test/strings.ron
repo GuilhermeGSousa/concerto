@@ -16,6 +16,8 @@
     "npc_01.f_01.r1": "The display case is empty? That held my late husband's snuffbox.",
     "npc_01.f_01.r2": "It was there this afternoon. I saw it myself.",
     "npc_01.npc_02.r1": "Mr Corwin and I have business. It is no concern of yours.",
+    "npc_01.cufflink.r1": "Where did you find that? Those are Mr Corwin's initials.",
+    "npc_01.cufflink.r2": "He was wearing the pair at dinner.",
     "npc_02.busy": "Excuse me. I am occupied.",
     "npc_02.no_answer": "I would not know.",
     "npc_02.q1": "Enjoying the house?",
@@ -37,6 +39,8 @@
     "f_05.text": "A silver snuffbox lies under the linen in the corridor basket.",
     "f_06.text": "The missing snuffbox belonged to Lady Ashby's late husband.",
     "f_07.text": "Mr Corwin told Hobbs to say he saw nothing.",
+    "f_09.text": "A cufflink found in the service corridor is Mr Corwin's.",
+    "f_10.text": "The study bell was rung at half past seven, after the argument.",
     "f_08.text": "Mr Corwin owes Lady Ashby more than he can pay.",
     "t_ashby.text": "Lady Ashby",
     "t_corwin.text": "Mr Corwin",
@@ -66,4 +70,5 @@
     "p_basket.h2": "Under the linen: a silver snuffbox.",
     "p_key.name": "Service key",
     "p_cup.name": "Teacup",
+    "p_cufflink.name": "Cufflink",
 }

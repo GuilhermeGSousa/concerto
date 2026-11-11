@@ -75,6 +75,8 @@ pub struct ScheduleEntry {
     pub critical: bool,
     #[serde(default)]
     pub conversation: Option<String>,
+    #[serde(default)]
+    pub rings: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -122,6 +124,7 @@ pub enum Ask {
     Question(String),
     Fact(String),
     Person(String),
+    Item(String),
 }
 
 #[derive(Deserialize)]

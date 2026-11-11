@@ -55,6 +55,13 @@ fn the_fixture_directory_loads() {
         case.phase_at(GameTime::parse("21:00").unwrap()),
         Phase::After
     );
+    let ringer = case.schedule(case.characters.id("npc_b").unwrap()).unwrap();
+    assert_eq!(
+        ringer.entries[0].rings,
+        Some(vec![case.facts.id("f_2").unwrap()]),
+        "an entry may ring its room's bell and say what the flag tells"
+    );
+    assert_eq!(ringer.entries[1].rings, None);
     assert_eq!(case.characters.len(), 3);
     assert_eq!(case.facts.len(), 3);
     assert_eq!(case.deductions.len(), 2);
@@ -115,7 +122,12 @@ fn dialogue_resolves_topics_conditions_and_effects() {
     let npc = case.characters.id("npc_a").unwrap();
     let dialogue = case.dialogue(npc).unwrap();
     assert_eq!(case.strings.name(dialogue.brush_off), "npc_a.busy");
-    assert_eq!(dialogue.topics.len(), 3);
+    assert_eq!(dialogue.topics.len(), 4);
+    assert_eq!(
+        dialogue.topics[3].ask,
+        Ask::Item(case.placements.id("p_5").unwrap()),
+        "a topic may be an item the player shows"
+    );
     let question = &dialogue.topics[0];
     assert_eq!(
         question.ask,

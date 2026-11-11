@@ -25,6 +25,7 @@ LevelManifest(
         Anchor(id: "c_stand_1", room: "corridor", pos: (2.00, 7.60, 0.00), facing: 180.0, tags: ["stand"]),
         Anchor(id: "c_stand_2", room: "corridor", pos: (7.00, 7.80, 0.00), facing: 180.0, tags: ["stand"]),
         Anchor(id: "c_hook", room: "corridor", pos: (5.00, 8.60, 0.80), facing: 0.0, tags: ["surface"]),
+        Anchor(id: "c_floor", room: "corridor", pos: (8.20, 6.60, 0.00), facing: 0.0, tags: ["surface"]),
         Anchor(id: "c_basket", room: "corridor", pos: (11.20, 8.40, 0.40), facing: 0.0, tags: ["surface"]),
     ],
     features: [],

@@ -4,12 +4,13 @@ use crate::case::{Case, CaseError, CaseFiles, Catalog, FILES, StrId};
 use crate::level::Level;
 
 /// The props, portraits and activities the game offers a case.
-pub const PROPS: [&str; 5] = [
+pub const PROPS: [&str; 6] = [
     "prop_case",
     "prop_note",
     "prop_basket",
     "prop_key",
     "prop_cup",
+    "prop_cufflink",
 ];
 pub const PORTRAITS: [&str; 3] = ["portrait_01", "portrait_02", "portrait_03"];
 pub const ACTIVITIES: [&str; 2] = ["sit", "stand"];

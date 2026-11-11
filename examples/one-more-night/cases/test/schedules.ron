@@ -2,6 +2,7 @@
     Schedule(npc: "npc_01", entries: [
         ScheduleEntry(start: "18:00", anchor: "a_seat_1", activity: "sit", phase: Before),
         ScheduleEntry(start: "19:00", anchor: "b_stand_1", activity: "stand", phase: Before, conversation: "conv_01"),
+        ScheduleEntry(start: "19:30", anchor: "b_stand_1", activity: "stand", phase: Before, rings: ["f_10"]),
         ScheduleEntry(start: "19:40", anchor: "a_seat_1", activity: "sit", phase: Before),
         ScheduleEntry(start: "21:30", anchor: "b_stand_1", activity: "stand", phase: After),
     ]),

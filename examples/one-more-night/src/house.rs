@@ -3,7 +3,7 @@ use glam::Vec3;
 
 use crate::book::Casebook;
 use crate::case::{
-    DoorId, DoorState, GameTime, Id, Interaction, KeyId, NpcId, PlacementId, Role, RoomId,
+    DoorId, DoorState, FactId, GameTime, Id, Interaction, KeyId, NpcId, PlacementId, Role, RoomId,
 };
 use crate::casefile::{CaseData, room_title};
 use crate::players::PLAYER_COUNT;
@@ -57,6 +57,16 @@ pub struct House {
     pub gathered: bool,
     /// A character is passing through the door, which stands open for them.
     pub held_open: Vec<bool>,
+    /// The schedule entries that have rung their bell tonight.
+    rung: Vec<Rung>,
+    /// What the raised flags tell the Staff who reads the board.
+    bell_facts: Vec<FactId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Rung {
+    npc: NpcId,
+    start: GameTime,
 }
 
 impl House {
@@ -79,6 +89,8 @@ impl House {
             lift_at: 0,
             gathered: false,
             held_open: vec![false; data.level.doors().count()],
+            rung: Vec::new(),
+            bell_facts: Vec::new(),
         }
     }
 
@@ -93,6 +105,37 @@ impl House {
     /// Whether `door` stands open, by a player's hand or for a character passing.
     pub fn stands_open(&self, door: DoorId) -> bool {
         self.doors[door.index()].open || self.held_open[door.index()]
+    }
+
+    /// Rings the bell of every schedule entry that asks for it and has started by `now`, once a night: the room's flag goes up and the Staff is told.
+    pub fn ring_scheduled(&mut self, session: &mut Session, data: &CaseData, now: GameTime) {
+        let phase = data.case.phase_at(now);
+        for schedule in &data.case.schedules {
+            for entry in &schedule.entries {
+                let rung = Rung {
+                    npc: schedule.npc,
+                    start: entry.start,
+                };
+                let Some(facts) = entry
+                    .rings
+                    .as_ref()
+                    .filter(|_| entry.phase == phase && entry.start <= now)
+                    .filter(|_| !self.rung.contains(&rung))
+                else {
+                    continue;
+                };
+                self.rung.push(rung);
+                self.bell_facts.extend(facts);
+                let room = data.level.anchor(entry.anchor).room;
+                self.bells[room.index()] = true;
+                let title = room_title(data.catalog.rooms.name(room));
+                for player in 0..PLAYER_COUNT {
+                    if session.role(player) == Role::Staff {
+                        session.tell(player, format!("A bell rings: {title}."));
+                    }
+                }
+            }
+        }
     }
 
     /// The item in the dumbwaiter's car.
@@ -206,6 +249,8 @@ impl House {
                     session.tell(player, format!("Flags up: {}.", raised.join(", ")));
                     if role == Role::Staff {
                         self.bells.fill(false);
+                        let told = std::mem::take(&mut self.bell_facts);
+                        session.grant(book, data, &told);
                     }
                 }
             }
@@ -461,6 +506,33 @@ mod tests {
         assert!(!n.house.bells[study.index()]);
         n.uses(1, Interactable::BellBoard);
         assert_eq!(n.told(1), "No flag is up on the bell board.");
+    }
+
+    #[test]
+    fn a_scheduled_ring_raises_a_flag_once_and_tells_the_staff_who_reads_it() {
+        let mut n = Night::new();
+        let study = n.data.catalog.rooms.id("room_b").unwrap();
+        let fact = n.data.case.facts.id("f_10").unwrap();
+        let at = |hour, minute| GameTime::from_hm(hour, minute).unwrap();
+
+        n.house.ring_scheduled(&mut n.session, &n.data, at(19, 29));
+        assert!(
+            !n.house.bells[study.index()],
+            "nothing rings before its time"
+        );
+        n.house.ring_scheduled(&mut n.session, &n.data, at(19, 31));
+        assert!(n.house.bells[study.index()]);
+        assert_eq!(n.told(1), "A bell rings: Study.");
+
+        n.uses(0, Interactable::BellBoard);
+        assert!(
+            !n.book.knows(fact),
+            "the Guest reading the board learns nothing"
+        );
+        n.uses(1, Interactable::BellBoard);
+        assert!(n.book.knows(fact));
+        n.house.ring_scheduled(&mut n.session, &n.data, at(20, 0));
+        assert!(!n.house.bells[study.index()], "an entry rings once a night");
     }
 
     #[test]

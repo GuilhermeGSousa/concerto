@@ -14,6 +14,7 @@
             ]),
             Topic(ask: Fact("f_1"), responses: [Response(lines: ["npc_a.about_f1"])]),
             Topic(ask: Person("npc_b"), responses: [Response(lines: ["npc_a.about_b"])]),
+            Topic(ask: Item("p_5"), responses: [Response(lines: ["npc_a.about_b"])]),
         ],
     ),
 ]

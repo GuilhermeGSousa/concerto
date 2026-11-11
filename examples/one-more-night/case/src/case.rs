@@ -140,6 +140,8 @@ pub struct ScheduleEntry {
     pub phase: Phase,
     pub critical: bool,
     pub conversation: Option<ConvId>,
+    /// The character rings the bell of the anchor's room as the entry starts; the Staff who reads the board while that flag is up gets these facts.
+    pub rings: Option<Vec<FactId>>,
 }
 
 /// A conversation between characters that players overhear.
@@ -183,6 +185,8 @@ pub enum Ask {
     Question(StrId),
     Fact(FactId),
     Person(NpcId),
+    /// An item the asking player carries and shows.
+    Item(PlacementId),
 }
 
 /// An answer, the conditions it needs and the facts it grants.

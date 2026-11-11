@@ -1,7 +1,7 @@
 use crate::book::Casebook;
 use crate::case::{
-    Ask, Case, Condition, Dialogue, DoorId, DoorState, GameTime, KeyId, NpcId, Phase, Role,
-    TimeWindow, Zone,
+    Ask, Case, Condition, Dialogue, DoorId, DoorState, GameTime, KeyId, NpcId, Phase, PlacementId,
+    Role, TimeWindow, Zone,
 };
 use crate::casefile::CaseData;
 
@@ -20,7 +20,13 @@ pub struct Offer {
 }
 
 /// The topics of `dialogue` on offer: fixed questions first, then facts the players know and people, each with the first response whose condition holds.
-pub fn offers(dialogue: &Dialogue, now: GameTime, phase: Phase, book: &Casebook) -> Vec<Offer> {
+pub fn offers(
+    dialogue: &Dialogue,
+    now: GameTime,
+    phase: Phase,
+    book: &Casebook,
+    carried: Option<PlacementId>,
+) -> Vec<Offer> {
     let offer = |topic: usize| {
         dialogue.topics[topic]
             .responses
@@ -41,6 +47,7 @@ pub fn offers(dialogue: &Dialogue, now: GameTime, phase: Phase, book: &Casebook)
             Ask::Question(_) => false,
             Ask::Fact(fact) => book.knows(fact),
             Ask::Person(_) => true,
+            Ask::Item(item) => carried == Some(item),
         });
     questions
         .chain(about)
@@ -57,6 +64,13 @@ pub fn ask_label(case: &Case, ask: Ask) -> String {
             case.strings.get(case.facts.get(fact).text).as_str()
         ),
         Ask::Person(npc) => format!("Ask about {}", name_of(case, npc)),
+        Ask::Item(item) => format!(
+            "Show the {}",
+            case.strings
+                .get(case.placements.get(item).name)
+                .as_str()
+                .to_lowercase()
+        ),
     }
 }
 
@@ -157,7 +171,7 @@ mod tests {
 
         let corwin = case.dialogue(npc("npc_02")).unwrap();
         assert_eq!(
-            offers(corwin, at(18, 0), Phase::Before, &book),
+            offers(corwin, at(18, 0), Phase::Before, &book, None),
             [
                 Offer {
                     topic: 0,
@@ -171,7 +185,7 @@ mod tests {
         );
         book.grant(fact("f_03"));
         assert_eq!(
-            offers(corwin, at(21, 0), Phase::Before, &book),
+            offers(corwin, at(21, 0), Phase::Before, &book, None),
             [
                 Offer {
                     topic: 0,
@@ -186,18 +200,29 @@ mod tests {
         );
 
         let ashby = case.dialogue(npc("npc_01")).unwrap();
-        let before: Vec<usize> = offers(ashby, at(18, 0), Phase::Before, &Casebook::default())
-            .iter()
-            .map(|offer| offer.topic)
-            .collect();
+        let before: Vec<usize> =
+            offers(ashby, at(18, 0), Phase::Before, &Casebook::default(), None)
+                .iter()
+                .map(|offer| offer.topic)
+                .collect();
         assert_eq!(before, [0, 2], "a fact nobody found is not on offer");
         book.grant(fact("f_01"));
-        let after: Vec<usize> = offers(ashby, at(18, 0), Phase::Before, &book)
+        let after: Vec<usize> = offers(ashby, at(18, 0), Phase::Before, &book, None)
             .iter()
             .map(|offer| offer.topic)
             .collect();
         assert_eq!(after, [0, 1, 2]);
         assert_eq!(ask_label(case, ashby.topics[2].ask), "Ask about Mr Corwin");
+
+        let cufflink = case.placements.id("p_cufflink").unwrap();
+        let shown = offers(ashby, at(18, 0), Phase::Before, &book, Some(cufflink));
+        let item = shown.last().unwrap();
+        assert_eq!(
+            ask_label(case, ashby.topics[item.topic].ask),
+            "Show the cufflink",
+            "an item topic is on offer only while the player carries the item"
+        );
+        assert_eq!(shown.len(), after.len() + 1);
     }
 
     #[test]
