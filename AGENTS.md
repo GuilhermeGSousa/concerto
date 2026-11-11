@@ -18,6 +18,7 @@ defines `DefaultPlugins`.
 | [docs/required-components.md](docs/required-components.md) | Declaring `#[require(..)]`, or a component that must always come with another |
 | [docs/scheduling.md](docs/scheduling.md) | Ordering systems, sets, chains |
 | [docs/asset-importing.md](docs/asset-importing.md) | Importing sources, `.gasset` files, `asset_id!` |
+| [docs/testing.md](docs/testing.md) | Writing, changing, or reviewing any test |
 | [docs/profiling.md](docs/profiling.md) | Measuring performance |
 | [crates/editor/README.md](crates/editor/README.md) | Anything in the editor |
 | [docs/agent-pipeline.md](docs/agent-pipeline.md) | Working on an issue labelled `agent`, or a PR from a `claude/issue-<n>` branch |
@@ -107,6 +108,10 @@ cargo test --locked -p concerto-physics --no-default-features --features force-r
 cargo build --locked --target wasm32-unknown-unknown
 ```
 
+CI installs the latest stable Rust, and each clippy release adds lints, so
+run `rustup update stable` before the gate; an older local toolchain passes
+code that CI's clippy rejects.
+
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. Neither CI runner, Ubuntu or Windows, has an adapter, so GPU tests skip in CI; run them locally on a machine with a GPU.
 
 Test builds carry line tables only and `cargo build` carries full debug info,
@@ -121,6 +126,12 @@ Both build third-party crates at `opt-level = 3` and the workspace crates at
 1, so a plain `cargo run` is playable. A variable can show as optimized out
 in the debugger; `--profile profiling` is the fully optimized build, and the
 one to measure performance with.
+
+While a plan is in progress, each task runs a gate scoped to the crates it
+touched: `cargo fmt --all -- --check`, then the clippy and test lines above
+with `-p <crate>` for each crate in place of `--workspace` (and the Rapier
+lines when physics is one of them). The full gate runs once, after the last
+task and before the branch review.
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
@@ -213,11 +224,21 @@ collection field gets `with_<item>` that adds one.
 cloud pipeline session writes the test first but cannot run it, so the red step
 is not observed.
 
-**What a test is for.** A test covers behaviour the engine owns. Do not test a
-getter, a one-line wrapper, or a derive from another crate (`std`, `serde`), and
-do not test what an external library does on its own. Engine maths, a value's
-persisted encoding, and a test that is the only cover for a behaviour stay
-however simple they look.
+**Few tests, on boundaries.** Follow [docs/testing.md](docs/testing.md). A test
+fails only when a promise breaks: a public API, an encoding, an MCP tool, a
+signal or event, an ECS invariant. It never pins how the code is built, so a
+refactor that keeps behaviour keeps every test green. Test a feature with one
+scenario that drives its signals or MCP tool and asserts each outcome; add an
+assertion to the scenario before adding a test. Edge cases go in one
+table-driven test, and a law (round trip, incremental equals fresh) in one
+`proptest` property, never in a family of near-identical tests. Unit tests of
+private functions are for maths only. Do not test a getter, a constructor, a
+`Default`, a derive, a constant, a label's formatting, flag parsing, or what a
+dependency does on its own. Performance guarantees are benchmarks, and no
+production type carries a `#[cfg(test)]` field, counter or getter for a test to
+read; a test-only setter may reach a state no public path can.
+Engine maths, a value's persisted encoding, and a test that is the only cover
+for a behaviour stay however simple they look.
 
 ## Editor rules
 
@@ -229,6 +250,15 @@ editor's MCP tools.
   positions read off a screenshot. The panel and the tool run the same code, so
   they cannot drift apart. The Agents (MCP) section of
   [crates/editor/README.md](crates/editor/README.md) describes it.
+- **Agents act on meaning, not on pixels.** An MCP tool names what it changes
+  (an entity, a property path, an asset, a document) and does the work by
+  signal, never by clicking, dragging or typing into the editor's own UI. Having
+  to drive panels to reach a feature is a missing tool. `send_input` exists
+  only to play the game; it is not a way to operate the editor.
+- **Tests go through the same seam.** An editor feature is tested by its
+  signals or MCP tool, asserting on the scene, the saved files or the reply.
+  Widget tests cover only focus, drag, text entry, hit testing and scrolling,
+  which no tool expresses.
 - **Modular, like the engine.** Each feature is a plugin that brings its
   panels, systems, signals and MCP tools, and the editor works without it.
   Features talk through components, events and signals, not through each

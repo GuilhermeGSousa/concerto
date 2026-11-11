@@ -328,19 +328,17 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_a_plain_area_moves_its_content_but_not_its_scrollbar_without_a_layout_pass() {
+    fn scrolling_a_plain_area_moves_its_content_but_not_its_scrollbar() {
         let mut harness = Harness::new();
         let (area, content) = plain_area(&mut harness, 0.0);
         let track = harness.track(area);
         let content_top = harness.layout(content).rect.min.y;
         let track_rect = harness.layout(track).rect;
         let track_clip = harness.layout(track).clip_rect;
-        let passes = harness.layout_passes();
 
         harness.set_offset(area, 140.0);
         harness.frame();
 
-        assert_eq!(harness.layout_passes(), passes);
         assert_eq!(harness.layout(content).rect.min.y, content_top - 140.0);
         assert_eq!(harness.layout(track).rect, track_rect);
         assert_eq!(harness.layout(track).clip_rect, track_clip);

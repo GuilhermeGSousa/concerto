@@ -310,7 +310,7 @@ mod tests {
     use glam::Vec3;
 
     use super::*;
-    use crate::{blackboard::AnimationBlackboard, pose::JointPose, test_walks::Walks};
+    use crate::{blackboard::AnimationBlackboard, pose::JointPose, testing::Walks};
 
     #[derive(Resource)]
     struct Step(u32);
@@ -443,64 +443,53 @@ mod tests {
             .state_as_any(&state)
             .downcast_ref::<GainState>()
             .unwrap();
-        assert_eq!((typed.updates, typed.resets), (2, 1));
+        assert_eq!(typed.updates, 2);
+        assert_eq!(typed.resets, 1);
+    }
+
+    struct InputCase {
+        name: &'static str,
+        register: fn(&mut concerto_ecs::World),
+        updates: u32,
     }
 
     #[test]
-    fn a_node_reads_its_update_input_from_the_world() {
-        let walks = gain_walks(|world| {
-            register_node_inputs::<Gain>(world);
-            world.insert_resource(Step(3));
-        });
+    fn a_node_reads_its_update_input_from_the_world_and_is_not_updated_without_it() {
+        let cases = [
+            InputCase {
+                name: "registered inputs and the resource",
+                register: |world| {
+                    register_node_inputs::<Gain>(world);
+                    world.insert_resource(Step(3));
+                },
+                updates: 6,
+            },
+            InputCase {
+                name: "inputs not registered",
+                register: |world| world.insert_resource(Step(3)),
+                updates: 0,
+            },
+            InputCase {
+                name: "the input resource missing",
+                register: register_node_inputs::<Gain>,
+                updates: 0,
+            },
+        ];
 
-        assert_eq!(updates_after_two_steps(&walks), 6);
+        for case in cases {
+            let walks = gain_walks(case.register);
+
+            assert_eq!(
+                updates_after_two_steps(&walks),
+                case.updates,
+                "{}",
+                case.name
+            );
+        }
     }
 
     #[test]
-    fn a_node_whose_inputs_were_not_registered_is_not_updated() {
-        let walks = gain_walks(|world| world.insert_resource(Step(3)));
-
-        assert_eq!(updates_after_two_steps(&walks), 0);
-    }
-
-    #[test]
-    fn a_node_whose_input_resource_is_missing_is_not_updated() {
-        let walks = gain_walks(register_node_inputs::<Gain>);
-
-        assert_eq!(updates_after_two_steps(&walks), 0);
-    }
-
-    #[test]
-    fn placeholder_passes_the_first_input_through() {
-        let walks = gain_walks(|_| {});
-        let blackboard = AnimationBlackboard::default();
-        let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
-        let mut state = walks
-            .create(&blackboard, |context| node.create_state(context))
-            .unwrap();
-        let mut pool = FramePool::new(1);
-        let mut input = AnimationFrame::identity(1);
-        input.joint_mut(0).unwrap().translation.x = 3.0;
-        let inputs = [EvaluatedFrame {
-            frame: input,
-            weight: 1.0,
-        }];
-
-        let mut output = AnimationFrame::identity(1);
-        walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut state, context, &[], &inputs, &mut pool, &mut output)
-        });
-        assert_eq!(output.joints()[0].translation.x, 3.0);
-
-        let mut output = AnimationFrame::identity(1);
-        walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut output)
-        });
-        assert_eq!(output.joints()[0].translation.x, 0.0);
-    }
-
-    #[test]
-    fn placeholder_without_input_leaves_the_rest_pose() {
+    fn placeholder_passes_the_first_input_through_and_without_one_leaves_the_rest_pose() {
         let walks = gain_walks(|_| {});
         let blackboard = AnimationBlackboard::default();
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
@@ -513,11 +502,23 @@ mod tests {
         }];
         let mut pool = FramePool::new(1);
         pool.set_rest(&rest);
+        let mut input = AnimationFrame::identity(1);
+        input.joint_mut(0).unwrap().translation.x = 3.0;
+        let inputs = [EvaluatedFrame {
+            frame: input,
+            weight: 1.0,
+        }];
 
-        let mut output = pool.acquire();
+        let mut passed = pool.acquire();
         walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut output)
+            node.evaluate(&mut state, context, &[], &inputs, &mut pool, &mut passed)
         });
-        assert_eq!(output.joints(), rest);
+        let mut alone = pool.acquire();
+        walks.evaluate(&blackboard, None, |context| {
+            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut alone)
+        });
+
+        assert_eq!(passed.joints()[0].translation.x, 3.0);
+        assert_eq!(alone.joints(), rest);
     }
 }

@@ -212,7 +212,8 @@ owner next comments or reviews.
   `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
   committing the `Cargo.lock` it rewrites. Clippy, tests and the wasm build are
   CI's.
-- Local: the done gate from `AGENTS.md`, every command, and
+- Local: the per-task gate from `AGENTS.md` after each plan task, the full
+  done gate once before review, and
   `visual-verification` where `AGENTS.md` asks for a look at the running
   program.
 

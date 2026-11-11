@@ -1,0 +1,63 @@
+//! End-to-end proof that an imported texture round-trips through the
+//! runtime byte-loading path — the same envelope `AssetServer` reads.
+use concerto_asset_import::{ImportContext, Importer};
+use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
+use concerto_foundation::assets::utils::load_content_asset;
+use concerto_foundation::assets::{Asset, ContentAssetRoot};
+use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
+use concerto_render::importers::image_importer::ImageImporter;
+
+#[test]
+fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_address() {
+    let temp_dir = std::env::temp_dir().join(format!("texture-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let source_path = temp_dir.join("swatch.png");
+    let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([9, 9, 9, 255]));
+    img.save(&source_path)
+        .expect("failed to save fixture texture");
+
+    let mut ctx = ImportContext::new(std::path::PathBuf::from("swatch.png"));
+    ImageImporter
+        .import(&source_path, &mut ctx)
+        .expect("importing the fixture texture must succeed");
+    let outputs = ctx.into_parts();
+    assert_eq!(
+        outputs.sub_assets.len(),
+        1,
+        "one image yields one sub-asset"
+    );
+    let sub_asset = &outputs.sub_assets[0];
+    assert_eq!(sub_asset.name, "main");
+    assert_eq!(sub_asset.type_name, Texture::name());
+
+    let address = "content/swatch/main.gasset";
+    let header = ContentAssetHeader {
+        asset_id: sub_asset.asset_id,
+        references: sub_asset.references.clone(),
+        kind: sub_asset.type_name.to_string(),
+        kind_version: sub_asset.kind_version,
+        provenance: None,
+        derived: None,
+    };
+    std::fs::create_dir_all(temp_dir.join("content/swatch")).unwrap();
+    std::fs::write(
+        temp_dir.join(address),
+        write_content_asset(&header, &sub_asset.bytes).unwrap(),
+    )
+    .unwrap();
+
+    let texture = pollster::block_on(load_content_asset::<Texture>(
+        &ContentAssetRoot::Directory(temp_dir.clone()),
+        address,
+    ))
+    .expect("the imported texture must load back through the runtime byte path");
+    assert_eq!(texture.width, 2);
+    assert_eq!(texture.height, 2);
+    assert_eq!(texture.format, TextureFormat::Rgba8UnormSrgb);
+    assert_eq!(texture.kind, TextureKind::Sampled);
+    assert_eq!(texture.data, [9, 9, 9, 255].repeat(4));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

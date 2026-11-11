@@ -485,32 +485,50 @@ mod tests {
         })
     }
 
-    #[test]
-    fn a_skinned_instance_is_visible_outside_the_frustum() {
-        let instance = instance_with(RenderMeshInstanceFlags::SKINNED, box_behind());
-
-        assert!(instance.is_visible_in(&frustum()));
+    struct Visibility {
+        case: &'static str,
+        flags: RenderMeshInstanceFlags,
+        world_aabb: Option<Aabb>,
+        visible: bool,
     }
 
     #[test]
-    fn an_instance_with_no_frustum_culling_is_visible_outside_the_frustum() {
-        let instance = instance_with(RenderMeshInstanceFlags::NO_FRUSTUM_CULLING, box_behind());
-
-        assert!(instance.is_visible_in(&frustum()));
-    }
-
-    #[test]
-    fn an_instance_with_no_bounds_is_visible() {
-        let instance = instance_with(RenderMeshInstanceFlags::empty(), None);
-
-        assert!(instance.is_visible_in(&frustum()));
-    }
-
-    #[test]
-    fn an_instance_outside_the_frustum_is_not_visible() {
-        let instance = instance_with(RenderMeshInstanceFlags::empty(), box_behind());
-
-        assert!(!instance.is_visible_in(&frustum()));
+    fn an_instance_is_culled_only_when_its_bounds_are_known_outside_the_frustum() {
+        let cases = [
+            Visibility {
+                case: "skinned, behind the camera",
+                flags: RenderMeshInstanceFlags::SKINNED,
+                world_aabb: box_behind(),
+                visible: true,
+            },
+            Visibility {
+                case: "no frustum culling, behind the camera",
+                flags: RenderMeshInstanceFlags::NO_FRUSTUM_CULLING,
+                world_aabb: box_behind(),
+                visible: true,
+            },
+            Visibility {
+                case: "no bounds",
+                flags: RenderMeshInstanceFlags::empty(),
+                world_aabb: None,
+                visible: true,
+            },
+            Visibility {
+                case: "behind the camera",
+                flags: RenderMeshInstanceFlags::empty(),
+                world_aabb: box_behind(),
+                visible: false,
+            },
+        ];
+        for case in &cases {
+            let instance = instance_with(case.flags, case.world_aabb);
+            assert_eq!(
+                instance.is_visible_in(&frustum()),
+                case.visible,
+                "{}",
+                case.case
+            );
+        }
     }
 
     #[test]

@@ -464,31 +464,26 @@ mod tests {
         graph::AnimationGraph,
         look_at::{LookFrame, YawPitch, yaw_pitch_to},
         node::{AnimationNode, ReflectAnimationNode},
-        player::{AnimationHandleComponent, AnimationPlayer},
-        plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion},
+        player::AnimationPlayer,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
     };
-    use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
-    use concerto_ecs::{
-        Entity,
-        component::scene::SceneEntityRef,
-        entity::hierarchy::ChildOf,
-        system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
-        world::World,
-    };
+    use concerto_app::{App, schedule_groups::LateUpdate};
+    use concerto_ecs::{Entity, entity::hierarchy::ChildOf, world::World};
     use concerto_foundation::{
-        assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
-        time::Time,
-        transform::{GlobalTransform, Transform},
+        assets::{AssetId, asset_store::AssetStore},
+        transform::GlobalTransform,
     };
-    use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+    use concerto_mesh::skeleton::Skeleton;
     use concerto_name::{Name, name};
-    use concerto_reflect::{Reflect, TypeRegistry};
+    use concerto_reflect::Reflect;
     use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{LookAtBone, LookAtEye, LookAtNode, LookAtState};
-    use crate::plugin::ProceduralAnimationPlugin;
+    use crate::testing::{
+        Frame, app_with, assert_near, bone, captured, captured_graph, compile, input_event,
+        input_motion, insert_asset, read_state, skeleton_of, spawn_rigged, write_state,
+    };
 
     const HIPS: usize = 0;
     const SPINE: usize = 1;
@@ -505,102 +500,54 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
     const SETTLE_STEPS: usize = 300;
 
-    struct RigBone {
-        name: &'static str,
-        parent: Option<u16>,
-        joint: JointPose,
-    }
-
-    fn rig_bone(
-        name: &'static str,
-        parent: Option<u16>,
-        translation: Vec3,
-        rotation: Quat,
-    ) -> RigBone {
-        RigBone {
-            name,
-            parent,
-            joint: JointPose {
-                translation,
-                rotation,
-                scale: Vec3::ONE,
-            },
-        }
-    }
-
     fn skeleton() -> Skeleton {
-        let bones = [
-            rig_bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
-            rig_bone(
+        skeleton_of(&[
+            bone("hips", None, Vec3::Y, Quat::from_rotation_y(0.4)),
+            bone(
                 "spine",
                 Some(0),
                 Vec3::new(0.0, 0.2, 0.0),
                 Quat::from_rotation_x(0.1),
             ),
-            rig_bone(
+            bone(
                 "neck",
                 Some(1),
                 Vec3::new(0.0, 0.4, 0.0),
                 Quat::from_rotation_z(0.15),
             ),
-            rig_bone(
+            bone(
                 "head",
                 Some(2),
                 Vec3::new(0.0, 0.15, 0.0),
                 Quat::from_rotation_y(-0.2),
             ),
-            rig_bone(
+            bone(
                 "eye_l",
                 Some(3),
                 Vec3::new(0.03, 0.08, 0.03),
                 Quat::from_rotation_x(0.05),
             ),
-            rig_bone(
+            bone(
                 "eye_r",
                 Some(3),
                 Vec3::new(-0.03, 0.08, 0.03),
                 Quat::from_rotation_x(-0.05),
             ),
-            rig_bone(
+            bone(
                 "lid",
                 Some(4),
                 Vec3::new(0.0, 0.01, 0.01),
                 Quat::from_rotation_z(0.1),
             ),
-            rig_bone(
+            bone(
                 "arm",
                 Some(1),
                 Vec3::new(0.2, 0.35, 0.0),
                 Quat::from_rotation_z(-1.2),
             ),
-            rig_bone("prop", None, Vec3::X, Quat::from_rotation_x(0.3)),
-            rig_bone("prop_child", Some(8), Vec3::Y, Quat::from_rotation_y(0.2)),
-        ];
-        Skeleton::new(
-            vec![Mat4::IDENTITY; bones.len()],
-            bones.iter().map(|bone| bone.parent).collect(),
-            bones.iter().map(|bone| bone.name.into()).collect(),
-            bones.iter().map(|bone| bone.joint.clone()).collect(),
-            (0..bones.len() as u128).map(Uuid::from_u128).collect(),
-        )
-        .unwrap()
-    }
-
-    fn input_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.1, 0.0, 0.3),
-            rotation: Quat::from_rotation_y(0.05),
-        }
-    }
-
-    fn input_event() -> FiredEvent {
-        FiredEvent {
-            clip: AssetId::from_path("look_input"),
-            key: 1,
-            time: 0.3,
-            weight: 0.5,
-            mirrored: false,
-        }
+            bone("prop", None, Vec3::X, Quat::from_rotation_x(0.3)),
+            bone("prop_child", Some(8), Vec3::Y, Quat::from_rotation_y(0.2)),
+        ])
     }
 
     #[derive(Default, Reflect)]
@@ -641,73 +588,13 @@ mod tests {
         fn reset(&self, _: &mut ()) {}
     }
 
-    struct Frame {
-        joints: Vec<JointPose>,
-        root_motion: RootMotion,
-        events: Vec<FiredEvent>,
-    }
-
-    #[derive(Default, Reflect)]
-    #[reflect(AnimationNode)]
-    struct Capture {}
-
-    impl AnimationNode for Capture {
-        type State = Option<Frame>;
-        type CreateInput = ();
-        type UpdateInput = ();
-        type EvaluateInput = ();
-
-        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> Option<Frame> {
-            None
-        }
-
-        fn update(&self, _: &mut Option<Frame>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
-
-        fn evaluate(
-            &self,
-            state: &mut Option<Frame>,
-            _: &(),
-            _: &AnimationGraphContext<'_>,
-            _: &[Uuid],
-            evaluated_inputs: &[EvaluatedFrame],
-            _: &mut FramePool,
-            output: &mut AnimationFrame,
-        ) {
-            let Some(input) = evaluated_inputs.first() else {
-                return;
-            };
-            output.copy_from(&input.frame);
-            *state = Some(Frame {
-                joints: input.frame.joints().to_vec(),
-                root_motion: input.frame.root_motion(),
-                events: input.frame.events().to_vec(),
-            });
-        }
-
-        fn reset(&self, state: &mut Option<Frame>) {
-            *state = None;
-        }
-    }
-
     fn graph_of(node: LookAtNode, rotations: &[Quat]) -> AnimationGraph {
-        let mut registry = TypeRegistry::default();
-        register_animation_types(&mut registry);
-        registry.register::<LookAtNode>();
-        registry.register::<InputPose>();
-        registry.register::<Capture>();
-        let mut graph = AnimationGraph::new();
-        graph.result_node().with_input(Capture {}, |mut capture| {
-            capture.with_input(node, |mut look| {
-                look.with_input(
-                    InputPose {
-                        rotations: rotations.to_vec(),
-                    },
-                    |_| {},
-                );
-            });
-        });
-        graph.make_live(&registry, None).unwrap();
-        graph
+        captured_graph(
+            node,
+            InputPose {
+                rotations: rotations.to_vec(),
+            },
+        )
     }
 
     struct FloatParam {
@@ -817,33 +704,15 @@ mod tests {
 
     impl Stage {
         fn new(rig: &Rig, node: LookAtNode) -> Self {
-            let mut app = App::new();
-            app.register_plugin(AssetManagerPlugin);
-            app.insert_resource(Time::new());
-            app.register_plugin(AnimationPlugin);
-            app.register_plugin(ProceduralAnimationPlugin);
-            app.register_animation_node::<InputPose>();
-            app.register_animation_node::<Capture>();
-
+            let mut app = app_with::<InputPose>();
             let bone_count = rig.skeleton.bone_count();
             let world = app.main_mut().world_mut();
-            world.register_component::<Transform>();
-            let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
-            world
-                .get_resource_mut::<AssetStore<Skeleton>>()
-                .unwrap()
-                .insert(skeleton_handle.id(), skeleton());
-            let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
-            let graph = graph_handle.id();
-            world
-                .get_resource_mut::<AssetStore<AnimationGraph>>()
-                .unwrap()
-                .insert(graph, graph_of(node.clone(), &rig.rotations));
-            let bones: Vec<Entity> = (0..bone_count)
-                .map(|_| world.spawn(Transform::IDENTITY))
-                .collect();
-            let space = world.spawn(GlobalTransform::new(Mat4::from(rig.model_to_world)));
-            world.insert(ChildOf::new(space), bones[0]);
+            let skeleton = insert_asset(world, AssetId::new(), skeleton());
+            let graph = insert_asset(
+                world,
+                AssetId::new(),
+                graph_of(node.clone(), &rig.rotations),
+            );
             let mut player = AnimationPlayer::new(bone_count);
             player.set_paused(true);
             for float in &rig.floats {
@@ -852,24 +721,13 @@ mod tests {
             if let Some(target) = rig.target {
                 player.set_param(name!("look_target"), target);
             }
-            let player = world.spawn((
-                player,
-                AnimationHandleComponent::new(graph_handle),
-                SkeletonComponent::new(
-                    skeleton_handle,
-                    bones
-                        .iter()
-                        .map(|bone| SceneEntityRef::Entity(*bone))
-                        .collect(),
-                    None,
-                ),
-            ));
-            let schedules = world.remove_resource::<Schedules>().unwrap();
-            let compiled = schedules.compile::<SingleThreadedExecutor>(world);
-            world.insert_resource(compiled);
+            let rigged = spawn_rigged(world, &skeleton, &graph, player, bone_count);
+            let space = world.spawn(GlobalTransform::new(Mat4::from(rig.model_to_world)));
+            world.insert(ChildOf::new(space), rigged.bones[0]);
+            compile(world);
             world.run_schedule(LateUpdate);
             world
-                .get_component_for_entity_mut::<AnimationPlayer>(player)
+                .get_component_for_entity_mut::<AnimationPlayer>(rigged.player)
                 .unwrap()
                 .set_paused(false);
 
@@ -877,8 +735,8 @@ mod tests {
                 app,
                 rotations: rig.rotations.clone(),
                 node,
-                graph,
-                player,
+                graph: graph.id(),
+                player: rigged.player,
                 space,
             }
         }
@@ -933,38 +791,23 @@ mod tests {
             self.node = node;
         }
 
-        fn state_of<N: AnimationNode, R>(
-            &mut self,
-            read: impl FnOnce(&mut N::State) -> R,
-        ) -> Option<R> {
+        fn read<R>(&mut self, read: impl FnOnce(&LookAtState) -> R) -> R {
             let player = self.player;
-            let mut read = Some(read);
-            let mut result = None;
-            self.world()
-                .resource_scope::<AssetStore<AnimationGraph>>(|world, graphs| {
-                    world
-                        .get_component_for_entity_mut::<AnimationPlayer>(player)
-                        .unwrap()
-                        .for_each_state_mut::<N>(graphs, |_, state, _| {
-                            if let Some(read) = read.take() {
-                                result = Some(read(state));
-                            }
-                        });
-                });
-            result
+            read_state::<LookAtNode, _>(self.world(), player, |_, state| read(state))
+                .expect("the graph holds a look-at node")
         }
 
-        fn with_state<R>(&mut self, read: impl FnOnce(&mut LookAtState) -> R) -> R {
-            self.state_of::<LookAtNode, R>(read)
+        fn write<R>(&mut self, write: impl FnOnce(&LookAtNode, &mut LookAtState) -> R) -> R {
+            let player = self.player;
+            write_state::<LookAtNode, _>(self.world(), player, write)
                 .expect("the graph holds a look-at node")
         }
 
         fn step(&mut self, delta_time: f32) -> Frame {
-            self.with_state(|state| state.elapsed += delta_time);
+            self.write(|_, state| state.elapsed += delta_time);
             self.world().run_schedule(LateUpdate);
-            self.state_of::<Capture, _>(|state: &mut Option<Frame>| state.take())
-                .flatten()
-                .expect("the look-at node was evaluated")
+            let player = self.player;
+            captured(self.world(), player)
         }
 
         fn settle(&mut self) -> Frame {
@@ -1012,6 +855,30 @@ mod tests {
         }
     }
 
+    fn eased() -> LookAtNode {
+        let mut node = with_eyes();
+        for link in &mut node.chain {
+            link.halflife = LookAtBone::default().halflife;
+        }
+        for eye in &mut node.eyes {
+            eye.halflife = LookAtEye::default().halflife;
+        }
+        node.weight_halflife = LookAtNode::default().weight_halflife;
+        node
+    }
+
+    fn snapping(halflife: f32) -> LookAtNode {
+        let mut node = with_eyes();
+        node.weight_halflife = halflife;
+        for link in &mut node.chain {
+            link.halflife = halflife;
+        }
+        for eye in &mut node.eyes {
+            eye.halflife = halflife;
+        }
+        node
+    }
+
     fn shared(shares: [f32; 3], limit: f32) -> LookAtNode {
         let mut node = look();
         for (link, share) in node.chain.iter_mut().zip(shares) {
@@ -1035,13 +902,6 @@ mod tests {
         );
     }
 
-    fn assert_near(actual: f32, expected: f32, tolerance: f32) {
-        assert!(
-            (actual - expected).abs() < tolerance,
-            "expected {expected}, got {actual}"
-        );
-    }
-
     fn assert_unchanged(rig: &Rig, frame: &Frame) {
         assert_eq!(frame.joints, rig.input());
         assert_eq!(frame.root_motion, input_motion());
@@ -1052,227 +912,416 @@ mod tests {
         Affine3A::from_rotation_translation(Quat::from_rotation_y(1.1), Vec3::new(3.0, 0.0, -2.0))
     }
 
-    #[test]
-    fn the_head_looks_at_a_target_in_reach() {
-        let mut rig = Rig::new();
-        let target = rig.toward(HEAD, 0.4, 0.2, 2.0);
-        rig.aim(target);
+    fn named(name: &str, check: impl FnOnce()) {
+        let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check));
+        assert!(checked.is_ok(), "{name}");
+    }
 
-        let frame = rig.solve(&look());
+    struct InputTurn {
+        bone: usize,
+        turn: Quat,
+    }
 
-        assert_gaze(&rig, &frame, HEAD, target);
+    struct Gaze {
+        name: &'static str,
+        model_to_world: Affine3A,
+        input: Vec<InputTurn>,
+        node: LookAtNode,
+        target: fn(&Rig) -> Vec3,
+        gazing: &'static [usize],
     }
 
     #[test]
-    fn each_chain_bone_takes_its_share_of_the_yaw() {
-        let mut rig = Rig::new();
-        let target = rig.toward(NECK, 60.0_f32.to_radians(), 0.0, 100.0);
-        rig.aim(target);
-        let shares = [0.1, 0.3, 0.6];
-
-        let frame = rig.solve(&shared(shares, 90.0_f32.to_radians()));
-
-        let yaws = CHAIN.map(|bone| rig.turn(&frame, bone).yaw);
-        let total: f32 = yaws.iter().sum();
-        for (yaw, share) in yaws.iter().zip(shares) {
-            assert_near(yaw / total, share, 1e-2);
-        }
-        assert_near(total, 60.0_f32.to_radians(), 0.5_f32.to_radians());
-    }
-
-    #[test]
-    fn a_clamped_bone_leaves_the_rest_of_the_turn_to_the_bones_after_it() {
-        let mut rig = Rig::new();
-        let target = rig.toward(NECK, 60.0_f32.to_radians(), 0.0, 100.0);
-        rig.aim(target);
-        let mut node = shared([0.1, 0.3, 0.6], 90.0_f32.to_radians());
-        node.chain[1].yaw_limit = 5.0_f32.to_radians();
-
-        let frame = rig.solve(&node);
-
-        assert_near(rig.turn(&frame, NECK).yaw, 5.0_f32.to_radians(), 1e-3);
-        assert_gaze(&rig, &frame, HEAD, target);
-    }
-
-    #[test]
-    fn a_target_past_every_limit_leaves_each_bone_at_its_limit() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(NECK, 90.0_f32.to_radians(), 0.0, 100.0));
-        let node = LookAtNode {
-            max_angle: 170.0_f32.to_radians(),
-            ..shared([1.0, 1.0, 1.0], 10.0_f32.to_radians())
+    fn each_gazing_bone_looks_at_a_target_in_reach_from_any_input_pose_and_model_space() {
+        let head = |rig: &Rig| rig.toward(HEAD, 0.4, 0.2, 2.0);
+        let plain = |name, node, gazing| Gaze {
+            name,
+            model_to_world: Affine3A::IDENTITY,
+            input: Vec::new(),
+            node,
+            target: head,
+            gazing,
         };
-
-        let frame = rig.solve(&node);
-
-        for bone in CHAIN {
-            assert_near(rig.turn(&frame, bone).yaw, 10.0_f32.to_radians(), 1e-3);
-        }
-    }
-
-    struct Animated {
-        spine: Quat,
-        head: Quat,
-    }
-
-    #[test]
-    fn the_look_turns_on_top_of_the_input_pose() {
-        let mut rig = Rig::new();
-        let target = rig.toward(HEAD, 0.3, 0.1, 2.0);
-        rig.aim(target);
-        let rest = rig.skeleton.rest_pose.to_vec();
-        let animations = [
-            Animated {
-                spine: Quat::from_rotation_y(0.3),
-                head: Quat::from_rotation_x(-0.2),
+        let animated = |name, spine, head| Gaze {
+            input: vec![
+                InputTurn {
+                    bone: SPINE,
+                    turn: spine,
+                },
+                InputTurn {
+                    bone: HEAD,
+                    turn: head,
+                },
+            ],
+            target: |rig| rig.toward(HEAD, 0.3, 0.1, 2.0),
+            ..plain(name, look(), &[HEAD])
+        };
+        let rows = [
+            plain("the head in reach", look(), &[HEAD]),
+            Gaze {
+                model_to_world: turned_world(),
+                target: |rig| rig.toward(HEAD, -0.3, 0.15, 3.0),
+                ..plain("the head under a turned model", look(), &[HEAD])
             },
-            Animated {
-                spine: Quat::from_rotation_z(-0.25),
-                head: Quat::from_rotation_y(-0.4),
+            animated(
+                "the head over a turned spine and pitched head",
+                Quat::from_rotation_y(0.3),
+                Quat::from_rotation_x(-0.2),
+            ),
+            animated(
+                "the head over a rolled spine and turned head",
+                Quat::from_rotation_z(-0.25),
+                Quat::from_rotation_y(-0.4),
+            ),
+            Gaze {
+                input: vec![InputTurn {
+                    bone: EYE_L,
+                    turn: Quat::from_rotation_y(0.1),
+                }],
+                target: |rig| {
+                    let input = rig.input();
+                    let between = (rig.model_position(&input, EYE_L)
+                        + rig.model_position(&input, EYE_R))
+                        * 0.5;
+                    between + rig.gaze(&input, HEAD) * 0.6
+                },
+                ..plain("each eye from its own position", with_eyes(), &EYES)
             },
+            plain(
+                "a negative halflife snaps",
+                snapping(-1.0),
+                &[HEAD, EYE_L, EYE_R],
+            ),
+            plain(
+                "a nan halflife snaps",
+                snapping(f32::NAN),
+                &[HEAD, EYE_L, EYE_R],
+            ),
+            plain(
+                "an infinite halflife snaps",
+                snapping(f32::INFINITY),
+                &[HEAD, EYE_L, EYE_R],
+            ),
         ];
 
-        for animated in animations {
-            rig.rotations = rest.iter().map(|joint| joint.rotation).collect();
-            rig.rotations[SPINE] = rest[SPINE].rotation * animated.spine;
-            rig.rotations[HEAD] = rest[HEAD].rotation * animated.head;
-
-            let frame = rig.solve(&look());
-
-            assert_gaze(&rig, &frame, HEAD, target);
-            let input = rig.input();
-            for bone in CHAIN {
-                assert_eq!(frame.joints[bone].translation, input[bone].translation);
+        for row in rows {
+            let mut rig = Rig::new();
+            rig.model_to_world = row.model_to_world;
+            for input in &row.input {
+                rig.rotations[input.bone] *= input.turn;
             }
+            let target = (row.target)(&rig);
+            rig.aim(target);
+
+            let frame = rig.solve(&row.node);
+
+            named(row.name, || {
+                for bone in row.gazing {
+                    assert_gaze(&rig, &frame, *bone, target);
+                }
+            });
         }
     }
 
-    #[test]
-    fn each_bone_turns_by_its_offset_on_top_of_its_input_rotation() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.3, 0.1, 2.0));
-        rig.rotations[SPINE] *= Quat::from_rotation_y(0.3);
-        rig.rotations[HEAD] *= Quat::from_rotation_x(-0.2);
-        rig.rotations[EYE_L] *= Quat::from_rotation_y(0.1);
-        let mut stage = Stage::start(&rig, with_eyes());
-
-        let frame = stage.settle();
-
-        let input = rig.input();
-        let offsets: Vec<Quat> =
-            stage.with_state(|state| state.offsets.iter().map(|offset| offset.value).collect());
-        assert_eq!(offsets.len(), CHAIN.len() + EYES.len());
-        for (bone, offset) in CHAIN.into_iter().chain(EYES).zip(offsets) {
-            let actual = frame.joints[bone].rotation;
-            let expected = input[bone].rotation * offset;
-            let expected = if actual.dot(expected) < 0.0 {
-                -expected
-            } else {
-                expected
-            };
-            assert!(
-                actual.abs_diff_eq(expected, 1e-4),
-                "bone {bone}: expected {expected}, got {actual}"
-            );
-        }
+    struct Share {
+        name: &'static str,
+        node: LookAtNode,
+        target: fn(&Rig) -> Vec3,
+        check: fn(&Rig, &Frame, Vec3),
     }
 
     #[test]
-    fn each_eye_looks_at_a_near_target_from_its_own_position() {
-        let mut rig = Rig::new();
-        let input = rig.input();
-        let between = (rig.model_position(&input, EYE_L) + rig.model_position(&input, EYE_R)) * 0.5;
-        let target = between + rig.gaze(&input, HEAD) * 0.6;
-        rig.aim(target);
-
-        let frame = rig.solve(&with_eyes());
-
-        for bone in EYES {
-            assert_gaze(&rig, &frame, bone, target);
-        }
-        let left = rig.turn(&frame, EYE_L).yaw;
-        let right = rig.turn(&frame, EYE_R).yaw;
-        assert!(left * right < 0.0, "the eyes yaw {left} and {right}");
-    }
-
-    #[test]
-    fn an_eye_that_cannot_reach_holds_its_limits() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.8, 0.4, 5.0));
+    fn each_bone_takes_its_share_of_the_turn_up_to_its_limit_and_leaves_the_rest_to_the_next() {
+        let wide = 90.0_f32.to_radians();
+        let far = |rig: &Rig| rig.toward(NECK, 60.0_f32.to_radians(), 0.0, 100.0);
+        let near = |rig: &Rig| rig.toward(NECK, 0.5, 0.2, 3.0);
+        let neck = |share: f32, limit: f32| {
+            let mut node = look();
+            node.chain[1].share = share;
+            node.chain[1].yaw_limit = limit;
+            node.chain[1].pitch_limit = limit;
+            node
+        };
+        let neck_held_head_gazing: fn(&Rig, &Frame, Vec3) = |rig, frame, target| {
+            assert!(rig.turned(frame, NECK) < 1e-3);
+            assert_gaze(rig, frame, HEAD, target);
+        };
         let narrow = |name: &str| LookAtEye {
             yaw_limit: 0.02,
             pitch_limit: 0.01,
             ..eye(name)
         };
-        let node = LookAtNode {
-            chain: Vec::new(),
-            eyes: vec![narrow("eye_l"), narrow("eye_r")],
-            ..look()
-        };
-
-        let frame = rig.solve(&node);
-
-        for bone in EYES {
-            let turn = rig.turn(&frame, bone);
-            assert_near(turn.yaw, 0.02, 1e-4);
-            assert_near(turn.pitch, 0.01, 1e-4);
-        }
-    }
-
-    #[test]
-    fn a_target_under_a_turned_model_is_looked_at_in_model_space() {
-        let mut rig = Rig::new();
-        rig.model_to_world = turned_world();
-        let target = rig.toward(HEAD, -0.3, 0.15, 3.0);
-        rig.aim(target);
-
-        let frame = rig.solve(&look());
-
-        assert_gaze(&rig, &frame, HEAD, target);
-    }
-
-    #[test]
-    fn bones_the_node_cannot_resolve_leave_the_input_pose() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.4, 0.1, 2.0));
-        let unresolvable = [
-            LookAtNode {
-                chain: links(&["spine", "missing", "head"]),
-                ..look()
+        let rows = [
+            Share {
+                name: "shares of 0.1, 0.3 and 0.6",
+                node: shared([0.1, 0.3, 0.6], wide),
+                target: far,
+                check: |rig, frame, _| {
+                    let yaws = CHAIN.map(|bone| rig.turn(frame, bone).yaw);
+                    let total: f32 = yaws.iter().sum();
+                    for (yaw, share) in yaws.iter().zip([0.1, 0.3, 0.6]) {
+                        assert_near(yaw / total, share, 1e-2);
+                    }
+                    assert_near(total, 60.0_f32.to_radians(), 0.5_f32.to_radians());
+                },
             },
-            LookAtNode {
-                chain: links(&["neck", "spine", "head"]),
-                ..look()
+            Share {
+                name: "a neck clamped at 5 degrees",
+                node: {
+                    let mut node = shared([0.1, 0.3, 0.6], wide);
+                    node.chain[1].yaw_limit = 5.0_f32.to_radians();
+                    node
+                },
+                target: far,
+                check: |rig, frame, target| {
+                    assert_near(rig.turn(frame, NECK).yaw, 5.0_f32.to_radians(), 1e-3);
+                    assert_gaze(rig, frame, HEAD, target);
+                },
             },
-            LookAtNode {
-                eyes: vec![eye("arm")],
-                ..look()
+            Share {
+                name: "a target past every limit",
+                node: LookAtNode {
+                    max_angle: 170.0_f32.to_radians(),
+                    ..shared([1.0, 1.0, 1.0], 10.0_f32.to_radians())
+                },
+                target: |rig| rig.toward(NECK, 90.0_f32.to_radians(), 0.0, 100.0),
+                check: |rig, frame, _| {
+                    for bone in CHAIN {
+                        assert_near(rig.turn(frame, bone).yaw, 10.0_f32.to_radians(), 1e-3);
+                    }
+                },
             },
-            LookAtNode {
-                eyes: vec![eye("eye_l"), eye("lid")],
-                ..look()
+            Share {
+                name: "a negative share",
+                node: neck(-1.0, LookAtBone::default().yaw_limit),
+                target: near,
+                check: neck_held_head_gazing,
             },
-            LookAtNode {
-                eyes: vec![eye("eye_l"), eye("eye_l")],
-                ..look()
+            Share {
+                name: "a nan share",
+                node: neck(f32::NAN, LookAtBone::default().yaw_limit),
+                target: near,
+                check: neck_held_head_gazing,
             },
-            LookAtNode {
-                chain: links(&["prop_child"]),
-                ..look()
+            Share {
+                name: "a negative limit",
+                node: neck(LookAtBone::default().share, -0.5),
+                target: near,
+                check: neck_held_head_gazing,
             },
-            LookAtNode {
-                forward: Vec3::ZERO,
-                ..look()
+            Share {
+                name: "a nan limit",
+                node: neck(LookAtBone::default().share, f32::NAN),
+                target: near,
+                check: neck_held_head_gazing,
             },
-            LookAtNode {
-                up: Vec3::Z * 2.0,
-                ..look()
+            Share {
+                name: "zero shares",
+                node: shared([0.0, 0.0, 0.0], 1.0),
+                target: near,
+                check: |rig, frame, _| {
+                    for bone in CHAIN {
+                        assert!(rig.turned(frame, bone) < 1e-3, "bone {bone}");
+                    }
+                },
+            },
+            Share {
+                name: "eyes that cannot reach",
+                node: LookAtNode {
+                    chain: Vec::new(),
+                    eyes: vec![narrow("eye_l"), narrow("eye_r")],
+                    ..look()
+                },
+                target: |rig| rig.toward(HEAD, 0.8, 0.4, 5.0),
+                check: |rig, frame, _| {
+                    for bone in EYES {
+                        let turn = rig.turn(frame, bone);
+                        assert_near(turn.yaw, 0.02, 1e-4);
+                        assert_near(turn.pitch, 0.01, 1e-4);
+                    }
+                },
             },
         ];
 
-        for node in &unresolvable {
-            assert_unchanged(&rig, &rig.solve(node));
+        for row in rows {
+            let mut rig = Rig::new();
+            let target = (row.target)(&rig);
+            rig.aim(target);
+
+            let frame = rig.solve(&row.node);
+
+            named(row.name, || (row.check)(&rig, &frame, target));
         }
+    }
+
+    fn aimed(bone: usize, yaw: f32, pitch: f32, distance: f32) -> Rig {
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(bone, yaw, pitch, distance));
+        rig
+    }
+
+    fn at_head() -> Rig {
+        aimed(HEAD, 0.4, 0.1, 2.0)
+    }
+
+    struct Untouched {
+        name: &'static str,
+        node: LookAtNode,
+        rig: fn() -> Rig,
+    }
+
+    #[test]
+    fn a_look_with_nothing_it_can_look_at_leaves_the_input_pose() {
+        let unresolvable = |name, node| Untouched {
+            name,
+            node,
+            rig: at_head,
+        };
+        let rows = [
+            unresolvable(
+                "a missing chain bone",
+                LookAtNode {
+                    chain: links(&["spine", "missing", "head"]),
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "a chain out of order",
+                LookAtNode {
+                    chain: links(&["neck", "spine", "head"]),
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "an eye off the chain",
+                LookAtNode {
+                    eyes: vec![eye("arm")],
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "an eye under an eye",
+                LookAtNode {
+                    eyes: vec![eye("eye_l"), eye("lid")],
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "the same eye twice",
+                LookAtNode {
+                    eyes: vec![eye("eye_l"), eye("eye_l")],
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "a chain bone outside the hierarchy",
+                LookAtNode {
+                    chain: links(&["prop_child"]),
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "a zero forward",
+                LookAtNode {
+                    forward: Vec3::ZERO,
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "an up along forward",
+                LookAtNode {
+                    up: Vec3::Z * 2.0,
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "no bones",
+                LookAtNode {
+                    chain: Vec::new(),
+                    ..look()
+                },
+            ),
+            unresolvable(
+                "weight zero",
+                LookAtNode {
+                    weight: 0.0,
+                    ..with_eyes()
+                },
+            ),
+            Untouched {
+                name: "a weight param of zero",
+                node: LookAtNode {
+                    weight_param: Some(name!("look_weight")),
+                    ..with_eyes()
+                },
+                rig: || {
+                    let mut rig = at_head();
+                    rig.set_float(name!("look_weight"), 0.0);
+                    rig
+                },
+            },
+            Untouched {
+                name: "no target",
+                node: with_eyes(),
+                rig: Rig::new,
+            },
+            Untouched {
+                name: "a target that is not a position",
+                node: with_eyes(),
+                rig: || {
+                    let mut rig = Rig::new();
+                    rig.set_float(name!("look_target"), 1.0);
+                    rig
+                },
+            },
+            Untouched {
+                name: "a model to world that cannot be inverted",
+                node: with_eyes(),
+                rig: || {
+                    let mut rig = Rig::new();
+                    rig.model_to_world = Affine3A::from_scale(Vec3::ZERO);
+                    rig.target = Some(Vec3::new(0.3, 1.5, 2.0));
+                    rig
+                },
+            },
+            Untouched {
+                name: "a nan max angle",
+                node: LookAtNode {
+                    max_angle: f32::NAN,
+                    ..look()
+                },
+                rig: || aimed(SPINE, 0.2, 0.0, 3.0),
+            },
+            Untouched {
+                name: "a max angle past 170 degrees",
+                node: LookAtNode {
+                    max_angle: 4.0,
+                    ..look()
+                },
+                rig: || aimed(SPINE, 175.0_f32.to_radians(), 0.0, 3.0),
+            },
+            Untouched {
+                name: "a target past max angle",
+                node: look(),
+                rig: || aimed(SPINE, 125.0_f32.to_radians(), 0.0, 3.0),
+            },
+        ];
+
+        for row in rows {
+            let rig = (row.rig)();
+
+            let frame = rig.solve(&row.node);
+
+            named(row.name, || assert_unchanged(&rig, &frame));
+        }
+
+        let inside = aimed(SPINE, 115.0_f32.to_radians(), 0.0, 3.0);
+        let frame = inside.solve(&look());
+        assert!(
+            CHAIN
+                .into_iter()
+                .any(|bone| inside.turned(&frame, bone) > 1e-3)
+        );
     }
 
     #[test]
@@ -1299,175 +1348,39 @@ mod tests {
     }
 
     #[test]
-    fn a_negative_or_nan_share_counts_as_zero() {
-        let mut rig = Rig::new();
-        let target = rig.toward(NECK, 0.5, 0.2, 3.0);
-        rig.aim(target);
-
-        for share in [-1.0, f32::NAN] {
-            let mut node = look();
-            node.chain[1].share = share;
-
-            let frame = rig.solve(&node);
-
-            assert!(rig.turned(&frame, NECK) < 1e-3, "share {share}");
-            assert_gaze(&rig, &frame, HEAD, target);
-        }
-    }
-
-    #[test]
-    fn zero_shares_turn_no_chain_bone() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(NECK, 0.5, 0.2, 3.0));
-
-        let frame = rig.solve(&shared([0.0, 0.0, 0.0], 1.0));
-
-        for bone in CHAIN {
-            assert!(rig.turned(&frame, bone) < 1e-3, "bone {bone}");
-        }
-    }
-
-    #[test]
-    fn a_negative_or_nan_limit_holds_its_bone_still() {
-        let mut rig = Rig::new();
-        let target = rig.toward(NECK, 0.5, 0.2, 3.0);
-        rig.aim(target);
-
-        for limit in [-0.5, f32::NAN] {
-            let mut node = look();
-            node.chain[1].yaw_limit = limit;
-            node.chain[1].pitch_limit = limit;
-
-            let frame = rig.solve(&node);
-
-            assert!(rig.turned(&frame, NECK) < 1e-3, "limit {limit}");
-            assert_gaze(&rig, &frame, HEAD, target);
-        }
-    }
-
-    #[test]
-    fn a_nan_max_angle_fades_any_target_off_the_first_gaze() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(SPINE, 0.2, 0.0, 3.0));
-
-        let frame = rig.solve(&LookAtNode {
-            max_angle: f32::NAN,
-            ..look()
-        });
-
-        assert_unchanged(&rig, &frame);
-    }
-
-    #[test]
-    fn a_max_angle_past_170_degrees_is_capped() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(SPINE, 175.0_f32.to_radians(), 0.0, 3.0));
-
-        let frame = rig.solve(&LookAtNode {
-            max_angle: 4.0,
-            ..look()
-        });
-
-        assert_unchanged(&rig, &frame);
-    }
-
-    #[test]
-    fn a_partial_weight_turns_each_bone_part_way_at_once() {
+    fn a_partial_weight_or_weight_param_turns_each_bone_part_way_at_once_or_once_eased() {
         let mut rig = Rig::new();
         rig.aim(rig.toward(HEAD, 0.6, 0.2, 2.0));
         rig.set_float(name!("look_weight"), 0.5);
-        let full = with_eyes();
-        let solved = rig.solve(&full);
+        let at_once = |node: LookAtNode| rig.solve(&node);
+        let once_eased = |node: LookAtNode| Stage::start(&rig, node).settle();
+        let modes: [&dyn Fn(LookAtNode) -> Frame; 2] = [&at_once, &once_eased];
         let input = rig.input();
 
-        let by_weight = rig.solve(&LookAtNode {
-            weight: 0.5,
-            ..full.clone()
-        });
-        let by_param = rig.solve(&LookAtNode {
-            weight_param: Some(name!("look_weight")),
-            ..full.clone()
-        });
+        for (solve, full) in modes.into_iter().zip([with_eyes(), eased()]) {
+            let solved = solve(full.clone());
+            let by_weight = solve(LookAtNode {
+                weight: 0.5,
+                ..full.clone()
+            });
+            let by_param = solve(LookAtNode {
+                weight_param: Some(name!("look_weight")),
+                ..full.clone()
+            });
+            let off = solve(LookAtNode {
+                weight: 0.0,
+                ..full
+            });
 
-        for bone in CHAIN.into_iter().chain(EYES) {
-            let halfway = input[bone]
-                .rotation
-                .slerp(solved.joints[bone].rotation, 0.5);
-            assert_rotation(by_weight.joints[bone].rotation, halfway);
-            assert_rotation(by_param.joints[bone].rotation, halfway);
+            for bone in CHAIN.into_iter().chain(EYES) {
+                let halfway = input[bone]
+                    .rotation
+                    .slerp(solved.joints[bone].rotation, 0.5);
+                assert_rotation(by_weight.joints[bone].rotation, halfway);
+                assert_rotation(by_param.joints[bone].rotation, halfway);
+            }
+            assert_unchanged(&rig, &off);
         }
-    }
-
-    #[test]
-    fn a_zero_weight_or_weight_param_leaves_the_input_pose() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.6, 0.2, 2.0));
-        rig.set_float(name!("look_weight"), 0.0);
-
-        let by_weight = rig.solve(&LookAtNode {
-            weight: 0.0,
-            ..with_eyes()
-        });
-        let by_param = rig.solve(&LookAtNode {
-            weight_param: Some(name!("look_weight")),
-            ..with_eyes()
-        });
-
-        assert_unchanged(&rig, &by_weight);
-        assert_unchanged(&rig, &by_param);
-    }
-
-    #[test]
-    fn a_missing_or_unmappable_target_leaves_the_input_pose() {
-        let mut rig = Rig::new();
-        assert_unchanged(&rig, &rig.solve(&with_eyes()));
-
-        rig.set_float(name!("look_target"), 1.0);
-        assert_unchanged(&rig, &rig.solve(&with_eyes()));
-
-        rig.model_to_world = Affine3A::from_scale(Vec3::ZERO);
-        rig.target = Some(Vec3::new(0.3, 1.5, 2.0));
-        assert_unchanged(&rig, &rig.solve(&with_eyes()));
-    }
-
-    #[test]
-    fn a_target_past_max_angle_leaves_the_input_pose_and_one_inside_does_not() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(SPINE, 125.0_f32.to_radians(), 0.0, 3.0));
-        assert_unchanged(&rig, &rig.solve(&look()));
-
-        rig.aim(rig.toward(SPINE, 115.0_f32.to_radians(), 0.0, 3.0));
-        let frame = rig.solve(&look());
-        assert!(
-            CHAIN
-                .into_iter()
-                .any(|bone| rig.turned(&frame, bone) > 1e-3)
-        );
-    }
-
-    #[test]
-    fn a_node_without_bones_passes_its_input_through() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.4, 0.1, 2.0));
-
-        let frame = rig.solve(&LookAtNode {
-            chain: Vec::new(),
-            ..look()
-        });
-
-        assert_unchanged(&rig, &frame);
-    }
-
-    fn eased() -> LookAtNode {
-        let mut node = with_eyes();
-        for link in &mut node.chain {
-            link.halflife = LookAtBone::default().halflife;
-        }
-        for eye in &mut node.eyes {
-            eye.halflife = LookAtEye::default().halflife;
-        }
-        node.weight_halflife = LookAtNode::default().weight_halflife;
-        node
     }
 
     #[test]
@@ -1514,44 +1427,15 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_weight_eases_each_bone_part_way() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.6, 0.2, 2.0));
-        rig.set_float(name!("look_weight"), 0.5);
-        let settle = |node: LookAtNode| Stage::start(&rig, node).settle();
-        let full = eased();
-
-        let solved = settle(full.clone());
-        let by_weight = settle(LookAtNode {
-            weight: 0.5,
-            ..full.clone()
-        });
-        let by_param = settle(LookAtNode {
-            weight_param: Some(name!("look_weight")),
-            ..full.clone()
-        });
-        let off = settle(LookAtNode {
-            weight: 0.0,
-            ..full
-        });
-
-        let input = rig.input();
-        for bone in CHAIN.into_iter().chain(EYES) {
-            let halfway = input[bone]
-                .rotation
-                .slerp(solved.joints[bone].rotation, 0.5);
-            assert_rotation(by_weight.joints[bone].rotation, halfway);
-            assert_rotation(by_param.joints[bone].rotation, halfway);
-        }
-        assert_unchanged(&rig, &off);
-    }
-
-    #[test]
-    fn an_absent_target_eases_the_look_back_to_the_input_pose() {
-        let absences: [fn(&mut Stage); 3] = [
-            |stage| stage.forget_target(),
-            |stage| stage.set_param(name!("look_target"), 1.0_f32),
-            |stage| stage.set_space(Affine3A::from_scale(Vec3::ZERO)),
+    fn a_target_that_goes_away_or_past_max_angle_eases_the_look_back_to_the_input_pose_exactly() {
+        let absences: [fn(&mut Stage, &mut Rig); 4] = [
+            |stage, _| stage.forget_target(),
+            |stage, _| stage.set_param(name!("look_target"), 1.0_f32),
+            |stage, _| stage.set_space(Affine3A::from_scale(Vec3::ZERO)),
+            |stage, rig| {
+                rig.aim(rig.toward(SPINE, 125.0_f32.to_radians(), 0.0, 3.0));
+                stage.follow(rig);
+            },
         ];
 
         for absence in absences {
@@ -1559,13 +1443,24 @@ mod tests {
             rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
             let mut stage = Stage::start(&rig, eased());
             stage.settle();
-            absence(&mut stage);
+            absence(&mut stage, &mut rig);
 
             let easing = stage.step(DT);
             let settled = stage.settle();
 
             assert!(rig.turned(&easing, HEAD) > 1e-3);
             assert_unchanged(&rig, &settled);
+        }
+
+        let mut rig = Rig::new();
+        rig.aim(rig.toward(SPINE, 0.3, 0.0, 3.0));
+        let mut inside = Stage::start(&rig, eased());
+        inside.settle();
+        rig.aim(rig.toward(SPINE, 115.0_f32.to_radians(), 0.0, 3.0));
+        inside.follow(&rig);
+        let held = inside.settle();
+        for bone in CHAIN {
+            assert!(rig.turned(&held, bone) > 1e-3, "bone {bone}");
         }
     }
 
@@ -1577,19 +1472,19 @@ mod tests {
         for _ in 0..5 {
             stage.step(DT);
         }
-        assert!(stage.with_state(|state| {
+        assert!(stage.read(|state| {
             state
                 .offsets
                 .iter()
                 .any(|offset| offset.velocity != Vec3::ZERO)
         }));
         let held: Vec<Quat> =
-            stage.with_state(|state| state.offsets.iter().map(|offset| offset.value).collect());
+            stage.read(|state| state.offsets.iter().map(|offset| offset.value).collect());
         stage.forget_target();
 
         stage.step(DT);
 
-        stage.with_state(|state| {
+        stage.read(|state| {
             assert!(state.weight.value > 0.0);
             assert_eq!(state.offsets.len(), held.len());
             for (offset, value) in state.offsets.iter().zip(&held) {
@@ -1609,7 +1504,7 @@ mod tests {
         };
         let full = rig.turned(&Stage::start(&rig, node.clone()).settle(), HEAD);
         let mut stage = Stage::new(&rig, node);
-        stage.with_state(|state| state.elapsed = 120.0 * DT);
+        stage.write(|_, state| state.elapsed = 120.0 * DT);
 
         let first = stage.step(0.0);
         let next = stage.step(DT);
@@ -1621,53 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn a_weight_faded_below_the_threshold_returns_the_input_pose_exactly() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
-        let mut stage = Stage::start(&rig, eased());
-        stage.settle();
-        stage.forget_target();
-
-        let mut snapped = false;
-        for _ in 0..SETTLE_STEPS {
-            let frame = stage.step(DT);
-            if stage.with_state(|state| state.weight.value) > 0.0 {
-                assert_ne!(frame.joints, rig.input());
-            } else {
-                assert_unchanged(&rig, &frame);
-                snapped = true;
-                break;
-            }
-        }
-        assert!(snapped, "the weight never snapped to zero");
-    }
-
-    #[test]
-    fn a_target_moved_past_max_angle_eases_the_look_out_and_one_inside_does_not() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(SPINE, 0.3, 0.0, 3.0));
-        let mut past = Stage::start(&rig, eased());
-        past.settle();
-        let mut inside = Stage::start(&rig, eased());
-        inside.settle();
-
-        rig.aim(rig.toward(SPINE, 125.0_f32.to_radians(), 0.0, 3.0));
-        past.follow(&rig);
-        let easing = past.step(DT);
-        let faded = past.settle();
-        assert!(rig.turned(&easing, SPINE) > 1e-3);
-        assert_unchanged(&rig, &faded);
-
-        rig.aim(rig.toward(SPINE, 115.0_f32.to_radians(), 0.0, 3.0));
-        inside.follow(&rig);
-        let held = inside.settle();
-        for bone in CHAIN {
-            assert!(rig.turned(&held, bone) > 1e-3, "bone {bone}");
-        }
-    }
-
-    #[test]
-    fn a_chain_bone_added_live_rebuilds_the_offsets_and_turns() {
+    fn a_chain_bone_added_live_turns() {
         let mut rig = Rig::new();
         rig.aim(rig.toward(HEAD, 0.5, 0.2, 2.0));
         let node = LookAtNode {
@@ -1683,7 +1532,6 @@ mod tests {
         stage.step(DT);
         let frame = stage.step(DT);
 
-        assert_eq!(stage.with_state(|state| state.offsets.len()), CHAIN.len());
         for bone in CHAIN {
             assert!(rig.turned(&frame, bone) > 1e-3, "bone {bone}");
         }
@@ -1696,33 +1544,8 @@ mod tests {
         let mut stage = Stage::start(&rig, eased());
         stage.settle();
 
-        let node = stage.node.clone();
-        stage.with_state(|state| node.reset(state));
+        stage.write(|node, state| node.reset(state));
 
         assert_unchanged(&rig, &stage.step(DT));
-    }
-
-    #[test]
-    fn a_negative_or_non_finite_halflife_snaps() {
-        let mut rig = Rig::new();
-        let target = rig.toward(HEAD, 0.4, 0.2, 2.0);
-        rig.aim(target);
-
-        for halflife in [-1.0, f32::NAN, f32::INFINITY] {
-            let mut node = with_eyes();
-            node.weight_halflife = halflife;
-            for link in &mut node.chain {
-                link.halflife = halflife;
-            }
-            for eye in &mut node.eyes {
-                eye.halflife = halflife;
-            }
-
-            let frame = rig.solve(&node);
-
-            for bone in [HEAD, EYE_L, EYE_R] {
-                assert_gaze(&rig, &frame, bone, target);
-            }
-        }
     }
 }

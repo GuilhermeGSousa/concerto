@@ -83,45 +83,49 @@ mod tests {
         vec![WindowEvent::Focused(false), WindowEvent::CloseRequested]
     }
 
-    #[test]
-    fn nothing_applied_yet_applies_every_setting() {
-        let wanted = WindowSettings::default();
-        assert_eq!(
-            settings_actions(None, &wanted),
-            vec![
-                WindowAction::Title("Concerto".to_string()),
-                WindowAction::Decorations(true),
-                WindowAction::MinSize(None),
-                WindowAction::Cursor(CursorMode::default()),
-            ]
-        );
+    struct Applied {
+        applied: Option<WindowSettings>,
+        actions: Vec<WindowAction>,
     }
 
     #[test]
-    fn unchanged_settings_need_no_action() {
-        let settings = WindowSettings::default();
-        assert!(settings_actions(Some(&settings), &settings).is_empty());
-    }
-
-    #[test]
-    fn only_the_changed_settings_are_applied() {
-        let applied = WindowSettings::default();
-        let mut wanted = applied.clone();
-        wanted.title = "Showcase".to_string();
-        wanted.cursor = CursorMode {
-            visible: false,
-            grabbed: true,
+    fn only_the_settings_not_yet_applied_become_actions() {
+        let wanted = WindowSettings {
+            title: "Showcase".to_string(),
+            cursor: CursorMode {
+                visible: false,
+                grabbed: true,
+            },
+            ..WindowSettings::default()
         };
-        assert_eq!(
-            settings_actions(Some(&applied), &wanted),
-            vec![
-                WindowAction::Title("Showcase".to_string()),
-                WindowAction::Cursor(CursorMode {
-                    visible: false,
-                    grabbed: true,
-                }),
-            ]
-        );
+        let cases = [
+            Applied {
+                applied: None,
+                actions: vec![
+                    WindowAction::Title("Showcase".to_string()),
+                    WindowAction::Decorations(true),
+                    WindowAction::MinSize(None),
+                    WindowAction::Cursor(wanted.cursor),
+                ],
+            },
+            Applied {
+                applied: Some(wanted.clone()),
+                actions: Vec::new(),
+            },
+            Applied {
+                applied: Some(WindowSettings::default()),
+                actions: vec![
+                    WindowAction::Title("Showcase".to_string()),
+                    WindowAction::Cursor(wanted.cursor),
+                ],
+            },
+        ];
+        for case in cases {
+            assert_eq!(
+                settings_actions(case.applied.as_ref(), &wanted),
+                case.actions
+            );
+        }
     }
 
     #[test]
@@ -134,13 +138,9 @@ mod tests {
     }
 
     #[test]
-    fn an_app_without_a_window_has_no_requests() {
-        let mut app = App::new();
-        assert!(take_requests(&mut app).is_none());
-    }
+    fn requests_are_read_once_and_an_app_without_a_window_has_none() {
+        assert!(take_requests(&mut App::new()).is_none());
 
-    #[test]
-    fn requests_are_read_once() {
         let mut app = App::new();
         let mut window = Window::new((800, 600), 1.0);
         window.settings.title = "Game".to_string();
@@ -157,21 +157,15 @@ mod tests {
     }
 
     #[test]
-    fn an_app_without_a_window_needs_no_size_correction() {
-        assert_eq!(size_correction(None, (800, 600)), None);
-    }
-
-    #[test]
-    fn a_window_of_the_actual_size_needs_no_correction() {
-        let window = Window::new((800, 600), 1.0);
-        assert_eq!(size_correction(Some(&window), (800, 600)), None);
-    }
-
-    #[test]
-    fn a_window_of_another_size_is_told_the_actual_size() {
-        let window = Window::new((0, 0), 1.0);
+    fn only_a_window_of_another_size_is_told_the_actual_size() {
+        let actual = (1024, 768);
+        assert_eq!(size_correction(None, actual), None);
         assert_eq!(
-            size_correction(Some(&window), (1024, 768)),
+            size_correction(Some(&Window::new(actual, 1.0)), actual),
+            None
+        );
+        assert_eq!(
+            size_correction(Some(&Window::new((0, 0), 1.0)), actual),
             Some(WindowEvent::Resized {
                 width: 1024,
                 height: 768,
@@ -180,17 +174,11 @@ mod tests {
     }
 
     #[test]
-    fn an_app_without_an_event_channel_drops_pending_events() {
-        let mut app = App::new();
-        let mut pending = pending();
+    fn pending_events_reach_the_event_channel_in_order_or_are_dropped_without_one() {
+        let mut dropped = pending();
+        deliver(&mut App::new(), &mut dropped);
+        assert!(dropped.is_empty());
 
-        deliver(&mut app, &mut pending);
-
-        assert!(pending.is_empty());
-    }
-
-    #[test]
-    fn pending_events_reach_the_event_channel_in_order() {
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
@@ -198,12 +186,12 @@ mod tests {
             .insert_resource(Seen::default())
             .add_system(Update, observe);
         app.finish_plugin_build();
-        let mut pending = pending();
+        let mut delivered = pending();
 
-        deliver(&mut app, &mut pending);
+        deliver(&mut app, &mut delivered);
         app.update();
 
-        assert!(pending.is_empty());
-        assert_eq!(app.get_resource::<Seen>().unwrap().0, self::pending());
+        assert!(delivered.is_empty());
+        assert_eq!(app.get_resource::<Seen>().unwrap().0, pending());
     }
 }

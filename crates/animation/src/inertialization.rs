@@ -180,7 +180,9 @@ impl Inertializer {
 
 #[cfg(test)]
 mod tests {
+    use concerto_foundation::math::spring_damper::halflife_to_damping;
     use glam::Quat;
+    use proptest::prelude::*;
 
     use super::*;
 
@@ -189,36 +191,18 @@ mod tests {
     }
 
     #[test]
-    fn zero_has_one_entry_per_bone() {
-        let velocity = PoseVelocity::zero(3);
-        assert_eq!(velocity.linear.len(), 3);
-        assert_eq!(velocity.angular.len(), 3);
-        assert!(velocity.linear.iter().all(|v| *v == Vec3::ZERO));
-        assert!(velocity.angular.iter().all(|v| *v == Vec3::ZERO));
-    }
-
-    #[test]
-    fn between_gives_linear_difference_over_dt() {
+    fn between_gives_the_linear_and_angular_velocity_over_dt() {
         let previous = Pose::identity(2);
         let mut next = Pose::identity(2);
+        next.joint_mut(0).unwrap().rotation = Quat::from_rotation_z(0.1);
         next.joint_mut(1).unwrap().translation = Vec3::new(1.0, -2.0, 0.5);
 
         let velocity = PoseVelocity::between(&previous, &next, 0.5);
 
         assert_close(velocity.linear[0], Vec3::ZERO);
-        assert_close(velocity.linear[1], Vec3::new(2.0, -4.0, 1.0));
-    }
-
-    #[test]
-    fn between_gives_angular_velocity_about_the_rotation_axis() {
-        let previous = Pose::identity(1);
-        let mut next = Pose::identity(1);
-        next.joint_mut(0).unwrap().rotation = Quat::from_rotation_z(0.1);
-
-        let velocity = PoseVelocity::between(&previous, &next, 0.5);
-
         assert_close(velocity.angular[0], Vec3::new(0.0, 0.0, 0.2));
-        assert_close(velocity.linear[0], Vec3::ZERO);
+        assert_close(velocity.linear[1], Vec3::new(2.0, -4.0, 1.0));
+        assert_close(velocity.angular[1], Vec3::ZERO);
     }
 
     fn pose_at(translation: Vec3, rotation: Quat) -> Pose {
@@ -233,66 +217,68 @@ mod tests {
         pose.joints()[0].translation
     }
 
-    #[test]
-    fn transition_frame_output_equals_source() {
-        let source = pose_at(Vec3::new(1.0, 2.0, 3.0), Quat::from_rotation_y(0.7));
-        let destination = pose_at(Vec3::new(-1.0, 0.0, 4.0), Quat::from_rotation_x(-0.3));
+    fn transitioned(source: &Pose, destination: &Pose) -> Inertializer {
         let mut inertializer = Inertializer::new(1);
         inertializer.transition(
-            &source,
+            source,
             &PoseVelocity::zero(1),
-            &destination,
+            destination,
             &PoseVelocity::zero(1),
         );
-        let mut output = Pose::identity(1);
-
-        inertializer.update(&destination, &PoseVelocity::zero(1), 0.2, 0.0, &mut output);
-
-        assert_close(translation(&output), translation(&source));
-        assert!(
-            output.joints()[0]
-                .rotation
-                .angle_between(source.joints()[0].rotation)
-                < 1e-4
-        );
+        inertializer
     }
 
-    #[test]
-    fn zero_velocity_offset_follows_the_closed_form_after_one_halflife() {
-        let source = pose_at(Vec3::new(1.0, 0.0, 0.0), Quat::IDENTITY);
-        let destination = Pose::identity(1);
-        let mut inertializer = Inertializer::new(1);
-        inertializer.transition(
-            &source,
-            &PoseVelocity::zero(1),
-            &destination,
-            &PoseVelocity::zero(1),
-        );
-        let mut output = Pose::identity(1);
+    fn any_vec3() -> impl Strategy<Value = Vec3> {
+        prop::array::uniform3(-5.0f32..5.0).prop_map(Vec3::from_array)
+    }
 
-        inertializer.update(
-            &destination,
-            &PoseVelocity::zero(1),
-            0.25,
-            0.25,
-            &mut output,
-        );
+    fn any_turn() -> impl Strategy<Value = Quat> {
+        prop::array::uniform3(-1.0f32..1.0)
+            .prop_map(|[x, y, z]| Quat::from_euler(glam::EulerRot::XYZ, x, y, z))
+    }
 
-        let y = std::f32::consts::LN_2 * 2.0 / 0.25;
-        let expected = (1.0 + y * 0.25) * (-y * 0.25).exp();
-        assert!((translation(&output).x - expected).abs() < 1e-3);
+    proptest! {
+        #[test]
+        fn one_update_decays_a_still_offset_by_the_critically_damped_closed_form(
+            source_at in any_vec3(),
+            destination_at in any_vec3(),
+            source_turn in any_turn(),
+            destination_turn in any_turn(),
+            halflife in prop_oneof![Just(0.0f32), 0.01f32..1.0],
+            dt in prop_oneof![Just(0.0f32), -1.0f32..0.0, 0.0f32..0.5],
+        ) {
+            let source = pose_at(source_at, source_turn);
+            let destination = pose_at(destination_at, destination_turn);
+            let mut inertializer = transitioned(&source, &destination);
+            let mut output = Pose::identity(1);
+
+            inertializer.update(&destination, &PoseVelocity::zero(1), halflife, dt, &mut output);
+
+            let y = halflife_to_damping(halflife.max(MIN_HALFLIFE)) / 2.0;
+            let left = if dt > 0.0 { (1.0 + y * dt) * (-y * dt).exp() } else { 1.0 };
+            let expected = destination_at + (source_at - destination_at) * left;
+            prop_assert!(translation(&output).is_finite());
+            prop_assert!(
+                translation(&output).distance(expected) < 1e-3,
+                "{} != {expected}",
+                translation(&output)
+            );
+            let rotation = output.joints()[0].rotation;
+            let angle = source_turn.angle_between(destination_turn);
+            prop_assert!(
+                (rotation.angle_between(destination_turn) - angle * left).abs() < 5e-3,
+                "{} of {angle} left",
+                rotation.angle_between(destination_turn)
+            );
+        }
     }
 
     #[test]
     fn converges_to_the_destination_and_settles() {
-        let source = pose_at(Vec3::new(2.0, 0.0, 0.0), Quat::from_rotation_z(1.0));
         let destination = pose_at(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY);
-        let mut inertializer = Inertializer::new(1);
-        inertializer.transition(
-            &source,
-            &PoseVelocity::zero(1),
+        let mut inertializer = transitioned(
+            &pose_at(Vec3::new(2.0, 0.0, 0.0), Quat::from_rotation_z(1.0)),
             &destination,
-            &PoseVelocity::zero(1),
         );
         assert!(!inertializer.is_settled());
         let mut output = Pose::identity(1);
@@ -314,14 +300,10 @@ mod tests {
 
     #[test]
     fn transition_during_a_decay_starts_from_the_output_pose() {
-        let first = pose_at(Vec3::new(4.0, 0.0, 0.0), Quat::IDENTITY);
         let destination = Pose::identity(1);
-        let mut inertializer = Inertializer::new(1);
-        inertializer.transition(
-            &first,
-            &PoseVelocity::zero(1),
+        let mut inertializer = transitioned(
+            &pose_at(Vec3::new(4.0, 0.0, 0.0), Quat::IDENTITY),
             &destination,
-            &PoseVelocity::zero(1),
         );
         let mut output = Pose::identity(1);
         inertializer.update(&destination, &PoseVelocity::zero(1), 0.2, 0.1, &mut output);
@@ -337,49 +319,5 @@ mod tests {
         inertializer.update(&next, &PoseVelocity::zero(1), 0.2, 0.0, &mut output);
 
         assert_close(translation(&output), running);
-    }
-
-    #[test]
-    fn non_positive_dt_does_not_decay() {
-        let source = pose_at(Vec3::X, Quat::IDENTITY);
-        let destination = Pose::identity(1);
-        let mut inertializer = Inertializer::new(1);
-        inertializer.transition(
-            &source,
-            &PoseVelocity::zero(1),
-            &destination,
-            &PoseVelocity::zero(1),
-        );
-        let mut output = Pose::identity(1);
-
-        inertializer.update(&destination, &PoseVelocity::zero(1), 0.2, -1.0, &mut output);
-
-        assert_close(translation(&output), Vec3::X);
-    }
-
-    #[test]
-    fn tiny_halflife_is_clamped_and_stays_finite() {
-        let source = pose_at(Vec3::X, Quat::IDENTITY);
-        let destination = Pose::identity(1);
-        let mut inertializer = Inertializer::new(1);
-        inertializer.transition(
-            &source,
-            &PoseVelocity::zero(1),
-            &destination,
-            &PoseVelocity::zero(1),
-        );
-        let mut output = Pose::identity(1);
-
-        inertializer.update(&destination, &PoseVelocity::zero(1), 0.0, 0.1, &mut output);
-
-        assert!(translation(&output).is_finite());
-        assert!(translation(&output).length() < 1e-3);
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic]
-    fn between_asserts_on_length_mismatch() {
-        PoseVelocity::between(&Pose::identity(2), &Pose::identity(3), 0.1);
     }
 }

@@ -185,28 +185,25 @@ mod structural_version_tests {
 mod id_string_tests {
     use std::num::NonZero;
 
-    use super::Entity;
-    use crate::world::World;
+    use proptest::prelude::*;
 
-    #[test]
-    fn id_strings_round_trip() {
-        let mut world = World::new();
-        world.spawn(());
-        let entity = world.spawn(());
-        let id = entity.to_id_string();
-        assert_eq!(id, format!("{}v{}", entity.index(), entity.generation()));
-        assert_eq!(Entity::parse_id(&id), Some(entity));
+    use super::Entity;
+
+    proptest! {
+        #[test]
+        fn an_id_string_parses_back_to_its_entity(index in any::<u32>(), generation in 1u32..) {
+            let entity = Entity::new(index, NonZero::new(generation).unwrap());
+
+            prop_assert_eq!(Entity::parse_id(&entity.to_id_string()), Some(entity));
+        }
     }
 
     #[test]
-    fn id_string_is_index_then_generation() {
+    fn an_id_string_is_index_v_generation_and_nothing_else_parses() {
         let entity = Entity::new(42, NonZero::new(3).unwrap());
         assert_eq!(entity.to_id_string(), "42v3");
         assert_eq!(Entity::parse_id("42v3"), Some(entity));
-    }
 
-    #[test]
-    fn malformed_ids_do_not_parse() {
         for id in [
             "", "42", "v3", "42v", "42v0", "42v3x", "-1v1", "+1v1", "1v+1", "42x3", "42v3v1",
             " 42v3", "42v3 ",

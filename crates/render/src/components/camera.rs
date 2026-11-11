@@ -553,41 +553,66 @@ mod tests {
         assert_eq!(uniform.size().get(), 128);
     }
 
-    #[test]
-    fn halves_tile_an_odd_width() {
-        let target = UVec2::new(1281, 720);
-        let left = Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0)).to_pixels(target);
-        let right = Viewport::new(Vec2::new(0.5, 0.0), Vec2::ONE).to_pixels(target);
-
-        assert_eq!(left, rect(0, 0, 641, 720));
-        assert_eq!(right, rect(641, 0, 640, 720));
+    struct Case {
+        case: &'static str,
+        viewport: Option<Viewport>,
+        target: UVec2,
+        rect: PixelRect,
+        aspect: Option<f32>,
     }
 
     #[test]
-    fn out_of_range_fractions_clamp_to_the_target() {
-        let viewport = Viewport::new(Vec2::new(-0.5, -1.0), Vec2::new(2.0, 3.0));
-
-        assert_eq!(viewport.to_pixels(UVec2::new(100, 50)), rect(0, 0, 100, 50));
-    }
-
-    #[test]
-    fn inverted_and_non_finite_rects_are_empty() {
-        let target = UVec2::new(100, 50);
-        let inverted = Viewport::new(Vec2::new(0.8, 0.0), Vec2::new(0.2, 1.0)).to_pixels(target);
-        let not_a_number = Viewport::new(Vec2::new(f32::NAN, 0.0), Vec2::ONE).to_pixels(target);
-
-        assert!(inverted.is_empty());
-        assert_eq!(inverted.aspect(), None);
-        assert!(not_a_number.is_empty());
-        assert_eq!(not_a_number, rect(0, 0, 0, 0));
-    }
-
-    #[test]
-    fn viewport_rect_without_a_viewport_is_the_whole_target() {
-        assert_eq!(
-            viewport_rect(None, UVec2::new(1280, 720)),
-            rect(0, 0, 1280, 720)
-        );
+    fn a_viewport_covers_its_fraction_of_the_target_in_whole_pixels() {
+        let cases = [
+            Case {
+                case: "the left half of an odd width",
+                viewport: Some(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))),
+                target: UVec2::new(1281, 720),
+                rect: rect(0, 0, 641, 720),
+                aspect: Some(641.0 / 720.0),
+            },
+            Case {
+                case: "the right half of an odd width",
+                viewport: Some(Viewport::new(Vec2::new(0.5, 0.0), Vec2::ONE)),
+                target: UVec2::new(1281, 720),
+                rect: rect(641, 0, 640, 720),
+                aspect: Some(640.0 / 720.0),
+            },
+            Case {
+                case: "fractions out of range",
+                viewport: Some(Viewport::new(Vec2::new(-0.5, -1.0), Vec2::new(2.0, 3.0))),
+                target: UVec2::new(100, 50),
+                rect: rect(0, 0, 100, 50),
+                aspect: Some(2.0),
+            },
+            Case {
+                case: "an inverted rect",
+                viewport: Some(Viewport::new(Vec2::new(0.8, 0.0), Vec2::new(0.2, 1.0))),
+                target: UVec2::new(100, 50),
+                rect: rect(80, 0, 0, 50),
+                aspect: None,
+            },
+            Case {
+                case: "a non-finite rect",
+                viewport: Some(Viewport::new(Vec2::new(f32::NAN, 0.0), Vec2::ONE)),
+                target: UVec2::new(100, 50),
+                rect: rect(0, 0, 0, 0),
+                aspect: None,
+            },
+            Case {
+                case: "no viewport",
+                viewport: None,
+                target: UVec2::new(1280, 720),
+                rect: rect(0, 0, 1280, 720),
+                aspect: Some(1280.0 / 720.0),
+            },
+        ];
+        for case in &cases {
+            let pixels = viewport_rect(case.viewport.as_ref(), case.target);
+            assert_eq!(pixels, case.rect, "{}", case.case);
+            assert_eq!(pixels.is_empty(), case.aspect.is_none(), "{}", case.case);
+            assert_eq!(pixels.aspect(), case.aspect, "{}", case.case);
+        }
     }
 
     fn sync(world: &mut World) {
@@ -610,6 +635,11 @@ mod tests {
         let left_half = world
             .spawn(Camera::default().with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))));
         let whole = world.spawn(Camera::default());
+        let empty = world.spawn(Camera {
+            aspect: 0.75,
+            ..Camera::default()
+                .with_viewport(Viewport::new(Vec2::new(0.5, 0.0), Vec2::new(0.5, 1.0)))
+        });
         let texture = world.spawn(
             Camera {
                 aspect: 0.25,
@@ -639,20 +669,10 @@ mod tests {
             .viewport = Some(Viewport::new(Vec2::ZERO, Vec2::new(0.25, 1.0)));
         sync(&mut world);
         assert_eq!(aspect(&world, left_half), 250.0 / 1000.0);
-    }
-
-    #[test]
-    fn a_window_camera_with_an_empty_viewport_keeps_its_aspect() {
-        let mut world = World::new();
-        world.insert_resource(Window::new((1280, 720), 1.0));
-        let empty = world.spawn(Camera {
-            aspect: 0.75,
-            ..Camera::default()
-                .with_viewport(Viewport::new(Vec2::new(0.5, 0.0), Vec2::new(0.5, 1.0)))
-        });
-
-        sync(&mut world);
-
-        assert_eq!(aspect(&world, empty), 0.75);
+        assert_eq!(
+            aspect(&world, empty),
+            0.75,
+            "a window camera with an empty viewport keeps its aspect"
+        );
     }
 }

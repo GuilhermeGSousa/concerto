@@ -294,6 +294,7 @@ mod tests {
     use std::f32::consts::PI;
 
     use glam::{Quat, Vec3};
+    use proptest::prelude::*;
 
     use concerto_foundation::assets::AssetId;
 
@@ -314,85 +315,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_turn_about_the_axis_is_all_twist() {
-        let yaw = Quat::from_rotation_y(0.7);
-
-        assert!(twist_about(yaw, Vec3::Y).abs_diff_eq(yaw, 1e-5));
+    struct TwistCase {
+        name: &'static str,
+        rotation: Quat,
+        axis: Vec3,
+        twist: Quat,
     }
 
     #[test]
-    fn a_turn_square_to_the_axis_has_no_twist() {
-        let pitch = Quat::from_rotation_x(0.7);
-
-        assert!(twist_about(pitch, Vec3::Y).abs_diff_eq(Quat::IDENTITY, 1e-5));
-    }
-
-    #[test]
-    fn a_mix_gives_the_twist_it_starts_with() {
+    fn twist_about_keeps_the_part_of_a_turn_about_the_axis() {
         let axis = Vec3::new(1.0, 2.0, 2.0).normalize();
         let twist = Quat::from_axis_angle(axis, 0.9);
         let swing = Quat::from_axis_angle(axis.any_orthonormal_vector(), 0.4);
+        let cases = [
+            TwistCase {
+                name: "a turn about the axis is all twist",
+                rotation: Quat::from_rotation_y(0.7),
+                axis: Vec3::Y,
+                twist: Quat::from_rotation_y(0.7),
+            },
+            TwistCase {
+                name: "a turn square to the axis has no twist",
+                rotation: Quat::from_rotation_x(0.7),
+                axis: Vec3::Y,
+                twist: Quat::IDENTITY,
+            },
+            TwistCase {
+                name: "a mix gives the twist it starts with",
+                rotation: twist * swing,
+                axis,
+                twist,
+            },
+            TwistCase {
+                name: "a half turn about the axis is all twist",
+                rotation: Quat::from_rotation_y(PI),
+                axis: Vec3::Y,
+                twist: Quat::from_rotation_y(PI),
+            },
+            TwistCase {
+                name: "a half turn across the axis has no twist to find",
+                rotation: Quat::from_xyzw(1.0, 0.0, 0.0, 0.0),
+                axis: Vec3::Y,
+                twist: Quat::IDENTITY,
+            },
+        ];
 
-        assert!(twist_about(twist * swing, axis).abs_diff_eq(twist, 1e-5));
-    }
+        for case in cases {
+            let found = twist_about(case.rotation, case.axis);
 
-    #[test]
-    fn a_half_turn_about_the_axis_is_all_twist() {
-        let half_turn = Quat::from_rotation_y(PI);
-
-        assert!(twist_about(half_turn, Vec3::Y).abs_diff_eq(half_turn, 1e-5));
-    }
-
-    #[test]
-    fn a_half_turn_across_the_axis_has_no_twist_to_find() {
-        assert_eq!(
-            twist_about(Quat::from_xyzw(1.0, 0.0, 0.0, 0.0), Vec3::Y),
-            Quat::IDENTITY
-        );
-    }
-
-    #[test]
-    fn copy_from_carries_root_motion() {
-        let mut source = AnimationFrame::identity(1);
-        source.set_root_motion(moved());
-
-        let mut copy = AnimationFrame::identity(1);
-        copy.copy_from(&source);
-
-        assert_eq!(copy.root_motion(), moved());
-    }
-
-    #[test]
-    fn blend_lerps_root_translation_and_slerps_root_rotation() {
-        let mut other = AnimationFrame::identity(1);
-        other.set_root_motion(moved());
-
-        let mut frame = AnimationFrame::identity(1);
-        frame.blend(&other, 0.25);
-
-        assert!(
-            frame
-                .root_motion()
-                .translation
-                .abs_diff_eq(Vec3::new(0.5, 0.0, 0.0), 1e-5)
-        );
-        assert!(
-            frame
-                .root_motion()
-                .rotation
-                .abs_diff_eq(Quat::from_rotation_y(0.2), 1e-5)
-        );
-    }
-
-    #[test]
-    fn acquire_clears_the_root_motion_of_a_recycled_frame() {
-        let mut pool = FramePool::new(1);
-        let mut recycled = pool.acquire();
-        recycled.set_root_motion(moved());
-        pool.release(recycled);
-
-        assert_eq!(pool.acquire().root_motion(), RootMotion::IDENTITY);
+            assert!(
+                found.abs_diff_eq(case.twist, 1e-5),
+                "{}: {found} != {}",
+                case.name,
+                case.twist
+            );
+        }
     }
 
     fn fired(key: u32, weight: f32) -> FiredEvent {
@@ -424,27 +401,42 @@ mod tests {
     }
 
     #[test]
-    fn copy_from_carries_the_events_and_drops_its_own() {
+    fn copy_from_carries_the_root_motion_and_the_events_and_drops_its_own() {
         let mut source = AnimationFrame::identity(1);
+        source.set_root_motion(moved());
         source.push_event(fired(1, 1.0));
         let mut copy = AnimationFrame::identity(1);
         copy.push_event(fired(2, 1.0));
 
         copy.copy_from(&source);
 
+        assert_eq!(copy.root_motion(), moved());
         assert_eq!(copy.events(), source.events());
     }
 
     #[test]
-    fn blend_scales_its_own_events_by_the_rest_and_appends_the_others_scaled_by_the_weight() {
+    fn blend_lerps_and_slerps_the_root_motion_and_weighs_the_events_of_both_frames() {
         let mut frame = AnimationFrame::identity(1);
         frame.push_event(fired(1, 1.0));
         frame.push_event(fired(2, 0.5));
         let mut other = AnimationFrame::identity(1);
+        other.set_root_motion(moved());
         other.push_event(fired(3, 1.0));
 
         frame.blend(&other, 0.25);
 
+        assert!(
+            frame
+                .root_motion()
+                .translation
+                .abs_diff_eq(Vec3::new(0.5, 0.0, 0.0), 1e-5)
+        );
+        assert!(
+            frame
+                .root_motion()
+                .rotation
+                .abs_diff_eq(Quat::from_rotation_y(0.2), 1e-5)
+        );
         assert_eq!(
             weights(&frame),
             [
@@ -456,13 +448,17 @@ mod tests {
     }
 
     #[test]
-    fn acquire_clears_the_events_of_a_recycled_frame() {
+    fn acquire_clears_the_root_motion_and_the_events_of_a_recycled_frame() {
         let mut pool = FramePool::new(1);
         let mut recycled = pool.acquire();
+        recycled.set_root_motion(moved());
         recycled.push_event(fired(1, 1.0));
         pool.release(recycled);
 
-        assert!(pool.acquire().events().is_empty());
+        let acquired = pool.acquire();
+
+        assert_eq!(acquired.root_motion(), RootMotion::IDENTITY);
+        assert!(acquired.events().is_empty());
     }
 
     #[test]
@@ -480,18 +476,41 @@ mod tests {
         assert_eq!(pool.acquire().joints(), rest);
     }
 
-    #[test]
-    fn two_stretches_compose_to_the_whole_journey() {
-        let rest = Quat::from_rotation_x(-1.2);
-        let start = joint(Vec3::new(1.0, 0.0, 0.0), Quat::from_rotation_y(0.3) * rest);
-        let middle = joint(Vec3::new(1.0, 0.0, 2.0), Quat::from_rotation_y(0.9) * rest);
-        let end = joint(Vec3::new(4.0, 1.0, 2.0), Quat::from_rotation_y(1.4) * rest);
+    fn any_stop() -> impl Strategy<Value = JointPose> {
+        prop::array::uniform4(-5.0f32..5.0).prop_map(|[x, y, z, yaw]| {
+            joint(
+                Vec3::new(x, y, z),
+                Quat::from_rotation_y(yaw * 0.6) * Quat::from_rotation_x(-1.2),
+            )
+        })
+    }
 
-        let composed = RootMotion::between(&start, &middle, rest)
-            .then(RootMotion::between(&middle, &end, rest));
-        let whole = RootMotion::between(&start, &end, rest);
+    proptest! {
+        #[test]
+        fn two_stretches_compose_to_the_whole_journey(
+            start in any_stop(),
+            middle in any_stop(),
+            end in any_stop(),
+        ) {
+            let rest = Quat::from_rotation_x(-1.2);
 
-        assert!(composed.translation.abs_diff_eq(whole.translation, 1e-5));
-        assert!(composed.rotation.abs_diff_eq(whole.rotation, 1e-5));
+            let composed = RootMotion::between(&start, &middle, rest)
+                .then(RootMotion::between(&middle, &end, rest));
+            let whole = RootMotion::between(&start, &end, rest);
+
+            prop_assert!(
+                composed.translation.abs_diff_eq(whole.translation, 1e-4),
+                "{} != {}",
+                composed.translation,
+                whole.translation
+            );
+            prop_assert!(
+                composed.rotation.abs_diff_eq(whole.rotation, 1e-4)
+                    || composed.rotation.abs_diff_eq(-whole.rotation, 1e-4),
+                "{} != {}",
+                composed.rotation,
+                whole.rotation
+            );
+        }
     }
 }

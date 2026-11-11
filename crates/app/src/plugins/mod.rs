@@ -184,31 +184,23 @@ mod tests {
     }
 
     #[test]
-    fn installing_content_settings_keeps_derived_data_under_the_project_root() {
+    fn content_settings_keep_derived_data_under_the_project_root_or_nowhere_without_one() {
         let root = temp_root();
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
+        for project_root in [Some(root.to_str().unwrap()), None] {
+            let mut app = App::new();
+            app.register_plugin(AssetManagerPlugin);
+            app.get_resource::<AssetServer>()
+                .unwrap()
+                .set_derived_cache(DerivedDataCache::at("stale"));
 
-        install_content_registry(&mut app, settings("", root.to_str()));
+            install_content_registry(&mut app, settings("", project_root));
 
-        let cache = app.get_resource::<AssetServer>().unwrap().derived_cache();
-        assert_eq!(cache.root(), Some(root.join("derived-cache").as_path()));
+            let cache = app.get_resource::<AssetServer>().unwrap().derived_cache();
+            let expected = project_root.map(|_| root.join("derived-cache"));
+            assert_eq!(cache.root(), expected.as_deref());
+        }
         assert!(!root.join("derived-cache").exists());
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn installing_content_settings_without_a_project_root_sets_no_cache() {
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        app.get_resource::<AssetServer>()
-            .unwrap()
-            .set_derived_cache(DerivedDataCache::at("stale"));
-
-        install_content_registry(&mut app, settings("", None));
-
-        let cache = app.get_resource::<AssetServer>().unwrap().derived_cache();
-        assert_eq!(cache.root(), None);
     }
 
     fn wait_for_plugins(app: &mut App) {
@@ -220,53 +212,33 @@ mod tests {
     }
 
     #[test]
-    fn the_published_registry_becomes_a_resource_once_plugins_finish() {
+    fn the_registry_resource_once_plugins_finish_is_the_one_supplied_or_else_the_published_one() {
         let root = temp_root();
-        let entry = AssetEntry {
-            id: AssetId::new(),
-            address: "content/hero.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: None,
-            provenance: None,
-        };
-        let mut registry = AssetRegistry::new();
-        registry.insert(entry.clone());
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.clone()));
-        server.publish_registry(registry);
-        app.insert_resource(server);
-        wait_for_plugins(&mut app);
-        app.finish_plugin_build();
+        for supplied in [false, true] {
+            let entry = AssetEntry {
+                id: AssetId::new(),
+                address: "content/hero.gasset".into(),
+                kind: "Mesh".into(),
+                kind_version: None,
+                provenance: None,
+            };
+            let mut registry = AssetRegistry::new();
+            registry.insert(entry.clone());
+            let mut app = App::new();
+            app.register_plugin(AssetManagerPlugin);
+            let server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.clone()));
+            if supplied {
+                app.insert_resource(registry);
+            } else {
+                server.publish_registry(registry);
+            }
+            app.insert_resource(server);
+            wait_for_plugins(&mut app);
+            app.finish_plugin_build();
 
-        let registry = app.get_resource::<AssetRegistry>().unwrap();
-        assert_eq!(registry.get(entry.id), Some(&entry));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn a_registry_the_host_supplied_is_kept_when_plugins_finish() {
-        let root = temp_root();
-        let supplied = AssetEntry {
-            id: AssetId::new(),
-            address: "content/supplied.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: None,
-            provenance: None,
-        };
-        let mut registry = AssetRegistry::new();
-        registry.insert(supplied.clone());
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        app.insert_resource(AssetServer::with_content_root(ContentAssetRoot::Directory(
-            root.clone(),
-        )));
-        app.insert_resource(registry);
-        wait_for_plugins(&mut app);
-        app.finish_plugin_build();
-
-        let registry = app.get_resource::<AssetRegistry>().unwrap();
-        assert_eq!(registry.get(supplied.id), Some(&supplied));
+            let registry = app.get_resource::<AssetRegistry>().unwrap();
+            assert_eq!(registry.get(entry.id), Some(&entry), "supplied: {supplied}");
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 

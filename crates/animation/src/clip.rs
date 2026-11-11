@@ -720,13 +720,6 @@ impl AnimationClip {
         Ok(hash.finish())
     }
 
-    #[cfg(test)]
-    pub(crate) fn build_delta_against(&mut self, base: &AnimationClip) -> anyhow::Result<()> {
-        let delta = self.delta_against(base)?;
-        let blob = bincode::serialize(&delta).context("failed to encode an additive delta")?;
-        self.apply_derived(&blob)
-    }
-
     fn delta_against(&self, base: &AnimationClip) -> anyhow::Result<AdditiveDelta> {
         let additive = self.additive_base()?;
         let range = checked_range(additive.range, self.duration, "range")?;
@@ -1130,34 +1123,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn events_in_excludes_from_unless_asked_and_includes_to() {
-        let clip = quarters();
-
-        assert_eq!(clip.events_in(0.25, 0.5, false), 2..3);
-        assert_eq!(clip.events_in(0.25, 0.5, true), 1..3);
-        assert_eq!(clip.events_in(0.1, 0.6, false), 1..3);
+    struct Window {
+        name: &'static str,
+        clip: AnimationClip,
+        from: f32,
+        to: f32,
+        include_from: bool,
+        events: std::ops::Range<usize>,
     }
 
     #[test]
-    fn events_in_a_single_instant_holds_its_event_only_when_from_is_included() {
-        let clip = quarters();
+    fn events_in_holds_the_events_after_from_or_at_it_when_asked_up_to_and_at_to() {
+        let window = |name, from, to, include_from, events| Window {
+            name,
+            clip: quarters(),
+            from,
+            to,
+            include_from,
+            events,
+        };
+        let cases = [
+            window("from is excluded", 0.25, 0.5, false, 2..3),
+            window("from is included when asked", 0.25, 0.5, true, 1..3),
+            window("between keys", 0.1, 0.6, false, 1..3),
+            window("an instant with from included", 0.0, 0.0, true, 0..1),
+            window("an instant with from excluded", 0.0, 0.0, false, 1..1),
+            window("past the last event", 0.8, 1.0, true, 4..4),
+            window("a reversed window", 0.6, 0.3, true, 3..3),
+            Window {
+                clip: AnimationClip::default(),
+                ..window("a clip without events", 0.0, 1.0, true, 0..0)
+            },
+        ];
 
-        assert_eq!(clip.events_in(0.0, 0.0, true), 0..1);
-        assert!(clip.events_in(0.0, 0.0, false).is_empty());
-    }
+        for case in cases {
+            let held = case.clip.events_in(case.from, case.to, case.include_from);
 
-    #[test]
-    fn events_in_is_empty_past_the_last_event_and_for_a_reversed_window() {
-        let clip = quarters();
-
-        assert!(clip.events_in(0.8, 1.0, true).is_empty());
-        assert!(clip.events_in(0.6, 0.3, true).is_empty());
-        assert!(
-            AnimationClip::default()
-                .events_in(0.0, 1.0, true)
-                .is_empty()
-        );
+            assert_eq!(held.is_empty(), case.events.is_empty(), "{}", case.name);
+            if !case.events.is_empty() {
+                assert_eq!(held, case.events, "{}", case.name);
+            }
+        }
     }
 
     fn stored(time: f32, type_name: &str) -> ClipEventKey {
@@ -1278,160 +1284,153 @@ mod tests {
     }
 
     #[test]
-    fn frame_rate_is_none_by_default() {
-        assert_eq!(AnimationClip::default().frame_rate(), None);
+    fn set_frame_rate_snaps_float_noise_to_a_whole_rate_and_keeps_one_that_is_not_whole() {
+        for [set, stored] in [[30.0, 30.0], [30.0003, 30.0], [29.97, 29.97]] {
+            let mut clip = AnimationClip::default();
+
+            clip.set_frame_rate(set);
+
+            assert_eq!(clip.frame_rate(), Some(stored), "set {set}");
+        }
+    }
+
+    struct Detected {
+        name: &'static str,
+        channels: Vec<AnimationChannel>,
+        rate: Option<f32>,
     }
 
     #[test]
-    fn set_frame_rate_stores_the_rate() {
-        let mut clip = AnimationClip::default();
-        clip.set_frame_rate(30.0);
+    fn detected_frame_rate_is_the_reciprocal_of_the_middle_spacing_of_the_channel_with_the_most_keys()
+     {
+        let detected = |name, channels, rate| Detected {
+            name,
+            channels,
+            rate,
+        };
+        let cases = [
+            detected(
+                "the reciprocal of the key spacing",
+                vec![channel_at(30.0, 31)],
+                Some(30.0),
+            ),
+            detected(
+                "the channel with the most keys",
+                vec![
+                    channel_at(10.0, 4),
+                    channel_at(60.0, 61),
+                    channel_at(24.0, 5),
+                ],
+                Some(60.0),
+            ),
+            detected(
+                "the middle of the spacings",
+                vec![channel_with_keys(vec![0.0, 0.5, 1.0, 5.0, 5.5])],
+                Some(2.0),
+            ),
+            detected(
+                "a tie broken on the smallest spacing, coarse first",
+                vec![channel_at(30.0, 10), channel_at(60.0, 10)],
+                Some(60.0),
+            ),
+            detected(
+                "a tie broken on the smallest spacing, fine first",
+                vec![channel_at(60.0, 10), channel_at(30.0, 10)],
+                Some(60.0),
+            ),
+            detected(
+                "float noise rounded to a whole rate",
+                vec![channel_with_keys(
+                    (0..100).map(|key| key as f32 * 0.033_333).collect(),
+                )],
+                Some(30.0),
+            ),
+            detected(
+                "a rate that is not whole",
+                vec![channel_at(29.97, 100)],
+                Some(29.97),
+            ),
+            detected(
+                "a rate that rounds to nothing",
+                vec![channel_with_keys(vec![0.0, 200.0])],
+                None,
+            ),
+            detected("no channel", Vec::new(), None),
+            detected(
+                "no channel of two keys",
+                vec![channel_with_keys(vec![0.5])],
+                None,
+            ),
+            detected(
+                "a spacing that is not positive",
+                vec![channel_with_keys(vec![0.5, 0.5, 0.5, 0.5])],
+                None,
+            ),
+        ];
 
-        assert_eq!(clip.frame_rate(), Some(30.0));
+        for case in cases {
+            let mut clip = AnimationClip::default();
+            for channel in case.channels {
+                clip.add_channel(Uuid::from_u128(1), channel);
+            }
+
+            let rate = clip.detected_frame_rate();
+
+            match case.rate {
+                Some(expected) => {
+                    let rate = rate.unwrap_or_else(|| panic!("{}: no rate", case.name));
+                    assert!((rate - expected).abs() < 1e-3, "{}: {rate}", case.name);
+                }
+                None => assert_eq!(rate, None, "{}", case.name),
+            }
+        }
+    }
+
+    struct VelocityCase {
+        name: &'static str,
+        time: f32,
+        bone: Uuid,
+        linear: Vec3,
     }
 
     #[test]
-    fn set_frame_rate_snaps_float_noise_to_a_whole_rate() {
-        let mut clip = AnimationClip::default();
-        clip.set_frame_rate(30.0003);
-
-        assert_eq!(clip.frame_rate(), Some(30.0));
-    }
-
-    #[test]
-    fn set_frame_rate_keeps_a_rate_that_is_not_whole() {
-        let mut clip = AnimationClip::default();
-        clip.set_frame_rate(29.97);
-
-        assert_eq!(clip.frame_rate(), Some(29.97));
-    }
-
-    #[test]
-    fn detected_frame_rate_is_none_when_the_rate_rounds_to_nothing() {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(Uuid::from_u128(1), channel_with_keys(vec![0.0, 200.0]));
-
-        assert_eq!(clip.detected_frame_rate(), None);
-    }
-
-    #[test]
-    fn detected_frame_rate_is_the_reciprocal_of_the_key_spacing() {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(Uuid::from_u128(1), channel_at(30.0, 31));
-
-        assert_eq!(clip.detected_frame_rate(), Some(30.0));
-    }
-
-    #[test]
-    fn detected_frame_rate_uses_the_channel_with_the_most_keys() {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(Uuid::from_u128(1), channel_at(10.0, 4));
-        clip.add_channel(Uuid::from_u128(2), channel_at(60.0, 61));
-        clip.add_channel(Uuid::from_u128(3), channel_at(24.0, 5));
-
-        assert_eq!(clip.detected_frame_rate(), Some(60.0));
-    }
-
-    #[test]
-    fn detected_frame_rate_takes_the_middle_of_the_spacings() {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            channel_with_keys(vec![0.0, 0.5, 1.0, 5.0, 5.5]),
-        );
-
-        assert_eq!(clip.detected_frame_rate(), Some(2.0));
-    }
-
-    #[test]
-    fn detected_frame_rate_breaks_a_tie_on_the_smallest_spacing_in_any_order() {
-        let id = Uuid::from_u128(1);
-        let mut coarse_first = AnimationClip::default();
-        coarse_first.add_channel(id, channel_at(30.0, 10));
-        coarse_first.add_channel(id, channel_at(60.0, 10));
-        let mut fine_first = AnimationClip::default();
-        fine_first.add_channel(id, channel_at(60.0, 10));
-        fine_first.add_channel(id, channel_at(30.0, 10));
-
-        assert_eq!(coarse_first.detected_frame_rate(), Some(60.0));
-        assert_eq!(fine_first.detected_frame_rate(), Some(60.0));
-    }
-
-    #[test]
-    fn detected_frame_rate_rounds_float_noise_to_a_whole_rate() {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            channel_with_keys((0..100).map(|key| key as f32 * 0.033_333).collect()),
-        );
-
-        assert_eq!(clip.detected_frame_rate(), Some(30.0));
-    }
-
-    #[test]
-    fn detected_frame_rate_keeps_a_rate_that_is_not_whole() {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(Uuid::from_u128(1), channel_at(29.97, 100));
-
-        let rate = clip.detected_frame_rate().expect("the clip has keys");
-        assert!((rate - 29.97).abs() < 1e-3, "{rate}");
-    }
-
-    #[test]
-    fn detected_frame_rate_is_none_without_a_channel_of_two_keys() {
-        let mut clip = AnimationClip::default();
-        assert_eq!(clip.detected_frame_rate(), None);
-
-        clip.add_channel(Uuid::from_u128(1), channel_with_keys(vec![0.5]));
-        assert_eq!(clip.detected_frame_rate(), None);
-    }
-
-    #[test]
-    fn detected_frame_rate_is_none_when_the_spacing_is_not_positive() {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            channel_with_keys(vec![0.5, 0.5, 0.5, 0.5]),
-        );
-
-        assert_eq!(clip.detected_frame_rate(), None);
-    }
-
-    #[test]
-    fn sample_velocity_gives_the_slope_of_a_linear_clip() {
+    fn sample_velocity_is_the_slope_of_a_clip_one_sided_at_its_start_and_zero_without_channels() {
         let id = Uuid::from_u128(1);
         let clip = linear_clip(id);
-        let mut velocity = PoseVelocity::zero(1);
+        let cases = [
+            VelocityCase {
+                name: "the slope of a linear clip",
+                time: 0.5,
+                bone: id,
+                linear: Vec3::new(2.0, 0.0, -4.0),
+            },
+            VelocityCase {
+                name: "one sided at the clip start",
+                time: 0.05,
+                bone: id,
+                linear: Vec3::new(2.0, 0.0, -4.0),
+            },
+            VelocityCase {
+                name: "a bone without channels",
+                time: 0.5,
+                bone: Uuid::from_u128(2),
+                linear: Vec3::ZERO,
+            },
+        ];
 
-        clip.sample_velocity(0.5, 0.1, &[id], &mut velocity);
+        for case in cases {
+            let mut velocity = PoseVelocity::zero(1);
 
-        assert!(
-            velocity.linear[0].distance(Vec3::new(2.0, 0.0, -4.0)) < 1e-4,
-            "{:?}",
-            velocity.linear[0]
-        );
-        assert!(velocity.angular[0].length() < 1e-4);
-    }
+            clip.sample_velocity(case.time, 0.1, &[case.bone], &mut velocity);
 
-    #[test]
-    fn sample_velocity_is_one_sided_at_the_clip_start() {
-        let id = Uuid::from_u128(1);
-        let clip = linear_clip(id);
-        let mut velocity = PoseVelocity::zero(1);
-
-        clip.sample_velocity(0.05, 0.1, &[id], &mut velocity);
-
-        assert!(velocity.linear[0].distance(Vec3::new(2.0, 0.0, -4.0)) < 1e-3);
-    }
-
-    #[test]
-    fn sample_velocity_is_zero_for_a_bone_without_channels() {
-        let clip = linear_clip(Uuid::from_u128(1));
-        let mut velocity = PoseVelocity::zero(1);
-
-        clip.sample_velocity(0.5, 0.1, &[Uuid::from_u128(2)], &mut velocity);
-
-        assert!(velocity.linear[0].length() < 1e-4);
+            assert!(
+                velocity.linear[0].distance(case.linear) < 1e-3,
+                "{}: {:?}",
+                case.name,
+                velocity.linear[0]
+            );
+            assert!(velocity.angular[0].length() < 1e-4, "{}", case.name);
+        }
     }
 
     fn rotations(times: Vec<f32>, keys: Vec<Quat>) -> AnimationChannel {
@@ -1591,25 +1590,6 @@ mod tests {
         for key in bone_delta(&delta, bone).rotation.as_ref().unwrap() {
             assert_same_rotation(*key, Quat::from_rotation_x(0.5));
         }
-    }
-
-    #[test]
-    fn changing_the_additive_setting_drops_the_built_delta() {
-        let bone = Uuid::from_u128(1);
-        let mut base = AnimationClip::default();
-        base.add_channel(bone, still_translation(Vec3::ZERO));
-        let mut clip = AnimationClip::default();
-        clip.add_channel(bone, x_ramp(1.0, 0.0, 2.0));
-        clip.set_frame_rate(4.0);
-        let mut clip = additive(clip, some_base());
-        let delta = clip.delta_against(&base).unwrap();
-        apply(&mut clip, &delta);
-        assert_eq!(clip.additive_duration(), 1.0);
-
-        clip.set_additive(Additive::None);
-
-        assert_eq!(clip.sample_additive(0.5, &bone), JointPose::IDENTITY);
-        assert_eq!(clip.additive_duration(), 0.0);
     }
 
     #[test]
@@ -1826,7 +1806,8 @@ mod tests {
     }
 
     #[test]
-    fn sample_additive_clamps_to_the_delta_and_is_identity_without_one() {
+    fn sample_additive_clamps_to_the_delta_and_is_identity_without_one_or_once_the_setting_changes()
+    {
         let bone = Uuid::from_u128(1);
         let mut base = AnimationClip::default();
         base.add_channel(bone, still_translation(Vec3::ZERO));
@@ -1853,6 +1834,11 @@ mod tests {
             clip.sample_additive(0.5, &Uuid::from_u128(9)),
             JointPose::IDENTITY
         );
+
+        clip.set_additive(Additive::None);
+
+        assert_eq!(clip.sample_additive(0.5, &bone), JointPose::IDENTITY);
+        assert_eq!(clip.additive_duration(), 0.0);
     }
 
     #[test]

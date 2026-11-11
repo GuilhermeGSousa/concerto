@@ -611,7 +611,7 @@ A node can read its playback rate from a float parameter: the rate is the
 node's own rate times the parameter, and no parameter (`None`, the default), or
 one that is missing or holds another type, leaves the node's rate alone. A product that is negative or not
 finite holds the node at rate 0.
-`crates/animation/tests/graph_serialization.rs` builds a graph with a blend
+`crates/animation/tests/animation/graph_serialization.rs` builds a graph with a blend
 space and a state machine. The tech demo's character plays no authored graph:
 `examples/tech-demo/src/character.rs` gives it one `MotionMatchingNode`, which
 plays a motion database, and the

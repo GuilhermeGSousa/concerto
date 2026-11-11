@@ -188,7 +188,7 @@ mod tests {
         blackboard::AnimationBlackboard,
         node::AnimationNode,
         pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
-        test_walks::Walks,
+        testing::Walks,
     };
 
     fn firing(key: u32) -> EvaluatedFrame {

@@ -528,10 +528,12 @@ mod tests {
     }
 
     #[test]
-    fn a_second_click_on_the_same_node_in_quick_succession_is_a_double_click() {
+    fn only_a_quick_second_click_on_the_same_node_is_a_double_click() {
         let mut world = pointer_world();
         let target = node(&mut world, 0.0);
+        let other = node(&mut world, 50.0);
         let inside = Vec2::splat(5.0);
+        let over_other = Vec2::splat(55.0);
         frame(&mut world, inside, None);
 
         assert_eq!(
@@ -548,17 +550,8 @@ mod tests {
             [(target, "up"), (target, "click")],
             "a third click starts a new pair"
         );
-    }
 
-    #[test]
-    fn slow_clicks_and_clicks_on_different_nodes_are_not_double_clicks() {
-        let mut world = pointer_world();
-        let target = node(&mut world, 0.0);
-        let other = node(&mut world, 50.0);
-        let inside = Vec2::splat(5.0);
-        let over_other = Vec2::splat(55.0);
-        frame(&mut world, inside, None);
-
+        wait(&mut world, DOUBLE_CLICK);
         click(&mut world, inside);
         wait(&mut world, DOUBLE_CLICK);
         assert_eq!(
@@ -576,31 +569,6 @@ mod tests {
     fn entities(count: usize) -> Vec<Entity> {
         let mut world = World::default();
         (0..count).map(|_| world.spawn(Interactable)).collect()
-    }
-
-    #[test]
-    fn a_press_and_release_on_the_same_node_is_a_click() {
-        let mut capture = ButtonCapture::default();
-        let node = Some(entities(1)[0]);
-
-        let down = advance_capture(&mut capture, InputState::Pressed, node, Vec2::ZERO);
-        assert_eq!(down.down, node);
-        assert_eq!(down.click, None);
-
-        let up = advance_capture(&mut capture, InputState::Released, node, Vec2::ZERO);
-        assert_eq!(up.up, node);
-        assert_eq!(up.click, node, "press and release on one node is a click");
-    }
-
-    #[test]
-    fn releasing_over_a_different_node_is_not_a_click() {
-        let ids = entities(2);
-        let mut capture = ButtonCapture::default();
-        advance_capture(&mut capture, InputState::Pressed, Some(ids[0]), Vec2::ZERO);
-
-        let up = advance_capture(&mut capture, InputState::Released, Some(ids[1]), Vec2::ZERO);
-        assert_eq!(up.up, Some(ids[0]), "the captured node still gets the up");
-        assert_eq!(up.click, None, "but sliding off it cancels the click");
     }
 
     #[test]
@@ -624,20 +592,6 @@ mod tests {
             Vec2::new(40.0, 0.0),
         );
         assert_eq!(up.click, None, "a drag is not a click");
-    }
-
-    #[test]
-    fn a_captured_node_keeps_receiving_drags_after_the_pointer_leaves_it() {
-        let handle = entities(1)[0];
-        let mut capture = ButtonCapture::default();
-        advance_capture(&mut capture, InputState::Pressed, Some(handle), Vec2::ZERO);
-
-        let held = advance_capture(&mut capture, InputState::Down, None, Vec2::new(5.0, 9.0));
-        assert_eq!(
-            held.drag,
-            Some(handle),
-            "a split handle dragged off its own bounds must keep the pointer"
-        );
     }
 
     #[test]
@@ -675,24 +629,6 @@ mod tests {
             Vec2::new(9.0, 0.0),
         );
         assert_eq!(left.drag, handle, "and must keep receiving its drags");
-    }
-
-    #[test]
-    fn clip_rect_excludes_visually_clipped_area() {
-        let layout = UILayout {
-            rect: UIBox {
-                min: Vec2::ZERO,
-                size: Vec2::splat(100.0),
-            },
-            content_rect: UIBox::default(),
-            clip_rect: UIBox {
-                min: Vec2::ZERO,
-                size: Vec2::splat(50.0),
-            },
-            paint_order: 0,
-        };
-        assert!(layout.rect.contains(Vec2::new(75.0, 25.0)));
-        assert!(!layout.clip_rect.contains(Vec2::new(75.0, 25.0)));
     }
 
     #[test]

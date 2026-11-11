@@ -310,29 +310,45 @@ mod tests {
         (a - b).length() < 1e-5
     }
 
-    #[test]
-    fn a_stick_reads_zero_inside_the_dead_zone_and_one_past_the_live_zone() {
-        let mut input = input_with_pad();
-        assert_eq!(left_stick(&mut input, Vec2::new(0.1, 0.05)), Vec2::ZERO);
-        assert!(close(
-            left_stick(&mut input, Vec2::new(0.0, 0.95)),
-            Vec2::new(0.0, 1.0)
-        ));
-        assert!(close(
-            left_stick(&mut input, Vec2::new(-1.0, 0.0)),
-            Vec2::new(-1.0, 0.0)
-        ));
+    struct Shaped {
+        raw: Vec2,
+        shaped: Vec2,
     }
 
     #[test]
-    fn a_stick_between_the_zones_rescales_its_length_and_keeps_its_direction() {
+    fn a_stick_reads_zero_in_the_dead_zone_one_past_the_live_zone_and_rescales_its_length_between()
+    {
+        let cases = [
+            Shaped {
+                raw: Vec2::new(0.1, 0.05),
+                shaped: Vec2::ZERO,
+            },
+            Shaped {
+                raw: Vec2::new(0.0, 0.95),
+                shaped: Vec2::new(0.0, 1.0),
+            },
+            Shaped {
+                raw: Vec2::new(-1.0, 0.0),
+                shaped: Vec2::new(-1.0, 0.0),
+            },
+            Shaped {
+                raw: Vec2::new(0.55, 0.0),
+                shaped: Vec2::new(0.5, 0.0),
+            },
+            Shaped {
+                raw: Vec2::new(0.3, 0.4),
+                shaped: Vec2::new(0.6, 0.8) * 0.4375,
+            },
+        ];
         let mut input = input_with_pad();
-        assert!(close(
-            left_stick(&mut input, Vec2::new(0.55, 0.0)),
-            Vec2::new(0.5, 0.0)
-        ));
-        let shaped = left_stick(&mut input, Vec2::new(0.3, 0.4));
-        assert!(close(shaped, Vec2::new(0.6, 0.8) * 0.4375));
+        for case in cases {
+            let shaped = left_stick(&mut input, case.raw);
+            assert!(
+                close(shaped, case.shaped),
+                "{:?} read as {shaped:?}",
+                case.raw
+            );
+        }
         assert!((the_pad(&input).axis(GamepadAxis::LeftStickY) - 0.35).abs() < 1e-5);
     }
 

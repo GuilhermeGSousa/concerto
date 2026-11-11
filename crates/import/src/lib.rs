@@ -633,26 +633,55 @@ fn replace(file: tempfile::NamedTempFile, path: &Path) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn supported_extensions_are_matched_without_regard_to_case() {
-        assert!(supported_extension("obj"));
-        assert!(supported_extension("GLB"), "matching is case-insensitive");
-        assert!(supported_extension("gltf"));
-        assert!(supported_extension("png"));
-        assert!(!supported_extension("txt"));
-        assert!(
-            !supported_extension(".obj"),
-            "the caller passes an extension, not a suffix with its dot"
-        );
+    struct Extension {
+        extension: &'static str,
+        supported: bool,
     }
 
     #[test]
-    fn a_normalised_path_stays_under_the_canonical_directory_it_was_joined_to() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path().canonicalize().expect("canonical tempdir");
-        let path = metadata::normalize(&root.join("assets").join("..").join("square.mtl"));
-        assert_eq!(path, root.join("square.mtl"));
-        assert!(path.starts_with(&root));
+    fn supported_extensions_are_matched_without_regard_to_case() {
+        let cases = [
+            Extension {
+                extension: "obj",
+                supported: true,
+            },
+            Extension {
+                extension: "GLB",
+                supported: true,
+            },
+            Extension {
+                extension: "gltf",
+                supported: true,
+            },
+            Extension {
+                extension: "png",
+                supported: true,
+            },
+            Extension {
+                extension: "bvh",
+                supported: true,
+            },
+            Extension {
+                extension: "BVH",
+                supported: true,
+            },
+            Extension {
+                extension: "txt",
+                supported: false,
+            },
+            Extension {
+                extension: ".obj",
+                supported: false,
+            },
+        ];
+        for case in &cases {
+            assert_eq!(
+                supported_extension(case.extension),
+                case.supported,
+                "{}",
+                case.extension
+            );
+        }
     }
 
     #[test]
@@ -668,13 +697,8 @@ mod tests {
             }],
         )
         .expect("the buffer lands inside the project");
-        assert_eq!(
-            copies[1],
-            (
-                source.join("triangle_ext.bin"),
-                project.join("assets").join("triangle_ext.bin")
-            )
-        );
+        assert_eq!(copies[1].0, source.join("triangle_ext.bin"));
+        assert_eq!(copies[1].1, project.join("assets").join("triangle_ext.bin"));
     }
 
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -692,9 +716,34 @@ mod tests {
         }
     }
 
-    type Entry = (&'static str, Option<&'static str>, Vec<&'static str>);
+    #[derive(Clone)]
+    struct Emit {
+        name: &'static str,
+        renamed_from: Option<&'static str>,
+        refs: Vec<&'static str>,
+    }
 
-    struct Scripted(Vec<Entry>);
+    fn emit(name: &'static str) -> Emit {
+        Emit {
+            name,
+            renamed_from: None,
+            refs: Vec::new(),
+        }
+    }
+
+    impl Emit {
+        fn renamed_from(mut self, old: &'static str) -> Self {
+            self.renamed_from = Some(old);
+            self
+        }
+
+        fn referring_to(mut self, name: &'static str) -> Self {
+            self.refs.push(name);
+            self
+        }
+    }
+
+    struct Scripted(Vec<Emit>);
 
     impl Importer for Scripted {
         fn supported_extensions(&self) -> &'static [&'static str] {
@@ -706,14 +755,14 @@ mod tests {
             _source_path: &Path,
             ctx: &mut ImportContext,
         ) -> Result<(), concerto_asset_import::ImportError> {
-            for (name, old, _) in &self.0 {
-                if let Some(old) = old {
-                    ctx.renamed_from(name, old);
+            for emit in &self.0 {
+                if let Some(old) = emit.renamed_from {
+                    ctx.renamed_from(emit.name, old);
                 }
             }
-            for (name, _, refs) in &self.0 {
-                let refs = refs.iter().map(|r| ctx.sub_asset_id(r)).collect();
-                ctx.emit(name, &Blob { refs })?;
+            for emit in &self.0 {
+                let refs = emit.refs.iter().map(|r| ctx.sub_asset_id(r)).collect();
+                ctx.emit(emit.name, &Blob { refs })?;
             }
             Ok(())
         }
@@ -741,9 +790,9 @@ mod tests {
             self.dir.path().canonicalize().expect("canonical tempdir")
         }
 
-        fn import(&self, entries: Vec<Entry>) -> anyhow::Result<ImportedSource> {
+        fn import(&self, emits: Vec<Emit>) -> anyhow::Result<ImportedSource> {
             import_with(
-                &Scripted(entries),
+                &Scripted(emits),
                 "bvh",
                 &self.source,
                 &self.source,
@@ -777,6 +826,15 @@ mod tests {
                 .map(|(key, output)| (key, output.asset_id))
                 .collect()
         }
+
+        fn strip_provenance(&self, entry: &AssetEntry) {
+            let path = self.root().join(&entry.address);
+            let file = std::fs::read(&path).unwrap();
+            let (mut header, bytes) =
+                concerto_foundation::assets::content::read_content_asset(&file).unwrap();
+            header.provenance = None;
+            std::fs::write(&path, write_content_asset(&header, bytes).unwrap()).unwrap();
+        }
     }
 
     fn entry<'a>(imported: &'a ImportedSource, name: &str) -> &'a AssetEntry {
@@ -793,23 +851,22 @@ mod tests {
     }
 
     #[test]
-    fn a_renamed_sub_asset_keeps_its_id_file_and_references() {
+    fn a_renamed_sub_asset_keeps_its_id_file_and_references_and_a_clashing_hint_writes_nothing() {
         let fixture = Fixture::new();
-        let first = fixture.import(vec![("animation/0", None, vec![])]).unwrap();
+        let first = fixture.import(vec![emit("animation/0")]).unwrap();
         let old = entry(&first, "animation/0").clone();
 
         let second = fixture
             .import(vec![
-                ("animation/clip", Some("animation/0"), vec![]),
-                ("scene", None, vec!["animation/clip"]),
+                emit("animation/clip").renamed_from("animation/0"),
+                emit("scene").referring_to("animation/clip"),
             ])
             .unwrap();
 
         let renamed = entry(&second, "animation/clip");
         assert_eq!(renamed.id, old.id);
         assert_eq!(renamed.address, old.address);
-        let path = fixture.root().join(&old.address);
-        let header = read_content_asset_header(&path).unwrap();
+        let header = read_content_asset_header(&fixture.root().join(&old.address)).unwrap();
         assert_eq!(header.provenance.unwrap().sub_asset, "animation/clip");
         let outputs = fixture.outputs();
         assert_eq!(outputs.get("animation/clip"), Some(&old.id));
@@ -817,45 +874,125 @@ mod tests {
         let scene = entry(&second, "scene");
         let header = read_content_asset_header(&fixture.root().join(&scene.address)).unwrap();
         assert_eq!(header.references, vec![old.id]);
-    }
 
-    #[test]
-    fn a_second_import_after_a_rename_keeps_the_same_id() {
-        let fixture = Fixture::new();
-        let first = fixture.import(vec![("animation/0", None, vec![])]).unwrap();
-        let id = entry(&first, "animation/0").id;
-        fixture
-            .import(vec![("animation/clip", Some("animation/0"), vec![])])
-            .unwrap();
-
-        let third = fixture
-            .import(vec![("animation/clip", None, vec![])])
-            .unwrap();
+        let third = fixture.import(vec![emit("animation/clip")]).unwrap();
         let fourth = fixture
-            .import(vec![("animation/clip", Some("animation/0"), vec![])])
+            .import(vec![emit("animation/clip").renamed_from("animation/0")])
             .unwrap();
+        assert_eq!(entry(&third, "animation/clip").id, old.id);
+        assert_eq!(entry(&fourth, "animation/clip").id, old.id);
+        assert_eq!(fixture.outputs().get("animation/clip"), Some(&old.id));
 
-        assert_eq!(entry(&third, "animation/clip").id, id);
-        assert_eq!(entry(&fourth, "animation/clip").id, id);
-        assert_eq!(fixture.outputs().get("animation/clip"), Some(&id));
-    }
-
-    #[test]
-    fn two_names_hinting_one_old_name_fail_without_writing() {
-        let fixture = Fixture::new();
-        fixture.import(vec![("animation/0", None, vec![])]).unwrap();
         let before = fixture.snapshot();
-
-        let result = fixture.import(vec![
-            ("animation/a", Some("animation/0"), vec![]),
-            ("animation/b", Some("animation/0"), vec![]),
+        let clash = fixture.import(vec![
+            emit("animation/a").renamed_from("animation/clip"),
+            emit("animation/b").renamed_from("animation/clip"),
         ]);
-
-        assert!(result.is_err());
+        assert!(clash.is_err());
         assert_eq!(fixture.snapshot(), before);
     }
 
-    static LOGS: Mutex<Vec<(std::thread::ThreadId, String)>> = Mutex::new(Vec::new());
+    #[derive(Clone, Copy, Debug)]
+    enum Tamper {
+        Nothing,
+        SaveFromTheEditor,
+        DeleteTheFile,
+    }
+
+    struct Prune {
+        tamper: Tamper,
+        first: Vec<Emit>,
+        second: Vec<Emit>,
+        old_name: &'static str,
+        deleted: bool,
+        file_kept: bool,
+        key_kept: bool,
+    }
+
+    #[test]
+    fn an_output_the_importer_stops_emitting_is_deleted_unless_the_editor_saved_it() {
+        let cases = [
+            Prune {
+                tamper: Tamper::Nothing,
+                first: vec![emit("keep"), emit("drop")],
+                second: vec![emit("keep")],
+                old_name: "drop",
+                deleted: true,
+                file_kept: false,
+                key_kept: false,
+            },
+            Prune {
+                tamper: Tamper::SaveFromTheEditor,
+                first: vec![emit("keep"), emit("drop")],
+                second: vec![emit("keep")],
+                old_name: "drop",
+                deleted: false,
+                file_kept: true,
+                key_kept: true,
+            },
+            Prune {
+                tamper: Tamper::DeleteTheFile,
+                first: vec![emit("keep"), emit("drop")],
+                second: vec![emit("keep")],
+                old_name: "drop",
+                deleted: false,
+                file_kept: false,
+                key_kept: false,
+            },
+            Prune {
+                tamper: Tamper::SaveFromTheEditor,
+                first: vec![emit("animation/0")],
+                second: vec![emit("animation/clip").renamed_from("animation/0")],
+                old_name: "animation/0",
+                deleted: false,
+                file_kept: true,
+                key_kept: true,
+            },
+        ];
+        for case in &cases {
+            let fixture = Fixture::new();
+            let first = fixture.import(case.first.clone()).unwrap();
+            let old = entry(&first, case.old_name).clone();
+            let path = fixture.root().join(&old.address);
+            match case.tamper {
+                Tamper::Nothing => {}
+                Tamper::SaveFromTheEditor => fixture.strip_provenance(&old),
+                Tamper::DeleteTheFile => std::fs::remove_file(&path).unwrap(),
+            }
+
+            let second = fixture.import(case.second.clone()).unwrap();
+
+            let label = format!("{:?} {}", case.tamper, case.old_name);
+            let removed: &[AssetId] = if case.deleted { &[old.id] } else { &[] };
+            assert_eq!(second.removed, removed, "{label}");
+            assert_eq!(path.exists(), case.file_kept, "{label}");
+            let outputs = fixture.outputs();
+            let expected = case.key_kept.then_some(&old.id);
+            assert_eq!(outputs.get(case.old_name), expected, "{label}");
+            for kept in case
+                .second
+                .iter()
+                .filter(|emit| emit.renamed_from.is_none())
+            {
+                assert_eq!(
+                    outputs.get(kept.name),
+                    Some(&entry(&first, kept.name).id),
+                    "{label}"
+                );
+                assert!(fixture
+                    .root()
+                    .join(&entry(&second, kept.name).address)
+                    .exists());
+            }
+        }
+    }
+
+    struct LogLine {
+        thread: std::thread::ThreadId,
+        text: String,
+    }
+
+    static LOGS: Mutex<Vec<LogLine>> = Mutex::new(Vec::new());
 
     struct Capture;
 
@@ -865,9 +1002,10 @@ mod tests {
         }
 
         fn log(&self, record: &log::Record) {
-            LOGS.lock()
-                .unwrap()
-                .push((std::thread::current().id(), record.args().to_string()));
+            LOGS.lock().unwrap().push(LogLine {
+                thread: std::thread::current().id(),
+                text: record.args().to_string(),
+            });
         }
 
         fn flush(&self) {}
@@ -881,8 +1019,8 @@ mod tests {
             LOGS.lock()
                 .unwrap()
                 .iter()
-                .filter(|(thread, _)| *thread == me)
-                .map(|(_, line)| line.clone())
+                .filter(|line| line.thread == me)
+                .map(|line| line.text.clone())
                 .collect()
         }
     }
@@ -894,83 +1032,8 @@ mod tests {
             log::set_max_level(log::LevelFilter::Warn);
         });
         let me = std::thread::current().id();
-        LOGS.lock().unwrap().retain(|(thread, _)| *thread != me);
+        LOGS.lock().unwrap().retain(|line| line.thread != me);
         Logs
-    }
-
-    fn strip_provenance(fixture: &Fixture, entry: &AssetEntry) {
-        let path = fixture.root().join(&entry.address);
-        let file = std::fs::read(&path).unwrap();
-        let (mut header, bytes) =
-            concerto_foundation::assets::content::read_content_asset(&file).unwrap();
-        header.provenance = None;
-        std::fs::write(&path, write_content_asset(&header, bytes).unwrap()).unwrap();
-    }
-
-    #[test]
-    fn an_output_the_importer_stops_emitting_is_deleted() {
-        let fixture = Fixture::new();
-        let first = fixture
-            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
-            .unwrap();
-        let dropped = entry(&first, "drop").clone();
-        let kept = entry(&first, "keep").clone();
-
-        let second = fixture.import(vec![("keep", None, vec![])]).unwrap();
-
-        assert_eq!(second.removed, vec![dropped.id]);
-        assert!(!fixture.root().join(&dropped.address).exists());
-        assert!(fixture.root().join(&kept.address).exists());
-        let outputs = fixture.outputs();
-        assert!(!outputs.contains_key("drop"));
-        assert_eq!(outputs.get("keep"), Some(&kept.id));
-    }
-
-    #[test]
-    fn an_obsolete_output_saved_from_the_editor_is_kept() {
-        let fixture = Fixture::new();
-        let first = fixture
-            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
-            .unwrap();
-        let dropped = entry(&first, "drop").clone();
-        strip_provenance(&fixture, &dropped);
-
-        let second = fixture.import(vec![("keep", None, vec![])]).unwrap();
-
-        assert!(second.removed.is_empty());
-        assert!(fixture.root().join(&dropped.address).exists());
-        assert_eq!(fixture.outputs().get("drop"), Some(&dropped.id));
-    }
-
-    #[test]
-    fn an_obsolete_output_whose_file_is_missing_only_loses_its_key() {
-        let fixture = Fixture::new();
-        let first = fixture
-            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
-            .unwrap();
-        let dropped = entry(&first, "drop").clone();
-        std::fs::remove_file(fixture.root().join(&dropped.address)).unwrap();
-
-        let second = fixture.import(vec![("keep", None, vec![])]).unwrap();
-
-        assert!(second.removed.is_empty());
-        assert!(!fixture.outputs().contains_key("drop"));
-    }
-
-    #[test]
-    fn an_editor_saved_file_under_a_hinted_rename_keeps_its_file_and_key() {
-        let fixture = Fixture::new();
-        let first = fixture.import(vec![("animation/0", None, vec![])]).unwrap();
-        let old = entry(&first, "animation/0").clone();
-        strip_provenance(&fixture, &old);
-
-        let second = fixture
-            .import(vec![("animation/clip", Some("animation/0"), vec![])])
-            .unwrap();
-
-        assert!(second.removed.is_empty());
-        assert!(fixture.root().join(&old.address).exists());
-        assert_eq!(fixture.outputs().get("animation/0"), Some(&old.id));
     }
 
     #[test]
@@ -978,20 +1041,17 @@ mod tests {
         let fixture = Fixture::new();
         let first = fixture
             .import(vec![
-                ("drop", None, vec![]),
-                ("rewritten", None, vec!["drop"]),
-                ("untouched", None, vec!["drop"]),
+                emit("drop"),
+                emit("rewritten").referring_to("drop"),
+                emit("untouched").referring_to("drop"),
             ])
             .unwrap();
         let untouched = entry(&first, "untouched").clone();
-        strip_provenance(&fixture, &untouched);
+        fixture.strip_provenance(&untouched);
         let logger = capture_logs();
 
         fixture
-            .import(vec![
-                ("rewritten", None, vec![]),
-                ("untouched", None, vec![]),
-            ])
+            .import(vec![emit("rewritten"), emit("untouched")])
             .unwrap();
 
         let lines = logger.lines();
@@ -1010,15 +1070,13 @@ mod tests {
     #[test]
     fn a_staging_failure_leaves_the_obsolete_file_in_place() {
         let fixture = Fixture::new();
-        let first = fixture
-            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
-            .unwrap();
+        let first = fixture.import(vec![emit("keep"), emit("drop")]).unwrap();
         let dropped = entry(&first, "drop").clone();
         let before = fixture.snapshot();
         let missing = fixture.root().join("elsewhere").join("a.test");
 
         let result = import_with(
-            &Scripted(vec![("keep", None, vec![])]),
+            &Scripted(vec![emit("keep")]),
             "bvh",
             &missing,
             &fixture.source,

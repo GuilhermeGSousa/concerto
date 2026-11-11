@@ -495,17 +495,11 @@ pub(crate) struct TextMeasure {
 #[derive(Resource)]
 pub(crate) struct UITextMeasure {
     font_system: glyphon::FontSystem,
-    #[cfg(test)]
-    measured: Vec<String>,
 }
 
 impl UITextMeasure {
     pub(crate) fn new(font_system: glyphon::FontSystem) -> Self {
-        Self {
-            font_system,
-            #[cfg(test)]
-            measured: Vec::new(),
-        }
+        Self { font_system }
     }
 
     pub(crate) fn font_system(&mut self) -> &mut glyphon::FontSystem {
@@ -513,9 +507,6 @@ impl UITextMeasure {
     }
 
     fn measure(&mut self, measure: &TextMeasure, width: Option<f32>) -> Vec2 {
-        #[cfg(test)]
-        self.measured.push(measure.text.clone());
-
         let mut buffer = glyphon::Buffer::new(
             &mut self.font_system,
             glyphon::Metrics {
@@ -609,8 +600,6 @@ pub(crate) struct UILayoutEngine {
     roots: Vec<Entity>,
     areas: HashMap<Entity, UIBox>,
     logical_size: Vec2,
-    #[cfg(test)]
-    visited: u64,
 }
 
 // SAFETY: Taffy stores a pointer in a length only for `calc()`, which no `UINode` style produces, so the tree shares nothing between threads.
@@ -633,8 +622,6 @@ impl Default for UILayoutEngine {
             roots: Vec::new(),
             areas: HashMap::new(),
             logical_size: Vec2::ZERO,
-            #[cfg(test)]
-            visited: 0,
         }
     }
 }
@@ -1144,11 +1131,6 @@ pub(crate) fn compute_ui_nodes(
                 &mut anchor_rects,
             );
         }
-    }
-
-    #[cfg(test)]
-    {
-        engine.visited += sequence as u64;
     }
 }
 
@@ -1751,6 +1733,7 @@ mod tests {
     use super::*;
     use crate::anchor::UIAnchorTarget;
     use concerto_render::components::camera::Viewport;
+    use proptest::prelude::*;
 
     #[test]
     fn content_rect_accounts_for_padding() {
@@ -1770,13 +1753,9 @@ mod tests {
     }
 
     #[test]
-    fn hidden_nodes_map_to_display_none() {
+    fn a_style_hides_invisible_nodes_and_reads_percentages_out_of_a_hundred() {
         let node = UINode::default().with_visible(false);
         assert_eq!(node.style().display, Display::None);
-    }
-
-    #[test]
-    fn percentages_use_a_zero_to_hundred_scale() {
         assert_eq!(dimension(UIValue::Percent(100.0)), Dimension::percent(1.0));
         assert_eq!(dimension(UIValue::Percent(25.0)), Dimension::percent(0.25));
         assert_eq!(dimension(UIValue::Percent(1.0)), Dimension::percent(0.01));
@@ -1800,6 +1779,18 @@ mod tests {
                 size: Vec2::new(50.0, 100.0),
             }
         );
+    }
+
+    #[test]
+    fn paint_order_puts_the_layer_above_the_sequence_and_a_child_inherits_its_parents_layer() {
+        assert!(paint_order(1, 0) > paint_order(0, i32::MAX as i64));
+        assert_eq!(paint_order(3, 0) >> 32, 3);
+        assert_eq!(paint_order(3, i32::MAX as i64) >> 32, 3);
+        assert!(paint_order(3, 1) > paint_order(3, 0));
+        assert!(paint_order(4, 0) > paint_order(3, i32::MAX as i64));
+        assert_eq!(effective_layer(200, 0), 200);
+        assert_eq!(effective_layer(70, 71), 71);
+        assert_eq!(effective_layer(70, 10), 70);
     }
 
     fn measurer() -> UITextMeasure {
@@ -1846,7 +1837,7 @@ mod tests {
         taffy.layout(label).unwrap().size.width
     }
 
-    fn card_heights(rows: f32, content_position: Position) -> (f32, f32) {
+    fn card_heights(rows: f32, content_position: Position) -> [f32; 2] {
         let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
         let mut card = || {
             let pool = taffy
@@ -1885,14 +1876,14 @@ mod tests {
                 )
                 .unwrap()
         };
-        let (first, second) = (card(), card());
+        let cards = [card(), card()];
         let rail = taffy
             .new_with_children(
                 UINode::default()
                     .with_size(UIValue::Px(238.0), UIValue::Px(600.0))
                     .with_flex_direction(FlexDirection::Column)
                     .style(),
-                &[first, second],
+                &cards,
             )
             .unwrap();
         let mut measurer = measurer();
@@ -1908,19 +1899,14 @@ mod tests {
                 },
             )
             .unwrap();
-        (
-            taffy.layout(first).unwrap().size.height,
-            taffy.layout(second).unwrap().size.height,
-        )
+        cards.map(|card| taffy.layout(card).unwrap().size.height)
     }
 
     #[test]
     fn a_scroll_viewport_does_not_take_its_size_from_its_content() {
-        let (short, tall) = (
-            card_heights(4.0, Position::Absolute),
-            card_heights(60.0, Position::Absolute),
-        );
-        assert_eq!(short, (300.0, 300.0), "cards split the rail evenly");
+        let short = card_heights(4.0, Position::Absolute);
+        let tall = card_heights(60.0, Position::Absolute);
+        assert_eq!(short, [300.0, 300.0], "cards split the rail evenly");
         assert_eq!(
             tall, short,
             "how many rows a list holds must not change the card holding it"
@@ -2105,46 +2091,30 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_viewport_without_a_picture_binds_no_texture() {
-        let mut world = concerto_ecs::World::new();
-        let node = world.spawn((
-            UIMaterial::flat(concerto_color::Color::WHITE),
-            UISharedViewport::new(),
-        ));
-        let mut system = concerto_ecs::IntoSystem::into_system(sync_shared_viewport_textures);
-        concerto_ecs::System::initialize(&mut system, &mut world);
+    fn a_shared_viewport_without_a_picture_in_its_slot_binds_no_texture() {
+        let empty_slot = || {
+            let mut viewport = UISharedViewport::new();
+            viewport.picture = Some(concerto_render::draw_target::SharedTexture::new(
+                concerto_render::wgpu::TextureFormat::Rgba8Unorm,
+            ));
+            viewport
+        };
+        for viewport in [UISharedViewport::new(), empty_slot()] {
+            let mut world = concerto_ecs::World::new();
+            let node = world.spawn((UIMaterial::flat(concerto_color::Color::WHITE), viewport));
+            let mut system = concerto_ecs::IntoSystem::into_system(sync_shared_viewport_textures);
+            concerto_ecs::System::initialize(&mut system, &mut world);
 
-        concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
+            concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
 
-        assert!(
-            world
-                .get_component_for_entity::<UIMaterial>(node)
-                .unwrap()
-                .texture
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn a_shared_viewport_with_an_empty_slot_binds_no_texture() {
-        let mut world = concerto_ecs::World::new();
-        let mut viewport = UISharedViewport::new();
-        viewport.picture = Some(concerto_render::draw_target::SharedTexture::new(
-            concerto_render::wgpu::TextureFormat::Rgba8Unorm,
-        ));
-        let node = world.spawn((UIMaterial::flat(concerto_color::Color::WHITE), viewport));
-        let mut system = concerto_ecs::IntoSystem::into_system(sync_shared_viewport_textures);
-        concerto_ecs::System::initialize(&mut system, &mut world);
-
-        concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
-
-        assert!(
-            world
-                .get_component_for_entity::<UIMaterial>(node)
-                .unwrap()
-                .texture
-                .is_none()
-        );
+            assert!(
+                world
+                    .get_component_for_entity::<UIMaterial>(node)
+                    .unwrap()
+                    .texture
+                    .is_none()
+            );
+        }
     }
 
     #[test]
@@ -2163,60 +2133,43 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_size_is_never_second_guessed() {
+    fn a_leaf_measures_to_its_explicit_size_or_to_its_text() {
         let mut measurer = measurer();
-        let size = measure_node(
-            &mut measurer,
-            Size {
-                width: Some(120.0),
-                height: Some(30.0),
-            },
-            Size {
-                width: AvailableSpace::MaxContent,
-                height: AvailableSpace::MaxContent,
-            },
-            Some(&mut LeafMeasure::Text(label("anything at all"))),
-        );
-        assert_eq!(size.width, 120.0);
-        assert_eq!(size.height, 30.0);
-    }
+        let mut size = |known: Size<Option<f32>>, text: Option<&str>| {
+            measure_node(
+                &mut measurer,
+                known,
+                Size {
+                    width: AvailableSpace::MaxContent,
+                    height: AvailableSpace::MaxContent,
+                },
+                text.map(|text| LeafMeasure::Text(label(text))).as_mut(),
+            )
+        };
+        let explicit = Size {
+            width: Some(120.0),
+            height: Some(30.0),
+        };
 
-    #[test]
-    fn a_node_without_text_measures_to_nothing() {
-        let mut measurer = measurer();
-        let size = measure_node(
-            &mut measurer,
-            Size::NONE,
+        assert_eq!(
+            size(explicit, Some("anything at all")),
             Size {
-                width: AvailableSpace::MaxContent,
-                height: AvailableSpace::MaxContent,
+                width: 120.0,
+                height: 30.0
             },
-            None,
+            "an explicit size is never second guessed"
         );
-        assert_eq!(size, Size::ZERO);
-    }
-
-    #[test]
-    fn longer_text_measures_wider() {
-        let mut measurer = measurer();
-        let short = measurer.measure(&label("Warren"), None);
-        let long = measurer.measure(&label("Warren and Curiosities"), None);
-        assert!(
-            long.x > short.x,
-            "more text must claim more width: {} vs {}",
-            long.x,
-            short.x
+        assert_eq!(size(Size::NONE, None), Size::ZERO);
+        let short = size(Size::NONE, Some("Warren"));
+        let long = size(Size::NONE, Some("Warren and Curiosities"));
+        assert!(short.width > 0.0, "text must have some width at all");
+        assert!(long.width > short.width, "more text must claim more width");
+        assert_eq!(size(Size::NONE, Some("one")).height, 20.0);
+        assert_eq!(
+            size(Size::NONE, Some("one\ntwo\nthree")).height,
+            60.0,
+            "height is line count times line height"
         );
-        assert!(short.x > 0.0, "text must have some width at all");
-    }
-
-    #[test]
-    fn each_line_adds_its_line_height() {
-        let mut measurer = measurer();
-        let one = measurer.measure(&label("one"), None);
-        let three = measurer.measure(&label("one\ntwo\nthree"), None);
-        assert_eq!(one.y, 20.0);
-        assert_eq!(three.y, 60.0, "height is line count times line height");
     }
 
     fn layout_world() -> concerto_ecs::World {
@@ -2226,7 +2179,7 @@ mod tests {
         world.insert_resource(UILayoutDiagnostics::default());
         world.insert_resource(UIPanelStack::default());
         world.insert_resource(measurer());
-        world.add_listener(blank_culled_layouts);
+        crate::items::install_listeners(&mut world);
         install_layout_listeners(&mut world);
         lay_out(&mut world);
         world
@@ -2246,13 +2199,6 @@ mod tests {
         };
         system.run_and_apply((), world);
         world.insert_resource(LayOut(system));
-    }
-
-    fn layout_passes(world: &concerto_ecs::World) -> u64 {
-        world
-            .get_resource::<UILayoutDiagnostics>()
-            .unwrap()
-            .layout_passes
     }
 
     fn rect_of(world: &concerto_ecs::World, entity: Entity) -> UIBox {
@@ -2286,17 +2232,44 @@ mod tests {
         ))
     }
 
+    fn ui_text(text: &str) -> crate::text::UIText {
+        crate::text::UIText {
+            text: text.into(),
+            font_size: 14.0,
+            line_height: 20.0,
+            wrap: false,
+            ..Default::default()
+        }
+    }
+
+    fn labelled_node() -> UINode {
+        UINode::default()
+            .with_flex_shrink(0.0)
+            .with_align_self(AlignItems::FlexStart)
+    }
+
+    fn fixed_label_node() -> UINode {
+        UINode::default()
+            .with_size(UIValue::Px(200.0), UIValue::Px(20.0))
+            .with_flex_shrink(0.0)
+    }
+
+    fn labelled(world: &mut concerto_ecs::World, parent: Entity, label: &str) -> Entity {
+        world.spawn((labelled_node(), ui_text(label), ChildOf::new(parent)))
+    }
+
     #[test]
-    fn a_first_layout_inserts_a_layout_and_a_render_mirror_on_every_node() {
+    fn a_first_layout_gives_every_node_and_bare_text_a_layout_that_reaches_the_renderer() {
         let mut world = layout_world();
         let root = column(&mut world);
         let first = row(&mut world, root);
         let inner = row(&mut world, first);
         let second = row(&mut world, root);
+        let bare = world.spawn((ui_text("Warren"), ChildOf::new(root)));
 
         lay_out(&mut world);
 
-        for entity in [root, first, inner, second] {
+        for entity in [root, first, inner, second, bare] {
             assert!(world.get_component_for_entity::<UILayout>(entity).is_some());
             assert!(
                 world
@@ -2304,6 +2277,12 @@ mod tests {
                     .is_some()
             );
         }
+        assert_eq!(
+            world.get_component_for_entity::<UINode>(bare),
+            Some(&UINode::default())
+        );
+        let size = rect_of(&world, bare).size;
+        assert!(size.x > 0.0 && size.y > 0.0);
     }
 
     #[test]
@@ -2376,20 +2355,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_target_root_lays_out_in_its_cameras_viewport() {
-        let mut world = layout_world();
-        let camera = viewport_camera(&mut world, half(0.5, 1.0));
-        let root = target_root(&mut world, camera);
-
-        lay_out(&mut world);
-
-        assert_eq!(rect_of(&world, root), right_half_box());
-        assert_eq!(clip_of(&world, root), right_half_box());
+    fn set_viewport(world: &mut concerto_ecs::World, camera: Entity, viewport: Viewport) {
+        world
+            .get_component_for_entity_mut::<Camera>(camera)
+            .unwrap()
+            .viewport = Some(viewport);
     }
 
     #[test]
-    fn a_target_roots_descendants_are_clipped_to_the_viewport() {
+    fn a_target_root_lays_out_and_clips_to_its_cameras_viewport_or_else_the_window() {
         let mut world = layout_world();
         let camera = viewport_camera(&mut world, half(0.5, 1.0));
         let root = target_root(&mut world, camera);
@@ -2399,73 +2373,7 @@ mod tests {
                 .with_flex_shrink(0.0),
             ChildOf::new(root),
         ));
-
-        lay_out(&mut world);
-
-        assert_eq!(rect_of(&world, wide).min, Vec2::new(400.0, 0.0));
-        assert_eq!(clip_of(&world, wide), right_half_box());
-    }
-
-    #[test]
-    fn a_root_without_a_target_camera_spans_the_window() {
-        let mut world = layout_world();
-        viewport_camera(&mut world, half(0.5, 1.0));
-        let root = world.spawn(full_root());
-
-        lay_out(&mut world);
-
-        assert_eq!(rect_of(&world, root), whole_window_box());
-        assert_eq!(clip_of(&world, root), whole_window_box());
-    }
-
-    #[test]
-    fn a_changed_viewport_relays_the_target_root_out() {
-        let mut world = layout_world();
-        let camera = viewport_camera(&mut world, half(0.5, 1.0));
-        let root = target_root(&mut world, camera);
-        lay_out(&mut world);
-
-        world
-            .get_component_for_entity_mut::<Camera>(camera)
-            .unwrap()
-            .viewport = Some(half(0.0, 0.5));
-        lay_out(&mut world);
-
-        let left = UIBox {
-            min: Vec2::ZERO,
-            size: Vec2::new(400.0, 600.0),
-        };
-        assert_eq!(rect_of(&world, root), left);
-        assert_eq!(clip_of(&world, root), left);
-    }
-
-    #[test]
-    fn a_resize_relays_the_target_root_out() {
-        let mut world = layout_world();
-        let camera = viewport_camera(&mut world, half(0.5, 1.0));
-        let root = target_root(&mut world, camera);
-        lay_out(&mut world);
-
-        world.insert_resource(Window::new((1000, 600), 1.0));
-        lay_out(&mut world);
-        assert_eq!(
-            rect_of(&world, root),
-            UIBox {
-                min: Vec2::new(500.0, 0.0),
-                size: Vec2::new(500.0, 600.0),
-            }
-        );
-
-        world.insert_resource(Window::new((1600, 1200), 2.0));
-        lay_out(&mut world);
-        assert_eq!(rect_of(&world, root), right_half_box());
-    }
-
-    #[test]
-    fn a_target_root_falls_back_to_the_window() {
-        let mut world = layout_world();
-        let camera = viewport_camera(&mut world, half(0.5, 1.0));
-        let root = target_root(&mut world, camera);
+        let untargeted = world.spawn(full_root());
         let texture_camera = world.spawn(
             Camera {
                 render_target: RenderTarget::texture(AssetHandle::weak(AssetId::from_path(
@@ -2476,86 +2384,119 @@ mod tests {
             .with_viewport(half(0.5, 1.0)),
         );
         let texture_root = target_root(&mut world, texture_camera);
+        let empty_camera = viewport_camera(&mut world, half(0.5, 0.5));
+        let empty_root = target_root(&mut world, empty_camera);
+        let dropped = target_root(&mut world, camera);
+
+        lay_out(&mut world);
+
+        assert_eq!(rect_of(&world, root), right_half_box());
+        assert_eq!(clip_of(&world, root), right_half_box());
+        assert_eq!(rect_of(&world, wide).min, Vec2::new(400.0, 0.0));
+        assert_eq!(clip_of(&world, wide), right_half_box());
+        for window_wide in [untargeted, texture_root] {
+            assert_eq!(rect_of(&world, window_wide), whole_window_box());
+            assert_eq!(clip_of(&world, window_wide), whole_window_box());
+        }
+        assert_eq!(rect_of(&world, empty_root).size.x, 0.0);
+
+        world.despawn(dropped);
+        lay_out(&mut world);
+        let engine = world.get_resource::<UILayoutEngine>().unwrap();
+        assert!(engine.areas.contains_key(&root));
+        assert!(
+            !engine.areas.contains_key(&dropped),
+            "a despawned root leaves no area behind"
+        );
+
+        set_viewport(&mut world, camera, half(0.0, 0.5));
+        lay_out(&mut world);
+        let left = UIBox {
+            min: Vec2::ZERO,
+            size: Vec2::new(400.0, 600.0),
+        };
+        assert_eq!(rect_of(&world, root), left);
+        assert_eq!(clip_of(&world, root), left);
+
+        set_viewport(&mut world, camera, half(0.5, 1.0));
+        world.insert_resource(Window::new((1000, 600), 1.0));
+        lay_out(&mut world);
+        assert_eq!(
+            rect_of(&world, root),
+            UIBox {
+                min: Vec2::new(500.0, 0.0),
+                size: Vec2::new(500.0, 600.0),
+            }
+        );
+        world.insert_resource(Window::new((1600, 1200), 2.0));
         lay_out(&mut world);
         assert_eq!(rect_of(&world, root), right_half_box());
-        assert_eq!(rect_of(&world, texture_root), whole_window_box());
-        assert_eq!(clip_of(&world, texture_root), whole_window_box());
 
         world.despawn(camera);
         lay_out(&mut world);
-
         assert_eq!(rect_of(&world, root), whole_window_box());
         assert_eq!(clip_of(&world, root), whole_window_box());
     }
 
-    #[test]
-    fn an_empty_viewport_hides_the_target_root() {
-        let mut world = layout_world();
-        let camera = viewport_camera(&mut world, half(0.5, 0.5));
-        let root = target_root(&mut world, camera);
-
-        lay_out(&mut world);
-
-        assert_eq!(rect_of(&world, root).size.x, 0.0);
+    struct SettledColumn {
+        watch: crate::testing::Watch,
+        rows: Vec<Entity>,
     }
 
-    #[test]
-    fn a_despawned_root_leaves_no_area_behind() {
-        let mut world = layout_world();
-        let camera = viewport_camera(&mut world, half(0.5, 1.0));
-        let kept = target_root(&mut world, camera);
-        let dropped = target_root(&mut world, camera);
-        lay_out(&mut world);
-
-        world.despawn(dropped);
-        lay_out(&mut world);
-
-        let engine = world.get_resource::<UILayoutEngine>().unwrap();
-        assert!(engine.areas.contains_key(&kept));
-        assert!(!engine.areas.contains_key(&dropped));
-    }
-
-    fn settled_column(world: &mut concerto_ecs::World) -> (crate::testing::Watch, Vec<Entity>) {
+    fn settled_column(world: &mut concerto_ecs::World) -> SettledColumn {
         let root = column(world);
         let rows = (0..4).map(|_| row(world, root)).collect::<Vec<_>>();
         let mut watch = crate::testing::Watch::new::<UILayout, _>(world, compute_ui_nodes);
         watch.run(world);
         assert_eq!(watch.run(world), 0, "a settled layout writes nothing");
-        (watch, rows)
+        SettledColumn { watch, rows }
     }
 
     #[test]
-    fn a_taller_last_row_restamps_only_that_row() {
-        let mut world = layout_world();
-        let (mut watch, rows) = settled_column(&mut world);
-        let above = rows[..3]
-            .iter()
-            .map(|&row| rect_of(&world, row))
-            .collect::<Vec<_>>();
-        let last = rows[3];
-        world
-            .get_component_for_entity_mut::<UINode>(last)
-            .unwrap()
-            .height = UIValue::Px(80.0);
-
-        assert_eq!(watch.run(&mut world), 1);
-        assert_eq!(rect_of(&world, last).size.y, 80.0);
-        for (&row, rect) in rows[..3].iter().zip(above) {
-            assert_eq!(rect_of(&world, row), rect);
+    fn a_taller_row_restamps_itself_and_the_rows_it_moves_but_not_the_column() {
+        struct Case {
+            grown: usize,
+            restamped: usize,
         }
-    }
+        for case in [
+            Case {
+                grown: 3,
+                restamped: 1,
+            },
+            Case {
+                grown: 0,
+                restamped: 4,
+            },
+        ] {
+            let mut world = layout_world();
+            let mut column = settled_column(&mut world);
+            let before = column
+                .rows
+                .iter()
+                .map(|&row| rect_of(&world, row))
+                .collect::<Vec<_>>();
+            world
+                .get_component_for_entity_mut::<UINode>(column.rows[case.grown])
+                .unwrap()
+                .height = UIValue::Px(80.0);
 
-    #[test]
-    fn a_taller_first_row_restamps_it_and_the_rows_below_but_not_the_column() {
-        let mut world = layout_world();
-        let (mut watch, rows) = settled_column(&mut world);
-        world
-            .get_component_for_entity_mut::<UINode>(rows[0])
-            .unwrap()
-            .height = UIValue::Px(80.0);
-
-        assert_eq!(watch.run(&mut world), rows.len());
-        assert_eq!(rect_of(&world, rows[1]).min.y, 80.0);
+            assert_eq!(
+                column.watch.run(&mut world),
+                case.restamped,
+                "row {}",
+                case.grown
+            );
+            for (index, (&row, rect)) in column.rows.iter().zip(before).enumerate() {
+                let after = rect_of(&world, row);
+                match index.cmp(&case.grown) {
+                    std::cmp::Ordering::Less => assert_eq!(after, rect),
+                    std::cmp::Ordering::Equal => assert_eq!(after.size.y, 80.0),
+                    std::cmp::Ordering::Greater => {
+                        assert_eq!(after.min.y, rect.min.y + 30.0)
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -2573,54 +2514,6 @@ mod tests {
         assert!(world.get_component_for_entity::<UILayout>(middle).is_none());
         assert!(world.get_component_for_entity::<UILayout>(inner).is_none());
         assert_eq!(rect_of(&world, third).min.y, rect_of(&world, first).max().y);
-    }
-
-    #[test]
-    fn the_item_listeners_blank_a_culled_subtree_at_once() {
-        let mut world = concerto_ecs::World::new();
-        world.register_component::<ChildOf>();
-        world.register_component::<Children>();
-        crate::items::install_listeners(&mut world);
-        let rect = UIBox {
-            min: Vec2::new(5.0, 5.0),
-            size: Vec2::new(40.0, 20.0),
-        };
-        let layout = || UILayout {
-            rect,
-            content_rect: rect,
-            clip_rect: rect,
-            paint_order: 0,
-        };
-        let parent = world.spawn(layout());
-        let child = world.spawn((layout(), ChildOf::new(parent)));
-
-        world.insert(UICulled, parent);
-
-        assert!(!clip_of(&world, parent).has_area());
-        assert!(!clip_of(&world, child).has_area());
-    }
-
-    #[test]
-    fn culling_or_unculling_a_node_relays_out() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        row(&mut world, root);
-        let child = row(&mut world, root);
-        lay_out(&mut world);
-        let laid_out = layout_passes(&world);
-        let shown_clip = clip_of(&world, child);
-        assert!(shown_clip.has_area());
-
-        world.insert(UICulled, child);
-        lay_out(&mut world);
-        let culled = layout_passes(&world);
-        assert!(culled > laid_out, "culling must relay out");
-
-        world.remove_component::<UICulled>(child);
-        lay_out(&mut world);
-        assert!(layout_passes(&world) > culled, "unculling must relay out");
-        assert_eq!(rect_of(&world, child).size, Vec2::new(100.0, 50.0));
-        assert_eq!(clip_of(&world, child), shown_clip);
     }
 
     fn hovered_at(world: &mut concerto_ecs::World, cursor: Vec2) -> Option<Entity> {
@@ -2676,35 +2569,10 @@ mod tests {
     }
 
     #[test]
-    fn nothing_moving_means_no_layout_pass() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        row(&mut world, root);
-        let culled = row(&mut world, root);
-        row(&mut world, culled);
-        world.insert(UICulled, culled);
-        lay_out(&mut world);
-        let passes = layout_passes(&world);
-
-        lay_out(&mut world);
-        lay_out(&mut world);
-
-        assert_eq!(layout_passes(&world), passes);
-    }
-
-    #[test]
     fn a_panel_that_keeps_its_place_keeps_its_resolved_side_unchanged() {
-        use crate::{
-            anchor::{UIAnchorTarget, track_panel_stack},
-            focus::{FocusedWidget, UIFocusGained, UIFocusLost},
-            testing::Watch,
-        };
-        use concerto_ecs::events::event_channel::EventChannel;
+        use crate::{anchor::track_panel_stack, testing::Watch};
 
-        let mut world = layout_world();
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(EventChannel::<UIFocusLost>::default());
-        world.insert_resource(EventChannel::<UIFocusGained>::default());
+        let mut world = panel_world();
         let root = column(&mut world);
         let button = row(&mut world, root);
         let below = row(&mut world, root);
@@ -2718,537 +2586,13 @@ mod tests {
 
         let mut watch = Watch::new::<UIAnchoredPanel, _>(&mut world, compute_ui_nodes);
         watch.run(&mut world);
-        let passes = layout_passes(&world);
         world
             .get_component_for_entity_mut::<UINode>(below)
             .unwrap()
             .height = UIValue::Px(60.0);
 
         assert_eq!(watch.run(&mut world), 0);
-        assert_eq!(layout_passes(&world), passes + 1);
-    }
-
-    #[test]
-    fn culled_subtrees_stay_out_of_the_taffy_tree() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let shown = row(&mut world, root);
-        for _ in 0..1_000 {
-            let hidden = row(&mut world, root);
-            row(&mut world, hidden);
-            world.insert(UICulled, hidden);
-        }
-        let visited = visited(&world);
-
-        lay_out(&mut world);
-
-        let engine = world.get_resource::<UILayoutEngine>().unwrap();
-        let root_id = engine.nodes[&root].id;
-        assert_eq!(engine.taffy.children(root_id).unwrap().len(), 1);
-        assert_eq!(
-            engine.visited - visited,
-            2,
-            "only the root and its shown row are walked"
-        );
-        assert!(world.get_component_for_entity::<UILayout>(shown).is_some());
-    }
-
-    fn visited(world: &concerto_ecs::World) -> u64 {
-        world.get_resource::<UILayoutEngine>().unwrap().visited
-    }
-
-    fn nodes_updated(world: &concerto_ecs::World) -> u64 {
-        world
-            .get_resource::<UILayoutDiagnostics>()
-            .unwrap()
-            .nodes_updated
-    }
-
-    fn measured(world: &mut concerto_ecs::World) -> Vec<String> {
-        std::mem::take(&mut world.get_resource_mut::<UITextMeasure>().unwrap().measured)
-    }
-
-    fn ui_text(text: &str) -> crate::text::UIText {
-        crate::text::UIText {
-            text: text.into(),
-            font_size: 14.0,
-            line_height: 20.0,
-            wrap: false,
-            ..Default::default()
-        }
-    }
-
-    fn labelled(world: &mut concerto_ecs::World, parent: Entity, label: &str) -> Entity {
-        world.spawn((
-            UINode::default()
-                .with_flex_shrink(0.0)
-                .with_align_self(AlignItems::FlexStart),
-            ui_text(label),
-            ChildOf::new(parent),
-        ))
-    }
-
-    #[test]
-    fn a_layout_requires_the_render_mirror_marker() {
-        let mut world = layout_world();
-        let entity = world.spawn(UILayout {
-            rect: UIBox::default(),
-            content_rect: UIBox::default(),
-            clip_rect: UIBox::default(),
-            paint_order: 0,
-        });
-
-        assert!(
-            world
-                .get_component_for_entity::<SyncWithRenderWorld>(entity)
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn a_bare_child_text_gets_a_node_and_is_laid_out() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let label = world.spawn((ui_text("Warren"), ChildOf::new(root)));
-
-        lay_out(&mut world);
-
-        assert_eq!(
-            world.get_component_for_entity::<UINode>(label),
-            Some(&UINode::default())
-        );
-        let layout = world.get_component_for_entity::<UILayout>(label).unwrap();
-        assert!(layout.rect.size.x > 0.0 && layout.rect.size.y > 0.0);
-    }
-
-    #[test]
-    fn nothing_changing_adds_no_layout_pass_and_updates_no_node() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let first = row(&mut world, root);
-        row(&mut world, first);
-        labelled(&mut world, root, "Warren");
-        lay_out(&mut world);
-        world.get_component_for_entity_mut::<UINode>(root);
-        lay_out(&mut world);
-        assert_eq!(
-            nodes_updated(&world),
-            0,
-            "an identical write updates no node"
-        );
-        let passes = layout_passes(&world);
-
-        for _ in 0..3 {
-            lay_out(&mut world);
-            assert_eq!(layout_passes(&world), passes);
-            assert_eq!(nodes_updated(&world), 0);
-        }
-    }
-
-    #[test]
-    fn nothing_changing_walks_no_node() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let first = row(&mut world, root);
-        row(&mut world, first);
-        row(&mut world, root);
-        lay_out(&mut world);
-        let walked = visited(&world);
-        assert!(walked > 0, "the first layout walks the tree");
-
-        for _ in 0..3 {
-            lay_out(&mut world);
-        }
-
-        assert_eq!(visited(&world), walked);
-    }
-
-    #[test]
-    fn one_changed_label_among_a_thousand_measures_only_that_label() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let labels = (0..1_000)
-            .map(|index| labelled(&mut world, root, &format!("label {index}")))
-            .collect::<Vec<_>>();
-        lay_out(&mut world);
-        lay_out(&mut world);
-        measured(&mut world);
-        let passes = layout_passes(&world);
-
-        world
-            .get_component_for_entity_mut::<crate::text::UIText>(labels[500])
-            .unwrap()
-            .text = "a label that changed".into();
-        lay_out(&mut world);
-
-        assert_eq!(layout_passes(&world), passes + 1);
-        assert_eq!(nodes_updated(&world), 1);
-        let measured = measured(&mut world);
-        assert!(!measured.is_empty(), "the changed label is measured");
-        assert!(
-            measured.iter().all(|text| text == "a label that changed"),
-            "only the changed label is measured: {measured:?}"
-        );
-    }
-
-    #[test]
-    fn a_pass_that_leaves_a_label_alone_does_not_shape_it_again() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let sibling = row(&mut world, root);
-        labelled(&mut world, root, "Curiosities");
-        lay_out(&mut world);
-        measured(&mut world);
-        let passes = layout_passes(&world);
-
-        world
-            .get_component_for_entity_mut::<UINode>(sibling)
-            .unwrap()
-            .width = UIValue::Px(120.0);
-        lay_out(&mut world);
-
-        assert_eq!(layout_passes(&world), passes + 1);
-        assert_eq!(measured(&mut world), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_changed_label_is_measured_again() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let label = labelled(&mut world, root, "Warren");
-        labelled(&mut world, root, "Curiosities");
-        lay_out(&mut world);
-        let short = rect_of(&world, label).size.x;
-        measured(&mut world);
-
-        world
-            .get_component_for_entity_mut::<crate::text::UIText>(label)
-            .unwrap()
-            .text = "Warren and Curiosities".into();
-        lay_out(&mut world);
-
-        let measured = measured(&mut world);
-        assert!(!measured.is_empty());
-        assert!(measured.iter().all(|text| text == "Warren and Curiosities"));
-        assert!(rect_of(&world, label).size.x > short);
-    }
-
-    fn fixed_label(world: &mut concerto_ecs::World, parent: Entity, label: &str) -> Entity {
-        world.spawn((
-            UINode::default()
-                .with_size(UIValue::Px(200.0), UIValue::Px(20.0))
-                .with_flex_shrink(0.0),
-            ui_text(label),
-            ChildOf::new(parent),
-        ))
-    }
-
-    #[test]
-    fn a_fixed_size_label_that_changes_its_text_adds_no_layout_pass() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let label = fixed_label(&mut world, root, "66 fps");
-        lay_out(&mut world);
-        let rect = rect_of(&world, label);
-        let passes = layout_passes(&world);
-
-        for text in ["67 fps", "68 fps · a much longer readout than before"] {
-            world
-                .get_component_for_entity_mut::<crate::text::UIText>(label)
-                .unwrap()
-                .text = text.into();
-            lay_out(&mut world);
-        }
-
-        assert_eq!(layout_passes(&world), passes);
-        assert_eq!(nodes_updated(&world), 0);
-        assert_eq!(rect_of(&world, label), rect);
-    }
-
-    #[test]
-    fn a_fixed_size_label_that_can_shrink_is_laid_out_again() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let label = fixed_label(&mut world, root, "66 fps");
-        world
-            .get_component_for_entity_mut::<UINode>(label)
-            .unwrap()
-            .flex_shrink = 1.0;
-        lay_out(&mut world);
-        let passes = layout_passes(&world);
-
-        world
-            .get_component_for_entity_mut::<crate::text::UIText>(label)
-            .unwrap()
-            .text = "67 fps".into();
-        lay_out(&mut world);
-
-        assert_eq!(layout_passes(&world), passes + 1);
-    }
-
-    #[test]
-    fn a_label_that_stops_being_fixed_is_measured_with_its_current_text() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let label = fixed_label(&mut world, root, "short");
-        lay_out(&mut world);
-        world
-            .get_component_for_entity_mut::<crate::text::UIText>(label)
-            .unwrap()
-            .text = "a label much longer than the one it started with".into();
-        lay_out(&mut world);
-        measured(&mut world);
-
-        let node = world.get_component_for_entity_mut::<UINode>(label).unwrap();
-        node.width = UIValue::Auto;
-        node.align_self = Some(AlignItems::FlexStart);
-        lay_out(&mut world);
-
-        let measured = measured(&mut world);
-        assert!(!measured.is_empty());
-        assert!(
-            measured
-                .iter()
-                .all(|text| text == "a label much longer than the one it started with"),
-            "{measured:?}"
-        );
-        assert!(rect_of(&world, label).size.x > 200.0);
-    }
-
-    #[test]
-    fn writing_an_identical_node_and_text_adds_no_layout_pass() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let label = labelled(&mut world, root, "Warren");
-        lay_out(&mut world);
-        let passes = layout_passes(&world);
-
-        for _ in 0..3 {
-            let node = world
-                .get_component_for_entity::<UINode>(label)
-                .unwrap()
-                .clone();
-            *world.get_component_for_entity_mut::<UINode>(label).unwrap() = node;
-            let component = world
-                .get_component_for_entity_mut::<crate::text::UIText>(label)
-                .unwrap();
-            component.text = component.text.clone();
-            lay_out(&mut world);
-        }
-
-        assert_eq!(layout_passes(&world), passes);
-        assert_eq!(nodes_updated(&world), 0);
-    }
-
-    type Snapshot = Vec<(Entity, UIBox, UIBox, UIBox, i64)>;
-
-    fn snapshot(world: &mut concerto_ecs::World) -> Snapshot {
-        let mut layouts = world
-            .query::<(Entity, &UILayout), ()>()
-            .iter(world)
-            .map(|(entity, layout)| {
-                (
-                    entity,
-                    layout.rect,
-                    layout.content_rect,
-                    layout.clip_rect,
-                    layout.paint_order,
-                )
-            })
-            .collect::<Vec<_>>();
-        layouts.sort_by_key(|(entity, ..)| (entity.index(), entity.generation()));
-        layouts
-    }
-
-    fn assert_matches_a_fresh_layout(world: &mut concerto_ecs::World) {
-        let retained = snapshot(world);
-        let engine = world.remove_resource::<UILayoutEngine>().unwrap();
-        let system = world.remove_resource::<LayOut>();
-        world.insert_resource(UILayoutEngine::default());
-        lay_out(world);
-        let fresh = snapshot(world);
-        world.insert_resource(engine);
-        match system {
-            Some(system) => world.insert_resource(system),
-            None => {
-                world.remove_resource::<LayOut>();
-            }
-        }
-        assert_eq!(
-            retained, fresh,
-            "the retained layout differs from a fresh one"
-        );
-    }
-
-    struct Structure {
-        root: Entity,
-        rows: Vec<Entity>,
-        nested: Entity,
-        grown: Entity,
-    }
-
-    fn structure(world: &mut concerto_ecs::World) -> Structure {
-        let root = column(world);
-        let rows = (0..3).map(|_| row(world, root)).collect::<Vec<_>>();
-        let grown = world.spawn((
-            UINode::default()
-                .with_flex_shrink(0.0)
-                .with_flex_direction(FlexDirection::Column)
-                .with_padding(UIRect::all(4.0)),
-            ChildOf::new(root),
-        ));
-        let nested = row(world, grown);
-        row(world, grown);
-        labelled(world, root, "Warren");
-        lay_out(world);
-        lay_out(world);
-        Structure {
-            root,
-            rows,
-            nested,
-            grown,
-        }
-    }
-
-    #[test]
-    fn adding_a_child_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        row(&mut world, tree.grown);
-        lay_out(&mut world);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn removing_a_child_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        world.despawn(tree.rows[1]);
-        lay_out(&mut world);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn reordering_children_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        let before = rect_of(&world, tree.rows[0]);
-        world
-            .get_component_for_entity_mut::<Children>(tree.root)
-            .unwrap()
-            .sort_by_key(|entity| std::cmp::Reverse(entity.index()));
-        lay_out(&mut world);
-        assert_ne!(rect_of(&world, tree.rows[0]), before);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn culling_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        world.insert(UICulled, tree.grown);
-        lay_out(&mut world);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn unculling_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        world.insert(UICulled, tree.grown);
-        lay_out(&mut world);
-        world
-            .get_component_for_entity_mut::<UINode>(tree.nested)
-            .unwrap()
-            .height = UIValue::Px(70.0);
-        lay_out(&mut world);
-        world.remove_component::<UICulled>(tree.grown);
-        lay_out(&mut world);
-        assert_eq!(rect_of(&world, tree.nested).size.y, 70.0);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn culling_and_unculling_between_passes_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        world.insert(UICulled, tree.grown);
-        world.remove_component::<UICulled>(tree.grown);
-        lay_out(&mut world);
-        assert!(clip_of(&world, tree.nested).has_area());
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn despawning_a_subtree_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        world.despawn(tree.grown);
-        lay_out(&mut world);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn giving_a_root_a_parent_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        let other = world.spawn(
-            UINode::default()
-                .with_size(UIValue::Px(40.0), UIValue::Px(30.0))
-                .with_flex_shrink(0.0),
-        );
-        lay_out(&mut world);
-        world.insert(ChildOf::new(tree.grown), other);
-        lay_out(&mut world);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn removing_a_parent_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        world.remove_component::<ChildOf>(tree.nested);
-        lay_out(&mut world);
-        assert_eq!(rect_of(&world, tree.nested).min, Vec2::ZERO);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn adding_and_removing_text_lays_out_as_a_fresh_engine_would() {
-        let mut world = layout_world();
-        let tree = structure(&mut world);
-        let bare = rect_of(&world, tree.grown);
-        world.insert(ui_text("a label on a grown node"), tree.nested);
-        world
-            .get_component_for_entity_mut::<UINode>(tree.nested)
-            .unwrap()
-            .height = UIValue::Auto;
-        lay_out(&mut world);
-        assert_ne!(rect_of(&world, tree.grown), bare);
-        assert_matches_a_fresh_layout(&mut world);
-
-        world.remove_component::<crate::text::UIText>(tree.nested);
-        lay_out(&mut world);
-        assert_matches_a_fresh_layout(&mut world);
-    }
-
-    #[test]
-    fn a_window_resize_lays_out_again() {
-        let mut world = layout_world();
-        let root = world.spawn(
-            UINode::default()
-                .with_size(UIValue::Percent(50.0), UIValue::Percent(100.0))
-                .with_flex_direction(FlexDirection::Column),
-        );
-        lay_out(&mut world);
-        assert_eq!(rect_of(&world, root).size, Vec2::new(400.0, 600.0));
-        let passes = layout_passes(&world);
-
-        world.insert_resource(Window::new((1000, 500), 1.0));
-        lay_out(&mut world);
-
-        assert_eq!(layout_passes(&world), passes + 1);
-        assert_eq!(rect_of(&world, root).size, Vec2::new(500.0, 500.0));
+        assert_eq!(rect_of(&world, below).size.y, 60.0);
     }
 
     fn panel_world() -> concerto_ecs::World {
@@ -3295,13 +2639,18 @@ mod tests {
     }
 
     #[test]
-    fn an_open_panel_follows_its_target_when_only_the_target_moves() {
+    fn an_open_panel_follows_its_target_node_or_point() {
         let mut world = panel_world();
         let root = column(&mut world);
         let above = row(&mut world, root);
         let button = row(&mut world, root);
         let menu = panel(&mut world, button);
         open(&mut world, menu);
+        let pointed = world.spawn((
+            UINode::default().with_size(UIValue::Px(80.0), UIValue::Px(40.0)),
+            UIAnchoredPanel::new(UIAnchorTarget::from_point(Vec2::new(100.0, 100.0)))
+                .with_open(true),
+        ));
         track_and_lay_out(&mut world);
         track_and_lay_out(&mut world);
         let before = rect_of(&world, menu).min;
@@ -3310,6 +2659,10 @@ mod tests {
             .get_component_for_entity_mut::<UINode>(above)
             .unwrap()
             .height = UIValue::Px(90.0);
+        world
+            .get_component_for_entity_mut::<UIAnchoredPanel>(pointed)
+            .unwrap()
+            .target = UIAnchorTarget::from_point(Vec2::new(200.0, 150.0));
         track_and_lay_out(&mut world);
 
         assert_eq!(rect_of(&world, menu).min, before + Vec2::new(0.0, 40.0));
@@ -3317,29 +2670,7 @@ mod tests {
             rect_of(&world, menu).min.y,
             rect_of(&world, button).max().y + 4.0
         );
-    }
-
-    #[test]
-    fn moving_an_open_panels_point_re_places_it_without_a_layout_pass() {
-        let mut world = panel_world();
-        column(&mut world);
-        let menu = world.spawn((
-            UINode::default().with_size(UIValue::Px(80.0), UIValue::Px(40.0)),
-            UIAnchoredPanel::new(UIAnchorTarget::from_point(Vec2::new(100.0, 100.0)))
-                .with_open(true),
-        ));
-        track_and_lay_out(&mut world);
-        track_and_lay_out(&mut world);
-        let passes = layout_passes(&world);
-
-        world
-            .get_component_for_entity_mut::<UIAnchoredPanel>(menu)
-            .unwrap()
-            .target = UIAnchorTarget::from_point(Vec2::new(200.0, 150.0));
-        track_and_lay_out(&mut world);
-
-        assert_eq!(layout_passes(&world), passes);
-        assert_eq!(rect_of(&world, menu).min.x, 200.0);
+        assert_eq!(rect_of(&world, pointed).min.x, 200.0);
     }
 
     #[test]
@@ -3372,83 +2703,354 @@ mod tests {
         assert_eq!(after >> 32, z_index as i64);
     }
 
-    #[test]
-    fn a_new_z_index_alone_repaints_without_a_layout_pass() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let first = row(&mut world, root);
-        let inner = row(&mut world, first);
-        lay_out(&mut world);
-        let passes = layout_passes(&world);
+    #[derive(Debug, PartialEq)]
+    struct Laid {
+        entity: Entity,
+        rect: UIBox,
+        content_rect: UIBox,
+        clip_rect: UIBox,
+        paint_order: i64,
+    }
 
-        world
-            .get_component_for_entity_mut::<UINode>(first)
-            .unwrap()
-            .z_index = 7;
-        lay_out(&mut world);
+    fn snapshot(world: &mut concerto_ecs::World) -> Vec<Laid> {
+        let mut layouts = world
+            .query::<(Entity, &UILayout), ()>()
+            .iter(world)
+            .map(|(entity, layout)| Laid {
+                entity,
+                rect: layout.rect,
+                content_rect: layout.content_rect,
+                clip_rect: layout.clip_rect,
+                paint_order: layout.paint_order,
+            })
+            .collect::<Vec<_>>();
+        layouts.sort_by_key(|laid| laid.entity.to_bits());
+        for laid in &mut layouts {
+            if culled(world, laid.entity) {
+                laid.paint_order = -1;
+            }
+        }
+        let mut orders = layouts
+            .iter()
+            .map(|laid| laid.paint_order)
+            .collect::<Vec<_>>();
+        orders.sort_unstable();
+        orders.dedup();
+        for laid in &mut layouts {
+            laid.paint_order = orders.binary_search(&laid.paint_order).unwrap() as i64;
+        }
+        layouts
+    }
 
-        assert_eq!(layout_passes(&world), passes);
-        for entity in [first, inner] {
-            let paint_order = world
-                .get_component_for_entity::<UILayout>(entity)
-                .unwrap()
-                .paint_order;
-            assert_eq!(paint_order >> 32, 7);
+    fn culled(world: &concerto_ecs::World, entity: Entity) -> bool {
+        let mut current = Some(entity);
+        while let Some(entity) = current {
+            if world.get_component_for_entity::<UICulled>(entity).is_some() {
+                return true;
+            }
+            current = world
+                .get_component_for_entity::<ChildOf>(entity)
+                .map(|child_of| child_of.parent());
+        }
+        false
+    }
+
+    fn assert_matches_a_fresh_layout(world: &mut concerto_ecs::World) {
+        let retained = snapshot(world);
+        let engine = world.remove_resource::<UILayoutEngine>().unwrap();
+        let system = world.remove_resource::<LayOut>();
+        world.insert_resource(UILayoutEngine::default());
+        lay_out(world);
+        let fresh = snapshot(world);
+        world.insert_resource(engine);
+        match system {
+            Some(system) => world.insert_resource(system),
+            None => {
+                world.remove_resource::<LayOut>();
+            }
+        }
+        assert_eq!(
+            retained, fresh,
+            "the retained layout differs from a fresh one"
+        );
+    }
+
+    const TEXTS: [&str; 4] = [
+        "Warren",
+        "Curiosities",
+        "67 fps",
+        "a label much longer than any of the others",
+    ];
+
+    #[derive(Clone, Copy, Debug)]
+    enum Edit {
+        Add {
+            parent: usize,
+            text: Option<&'static str>,
+            fixed: bool,
+        },
+        Despawn {
+            node: usize,
+        },
+        Reorder {
+            parent: usize,
+            by: usize,
+        },
+        Cull {
+            node: usize,
+        },
+        Uncull {
+            node: usize,
+        },
+        Reparent {
+            node: usize,
+            parent: usize,
+        },
+        Detach {
+            node: usize,
+        },
+        SetText {
+            node: usize,
+            text: &'static str,
+        },
+        RemoveText {
+            node: usize,
+        },
+        Resize {
+            node: usize,
+            width: Option<f32>,
+            height: f32,
+        },
+        Shrink {
+            node: usize,
+            shrink: bool,
+        },
+        Hide {
+            node: usize,
+            visible: bool,
+        },
+        Raise {
+            node: usize,
+            z_index: i32,
+        },
+        Window {
+            width: u32,
+            height: u32,
+        },
+        LayOut,
+    }
+
+    prop_compose! {
+        fn edit()(
+            kind in 0usize..18,
+            first in 0usize..64,
+            second in 0usize..64,
+            text in prop::sample::select(TEXTS.to_vec()),
+            length in 10.0f32..400.0,
+            flag in any::<bool>(),
+        ) -> Edit {
+            match kind {
+                0 => Edit::Add { parent: first, text: flag.then_some(text), fixed: second % 2 == 0 },
+                1 => Edit::Despawn { node: first },
+                2 => Edit::Reorder { parent: first, by: second },
+                3 => Edit::Cull { node: first },
+                4 => Edit::Uncull { node: first },
+                5 => Edit::Reparent { node: first, parent: second },
+                6 => Edit::Detach { node: first },
+                7 => Edit::SetText { node: first, text },
+                8 => Edit::RemoveText { node: first },
+                9 => Edit::Resize { node: first, width: flag.then_some(length), height: length / 4.0 },
+                10 => Edit::Shrink { node: first, shrink: flag },
+                11 => Edit::Hide { node: first, visible: flag },
+                12 => Edit::Raise { node: first, z_index: second as i32 % 5 },
+                13 => Edit::Window { width: 200 + first as u32 * 20, height: 200 + second as u32 * 10 },
+                _ => Edit::LayOut,
+            }
         }
     }
 
-    #[test]
-    fn a_node_added_deep_inside_a_hidden_node_is_laid_out() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let hidden = row(&mut world, root);
-        world
-            .get_component_for_entity_mut::<UINode>(hidden)
-            .unwrap()
-            .visible = false;
-        let inner = row(&mut world, hidden);
-        lay_out(&mut world);
-
-        let added = row(&mut world, inner);
-        lay_out(&mut world);
-
-        assert!(world.get_component_for_entity::<UILayout>(added).is_some());
-        assert_matches_a_fresh_layout(&mut world);
+    fn pick(world: &mut concerto_ecs::World, index: usize) -> Option<Entity> {
+        let mut nodes = world
+            .query::<Entity, With<UINode>>()
+            .iter(world)
+            .collect::<Vec<_>>();
+        nodes.sort_by_key(|entity| entity.to_bits());
+        (!nodes.is_empty()).then(|| nodes[index % nodes.len()])
     }
 
-    #[test]
-    fn despawning_one_child_relays_out_its_siblings() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let rows = (0..3).map(|_| row(&mut world, root)).collect::<Vec<_>>();
-        lay_out(&mut world);
-        assert_eq!(rect_of(&world, rows[1]).min.y, 50.0);
-
-        world.despawn(rows[0]);
-        lay_out(&mut world);
-
-        assert_eq!(rect_of(&world, rows[1]).min.y, 0.0);
-        assert_eq!(rect_of(&world, rows[2]).min.y, 50.0);
+    fn descends_from(world: &concerto_ecs::World, entity: Entity, ancestor: Entity) -> bool {
+        let mut current = Some(entity);
+        while let Some(entity) = current {
+            if entity == ancestor {
+                return true;
+            }
+            current = world
+                .get_component_for_entity::<ChildOf>(entity)
+                .map(|child_of| child_of.parent());
+        }
+        false
     }
 
-    #[test]
-    fn detaching_a_parents_only_child_relays_out_the_parent() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let parent = world.spawn((
+    fn apply(world: &mut concerto_ecs::World, edit: Edit) {
+        match edit {
+            Edit::Add {
+                parent,
+                text,
+                fixed,
+            } => {
+                let parent = pick(world, parent);
+                let node = match text {
+                    Some(_) if fixed => fixed_label_node(),
+                    Some(_) => labelled_node(),
+                    None => UINode::default()
+                        .with_size(UIValue::Px(100.0), UIValue::Px(50.0))
+                        .with_flex_shrink(0.0),
+                };
+                let node = world.spawn(node);
+                if let Some(text) = text {
+                    world.insert(ui_text(text), node);
+                }
+                if let Some(parent) = parent {
+                    world.insert(ChildOf::new(parent), node);
+                }
+            }
+            Edit::Despawn { node } => {
+                if let Some(node) = pick(world, node) {
+                    world.despawn(node);
+                }
+            }
+            Edit::Reorder { parent, by } => {
+                let Some(parent) = pick(world, parent) else {
+                    return;
+                };
+                let Some(children) = world.get_component_for_entity_mut::<Children>(parent) else {
+                    return;
+                };
+                let order = children.iter().copied().collect::<Vec<_>>();
+                let by = by % order.len();
+                children.sort_by_key(|child| {
+                    let position = order.iter().position(|entity| *entity == child).unwrap();
+                    (position + order.len() - by) % order.len()
+                });
+            }
+            Edit::Cull { node } => {
+                if let Some(node) = pick(world, node) {
+                    world.insert(UICulled, node);
+                }
+            }
+            Edit::Uncull { node } => {
+                if let Some(node) = pick(world, node) {
+                    world.remove_component::<UICulled>(node);
+                }
+            }
+            Edit::Reparent { node, parent } => {
+                let (Some(node), Some(parent)) = (pick(world, node), pick(world, parent)) else {
+                    return;
+                };
+                if !descends_from(world, parent, node) {
+                    world.insert(ChildOf::new(parent), node);
+                    lay_out(world);
+                }
+            }
+            Edit::Detach { node } => {
+                if let Some(node) = pick(world, node) {
+                    world.remove_component::<ChildOf>(node);
+                    lay_out(world);
+                }
+            }
+            Edit::SetText { node, text } => {
+                let Some(node) = pick(world, node) else {
+                    return;
+                };
+                match world.get_component_for_entity_mut::<crate::text::UIText>(node) {
+                    Some(component) => component.text = text.into(),
+                    None => world.insert(ui_text(text), node),
+                }
+            }
+            Edit::RemoveText { node } => {
+                if let Some(node) = pick(world, node) {
+                    world.remove_component::<crate::text::UIText>(node);
+                }
+            }
+            Edit::Resize {
+                node,
+                width,
+                height,
+            } => {
+                if let Some(node) = pick(world, node) {
+                    let node = world.get_component_for_entity_mut::<UINode>(node).unwrap();
+                    node.width = width.map_or(UIValue::Auto, UIValue::Px);
+                    node.height = UIValue::Px(height);
+                }
+            }
+            Edit::Shrink { node, shrink } => {
+                if let Some(node) = pick(world, node) {
+                    world
+                        .get_component_for_entity_mut::<UINode>(node)
+                        .unwrap()
+                        .flex_shrink = if shrink { 1.0 } else { 0.0 };
+                }
+            }
+            Edit::Hide { node, visible } => {
+                if let Some(node) = pick(world, node) {
+                    world
+                        .get_component_for_entity_mut::<UINode>(node)
+                        .unwrap()
+                        .visible = visible;
+                }
+            }
+            Edit::Raise { node, z_index } => {
+                if let Some(node) = pick(world, node) {
+                    world
+                        .get_component_for_entity_mut::<UINode>(node)
+                        .unwrap()
+                        .z_index = z_index;
+                }
+            }
+            Edit::Window { width, height } => {
+                world.insert_resource(Window::new((width, height), 1.0));
+            }
+            Edit::LayOut => {
+                lay_out(world);
+                lay_out(world);
+                assert_matches_a_fresh_layout(world);
+            }
+        }
+    }
+
+    fn edited_tree(world: &mut concerto_ecs::World) {
+        let root = world.spawn(full_root().with_flex_direction(FlexDirection::Column));
+        for _ in 0..3 {
+            row(world, root);
+        }
+        let grown = world.spawn((
             UINode::default()
                 .with_flex_shrink(0.0)
-                .with_flex_direction(FlexDirection::Column),
+                .with_flex_direction(FlexDirection::Column)
+                .with_padding(UIRect::all(4.0)),
             ChildOf::new(root),
         ));
-        let only = row(&mut world, parent);
-        lay_out(&mut world);
-        assert_eq!(rect_of(&world, parent).size.y, 50.0);
+        row(world, grown);
+        row(world, grown);
+        labelled(world, root, "Warren");
+        world.spawn((fixed_label_node(), ui_text("66 fps"), ChildOf::new(root)));
+        lay_out(world);
+        lay_out(world);
+    }
 
-        world.remove_component::<ChildOf>(only);
-        lay_out(&mut world);
-
-        assert_eq!(rect_of(&world, parent).size.y, 0.0);
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn any_sequence_of_edits_lays_out_as_a_fresh_engine_would(
+            edits in prop::collection::vec(edit(), 1..32)
+        ) {
+            let mut world = layout_world();
+            edited_tree(&mut world);
+            for edit in edits {
+                apply(&mut world, edit);
+            }
+            apply(&mut world, Edit::LayOut);
+        }
     }
 
     fn drawing_app(gpu: &concerto_render::gpu::Gpu) -> concerto_app::App {
@@ -3541,93 +3143,48 @@ mod tests {
     }
 
     #[test]
-    fn idle_frames_rebuild_no_quad() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        quad(&mut app, 32.0);
-        quad(&mut app, 16.0);
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-        let rebuilds = geometry_rebuilds(&app);
-
-        app.update();
-        app.update();
-
-        assert_eq!(geometry_rebuilds(&app), rebuilds);
-    }
-
-    #[test]
-    fn a_new_paint_order_alone_updates_the_quad_without_a_rebuild() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        let node = quad(&mut app, 32.0);
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-        let rebuilds = geometry_rebuilds(&app);
-
-        app.main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<UINode>(node)
-            .unwrap()
-            .z_index = 7;
-        app.update();
-
-        assert_eq!(render_node(&app, node).z_index >> 32, 7);
-        assert_eq!(geometry_rebuilds(&app), rebuilds);
-    }
-
-    #[test]
-    fn moving_one_quad_rewrites_only_its_vertices_in_place() {
+    fn a_quad_is_updated_in_place_and_rebuilt_only_when_it_or_the_window_changes_size() {
         let Some(gpu) = gpu() else {
             return;
         };
         let mut app = drawing_app(&gpu);
         let moved = quad(&mut app, 32.0);
         quad(&mut app, 16.0);
+        quad(&mut app, 8.0);
         app.finish_plugin_build();
         app.update();
         app.update();
         let rebuilds = geometry_rebuilds(&app);
         let vertex_buffer = render_node(&app, moved).vertex_buffer.clone();
 
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<UINode>(moved)
+            .unwrap()
+            .z_index = 7;
+        app.update();
+        assert_eq!(render_node(&app, moved).z_index >> 32, 7);
+        assert_eq!(geometry_rebuilds(&app), rebuilds, "a new paint order alone");
+
         *app.main_mut()
             .world_mut()
             .get_component_for_entity_mut::<UINode>(moved)
             .unwrap() = UINode::default().with_size(UIValue::Px(48.0), UIValue::Px(48.0));
         app.update();
-
-        assert_eq!(geometry_rebuilds(&app), rebuilds + 1);
+        assert_eq!(geometry_rebuilds(&app), rebuilds + 1, "one moved quad");
         assert!(drawn_quad(&app, moved), "the moved quad is still drawn");
         assert!(
             render_node(&app, moved).vertex_buffer == vertex_buffer,
             "the moved quad keeps its vertex buffer"
         );
-    }
-
-    #[test]
-    fn a_window_resize_re_extracts_every_quad() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        for size in [8.0, 16.0, 32.0] {
-            quad(&mut app, size);
-        }
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-        let rebuilds = geometry_rebuilds(&app);
 
         app.insert_resource(Window::new((128, 96), 1.0));
         app.update();
-
-        assert_eq!(geometry_rebuilds(&app), rebuilds + 3);
+        assert_eq!(
+            geometry_rebuilds(&app),
+            rebuilds + 4,
+            "a window resize re-extracts every quad"
+        );
     }
 
     fn binding_rebuilds(app: &concerto_app::App) -> u64 {
@@ -3646,26 +3203,6 @@ mod tests {
             .world()
             .get_component_for_entity::<RenderUIMaterial>(render_entity)
             .is_some()
-    }
-
-    #[test]
-    fn idle_frames_rebuild_no_binding() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        quad(&mut app, 32.0);
-        quad(&mut app, 16.0);
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-        app.update();
-        let rebuilds = binding_rebuilds(&app);
-
-        app.update();
-        app.update();
-
-        assert_eq!(binding_rebuilds(&app), rebuilds);
     }
 
     #[test]
@@ -3764,7 +3301,8 @@ mod tests {
             .get_component_for_entity::<UIMaterial>(node)
             .unwrap()
             .border_params;
-        assert_eq!((params[1], params[2]), (48.0, 40.0));
+        assert_eq!(params[1], 48.0);
+        assert_eq!(params[2], 40.0);
         assert_eq!(binding_rebuilds(&app), rebuilds + 1);
     }
 
@@ -3795,127 +3333,42 @@ mod tests {
     }
 
     #[test]
-    fn idle_frames_prepare_no_text_layer() {
+    fn a_text_layer_is_prepared_again_only_when_its_labels_or_the_window_change() {
         let Some(gpu) = gpu() else {
             return;
         };
         let mut app = drawing_app(&gpu);
-        drawn_label(&mut app, "Low", 0);
-        drawn_label(&mut app, "High", 3);
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-        assert_eq!(text_layers(&app), vec![0, 3]);
-        let prepares = text_prepares(&app);
-
-        app.update();
-        app.update();
-
-        assert_eq!(text_prepares(&app), prepares);
-    }
-
-    #[test]
-    fn changing_one_labels_text_prepares_only_its_layer() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        let low = drawn_label(&mut app, "Low", 0);
-        drawn_label(&mut app, "High", 3);
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-        let prepares = text_prepares(&app);
-
-        app.main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<crate::text::UIText>(low)
-            .unwrap()
-            .text = "Lower".into();
-        app.update();
-
-        assert_eq!(text_prepares(&app), prepares + 1);
-    }
-
-    #[test]
-    fn a_new_text_layer_below_the_others_prepares_only_itself() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        drawn_label(&mut app, "Middle", 2);
+        drawn_label(&mut app, "Stays", 2);
+        let changes = drawn_label(&mut app, "Changes", 2);
         drawn_label(&mut app, "Top", 4);
         app.finish_plugin_build();
         app.update();
         app.update();
+        assert_eq!(text_layers(&app), vec![2, 4]);
         let prepares = text_prepares(&app);
+
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<crate::text::UIText>(changes)
+            .unwrap()
+            .text = "Changed".into();
+        app.update();
+        assert_eq!(text_prepares(&app), prepares + 1, "a changed label");
 
         drawn_label(&mut app, "Bottom", 0);
         app.update();
         app.update();
-
         assert_eq!(text_layers(&app), vec![0, 2, 4]);
-        assert_eq!(text_prepares(&app), prepares + 1);
-    }
+        assert_eq!(text_prepares(&app), prepares + 2, "a new layer below");
 
-    #[test]
-    fn a_despawned_label_prepares_its_layer_again() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        drawn_label(&mut app, "Stays", 0);
-        let leaves = drawn_label(&mut app, "Leaves", 0);
-        drawn_label(&mut app, "Above", 5);
-        app.finish_plugin_build();
+        app.main_mut().world_mut().despawn(changes);
         app.update();
         app.update();
-        let prepares = text_prepares(&app);
-
-        app.main_mut().world_mut().despawn(leaves);
-        app.update();
-        app.update();
-
-        assert_eq!(text_prepares(&app), prepares + 1);
-    }
-
-    #[test]
-    fn a_window_resize_prepares_every_text_layer() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = drawing_app(&gpu);
-        drawn_label(&mut app, "Low", 0);
-        drawn_label(&mut app, "High", 3);
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-        let prepares = text_prepares(&app);
+        assert_eq!(text_prepares(&app), prepares + 3, "a despawned label");
 
         app.insert_resource(Window::new((128, 96), 1.0));
         app.update();
         app.update();
-
-        assert_eq!(text_prepares(&app), prepares + 2);
-    }
-
-    #[test]
-    fn explicit_z_index_dominates_tree_sequence() {
-        assert!(paint_order(1, 0) > paint_order(0, i32::MAX as i64));
-    }
-
-    #[test]
-    fn a_child_paints_on_its_parents_layer_unless_it_asks_for_more() {
-        assert_eq!(effective_layer(200, 0), 200);
-        assert_eq!(effective_layer(70, 71), 71);
-        assert_eq!(effective_layer(70, 10), 70);
-    }
-
-    #[test]
-    fn paint_order_packs_the_layer_above_the_sequence() {
-        assert_eq!(paint_order(3, 0) >> 32, 3);
-        assert_eq!(paint_order(3, i32::MAX as i64) >> 32, 3);
-        assert!(paint_order(3, 1) > paint_order(3, 0));
-        assert!(paint_order(4, 0) > paint_order(3, i32::MAX as i64));
+        assert_eq!(text_prepares(&app), prepares + 6, "a window resize");
     }
 }

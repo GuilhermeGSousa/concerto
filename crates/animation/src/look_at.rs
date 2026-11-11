@@ -70,6 +70,7 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use glam::Vec3;
+    use proptest::prelude::*;
 
     use super::{LookFrame, YawPitch, look_rotation, yaw_pitch_to};
 
@@ -77,29 +78,36 @@ mod tests {
         LookFrame::new(Vec3::new(0.3, -0.2, 1.0), Vec3::new(0.1, 1.0, 0.4)).unwrap()
     }
 
-    #[test]
-    fn look_rotation_turns_forward_onto_the_direction() {
-        let frame = skewed();
-        let directions = [
-            frame.side() * 2.0,
-            frame.up() * 0.5,
-            -frame.up() * 3.0,
-            -frame.forward() - frame.side(),
-            Vec3::new(0.7, -1.3, 0.4),
-        ];
-        for direction in directions {
-            let angles = yaw_pitch_to(&frame, direction);
-            let turned = look_rotation(&frame, angles) * frame.forward();
-            let expected = direction.normalize();
-            assert!(
-                turned.distance(expected) < 1e-5,
-                "{direction}: turned {turned}, expected {expected}"
+    fn any_vec3() -> impl Strategy<Value = Vec3> {
+        prop::array::uniform3(-2.0f32..2.0).prop_map(Vec3::from_array)
+    }
+
+    proptest! {
+        #[test]
+        fn a_frame_is_orthonormal_and_its_yaw_and_pitch_turn_forward_onto_the_direction(
+            forward in any_vec3(),
+            up in any_vec3(),
+            direction in any_vec3().prop_filter("not zero", |direction| direction.length() > 1e-3),
+        ) {
+            let Some(frame) = LookFrame::new(forward, up) else {
+                return Ok(());
+            };
+
+            prop_assert!(frame.forward().distance(forward.normalize()) < 1e-5);
+            prop_assert!((frame.up().length() - 1.0).abs() < 1e-5);
+            prop_assert!(frame.up().dot(frame.forward()).abs() < 1e-4);
+            prop_assert!(frame.up().dot(forward.cross(up).normalize()).abs() < 1e-4);
+            prop_assert!(frame.up().dot(up) > 0.0);
+            let turned = look_rotation(&frame, yaw_pitch_to(&frame, direction)) * frame.forward();
+            prop_assert!(
+                turned.distance(direction.normalize()) < 1e-4,
+                "{direction}: turned {turned}"
             );
         }
     }
 
     #[test]
-    fn toward_the_side_yaws_positive_and_toward_up_pitches_a_right_angle() {
+    fn toward_the_side_yaws_positive_toward_up_pitches_a_right_angle_and_nowhere_gives_no_turn() {
         let frame = skewed();
 
         let side = yaw_pitch_to(&frame, frame.side());
@@ -109,6 +117,8 @@ mod tests {
         let up = yaw_pitch_to(&frame, frame.up());
         assert!((up.pitch - FRAC_PI_2).abs() < 1e-5, "{up:?}");
         assert!(up.yaw.is_finite(), "{up:?}");
+
+        assert_eq!(yaw_pitch_to(&frame, Vec3::ZERO), YawPitch::default());
     }
 
     #[test]
@@ -120,23 +130,5 @@ mod tests {
         assert_eq!(LookFrame::new(forward, forward * 2.0), None);
         assert_eq!(LookFrame::new(Vec3::new(f32::NAN, 0.0, 1.0), up), None);
         assert_eq!(LookFrame::new(forward, Vec3::new(0.0, f32::NAN, 0.0)), None);
-    }
-
-    #[test]
-    fn a_skewed_up_is_made_perpendicular_to_forward() {
-        let forward = Vec3::new(0.3, -0.2, 1.0);
-        let up = Vec3::new(0.1, 1.0, 0.4);
-        let frame = LookFrame::new(forward, up).unwrap();
-
-        assert!(frame.forward().distance(forward.normalize()) < 1e-6);
-        assert!((frame.up().length() - 1.0).abs() < 1e-6);
-        assert!(frame.up().dot(frame.forward()).abs() < 1e-6);
-        assert!(frame.up().dot(forward.cross(up)).abs() < 1e-6);
-        assert!(frame.up().dot(up) > 0.0);
-    }
-
-    #[test]
-    fn a_zero_direction_gives_no_turn() {
-        assert_eq!(yaw_pitch_to(&skewed(), Vec3::ZERO), YawPitch::default());
     }
 }
