@@ -780,6 +780,21 @@ where
     T: Send + 'static,
     F: Future<Output = T>,
 {
+    serve_sized(fixture, log, recipe, configure, SIZE, scenario)
+}
+
+fn serve_sized<T, F>(
+    fixture: &Fixture,
+    log: &Log,
+    recipe: fn(&mut App),
+    configure: impl FnOnce(&mut App),
+    size: (u32, u32),
+    scenario: impl FnOnce(Client) -> F + Send + 'static,
+) -> Option<Served<T>>
+where
+    T: Send + 'static,
+    F: Future<Output = T>,
+{
     let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let cancelled = Arc::new(Mutex::new(None::<Instant>));
@@ -859,7 +874,7 @@ where
                 .add_listener(note_closing);
             configure(app);
         },
-        SIZE,
+        size,
     );
     let returned = Instant::now();
     let result = client
@@ -1154,6 +1169,104 @@ fn frames_run_while_the_edited_scene_loads_and_stop_once_it_has_loaded() {
     assert!(loading.ends_with("busy: yes"), "{loading}");
     assert!(later > first, "{first} then {later} frames while loading");
     assert_eq!(idle, loaded, "frames ran once the scene had loaded");
+}
+
+struct Resized {
+    reply: String,
+    status: String,
+}
+
+struct Shown {
+    layout: &'static str,
+    width: f32,
+    height: f32,
+}
+
+async fn resize(client: &Client, panel: &str, size: f32) -> Resized {
+    let reply = ok_with(
+        client,
+        "set_panel_size",
+        json!({ "panel": panel, "size": size }),
+    )
+    .await;
+    let status = ok(client, "status").await;
+    Resized { reply, status }
+}
+
+#[test]
+fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve_sized(
+        &fixture,
+        &log,
+        game,
+        |_| {},
+        (1280, 720),
+        |client| async move {
+            open(&client).await;
+            let before = until(&client, "status", |status| {
+                status.contains("\nviewport: ") && !status.contains("viewport: not shown")
+            })
+            .await;
+            let left = resize(&client, "left", 300.0).await;
+            let right = resize(&client, "right", 400.0).await;
+            let bottom = resize(&client, "bottom", 300.0).await;
+            let clamped = resize(&client, "left", 5000.0).await;
+            let filling = error_with(
+                &client,
+                "set_panel_size",
+                json!({ "panel": "browser", "size": 300.0 }),
+            )
+            .await;
+            let after = ok(&client, "status").await;
+            client.cancel().await.unwrap();
+            (before, [left, right, bottom, clamped], filling, after)
+        },
+    ) else {
+        return;
+    };
+
+    let (before, [left, right, bottom, clamped], filling, after) = served.result;
+    assert_eq!(
+        line(&before, "layout: "),
+        "left 260 · right 320 · bottom 220 · browser fill"
+    );
+    let (width, height) = viewport_size(&before);
+    let expected = [
+        Shown {
+            layout: "left 300 · right 320 · bottom 220 · browser fill",
+            width: width - 40.0,
+            height,
+        },
+        Shown {
+            layout: "left 300 · right 400 · bottom 220 · browser fill",
+            width: width - 120.0,
+            height,
+        },
+        Shown {
+            layout: "left 300 · right 400 · bottom 300 · browser fill",
+            width: width - 120.0,
+            height: height - 80.0,
+        },
+        Shown {
+            layout: "left 550 · right 400 · bottom 300 · browser fill",
+            width: width - 370.0,
+            height: height - 80.0,
+        },
+    ];
+    for (resized, shown) in [&left, &right, &bottom, &clamped].into_iter().zip(expected) {
+        for answer in [&resized.reply, &resized.status] {
+            assert_eq!(line(answer, "layout: "), shown.layout);
+            assert_eq!(
+                viewport_size(answer),
+                (shown.width, shown.height),
+                "{answer}"
+            );
+        }
+    }
+    assert_eq!(filling["code"], "refused", "{filling}");
+    assert_eq!(line(&after, "layout: "), line(&clamped.status, "layout: "));
 }
 
 #[test]

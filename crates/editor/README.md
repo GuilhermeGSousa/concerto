@@ -89,9 +89,13 @@ edits keeps them by saving first, with `save`.
 ### Tools
 
 `status` reports the project and its status line, the open documents, the
-active one, the selection in the edited scene, the viewport's size, whether the
-editor is busy, and under `values:` the names of the front document's inspected
-values, or `none`. `list_assets` lists the project's assets as
+active one, the selection in the edited scene, the panels' sizes, the
+viewport's size, whether the editor is busy, and under `values:` the names of
+the front document's inspected values, or `none`. The `layout:` line reads
+`left 260 · right 320 · bottom 220 · browser fill`: the size each panel shows,
+in logical pixels, or `hidden` or `fill` for one the front tab collapses or
+lets take the space that is left. The `viewport:` line is the picture's size
+in physical pixels; under `--mcp` the scale is 1, so the two agree. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
 call that shows the rest. `scene_tree` shows the edited scene, or while a game
@@ -153,6 +157,15 @@ position, yaw, pitch and the direction it looks along, once the edit `App` has
 stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
 no editor camera. All three need an open scene.
+
+`set_panel_size` sets the size of `panel`, one of `left`, `right`, `bottom`
+and `browser`, to `size` logical pixels: a width, or for `bottom` the strip's
+height. It triggers `ResizePanel`, the signal a splitter's drag triggers, and
+answers `status`'s `layout:` and `viewport:` lines once the panels are laid
+out and the viewport has its new size, or the `layout:` line alone on a tab
+that shows no viewport. A size outside what the window allows is clamped, and
+the answer shows the size that was set. A panel that is `hidden` or `fill` on
+the front tab answers `refused`, naming the kind of tab that sizes it.
 
 The edit tools change the edited scene, or the running game while it plays, by
 triggering the signal the panels trigger, and answer once the edit `App`
@@ -394,7 +407,8 @@ host, between the Asset Browser and that host. The sizes are the
 220 and `browser` 420 to begin with. They are the same on every tab and last
 for the session; no file holds them. `ResizePanel { panel, size }`, with
 `panel` a `LayoutPanel` (`Left`, `Right`, `Bottom` or `Browser`), is the one
-signal that changes them, and a splitter's drag triggers it. Its listener
+signal that changes them; a splitter's drag triggers it, and so does the MCP
+tool `set_panel_size`. Its listener
 clamps the size for the window as it is: `Left` no less than 180 and `Right`
 no less than 220, each no more than leaves the `Centre` 320 wide; `Bottom`
 from 120 to what leaves the `Centre` 240 high; `Browser` from 200 to what

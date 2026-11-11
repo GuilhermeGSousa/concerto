@@ -131,7 +131,7 @@ fn show_active_picture(
     }
 }
 
-fn publish_viewport_view(
+pub(crate) fn publish_viewport_view(
     window: Res<concerto_window::plugin::Window>,
     hovered: Res<HoveredNode>,
     focus: Res<FocusedWidget>,
