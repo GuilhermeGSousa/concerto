@@ -246,12 +246,12 @@ through `fonts::icon`.
   their kinds. Folders show `folder`, and `folder-open` while expanded.
 - **Entities.** The hierarchy draws glyphs in place of shapes, and the scene
   root, which shares the group's shape today, gets its own: the scene root `stack`, a camera `camera`, a light `lightbulb`, a
-  mesh `cube`, an entity with children and none of those `folder-simple`, and
-  anything else `dot`. Icons per component type, registered by a game or an
+  mesh `cube`, and any other entity `circle`, with or without children, since
+  the caret already says which. Icons per component type, registered by a game or an
   extension, are not part of this work.
 New glyph constants are added to `fonts::glyph` under their upstream names.
 Step 5 starts by confirming the bundled `Phosphor.ttf` holds `bone`, `folder`,
-`folder-open` and `folder-simple`; a missing one is replaced by the nearest
+`folder-open` and `circle`; a missing one is replaced by the nearest
 glyph the font has.
 
 Tooltips on icon-only buttons are not part of this work. `UITooltip`

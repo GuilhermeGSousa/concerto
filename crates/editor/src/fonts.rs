@@ -239,8 +239,8 @@ pub mod glyph {
     pub const X: char = '\u{E4F6}';
     /// `dots-three` — a menu of further actions.
     pub const DOTS_THREE: char = '\u{E1FE}';
-    /// `dot` — a leaf row with nothing to expand.
-    pub const DOT: char = '\u{ECDE}';
+    /// `circle` — an entity that is no camera, light or mesh.
+    pub const CIRCLE: char = '\u{E18A}';
     /// `play` — starting playback.
     pub const PLAY: char = '\u{E3D0}';
     /// `pause` — pausing playback.
@@ -257,8 +257,6 @@ pub mod glyph {
     pub const FOLDER: char = '\u{E24A}';
     /// `folder-open` — an expanded folder of assets.
     pub const FOLDER_OPEN: char = '\u{E256}';
-    /// `folder-simple` — an entity that only groups its children.
-    pub const FOLDER_SIMPLE: char = '\u{E25A}';
     /// `person-arms-spread` — a retarget rig.
     pub const PERSON_ARMS_SPREAD: char = '\u{ECFE}';
     /// `mask-happy` — a bone mask.

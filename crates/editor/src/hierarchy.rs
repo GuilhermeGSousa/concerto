@@ -315,7 +315,7 @@ fn spawn_item(
     scene_entity: Entity,
     parent: Entity,
 ) -> Entity {
-    let mark = cmd.spawn(row_icon(theme, glyph::DOT)).entity();
+    let mark = cmd.spawn(row_icon(theme, glyph::CIRCLE)).entity();
     let label = cmd
         .spawn((
             UINode::default()
@@ -765,8 +765,7 @@ fn update_row(
         Some((Some(_), _, _)) => glyph::CAMERA,
         Some((_, Some(_), _)) => glyph::LIGHTBULB,
         Some((_, _, Some(_))) => glyph::CUBE,
-        _ if count > 0 => glyph::FOLDER_SIMPLE,
-        _ => glyph::DOT,
+        _ => glyph::CIRCLE,
     };
     let name = names.get_entity(scene_entity);
     let same_name = !item.is_added() && name.as_ref().is_some_and(|name| !name.is_changed());

@@ -454,8 +454,8 @@ measure. An icon button is `fonts::icon_button` with `fonts::button_icon`: a
 muted text colour at rest and the text colour while its row is hovered or
 selected, and a tab's is the text colour on the active tab and muted on the
 others, whether hovered or not; the glyph, not a colour, tells kinds apart. The hierarchy shows `stack` for the scene root, `camera`,
-`lightbulb` and `cube` for an entity with a camera, a light or a mesh,
-`folder-simple` for any other entity with children, and `dot` for the rest.
+`lightbulb` and `cube` for an entity with a camera, a light or a mesh, and
+`circle` for any other entity, with or without children.
 
 The `AssetIcons` resource maps an asset kind's `Asset::name()` to its glyph,
 and the Asset Browser's rows and the tab strip both read it. `ContentPlugin`,
