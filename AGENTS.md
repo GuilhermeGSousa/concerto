@@ -71,8 +71,8 @@ on a graybox test level, `content/level/test_level.gasset`, authored in the
 editor over MCP, with the window split in two side by side: two players join
 with their pads and walk the night, 18:00 to 00:00 over 18 real minutes, as the
 Guest and the Staff. The level's doors and other interactive objects are scene
-entities with the game's `Fixture` component. The characters are the tech
-demo's UAL1 model, imported again under `assets/characters/`, as placeholders.
+entities with the game's `Fixture` component. Its art, the rooms in `assets/art` and the
+characters in `assets/characters`, is built by Blender scripts kept beside it.
 The game writes `saves/` under its working directory.
 Its manor graybox is in `examples/one-more-night/assets/manor/`: the
 Blender source, the scripts that generate and export it, and the export, with a

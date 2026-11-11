@@ -3,7 +3,7 @@ use concerto::ui::grid::{GridStep, grid_step};
 
 use crate::book::{Casebook, Verdict};
 use crate::case::{
-    DeductionId, FactId, GameTime, Interaction, NpcId, Phase, PlacementId, Role, StrId,
+    DeductionId, FactId, GameTime, Id, Interaction, NpcId, Phase, PlacementId, Role, StrId,
 };
 use crate::casefile::{CaseData, room_title};
 use crate::players::PLAYER_COUNT;
@@ -883,8 +883,10 @@ impl Session {
                     .characters
                     .ids()
                     .zip(&facts)
-                    .enumerate()
-                    .map(|(index, (npc, facts))| subject(name_of(case, npc), Some(index), facts))
+                    .map(|(npc, facts)| {
+                        let portrait = case.characters.get(npc).portrait.index();
+                        subject(name_of(case, npc), Some(portrait), facts)
+                    })
                     .collect();
                 (listed(subjects, facts), move_hint.to_string())
             }

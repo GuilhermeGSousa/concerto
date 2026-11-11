@@ -87,10 +87,6 @@ const GAIT_IDLE: Vec2 = Vec2::ZERO;
 const GAIT_WALK: Vec2 = Vec2::new(0.0, 1.0);
 const GAIT_SIT: Vec2 = Vec2::new(1.0, 0.0);
 const GAIT_BLEND_RATE: f32 = 2.5;
-const CHARACTER_SCENE: AssetId = asset_id!("content/characters/UAL1/scene.gasset");
-const IDLE_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Idle_Loop.gasset");
-const WALK_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Walk_Loop.gasset");
-const SIT_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Sitting_Idle_Loop.gasset");
 const LEVEL_ART: AssetId = asset_id!("content/art/export/level_test/scene.gasset");
 
 fn fixture_art(kind: FixtureKind) -> AssetId {
@@ -181,11 +177,75 @@ struct NpcVisual {
     body: Entity,
     animator: Option<Entity>,
     gait: Vec2,
+    graph: AssetHandle<AnimationGraph>,
 }
 
-#[derive(Resource)]
-struct NpcAnimations {
-    graph: AssetHandle<AnimationGraph>,
+struct CharacterArt {
+    scene: AssetId,
+    idle: AssetId,
+    walk: AssetId,
+    sit: AssetId,
+}
+
+fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
+    match data
+        .catalog
+        .portraits
+        .name(data.case.characters.get(npc).portrait)
+    {
+        "portrait_01" => CharacterArt {
+            scene: asset_id!("content/characters/export/lady/scene.gasset"),
+            idle: asset_id!("content/characters/export/lady/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/lady/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/lady/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_02" => CharacterArt {
+            scene: asset_id!("content/characters/export/gentleman/scene.gasset"),
+            idle: asset_id!("content/characters/export/gentleman/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/gentleman/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/gentleman/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        _ => CharacterArt {
+            scene: asset_id!("content/characters/export/footman/scene.gasset"),
+            idle: asset_id!("content/characters/export/footman/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/footman/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/footman/animation_Sitting_Idle_Loop.gasset"),
+        },
+    }
+}
+
+fn character_graph(assets: &AssetServer, art: &CharacterArt) -> AnimationGraph {
+    let look = LookAtNode {
+        chain: vec![
+            LookAtBone {
+                bone: JointName(name!("neck_01")),
+                share: 0.35,
+                halflife: 0.25,
+                ..Default::default()
+            },
+            LookAtBone {
+                bone: JointName(name!("Head")),
+                share: 1.0,
+                halflife: 0.2,
+                ..Default::default()
+            },
+        ],
+        target_param: name!("look_target"),
+        weight_param: Some(name!("look_weight")),
+        ..Default::default()
+    };
+    let mut graph = AnimationGraph::new();
+    graph.result_node().with_input(look, |mut body| {
+        body.with_blend_space_2d_input(name!("gait"), |space| {
+            space
+                .animation_clip_input(assets.load::<AnimationClip>(art.idle), GAIT_IDLE)
+                .animation_clip_input(assets.load::<AnimationClip>(art.walk), GAIT_WALK)
+                .animation_clip_input(assets.load::<AnimationClip>(art.sit), GAIT_SIT);
+        });
+    });
+    graph
 }
 
 #[derive(Component)]
@@ -345,42 +405,11 @@ fn spawn_case(
         SceneSpawnerComponent(assets.load::<Scene>(LEVEL_ART)),
         Transform::default(),
     ));
-    let character = assets.load::<Scene>(CHARACTER_SCENE);
-    let look = LookAtNode {
-        chain: vec![
-            LookAtBone {
-                bone: JointName(name!("neck_01")),
-                share: 0.35,
-                halflife: 0.25,
-                ..Default::default()
-            },
-            LookAtBone {
-                bone: JointName(name!("Head")),
-                share: 1.0,
-                halflife: 0.2,
-                ..Default::default()
-            },
-        ],
-        target_param: name!("look_target"),
-        weight_param: Some(name!("look_weight")),
-        ..Default::default()
-    };
-    let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(look, |mut body| {
-        body.with_blend_space_2d_input(name!("gait"), |space| {
-            space
-                .animation_clip_input(assets.load::<AnimationClip>(IDLE_CLIP), GAIT_IDLE)
-                .animation_clip_input(assets.load::<AnimationClip>(WALK_CLIP), GAIT_WALK)
-                .animation_clip_input(assets.load::<AnimationClip>(SIT_CLIP), GAIT_SIT);
-        });
-    });
-    cmd.insert_resource(NpcAnimations {
-        graph: assets.add(graph),
-    });
     for npc in data.case.characters.ids() {
         let Some(pose) = npc_pose(&data, &house, npc, now_seconds(&clock)) else {
             continue;
         };
+        let art = character_art(&data, npc);
         let collider = Collider::capsule(0.5, 0.3);
         let offset = ColliderOffset::bottom_origin(&collider);
         let body = cmd
@@ -407,8 +436,9 @@ fn spawn_case(
                 body,
                 animator: None,
                 gait: GAIT_IDLE,
+                graph: assets.add(character_graph(&assets, &art)),
             },
-            SceneSpawnerComponent(character.clone()),
+            SceneSpawnerComponent(assets.load::<Scene>(art.scene)),
             Transform::from_translation_rotation(
                 pose.position,
                 Quat::from_rotation_y(pose.yaw + MODEL_TURN),
@@ -1123,7 +1153,6 @@ fn face_npcs(
     bodies: Query<(&NpcBody, &Transform), Without<NpcVisual>>,
     children: Query<&Children>,
     players: Query<&mut AnimationPlayer>,
-    animations: Option<Res<NpcAnimations>>,
     eyes: Query<(&PlayerIndex, &Transform), (With<Camera>, Without<NpcVisual>)>,
     session: Res<Session>,
     house: Res<House>,
@@ -1148,12 +1177,11 @@ fn face_npcs(
         transform.translation = body.translation;
         transform.rotation = Quat::from_rotation_y(npc.yaw + MODEL_TURN);
         if visual.animator.is_none()
-            && let Some(animations) = &animations
             && let Some(animator) = animator_under(entity, &children, &players)
         {
             visual.animator = Some(animator);
             cmd.insert(
-                AnimationHandleComponent::new(animations.graph.clone()),
+                AnimationHandleComponent::new(visual.graph.clone()),
                 animator,
             );
         }

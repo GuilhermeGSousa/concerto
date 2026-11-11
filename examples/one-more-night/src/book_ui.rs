@@ -1,6 +1,9 @@
 use concerto::{
+    asset_id,
     color::Color,
     ecs::{CommandQueue, Component, Entity, Query, Res},
+    foundation::assets::{AssetId, asset_server::AssetServer},
+    render::assets::texture::Texture,
     ui::{
         grid::{UIGrid, UIGridCell},
         material::UIMaterial,
@@ -27,10 +30,10 @@ const CELL: Color = Color::srgba(0.1, 0.1, 0.14, 0.9);
 const INK: Color = Color::srgba(0.945, 0.925, 0.885, 1.0);
 const MUTED: Color = Color::srgba(0.66, 0.64, 0.6, 1.0);
 const GOLD: Color = Color::srgba(0.9, 0.72, 0.32, 1.0);
-const PORTRAITS: [Color; 3] = [
-    Color::srgba(0.5, 0.2, 0.26, 1.0),
-    Color::srgba(0.2, 0.34, 0.5, 1.0),
-    Color::srgba(0.28, 0.42, 0.26, 1.0),
+const PORTRAITS: [AssetId; 3] = [
+    asset_id!("content/characters/portraits/portrait_01/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_02/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_03/main.gasset"),
 ];
 
 /// The panel a player's open casebook is drawn in, and the screen it last drew.
@@ -112,7 +115,7 @@ fn facts_column(cmd: &mut CommandQueue, parent: Entity, facts: &[String]) {
     }
 }
 
-fn build(cmd: &mut CommandQueue, panel: Entity, screen: &BookScreen) {
+fn build(cmd: &mut CommandQueue, panel: Entity, screen: &BookScreen, assets: &AssetServer) {
     let tabs = cmd.entity(panel).spawn_child(row()).entity();
     for page in Page::ALL {
         let chosen = page == screen.page;
@@ -145,18 +148,22 @@ fn build(cmd: &mut CommandQueue, panel: Entity, screen: &BookScreen) {
                 let line = cmd
                     .entity(list)
                     .spawn_child((
-                        row().with_padding(UIRect::all(5.0)),
+                        row()
+                            .with_padding(UIRect::all(5.0))
+                            .with_align_items(concerto::ui::node::AlignItems::Center),
                         fill(if index == *selected { CHOSEN } else { CLEAR }, 5.0),
                     ))
                     .entity();
                 if let Some(portrait) = subject.portrait {
-                    let initial = subject.label.chars().next().unwrap_or(' ').to_string();
                     cmd.entity(line).add_child((
-                        UINode::default()
-                            .with_size(UIValue::Px(26.0), UIValue::Px(26.0))
-                            .with_padding(inset(2.0, 7.0)),
-                        fill(PORTRAITS[portrait % PORTRAITS.len()], 13.0),
-                        label(initial, 16.0, INK),
+                        UINode::default().with_size(UIValue::Px(44.0), UIValue::Px(44.0)),
+                        UIMaterial {
+                            corner_radius: 6.0,
+                            texture: Some(
+                                assets.load::<Texture>(PORTRAITS[portrait % PORTRAITS.len()]),
+                            ),
+                            ..UIMaterial::flat(Color::srgba(1.0, 1.0, 1.0, 1.0))
+                        },
                     ));
                 }
                 cmd.entity(line).add_child((
@@ -257,6 +264,7 @@ pub fn show_book(
     session: Res<Session>,
     book: Res<Casebook>,
     data: Res<CaseData>,
+    assets: Res<AssetServer>,
     mut cmd: CommandQueue,
 ) {
     for (entity, mut panel, mut node) in panels.iter() {
@@ -269,7 +277,7 @@ pub fn show_book(
         }
         cmd.entity(entity).despawn_children();
         if let Some(screen) = &screen {
-            build(&mut cmd, entity, screen);
+            build(&mut cmd, entity, screen, &assets);
         }
         panel.shown = screen;
     }
