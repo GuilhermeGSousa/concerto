@@ -29,6 +29,10 @@ use crate::{
     content::{self, AssetCreation},
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
+    import::{
+        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, stage_sources,
+        validate_rows,
+    },
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
     scene::{SaveFailed, SceneOpenFailed, SceneOpened},
     tools::{
@@ -66,6 +70,15 @@ pub struct CreateAsset {
     pub name: String,
     /// The folder to create it in, such as content/rooms, made if it is missing; the content root without one.
     pub folder: Option<String>,
+}
+
+/// Imports a source file, such as a .glb, .obj, .bvh or .png, into the project, as the Import… dialog does, and answers the assets it wrote.
+#[derive(Deserialize, JsonSchema)]
+pub struct ImportSource {
+    /// The source file; a relative path is read from the editor's working directory.
+    pub source: String,
+    /// Where the source is copied to in the project, such as assets/props/crate.glb, keeping its extension; assets/<file name> without one, or where it already is when it lies inside the project.
+    pub destination: Option<String>,
 }
 
 /// Closes an open document.
@@ -143,6 +156,11 @@ struct CreatingAsset {
 }
 
 #[derive(Component)]
+struct ImportingSource {
+    destination: String,
+}
+
+#[derive(Component)]
 struct ClosingDocument(Entity);
 
 #[derive(Component)]
@@ -172,6 +190,10 @@ pub(super) fn build(app: &mut App) {
             McpTool::new("create_asset").needs(Needs::Project),
             create_asset,
         )
+        .add_tool::<ImportSource, _>(
+            McpTool::new("import_source").needs(Needs::Project),
+            import_source,
+        )
         .add_tool::<CloseDocument, _>(McpTool::new("close_document"), close_document)
         .add_tool::<Select, _>(McpTool::new("select").needs(Needs::Scene), select)
         .add_tool::<Frame, _>(McpTool::new("frame").needs(Needs::Scene), frame)
@@ -191,6 +213,7 @@ pub(super) fn build(app: &mut App) {
                 answer_project_opens,
                 answer_asset_opens,
                 answer_asset_creations,
+                answer_imports,
                 answer_closes,
             ),
         );
@@ -512,6 +535,96 @@ fn answer_asset_creations(
                 format!(
                     "{message}. Give a name of letters, digits, spaces, - and _ that list_assets does not show in that folder, and a folder inside the content root."
                 ),
+            )),
+        }
+        cmd.despawn(entity);
+    }
+}
+
+fn import_source(
+    mut calls: ToolCalls<ImportSource>,
+    state: Res<ProjectState>,
+    commands: Res<EditorCommands>,
+    mut queue: ResMut<ImportQueue>,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        if project_opening(&state, &commands) {
+            reply.err(busy());
+            continue;
+        }
+        let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
+            continue;
+        };
+        let source = PathBuf::from(&arguments.source);
+        if !source.is_file() {
+            reply.err(ToolError::new(
+                "unknown_source",
+                format!(
+                    "No file at {}; give a path to a source file, absolute or from the editor's working directory.",
+                    source.display()
+                ),
+            ));
+            continue;
+        }
+        let mut rows = stage_sources(vec![source]);
+        match &arguments.destination {
+            Some(destination) => rows[0].destination = destination.clone(),
+            None => keep_project_sources_in_place(&mut rows, &root),
+        }
+        validate_rows(&mut rows, &root);
+        if let RowState::Rejected(reason) = &rows[0].state {
+            reply.err(ToolError::new(
+                "import_refused",
+                format!(
+                    "{} cannot be imported to {}: {reason}. A destination is a file inside the project with the source's extension.",
+                    arguments.source, rows[0].destination
+                ),
+            ));
+            continue;
+        }
+        let destination = rows[0].destination.clone();
+        queue.enqueue(rows);
+        cmd.spawn((
+            PendingCall::new(reply, "the import to finish"),
+            ImportingSource { destination },
+        ));
+    }
+}
+
+fn answer_imports(
+    mut finished: EventReader<ImportFinished>,
+    waiting: Query<(Entity, &PendingCall, &ImportingSource)>,
+    mut cmd: CommandQueue,
+) {
+    for event in finished.read() {
+        let Some((entity, pending, _)) = waiting
+            .iter()
+            .find(|(_, _, importing)| importing.destination == event.destination)
+        else {
+            continue;
+        };
+        match &event.result {
+            Ok(imported) => {
+                let mut answer = format!(
+                    "Imported {}: {}, {}.",
+                    event.destination,
+                    counted(imported.assets.len(), "asset"),
+                    counted(imported.siblings.len(), "sibling file")
+                );
+                for asset in &imported.assets {
+                    answer.push_str(&format!(
+                        "\n{} · {} · {}",
+                        asset.address,
+                        asset.kind,
+                        asset.id.simple_hex()
+                    ));
+                }
+                pending.reply.ok(answer);
+            }
+            Err(reason) => pending.reply.err(ToolError::new(
+                "import_failed",
+                format!("{} was not imported: {reason}", event.destination),
             )),
         }
         cmd.despawn(entity);

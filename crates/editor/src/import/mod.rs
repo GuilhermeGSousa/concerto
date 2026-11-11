@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use std::thread::JoinHandle;
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_ecs::{IntoSystemConfig, ResMut, Resource, events::event_writer::EventWriter};
+use concerto_ecs::{Event, IntoSystemConfig, ResMut, Resource, events::event_writer::EventWriter};
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
@@ -147,12 +147,20 @@ pub struct ImportStaging {
     pub visible: bool,
 }
 
+/// A queued import ended: what it wrote to `destination`, or why it failed.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct ImportFinished {
+    pub destination: String,
+    pub result: Result<ImportedSource, String>,
+}
+
 /// Queued imports and the single worker running one of them.
 #[derive(Resource, Default)]
 pub struct ImportQueue {
     pending: VecDeque<QueuedImport>,
     job: Option<JoinHandle<(PathBuf, Result<ImportedSource, String>)>>,
     current: Option<String>,
+    current_destination: Option<String>,
     failures: Vec<(String, String)>,
     done: usize,
     total: usize,
@@ -240,7 +248,7 @@ pub fn accept_picked(
     staging.visible = !staging.rows.is_empty();
 }
 
-fn keep_project_sources_in_place(rows: &mut [StagedImport], project_root: &Path) {
+pub(crate) fn keep_project_sources_in_place(rows: &mut [StagedImport], project_root: &Path) {
     let Ok(root) = project_root.canonicalize() else {
         return;
     };
@@ -292,6 +300,7 @@ impl Plugin for ImportPlugin {
         app.insert_resource(ImportQueue::default());
         app.insert_resource(ImportStaging::default());
         app.insert_resource(ImportPicker::default());
+        app.register_event::<ImportFinished>();
         app.register_plugin(dialog::DialogPlugin);
         app.add_system(Update, (finish_import, drive_imports).chain());
         app.add_system(Update, drive_picker);
@@ -333,6 +342,7 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
         .unwrap_or_else(|| row.destination.clone());
     state.status = format!("Importing {name} ({} of {})…", queue.done + 1, queue.total);
     queue.current = Some(name);
+    queue.current_destination = Some(row.destination.clone());
     queue.job = Some(std::thread::spawn(move || {
         let result = import_source_into(&row.source, &row.destination, &root).map_err(|error| {
             let error = format!("{error:#}");
@@ -353,11 +363,13 @@ fn finish_import(
     mut state: ResMut<ProjectState>,
     mut registry: ResMut<AssetRegistry>,
     mut written: EventWriter<AssetsWritten>,
+    mut finished: EventWriter<ImportFinished>,
 ) {
     if !queue.job.as_ref().is_some_and(|job| job.is_finished()) {
         return;
     }
     let name = queue.current.take().unwrap_or_default();
+    let destination = queue.current_destination.take().unwrap_or_default();
     let (root, result) = match queue
         .job
         .take()
@@ -371,6 +383,10 @@ fn finish_import(
         }
     };
     queue.done += 1;
+    finished.write(ImportFinished {
+        destination,
+        result: result.clone(),
+    });
     let imported = match result {
         Ok(imported) => {
             if let Some(root) = &root

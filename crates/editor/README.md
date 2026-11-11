@@ -141,7 +141,18 @@ name field triggers. It answers `Created <address> · <kind> · <id>. Open it
 with open_asset.` and does not open the asset. A kind that cannot be created
 answers `unknown_kind`, listing the ones that can; a name New would refuse, a
 name taken in that folder, or a folder outside the content root answers
-`create_failed` with the reason. It needs an open project. `close_document`
+`create_failed` with the reason. It needs an open project. `import_source`
+imports the file at `source` through the queue the Import… dialog fills: it
+copies the source to `destination` in the project, or to `assets/<file name>`
+without one, or leaves it where it is when it already lies inside the project,
+and answers once that import has finished, with `Imported <destination>: N
+assets, M sibling files.` and one `address · kind · id` line per asset written.
+A path with no file answers `unknown_source`; a destination outside the
+project, without a file name, with another extension than the source's, or a
+source no importer handles answers `import_refused` with the dialog's reason;
+an import that fails answers `import_failed` with the status line's reason.
+Each queued import ends with an `ImportFinished` event, which is what the tool
+waits for. It needs an open project. `close_document`
 closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the

@@ -1793,6 +1793,71 @@ fn create_asset_writes_an_empty_scene_that_open_asset_opens() {
 }
 
 #[test]
+fn import_source_writes_the_source_and_its_assets_into_the_project() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    let sources = tempfile::tempdir().unwrap();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
+    for name in ["square.obj", "square.mtl"] {
+        std::fs::copy(fixtures.join(name), sources.path().join(name)).unwrap();
+    }
+    let square = sources.path().join("square.obj").display().to_string();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let imported = ok_with(
+            &client,
+            "import_source",
+            json!({ "source": square, "destination": "assets/props/square.obj" }),
+        )
+        .await;
+        let listed = ok_with(&client, "list_assets", json!({ "query": "square" })).await;
+        let errors = vec![
+            error_with(
+                &client,
+                "import_source",
+                json!({ "source": "nowhere/missing.obj" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "import_source",
+                json!({ "source": square, "destination": "../square.obj" }),
+            )
+            .await,
+        ];
+        until(&client, "status", |status| status.contains("busy: no")).await;
+        client.cancel().await.unwrap();
+        (imported, listed, errors)
+    }) else {
+        return;
+    };
+
+    let (imported, listed, errors) = served.result;
+    let mut lines = imported.lines();
+    let summary = lines.next().unwrap();
+    assert!(
+        summary.starts_with("Imported assets/props/square.obj: ")
+            && summary.ends_with(", 1 sibling file."),
+        "{imported}"
+    );
+    assert!(root.join("assets/props/square.obj").is_file());
+    assert!(root.join("assets/props/square.mtl").is_file());
+    let assets: Vec<&str> = lines.collect();
+    assert!(!assets.is_empty(), "{imported}");
+    for asset in assets {
+        let address = asset.split(" · ").next().unwrap();
+        assert!(root.join(address).is_file(), "{asset}");
+        assert!(listed.contains(asset), "{asset} is not in {listed}");
+    }
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["unknown_source", "import_refused"]);
+}
+
+#[test]
 fn open_asset_waits_for_a_scene_and_answers_at_once_when_it_is_shown() {
     let fixture = Fixture::new();
     let level = fixture.scene;
