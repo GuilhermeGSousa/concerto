@@ -50,7 +50,7 @@ use concerto::{
 use glam::{Quat, Vec2, Vec3};
 
 use crate::book::Casebook;
-use crate::case::{Id, NpcId, Phase, PlacementId, Role};
+use crate::case::{Id, NpcId, PlacementId, Role};
 use crate::casefile::CaseData;
 use crate::clock::{GameTime, Midnight, NightClock, NightPaused};
 use crate::controls::{
@@ -306,12 +306,12 @@ fn npc_pose(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<NpcP
             walking: false,
         });
     }
-    let entries = entries_of(&data.case, npc, Phase::Before);
+    let entries = entries_of(&data.case, npc, data.case.phase_at(case_time(now)));
     pose_at(&entries, &data.level, now, WALK_SPEED)
 }
 
 fn npc_is_busy(data: &CaseData, house: &House, npc: NpcId, now: f64) -> bool {
-    let entries = entries_of(&data.case, npc, Phase::Before);
+    let entries = entries_of(&data.case, npc, data.case.phase_at(case_time(now)));
     npc_pose(data, house, npc, now)
         .and_then(|pose| entries.get(pose.entry).map(|entry| entry.critical))
         .unwrap_or(false)
@@ -630,7 +630,14 @@ fn play(
         ];
         for (pressed, press) in presses {
             if pressed {
-                effects.extend(session.press(player, press, &mut book, &data, time, Phase::Before));
+                effects.extend(session.press(
+                    player,
+                    press,
+                    &mut book,
+                    &data,
+                    time,
+                    data.case.phase_at(time),
+                ));
             }
         }
     }
@@ -672,7 +679,8 @@ fn overhear(
         .filter(|(player, _)| session.seats[*player as usize].present)
         .collect();
     if !house.gathered {
-        for talk in talks_at(&data.case, Phase::Before, now_seconds(&clock)) {
+        let phase = data.case.phase_at(case_time(now_seconds(&clock)));
+        for talk in talks_at(&data.case, phase, now_seconds(&clock)) {
             let conversation = data.case.conversations.get(talk.conversation);
             let Some(place) = npcs
                 .iter()
@@ -793,7 +801,7 @@ fn show_hud(
     let time = case_time(now_seconds(&clock));
     let screens: [Option<String>; SEATS] = std::array::from_fn(|seat| {
         session
-            .view(seat as u8, &book, &data, time, Phase::Before)
+            .view(seat as u8, &book, &data, time, data.case.phase_at(time))
             .map(|screen| screen.laid_out(SCREEN_ROWS))
     });
     for (hud, mut text, mut node) in texts.iter() {
@@ -949,7 +957,7 @@ fn move_npcs(
         }
         let moving = pose.walking || step.length() > 0.05;
         let sitting = !moving && !house.gathered && {
-            let entries = entries_of(&data.case, npc.npc, Phase::Before);
+            let entries = entries_of(&data.case, npc.npc, data.case.phase_at(case_time(now)));
             entries
                 .get(pose.entry)
                 .is_some_and(|entry| data.catalog.activities.name(entry.activity) == "sit")

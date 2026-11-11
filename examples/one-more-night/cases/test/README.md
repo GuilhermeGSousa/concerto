@@ -18,6 +18,9 @@ tiny and its solution is public.
 | The timeline | `f_03`, `f_04` and `f_07` have a room and a time |
 | Inspect, document and carry | `p_case`, `p_basket`; `p_note`; `p_key`, `p_cup` |
 
+At 21:30 the theft is discovered: Lady Ashby and Hobbs go to the study, and
+Hobbs has a new answer for a player who already has `f_04`.
+
 ## Solution
 
 - `d_01`: Mr Corwin took the snuffbox from the study.

@@ -184,6 +184,7 @@ impl Case {
 
         Ok(Case {
             title,
+            discovery: manifest.discovery,
             strings: Table::new(names.strings, texts),
             characters: Table::new(names.characters, characters),
             schedules,

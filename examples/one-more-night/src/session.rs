@@ -398,7 +398,7 @@ impl Session {
     }
 
     fn row_count(&self, player: u8, book: &Casebook, data: &CaseData, now: GameTime) -> usize {
-        self.view(player, book, data, now, Phase::Before)
+        self.view(player, book, data, now, data.case.phase_at(now))
             .map_or(0, |screen| screen.lines.len())
     }
 

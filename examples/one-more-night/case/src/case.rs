@@ -11,6 +11,8 @@ use crate::{
 #[derive(Debug)]
 pub struct Case {
     pub title: StrId,
+    /// When the discovery happens; from then on characters follow their `After` entries. `None` keeps them in `Before` all night.
+    pub discovery: Option<GameTime>,
     pub strings: Table<StrId, Text>,
     pub characters: Table<NpcId, Character>,
     pub schedules: Vec<Schedule>,
@@ -27,6 +29,14 @@ pub struct Case {
 }
 
 impl Case {
+    /// The phase the night is in at `time`.
+    pub fn phase_at(&self, time: GameTime) -> Phase {
+        match self.discovery {
+            Some(discovery) if time >= discovery => Phase::After,
+            _ => Phase::Before,
+        }
+    }
+
     pub fn schedule(&self, npc: NpcId) -> Option<&Schedule> {
         self.schedules.iter().find(|schedule| schedule.npc == npc)
     }

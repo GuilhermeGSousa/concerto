@@ -186,6 +186,19 @@ mod tests {
             before.position, seat,
             "before its first entry it waits there"
         );
+        let discovered = data.case.phase_at(case_time(at(21, 30)));
+        assert_eq!(
+            discovered,
+            Phase::After,
+            "the test case's discovery is at 21:30"
+        );
+        let after = entries_of(&data.case, npc, discovered);
+        let moved = pose_at(&after, &level, at(21, 45), WALK_SPEED).unwrap();
+        assert_eq!(
+            moved.position, stand,
+            "after the discovery she is in the study"
+        );
+
         let last = pose_at(&entries, &level, at(23, 59), WALK_SPEED).unwrap();
         assert_eq!(last.position, seat);
         assert_eq!(last.entry, 2);

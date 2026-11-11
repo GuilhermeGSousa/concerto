@@ -30,6 +30,7 @@
         no_answer: "npc_03.no_answer",
         topics: [
             Topic(ask: Question("npc_03.q1"), responses: [
+                Response(when: Condition(phase: After, knows: ["f_04"]), lines: ["npc_03.q1.r3"]),
                 Response(when: Condition(window: TimeWindow(from: "19:40", until: "24:00")), lines: ["npc_03.q1.r2"], grants: ["f_04"]),
                 Response(lines: ["npc_03.q1.r1"]),
             ]),

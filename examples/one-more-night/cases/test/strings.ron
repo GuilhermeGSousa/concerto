@@ -28,6 +28,7 @@
     "npc_03.q1": "Anything unusual tonight?",
     "npc_03.q1.r1": "Quiet so far.",
     "npc_03.q1.r2": "Mr Corwin came through the service corridor with something under his coat. Guests never come back here.",
+    "npc_03.q1.r3": "Her ladyship has seen the empty case. The whole house knows now.",
     "npc_03.f_05.r1": "In the linen basket? I never put it there.",
     "f_01.text": "The display case in the study is empty.",
     "f_02.text": "A note on the desk asks for a meeting in the study at seven, signed C.",
