@@ -41,6 +41,7 @@ use crate::{
     },
     sets::UiSet,
     slider::{setup_slider_visuals, sync_slider_fill},
+    splitter::{setup_splitter_visuals, sync_splitter_lines},
     text::{
         extract_text_nodes,
         fonts::{UIFonts, build_font_system},
@@ -148,7 +149,13 @@ impl Plugin for UIPlugin {
         );
         app.add_system(
             LateUpdate,
-            (setup_slider_visuals, setup_scrollbars, setup_text_inputs).in_set(UiSet::Setup),
+            (
+                setup_slider_visuals,
+                setup_splitter_visuals,
+                setup_scrollbars,
+                setup_text_inputs,
+            )
+                .in_set(UiSet::Setup),
         );
         app.add_system(
             LateUpdate,
@@ -166,6 +173,7 @@ impl Plugin for UIPlugin {
             LateUpdate,
             (
                 sync_checkbox_material,
+                sync_splitter_lines,
                 sync_viewport_textures,
                 sync_shared_viewport_textures,
                 apply_interaction_styles,
