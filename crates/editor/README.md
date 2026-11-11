@@ -428,12 +428,13 @@ region with no visible panel and no host is `Hidden`, and the Asset Browser is
 
 Every icon is a glyph of the bundled Phosphor face, drawn through
 `fonts::icon` from a constant in `fonts::glyph`, which carries the glyph's
-upstream name. There are two sizes. A row's icon, in a tree row or on a tab,
-is `fonts::row_icon`: a 16 px glyph in a 20 px column. An icon button is
-`fonts::icon_button` with `fonts::button_icon`: a 16 px glyph in a square of
-the theme's control height. An icon is the muted text colour at rest and the
-text colour while its row is hovered or selected; the glyph, not a colour,
-tells kinds apart. The hierarchy shows `stack` for the scene root, `camera`,
+upstream name. There are two sizes. A row's icon is a 16 px glyph in a 20 px
+column: a tree row's is `fonts::row_icon`, and a tab builds its own to the same
+measure. An icon button is `fonts::icon_button` with `fonts::button_icon`: a
+16 px glyph in a square of the theme's control height. A tree row's icon is the
+muted text colour at rest and the text colour while its row is hovered or
+selected, and a tab's is the text colour on the active tab and muted on the
+others, whether hovered or not; the glyph, not a colour, tells kinds apart. The hierarchy shows `stack` for the scene root, `camera`,
 `lightbulb` and `cube` for an entity with a camera, a light or a mesh,
 `folder-simple` for any other entity with children, and `dot` for the rest.
 
