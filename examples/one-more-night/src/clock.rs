@@ -215,6 +215,8 @@ impl NightClock {
 #[derive(Clone, Debug, Default)]
 pub struct NightClockPlugin {
     pub clock: NightClock,
+    /// Shows the time in the window's corner, for a build with no pocket watch.
+    pub readout: bool,
 }
 
 impl Plugin for NightClockPlugin {
@@ -225,9 +227,11 @@ impl Plugin for NightClockPlugin {
             .register_event::<ClockReached>()
             .register_event::<HourStruck>()
             .register_event::<Midnight>()
-            .add_system(Startup, spawn_clock_readout)
-            .add_system(Update, advance_night_clock)
-            .add_system(Update, update_clock_readout.after(advance_night_clock));
+            .add_system(Update, advance_night_clock);
+        if self.readout {
+            app.add_system(Startup, spawn_clock_readout)
+                .add_system(Update, update_clock_readout.after(advance_night_clock));
+        }
     }
 }
 

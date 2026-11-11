@@ -106,6 +106,13 @@ impl Casebook {
         self.confirmed.contains(&deduction)
     }
 
+    /// Confirms `deduction` without a joint lock, for the debug tools.
+    pub fn force_confirm(&mut self, deduction: DeductionId) {
+        if !self.is_confirmed(deduction) {
+            self.confirmed.push(deduction);
+        }
+    }
+
     pub fn confirmed(&self) -> &[DeductionId] {
         &self.confirmed
     }

@@ -2,12 +2,15 @@ use concerto::{DefaultPlugins, app::App, asset_id};
 
 pub mod book;
 pub mod casefile;
+pub mod controls;
 pub mod house;
 pub mod level;
 pub mod players;
 pub mod rules;
+pub mod save;
 pub mod schedule;
 pub mod session;
+pub mod world;
 
 use crate::clock::NightClockPlugin;
 
@@ -21,6 +24,17 @@ pub fn game(app: &mut App) {
     players::install(app);
     app.register_plugin(DefaultPlugins);
     players::enable_joining(app);
-    app.set_startup_scene(asset_id!("content/room/room.gasset"));
+    app.set_startup_scene(asset_id!("content/level/test_level.gasset"));
     app.register_plugin(NightClockPlugin::default());
+    world::install(app, world::default_saves());
+}
+
+/// The game as tests build it: the same, saving nowhere.
+pub fn game_without_saves(app: &mut App) {
+    players::install(app);
+    app.register_plugin(DefaultPlugins);
+    players::enable_joining(app);
+    app.set_startup_scene(asset_id!("content/level/test_level.gasset"));
+    app.register_plugin(NightClockPlugin::default());
+    world::install(app, None);
 }

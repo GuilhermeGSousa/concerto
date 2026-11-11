@@ -6,3 +6,4 @@ examples/tech-demo/assets/sanatorium/*.blend filter=lfs diff=lfs merge=lfs -text
 examples/one-more-night/assets/manor/*.blend filter=lfs diff=lfs merge=lfs -text
 examples/one-more-night/assets/manor/export/*.glb filter=lfs diff=lfs merge=lfs -text
 examples/one-more-night/assets/manor/export/travel_full.csv filter=lfs diff=lfs merge=lfs -text
+examples/one-more-night/assets/characters/*.glb filter=lfs diff=lfs merge=lfs -text

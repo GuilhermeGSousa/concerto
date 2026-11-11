@@ -13,6 +13,8 @@ plugins = [
 ]
 
 [features]
+default = ["debug"]
+debug = []
 tracy = ["concerto/tracy"]
 
 [lib]

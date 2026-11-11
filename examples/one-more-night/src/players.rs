@@ -32,8 +32,13 @@ pub struct SpawnPoint {
     pub player: u32,
 }
 
+/// A spawn point whose player has been seated.
 #[derive(Component)]
-struct Seated;
+pub struct Seated;
+
+/// An entity of a player's seat: their walker, camera or HUD. A new night despawns them and seats the players again.
+#[derive(Component)]
+pub struct SeatEntity;
 
 #[derive(Component)]
 struct SeatLabel {
@@ -101,16 +106,20 @@ fn seat_players(
             Transform::from_translation(transform.translation),
             FirstPersonWalker::default().with_yaw(yaw),
         );
+        cmd.insert(SeatEntity, walker);
         let camera = cmd
             .spawn((
                 Camera::default().with_viewport(viewport_of(player)),
                 Transform::from_translation(transform.translation),
                 FirstPersonView { walker },
+                player,
+                SeatEntity,
             ))
             .entity();
         cmd.spawn((
             UINode::default().with_size(UIValue::Percent(100.0), UIValue::Percent(100.0)),
             UITargetCamera(camera),
+            SeatEntity,
         ))
         .add_child((
             theme
@@ -216,13 +225,13 @@ mod tests {
     }
 
     #[test]
-    fn the_game_starts_in_the_graybox_room() {
+    fn the_game_starts_in_the_test_level() {
         let mut app = App::new();
         crate::game(&mut app);
 
         assert_eq!(
             app.get_resource::<StartupScene>(),
-            Some(&StartupScene(asset_id!("content/room/room.gasset")))
+            Some(&StartupScene(asset_id!("content/level/test_level.gasset")))
         );
     }
 
