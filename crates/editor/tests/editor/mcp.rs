@@ -1189,6 +1189,12 @@ struct FormTab {
     narrowed: Resized,
 }
 
+struct SharedStrip {
+    status: String,
+    widened: Resized,
+    filling: Value,
+}
+
 async fn resize(client: &Client, panel: &str, size: f32) -> Resized {
     let reply = ok_with(
         client,
@@ -1204,12 +1210,16 @@ async fn resize(client: &Client, panel: &str, size: f32) -> Resized {
 fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them() {
     let fixture = Fixture::new();
     fixture.add("content/tune.gasset", "Tune");
+    fixture.add("content/riff.gasset", "Riff");
     let log = Log::default();
     let Some(served) = serve_sized(
         &fixture,
         &log,
         game,
-        form_tune_editor,
+        |app| {
+            form_tune_editor(app);
+            app.register_asset_editor::<Riff, RiffEditor>().unwrap();
+        },
         (1280, 720),
         |client| async move {
             open(&client).await;
@@ -1246,6 +1256,35 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
             .await;
             let back = until(&client, "status", |status| !status.contains("left hidden")).await;
             let narrowed = resize(&client, "left", 500.0).await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/riff.gasset" }),
+            )
+            .await;
+            let status = until(&client, "status", |status| {
+                !status.contains("browser fill") && status.ends_with("busy: no")
+            })
+            .await;
+            let widened = resize(&client, "browser", 500.0).await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            until(&client, "status", |status| status.contains("browser fill")).await;
+            let refilled = error_with(
+                &client,
+                "set_panel_size",
+                json!({ "panel": "browser", "size": 300.0 }),
+            )
+            .await;
+            let shared = SharedStrip {
+                status,
+                widened,
+                filling: refilled,
+            };
             client.cancel().await.unwrap();
             let form = FormTab {
                 status: form,
@@ -1253,13 +1292,14 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
                 back,
                 narrowed,
             };
-            (before, [left, right, bottom, clamped], filling, after, form)
+            let sized = [left, right, bottom, clamped];
+            (before, sized, filling, after, form, shared)
         },
     ) else {
         return;
     };
 
-    let (before, [left, right, bottom, clamped], filling, after, form) = served.result;
+    let (before, [left, right, bottom, clamped], filling, after, form, shared) = served.result;
     assert_eq!(
         line(&before, "layout: "),
         "left 260 · right 320 · bottom 220 · browser fill"
@@ -1318,6 +1358,17 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
             "{answer}"
         );
     }
+    assert_eq!(
+        line(&shared.status, "layout: "),
+        "left 500 · right 400 · bottom 300 · browser 420"
+    );
+    for answer in [&shared.widened.reply, &shared.widened.status] {
+        assert_eq!(
+            line(answer, "layout: "),
+            "left 500 · right 400 · bottom 300 · browser 500"
+        );
+    }
+    assert_eq!(shared.filling["code"], "refused", "{}", shared.filling);
 }
 
 #[test]
@@ -5314,6 +5365,28 @@ impl AssetEditor for FormTuneEditor {
     }
 
     fn form(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Riff;
+
+impl Asset for Riff {
+    fn name() -> &'static str {
+        "Riff"
+    }
+}
+
+#[derive(Default)]
+struct RiffEditor;
+
+impl AssetEditor for RiffEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        TuneEditor.build(editor);
+    }
+
+    fn bottom_host(&self) -> bool {
         true
     }
 }
