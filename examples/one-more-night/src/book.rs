@@ -203,12 +203,13 @@ impl Casebook {
         self.drafts[player as usize].insert(deduction, draft);
     }
 
-    /// Locks or unlocks `player`'s copy; once every player's copy is locked, judges them, confirms a correct one and unlocks the rest.
+    /// Locks or unlocks `player`'s copy; once the copy of every `present` player is locked, judges them, confirms a correct one and unlocks the rest.
     pub fn toggle_lock(
         &mut self,
         case: &Case,
         player: u8,
         deduction: DeductionId,
+        present: [bool; PLAYER_COUNT as usize],
     ) -> Option<Verdict> {
         if self.is_confirmed(deduction) {
             return None;
@@ -217,6 +218,7 @@ impl Casebook {
         draft.locked = !draft.locked;
         self.drafts[player as usize].insert(deduction, draft);
         let drafts: Vec<Draft> = (0..PLAYER_COUNT)
+            .filter(|other| *other == player || present[*other as usize])
             .map(|player| self.draft(case, player, deduction))
             .collect();
         if !drafts.iter().all(|draft| draft.locked) {
@@ -286,6 +288,21 @@ mod tests {
     use super::{Casebook, Verdict};
     use crate::casefile::CaseData;
 
+    const BOTH: [bool; 2] = [true, true];
+
+    #[test]
+    fn a_player_alone_judges_their_own_copy() {
+        let data = CaseData::test();
+        let case = &data.case;
+        let d1 = case.deductions.id("d_01").unwrap();
+        let mut book = Casebook::default();
+
+        assert_eq!(
+            book.toggle_lock(case, 0, d1, [true, false]),
+            Some(Verdict::Close)
+        );
+    }
+
     #[test]
     fn facts_unlock_terms_and_deductions_and_a_joint_lock_judges_them() {
         let data = CaseData::test();
@@ -312,7 +329,7 @@ mod tests {
         book.cycle(case, 0, d1, 1, true);
         assert_eq!(book.draft(case, 0, d1).picks, [None, Some(term("t_box"))]);
         assert_eq!(
-            book.toggle_lock(case, 0, d1),
+            book.toggle_lock(case, 0, d1, BOTH),
             None,
             "one lock waits for the other"
         );
@@ -322,12 +339,12 @@ mod tests {
             [None, Some(term("t_box"))],
             "a locked copy does not change"
         );
-        assert_eq!(book.toggle_lock(case, 1, d1), Some(Verdict::Disagree));
+        assert_eq!(book.toggle_lock(case, 1, d1, BOTH), Some(Verdict::Disagree));
         assert!(!book.draft(case, 0, d1).locked, "a verdict unlocks both");
 
         book.cycle(case, 1, d1, 1, true);
-        book.toggle_lock(case, 0, d1);
-        assert_eq!(book.toggle_lock(case, 1, d1), Some(Verdict::Close));
+        book.toggle_lock(case, 0, d1, BOTH);
+        assert_eq!(book.toggle_lock(case, 1, d1, BOTH), Some(Verdict::Close));
 
         book.grant(fact("f_02"));
         for player in 0..2 {
@@ -337,8 +354,8 @@ mod tests {
             book.sentence(case, 1, d1),
             "[Mr Corwin] took [the snuffbox] from the study."
         );
-        book.toggle_lock(case, 0, d1);
-        assert_eq!(book.toggle_lock(case, 1, d1), Some(Verdict::Correct));
+        book.toggle_lock(case, 0, d1, BOTH);
+        assert_eq!(book.toggle_lock(case, 1, d1, BOTH), Some(Verdict::Correct));
         assert!(book.is_confirmed(d1));
         assert_eq!(
             book.visible_deductions(case),

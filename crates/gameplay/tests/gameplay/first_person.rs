@@ -216,6 +216,18 @@ fn each_walker_reads_its_own_players_stick_and_its_view_sits_at_its_eyes() {
     simulate(&mut world, 1.0);
     run(&mut world, place_first_person_views);
 
+    world
+        .get_component_for_entity_mut::<FirstPersonWalker>(second)
+        .unwrap()
+        .controlled = false;
+    let held = position(&world, second);
+    run(&mut world, read_first_person_input);
+    simulate(&mut world, 0.5);
+    assert!(
+        (position(&world, second) - held).length() < 0.05,
+        "a walker that is not controlled ignores its stick"
+    );
+
     let still = position(&world, first);
     let moved = position(&world, second);
     assert!(
@@ -224,6 +236,7 @@ fn each_walker_reads_its_own_players_stick_and_its_view_sits_at_its_eyes() {
     );
     assert!(moved.z < -3.0, "player two's walker hurries, to {moved}");
     let eye_height = FirstPersonWalker::default().eye_height;
+    run(&mut world, place_first_person_views);
     let eyes = position(&world, view);
     assert!(
         (eyes - (moved + Vec3::Y * eye_height)).length() < 1e-4,

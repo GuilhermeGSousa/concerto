@@ -1242,6 +1242,8 @@ motion, still passes the events, and warns once.
   steeper than `max_slope_angle`, falls when there is none, and is stopped by
   walls, closed doors and anything else with a collider. Code that isn't a
   player drives a walker with `steer(push)` and `look(yaw, pitch)`.
+  Setting `controlled` to false makes it ignore its player, standing still
+  with its view kept, for a menu or a conversation.
   `FirstPersonView { walker }` on a root entity puts it at the walker's
   `eye_height`, looking where it looks; give that entity a `Camera` with a
   `viewport` for split screen, or a `VirtualCamera`.

@@ -6,6 +6,7 @@ pub mod level;
 pub mod players;
 pub mod rules;
 pub mod schedule;
+pub mod session;
 
 use crate::clock::NightClockPlugin;
 

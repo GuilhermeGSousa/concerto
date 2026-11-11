@@ -97,3 +97,13 @@ impl CaseData {
         self.case.strings.get(id).as_str()
     }
 }
+
+/// What the casebook calls a room of the level.
+pub fn room_title(id: &str) -> &str {
+    match id {
+        "room_a" => "Drawing room",
+        "room_b" => "Study",
+        "corridor" => "Service corridor",
+        other => other,
+    }
+}

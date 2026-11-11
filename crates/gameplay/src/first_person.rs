@@ -42,6 +42,8 @@ pub struct FirstPersonWalker {
     pub pitch_limit: f32,
     /// Pushing the `Look` stick up looks down.
     pub invert_y: bool,
+    /// Whether the player's `Move` and `Look` drive it; while false it stands still and keeps its view, as when a menu is open.
+    pub controlled: bool,
     yaw: f32,
     pitch: f32,
     push: Vec2,
@@ -63,6 +65,7 @@ impl Default for FirstPersonWalker {
             mouse_sensitivity: 0.002,
             pitch_limit: 80f32.to_radians(),
             invert_y: false,
+            controlled: true,
             yaw: 0.0,
             pitch: 0.0,
             push: Vec2::ZERO,
@@ -236,6 +239,12 @@ pub fn read_first_person_input(
 ) {
     let dt = time.delta().as_secs_f32();
     for (player, mut walker) in walkers.iter() {
+        if !walker.controlled {
+            if walker.push != Vec2::ZERO {
+                walker.steer(Vec2::ZERO);
+            }
+            continue;
+        }
         let actions = actions.player(*player, &input, &players);
         let push = actions.axis2d(Move);
         if walker.push != push {
