@@ -1182,6 +1182,13 @@ struct Shown {
     height: f32,
 }
 
+struct FormTab {
+    status: String,
+    unsized_panels: Vec<Value>,
+    back: String,
+    narrowed: Resized,
+}
+
 async fn resize(client: &Client, panel: &str, size: f32) -> Resized {
     let reply = ok_with(
         client,
@@ -1196,12 +1203,13 @@ async fn resize(client: &Client, panel: &str, size: f32) -> Resized {
 #[test]
 fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them() {
     let fixture = Fixture::new();
+    fixture.add("content/tune.gasset", "Tune");
     let log = Log::default();
     let Some(served) = serve_sized(
         &fixture,
         &log,
         game,
-        |_| {},
+        form_tune_editor,
         (1280, 720),
         |client| async move {
             open(&client).await;
@@ -1220,14 +1228,38 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
             )
             .await;
             let after = ok(&client, "status").await;
+            open_tune(&client).await;
+            let form = until(&client, "status", |status| {
+                status.contains("Tune content/tune.gasset") && status.ends_with("busy: no")
+            })
+            .await;
+            let mut unsized_panels = Vec::new();
+            for panel in ["left", "right"] {
+                let arguments = json!({ "panel": panel, "size": 300.0 });
+                unsized_panels.push(error_with(&client, "set_panel_size", arguments).await);
+            }
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            let back = until(&client, "status", |status| !status.contains("left hidden")).await;
+            let narrowed = resize(&client, "left", 500.0).await;
             client.cancel().await.unwrap();
-            (before, [left, right, bottom, clamped], filling, after)
+            let form = FormTab {
+                status: form,
+                unsized_panels,
+                back,
+                narrowed,
+            };
+            (before, [left, right, bottom, clamped], filling, after, form)
         },
     ) else {
         return;
     };
 
-    let (before, [left, right, bottom, clamped], filling, after) = served.result;
+    let (before, [left, right, bottom, clamped], filling, after, form) = served.result;
     assert_eq!(
         line(&before, "layout: "),
         "left 260 · right 320 · bottom 220 · browser fill"
@@ -1267,6 +1299,25 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
     }
     assert_eq!(filling["code"], "refused", "{filling}");
     assert_eq!(line(&after, "layout: "), line(&clamped.status, "layout: "));
+    assert_eq!(
+        line(&form.status, "layout: "),
+        "left hidden · right fill · bottom 300 · browser fill"
+    );
+    for refusal in &form.unsized_panels {
+        assert_eq!(refusal["code"], "refused", "{refusal}");
+    }
+    assert_eq!(line(&form.back, "layout: "), line(&after, "layout: "));
+    for answer in [&form.narrowed.reply, &form.narrowed.status] {
+        assert_eq!(
+            line(answer, "layout: "),
+            "left 500 · right 400 · bottom 300 · browser fill"
+        );
+        assert_eq!(
+            viewport_size(answer),
+            (width - 320.0, height - 80.0),
+            "{answer}"
+        );
+    }
 }
 
 #[test]
@@ -5252,6 +5303,24 @@ fn held_tune_editor(app: &mut App, tune: AssetId) {
         .add_tool::<QueueTune, _>(McpTool::new("queue_tune"), queue_tune)
         .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune)
         .add_system(LateUpdate, note_value_edits);
+}
+
+#[derive(Default)]
+struct FormTuneEditor;
+
+impl AssetEditor for FormTuneEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        TuneEditor.build(editor);
+    }
+
+    fn form(&self) -> bool {
+        true
+    }
+}
+
+fn form_tune_editor(app: &mut App) {
+    app.register_asset_editor::<Tune, FormTuneEditor>().unwrap();
+    app.register_type::<Tuning>().add_system(Update, load_tunes);
 }
 
 fn shown_tune_editor(app: &mut App) {

@@ -422,8 +422,9 @@ shows its stored size and can be resized; `Hidden`, collapsed with its
 splitter; or `Fill`, taking the space that is left, with no splitter. The
 workspace (`src/workspace.rs`) decides it from what the tab shows: a side
 region with no visible panel and no host is `Hidden`, and the Asset Browser is
-`Fill` unless the tab has a bottom host. `ResizePanel` for a panel that is not
-`Sized` changes nothing.
+`Fill` unless the tab has a bottom host. On a [form](#inspected-assets) tab
+`Left` is `Hidden`, the `Centre` is hidden and `Right` is `Fill`.
+`ResizePanel` for a panel that is not `Sized` changes nothing.
 
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
@@ -788,6 +789,11 @@ Unchanged components reuse their snapshots;
 component changes, selection changes, and editor registration changes refresh
 them. Widget input and focused edit buffers continue updating every frame.
 
+The inspector's cards sit in a column at most 760 px wide, centred in the
+panel, so a panel wider than that, as on a form tab, leaves margins beside
+them. A card's label column is 38% of the card's width, no less than 96 px and
+no more than 260 px, so a wider panel gives labels more room.
+
 Registration is split between the two `App`s. A component states what it
 supports on its derive, `#[derive(Reflect)] #[reflect(Component, Default)]`,
 and is registered in the scene's `App`, by the plugin that owns it or by the
@@ -1149,6 +1155,15 @@ bottom host the Asset Browser takes the whole strip. The `left` host stands in
 panel, and `canvas` in `Centre`. Chatter stays visible on every tab. A Scene
 document gets no `bottom` host.
 
+An editor that returns `true` from `AssetEditor::form`, which is `false` unless
+it says otherwise, shows its `InspectedValues` as the tab's main content. Its
+documents get no `canvas` and no `left` host, only `inspector`, and `bottom` if
+the editor asks for one. On its tabs the `Centre` is hidden, `Left` collapses,
+and `Right` fills the row with no splitter, so `status` reports `left hidden`
+and `right fill` and `set_panel_size` refuses both; `EditorLayout::right` is
+left as it was for the other tabs. A preview wins: an editor with a preview
+keeps the viewport and its hosts whatever `form` says.
+
 The [custom asset example](examples/custom_asset.rs) writes no editor of its
 own. Its game marks a non-Clone `Dialogue { text: String, spin_speed: f32 }`
 as an [inspected asset](#inspected-assets), so the generic tab opens, edits,
@@ -1228,8 +1243,12 @@ no scene, an inspected kind has no editor: double-clicking one in the Asset
 Browser does nothing, and MCP `open_asset` answers `open_failed`, naming it a
 kind with no editor.
 
-The generic tab is the inspector alone, with no preview and no bottom host, and
-it closes like any other tab. Its document carries `InspectedDocument`, which
+The generic tab is a form: `InspectedAssetEditor` returns `true` from
+`AssetEditor::form`, so the inspector fills the row above the Asset Browser in
+place of the viewport, with no preview and no bottom host, and
+it closes like any other tab. A custom editor that calls
+`InspectedAssetEditor::build` from its own `build` is its own `AssetEditor` and
+is a form only if it returns `true` itself. Its document carries `InspectedDocument`, which
 holds the kind's record, the value being edited, and the file's bytes as last
 read or saved, and publishes the value as one
 [document value](#document-values) named after the kind. Opening reads the

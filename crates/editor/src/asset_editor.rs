@@ -36,6 +36,10 @@ pub trait AssetEditor: Send + Sync + 'static {
     fn bottom_host(&self) -> bool {
         false
     }
+    /// Whether this editor's tabs show their inspected values as the tab's main content.
+    fn form(&self) -> bool {
+        false
+    }
 }
 
 /// What an asset editor's preview `App` adds to the game's recipe.
@@ -182,6 +186,13 @@ impl AssetEditorRegistry {
         self.editors
             .get(kind)
             .is_some_and(|editor| editor.bottom_host())
+    }
+
+    /// Whether a document of `kind` shows its inspected values in place of the centre: its editor says `form` and hosts no preview.
+    pub fn form(&self, kind: &str) -> bool {
+        self.editors
+            .get(kind)
+            .is_some_and(|editor| editor.form() && editor.preview().is_none())
     }
 }
 

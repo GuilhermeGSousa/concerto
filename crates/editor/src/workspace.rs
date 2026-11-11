@@ -39,8 +39,9 @@ pub(crate) fn create_editor_hosts(
         let mut bottom = None;
         if doc.asset_type != concerto_scene::scene::Scene::name() {
             let previewing = editors.preview(doc.asset_type).is_some();
+            let form = editors.form(doc.asset_type);
             for (index, base) in bases.iter().copied().enumerate() {
-                if index == 0 && previewing {
+                if (index == 0 && previewing) || (index < 2 && form) {
                     continue;
                 }
                 let Some((node, parent)) = base.and_then(|base| nodes.get_entity(base)) else {
@@ -122,6 +123,10 @@ pub(crate) fn sync_workspace(
     let inspected = active
         .0
         .is_some_and(|entity| values.get_entity(entity).is_some());
+    let form = document.is_some_and(|doc| editors.form(doc.asset_type));
+    if let Some(centre) = registry.region(Region::Centre) {
+        set_visible(&nodes, centre, !form);
+    }
     let bases = panel_bodies(&registry);
     for (entity, visible) in bases.into_iter().zip([viewport, scene, scene || inspected]) {
         if let Some(entity) = entity {
@@ -140,9 +145,14 @@ pub(crate) fn sync_workspace(
             PanelState::Hidden
         }
     };
+    let right = side(bases[2].is_some() && (scene || inspected), front.inspector);
     let next = PanelStates {
         left: side(bases[1].is_some() && scene, front.left),
-        right: side(bases[2].is_some() && (scene || inspected), front.inspector),
+        right: if form && right == PanelState::Sized {
+            PanelState::Fill
+        } else {
+            right
+        },
         bottom: PanelState::Sized,
         browser: if front.bottom.is_some() {
             PanelState::Sized
