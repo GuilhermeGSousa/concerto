@@ -5,6 +5,8 @@ use concerto::{
         schedule_groups::{Startup, Update},
     },
     asset_id,
+    ecs::IntoSystemConfig,
+    gameplay::third_person::update_third_person_cameras,
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
     window::input::actions::ActionMap,
 };
@@ -13,22 +15,25 @@ use concerto_navigation_gizmos::NavigationGizmosPlugin;
 use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 
 use crate::{
+    body::install_body,
     character::{
         CharacterConfig, PlayerSpawner, bind_controls, cycle_displacement, debug_keys,
         feed_foot_placement, setup_character_animations, spawn_character, spawn_forest_walls,
-        update_movement,
+        update_camera_stance, update_movement,
     },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
 
+mod body;
 mod character;
+mod footsteps;
 mod grid;
 mod retarget;
 mod sanatorium;
 mod ui;
 
 pub use grid::grid;
-pub use retarget::retarget;
+pub use retarget::{retarget, retargeted_sanatorium};
 pub use sanatorium::sanatorium;
 
 /// Builds tech-demo: the forest, the character, and its overlay.
@@ -52,10 +57,15 @@ pub fn game(app: &mut App) {
         .add_system(Startup, spawn_grounded_overlay)
         .add_system(Update, setup_character_animations)
         .add_system(Update, feed_foot_placement)
-        .add_system(Update, update_movement)
+        .add_system(Update, update_movement.after(update_camera_stance))
+        .add_system(
+            Update,
+            update_camera_stance.before(update_third_person_cameras),
+        )
         .add_system(Update, debug_keys)
         .add_system(Update, cycle_displacement)
         .add_system(Update, update_grounded_overlay);
+    install_body(app);
 }
 
 #[cfg(test)]
@@ -127,8 +137,14 @@ mod tests {
     }
 
     #[test]
-    fn only_the_retargeted_grid_plays_the_retargeted_player() {
-        let recipes: [fn(&mut App); 4] = [crate::grid, game, crate::sanatorium, crate::retarget];
+    fn only_the_retargeted_levels_play_the_retargeted_player() {
+        let recipes: [fn(&mut App); 5] = [
+            crate::grid,
+            game,
+            crate::sanatorium,
+            crate::retarget,
+            crate::retargeted_sanatorium,
+        ];
         let retargeted: Vec<bool> = recipes
             .into_iter()
             .map(|recipe| {
@@ -137,7 +153,7 @@ mod tests {
                 app.get_resource::<RetargetedPlayer>().is_some()
             })
             .collect();
-        assert_eq!(retargeted, vec![false, false, false, true]);
+        assert_eq!(retargeted, vec![false, false, false, true, true]);
     }
 
     #[test]
