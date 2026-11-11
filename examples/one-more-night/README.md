@@ -42,9 +42,13 @@ them swap.
   its details.
 - **You can see each other.** Each player has a body, by role: the Guest in a
   navy suit, the Staff as a maid. It follows the roles when they are swapped.
-- **The first night explains itself.** Its card lists the basics, and a line
-  under your role says what to try next until you confirm a deduction. When
-  the Staff stands at a door with talk behind it, the line says to hold RB.
+- **The first night is a lesson.** Its card lists the basics, and five steps
+  follow what you have done: find a fact, open the casebook, reach
+  Deductions, lock in an answer, confirm one together. The step shows under
+  your role while you walk and on the casebook's hint line while it is open,
+  and the lesson ends with the first confirmed deduction. When the Staff
+  stands at a door with talk behind it, the line says to hold RB.
+- **Pausing shows the controls** to both players.
 - **Facts** are found by looking a prop over, reading, overhearing and asking.
   Both players get a fact at once, and it is never lost.
 - **The casebook** has People, Timeline, Places, Objects and Deductions.

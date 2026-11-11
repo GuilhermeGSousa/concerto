@@ -268,7 +268,9 @@ pub fn show_book(
     mut cmd: CommandQueue,
 ) {
     for (entity, mut panel, mut node) in panels.iter() {
-        let screen = session.book_screen(panel.player, &book, &data);
+        let screen = session
+            .book_screen(panel.player, &book, &data)
+            .filter(|_| !session.paused);
         if node.visible != screen.is_some() {
             node.visible = screen.is_some();
         }
@@ -329,7 +331,9 @@ pub fn show_screens(
 ) {
     let time = case_time(clock.now().seconds());
     for (entity, mut panel, mut node) in panels.iter() {
-        let screen = if matches!(session.mode(panel.player), Mode::Book { .. }) {
+        let screen = if session.paused && session.seats[panel.player as usize].present {
+            Some(Session::pause_screen())
+        } else if matches!(session.mode(panel.player), Mode::Book { .. }) {
             None
         } else {
             session.view(panel.player, &book, &data, time, data.case.phase_at(time))

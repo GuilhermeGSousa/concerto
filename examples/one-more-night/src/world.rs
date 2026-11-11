@@ -967,10 +967,7 @@ fn show_hud(
                 if sight.could_listen[hud.player as usize] {
                     "Someone is talking behind this door. Hold RB to listen.".to_string()
                 } else {
-                    session
-                        .guide(hud.player, &book, &data)
-                        .unwrap_or_default()
-                        .to_string()
+                    session.guide(hud.player, &book, &data).unwrap_or_default()
                 }
             }
             HudPart::Prompt => match sight.targets[hud.player as usize] {

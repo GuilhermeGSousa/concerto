@@ -198,6 +198,17 @@ const HOW_TO_PLAY: [&str; 6] = [
     "The night repeats. What you learn stays with you.",
     "Hold LB for your watch; hold both watches together to pass the time.",
 ];
+const CONTROLS: [&str; 9] = [
+    "Left stick or WASD: walk (left Shift walks slowly)",
+    "Right stick or mouse: look",
+    "X or E: use what the + is on",
+    "Y or Tab: casebook    LB/RB or Page Up/Down: turn its pages",
+    "A or Enter: choose    B or Q: back, or put down what you carry",
+    "D-pad or arrows: move on a screen",
+    "LB or C, held: pocket watch; both held: pass the time",
+    "RB or R, held: the Staff listens at a door",
+    "Start or Escape: pause",
+];
 const FIRST_HOUR: u16 = 18;
 const HOURS: usize = 6;
 
@@ -249,6 +260,34 @@ pub struct Session {
     pub finished: bool,
     /// The shared pause: the clock and both players hold still.
     pub paused: bool,
+    /// What the players have done for the first time, for the first night's lesson.
+    pub learned: Learned,
+}
+
+/// What the players have done at least once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Learned {
+    pub opened_book: bool,
+    pub seen_deductions: bool,
+    pub locked: bool,
+}
+
+/// A step of the first night's lesson.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lesson {
+    pub step: usize,
+    pub of: usize,
+    pub text: &'static str,
+}
+
+impl Lesson {
+    /// The step as one line.
+    pub fn line(&self) -> String {
+        format!(
+            "First night, step {} of {}: {}",
+            self.step, self.of, self.text
+        )
+    }
 }
 
 impl Default for Session {
@@ -261,6 +300,7 @@ impl Default for Session {
             notices: Vec::new(),
             finished: false,
             paused: false,
+            learned: Learned::default(),
         }
     }
 }
@@ -354,6 +394,7 @@ impl Session {
 
     /// Opens the casebook for `player`.
     pub fn open_book(&mut self, player: u8) {
+        self.learned.opened_book = true;
         let seat = &mut self.seats[player as usize];
         seat.message = None;
         seat.mode = Mode::Book {
@@ -550,6 +591,7 @@ impl Session {
                         book.cycle(&data.case, player, deduction, blank, press == Press::Right);
                     }
                     (Some(deduction), Press::Confirm) => {
+                        self.learned.locked = true;
                         if let Some(verdict) =
                             book.toggle_lock(&data.case, player, deduction, present)
                         {
@@ -585,6 +627,15 @@ impl Session {
                             };
                         }
                     }
+                }
+                if matches!(
+                    next,
+                    Mode::Book {
+                        page: Page::Deductions,
+                        ..
+                    }
+                ) {
+                    self.learned.seen_deductions = true;
                 }
                 self.seats[seat].mode = next;
             }
@@ -974,6 +1025,10 @@ impl Session {
                 "Up/Down: choose   A: fill in   LB/RB: page   B: close".to_string(),
             ),
         };
+        let hint = match self.lesson(book) {
+            Some(lesson) if lesson.step > 2 => format!("{}\n{hint}", lesson.line()),
+            _ => hint,
+        };
         Some(BookScreen {
             page: *page,
             body,
@@ -1145,21 +1200,52 @@ impl Session {
         }
     }
 
+    /// The step of the first night's lesson the players are on; nothing once they have confirmed a deduction.
+    pub fn lesson(&self, book: &Casebook) -> Option<Lesson> {
+        let steps = [
+            (
+                !book.facts().is_empty(),
+                "Find a fact: put the + on something and press X, listen to people, or ask them.",
+            ),
+            (self.learned.opened_book, "Press Y to open the casebook."),
+            (
+                self.learned.seen_deductions,
+                "In the casebook, RB turns the page. Go to the last one, Deductions.",
+            ),
+            (
+                self.learned.locked,
+                "Pick a deduction with A, choose a word for each blank, then press A to lock in.",
+            ),
+            (
+                !book.confirmed().is_empty(),
+                "Lock in the same answer as each other. If a word is missing, a fact will teach it.",
+            ),
+        ];
+        steps.iter().position(|(done, _)| !done).map(|step| Lesson {
+            step: step + 1,
+            of: steps.len(),
+            text: steps[step].1,
+        })
+    }
+
     /// The next thing worth doing, said to a player who is walking around; nothing once they have the hang of it.
-    pub fn guide(&self, player: u8, book: &Casebook, data: &CaseData) -> Option<&'static str> {
+    pub fn guide(&self, player: u8, book: &Casebook, data: &CaseData) -> Option<String> {
         if !self.seats[player as usize].present || !self.is_walking(player) {
             return None;
         }
-        if book.facts().is_empty() {
-            Some("Find facts: look at things and press X, listen to people talking, ask questions.")
-        } else if book.finale_ready(&data.case) && !self.finished {
-            Some("You can say what happened. Strike the gong in the drawing room.")
-        } else if book.confirmed().is_empty() {
-            Some(
-                "Press Y for the casebook. Its last page, Deductions, is where facts become answers.",
-            )
-        } else {
-            None
+        if book.finale_ready(&data.case) && !self.finished {
+            return Some("You can say what happened. Strike the gong in the drawing room.".into());
+        }
+        self.lesson(book).map(|lesson| lesson.line())
+    }
+
+    /// What both players see while the game is paused: the controls.
+    pub fn pause_screen() -> ScreenText {
+        ScreenText {
+            title: "Paused".into(),
+            lines: CONTROLS.iter().map(|line| line.to_string()).collect(),
+            cursor: None,
+            hint: "Start, or Escape: go on".into(),
         }
     }
 
@@ -1624,20 +1710,16 @@ mod tests {
     #[test]
     fn the_guide_and_the_deduction_screen_say_what_to_do_next() {
         let mut t = Table::new();
+        let step = |t: &Table| t.session.lesson(&t.book).map(|lesson| lesson.step);
         assert!(
             t.session
                 .guide(0, &t.book, &t.data)
                 .unwrap()
-                .starts_with("Find facts"),
+                .starts_with("First night, step 1 of 5: Find a fact"),
             "with nothing found, the guide says how facts are found"
         );
         t.fact("f_01");
-        assert!(
-            t.session
-                .guide(0, &t.book, &t.data)
-                .unwrap()
-                .starts_with("Press Y")
-        );
+        assert_eq!(step(&t), Some(2), "a fact found, the casebook is next");
 
         t.session.open_book(0);
         assert_eq!(
@@ -1645,7 +1727,18 @@ mod tests {
             None,
             "a screen has its own hint"
         );
-        t.press(0, &[Press::PagePrev, Press::Confirm]);
+        assert_eq!(step(&t), Some(3));
+        t.press(0, &[Press::PagePrev]);
+        assert_eq!(step(&t), Some(4), "reaching Deductions is its own step");
+        assert!(
+            t.session
+                .book_screen(0, &t.book, &t.data)
+                .unwrap()
+                .hint
+                .starts_with("First night, step 4 of 5"),
+            "inside the casebook the lesson rides on the hint line"
+        );
+        t.press(0, &[Press::Confirm]);
         let waiting = t.lines(0);
         assert!(
             waiting.contains(&"You: still choosing".to_string()),
