@@ -44,3 +44,7 @@ derived-cache/
 
 # Tracing
 traces
+saves/
+
+# Blender backups
+*.blend1

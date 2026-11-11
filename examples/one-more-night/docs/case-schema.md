@@ -105,13 +105,14 @@ bank, a door listed twice in `staff_opens`.
 ### `case.ron`
 
 ```ron
-Manifest(version: 1, title: "case.title")
+Manifest(version: 1, title: "case.title", discovery: "21:00")
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
 | `version` | integer | The schema version, 1. |
 | `title` | string id | The case's name on the title screen. |
+| `discovery` | time, optional | When the discovery happens. From then on characters follow their `After` entries and `case.phase_at(time)` answers `After`. Left out, the night stays in `Before`. |
 
 ### `strings.ron`
 
@@ -362,7 +363,6 @@ one.
 Each of these is left to the issue that builds the system, which adds it here
 before the freeze if it turns out to be case data:
 
-- When the discovery happens, which moves NPCs from `Before` to `After`.
 - An NPC ringing a bell on schedule.
 - Anything about the dumbwaiter.
 - Removing a door's key, and a door that is always open.

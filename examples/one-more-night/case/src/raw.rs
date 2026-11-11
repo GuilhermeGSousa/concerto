@@ -10,6 +10,8 @@ use crate::{Category, DoorState, GameTime, Phase, Role, Source, TimeWindow, Zone
 pub struct Manifest {
     pub version: u32,
     pub title: String,
+    #[serde(default)]
+    pub discovery: Option<GameTime>,
 }
 
 pub struct StringEntry {
