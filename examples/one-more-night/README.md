@@ -22,7 +22,8 @@ to them.
 upstairs and the Staff in the servants' hall. Its walls, floors and furniture
 collide, its doors open, and its bells, bell board, beds and dumbwaiter stops
 are found by the names of the nodes in the export, with nothing placed by
-hand. It is lit flat, by one sun and no lamps.
+hand. A door leaf that stands open is walked through and does not block the
+way; aim at it to close it. It is lit flat, by one sun and no lamps.
 
 ## Playing
 
