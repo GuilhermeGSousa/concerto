@@ -16,6 +16,7 @@ use concerto::{
     render::components::{
         camera::{Camera, Viewport},
         camera_environment::CameraEnvironment,
+        visibility::RenderLayers,
     },
     ui::{
         elements::prelude::*,
@@ -30,7 +31,6 @@ use concerto::{
 use glam::{EulerRot, Vec2};
 
 const DIVIDER_WIDTH: f32 = 3.0;
-const EYE_FORWARD: f32 = 0.22;
 const NIGHT_SKY: Color = Color::srgba(0.01, 0.012, 0.03, 1.0);
 const NIGHT_AMBIENT: Color = Color::rgba(0.07, 0.085, 0.13, 1.0);
 
@@ -56,6 +56,20 @@ pub struct SeatEntity;
 #[derive(Component)]
 struct SeatLabel {
     player: PlayerIndex,
+}
+
+/// The layer `player`'s own body is drawn on, which their camera leaves out.
+pub fn body_layer(player: PlayerIndex) -> RenderLayers {
+    RenderLayers::layer(1 + player.index())
+}
+
+/// What `player`'s camera draws: the world and every body but their own.
+pub fn eyes_of(player: PlayerIndex) -> RenderLayers {
+    (0..PLAYER_COUNT)
+        .filter(|other| *other != player.index())
+        .fold(RenderLayers::DEFAULT, |layers, other| {
+            layers.with(1 + other)
+        })
 }
 
 /// The part of the window `player` sees: side by side, the first player on the left.
@@ -134,9 +148,7 @@ fn seat_players(
             &mut cmd,
             player,
             Transform::from_translation(transform.translation),
-            FirstPersonWalker::default()
-                .with_yaw(yaw)
-                .with_eye_forward(EYE_FORWARD),
+            FirstPersonWalker::default().with_yaw(yaw),
         );
         cmd.insert(SeatEntity, walker);
         let camera = cmd
@@ -146,6 +158,7 @@ fn seat_players(
                     ..Camera::default().with_viewport(viewport_of(player))
                 },
                 CameraEnvironment::default().with_ambient(NIGHT_AMBIENT),
+                eyes_of(player),
                 Transform::from_translation(transform.translation),
                 FirstPersonView { walker },
                 player,

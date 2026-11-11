@@ -1251,8 +1251,9 @@ motion, still passes the events, and warns once.
   Setting `controlled` to false makes it ignore its player, standing still
   with its view kept, for a menu or a conversation.
   `FirstPersonView { walker }` on a root entity puts it at the walker's
-  `eye_height`, `eye_forward` ahead of its centre (0 by default; set it when a
-  body is drawn on the walker, so the view looks out past it), looking where it
+  `eye_height`, `eye_forward` ahead of its centre (0 by default; a view moved forward
+  can reach through a wall the walker stands against, so to hide a body drawn
+  on the walker from its own view, use `RenderLayers` instead), looking where it
   looks; give that entity a `Camera` with a
   `viewport` for split screen, or a `VirtualCamera`.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
