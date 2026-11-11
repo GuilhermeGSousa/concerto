@@ -64,6 +64,7 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
         ("DOTS_THREE", DOTS_THREE),
         ("CIRCLE", CIRCLE),
         ("PLAY", PLAY),
+        ("STOP", STOP),
         ("PAUSE", PAUSE),
         ("SKIP_BACK", SKIP_BACK),
         ("SKIP_FORWARD", SKIP_FORWARD),

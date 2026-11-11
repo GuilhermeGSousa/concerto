@@ -243,6 +243,8 @@ pub mod glyph {
     pub const CIRCLE: char = '\u{E18A}';
     /// `play` — starting playback.
     pub const PLAY: char = '\u{E3D0}';
+    /// `stop` — ending a running game.
+    pub const STOP: char = '\u{E46C}';
     /// `pause` — pausing playback.
     pub const PAUSE: char = '\u{E39E}';
     /// `skip-back` — one frame back.

@@ -1,5 +1,6 @@
 //! The document tab strip.
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
+use concerto_color::Color;
 use concerto_ecs::query::filter::{With, Without};
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res, ResMut,
@@ -12,7 +13,8 @@ use concerto_ui::{
     elements::prelude::*,
     interaction::HoveredNode,
     interaction::{Interactable, UIClick, UIInteractionStyle},
-    node::{UILayout, UINode, UIRect},
+    material::UIMaterial,
+    node::{UIInset, UILayout, UINode, UIRect},
     sets::UiSet,
     text::UIText,
     theme::{ButtonVariant, UITheme},
@@ -27,11 +29,17 @@ use crate::{
         ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
         Unsaved,
     },
-    fonts::{AssetIcons, ICON_COLUMN, ICON_SIZE, button_icon, draw_row_icon, glyph, icon},
+    fonts::{
+        AssetIcons, ICON_COLUMN, ICON_SIZE, SEMIBOLD, button_icon, draw_row_icon, glyph, icon,
+    },
     hosted::{PlayState, toggle_play},
 };
 use concerto_foundation::assets::Asset;
 use concerto_scene::scene::Scene;
+
+const PLAY_HEIGHT: f32 = 24.0;
+const PLAY_INSET: f32 = 9.0;
+const PLAY_GLYPH: f32 = 13.0;
 
 /// Entity in the tab bar that activates the associated document.
 #[derive(Component)]
@@ -49,6 +57,11 @@ pub struct EditorTabClose {
 #[derive(Component)]
 pub struct EditorTabPlay {
     pub document: Entity,
+}
+
+#[derive(Component)]
+struct PlayGlyph {
+    document: Entity,
 }
 
 #[derive(Component)]
@@ -148,11 +161,91 @@ pub(crate) fn press_play(
     );
 }
 
-fn sync_play_buttons(buttons: Query<(&EditorTabPlay, &mut UIText)>, states: Query<&PlayState>) {
-    for (play, mut text) in buttons.iter() {
-        let label = play_label(states.get_entity(play.document));
+struct PlayLook {
+    glyph: char,
+    ink: Color,
+    border: Color,
+    style: UIInteractionStyle,
+}
+
+fn play_look(theme: &UITheme, state: Option<&PlayState>) -> PlayLook {
+    let wash = |color: Color, alpha: f32| {
+        let color = color.to_srgba();
+        Color::srgba(color.r, color.g, color.b, alpha)
+    };
+    match state {
+        Some(PlayState::Playing) => PlayLook {
+            glyph: glyph::STOP,
+            ink: theme.error,
+            border: theme.error,
+            style: UIInteractionStyle {
+                normal: wash(theme.error, 0.14),
+                hovered: wash(theme.error, 0.3),
+                pressed: wash(theme.error, 0.45),
+                disabled: Color::TRANSPARENT,
+            },
+        },
+        Some(PlayState::Starting) => PlayLook {
+            glyph: glyph::PLAY,
+            ink: theme.text_muted,
+            border: theme.border,
+            style: UIInteractionStyle {
+                normal: Color::TRANSPARENT,
+                hovered: theme.surface_hovered,
+                pressed: theme.surface_hovered,
+                disabled: Color::TRANSPARENT,
+            },
+        },
+        Some(PlayState::Editing) | None => PlayLook {
+            glyph: glyph::PLAY,
+            ink: theme.canvas,
+            border: theme.accent,
+            style: UIInteractionStyle {
+                normal: theme.accent,
+                hovered: theme.accent_hovered,
+                pressed: theme.accent_secondary,
+                disabled: theme.accent,
+            },
+        },
+    }
+}
+
+fn sync_play_buttons(
+    buttons: Query<(
+        &EditorTabPlay,
+        &mut UIText,
+        &mut UIInteractionStyle,
+        &mut UIMaterial,
+    )>,
+    glyphs: Query<(&PlayGlyph, &mut UIText), Without<EditorTabPlay>>,
+    states: Query<&PlayState>,
+    theme: Res<UITheme>,
+) {
+    for (play, mut text, mut interaction, mut material) in buttons.iter() {
+        let state = states.get_entity(play.document);
+        let label = play_label(state);
+        let look = play_look(&theme, state);
         if text.text != label {
             text.text = label.into();
+        }
+        if text.color != look.ink {
+            text.color = look.ink;
+        }
+        if interaction.normal != look.style.normal {
+            **interaction = look.style;
+        }
+        let border = look.border.to_linear();
+        if material.border_color != border {
+            material.border_color = border;
+        }
+    }
+    for (mark, mut text) in glyphs.iter() {
+        let look = play_look(&theme, states.get_entity(mark.document));
+        if !text.text.chars().eq([look.glyph]) {
+            text.text = look.glyph.to_string();
+        }
+        if text.color != look.ink {
+            text.color = look.ink;
         }
     }
 }
@@ -248,14 +341,16 @@ fn sync_tabs(
             };
             let closable = registry.closable(document.asset_type);
             let plays = document.asset_type == Scene::name();
-            let play = play_label(states.get_entity(entity));
+            let state = states.get_entity(entity);
+            let play = play_label(state);
+            let look = play_look(&theme, state);
             cmd.entity(content).add_child_with(
                 (
                     theme
                         .pressable()
                         .tab()
                         .selected(is_active)
-                        .radius(0.0)
+                        .radius_md()
                         .height(UIValue::Px(30.0))
                         .row()
                         .padding(UIRect::axes(0.0, theme.spacing_sm))
@@ -306,21 +401,54 @@ fn sync_tabs(
                             WindowChromeControl,
                         ));
                     } else if plays {
-                        button.add_child((
-                            theme
-                                .button(play)
-                                .height(UIValue::Px(22.0))
-                                .padding(UIRect::axes(0.0, theme.spacing_sm))
-                                .margin(UIRect {
-                                    left: theme.spacing_sm,
+                        button.add_child_with(
+                            UINode::default()
+                                .with_flex_shrink(0.0)
+                                .with_margin(UIRect {
+                                    left: theme.spacing_md,
                                     ..UIRect::default()
                                 })
-                                .small()
-                                .z_index(71)
-                                .on_click(press_play),
-                            EditorTabPlay { document: entity },
-                            WindowChromeControl,
-                        ));
+                                .with_z_index(71),
+                            |mut pill| {
+                                pill.add_child((
+                                    theme
+                                        .button(play)
+                                        .height(UIValue::Px(PLAY_HEIGHT))
+                                        .padding(UIRect {
+                                            left: PLAY_INSET + PLAY_GLYPH + theme.spacing_xs,
+                                            right: PLAY_INSET + 2.0,
+                                            top: (PLAY_HEIGHT
+                                                - theme.line_height(theme.font_size_md))
+                                                / 2.0,
+                                            bottom: 0.0,
+                                        })
+                                        .radius(PLAY_HEIGHT / 2.0)
+                                        .border(look.border, 1.0)
+                                        .normal(look.style.normal)
+                                        .hovered(look.style.hovered)
+                                        .pressed(look.style.pressed)
+                                        .disabled_color(look.style.disabled)
+                                        .weight(SEMIBOLD)
+                                        .color(look.ink)
+                                        .on_click(press_play),
+                                    EditorTabPlay { document: entity },
+                                    WindowChromeControl,
+                                ))
+                                .add_child((
+                                    UINode::default()
+                                        .with_position(taffy::Position::Absolute)
+                                        .with_inset(UIInset {
+                                            left: UIValue::Px(PLAY_INSET),
+                                            top: UIValue::Px(
+                                                (PLAY_HEIGHT - theme.line_height(PLAY_GLYPH)) / 2.0,
+                                            ),
+                                            ..Default::default()
+                                        }),
+                                    icon(&theme, look.glyph, PLAY_GLYPH).color(look.ink),
+                                    PlayGlyph { document: entity },
+                                ));
+                            },
+                        );
                     }
                 },
             );
