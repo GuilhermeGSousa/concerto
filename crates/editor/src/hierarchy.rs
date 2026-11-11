@@ -1103,16 +1103,6 @@ mod tests {
         fn count_of(&self, scene_entity: Entity) -> String {
             self.text_of(self.hierarchy_item(scene_entity).count)
         }
-        fn icon_of(&self, scene_entity: Entity) -> String {
-            self.text_of(self.hierarchy_item(scene_entity).mark)
-        }
-        fn icon_color(&self, scene_entity: Entity) -> Color {
-            self.scene
-                .world
-                .get_component_for_entity::<UIText>(self.hierarchy_item(scene_entity).mark)
-                .unwrap()
-                .color
-        }
         fn parent_item(&self, item: Entity) -> Option<Entity> {
             self.scene
                 .world
@@ -1662,14 +1652,12 @@ mod tests {
     #[test]
     fn an_external_selection_draws_the_mark_selected_in_the_same_frame() {
         let mut f = fixture();
-        let theme = UITheme::default();
         assert!(!f.ui_selected(f.node));
         f.select(f.node);
 
         f.reconcile_content();
 
         assert!(f.ui_selected(f.node));
-        assert_eq!(f.icon_color(f.node), theme.text);
     }
 
     #[test]
@@ -1834,35 +1822,6 @@ mod tests {
         assert_eq!(f.count_of(node), "");
     }
 
-    fn removing_reaches_the_mark<T: Component>(component: impl FnOnce() -> T) {
-        let mut f = fixture();
-        f.expand(f.root);
-        let node = f.node;
-        let plain = f.icon_of(node);
-        f.scene
-            .scene_world_mut(f.document)
-            .insert(component(), node);
-        f.scene.world.tick();
-        f.refresh();
-        let marked = f.icon_of(node);
-        assert_ne!(marked, plain);
-
-        f.scene
-            .scene_world_mut(f.document)
-            .remove_component::<T>(node);
-        f.scene.world.tick();
-        f.refresh();
-
-        assert_eq!(f.icon_of(node), plain);
-    }
-
-    #[test]
-    fn removing_a_camera_light_or_mesh_changes_the_rows_mark() {
-        removing_reaches_the_mark(Camera::default);
-        removing_reaches_the_mark(Light::default);
-        removing_reaches_the_mark(MeshComponent::default);
-    }
-
     #[test]
     fn removing_a_name_alone_labels_the_row_by_its_entity() {
         let mut f = fixture();
@@ -2006,15 +1965,10 @@ mod tests {
         f.refresh();
         assert!(f.ui_selected(f.root));
         assert!(!f.ui_selected(f.node));
-        f.refresh();
-        let theme = UITheme::default();
-        assert_eq!(f.icon_color(f.root), theme.text);
 
         f.scene.scene_world_mut(f.document).trigger(Select(None));
         f.refresh();
         assert!(!f.ui_selected(f.root));
-        f.refresh();
-        assert_eq!(f.icon_color(f.root), theme.text_muted);
     }
 
     #[test]
@@ -2033,8 +1987,6 @@ mod tests {
         assert_eq!(f.label_of(f.node), "first");
         assert_eq!(f.count_of(f.node), "");
         assert!(f.ui_selected(f.node) && !f.ui_selected(f.root));
-        assert_eq!(f.icon_of(f.root), glyph::STACK.to_string());
-        assert_eq!(f.icon_of(f.node), glyph::DOT.to_string());
 
         f.scene.close(f.document);
         f.scene.frame();

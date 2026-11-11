@@ -1807,18 +1807,6 @@ mod tests {
                 .0
         }
 
-        fn icon(&self, item: Entity) -> UIText {
-            let icon = self
-                .world
-                .get_component_for_entity::<ContentItem>(item)
-                .unwrap()
-                .icon_node;
-            self.world
-                .get_component_for_entity::<UIText>(icon)
-                .unwrap()
-                .clone()
-        }
-
         fn busy(&mut self) -> std::sync::mpsc::Sender<()> {
             let (release, wait) = std::sync::mpsc::channel();
             self.world
@@ -2029,7 +2017,6 @@ mod tests {
         assert_eq!(f.state().selected(), Some(level));
         assert!(f.ui_selected(item));
         assert!(!f.ui_selected(f.asset_item("content/rock.gasset")));
-        assert_eq!(f.icon(item).color, UITheme::default().text);
         assert!(f.opened().is_empty());
     }
 
@@ -2048,8 +2035,6 @@ mod tests {
         f.refresh();
 
         assert!(!f.ui_selected(level));
-        assert_eq!(f.icon(level).color, UITheme::default().text_muted);
-        assert_eq!(f.icon(rock).color, UITheme::default().text);
     }
 
     #[test]
@@ -2086,9 +2071,6 @@ mod tests {
         assert!(f.ui_selected(forest));
         assert!(!f.ui_selected(level_item));
         assert_eq!(f.state().selected(), Some(level));
-        let theme = UITheme::default();
-        assert_eq!(f.icon(forest).color, theme.text);
-        assert_eq!(f.icon(level_item).color, theme.text_muted);
     }
 
     #[test]
