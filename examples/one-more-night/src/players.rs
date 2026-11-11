@@ -1,5 +1,9 @@
 use concerto::{
-    app::{App, schedule_groups::Update},
+    app::{
+        App,
+        schedule_groups::{Startup, Update},
+    },
+    color::Color,
     director::CameraDirector,
     ecs::{
         CommandQueue, Component, Entity, Query, Res, Without,
@@ -12,7 +16,8 @@ use concerto::{
     render::components::camera::{Camera, Viewport},
     ui::{
         elements::prelude::*,
-        node::{UINode, UITargetCamera},
+        material::UIMaterial,
+        node::{AlignContent, UINode, UITargetCamera},
         text::UIText,
         theme::UITheme,
         transform::UIValue,
@@ -20,6 +25,8 @@ use concerto::{
     window::input::{JoinSettings, PlayerIndex, Players},
 };
 use glam::{EulerRot, Vec2};
+
+const DIVIDER_WIDTH: f32 = 3.0;
 
 /// How many players share the screen.
 pub const PLAYER_COUNT: u8 = 2;
@@ -68,6 +75,7 @@ pub fn seat_text(player: PlayerIndex, players: &Players) -> String {
 pub fn install(app: &mut App) {
     app.insert_resource(CameraDirector::default().with_main_camera(false))
         .register_type::<SpawnPoint>()
+        .add_system(Startup, divide_the_window)
         .add_system(Update, seat_players)
         .add_system(Update, update_seat_labels);
 }
@@ -82,6 +90,22 @@ pub fn enable_joining(app: &mut App) {
                 .with_join_on_press(true)
                 .with_keyboard_mouse_joins(true),
         );
+}
+
+fn divide_the_window(mut cmd: CommandQueue) {
+    let root = cmd
+        .spawn(
+            UINode::default()
+                .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+                .with_justify_content(AlignContent::SpaceEvenly),
+        )
+        .entity();
+    for _ in 1..PLAYER_COUNT {
+        cmd.entity(root).add_child((
+            UINode::default().with_size(UIValue::Px(DIVIDER_WIDTH), UIValue::Percent(100.0)),
+            UIMaterial::flat(Color::srgba(0.0, 0.0, 0.0, 1.0)),
+        ));
+    }
 }
 
 fn seat_players(

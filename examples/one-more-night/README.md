@@ -22,7 +22,7 @@ them swap.
 
 | Pad | Keyboard | What it does |
 |---|---|---|
-| Left stick | WASD | Walk; a full push hurries |
+| Left stick | WASD | Walk; a full push hurries, and keys push fully, so hold left Shift to walk |
 | Right stick | Mouse | Look |
 | X | E | Use what the dot in the middle of your half points at |
 | B | Q | Put down what you carry; leave a screen |
@@ -31,6 +31,7 @@ them swap.
 | D-pad | Arrow keys | Move on a screen |
 | LB, held | C | Pocket watch |
 | RB, held | R | The Staff listens at a door they stand by |
+| Start | Escape | Pause for both players; it also frees the mouse |
 
 - **Facts** are found by looking a prop over, reading, overhearing and asking.
   Both players get a fact at once, and it is never lost.
@@ -55,7 +56,7 @@ them swap.
 
 ## Debug keys
 
-Built in by the `debug` feature, which is on by default for now.
+Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 
 | Key | What it does |
 |---|---|

@@ -46,7 +46,10 @@ use concerto::{
         text::UIText,
         transform::UIValue,
     },
-    window::input::{Input, PlayerIndex, Players, actions::ActionMap},
+    window::{
+        input::{Input, PlayerIndex, Players, actions::ActionMap},
+        plugin::{CursorMode, Window},
+    },
 };
 use glam::{Quat, Vec2, Vec3};
 
@@ -55,7 +58,7 @@ use crate::case::{Id, NpcId, Phase, PlacementId, Role};
 use crate::casefile::CaseData;
 use crate::clock::{GameTime, Midnight, NightClock, NightPaused};
 use crate::controls::{
-    Back, Confirm, Interact, Listen, MenuDown, MenuLeft, MenuRight, MenuUp, OpenBook, Watch,
+    Back, Confirm, Interact, Listen, MenuDown, MenuLeft, MenuRight, MenuUp, OpenBook, Pause, Watch,
     bind_controls,
 };
 use crate::house::{House, Interactable, ItemPlace, end_night};
@@ -72,6 +75,7 @@ const EARSHOT: f32 = 6.0;
 const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
+const NPC_DOOR_REACH: f32 = 1.1;
 const SCREEN_ROWS: usize = 12;
 const MODEL_TURN: f32 = std::f32::consts::PI;
 const GAIT_IDLE: Vec2 = Vec2::ZERO;
@@ -213,6 +217,8 @@ pub fn install(app: &mut App, saves: Option<PathBuf>) {
         .add_system(Update, swing_doors.after(play))
         .add_system(Update, place_items.after(play))
         .add_system(Update, face_npcs)
+        .add_system(Update, hold_doors_for_npcs.before(swing_doors))
+        .add_system(Update, capture_mouse.after(play))
         .add_system(Update, pause_for_screens.after(play))
         .add_system(FixedUpdate, move_npcs);
     #[cfg(feature = "debug")]
@@ -303,7 +309,7 @@ fn spawn_case(
         let Some(pose) = npc_pose(&data, &house, npc, now_seconds(&clock)) else {
             continue;
         };
-        let collider = Collider::capsule(0.55, 0.3);
+        let collider = Collider::capsule(0.5, 0.3);
         let offset = ColliderOffset::bottom_origin(&collider);
         let body = cmd
             .spawn((
@@ -527,6 +533,12 @@ fn play(
             continue;
         }
         let pad = actions.player(index, &input, &players);
+        if pad.is_just_pressed(Pause) {
+            session.paused = !session.paused;
+        }
+        if session.paused {
+            continue;
+        }
         if session.is_walking(player) {
             if pad.is_just_pressed(OpenBook) {
                 session.open_book(player);
@@ -580,8 +592,9 @@ fn play(
         sight.night_over = true;
     }
     for (player, mut walker) in walkers.iter() {
-        let free =
-            session.is_walking(player.index()) && !session.seats[player.index() as usize].in_bed;
+        let free = session.is_walking(player.index())
+            && !session.paused
+            && !session.seats[player.index() as usize].in_bed;
         if walker.controlled != free {
             walker.controlled = free;
         }
@@ -706,7 +719,7 @@ fn pause_for_screens(
     debug: Res<DebugPause>,
     mut paused: ResMut<NightPaused>,
 ) {
-    let hold = session.card.is_some() || session.finale.is_some() || debug.0;
+    let hold = session.card.is_some() || session.finale.is_some() || session.paused || debug.0;
     if paused.0 != hold {
         paused.0 = hold;
     }
@@ -775,6 +788,9 @@ fn show_hud(
             },
             HudPart::Subtitle => {
                 let mut lines: Vec<&str> = Vec::new();
+                if session.paused {
+                    lines.push("Paused. Start, or Escape, to go on.");
+                }
                 if let Some(heard) = &sight.heard[hud.player as usize] {
                     lines.push(heard);
                 }
@@ -799,7 +815,7 @@ fn swing_doors(
     mut cmd: CommandQueue,
 ) {
     for (entity, mut panel, mut transform) in panels.iter() {
-        let open = house.doors[panel.door.index()].open;
+        let open = house.stands_open(panel.door);
         if panel.shown_open == open {
             continue;
         }
@@ -895,6 +911,39 @@ fn move_npcs(
         if npc.sitting != sitting {
             npc.sitting = sitting;
         }
+    }
+}
+
+fn hold_doors_for_npcs(
+    npcs: Query<&Transform, With<NpcBody>>,
+    data: Res<CaseData>,
+    mut house: ResMut<House>,
+) {
+    for door in data.level.doors() {
+        let held = data.level.door_position(door).is_some_and(|position| {
+            npcs.iter().any(|npc| {
+                npc.translation.with_y(0.0).distance(position.with_y(0.0)) <= NPC_DOOR_REACH
+            })
+        });
+        if house.held_open[door.index()] != held {
+            house.held_open[door.index()] = held;
+        }
+    }
+}
+
+fn capture_mouse(session: Res<Session>, players: Res<Players>, mut window: ResMut<Window>) {
+    let played = (0..PLAYER_COUNT).any(|player| {
+        players
+            .devices(PlayerIndex::new(player))
+            .is_some_and(|devices| devices.keyboard_mouse)
+    });
+    let captured = played && !session.paused;
+    let cursor = CursorMode {
+        visible: !captured,
+        grabbed: captured,
+    };
+    if window.settings.cursor != cursor {
+        window.settings.cursor = cursor;
     }
 }
 
@@ -1228,6 +1277,20 @@ mod tests {
         assert!(session(&app).is_walking(0) && session(&app).is_walking(1));
         let before = walkers(&mut app);
         assert_eq!(before.len(), 2);
+
+        tap(&mut app, 1, GamepadButton::Start);
+        let held = app.get_resource::<NightClock>().unwrap().now();
+        frames(&mut app, 10);
+        assert!(session(&app).paused);
+        assert_eq!(
+            app.get_resource::<NightClock>().unwrap().now(),
+            held,
+            "the shared pause holds the clock"
+        );
+        tap(&mut app, 0, GamepadButton::West);
+        assert!(session(&app).is_walking(0), "and nothing else is read");
+        tap(&mut app, 0, GamepadButton::Start);
+        assert!(!session(&app).paused, "either player ends it");
 
         frames(&mut app, 20);
         let hobbs = app.get_resource::<crate::casefile::CaseData>().unwrap();

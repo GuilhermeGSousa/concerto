@@ -55,6 +55,8 @@ pub struct House {
     pub lift_at: u8,
     /// The characters stand at their places for the gathering.
     pub gathered: bool,
+    /// A character is passing through the door, which stands open for them.
+    pub held_open: Vec<bool>,
 }
 
 impl House {
@@ -76,6 +78,7 @@ impl House {
             items: vec![ItemPlace::Home; data.case.placements.len()],
             lift_at: 0,
             gathered: false,
+            held_open: vec![false; data.level.doors().count()],
         }
     }
 
@@ -85,6 +88,11 @@ impl House {
             Interaction::Carry { key } => key,
             _ => None,
         }
+    }
+
+    /// Whether `door` stands open, by a player's hand or for a character passing.
+    pub fn stands_open(&self, door: DoorId) -> bool {
+        self.doors[door.index()].open || self.held_open[door.index()]
     }
 
     /// The item in the dumbwaiter's car.
@@ -397,6 +405,14 @@ mod tests {
         assert!(
             door.open && !door.locked,
             "the key ring unlocks and opens it"
+        );
+
+        n.uses(1, Interactable::Door(service));
+        assert!(!n.house.stands_open(service));
+        n.house.held_open[service.index()] = true;
+        assert!(
+            n.house.stands_open(service),
+            "a closed door stands open while a character passes"
         );
     }
 

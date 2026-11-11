@@ -192,6 +192,8 @@ pub struct Session {
     pub card: Option<Card>,
     pub notices: Vec<Notice>,
     pub finished: bool,
+    /// The shared pause: the clock and both players hold still.
+    pub paused: bool,
 }
 
 impl Default for Session {
@@ -203,6 +205,7 @@ impl Default for Session {
             card: None,
             notices: Vec::new(),
             finished: false,
+            paused: false,
         }
     }
 }

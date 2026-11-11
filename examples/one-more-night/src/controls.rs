@@ -47,6 +47,11 @@ define_action!(
     Listen
 );
 
+define_action!(
+    /// Holds and releases the night for both players: Start, or Escape.
+    Pause
+);
+
 /// Binds the game's actions for pads and for the keyboard that stands in for one player.
 pub fn bind_controls(actions: &mut ActionMap) {
     let key = |key: KeyCode| Shortcut::key(key);
@@ -70,4 +75,6 @@ pub fn bind_controls(actions: &mut ActionMap) {
     actions.bind_global(Watch, key(KeyCode::KeyC));
     actions.bind_global(Listen, GamepadButton::RightBumper);
     actions.bind_global(Listen, key(KeyCode::KeyR));
+    actions.bind_global(Pause, GamepadButton::Start);
+    actions.bind_global(Pause, key(KeyCode::Escape));
 }
