@@ -41,6 +41,11 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 `ColliderOffset::bottom_origin(&collider)` puts the entity's origin at the
 bottom of a capsule, where a character's feet are.
 
+A static collider's `Transform` is yours: the simulation writes poses back
+only to entities with a `RigidBody`. Moving the entity does not move its body,
+though; insert its `Collider` or `BoxCollider` again to rebuild the body where
+the entity now is, as a door does when it swings.
+
 The body is built from the `Collider` once. Inserting a new `Collider` on the
 entity rebuilds its body from the new shape, which is how editing a
 `BoxCollider` in the inspector or over MCP takes effect. A `BoxCollider` on an
