@@ -70,7 +70,8 @@ window split in two side by side. Each `SpawnPoint` in the scene seats one
 player: a first-person walker, a camera on that player's half and a label with
 their name. A pad joins by pressing South or Start and the keyboard by Enter or
 Space; the left stick or WASD walks, a full push hurries, and the right stick
-or the mouse looks. The room's one mesh comes from `assets/graybox/cube.obj`.
+or the mouse looks. The room's one mesh comes from `assets/graybox/cube.obj`. The night clock runs
+18:00 to 00:00 over 18 real minutes.
 Its manor graybox is in `examples/one-more-night/assets/manor/`: the
 Blender source, the scripts that generate and export it, and the export, with a
 `README.md` that says how to run them; the game does not load it yet. Its
