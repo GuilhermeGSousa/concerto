@@ -136,6 +136,8 @@ pub struct Seat {
     pub in_bed: bool,
     /// What the screen last said about a lock, a door or a refusal.
     pub message: Option<String>,
+    /// A line for this player alone, and the seconds it still shows.
+    pub told: Option<Notice>,
 }
 
 /// Something a press asks of the world.
@@ -245,12 +247,41 @@ impl Session {
         });
     }
 
-    /// Ages the notices by `seconds` and drops the old ones.
+    /// Shows `text` to `player` alone for a few seconds.
+    pub fn tell(&mut self, player: u8, text: impl Into<String>) {
+        self.seats[player as usize].told = Some(Notice {
+            text: text.into(),
+            seconds: 4.0,
+        });
+    }
+
+    /// Ages the notices and each player's own line by `seconds` and drops the old ones.
     pub fn age_notices(&mut self, seconds: f32) {
         for notice in &mut self.notices {
             notice.seconds -= seconds;
         }
         self.notices.retain(|notice| notice.seconds > 0.0);
+        for seat in &mut self.seats {
+            if let Some(told) = &mut seat.told {
+                told.seconds -= seconds;
+            }
+            if seat.told.as_ref().is_some_and(|told| told.seconds <= 0.0) {
+                seat.told = None;
+            }
+        }
+    }
+
+    /// The seats with a player in them.
+    pub fn present_players(&self) -> impl Iterator<Item = u8> + '_ {
+        (0..PLAYER_COUNT).filter(|player| self.seats[*player as usize].present)
+    }
+
+    /// The character `player` is talking to.
+    pub fn talking_to(&self, player: u8) -> Option<NpcId> {
+        match self.mode(player) {
+            Mode::Talking { npc, .. } => Some(*npc),
+            _ => None,
+        }
     }
 
     /// Grants `facts` to both players and says which were new.

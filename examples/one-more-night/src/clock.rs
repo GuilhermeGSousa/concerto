@@ -161,6 +161,20 @@ impl NightClock {
         self.scale
     }
 
+    /// Puts the clock back at the night's start, as a new night begins.
+    pub fn restart(&mut self) {
+        self.now = self.start;
+        self.started = false;
+    }
+
+    /// Moves the clock to `time`, kept within the night; nothing between fires.
+    pub fn jump_to(&mut self, time: GameTime) {
+        self.now = GameTime::from_seconds(
+            time.seconds()
+                .clamp(self.start.seconds(), self.end.seconds()),
+        );
+    }
+
     /// Whether the clock reached the end of the night.
     pub fn is_over(&self) -> bool {
         self.now >= self.end

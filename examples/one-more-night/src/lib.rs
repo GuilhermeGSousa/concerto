@@ -2,6 +2,7 @@ use concerto::{DefaultPlugins, app::App, asset_id};
 
 pub mod book;
 pub mod casefile;
+pub mod house;
 pub mod level;
 pub mod players;
 pub mod rules;
