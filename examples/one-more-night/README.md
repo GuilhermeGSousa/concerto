@@ -11,7 +11,8 @@ cargo run -p one-more-night-editor -- --project <scratch copy of examples/one-mo
 The game plays the open test case in `cases/test` on a graybox test level,
 `content/level/test_level.gasset`: a drawing room, a study and a service
 corridor. `cases/test/README.md` has the case and its solution. The characters
-are the tech demo's UAL1 model, as placeholders.
+are the tech demo's UAL1 model, as placeholders: they blend between standing,
+walking and sitting, and turn their heads to a player who is talking to them.
 
 ## Playing
 

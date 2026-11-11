@@ -25,6 +25,7 @@ use concerto::{
         transform::Transform,
     },
     gameplay::first_person::{FirstPersonView, FirstPersonWalker},
+    mesh::skeleton::JointName,
     name::name,
     physics::{
         body::BodyId,
@@ -33,6 +34,7 @@ use concerto::{
         query::QueryFilter,
         rigid_body::{AllowedDofs, MotionType, RigidBody},
     },
+    procedural_animation::{LookAtBone, LookAtNode},
     reflect::{Reflect, ReflectDefault},
     render::components::camera::Camera,
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
@@ -83,6 +85,7 @@ const MODEL_TURN: f32 = std::f32::consts::PI;
 const GAIT_IDLE: Vec2 = Vec2::ZERO;
 const GAIT_WALK: Vec2 = Vec2::new(0.0, 1.0);
 const GAIT_SIT: Vec2 = Vec2::new(1.0, 0.0);
+const GAIT_BLEND_RATE: f32 = 2.5;
 const CHARACTER_SCENE: AssetId = asset_id!("content/characters/UAL1/scene.gasset");
 const IDLE_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Idle_Loop.gasset");
 const WALK_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Walk_Loop.gasset");
@@ -176,6 +179,7 @@ struct NpcBody {
 struct NpcVisual {
     body: Entity,
     animator: Option<Entity>,
+    gait: Vec2,
 }
 
 #[derive(Resource)]
@@ -340,15 +344,34 @@ fn spawn_case(
         Transform::default(),
     ));
     let character = assets.load::<Scene>(CHARACTER_SCENE);
+    let look = LookAtNode {
+        chain: vec![
+            LookAtBone {
+                bone: JointName(name!("neck_01")),
+                share: 0.35,
+                halflife: 0.25,
+                ..Default::default()
+            },
+            LookAtBone {
+                bone: JointName(name!("Head")),
+                share: 1.0,
+                halflife: 0.2,
+                ..Default::default()
+            },
+        ],
+        target_param: name!("look_target"),
+        weight_param: Some(name!("look_weight")),
+        ..Default::default()
+    };
     let mut graph = AnimationGraph::new();
-    graph
-        .result_node()
-        .with_blend_space_2d_input(name!("gait"), |space| {
+    graph.result_node().with_input(look, |mut body| {
+        body.with_blend_space_2d_input(name!("gait"), |space| {
             space
                 .animation_clip_input(assets.load::<AnimationClip>(IDLE_CLIP), GAIT_IDLE)
                 .animation_clip_input(assets.load::<AnimationClip>(WALK_CLIP), GAIT_WALK)
                 .animation_clip_input(assets.load::<AnimationClip>(SIT_CLIP), GAIT_SIT);
         });
+    });
     cmd.insert_resource(NpcAnimations {
         graph: assets.add(graph),
     });
@@ -381,6 +404,7 @@ fn spawn_case(
             NpcVisual {
                 body,
                 animator: None,
+                gait: GAIT_IDLE,
             },
             SceneSpawnerComponent(character.clone()),
             Transform::from_translation_rotation(
@@ -1103,12 +1127,27 @@ fn face_npcs(
     children: Query<&Children>,
     players: Query<&mut AnimationPlayer>,
     animations: Option<Res<NpcAnimations>>,
+    eyes: Query<(&PlayerIndex, &Transform), (With<Camera>, Without<NpcVisual>)>,
+    session: Res<Session>,
+    house: Res<House>,
+    time: Res<Time>,
     mut cmd: CommandQueue,
 ) {
+    let dt = time.delta().as_secs_f32();
     for (entity, mut visual, mut transform) in visuals.iter() {
         let Some((npc, body)) = bodies.get_entity(visual.body) else {
             continue;
         };
+        let watched = eyes
+            .iter()
+            .filter(|(player, _)| {
+                house.gathered || session.talking_to(player.index()) == Some(npc.npc)
+            })
+            .map(|(_, eye)| eye.translation)
+            .min_by(|a, b| {
+                a.distance(body.translation)
+                    .total_cmp(&b.distance(body.translation))
+            });
         transform.translation = body.translation;
         transform.rotation = Quat::from_rotation_y(npc.yaw + MODEL_TURN);
         if visual.animator.is_none()
@@ -1132,7 +1171,15 @@ fn face_npcs(
             } else {
                 GAIT_IDLE
             };
-            player.set_vec2_param(name!("gait"), gait);
+            let step = (gait - visual.gait).clamp_length_max(GAIT_BLEND_RATE * dt);
+            if step != Vec2::ZERO {
+                visual.gait += step;
+            }
+            player.set_vec2_param(name!("gait"), visual.gait);
+            if let Some(target) = watched {
+                player.set_param(name!("look_target"), target);
+            }
+            player.set_float_param(name!("look_weight"), f32::from(watched.is_some()));
         }
     }
 }
