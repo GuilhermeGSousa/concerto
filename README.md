@@ -75,7 +75,7 @@ cargo run -p tech-demo
 |---|---|
 | `tech-demo` | A motion matched character driven from the keyboard, with a follow camera and debug gizmos, on the world grid; `-- --forest` and `-- --sanatorium` pick the other levels, and `-- --retarget` plays the grid with the UAL1 character driven by LAFAN1 motion matching through a retarget node; it has an editor |
 | `ui-showcase` | Every UI element on one screen |
-| `one-more-night` | The start of One More Night, a couch co-op game: two players join with their pads and walk a graybox room in first person, each in their own half of the window, under a night clock that runs 18:00 to 00:00 over 18 real minutes; it has an editor |
+| `one-more-night` | The start of One More Night, a couch co-op mystery: two players walk one night of an open test case in split screen, as the Guest and the Staff, find facts, fill deductions together and loop the night; it has an editor |
 
 The first build compiles Jolt and takes a while. In the browser:
 

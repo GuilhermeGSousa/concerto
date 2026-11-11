@@ -1049,6 +1049,144 @@ mod tests {
     }
 
     #[test]
+    fn the_staff_opens_a_service_door_and_its_body_swings_with_it() {
+        let Some(mut app) = concerto::headless(crate::game_without_saves) else {
+            return;
+        };
+        let world = app.main_mut().world_mut();
+        world.spawn((
+            BoxCollider::default(),
+            Transform::from_translation_rotation_scale(
+                Vec3::new(6.0, -0.5, -4.5),
+                Default::default(),
+                Vec3::new(30.0, 1.0, 30.0),
+            ),
+        ));
+        let door = world.spawn((
+            super::Fixture {
+                kind: super::FixtureKind::Door,
+                name: "d_a_service".into(),
+            },
+            BoxCollider::default(),
+            Transform::from_translation_rotation_scale(
+                Vec3::new(3.0, 1.1, -6.0),
+                Default::default(),
+                Vec3::new(1.0, 2.2, 0.08),
+            ),
+        ));
+        world.spawn((
+            SpawnPoint { player: 1 },
+            Transform::from_translation_rotation(
+                Vec3::new(3.0, 0.0, -7.6),
+                glam::Quat::from_rotation_y(std::f32::consts::PI),
+            ),
+        ));
+        app.get_resource_mut::<Input>()
+            .unwrap()
+            .connect_gamepad(PADS[1], "Test pad");
+        app.get_resource_mut::<Players>()
+            .unwrap()
+            .assign(PlayerIndex::new(1), PlayerDevice::Gamepad(PADS[1]))
+            .unwrap();
+        frames(&mut app, 30);
+        tap(&mut app, 1, GamepadButton::South);
+        frames(&mut app, 20);
+        let through = |app: &App| {
+            app.get_resource::<concerto::physics::physics_state::PhysicsState>()
+                .unwrap()
+                .cast_ray(
+                    Vec3::new(3.0, 1.9, -6.6),
+                    Vec3::new(0.0, 0.0, 1.5),
+                    Default::default(),
+                )
+                .and_then(|hit| hit.entity)
+        };
+        assert_eq!(
+            through(&app),
+            Some(door),
+            "the closed door fills its doorway"
+        );
+
+        tap(&mut app, 1, GamepadButton::West);
+        frames(&mut app, 20);
+
+        let panel = app
+            .main_mut()
+            .world_mut()
+            .get_component_for_entity::<Transform>(door)
+            .unwrap()
+            .clone();
+        assert!(
+            (panel.translation - Vec3::new(2.5, 1.1, -6.5)).length() < 0.01,
+            "the panel swung about its hinge, to {}",
+            panel.translation
+        );
+        assert_eq!(through(&app), None, "and the doorway is clear");
+    }
+
+    #[test]
+    fn a_private_conversation_covers_itself_for_the_guest_and_is_heard_by_the_staff() {
+        for (staff, heard, facts) in [
+            (
+                false,
+                "Mr Corwin: Lovely weather for the season, is it not?",
+                0,
+            ),
+            (
+                true,
+                "Lady Ashby: Then you will answer for it, Mr Corwin.",
+                1,
+            ),
+        ] {
+            let Some(mut app) = concerto::headless(crate::game_without_saves) else {
+                return;
+            };
+            if staff {
+                app.get_resource_mut::<Session>().unwrap().roles.swap(0, 1);
+            }
+            let world = app.main_mut().world_mut();
+            world.spawn((
+                BoxCollider::default(),
+                Transform::from_translation_rotation_scale(
+                    Vec3::new(6.0, -0.5, -4.5),
+                    Default::default(),
+                    Vec3::new(30.0, 1.0, 30.0),
+                ),
+            ));
+            world.spawn((
+                SpawnPoint { player: 0 },
+                Transform::from_translation(Vec3::new(9.0, 0.0, -4.4)),
+            ));
+            app.get_resource_mut::<Input>()
+                .unwrap()
+                .connect_gamepad(PADS[0], "Test pad");
+            app.get_resource_mut::<Players>()
+                .unwrap()
+                .assign(PlayerIndex::new(0), PlayerDevice::Gamepad(PADS[0]))
+                .unwrap();
+            frames(&mut app, 30);
+            tap(&mut app, 0, GamepadButton::South);
+            app.get_resource_mut::<NightClock>()
+                .unwrap()
+                .jump_to(GameTime::from_seconds(
+                    GameTime::hm(19, 0).seconds() + 210.0,
+                ));
+            frames(&mut app, 40);
+
+            assert_eq!(
+                app.get_resource::<Sight>().unwrap().heard[0].as_deref(),
+                Some(heard),
+                "staff: {staff}"
+            );
+            assert_eq!(
+                app.get_resource::<Casebook>().unwrap().facts().len(),
+                facts,
+                "staff: {staff}"
+            );
+        }
+    }
+
+    #[test]
     fn two_pads_play_a_night_talk_to_a_character_and_start_the_next() {
         let Some(mut app) = concerto::headless(crate::game_without_saves) else {
             return;
