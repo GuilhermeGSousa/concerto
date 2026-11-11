@@ -109,6 +109,12 @@ impl Plugin for UIPlugin {
         app.register_event::<UITextInputCancelled>();
         app.register_event::<UIFocusGained>();
         app.register_event::<UIFocusLost>();
+        app.register_event::<crate::grid::UIGridMoved>();
+        app.add_listener(crate::grid::move_grid);
+        app.add_system(
+            LateUpdate,
+            crate::grid::paint_grid_cells.before(UiSet::Materials),
+        );
 
         app.configure_sets(
             LateUpdate,
