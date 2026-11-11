@@ -64,8 +64,14 @@ cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown
 ```
 
 Examples are `tech-demo`, `ui-showcase` and `one-more-night`.
-`one-more-night` is the start of a couch co-op game and opens an empty window
-for now. Its manor graybox is in `examples/one-more-night/assets/manor/`: the
+`one-more-night` is the start of a couch co-op game: it starts in a graybox
+room, `content/room/room.gasset`, authored in the editor over MCP, with the
+window split in two side by side. Each `SpawnPoint` in the scene seats one
+player: a first-person walker, a camera on that player's half and a label with
+their name. A pad joins by pressing South or Start and the keyboard by Enter or
+Space; the left stick or WASD walks, a full push hurries, and the right stick
+or the mouse looks. The room's one mesh comes from `assets/graybox/cube.obj`.
+Its manor graybox is in `examples/one-more-night/assets/manor/`: the
 Blender source, the scripts that generate and export it, and the export, with a
 `README.md` that says how to run them; the game does not load it yet. Its
 mystery is data: `examples/one-more-night/case` is `one-more-night-case`, an

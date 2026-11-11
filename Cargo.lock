@@ -4699,6 +4699,7 @@ dependencies = [
  "concerto",
  "concerto-asset-build",
  "fs_extra",
+ "glam 0.33.12",
  "one-more-night-case",
 ]
 
