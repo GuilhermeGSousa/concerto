@@ -4549,7 +4549,7 @@ fn list_elements_are_listed_written_pushed_and_removed() {
     );
     assert_eq!(
         refused[1]["message"],
-        "Set Roster.moods.0 failed: mcp::Mood has no JSON form and no registered Default, so JSON cannot build it inside a list"
+        "Set Roster.moods.0 failed: editor::mcp::Mood has no JSON form and no registered Default, so JSON cannot build it inside a list"
     );
     let cut = refused[2]["message"].as_str().unwrap();
     assert!(
@@ -5466,7 +5466,7 @@ fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
     assert_eq!(answers.in_a_frame, answers.between_frames);
     let shown = &answers.between_frames;
     assert_eq!(shown["name"], "Tuning");
-    assert_eq!(shown["type"], "mcp::Tuning");
+    assert_eq!(shown["type"], "editor::mcp::Tuning");
     assert_eq!(
         shown["value"],
         json!({ "gain": 0.0, "temper": "Calm", "samples": [] })
