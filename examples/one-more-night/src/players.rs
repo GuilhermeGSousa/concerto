@@ -13,7 +13,10 @@ use concerto::{
     foundation::transform::Transform,
     gameplay::first_person::{FirstPersonView, FirstPersonWalker, spawn_first_person_walker},
     reflect::{Reflect, ReflectDefault},
-    render::components::camera::{Camera, Viewport},
+    render::components::{
+        camera::{Camera, Viewport},
+        camera_environment::CameraEnvironment,
+    },
     ui::{
         elements::prelude::*,
         material::UIMaterial,
@@ -27,6 +30,8 @@ use concerto::{
 use glam::{EulerRot, Vec2};
 
 const DIVIDER_WIDTH: f32 = 3.0;
+const NIGHT_SKY: Color = Color::srgba(0.01, 0.012, 0.03, 1.0);
+const NIGHT_AMBIENT: Color = Color::rgba(0.07, 0.085, 0.13, 1.0);
 
 /// How many players share the screen.
 pub const PLAYER_COUNT: u8 = 2;
@@ -133,7 +138,11 @@ fn seat_players(
         cmd.insert(SeatEntity, walker);
         let camera = cmd
             .spawn((
-                Camera::default().with_viewport(viewport_of(player)),
+                Camera {
+                    clear_color: NIGHT_SKY,
+                    ..Camera::default().with_viewport(viewport_of(player))
+                },
+                CameraEnvironment::default().with_ambient(NIGHT_AMBIENT),
                 Transform::from_translation(transform.translation),
                 FirstPersonView { walker },
                 player,

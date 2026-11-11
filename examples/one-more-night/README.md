@@ -80,6 +80,9 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | `world` | The systems that run all of it: fixtures, characters, props, targeting, the HUD and the loop |
 | `players`, `controls`, `clock` | Split-screen seats, the actions, the night clock |
 
-The level's doors, bell pulls, bell board, gong, beds and dumbwaiter stops are
+The level scene holds collision boxes, lights, spawn points and fixtures, and
+no meshes; what is seen comes from `assets/art`, whose
+[README](assets/art/README.md) has the art direction and how it is built. The
+level's doors, bell pulls, bell board, gong, beds and dumbwaiter stops are
 scene entities with a `Fixture` component, placed in the editor. A fixture's
 `name` is the door or room id, the bed's player, or the stop's number.

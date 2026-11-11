@@ -1,0 +1,27 @@
+version = 1
+source_id = "023738cd-a7c2-4093-8ce1-a95a4519818f"
+importer = "gltf"
+
+[outputs."material/0"]
+asset_id = "f4bb6602-7481-4ef0-b199-ea1efe951289"
+
+[outputs."material/1"]
+asset_id = "24bcd82b-462e-4503-82eb-22795536dce7"
+
+[outputs."material/2"]
+asset_id = "b2f20964-f3c6-453d-97d3-7bc9a25e39dd"
+
+[outputs."mesh/0"]
+asset_id = "e402a633-72a0-4880-ac0d-ddca03ae233d"
+
+[outputs."mesh/1"]
+asset_id = "bf30b368-c156-4705-97af-a26aeee1b897"
+
+[outputs."mesh/2"]
+asset_id = "b5a3436b-aafd-4e56-9328-896c872d556c"
+
+[outputs.scene]
+asset_id = "00422086-db1d-43df-a348-0b891b2049be"
+
+[outputs."texture/0"]
+asset_id = "8af3b0dc-0688-4542-9381-bd1b89282a41"

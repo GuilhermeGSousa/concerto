@@ -20,12 +20,11 @@ use concerto::{
         reflect::{ReflectComponent, ReflectSceneComponent},
     },
     foundation::{
-        assets::{asset_server::AssetServer, handle::AssetHandle},
+        assets::{AssetId, asset_server::AssetServer, handle::AssetHandle},
         time::Time,
         transform::Transform,
     },
     gameplay::first_person::{FirstPersonView, FirstPersonWalker},
-    mesh::mesh::{Mesh, MeshComponent},
     name::name,
     physics::{
         body::BodyId,
@@ -35,10 +34,7 @@ use concerto::{
         rigid_body::{AllowedDofs, MotionType, RigidBody},
     },
     reflect::{Reflect, ReflectDefault},
-    render::{
-        assets::material::StandardMaterial,
-        components::{camera::Camera, material::MaterialComponent},
-    },
+    render::components::camera::Camera,
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
     ui::{
         material::UIMaterial,
@@ -81,18 +77,56 @@ const MODEL_TURN: f32 = std::f32::consts::PI;
 const GAIT_IDLE: Vec2 = Vec2::ZERO;
 const GAIT_WALK: Vec2 = Vec2::new(0.0, 1.0);
 const GAIT_SIT: Vec2 = Vec2::new(1.0, 0.0);
-const CHARACTER_SCENE: concerto::foundation::assets::AssetId =
-    asset_id!("content/characters/UAL1/scene.gasset");
-const IDLE_CLIP: concerto::foundation::assets::AssetId =
-    asset_id!("content/characters/UAL1/animation_Idle_Loop.gasset");
-const WALK_CLIP: concerto::foundation::assets::AssetId =
-    asset_id!("content/characters/UAL1/animation_Walk_Loop.gasset");
-const SIT_CLIP: concerto::foundation::assets::AssetId =
-    asset_id!("content/characters/UAL1/animation_Sitting_Idle_Loop.gasset");
-const CUBE_MESH: concerto::foundation::assets::AssetId =
-    asset_id!("content/graybox/cube/mesh_0.gasset");
-const CUBE_MATERIAL: concerto::foundation::assets::AssetId =
-    asset_id!("content/graybox/cube/material_cube.gasset");
+const CHARACTER_SCENE: AssetId = asset_id!("content/characters/UAL1/scene.gasset");
+const IDLE_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Idle_Loop.gasset");
+const WALK_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Walk_Loop.gasset");
+const SIT_CLIP: AssetId = asset_id!("content/characters/UAL1/animation_Sitting_Idle_Loop.gasset");
+const LEVEL_ART: AssetId = asset_id!("content/art/export/level_test/scene.gasset");
+
+fn fixture_art(kind: FixtureKind) -> AssetId {
+    match kind {
+        FixtureKind::Door => asset_id!("content/art/export/kit_door/scene.gasset"),
+        FixtureKind::BellPull => asset_id!("content/art/export/kit_bell_pull/scene.gasset"),
+        FixtureKind::BellBoard => asset_id!("content/art/export/kit_bell_board/scene.gasset"),
+        FixtureKind::Gong => asset_id!("content/art/export/kit_gong/scene.gasset"),
+        FixtureKind::Bed => asset_id!("content/art/export/kit_bed/scene.gasset"),
+        FixtureKind::Lift => asset_id!("content/art/export/kit_lift/scene.gasset"),
+    }
+}
+
+struct PropArt {
+    scene: AssetId,
+    size: Vec3,
+}
+
+fn prop_art(data: &CaseData, placement: PlacementId) -> PropArt {
+    match data
+        .catalog
+        .props
+        .name(data.case.placements.get(placement).prop)
+    {
+        "prop_case" => PropArt {
+            scene: asset_id!("content/art/export/kit_prop_case/scene.gasset"),
+            size: Vec3::new(0.5, 0.35, 0.3),
+        },
+        "prop_note" => PropArt {
+            scene: asset_id!("content/art/export/kit_prop_note/scene.gasset"),
+            size: Vec3::new(0.22, 0.02, 0.3),
+        },
+        "prop_basket" => PropArt {
+            scene: asset_id!("content/art/export/kit_prop_basket/scene.gasset"),
+            size: Vec3::new(0.6, 0.45, 0.45),
+        },
+        "prop_key" => PropArt {
+            scene: asset_id!("content/art/export/kit_prop_key/scene.gasset"),
+            size: Vec3::new(0.14, 0.02, 0.06),
+        },
+        _ => PropArt {
+            scene: asset_id!("content/art/export/kit_prop_cup/scene.gasset"),
+            size: Vec3::new(0.14, 0.07, 0.14),
+        },
+    }
+}
 
 /// What a scene object is to the game.
 #[derive(Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
@@ -263,17 +297,7 @@ fn npc_is_busy(data: &CaseData, house: &House, npc: NpcId, now: f64) -> bool {
 }
 
 fn prop_size(data: &CaseData, placement: PlacementId) -> Vec3 {
-    match data
-        .catalog
-        .props
-        .name(data.case.placements.get(placement).prop)
-    {
-        "prop_case" => Vec3::new(0.5, 0.35, 0.3),
-        "prop_note" => Vec3::new(0.22, 0.02, 0.3),
-        "prop_basket" => Vec3::new(0.6, 0.45, 0.45),
-        "prop_key" => Vec3::new(0.06, 0.14, 0.03),
-        _ => Vec3::new(0.12, 0.12, 0.12),
-    }
+    prop_art(data, placement).size
 }
 
 fn item_home(data: &CaseData, placement: PlacementId) -> Vec3 {
@@ -290,8 +314,10 @@ fn spawn_case(
     assets: Res<AssetServer>,
     mut cmd: CommandQueue,
 ) {
-    let mesh = assets.load::<Mesh>(CUBE_MESH);
-    let material = assets.load::<StandardMaterial>(CUBE_MATERIAL);
+    cmd.spawn((
+        SceneSpawnerComponent(assets.load::<Scene>(LEVEL_ART)),
+        Transform::default(),
+    ));
     let character = assets.load::<Scene>(CHARACTER_SCENE);
     let mut graph = AnimationGraph::new();
     graph
@@ -343,24 +369,21 @@ fn spawn_case(
         ));
     }
     for placement in data.case.placements.ids() {
+        let art = prop_art(&data, placement);
         cmd.spawn((
             ItemBody {
                 placement,
                 shown: None,
             },
             Interactable::Placement(placement),
-            MeshComponent {
-                handle: mesh.clone(),
+            Transform::from_translation(item_home(&data, placement)),
+            BoxCollider {
+                half_extents: art.size / 2.0,
             },
-            MaterialComponent {
-                handle: material.clone(),
-            },
-            Transform::from_translation_rotation_scale(
-                item_home(&data, placement),
-                Quat::IDENTITY,
-                prop_size(&data, placement),
-            ),
-            BoxCollider::default(),
+        ))
+        .add_child((
+            SceneSpawnerComponent(assets.load::<Scene>(art.scene)),
+            Transform::default(),
         ));
     }
 }
@@ -368,10 +391,15 @@ fn spawn_case(
 fn adopt_fixtures(
     fixtures: Query<(Entity, &Fixture, &Transform), Without<Adopted>>,
     mut data: ResMut<CaseData>,
+    assets: Res<AssetServer>,
     mut cmd: CommandQueue,
 ) {
     for (entity, fixture, transform) in fixtures.iter() {
         cmd.insert(Adopted, entity);
+        cmd.entity(entity).add_child((
+            SceneSpawnerComponent(assets.load::<Scene>(fixture_art(fixture.kind))),
+            Transform::default(),
+        ));
         let number = fixture.name.parse::<u8>().ok();
         let target = match fixture.kind {
             FixtureKind::Door => data.catalog.doors.id(&fixture.name).map(|door| {
@@ -810,18 +838,18 @@ fn show_hud(
 }
 
 fn swing_doors(
-    panels: Query<(Entity, &mut DoorPanel, &mut Transform)>,
+    panels: Query<(Entity, &mut DoorPanel, &mut Transform, &BoxCollider)>,
     house: Res<House>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, mut panel, mut transform) in panels.iter() {
+    for (entity, mut panel, mut transform, collider) in panels.iter() {
         let open = house.stands_open(panel.door);
         if panel.shown_open == open {
             continue;
         }
         panel.shown_open = open;
         let closed = panel.closed.clone();
-        let half = Vec3::X * closed.scale.x / 2.0;
+        let half = Vec3::X * collider.half_extents.x * closed.scale.x;
         let (rotation, translation) = if open {
             let hinge = closed.translation - closed.rotation * half;
             let rotation = closed.rotation * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
@@ -831,18 +859,18 @@ fn swing_doors(
         };
         transform.rotation = rotation;
         transform.translation = translation;
-        cmd.insert(BoxCollider::default(), entity);
+        cmd.insert(*collider, entity);
     }
 }
 
 fn place_items(
-    items: Query<(Entity, &mut ItemBody, &mut Transform)>,
-    lifts: Query<(&Interactable, &Transform), Without<ItemBody>>,
+    items: Query<(Entity, &mut ItemBody, &mut Transform, &BoxCollider)>,
+    lifts: Query<(&Interactable, &Transform, &BoxCollider), Without<ItemBody>>,
     house: Res<House>,
     data: Res<CaseData>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, mut item, mut transform) in items.iter() {
+    for (entity, mut item, mut transform, collider) in items.iter() {
         let place = house.items[item.placement.index()];
         let lift_at = house.lift_at;
         let shown = (place, lift_at);
@@ -855,9 +883,9 @@ fn place_items(
             ItemPlace::Carried(_) => Vec3::new(0.0, -40.0, 0.0),
             ItemPlace::Lift => lifts
                 .iter()
-                .find(|(target, _)| **target == Interactable::Lift(shown.1))
-                .map_or(Vec3::new(0.0, -40.0, 0.0), |(_, lift)| {
-                    lift.translation + Vec3::Y * (lift.scale.y / 2.0 + 0.1)
+                .find(|(target, _, _)| **target == Interactable::Lift(shown.1))
+                .map_or(Vec3::new(0.0, -40.0, 0.0), |(_, lift, cabinet)| {
+                    lift.translation + Vec3::Y * (cabinet.half_extents.y + collider.half_extents.y)
                 }),
         };
         let moved = transform.translation.distance(translation) > 1e-4;
@@ -866,7 +894,7 @@ fn place_items(
         }
         if moved {
             transform.translation = translation;
-            cmd.insert(BoxCollider::default(), entity);
+            cmd.insert(*collider, entity);
         }
     }
 }
@@ -1116,12 +1144,10 @@ mod tests {
                 kind: super::FixtureKind::Door,
                 name: "d_a_service".into(),
             },
-            BoxCollider::default(),
-            Transform::from_translation_rotation_scale(
-                Vec3::new(3.0, 1.1, -6.0),
-                Default::default(),
-                Vec3::new(1.0, 2.2, 0.08),
-            ),
+            BoxCollider {
+                half_extents: Vec3::new(0.5, 1.1, 0.04),
+            },
+            Transform::from_translation(Vec3::new(3.0, 1.1, -6.0)),
         ));
         world.spawn((
             SpawnPoint { player: 1 },
