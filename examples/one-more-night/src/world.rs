@@ -62,7 +62,8 @@ use crate::players::{PLAYER_COUNT, SeatEntity, Seated};
 use crate::rules::name_of;
 use crate::save::{SaveFile, save_dir};
 use crate::schedule::{NpcPose, WALK_SPEED, case_time, entries_of, line_at, pose_at, talks_at};
-use crate::session::{Effect, Press, Session};
+use crate::session::{Effect, Mode, Press, Session};
+use concerto::gameplay::actions::{Look, Move};
 
 const SEATS: usize = PLAYER_COUNT as usize;
 const REACH: f32 = 2.6;
@@ -72,6 +73,11 @@ const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
 const NPC_DOOR_REACH: f32 = 1.1;
+const HELD_SIZE: f32 = 0.15;
+const HELD_NEAR: f32 = 0.32;
+const HELD_FAR: f32 = 0.8;
+const HELD_TURN_RATE: f32 = 2.4;
+const HELD_ZOOM_RATE: f32 = 0.5;
 const SCREEN_ROWS: usize = 12;
 const MODEL_TURN: f32 = std::f32::consts::PI;
 const GAIT_IDLE: Vec2 = Vec2::ZERO;
@@ -183,6 +189,15 @@ struct ItemBody {
     shown: Option<ItemPlace>,
 }
 
+#[derive(Component)]
+struct Held {
+    player: u8,
+    placement: PlacementId,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HudPart {
     Info,
@@ -253,6 +268,12 @@ pub fn install(app: &mut App, saves: Option<PathBuf>) {
         .add_system(Update, face_npcs)
         .add_system(Update, hold_doors_for_npcs.before(swing_doors))
         .add_system(Update, capture_mouse.after(play))
+        .add_system(
+            Update,
+            hold_up_props
+                .after(play)
+                .after(concerto::gameplay::first_person::place_first_person_views),
+        )
         .add_system(Update, pause_for_screens.after(play))
         .add_system(FixedUpdate, move_npcs);
     #[cfg(feature = "debug")]
@@ -975,6 +996,82 @@ fn capture_mouse(session: Res<Session>, players: Res<Players>, mut window: ResMu
     }
 }
 
+fn held_placement(session: &Session, player: u8) -> Option<PlacementId> {
+    match session.mode(player) {
+        Mode::Inspecting { placement, .. } | Mode::Reading { placement, .. } => Some(*placement),
+        _ => None,
+    }
+}
+
+fn hold_up_props(
+    held: Query<(Entity, &mut Held, &mut Transform)>,
+    eyes: Query<(&PlayerIndex, &Transform), (With<Camera>, Without<Held>)>,
+    session: Res<Session>,
+    data: Res<CaseData>,
+    assets: Res<AssetServer>,
+    input: Res<Input>,
+    actions: Res<ActionMap>,
+    players: Res<Players>,
+    time: Res<Time>,
+    mut cmd: CommandQueue,
+) {
+    let dt = time.real_delta().as_secs_f32();
+    let mut shown = [false; SEATS];
+    for (entity, mut prop, mut transform) in held.iter() {
+        let eye = eyes
+            .iter()
+            .find(|(player, _)| player.index() == prop.player)
+            .map(|(_, eye)| eye);
+        let (Some(eye), true) = (
+            eye,
+            held_placement(&session, prop.player) == Some(prop.placement),
+        ) else {
+            cmd.despawn(entity);
+            continue;
+        };
+        shown[prop.player as usize] = true;
+        let pad = actions.player(PlayerIndex::new(prop.player), &input, &players);
+        let turn = pad.axis2d(Look) * HELD_TURN_RATE * dt;
+        let zoom = pad.axis2d(Move).y * HELD_ZOOM_RATE * dt;
+        if turn != Vec2::ZERO || zoom != 0.0 {
+            prop.yaw += turn.x;
+            prop.pitch = (prop.pitch - turn.y).clamp(-1.4, 1.4);
+            prop.distance = (prop.distance - zoom).clamp(HELD_NEAR, HELD_FAR);
+        }
+        transform.translation =
+            eye.translation + eye.rotation * Vec3::new(0.0, -0.06, -prop.distance);
+        transform.rotation =
+            eye.rotation * Quat::from_rotation_x(prop.pitch) * Quat::from_rotation_y(prop.yaw);
+    }
+    for (player, eye) in eyes.iter() {
+        let player = player.index();
+        let Some(placement) = held_placement(&session, player).filter(|_| !shown[player as usize])
+        else {
+            continue;
+        };
+        let art = prop_art(&data, placement);
+        let scale = HELD_SIZE / art.size.max_element();
+        cmd.spawn((
+            Held {
+                player,
+                placement,
+                yaw: 0.5,
+                pitch: 0.6,
+                distance: 0.55,
+            },
+            Transform::from_translation(eye.translation),
+        ))
+        .add_child((
+            SceneSpawnerComponent(assets.load::<Scene>(art.scene)),
+            Transform::from_translation_rotation_scale(
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::splat(scale),
+            ),
+        ));
+    }
+}
+
 fn animator_under(
     root: Entity,
     children: &Query<&Children>,
@@ -1064,6 +1161,18 @@ fn debug_keys(
         && let Some(fact) = data.case.facts.ids().find(|fact| !book.knows(*fact))
     {
         session.grant(&mut book, &data, &[fact]);
+    }
+    let first = session.present_players().next();
+    if pressed(KeyCode::F10)
+        && let Some(player) = first
+        && let Some(placement) = data.case.placements.ids().find(|placement| {
+            matches!(
+                data.case.placements.get(*placement).interaction,
+                crate::case::Interaction::Inspect { .. }
+            )
+        })
+    {
+        session.examine(player, placement, &mut book, &data);
     }
     if pressed(KeyCode::F8) {
         sight.night_over = true;
@@ -1303,6 +1412,25 @@ mod tests {
         assert!(session(&app).is_walking(0) && session(&app).is_walking(1));
         let before = walkers(&mut app);
         assert_eq!(before.len(), 2);
+
+        let case = app.get_resource::<crate::casefile::CaseData>().unwrap();
+        let placement = case.case.placements.id("p_case").unwrap();
+        let held_props = |app: &mut App| {
+            let world = app.main_mut().world_mut();
+            let mut held = world.query::<&super::Held, ()>();
+            held.iter(world).count()
+        };
+        app.get_resource_mut::<Session>().unwrap().seats[0].mode =
+            Mode::Inspecting { placement, spot: 0 };
+        frames(&mut app, 3);
+        assert_eq!(
+            held_props(&mut app),
+            1,
+            "an inspected prop is held up to its player"
+        );
+        app.get_resource_mut::<Session>().unwrap().seats[0].mode = Mode::Walking;
+        frames(&mut app, 3);
+        assert_eq!(held_props(&mut app), 0, "and put away when they are done");
 
         tap(&mut app, 1, GamepadButton::Start);
         let held = app.get_resource::<NightClock>().unwrap().now();

@@ -23,5 +23,11 @@ asset_id = "b5a3436b-aafd-4e56-9328-896c872d556c"
 [outputs.scene]
 asset_id = "00422086-db1d-43df-a348-0b891b2049be"
 
-[outputs."texture/0"]
-asset_id = "8af3b0dc-0688-4542-9381-bd1b89282a41"
+[outputs."texture/0_linear"]
+asset_id = "43731b36-6343-4e91-9d2e-0bb3d9210639"
+
+[outputs."texture/1"]
+asset_id = "935cd50b-8077-42f8-aa69-c6c8081b0972"
+
+[outputs."texture/2_linear"]
+asset_id = "8a876b15-2b33-4c47-9e9a-9c3590aa0f63"

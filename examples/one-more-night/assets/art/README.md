@@ -12,7 +12,7 @@ painted by hand and a change of palette is a change of numbers.
 | Path | What it holds |
 |---|---|
 | `tools/build_art.py` | Generates the textures, builds the meshes, exports the glTF files and saves `art.blend` |
-| `textures/` | The generated 512 px tileable textures: oak, mahogany, parquet, two wallpapers, plaster, ceiling, tiles, rug |
+| `textures/` | The generated 512 px tileable textures: oak, mahogany, parquet, two wallpapers, plaster, ceiling, tiles, rug. Each has a colour map, a normal map (`_normal`) and a map with roughness in green and metallic in blue (`_surface`) |
 | `export/level_test.glb` | The test level's visible geometry: floors, walls, ceiling, skirting, furniture, rug, lamps |
 | `export/kit_*.glb` | One model each for the door, bell pull, bell board, gong, bed, dumbwaiter and the five props |
 | `art.blend` | The scene the script leaves behind, for looking at |
@@ -42,5 +42,6 @@ keeps the asset ids, so the game's `asset_id!` paths stay valid.
 
 ## Not here yet
 
-Normal and roughness maps, the characters (still the UAL1 placeholder),
+Shared textures (each exported file carries its own copies, so small kit
+pieces use a wood with no relief maps), the characters (still the UAL1 placeholder),
 portraits, and anything for the manor.

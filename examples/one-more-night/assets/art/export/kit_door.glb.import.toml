@@ -36,7 +36,13 @@ asset_id = "10b6e470-ef85-425c-88c4-545c2887d404"
 asset_id = "3f3589dc-34a7-4e9e-baf2-92a3d3b0cda4"
 
 [outputs."texture/0"]
-asset_id = "bde77875-594d-4c0f-9f20-276b5f180e8c"
+asset_id = "7d6956bf-1506-440f-a9f4-0f6d701cf70e"
 
-[outputs."texture/1"]
-asset_id = "88dfb2ed-6b56-4310-81ed-5ac4e43d3a1f"
+[outputs."texture/1_linear"]
+asset_id = "b888bafc-5770-40f1-bf88-eaea17112ada"
+
+[outputs."texture/2"]
+asset_id = "d91b1c60-4a23-4a29-9e33-6c4a5dd5bc6b"
+
+[outputs."texture/3_linear"]
+asset_id = "c9bb48ba-2a06-470d-8315-d7ffe9f98f59"

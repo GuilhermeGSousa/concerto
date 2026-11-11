@@ -43,15 +43,43 @@ def noise(seed, octaves=(4, 8, 16, 32, 64)):
     return (out - out.min()) / (out.max() - out.min())
 
 
-def save(name, rgb):
+HEIGHTS = {}
+
+
+def write(name, rgb, data=False):
     pixels = np.ones((SIZE, SIZE, 4), dtype=np.float32)
     pixels[..., :3] = np.clip(rgb, 0.0, 1.0)
     image = bpy.data.images.new(name, SIZE, SIZE)
+    if data:
+        image.colorspace_settings.name = "Non-Color"
     image.pixels.foreach_set(pixels[::-1].ravel())
     image.filepath_raw = os.path.join(TEXTURES, name + ".png")
     image.file_format = "PNG"
     image.save()
     return image
+
+
+def save(name, rgb, height=None):
+    if height is not None:
+        low, high = float(height.min()), float(height.max())
+        HEIGHTS[name] = (height - low) / max(high - low, 1e-6)
+    return write(name, rgb)
+
+
+def normal_map(name, strength):
+    height = HEIGHTS[name]
+    across = (np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)) * strength
+    up = (np.roll(height, 1, axis=0) - np.roll(height, -1, axis=0)) * strength
+    length = np.sqrt(across * across + up * up + 1.0)
+    rgb = np.stack((-across / length, -up / length, 1.0 / length), axis=-1) * 0.5 + 0.5
+    return write(name + "_normal", rgb, data=True)
+
+
+def surface_map(name, roughness, spread, metallic):
+    height = HEIGHTS[name]
+    rough = np.clip(roughness + spread * (0.5 - height), 0.04, 1.0)
+    rgb = np.stack((np.ones_like(rough), rough, np.full_like(rough, metallic)), axis=-1)
+    return write(name + "_surface", rgb, data=True)
 
 
 def tint(value, colour):
@@ -62,7 +90,7 @@ def wood_texture(name, colour, seed):
     grain = noise(seed, (64, 128, 256))[0, :]
     body = noise(seed + 1)
     value = 0.62 + 0.3 * grain[None, :] + 0.16 * body
-    return save(name, tint(value, colour))
+    return save(name, tint(value, colour), value)
 
 
 def parquet_texture(name, seed):
@@ -71,6 +99,7 @@ def parquet_texture(name, seed):
     plank = cell // 4
     grain = noise(seed, (64, 128, 256))
     rgb = np.zeros((SIZE, SIZE, 3))
+    height = np.ones((SIZE, SIZE))
     for row in range(4):
         for column in range(4):
             upright = (row + column) % 2 == 0
@@ -88,7 +117,10 @@ def parquet_texture(name, seed):
                 rgb[ys, xs] = tint(block * (0.85 + 0.25 * streak), colour)
                 rgb[ys.start : ys.start + 1, xs] *= 0.45
                 rgb[ys, xs.start : xs.start + 1] *= 0.45
-    return save(name, rgb)
+                height[ys, xs] = 0.8 + 0.2 * streak
+                height[ys.start : ys.start + 2, xs] = 0.0
+                height[ys, xs.start : xs.start + 2] = 0.0
+    return save(name, rgb, height)
 
 
 def wallpaper_texture(name, colour, accent, seed):
@@ -100,11 +132,12 @@ def wallpaper_texture(name, colour, accent, seed):
     dy = np.abs((ys % 128) - 64)
     motif = (dx + dy < 14) & (dx + dy > 6)
     rgb[motif] = np.array(accent)
-    return save(name, rgb)
+    return save(name, rgb, value + 0.6 * motif)
 
 
 def plaster_texture(name, colour, seed):
-    return save(name, tint(0.95 + 0.05 * noise(seed, (32, 64, 128, 256)), colour))
+    grit = noise(seed, (32, 64, 128, 256))
+    return save(name, tint(0.95 + 0.05 * grit, colour), grit)
 
 
 def tile_texture(name, seed):
@@ -115,7 +148,7 @@ def tile_texture(name, seed):
     rgb = np.where(dark[..., None], tint(value, (0.1, 0.1, 0.11)), tint(value, (0.78, 0.74, 0.66)))
     grout = (xs % half < 3) | (ys % half < 3)
     rgb[grout] = np.array((0.3, 0.29, 0.27))
-    return save(name, rgb)
+    return save(name, rgb, np.where(grout, 0.0, 0.9 + 0.1 * value))
 
 
 def rug_texture(name):
@@ -125,10 +158,12 @@ def rug_texture(name):
     rgb[(edge > 24) & (edge < 40)] = np.array((0.72, 0.55, 0.22))
     rgb[(edge > 52) & (edge < 58)] = np.array((0.72, 0.55, 0.22))
     rgb[edge <= 24] = np.array((0.16, 0.2, 0.3))
-    return save(name, rgb)
+    return save(name, rgb, noise(22, (64, 128, 256)))
 
 
-def material(name, colour=(1, 1, 1), image=None, roughness=0.7, metallic=0.0, emission=None):
+def material(
+    name, colour=(1, 1, 1), image=None, roughness=0.7, metallic=0.0, emission=None, relief=0.0, spread=0.2
+):
     made = bpy.data.materials.new(name)
     made.use_nodes = True
     shader = made.node_tree.nodes["Principled BSDF"]
@@ -139,6 +174,20 @@ def material(name, colour=(1, 1, 1), image=None, roughness=0.7, metallic=0.0, em
         node = made.node_tree.nodes.new("ShaderNodeTexImage")
         node.image = image
         made.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
+    if image is not None and relief > 0.0 and image.name in HEIGHTS:
+        links = made.node_tree.links
+        nodes = made.node_tree.nodes
+        bumps = nodes.new("ShaderNodeTexImage")
+        bumps.image = normal_map(image.name, relief)
+        to_normal = nodes.new("ShaderNodeNormalMap")
+        links.new(bumps.outputs["Color"], to_normal.inputs["Color"])
+        links.new(to_normal.outputs["Normal"], shader.inputs["Normal"])
+        surface = nodes.new("ShaderNodeTexImage")
+        surface.image = surface_map(image.name, roughness, spread, metallic)
+        split = nodes.new("ShaderNodeSeparateColor")
+        links.new(surface.outputs["Color"], split.inputs["Color"])
+        links.new(split.outputs["Green"], shader.inputs["Roughness"])
+        links.new(split.outputs["Blue"], shader.inputs["Metallic"])
     if emission is not None:
         shader.inputs["Emission Color"].default_value = (*emission, 1.0)
         shader.inputs["Emission Strength"].default_value = 4.0
@@ -240,31 +289,36 @@ def export(group, name):
         use_selection=True,
         export_apply=True,
         export_yup=True,
+        export_tangents=True,
     )
 
 
 def build():
     os.makedirs(TEXTURES, exist_ok=True)
     os.makedirs(EXPORT, exist_ok=True)
+    HEIGHTS.clear()
     clear()
 
-    oak = material("oak", image=wood_texture("oak", (0.5, 0.3, 0.16), 1), roughness=0.55)
-    mahogany = material("mahogany", image=wood_texture("mahogany", (0.3, 0.12, 0.08), 2), roughness=0.4)
-    parquet = material("parquet", image=parquet_texture("parquet", 3), roughness=0.45)
+    oak = material("oak", image=wood_texture("oak", (0.5, 0.3, 0.16), 1), roughness=0.55, relief=2.0)
+    mahogany = material("mahogany", image=wood_texture("mahogany", (0.3, 0.12, 0.08), 2), roughness=0.4, relief=1.5)
+    plain_wood = material("mahogany_plain", image=bpy.data.images["mahogany"], roughness=0.4)
+    parquet = material("parquet", image=parquet_texture("parquet", 3), roughness=0.4, relief=3.0, spread=0.5)
     green = material(
         "wallpaper_green",
         image=wallpaper_texture("wallpaper_green", (0.16, 0.32, 0.23), (0.7, 0.56, 0.26), 4),
         roughness=0.9,
+        relief=1.5,
     )
     red = material(
         "wallpaper_red",
         image=wallpaper_texture("wallpaper_red", (0.42, 0.11, 0.12), (0.72, 0.56, 0.28), 5),
         roughness=0.9,
+        relief=1.5,
     )
-    plaster = material("plaster", image=plaster_texture("plaster", (0.74, 0.7, 0.62), 6), roughness=0.95)
-    ceiling = material("ceiling", image=plaster_texture("ceiling", (0.82, 0.8, 0.75), 7), roughness=0.95)
-    tiles = material("tiles", image=tile_texture("tiles", 8), roughness=0.35)
-    rug = material("rug", image=rug_texture("rug"), roughness=1.0)
+    plaster = material("plaster", image=plaster_texture("plaster", (0.74, 0.7, 0.62), 6), roughness=0.95, relief=0.35)
+    ceiling = material("ceiling", image=plaster_texture("ceiling", (0.82, 0.8, 0.75), 7), roughness=0.95, relief=0.25)
+    tiles = material("tiles", image=tile_texture("tiles", 8), roughness=0.25, relief=4.0, spread=0.6)
+    rug = material("rug", image=rug_texture("rug"), roughness=1.0, relief=2.0, spread=0.0)
     brass = material("brass", (0.83, 0.62, 0.24), roughness=0.3, metallic=1.0)
     iron = material("iron", (0.08, 0.08, 0.09), roughness=0.5, metallic=1.0)
     velvet = material("velvet", (0.45, 0.06, 0.08), roughness=1.0)
@@ -345,7 +399,7 @@ def build():
         box(group, "door_panel", (0, 0, 0), (1.0, 0.06, 2.2), oak, 0.9)
         for inset_z in (-0.55, 0.5):
             for face in (-0.035, 0.035):
-                box(group, "door_inset", (0, face, inset_z), (0.7, 0.012, 0.8), mahogany, 0.9)
+                box(group, "door_inset", (0, face, inset_z), (0.7, 0.012, 0.8), plain_wood, 0.9)
         for face in (-0.07, 0.07):
             round_shape(group, "door_knob", (0.4, face, -0.05), 0.04, 0, brass, sphere=True)
 
@@ -355,7 +409,7 @@ def build():
         box(group, "pull_tassel", (0, 0, -0.24), (0.07, 0.07, 0.12), brass)
 
     def bell_board(group):
-        box(group, "board", (0, 0, 0), (1.2, 0.05, 0.6), mahogany, 0.8)
+        box(group, "board", (0, 0, 0), (1.2, 0.05, 0.6), plain_wood, 0.8)
         for index in range(3):
             at_x = -0.4 + index * 0.4
             round_shape(group, "board_bell", (at_x, -0.05, 0.12), 0.06, 0, brass, sphere=True)
@@ -363,17 +417,17 @@ def build():
 
     def gong(group):
         for post_x in (-0.3, 0.3):
-            box(group, "gong_post", (post_x, 0, 0), (0.06, 0.06, 1.2), mahogany, 0.8)
-            box(group, "gong_foot", (post_x, 0, -0.57), (0.1, 0.34, 0.06), mahogany, 0.8)
-        box(group, "gong_bar", (0, 0, 0.57), (0.7, 0.06, 0.06), mahogany, 0.8)
+            box(group, "gong_post", (post_x, 0, 0), (0.06, 0.06, 1.2), plain_wood, 0.8)
+            box(group, "gong_foot", (post_x, 0, -0.57), (0.1, 0.34, 0.06), plain_wood, 0.8)
+        box(group, "gong_bar", (0, 0, 0.57), (0.7, 0.06, 0.06), plain_wood, 0.8)
         round_shape(group, "gong_disc", (0, 0, 0.12), 0.25, 0.025, brass, segments=24, axis="Y")
 
     def bed(group):
-        box(group, "bed_frame", (0, 0, -0.12), (1.0, 1.6, 0.26), mahogany, 0.8)
+        box(group, "bed_frame", (0, 0, -0.12), (1.0, 1.6, 0.26), plain_wood, 0.8)
         box(group, "bed_mattress", (0, 0.02, 0.08), (0.94, 1.5, 0.16), linen)
         box(group, "bed_blanket", (0, -0.3, 0.17), (0.96, 0.9, 0.03), velvet)
         box(group, "bed_pillow", (0, 0.55, 0.2), (0.6, 0.32, 0.08), linen)
-        box(group, "bed_head", (0, 0.78, 0.15), (1.0, 0.05, 0.6), mahogany, 0.8)
+        box(group, "bed_head", (0, 0.78, 0.15), (1.0, 0.05, 0.6), plain_wood, 0.8)
 
     def lift(group):
         box(group, "lift_cabinet", (0, 0, 0), (0.7, 0.5, 1.0), oak, 0.8)
@@ -382,7 +436,7 @@ def build():
         round_shape(group, "lift_button", (0.29, -0.26, 0.3), 0.025, 0, brass, sphere=True)
 
     def prop_case(group):
-        box(group, "case_base", (0, 0, -0.135), (0.5, 0.3, 0.08), mahogany, 0.6)
+        box(group, "case_base", (0, 0, -0.135), (0.5, 0.3, 0.08), plain_wood, 0.6)
         box(group, "case_cushion", (0, 0, -0.08), (0.42, 0.22, 0.03), velvet)
         for corner_x in (-0.235, 0.235):
             for corner_y in (-0.135, 0.135):
@@ -407,7 +461,7 @@ def build():
     def prop_cup(group):
         round_shape(group, "cup_saucer", (0, 0, -0.03), 0.07, 0.01, porcelain)
         round_shape(group, "cup_body", (0, 0, 0.005), 0.04, 0.06, porcelain)
-        round_shape(group, "cup_tea", (0, 0, 0.036), 0.034, 0.002, mahogany)
+        round_shape(group, "cup_tea", (0, 0, 0.036), 0.034, 0.002, velvet)
 
     offset = 16.0
     for name, parts in (

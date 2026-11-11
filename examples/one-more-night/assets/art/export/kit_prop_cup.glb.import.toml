@@ -19,6 +19,3 @@ asset_id = "ff085390-c633-4a77-b665-5548b5a94c81"
 
 [outputs.scene]
 asset_id = "9a1db726-7b41-4a85-a6a3-5e8d5ed511ed"
-
-[outputs."texture/0"]
-asset_id = "8bbb8ae5-9b27-401b-a996-189f4653ae40"

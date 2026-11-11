@@ -944,7 +944,8 @@ impl Session {
                     title: data.text(placement.name).to_string(),
                     lines,
                     cursor: Some(*spot),
-                    hint: "Up/Down: look closer   B: put back".into(),
+                    hint: "Right stick: turn   Left stick: closer   Up/Down: look closer   B: put back"
+                        .into(),
                 })
             }
             Mode::Reading { placement, page } => {

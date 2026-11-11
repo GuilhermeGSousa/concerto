@@ -33,6 +33,9 @@ them swap.
 | RB, held | R | The Staff listens at a door they stand by |
 | Start | Escape | Pause for both players; it also frees the mouse |
 
+- **Looking a prop over** brings it up in front of you: the right stick turns
+  it, the left stick moves it nearer and farther, and the d-pad steps through
+  its details.
 - **Facts** are found by looking a prop over, reading, overhearing and asking.
   Both players get a fact at once, and it is never lost.
 - **The casebook** has People, Timeline, Places, Objects and Deductions. A
@@ -65,6 +68,7 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | F7 | Grants the next fact not yet found |
 | F8 | Ends the night |
 | F9 | Confirms the next open deduction |
+| F10 | Brings the first inspectable prop up for the first player |
 
 ## Code
 
