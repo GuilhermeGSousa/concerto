@@ -138,7 +138,26 @@ editor: it answers once the asset has loaded, and at once if it is already
 shown. A scene that fails to load answers `open_failed`; another kind answers
 once its editor calls `finish_asset_request`, or `open_failed` with the
 document's status if the load failed. A kind with no editor answers
-`open_failed`. `close_document` closes the document `status` lists as
+`open_failed`. `create_asset` creates an empty asset of `kind`, one of the kinds
+the Asset Browser's New lists, ignoring case, named `name` in `folder`, or in
+the content root without one, by triggering the `CreateAsset` signal that New's
+name field triggers. It answers `Created <address> · <kind> · <id>. Open it
+with open_asset.` and does not open the asset. A kind that cannot be created
+answers `unknown_kind`, listing the ones that can; a name New would refuse, a
+name taken in that folder, or a folder outside the content root answers
+`create_failed` with the reason. It needs an open project. `import_source`
+imports the file at `source` through the queue the Import… dialog fills: it
+copies the source to `destination` in the project, or to `assets/<file name>`
+without one, or leaves it where it is when it already lies inside the project,
+and answers once that import has finished, with `Imported <destination>: N
+assets, M sibling files.` and one `address · kind · id` line per asset written.
+A path with no file answers `unknown_source`; a destination outside the
+project, without a file name, with another extension than the source's, or a
+source no importer handles answers `import_refused` with the dialog's reason;
+an import that fails answers `import_failed` with the status line's reason.
+Each queued import ends with an `ImportFinished` event, which is what the tool
+waits for. It needs an open project. `close_document`
+closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
 documents, once the prompt has closed, unless it says `unsaved`: `"discard"`
@@ -549,7 +568,11 @@ nothing. A name follows `valid_asset_name`, and one already used in that folder,
 by a file on disk or a registry entry, ignoring case, is taken. Enter on a
 refused name keeps the field, outlines it in the error colour and puts the
 reason in the footer until the next keystroke; clicking away from a refused
-name cancels. New and the menu rows are disabled while no project is open or one is opening. The
+name cancels. Enter and clicking away trigger `CreateAsset { kind, folder, name, open }`,
+the signal an extension or the `create_asset` MCP tool triggers to create an
+asset without the row; its listener does the checks and the write, makes a
+missing folder, and reports each request as an `AssetCreation` event with the
+new id or the reason. New and the menu rows are disabled while no project is open or one is opening. The
 file is always a `.gasset`, even in a project whose `content.toml` sets another
 extension; there the scan looks only for that extension, so the created asset
 is not listed after the project is reopened. If an unsaved Scene tab holds the open, the asset is already written

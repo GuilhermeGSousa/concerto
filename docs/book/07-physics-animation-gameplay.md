@@ -41,6 +41,11 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 `ColliderOffset::bottom_origin(&collider)` puts the entity's origin at the
 bottom of a capsule, where a character's feet are.
 
+A static collider's `Transform` is yours: the simulation writes poses back
+only to entities with a `RigidBody`. Moving the entity does not move its body,
+though; insert its `Collider` or `BoxCollider` again to rebuild the body where
+the entity now is, as a door does when it swings.
+
 The body is built from the `Collider` once. Inserting a new `Collider` on the
 entity rebuilds its body from the new shape, which is how editing a
 `BoxCollider` in the inspector or over MCP takes effect. A `BoxCollider` on an
@@ -1224,8 +1229,30 @@ motion, still passes the events, and warns once.
   `CameraSettings::stick_turn_rate` radians per second at full deflection
   (3.0 by default), scaled the same way.
 - `gameplay::actions` holds the `Move` action (WASD, the arrow keys and the
-  left stick) and `Look` (the right stick). `GameplayPlugin` binds them through
+  left stick), `Look` (the right stick) and `Stroll` (left Shift). `GameplayPlugin` binds them through
   `bind_gameplay_actions`, which a test calls on its own `ActionMap`.
+- `gameplay::first_person` is a first-person character that walks, with no
+  jump. `spawn_first_person_walker(&mut cmd, player, transform, walker)` spawns
+  a `FirstPersonWalker` with its body, feet at `transform`, and returns the
+  entity; `player` is the `PlayerIndex` whose `Move` and `Look` drive it, so two
+  walkers with two indices are two players. The left stick walks up to
+  `walk_speed` (1.6 m/s) at `hurry_threshold` (0.7 of full deflection) and
+  rises to `hurry_speed` (3.4 m/s) at full; keys always push fully, so holding
+  `Stroll`, left Shift, keeps a push at the walk. The right
+  stick turns the view at `look_rate` radians per second, and the mouse turns
+  it by `mouse_sensitivity` for the player who holds the mouse; `invert_y`
+  flips the pitch. Sensitivity and inversion are fields of the walker, so they
+  are per player; a settings screen writes them. The body is a dynamic capsule
+  that never rotates, held `step_height` (0.35 m) above the ground by a sphere
+  cast under it each fixed step: it walks up steps that high, follows ground no
+  steeper than `max_slope_angle`, falls when there is none, and is stopped by
+  walls, closed doors and anything else with a collider. Code that isn't a
+  player drives a walker with `steer(push)` and `look(yaw, pitch)`.
+  Setting `controlled` to false makes it ignore its player, standing still
+  with its view kept, for a menu or a conversation.
+  `FirstPersonView { walker }` on a root entity puts it at the walker's
+  `eye_height`, looking where it looks; give that entity a `Camera` with a
+  `viewport` for split screen, or a `VirtualCamera`.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
   system flies it with the keyboard and mouse, for looking around a scene.

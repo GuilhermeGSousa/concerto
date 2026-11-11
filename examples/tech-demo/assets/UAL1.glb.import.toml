@@ -379,3 +379,15 @@ asset_id = "0f6cee1d-bb2f-5d45-82c8-a3f1422950f8"
 
 [outputs."skeleton/0"]
 asset_id = "9ff87eda-a319-526f-93f6-030fe0ba519f"
+
+[settings.additive.Idle_Tired_Loop]
+base = "83e98262-f197-577d-aa5c-4a7130a4cb42"
+
+[settings.additive.Pistol_Aim_Down]
+base = "c24facef-c56a-55fb-afd9-ed1932926116"
+
+[settings.additive.Pistol_Aim_Up]
+base = "c24facef-c56a-55fb-afd9-ed1932926116"
+
+[settings.additive.Pistol_Shoot]
+base = "c24facef-c56a-55fb-afd9-ed1932926116"

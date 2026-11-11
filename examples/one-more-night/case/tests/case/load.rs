@@ -47,6 +47,14 @@ fn the_fixture_directory_loads() {
     let case = Case::load_dir(&fixture_dir().join("case"), &catalog()).unwrap();
     assert_eq!(case.strings.name(case.title), "case.title");
     assert_eq!(case.strings.get(case.title).as_str(), "Placeholder case");
+    assert_eq!(
+        case.phase_at(GameTime::parse("20:59").unwrap()),
+        Phase::Before
+    );
+    assert_eq!(
+        case.phase_at(GameTime::parse("21:00").unwrap()),
+        Phase::After
+    );
     assert_eq!(case.characters.len(), 3);
     assert_eq!(case.facts.len(), 3);
     assert_eq!(case.deductions.len(), 2);

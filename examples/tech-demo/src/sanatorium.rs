@@ -27,6 +27,7 @@ use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 use glam::{Quat, Vec3};
 
+use crate::body::install_body;
 use crate::character::{
     CharacterConfig, PlayerSpawner, bind_controls, debug_keys, feed_foot_placement,
     setup_character_animations, spawn_character, update_camera_stance, update_movement,
@@ -85,6 +86,7 @@ pub fn sanatorium(app: &mut App) {
             update_camera_stance.before(update_third_person_cameras),
         )
         .add_system(Update, (toggle_marker_debug, draw_markers).chain());
+    install_body(app);
 }
 
 fn spawn_areas(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {

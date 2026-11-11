@@ -1,0 +1,66 @@
+version = 1
+source_id = "c1049f2e-f29b-4d3a-afcb-8c24074829d5"
+importer = "gltf"
+
+[outputs."animation/Idle_Loop"]
+asset_id = "cb79876c-726c-4635-b2e8-7ff2fe18b5e1"
+
+[outputs."animation/Sitting_Enter"]
+asset_id = "3a37eba4-880f-426c-809e-bee06d8796d4"
+
+[outputs."animation/Sitting_Exit"]
+asset_id = "e74d2dbd-d579-4d82-9ca5-54aa1efea5a6"
+
+[outputs."animation/Sitting_Idle_Loop"]
+asset_id = "47ebdf25-4246-4f90-8f8d-be07862a4565"
+
+[outputs."animation/Walk_Loop"]
+asset_id = "47887900-98fc-4ffe-934a-94ae91254538"
+
+[outputs."material/0"]
+asset_id = "8e3c243a-c832-4759-aee7-1d005d28be25"
+
+[outputs."material/1"]
+asset_id = "43c3be25-e473-46fe-9970-d320b4b7fd05"
+
+[outputs."material/2"]
+asset_id = "171952cb-cdfb-43f1-9610-f547e79db79d"
+
+[outputs."material/3"]
+asset_id = "9c98ed8a-c8c5-4991-8ecf-9e30e3f40533"
+
+[outputs."material/4"]
+asset_id = "c8bd2a3a-3e20-4da0-a547-716eee3f15da"
+
+[outputs."material/5"]
+asset_id = "62598acb-93f3-4b55-99fa-d1a0e3b8f410"
+
+[outputs."material/6"]
+asset_id = "26e2df01-c54a-421d-a64a-c60b248066be"
+
+[outputs."mesh/0"]
+asset_id = "ea2dd759-3ff0-43c3-82fc-37c81417df7b"
+
+[outputs."mesh/1"]
+asset_id = "c7611abc-fb42-4ed0-86af-61bc5fe75b35"
+
+[outputs."mesh/2"]
+asset_id = "55100b8b-e4b1-42a2-bbea-d3b16a4bc480"
+
+[outputs."mesh/3"]
+asset_id = "fd5ae5b4-8290-40b7-9294-88916e535729"
+
+[outputs."mesh/4"]
+asset_id = "799fc014-7163-4c63-8759-ebe1ab885ea7"
+
+[outputs."mesh/5"]
+asset_id = "b1082369-c6e4-4d2d-9a58-f899d9537615"
+
+[outputs."mesh/6"]
+asset_id = "c251206c-c5a3-415e-bb8c-ad8041a63c86"
+
+[outputs.scene]
+asset_id = "2b7e2508-d935-4858-90f1-a6b1d2b6cd2f"
+
+[outputs."skeleton/0"]
+asset_id = "3f9138f8-c946-41a9-b769-98ee186e23c7"

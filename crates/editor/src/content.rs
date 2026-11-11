@@ -5,7 +5,7 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, World,
+    Component, Entity, Event, IntoSystemConfig, Query, Res, ResMut, Resource, World,
     command::CommandQueue,
     component::removed::RemovedComponents,
     entity::hierarchy::ChildOf,
@@ -15,7 +15,7 @@ use concerto_ecs::{
         filter::{Added, Changed, Or, With},
     },
     signal::{
-        On,
+        On, Signal,
         lifecycle::Add,
         listener::{IntoListener, Listener},
     },
@@ -159,6 +159,23 @@ struct ContentMenu {
 #[derive(Component)]
 struct ContentMenuRow;
 
+/// Creates an asset of a creatable `kind` named `name` in `folder`, or in the content root without one, as the Asset Browser's New does; `open` opens it in its editor.
+pub struct CreateAsset {
+    pub kind: String,
+    pub folder: Option<String>,
+    pub name: String,
+    pub open: bool,
+}
+impl Signal for CreateAsset {}
+
+/// What a `CreateAsset` came to: the new asset's id, or why nothing was written.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct AssetCreation {
+    pub kind: String,
+    pub address: String,
+    pub result: Result<AssetId, String>,
+}
+
 pub struct ContentPlugin;
 
 impl Plugin for ContentPlugin {
@@ -167,6 +184,7 @@ impl Plugin for ContentPlugin {
         if app.get_resource::<AssetIcons>().is_none() {
             app.insert_resource(AssetIcons::default());
         }
+        app.register_event::<AssetCreation>();
         app.track_removals::<UISelected>();
         install_listeners(app.main_mut().world_mut());
         app.add_panel(PanelDescriptor {
@@ -205,6 +223,7 @@ impl Plugin for ContentPlugin {
 
 fn install_listeners(world: &mut World) {
     world.add_listener(focus_pending_field);
+    world.add_listener(create_asset);
 }
 
 fn visible_assets<'a>(registry: &'a AssetRegistry, state: &ContentState) -> Vec<&'a AssetEntry> {
@@ -668,14 +687,9 @@ fn commit_pending_asset(
         EventReader<ProjectOpened>,
     ),
     fields: Query<(Entity, &UITextInput), With<PendingField>>,
-    editors: Res<AssetEditorRegistry>,
-    mut project: ResMut<ProjectState>,
-    mut registry: ResMut<AssetRegistry>,
     mut state: ResMut<ContentState>,
     mut focused: ResMut<FocusedWidget>,
-    mut commands: ResMut<EditorCommands>,
     highlighted: Query<(Entity, &ContentItem), With<UISelected>>,
-    mut written: EventWriter<AssetsWritten>,
     mut cmd: CommandQueue,
 ) {
     let field = fields.iter().next();
@@ -720,58 +734,122 @@ fn commit_pending_asset(
     if !submit && !lost {
         return;
     }
-    let keeps_focus = **focused == Some(field);
-    let name = input.value.clone();
-    let checked = match project.project.as_ref() {
-        _ if project.busy() => Err("Wait for the project to finish".to_string()),
-        None => Err("Open a project before creating an asset.".to_string()),
-        Some(open) => valid_asset_name(&name).and_then(|()| {
-            if taken_names(&folder, &open.root, &registry).contains(&file_key(&name)) {
-                Err(format!("{folder}/{name}.{EXTENSION} already exists"))
-            } else {
-                Ok(open.root.clone())
-            }
-        }),
-    };
-    let root = match checked {
-        Ok(root) => root,
-        Err(error) => {
-            if keeps_focus {
-                state.pending_error = Some(error);
-            } else {
-                finish_pending(&mut state, &mut focused, Some(field));
-            }
-            return;
+    cmd.trigger(CreateAsset {
+        kind: kind.into(),
+        folder: Some(folder),
+        name: input.value.clone(),
+        open: true,
+    });
+}
+
+enum CreateRefusal {
+    Request(String),
+    Write(String),
+}
+
+impl CreateRefusal {
+    fn message(&self) -> &str {
+        match self {
+            Self::Request(message) | Self::Write(message) => message,
         }
+    }
+}
+
+fn valid_folder(folder: &str, content_root: &str) -> Result<(), String> {
+    let inside = folder
+        .strip_prefix(content_root)
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+        .ok_or_else(|| format!("{folder} is not inside {content_root}"))?;
+    inside.split('/').skip(1).try_for_each(|segment| {
+        valid_asset_name(segment).map_err(|error| format!("{folder}: {error}"))
+    })
+}
+
+fn create_asset(
+    on: On<CreateAsset>,
+    editors: Res<AssetEditorRegistry>,
+    fields: Query<Entity, With<PendingField>>,
+    mut project: ResMut<ProjectState>,
+    mut registry: ResMut<AssetRegistry>,
+    mut state: ResMut<ContentState>,
+    mut focused: ResMut<FocusedWidget>,
+    mut commands: ResMut<EditorCommands>,
+    mut written: EventWriter<AssetsWritten>,
+    mut outcome: EventWriter<AssetCreation>,
+) {
+    let request = on.signal();
+    let name = request.name.as_str();
+    let folder = request.folder.clone().or_else(|| {
+        project
+            .project
+            .as_ref()
+            .map(|open| open.content_root.clone())
+    });
+    let named = state.pending.as_ref().is_some_and(|pending| {
+        pending.kind == request.kind && Some(&pending.folder) == folder.as_ref()
+    });
+    let field = fields.iter().next().filter(|_| named);
+    let keeps_focus = field.is_some() && **focused == field;
+    let address = format!(
+        "{}/{name}.{EXTENSION}",
+        folder.as_deref().unwrap_or_default()
+    );
+    let checked = match (project.project.as_ref(), folder.as_deref()) {
+        _ if project.busy() => Err("Wait for the project to finish".to_string()),
+        (Some(open), Some(folder)) => valid_folder(folder, &open.content_root)
+            .and_then(|()| valid_asset_name(name))
+            .and_then(|()| {
+                if taken_names(folder, &open.root, &registry).contains(&file_key(name)) {
+                    Err(format!("{address} already exists"))
+                } else {
+                    Ok(open.root.clone())
+                }
+            }),
+        _ => Err("Open a project before creating an asset.".to_string()),
     };
-    let address = format!("{folder}/{name}.{EXTENSION}");
-    let created = match editors
-        .creatable()
-        .find(|(creatable, _)| *creatable == kind)
-    {
-        Some((_, creator)) => creator.create(&root, &address, &mut registry),
-        None => Err(anyhow::anyhow!("{kind} cannot be created")),
-    };
-    match created {
+    let created = checked.map_err(CreateRefusal::Request).and_then(|root| {
+        let created = match editors
+            .creatable()
+            .find(|(creatable, _)| *creatable == request.kind)
+        {
+            Some((_, creator)) => creator.create(&root, &address, &mut registry),
+            None => Err(anyhow::anyhow!("{} cannot be created", request.kind)),
+        };
+        created
+            .map_err(|error| CreateRefusal::Write(format!("Could not create {address}: {error:#}")))
+    });
+    let result = match created {
         Ok(id) => {
-            finish_pending(&mut state, &mut focused, Some(field));
+            if named {
+                finish_pending(&mut state, &mut focused, field);
+            }
             state.selected = Some(id);
             state.selected_folder = None;
             state.reveal = Some(ContentKey::Asset(id));
             project.status = format!("Created {address}");
             written.write(AssetsWritten { ids: vec![id] });
-            commands.0.push_back(EditorCommand::OpenAsset(id));
-        }
-        Err(error) => {
-            let message = format!("Could not create {address}: {error:#}");
-            if keeps_focus {
-                state.pending_error = Some(message);
-            } else {
-                finish_pending(&mut state, &mut focused, Some(field));
-                project.status = message;
+            if request.open {
+                commands.0.push_back(EditorCommand::OpenAsset(id));
             }
+            Ok(id)
         }
-    }
+        Err(refusal) => {
+            if keeps_focus {
+                state.pending_error = Some(refusal.message().into());
+            } else if named {
+                finish_pending(&mut state, &mut focused, field);
+                if let CreateRefusal::Write(message) = &refusal {
+                    project.status = message.clone();
+                }
+            }
+            Err(refusal.message().into())
+        }
+    };
+    outcome.write(AssetCreation {
+        kind: request.kind.clone(),
+        address,
+        result,
+    });
 }
 
 fn rebuild_new_rows(
@@ -1293,6 +1371,7 @@ mod tests {
         channel::<UIFocusLost>(world);
         channel::<ProjectOpened>(world);
         channel::<AssetsWritten>(world);
+        channel::<AssetCreation>(world);
         world.track_removals::<UISelected>();
         install_listeners(world);
         run(world, build);
@@ -2347,6 +2426,82 @@ mod tests {
 
         let (_, reopened) = discover_project(f.root.path()).unwrap();
         assert_eq!(reopened.id_for_address(address), Some(id));
+    }
+
+    fn creations(f: &Fixture) -> Vec<AssetCreation> {
+        f.world
+            .get_resource::<EventChannel<AssetCreation>>()
+            .unwrap()
+            .read_from(&mut concerto_ecs::events::event_cursor::EventCursor::default())
+            .cloned()
+            .collect()
+    }
+
+    fn create(f: &mut Fixture, folder: Option<&str>, name: &str) {
+        f.world.trigger(CreateAsset {
+            kind: Scene::name().into(),
+            folder: folder.map(str::to_string),
+            name: name.into(),
+            open: false,
+        });
+        f.refresh();
+    }
+
+    #[test]
+    fn create_asset_writes_into_a_new_folder_without_a_pending_row_or_an_open() {
+        let mut f = level_and_forest();
+
+        create(&mut f, Some("content/rooms"), "Hall");
+
+        let address = "content/rooms/Hall.gasset";
+        assert!(f.root.path().join(address).is_file());
+        let id = f.asset(address);
+        assert_eq!(
+            creations(&f),
+            [AssetCreation {
+                kind: Scene::name().into(),
+                address: address.into(),
+                result: Ok(id),
+            }]
+        );
+        assert_eq!(f.state().selected(), Some(id));
+        assert_eq!(f.status(), "Created content/rooms/Hall.gasset");
+        assert!(f.opened().is_empty());
+        assert_eq!(f.field(), None);
+    }
+
+    #[test]
+    fn create_asset_without_a_folder_writes_in_the_content_root() {
+        let mut f = level_and_forest();
+
+        create(&mut f, None, "Hall");
+
+        assert!(f.root.path().join("content/Hall.gasset").is_file());
+    }
+
+    #[test]
+    fn create_asset_reports_a_refusal_and_writes_nothing() {
+        let mut f = level_and_forest();
+        let status = f.status();
+
+        create(&mut f, None, "level");
+        create(&mut f, Some("elsewhere"), "Hall");
+        create(&mut f, Some("content/../up"), "Hall");
+
+        let refusals: Vec<String> = creations(&f)
+            .into_iter()
+            .map(|creation| creation.result.unwrap_err())
+            .collect();
+        assert_eq!(
+            refusals,
+            [
+                "content/level.gasset already exists",
+                "elsewhere is not inside content",
+                "content/../up: A name holds only letters, digits, spaces, - and _",
+            ]
+        );
+        assert!(f.files().is_empty());
+        assert_eq!(f.status(), status);
     }
 
     #[test]
