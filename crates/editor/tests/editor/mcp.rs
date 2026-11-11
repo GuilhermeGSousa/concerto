@@ -780,6 +780,21 @@ where
     T: Send + 'static,
     F: Future<Output = T>,
 {
+    serve_sized(fixture, log, recipe, configure, SIZE, scenario)
+}
+
+fn serve_sized<T, F>(
+    fixture: &Fixture,
+    log: &Log,
+    recipe: fn(&mut App),
+    configure: impl FnOnce(&mut App),
+    size: (u32, u32),
+    scenario: impl FnOnce(Client) -> F + Send + 'static,
+) -> Option<Served<T>>
+where
+    T: Send + 'static,
+    F: Future<Output = T>,
+{
     let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let cancelled = Arc::new(Mutex::new(None::<Instant>));
@@ -859,7 +874,7 @@ where
                 .add_listener(note_closing);
             configure(app);
         },
-        SIZE,
+        size,
     );
     let returned = Instant::now();
     let result = client
@@ -1154,6 +1169,206 @@ fn frames_run_while_the_edited_scene_loads_and_stop_once_it_has_loaded() {
     assert!(loading.ends_with("busy: yes"), "{loading}");
     assert!(later > first, "{first} then {later} frames while loading");
     assert_eq!(idle, loaded, "frames ran once the scene had loaded");
+}
+
+struct Resized {
+    reply: String,
+    status: String,
+}
+
+struct Shown {
+    layout: &'static str,
+    width: f32,
+    height: f32,
+}
+
+struct FormTab {
+    status: String,
+    unsized_panels: Vec<Value>,
+    back: String,
+    narrowed: Resized,
+}
+
+struct SharedStrip {
+    status: String,
+    widened: Resized,
+    filling: Value,
+}
+
+async fn resize(client: &Client, panel: &str, size: f32) -> Resized {
+    let reply = ok_with(
+        client,
+        "set_panel_size",
+        json!({ "panel": panel, "size": size }),
+    )
+    .await;
+    let status = ok(client, "status").await;
+    Resized { reply, status }
+}
+
+#[test]
+fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them() {
+    let fixture = Fixture::new();
+    fixture.add("content/tune.gasset", "Tune");
+    fixture.add("content/riff.gasset", "Riff");
+    let log = Log::default();
+    let Some(served) = serve_sized(
+        &fixture,
+        &log,
+        game,
+        |app| {
+            form_tune_editor(app);
+            app.register_asset_editor::<Riff, RiffEditor>().unwrap();
+        },
+        (1280, 720),
+        |client| async move {
+            open(&client).await;
+            let before = until(&client, "status", |status| {
+                status.contains("\nviewport: ") && !status.contains("viewport: not shown")
+            })
+            .await;
+            let left = resize(&client, "left", 300.0).await;
+            let right = resize(&client, "right", 400.0).await;
+            let bottom = resize(&client, "bottom", 300.0).await;
+            let clamped = resize(&client, "left", 5000.0).await;
+            let filling = error_with(
+                &client,
+                "set_panel_size",
+                json!({ "panel": "browser", "size": 300.0 }),
+            )
+            .await;
+            let after = ok(&client, "status").await;
+            open_tune(&client).await;
+            let form = until(&client, "status", |status| {
+                status.contains("Tune content/tune.gasset") && status.ends_with("busy: no")
+            })
+            .await;
+            let mut unsized_panels = Vec::new();
+            for panel in ["left", "right"] {
+                let arguments = json!({ "panel": panel, "size": 300.0 });
+                unsized_panels.push(error_with(&client, "set_panel_size", arguments).await);
+            }
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            let back = until(&client, "status", |status| !status.contains("left hidden")).await;
+            let narrowed = resize(&client, "left", 500.0).await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/riff.gasset" }),
+            )
+            .await;
+            let status = until(&client, "status", |status| {
+                !status.contains("browser fill") && status.ends_with("busy: no")
+            })
+            .await;
+            let widened = resize(&client, "browser", 500.0).await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            until(&client, "status", |status| status.contains("browser fill")).await;
+            let refilled = error_with(
+                &client,
+                "set_panel_size",
+                json!({ "panel": "browser", "size": 300.0 }),
+            )
+            .await;
+            let shared = SharedStrip {
+                status,
+                widened,
+                filling: refilled,
+            };
+            client.cancel().await.unwrap();
+            let form = FormTab {
+                status: form,
+                unsized_panels,
+                back,
+                narrowed,
+            };
+            let sized = [left, right, bottom, clamped];
+            (before, sized, filling, after, form, shared)
+        },
+    ) else {
+        return;
+    };
+
+    let (before, [left, right, bottom, clamped], filling, after, form, shared) = served.result;
+    assert_eq!(
+        line(&before, "layout: "),
+        "left 260 · right 320 · bottom 220 · browser fill"
+    );
+    let (width, height) = viewport_size(&before);
+    let expected = [
+        Shown {
+            layout: "left 300 · right 320 · bottom 220 · browser fill",
+            width: width - 40.0,
+            height,
+        },
+        Shown {
+            layout: "left 300 · right 400 · bottom 220 · browser fill",
+            width: width - 120.0,
+            height,
+        },
+        Shown {
+            layout: "left 300 · right 400 · bottom 300 · browser fill",
+            width: width - 120.0,
+            height: height - 80.0,
+        },
+        Shown {
+            layout: "left 528 · right 400 · bottom 300 · browser fill",
+            width: width - 348.0,
+            height: height - 80.0,
+        },
+    ];
+    for (resized, shown) in [&left, &right, &bottom, &clamped].into_iter().zip(expected) {
+        for answer in [&resized.reply, &resized.status] {
+            assert_eq!(line(answer, "layout: "), shown.layout);
+            assert_eq!(
+                viewport_size(answer),
+                (shown.width, shown.height),
+                "{answer}"
+            );
+        }
+    }
+    assert_eq!(filling["code"], "refused", "{filling}");
+    assert_eq!(line(&after, "layout: "), line(&clamped.status, "layout: "));
+    assert_eq!(
+        line(&form.status, "layout: "),
+        "left hidden · right fill · bottom 300 · browser fill"
+    );
+    for refusal in &form.unsized_panels {
+        assert_eq!(refusal["code"], "refused", "{refusal}");
+    }
+    assert_eq!(line(&form.back, "layout: "), line(&after, "layout: "));
+    for answer in [&form.narrowed.reply, &form.narrowed.status] {
+        assert_eq!(
+            line(answer, "layout: "),
+            "left 500 · right 400 · bottom 300 · browser fill"
+        );
+        assert_eq!(
+            viewport_size(answer),
+            (width - 320.0, height - 80.0),
+            "{answer}"
+        );
+    }
+    assert_eq!(
+        line(&shared.status, "layout: "),
+        "left 500 · right 400 · bottom 300 · browser 420"
+    );
+    for answer in [&shared.widened.reply, &shared.widened.status] {
+        assert_eq!(
+            line(answer, "layout: "),
+            "left 500 · right 400 · bottom 300 · browser 500"
+        );
+    }
+    assert_eq!(shared.filling["code"], "refused", "{}", shared.filling);
 }
 
 #[test]
@@ -5276,6 +5491,46 @@ fn held_tune_editor(app: &mut App, tune: AssetId) {
         .add_tool::<QueueTune, _>(McpTool::new("queue_tune"), queue_tune)
         .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune)
         .add_system(LateUpdate, note_value_edits);
+}
+
+#[derive(Default)]
+struct FormTuneEditor;
+
+impl AssetEditor for FormTuneEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        TuneEditor.build(editor);
+    }
+
+    fn form(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Riff;
+
+impl Asset for Riff {
+    fn name() -> &'static str {
+        "Riff"
+    }
+}
+
+#[derive(Default)]
+struct RiffEditor;
+
+impl AssetEditor for RiffEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        TuneEditor.build(editor);
+    }
+
+    fn bottom_host(&self) -> bool {
+        true
+    }
+}
+
+fn form_tune_editor(app: &mut App) {
+    app.register_asset_editor::<Tune, FormTuneEditor>().unwrap();
+    app.register_type::<Tuning>().add_system(Update, load_tunes);
 }
 
 fn shown_tune_editor(app: &mut App) {

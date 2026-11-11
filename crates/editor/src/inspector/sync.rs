@@ -21,6 +21,14 @@ pub struct InspectedComponent {
 }
 
 #[derive(Component)]
+pub(super) struct LabelColumn {
+    body: Entity,
+}
+
+#[derive(Component)]
+pub(super) struct RowLabel;
+
+#[derive(Component)]
 pub(super) struct BuildPropertyWidget {
     pub(super) world: TargetWorld,
     remove: Option<(Entity, usize)>,
@@ -320,6 +328,7 @@ pub(super) fn spawn_card(
     );
 
     let body = card_queue.spawn_child(body_node(theme)).entity();
+    card_queue.insert(LabelColumn { body });
     (entity, body)
 }
 
@@ -359,15 +368,16 @@ fn spawn_row(
             type_id: property.type_id,
         }),
     };
-    row_queue.add_child(
+    row_queue.add_child((
         theme
             .label(label)
             .small()
             .muted()
             .single_line()
-            .width(UIValue::Px(PROPERTY_LABEL_WIDTH))
+            .width(UIValue::Px(LABEL_MIN))
             .fixed(),
-    );
+        RowLabel,
+    ));
     match property.kind {
         PropertyKind::Value(value) => {
             row_queue.insert(value);
@@ -378,6 +388,33 @@ fn spawn_row(
         }
     }
     row
+}
+
+fn label_column(card_width: f32) -> f32 {
+    (card_width * LABEL_SHARE).clamp(LABEL_MIN, LABEL_MAX)
+}
+
+pub(super) fn size_label_columns(
+    cards: Query<(&LabelColumn, &UILayout)>,
+    children: Query<&Children>,
+    labels: Query<&RowLabel>,
+    nodes: Query<&mut UINode>,
+) {
+    for (card, layout) in cards.iter() {
+        let width = UIValue::Px(label_column(layout.rect.size.x));
+        let rows = children.get_entity(card.body);
+        for &row in rows.into_iter().flat_map(|rows| rows.iter()) {
+            let cells = children.get_entity(row);
+            for &cell in cells.into_iter().flat_map(|cells| cells.iter()) {
+                if labels.get_entity(cell).is_some()
+                    && let Some(mut node) = nodes.get_entity(cell)
+                    && node.width != width
+                {
+                    node.width = width;
+                }
+            }
+        }
+    }
 }
 
 /// The layout node every property row starts from.

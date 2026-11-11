@@ -89,9 +89,13 @@ edits keeps them by saving first, with `save`.
 ### Tools
 
 `status` reports the project and its status line, the open documents, the
-active one, the selection in the edited scene, the viewport's size, whether the
-editor is busy, and under `values:` the names of the front document's inspected
-values, or `none`. `list_assets` lists the project's assets as
+active one, the selection in the edited scene, the panels' sizes, the
+viewport's size, whether the editor is busy, and under `values:` the names of
+the front document's inspected values, or `none`. The `layout:` line reads
+`left 260 · right 320 · bottom 220 · browser fill`: the size each panel shows,
+in logical pixels, or `hidden` or `fill` for one the front tab collapses or
+lets take the space that is left. The `viewport:` line is the picture's size
+in physical pixels; under `--mcp` the scale is 1, so the two agree. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
 call that shows the rest. `scene_tree` shows the edited scene, or while a game
@@ -172,6 +176,15 @@ position, yaw, pitch and the direction it looks along, once the edit `App` has
 stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
 no editor camera. All three need an open scene.
+
+`set_panel_size` sets the size of `panel`, one of `left`, `right`, `bottom`
+and `browser`, to `size` logical pixels: a width, or for `bottom` the strip's
+height. It triggers `ResizePanel`, the signal a splitter's drag triggers, and
+answers `status`'s `layout:` and `viewport:` lines once the panels are laid
+out and the viewport has its new size, or the `layout:` line alone on a tab
+that shows no viewport. A size outside what the window allows is clamped, and
+the answer shows the size that was set. A panel that is `hidden` or `fill` on
+the front tab answers `refused`, naming the kind of tab that sizes it.
 
 The edit tools change the edited scene, or the running game while it plays, by
 triggering the signal the panels trigger, and answer once the edit `App`
@@ -397,6 +410,87 @@ steps, and drops. The crate has three parts:
 - The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
   editor's `App`.
 
+The dock (`src/dock.rs`) tiles the window; nothing is drawn over anything
+else. From the top: a bar with the brand, the tabs, the stats and the window
+buttons; a row of the `Left`, `Centre` and `Right` regions; the `Bottom` strip
+across the full width; and the `Status` line. The hierarchy is in `Left`, the
+viewport in `Centre`, the inspector in `Right`, the Asset Browser in `Bottom`
+and Chatter in `Status`. The viewport, and so the game while it plays, is
+exactly the space the panels leave. A panel declares its region in its
+`PanelDescriptor`, and `PanelRegistry::region` gives a region's node.
+
+Each panel in `Left`, `Right` and `Bottom` is a card, `dock::card`: the
+theme's panel with its large corner radius and a faint outline, on the opaque
+canvas backdrop. The viewport's picture has the same corners. The cards stand
+8 px apart and 8 px from the window's left and right edges; the top bar and
+the status line have no fill of their own. A tab's hosts are cards too, and
+two cards in one side region stand 8 px apart. The Play button on the Scene
+tab is a pill filled with the accent that shows `play` and "Play"; while the
+game runs it is outlined in the error colour and shows `stop` and "Stop".
+
+Four splitters resize the panels: between `Left` and `Centre`, between
+`Centre` and `Right`, above the `Bottom` strip, and, on a tab with a bottom
+host, between the Asset Browser and that host. A splitter is the gap between
+two cards: it draws nothing at rest, and a line in the accent colour while it
+is hovered or dragged. The sizes are the
+`EditorLayout` resource, in logical pixels: `left` 260, `right` 320, `bottom`
+220 and `browser` 420 to begin with. They are the same on every tab and last
+for the session; no file holds them. `ResizePanel { panel, size }`, with
+`panel` a `LayoutPanel` (`Left`, `Right`, `Bottom` or `Browser`), is the one
+signal that changes them; a splitter's drag triggers it, and so does the MCP
+tool `set_panel_size`. Its listener
+clamps the size for the window as it is: `Left` no less than 180 and `Right`
+no less than 220, each no more than leaves the `Centre` 320 wide; `Bottom`
+from 120 to what leaves the `Centre` 240 high; `Browser` from 200 to what
+leaves its bottom host 240 wide. In a window too small for the stored sizes
+the dock shows smaller ones, `Right` giving way before `Left`, and the stored
+sizes come back when the window grows; `EditorLayout::shown` gives the sizes
+on screen.
+
+`PanelStates` says what each of the four is on the front tab: `Sized`, which
+shows its stored size and can be resized; `Hidden`, collapsed with its
+splitter; or `Fill`, taking the space that is left, with no splitter. The
+workspace (`src/workspace.rs`) decides it from what the tab shows: a side
+region with no visible panel and no host is `Hidden`, and the Asset Browser is
+`Fill` unless the tab has a bottom host. On a [form](#inspected-assets) tab
+`Left` is `Hidden`, the `Centre` is hidden and `Right` is `Fill`.
+`ResizePanel` for a panel that is not `Sized` changes nothing.
+
+The brand in the top bar is the Concerto mark, `fonts::brand_mark`: the one
+glyph of the bundled `Concerto Mark` face, which
+[`docs/logo/build.py`](../../docs/logo/README.md) generates with the logo's
+SVGs.
+
+Every icon is a glyph of the bundled Phosphor face, drawn through
+`fonts::icon` from a constant in `fonts::glyph`, which carries the glyph's
+upstream name. There are two sizes. A row's icon is a 16 px glyph in a 20 px
+column: a tree row's is `fonts::row_icon`, and a tab builds its own to the same
+measure. An icon button is `fonts::icon_button` with `fonts::button_icon`: a
+16 px glyph in a square of the theme's control height. A tree row's icon is the
+muted text colour at rest and the text colour while its row is hovered or
+selected, and a tab's is the text colour on the active tab and muted on the
+others, whether hovered or not; the glyph, not a colour, tells kinds apart. The hierarchy shows `stack` for the scene root, `camera`,
+`lightbulb` and `cube` for an entity with a camera, a light or a mesh, and
+`circle` for any other entity, with or without children.
+
+The `AssetIcons` resource maps an asset kind's `Asset::name()` to its glyph,
+and the Asset Browser's rows and the tab strip both read it. `ContentPlugin`,
+`TabsPlugin` and the first `register_asset_icon` each insert it when it is
+missing, so either plugin works without `FontsPlugin`. `FontsPlugin` registers
+`Scene`, `Mesh`, `Texture`, `StandardMaterial` and `Skeleton`; a kind nothing
+registered shows `file`. An extension crate registers its own kinds, and a
+later registration of a kind replaces the earlier one:
+
+```rust,ignore
+use concerto_editor::fonts::{AssetIconsAppExt, glyph};
+
+app.register_asset_icon(AnimationClip::name(), glyph::WAVEFORM);
+```
+
+`concerto-animation-editor` registers `AnimationClip`, `AnimationGraph`,
+`BoneMask` and `RetargetRig`, and `concerto-motion-matching-editor` registers
+`MotionDatabase`.
+
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
 same function the game's own `main` hands to `concerto::run`. Each scene's edit
@@ -453,8 +547,9 @@ and which is empty while no project is open. The editor scans only then; content
 that git or a file explorer changes while the project is open shows after it is
 reopened. The tree mirrors the
 project's `content/` folder: the folders and
-assets directly inside it are the top-level rows, a folder shows a folder mark
-and holds its subfolders and assets, and an asset shows its kind mark and name.
+assets directly inside it are the top-level rows, a folder shows the `folder`
+glyph, `folder-open` while expanded, and holds its subfolders and assets, and
+an asset shows its kind's glyph from `AssetIcons` and its name.
 A folder appears once it holds an asset at any depth; empty directories are not
 shown. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an
@@ -611,8 +706,8 @@ mouse button, wheel turn, and mouse motion goes to it wherever the pointer is,
 Esc included, and the editor's panels and shortcuts see none of them. The
 viewport has an accent border and says "Shift+F1 to release". Three things give
 input back to the editor: a click anywhere but the viewport's picture, which
-then lands on whatever is under the pointer, the tab strip and the panels drawn
-over the viewport included; Shift+F1; and the editor window losing focus. The
+then lands on whatever is under the pointer, the tab strip, the panels and the
+splitters beside the viewport included; Shift+F1; and the editor window losing focus. The
 game is told it lost focus, so nothing stays held in it, and any cursor grab it
 asked for is let go. The border turns muted and the viewport says "Click to
 play"; the game keeps running but gets no input, and the editor works as usual.
@@ -763,6 +858,11 @@ owned by property-row entities. Component cards carry
 Unchanged components reuse their snapshots;
 component changes, selection changes, and editor registration changes refresh
 them. Widget input and focused edit buffers continue updating every frame.
+
+The inspector's cards sit in a column at most 760 px wide, centred in the
+panel, so a panel wider than that, as on a form tab, leaves margins beside
+them. A card's label column is 38% of the card's width, no less than 96 px and
+no more than 260 px, so a wider panel gives labels more room.
 
 Registration is split between the two `App`s. A component states what it
 supports on its derive, `#[derive(Reflect)] #[reflect(Component, Default)]`,
@@ -1116,11 +1216,23 @@ roots with `EditorOwned(document)` so closing the editor cleans them up
 recursively. Headless hosts have no UI containers.
 
 An editor that returns `true` from `AssetEditor::bottom_host`, which is `false`
-unless it says otherwise, also gets `EditorHosts::bottom`: a panel 132 px high
-in the `Foot` region, above Chatter, shown while its document is active. It
-spans the space between the cards and sits over the viewport, which keeps its
-full size, as it does under the cards. Chatter stays visible on every tab. A
-Scene document gets no `bottom` host.
+unless it says otherwise, also gets `EditorHosts::bottom`: a panel in the
+`Bottom` strip, to the right of the Asset Browser, shown while its document is
+active. It is as high as the strip, and a splitter between it and the Asset
+Browser sets the browser's width, `EditorLayout::browser`; on a tab with no
+bottom host the Asset Browser takes the whole strip. The `left` host stands in
+`Left` in place of the hierarchy, `inspector` in `Right` above the inspector
+panel, and `canvas` in `Centre`. Chatter stays visible on every tab. A Scene
+document gets no `bottom` host.
+
+An editor that returns `true` from `AssetEditor::form`, which is `false` unless
+it says otherwise, shows its `InspectedValues` as the tab's main content. Its
+documents get no `canvas` and no `left` host, only `inspector`, and `bottom` if
+the editor asks for one. On its tabs the `Centre` is hidden, `Left` collapses,
+and `Right` fills the row with no splitter, so `status` reports `left hidden`
+and `right fill` and `set_panel_size` refuses both; `EditorLayout::right` is
+left as it was for the other tabs. A preview wins: an editor with a preview
+keeps the viewport and its hosts whatever `form` says.
 
 The [custom asset example](examples/custom_asset.rs) writes no editor of its
 own. Its game marks a non-Clone `Dialogue { text: String, spin_speed: f32 }`
@@ -1201,8 +1313,12 @@ no scene, an inspected kind has no editor: double-clicking one in the Asset
 Browser does nothing, and MCP `open_asset` answers `open_failed`, naming it a
 kind with no editor.
 
-The generic tab is the inspector alone, with no preview and no bottom host, and
-it closes like any other tab. Its document carries `InspectedDocument`, which
+The generic tab is a form: `InspectedAssetEditor` returns `true` from
+`AssetEditor::form`, so the inspector fills the row above the Asset Browser in
+place of the viewport, with no preview and no bottom host, and
+it closes like any other tab. A custom editor that calls
+`InspectedAssetEditor::build` from its own `build` is its own `AssetEditor` and
+is a form only if it returns `true` itself. Its document carries `InspectedDocument`, which
 holds the kind's record, the value being edited, and the file's bytes as last
 read or saved, and publishes the value as one
 [document value](#document-values) named after the kind. Opening reads the

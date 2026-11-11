@@ -49,7 +49,7 @@ impl Plugin for ViewportPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Scene",
-            region: Region::Scene,
+            region: Region::Centre,
         });
         app.add_system(Startup, build_panel)
             .add_system(Update, viewport_shortcuts)
@@ -69,7 +69,7 @@ const INPUT_BORDER: f32 = 2.0;
 
 fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(body) = registry.body(PANEL_ID) {
-        let viewport = spawn_panel(&mut cmd, body);
+        let viewport = spawn_panel(&mut cmd, body, &theme);
         cmd.entity(viewport).add_child((
             theme
                 .card()
@@ -89,13 +89,17 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
     }
 }
 
-pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity) -> Entity {
+/// Spawns the viewport under `parent`: the picture of the front tab's `App`, cut to a card's corners.
+pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) -> Entity {
     cmd.entity(parent)
         .spawn_child((
             UINode::default()
                 .with_flex_grow(1.0)
                 .with_min_size(UIValue::Px(320.0), UIValue::Px(240.0)),
-            UIMaterial::flat(SKY),
+            UIMaterial {
+                corner_radius: theme.radius_lg,
+                ..UIMaterial::flat(SKY)
+            },
             UISharedViewport::new(),
             Interactable,
             ViewportRegion,
@@ -131,7 +135,7 @@ fn show_active_picture(
     }
 }
 
-fn publish_viewport_view(
+pub(crate) fn publish_viewport_view(
     window: Res<concerto_window::plugin::Window>,
     hovered: Res<HoveredNode>,
     focus: Res<FocusedWidget>,
@@ -456,7 +460,7 @@ mod tests {
         let (mut world, document) = host_world(plain_recipe);
         let mut build = (|mut cmd: CommandQueue| {
             let parent = cmd.spawn(UINode::default()).entity();
-            spawn_panel(&mut cmd, parent);
+            spawn_panel(&mut cmd, parent, &UITheme::default());
         })
         .into_system();
         build.initialize(&mut world);

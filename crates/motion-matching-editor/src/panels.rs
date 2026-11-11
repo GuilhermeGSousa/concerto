@@ -16,7 +16,7 @@ use concerto_editor::{
     asset_picker::{
         AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
     },
-    fonts::{MEDIUM, glyph, icon},
+    fonts::{self, MEDIUM, button_icon, glyph},
     hosted::HostedApp,
     inspector::{InspectedValues, ShownValue},
     name_menu::{NameMenu, close_menu, open_name_menu},
@@ -457,19 +457,9 @@ fn icon_button(
     mark: char,
     click: Listener<UIClick>,
 ) -> (Listening<Pressable, UIClick>, Text) {
-    let size = theme.font_size_md;
-    let vertical = (theme.control_height - theme.line_height(size)) / 2.0;
-    let horizontal = (theme.control_height - size) / 2.0;
     (
-        theme
-            .pressable()
-            .size(
-                UIValue::Px(theme.control_height),
-                UIValue::Px(theme.control_height),
-            )
-            .padding(UIRect::axes(vertical, horizontal))
-            .on_click(click),
-        icon(theme, mark, size).muted(),
+        fonts::icon_button(theme).on_click(click),
+        button_icon(theme, mark),
     )
 }
 

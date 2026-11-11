@@ -10,7 +10,7 @@ use concerto_ecs::{
     },
 };
 use concerto_editor::{
-    fonts::{glyph, icon},
+    fonts::{self, ICON_SIZE, glyph, icon},
     hosted::{Hosted, HostedEventsAppExt},
     preview::PreviewSignals,
     timeline::{Timeline, TimelineScrubbed, frame_at, time_of_frame},
@@ -18,10 +18,8 @@ use concerto_editor::{
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{UIClick, UIDisabled, UIInteractionStyle},
-    node::UIRect,
     text::UIText,
     theme::{ButtonVariant, UITheme},
-    transform::UIValue,
 };
 use concerto_window::input::MouseButton;
 
@@ -208,22 +206,10 @@ fn icon_button(
     mark: char,
     click: Listener<UIClick>,
 ) -> Entity {
-    let size = theme.font_size_lg;
-    let vertical = (theme.control_height - theme.line_height(size)) / 2.0;
-    let horizontal = (theme.control_height - size) / 2.0;
     parent
         .spawn_child((
-            theme
-                .pressable()
-                .solid()
-                .bordered()
-                .size(
-                    UIValue::Px(theme.control_height),
-                    UIValue::Px(theme.control_height),
-                )
-                .padding(UIRect::axes(vertical, horizontal))
-                .on_click(click),
-            icon(theme, mark, size),
+            fonts::icon_button(theme).solid().bordered().on_click(click),
+            icon(theme, mark, ICON_SIZE),
         ))
         .entity()
 }

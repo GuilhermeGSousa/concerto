@@ -12,7 +12,7 @@ use concerto_reflect::{Reflect, ReflectMut, ReflectRef};
 use concerto_ui::elements::{Listening, Pressable, Text, prelude::*};
 use concerto_ui::{
     interaction::UIClick,
-    node::{UIInset, UINode, UIRect},
+    node::{UIInset, UINode},
     theme::UITheme,
     transform::UIValue,
 };
@@ -23,7 +23,7 @@ use super::{
     EditContext, EditError, ErasedEditor, PropertyCommit, PropertyCommits, PropertyRow,
     PropertyRowValue,
 };
-use crate::fonts::{glyph, icon};
+use crate::fonts::{button_icon, glyph, icon_button};
 
 /// Shows a reflected list's length and adds to it; its elements follow as rows of their own.
 pub(crate) struct ListEditor;
@@ -136,20 +136,9 @@ fn list_button(
     click: Listener<UIClick>,
     place: impl FnOnce(UINode) -> UINode,
 ) -> (Listening<Pressable, UIClick>, Text) {
-    let size = theme.font_size_md;
-    let vertical = (theme.control_height - theme.line_height(size)) / 2.0;
-    let horizontal = (theme.control_height - size) / 2.0;
     (
-        theme
-            .pressable()
-            .size(
-                UIValue::Px(theme.control_height),
-                UIValue::Px(theme.control_height),
-            )
-            .padding(UIRect::axes(vertical, horizontal))
-            .node(place)
-            .on_click(click),
-        icon(theme, mark, size).muted(),
+        icon_button(theme).node(place).on_click(click),
+        button_icon(theme, mark),
     )
 }
 

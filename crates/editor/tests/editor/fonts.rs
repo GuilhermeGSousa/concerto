@@ -9,6 +9,7 @@ fn fonts() -> UIFonts {
     fonts.add_face(include_bytes!("../../fonts/Inter/Inter-Medium.ttf").as_slice());
     fonts.add_face(include_bytes!("../../fonts/Inter/Inter-SemiBold.ttf").as_slice());
     fonts.add_face(include_bytes!("../../fonts/Phosphor/Phosphor.ttf").as_slice());
+    fonts.add_face(include_bytes!("../../fonts/Concerto/ConcertoMark.ttf").as_slice());
     fonts.set_sans_serif(concerto_editor::fonts::INTER);
     fonts
 }
@@ -41,7 +42,6 @@ fn glyph_ids(text: &str, family: &str) -> Vec<u16> {
 fn every_icon_constant_exists_in_the_phosphor_face() {
     use concerto_editor::fonts::glyph::*;
     let icons = [
-        ("RABBIT", RABBIT),
         ("CARET_RIGHT", CARET_RIGHT),
         ("CARET_DOWN", CARET_DOWN),
         ("CUBE", CUBE),
@@ -62,7 +62,20 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
         ("CORNERS_IN", CORNERS_IN),
         ("X", X),
         ("DOTS_THREE", DOTS_THREE),
-        ("DOT", DOT),
+        ("CIRCLE", CIRCLE),
+        ("PLAY", PLAY),
+        ("STOP", STOP),
+        ("PAUSE", PAUSE),
+        ("SKIP_BACK", SKIP_BACK),
+        ("SKIP_FORWARD", SKIP_FORWARD),
+        ("CROSSHAIR", CROSSHAIR),
+        ("BONE", BONE),
+        ("FOLDER", FOLDER),
+        ("FOLDER_OPEN", FOLDER_OPEN),
+        ("PERSON_ARMS_SPREAD", PERSON_ARMS_SPREAD),
+        ("MASK_HAPPY", MASK_HAPPY),
+        ("GRAPH", GRAPH),
+        ("DATABASE", DATABASE),
     ];
     for (name, icon) in icons {
         let ids = glyph_ids(&icon.to_string(), concerto_editor::fonts::PHOSPHOR);
@@ -72,6 +85,73 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
             "{name} (U+{:04X}) is not in the Phosphor face",
             icon as u32
         );
+    }
+}
+
+#[test]
+fn the_brand_face_holds_the_concerto_mark() {
+    use concerto_editor::fonts::{BRAND, BRAND_MARK};
+    let font_system = build_font_system(&fonts());
+    let face = font_system
+        .db()
+        .faces()
+        .find(|face| face.families.iter().any(|family| family.0 == BRAND))
+        .unwrap_or_else(|| panic!("no loaded face is named {BRAND}"));
+    assert_eq!(face.post_script_name, "ConcertoMark-Regular");
+    let ids = glyph_ids(&BRAND_MARK.to_string(), BRAND);
+    assert_eq!(ids.len(), 1);
+    assert_ne!(ids[0], 0, "the mark is not in the {BRAND} face");
+}
+
+struct IconCase {
+    kind: &'static str,
+    glyph: char,
+}
+
+#[test]
+fn an_asset_kind_shows_the_glyph_registered_last_and_the_file_when_none_is() {
+    use concerto_editor::fonts::{AssetIcons, AssetIconsAppExt, FontsPlugin, glyph};
+    let mut app = concerto_app::App::new();
+    app.register_asset_icon("Dialogue", glyph::IMAGE);
+    app.register_plugin(FontsPlugin);
+    app.register_asset_icon("AnimationClip", glyph::WAVEFORM)
+        .register_asset_icon("Dialogue", glyph::GRAPH);
+    let icons = app.get_resource::<AssetIcons>().unwrap();
+    for case in [
+        IconCase {
+            kind: "Scene",
+            glyph: glyph::STACK,
+        },
+        IconCase {
+            kind: "Mesh",
+            glyph: glyph::CUBE,
+        },
+        IconCase {
+            kind: "Texture",
+            glyph: glyph::IMAGE,
+        },
+        IconCase {
+            kind: "StandardMaterial",
+            glyph: glyph::CIRCLES_THREE,
+        },
+        IconCase {
+            kind: "Skeleton",
+            glyph: glyph::BONE,
+        },
+        IconCase {
+            kind: "AnimationClip",
+            glyph: glyph::WAVEFORM,
+        },
+        IconCase {
+            kind: "Dialogue",
+            glyph: glyph::GRAPH,
+        },
+        IconCase {
+            kind: "NavMesh",
+            glyph: glyph::FILE,
+        },
+    ] {
+        assert_eq!(icons.glyph(case.kind), case.glyph, "{}", case.kind);
     }
 }
 

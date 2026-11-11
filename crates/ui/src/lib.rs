@@ -31,6 +31,7 @@ pub mod render;
 pub mod scroll;
 pub mod sets;
 pub mod slider;
+pub mod splitter;
 pub mod text;
 pub mod text_input;
 pub mod theme;

@@ -19,13 +19,10 @@ use concerto_window::input::actions::ActionMap;
 
 use crate::{
     asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, EditorHosts, EditorOwned},
-    dock::PanelRegistry,
+    dock::{PanelRegistry, PanelState, PanelStates, Region, card},
     hosted::ViewportTarget,
     inspector::InspectedValues,
-    shell::CHATTER_ID,
 };
-
-const BOTTOM_HOST_HEIGHT: f32 = 132.0;
 
 /// Build contextual containers for new documents.
 pub(crate) fn create_editor_hosts(
@@ -42,8 +39,9 @@ pub(crate) fn create_editor_hosts(
         let mut bottom = None;
         if doc.asset_type != concerto_scene::scene::Scene::name() {
             let previewing = editors.preview(doc.asset_type).is_some();
+            let form = editors.form(doc.asset_type);
             for (index, base) in bases.iter().copied().enumerate() {
-                if index == 0 && previewing {
+                if (index == 0 && previewing) || (index < 2 && form) {
                     continue;
                 }
                 let Some((node, parent)) = base.and_then(|base| nodes.get_entity(base)) else {
@@ -51,29 +49,35 @@ pub(crate) fn create_editor_hosts(
                 };
                 let mut node = node.clone();
                 node.visible = false;
-                let surface = if index == 0 {
-                    theme.canvas()
+                let mut region = commands.entity(parent.parent());
+                let host = if form {
+                    region.spawn_child((
+                        UINode::default()
+                            .with_position(taffy::Position::Absolute)
+                            .with_visible(false),
+                        EditorOwned(editor),
+                        Interactable,
+                    ))
                 } else {
-                    theme.panel()
-                };
-                let host = commands
-                    .entity(parent.parent())
-                    .spawn_child((surface.node(|_| node), EditorOwned(editor), Interactable))
-                    .entity();
+                    region.spawn_child((
+                        card(&theme).node(|_| node),
+                        EditorOwned(editor),
+                        Interactable,
+                    ))
+                }
+                .entity();
                 hosts[index] = Some(host);
             }
             if editors.bottom_host(doc.asset_type)
-                && let Some((_, chatter)) = registry
-                    .body(CHATTER_ID)
-                    .and_then(|chatter| nodes.get_entity(chatter))
+                && let Some(strip) = registry.region(Region::Bottom)
             {
-                let surface = theme
-                    .panel()
-                    .height(UIValue::Px(BOTTOM_HOST_HEIGHT))
-                    .fixed()
+                let surface = card(&theme)
+                    .width(UIValue::Px(0.0))
+                    .min_width(UIValue::Px(0.0))
+                    .grow()
                     .hidden();
                 let host = commands
-                    .entity(chatter.parent())
+                    .entity(strip)
                     .spawn_child((surface, EditorOwned(editor), Interactable))
                     .entity();
                 bottom = Some(host);
@@ -99,10 +103,11 @@ fn panel_bodies(registry: &PanelRegistry) -> [Option<Entity>; 3] {
     ]
 }
 
-/// Update visibility only when tab/panel resources or host components change.
+/// Update visibility, and which regions collapse or fill, only when tab/panel resources or host components change.
 pub(crate) fn sync_workspace(
     active: Res<ActiveEditor>,
     registry: Res<PanelRegistry>,
+    mut states: ResMut<PanelStates>,
     editors: Res<AssetEditorRegistry>,
     documents: Query<&EditorDocument>,
     hosts: Query<(Entity, &EditorHosts)>,
@@ -124,11 +129,45 @@ pub(crate) fn sync_workspace(
     let inspected = active
         .0
         .is_some_and(|entity| values.get_entity(entity).is_some());
+    let form = document.is_some_and(|doc| editors.form(doc.asset_type));
+    if let Some(centre) = registry.region(Region::Centre) {
+        set_visible(&nodes, centre, !form);
+    }
     let bases = panel_bodies(&registry);
     for (entity, visible) in bases.into_iter().zip([viewport, scene, scene || inspected]) {
         if let Some(entity) = entity {
             set_visible(&nodes, entity, visible);
         }
+    }
+    let front = active
+        .0
+        .and_then(|entity| hosts.get_entity(entity))
+        .map(|(_, hosts)| *hosts)
+        .unwrap_or_default();
+    let side = |panel: bool, host: Option<Entity>| {
+        if panel || host.is_some() {
+            PanelState::Sized
+        } else {
+            PanelState::Hidden
+        }
+    };
+    let right = side(bases[2].is_some() && (scene || inspected), front.inspector);
+    let next = PanelStates {
+        left: side(bases[1].is_some() && scene, front.left),
+        right: if form && right == PanelState::Sized {
+            PanelState::Fill
+        } else {
+            right
+        },
+        bottom: PanelState::Sized,
+        browser: if front.bottom.is_some() {
+            PanelState::Sized
+        } else {
+            PanelState::Fill
+        },
+    };
+    if *states != next {
+        *states = next;
     }
     for (entity, hosts) in hosts.iter() {
         for host in [hosts.canvas, hosts.left, hosts.inspector, hosts.bottom]
@@ -161,12 +200,6 @@ pub(crate) fn sync_workspace(
                 } else {
                     usize::from(entity != base) + 1
                 }
-            });
-        }
-        if let Some(chatter) = registry.body(CHATTER_ID) {
-            let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.bottom).collect();
-            sort_siblings(&parents, &children, chatter, |entity| {
-                usize::from(!contextual.contains(&entity))
             });
         }
     }
@@ -299,6 +332,7 @@ mod tests {
         world.insert_resource(AssetEditorRegistry::default());
         world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(PanelRegistry::default());
+        world.insert_resource(PanelStates::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(HoveredNode::default());
         world.insert_resource(UIInputState::default());
@@ -425,7 +459,7 @@ mod tests {
             panels.register(crate::dock::PanelDescriptor {
                 id: "test",
                 title: "Test",
-                region: crate::dock::Region::Scene,
+                region: crate::dock::Region::Centre,
             })
         })
         .into_system();
@@ -534,10 +568,11 @@ mod tests {
             .insert_resource(PanelRegistry::default())
             .register_plugin(DockPlugin);
         for (id, region) in [
-            (crate::viewport::PANEL_ID, Region::Scene),
-            (crate::hierarchy::PANEL_ID, Region::Rail),
-            (crate::inspector::PANEL_ID, Region::Side),
-            (crate::shell::CHATTER_ID, Region::Foot),
+            (crate::viewport::PANEL_ID, Region::Centre),
+            (crate::hierarchy::PANEL_ID, Region::Left),
+            (crate::inspector::PANEL_ID, Region::Right),
+            (crate::content::PANEL_ID, Region::Bottom),
+            (crate::shell::CHATTER_ID, Region::Status),
         ] {
             app.add_panel(PanelDescriptor {
                 id,
@@ -556,9 +591,9 @@ mod tests {
             .visible
     }
 
-    fn foot_children(world: &World, chatter: Entity) -> Vec<Entity> {
+    fn siblings(world: &World, entity: Entity) -> Vec<Entity> {
         let region = world
-            .get_component_for_entity::<ChildOf>(chatter)
+            .get_component_for_entity::<ChildOf>(entity)
             .unwrap()
             .parent();
         world
@@ -569,8 +604,13 @@ mod tests {
             .collect()
     }
 
+    fn states(world: &World) -> PanelStates {
+        *world.get_resource::<PanelStates>().unwrap()
+    }
+
     #[test]
-    fn a_bottom_host_sits_above_chatter_follows_its_document_and_closes_with_it() {
+    fn a_bottom_host_shares_the_strip_with_the_asset_browser_follows_its_document_and_closes_with_it()
+     {
         let mut world = docked_world();
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
@@ -584,11 +624,13 @@ mod tests {
         editors.register::<Take, TakeEditor>().unwrap();
         editors.register::<Notes, NotesEditor>().unwrap();
         world.insert_resource(editors);
-        let chatter = world
+        let browser = world
             .get_resource::<PanelRegistry>()
             .unwrap()
-            .body(crate::shell::CHATTER_ID)
+            .body(crate::content::PANEL_ID)
             .unwrap();
+        let strip = siblings(&world, browser);
+        assert_eq!(strip[0], browser);
         let take = document_of(&mut world, Take::name());
         let notes = document_of(&mut world, Notes::name());
         let scene = document_of(&mut world, concerto_scene::scene::Scene::name());
@@ -616,24 +658,25 @@ mod tests {
                 .get_component_for_entity::<Interactable>(bottom)
                 .is_some()
         );
-        assert_eq!(
-            world
-                .get_component_for_entity::<UINode>(bottom)
-                .unwrap()
-                .height,
-            UIValue::Px(132.0)
-        );
         assert!(!visible(&world, Some(bottom)));
 
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(take);
         sync_workspace(&mut world);
-        assert_eq!(foot_children(&world, chatter), vec![bottom, chatter]);
-        assert!(visible(&world, Some(bottom)) && visible(&world, Some(chatter)));
+        assert_eq!(
+            siblings(&world, browser),
+            [strip.as_slice(), &[bottom]].concat()
+        );
+        assert!(visible(&world, Some(bottom)));
+        assert_eq!(states(&world).browser, PanelState::Sized);
+        assert_eq!(states(&world).left, PanelState::Sized);
 
         for other in [notes, scene] {
             world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
             sync_workspace(&mut world);
-            assert!(!visible(&world, Some(bottom)) && visible(&world, Some(chatter)));
+            assert!(!visible(&world, Some(bottom)));
+            assert_eq!(states(&world).browser, PanelState::Fill);
+            assert_eq!(states(&world).left, PanelState::Sized);
+            assert_eq!(states(&world).bottom, PanelState::Sized);
         }
 
         let second = document_of(&mut world, Take::name());
@@ -645,8 +688,8 @@ mod tests {
             .unwrap();
         sync_workspace(&mut world);
         assert_eq!(
-            foot_children(&world, chatter),
-            vec![bottom, second_bottom, chatter]
+            siblings(&world, browser),
+            [strip.as_slice(), &[bottom, second_bottom]].concat()
         );
 
         world
@@ -657,7 +700,10 @@ mod tests {
         process_editor_commands(&mut world);
         sync_workspace(&mut world);
         assert!(!world.entity_is_valid(bottom));
-        assert_eq!(foot_children(&world, chatter), vec![second_bottom, chatter]);
+        assert_eq!(
+            siblings(&world, browser),
+            [strip.as_slice(), &[second_bottom]].concat()
+        );
     }
 
     #[test]
@@ -709,7 +755,7 @@ mod tests {
         };
         assert_eq!(shrink(&world, host), 0.0);
         assert_eq!(shrink(&world, base), 1.0);
-        let order = foot_children(&world, base);
+        let order = siblings(&world, base);
         let position = |entity| order.iter().position(|&child| child == entity).unwrap();
         assert!(position(host) < position(base));
         world.tick();
@@ -812,6 +858,7 @@ mod tests {
         world.insert_resource(crate::guard::UnsavedGuard::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(PanelRegistry::default());
+        world.insert_resource(PanelStates::default());
         world.insert_resource(HoveredNode::default());
         world.insert_resource(UIInputState::default());
         world.insert_resource(ActionMap::default());

@@ -1,6 +1,7 @@
 mod act;
 mod edit;
 mod input;
+mod layout;
 mod observe;
 mod run;
 mod value;
@@ -88,6 +89,7 @@ impl Plugin for EditorMcpPlugin {
         .add_listener(quit_when_host_closes);
         observe::build(app);
         act::build(app);
+        layout::build(app);
         edit::build(app);
         value::build(app);
         run::build(app);

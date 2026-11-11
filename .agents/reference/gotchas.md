@@ -403,8 +403,8 @@ fix the entry in the same commit as the change that made it false.
   editor's UI and `ActionMap` see nothing until input is released by a click
   anywhere but the viewport's picture, Shift+F1, or the window losing focus.
   A press counts as on the picture only if the viewport was the hovered node in
-  the frame before and the pointer is inside its rectangle, so the tab strip
-  and the panels drawn over the viewport take the click. A shortcut that
+  the frame before and the pointer is inside its rectangle, so the tab strip,
+  the panels and the splitters beside the viewport take the click. A shortcut that
   must work while playing cannot be an `ActionMap` binding; the host reads
   Ctrl+P and Shift+F1 from the raw window events in `route_play_input`
   (`hosted/input.rs`). That system decides the gate for the frame, so it runs

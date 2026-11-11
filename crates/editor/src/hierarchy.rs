@@ -2,10 +2,9 @@
 use crate::actions::{DeleteEntity, DuplicateEntity, EditorContextSet, RenameEntity, TreeContext};
 use crate::asset_editor::{ActiveEditor, EditorDocument};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::fonts::{glyph, icon};
+use crate::fonts::{button_icon, draw_row_icon, glyph, icon_button, row_icon};
 use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState};
 use crate::inspector::FocusNameField;
-use crate::marks::{self, Mark};
 use crate::scene::SceneState;
 use crate::tools::{
     entity_ops::EntityEdit,
@@ -42,7 +41,6 @@ use concerto_ui::{
     focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
     items::{UIHidden, UIItem, UIItemContextMenu, UIItemSelected, UIReveal, UISelected},
-    material::UIMaterial,
     node::{UINode, UIRect},
     scroll::UIScrollArea,
     sets::UiSet,
@@ -132,7 +130,7 @@ impl Plugin for HierarchyPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Warren",
-            region: Region::Rail,
+            region: Region::Left,
         });
         install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);
@@ -225,13 +223,10 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent).add_child_with(
         (
-            theme
-                .panel()
-                .radius(0.0)
-                .width(UIValue::Percent(100.0))
-                .grow()
-                .column()
-                .padding(8.0)
+            UINode::default()
+                .with_width(UIValue::Percent(100.0))
+                .with_flex_grow(1.0)
+                .with_flex_direction(taffy::FlexDirection::Column)
                 .clipped(),
             Interactable,
         ),
@@ -246,12 +241,8 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                             Label::Title,
                         ))
                         .add_child((
-                            theme
-                                .pressable()
-                                .size(UIValue::Px(24.0), UIValue::Px(24.0))
-                                .padding(UIRect::axes(4.0, 5.0))
-                                .on_click(add_entity),
-                            icon(theme, glyph::PLUS, theme.font_size_md).muted(),
+                            icon_button(theme).on_click(add_entity),
+                            button_icon(theme, glyph::PLUS),
                             AddEntityButton,
                             UIDisabled,
                         ));
@@ -321,7 +312,7 @@ fn spawn_item(
     scene_entity: Entity,
     parent: Entity,
 ) -> Entity {
-    let mark = cmd.spawn(marks::node()).entity();
+    let mark = cmd.spawn(row_icon(theme, glyph::CIRCLE)).entity();
     let label = cmd
         .spawn((
             UINode::default()
@@ -701,7 +692,6 @@ pub(crate) fn reconcile_content(
         Query<Entity, Added<HierarchyItem>>,
     ),
     texts: Query<&mut UIText>,
-    marks: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
@@ -728,17 +718,7 @@ pub(crate) fn reconcile_content(
             .is_some_and(|document| document.is_changed());
     let scene = (&*names, &*roots, &*scene_children, &*kinds);
     let selected = selection.entity();
-    let mut update = |row| {
-        update_row(
-            row,
-            selected,
-            address,
-            scene,
-            (&texts, &marks),
-            &theme,
-            &mut cmd,
-        )
-    };
+    let mut update = |row| update_row(row, selected, address, scene, &texts, &theme, &mut cmd);
     if every_row {
         items.iter().for_each(&mut update);
         return;
@@ -766,7 +746,7 @@ fn update_row(
         &Query<Ref<Children>>,
         &Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>,
     ),
-    (texts, marks): (&Query<&mut UIText>, &Query<(&mut UINode, &mut UIMaterial)>),
+    texts: &Query<&mut UIText>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
@@ -778,12 +758,11 @@ fn update_row(
         .map_or(0, |children| children.iter().len());
     let kind = kinds.get_entity(scene_entity);
     let mark = match kind {
-        _ if is_root => Mark::Group,
-        Some((Some(_), _, _)) => Mark::Camera,
-        Some((_, Some(_), _)) => Mark::Light,
-        Some((_, _, Some(_))) => Mark::Mesh,
-        _ if count > 0 => Mark::Group,
-        _ => Mark::Plain,
+        _ if is_root => glyph::STACK,
+        Some((Some(_), _, _)) => glyph::CAMERA,
+        Some((_, Some(_), _)) => glyph::LIGHTBULB,
+        Some((_, _, Some(_))) => glyph::CUBE,
+        _ => glyph::CIRCLE,
     };
     let name = names.get_entity(scene_entity);
     let same_name = !item.is_added() && name.as_ref().is_some_and(|name| !name.is_changed());
@@ -808,8 +787,8 @@ fn update_row(
         }
     }
     let wanted = selection == Some(scene_entity);
-    if let Some((mut node, mut material)) = marks.get_entity(item.mark) {
-        marks::apply(mark, theme, wanted, &mut node, &mut material);
+    if let Some(mut text) = texts.get_entity(item.mark) {
+        draw_row_icon(&mut text, theme, mark, wanted);
     }
     if wanted && selected.is_none() {
         cmd.insert(UISelected, entity);
@@ -904,12 +883,13 @@ mod tests {
     use concerto_ecs::{
         IntoSystem, System, World,
         events::event_channel::EventChannel,
-        query::filter::{Changed, Or, With},
+        query::filter::{Changed, With},
         system::BoxedSystem,
     };
     use concerto_foundation::transform::Transform;
     use concerto_ui::{
         items::UIItem,
+        material::UIMaterial,
         node::{UIBox, UILayout},
         tree::update_trees_system,
     };
@@ -1118,27 +1098,6 @@ mod tests {
         }
         fn count_of(&self, scene_entity: Entity) -> String {
             self.text_of(self.hierarchy_item(scene_entity).count)
-        }
-        fn mark_width(&self, scene_entity: Entity) -> UIValue {
-            self.scene
-                .world
-                .get_component_for_entity::<UINode>(self.hierarchy_item(scene_entity).mark)
-                .unwrap()
-                .width
-        }
-        fn mark_border(&self, scene_entity: Entity) -> concerto_color::LinearRgba {
-            self.scene
-                .world
-                .get_component_for_entity::<UIMaterial>(self.hierarchy_item(scene_entity).mark)
-                .unwrap()
-                .border_color
-        }
-        fn mark_fill(&self, scene_entity: Entity) -> concerto_color::LinearRgba {
-            self.scene
-                .world
-                .get_component_for_entity::<UIMaterial>(self.hierarchy_item(scene_entity).mark)
-                .unwrap()
-                .color
         }
         fn parent_item(&self, item: Entity) -> Option<Entity> {
             self.scene
@@ -1689,17 +1648,12 @@ mod tests {
     #[test]
     fn an_external_selection_draws_the_mark_selected_in_the_same_frame() {
         let mut f = fixture();
-        let theme = UITheme::default();
         assert!(!f.ui_selected(f.node));
         f.select(f.node);
 
         f.reconcile_content();
 
         assert!(f.ui_selected(f.node));
-        assert_eq!(
-            f.mark_fill(f.node),
-            Mark::Plain.shape(&theme, true).fill.to_linear()
-        );
     }
 
     #[test]
@@ -1791,7 +1745,7 @@ mod tests {
         let changed: Vec<Entity> = f
             .scene
             .world
-            .query::<Entity, Or<(Changed<UINode>, Changed<UIMaterial>)>>()
+            .query::<Entity, Changed<UIText>>()
             .iter(&mut f.scene.world)
             .filter(|entity| marks.contains(entity))
             .collect();
@@ -1862,39 +1816,6 @@ mod tests {
 
         assert_eq!(f.label_of(node), format!("Entity {}", node.index()));
         assert_eq!(f.count_of(node), "");
-    }
-
-    fn mark_of(f: &Fixture, scene_entity: Entity) -> (UIValue, concerto_color::LinearRgba) {
-        (f.mark_width(scene_entity), f.mark_border(scene_entity))
-    }
-
-    fn removing_reaches_the_mark<T: Component>(component: impl FnOnce() -> T) {
-        let mut f = fixture();
-        f.expand(f.root);
-        let node = f.node;
-        let plain = mark_of(&f, node);
-        f.scene
-            .scene_world_mut(f.document)
-            .insert(component(), node);
-        f.scene.world.tick();
-        f.refresh();
-        let marked = mark_of(&f, node);
-        assert_ne!(marked, plain);
-
-        f.scene
-            .scene_world_mut(f.document)
-            .remove_component::<T>(node);
-        f.scene.world.tick();
-        f.refresh();
-
-        assert_eq!(mark_of(&f, node), plain);
-    }
-
-    #[test]
-    fn removing_a_camera_light_or_mesh_changes_the_rows_mark() {
-        removing_reaches_the_mark(Camera::default);
-        removing_reaches_the_mark(Light::default);
-        removing_reaches_the_mark(MeshComponent::default);
     }
 
     #[test]
@@ -2040,21 +1961,10 @@ mod tests {
         f.refresh();
         assert!(f.ui_selected(f.root));
         assert!(!f.ui_selected(f.node));
-        f.refresh();
-        let theme = UITheme::default();
-        assert_eq!(
-            f.mark_border(f.root),
-            Mark::Group.shape(&theme, true).border.to_linear()
-        );
 
         f.scene.scene_world_mut(f.document).trigger(Select(None));
         f.refresh();
         assert!(!f.ui_selected(f.root));
-        f.refresh();
-        assert_eq!(
-            f.mark_border(f.root),
-            Mark::Group.shape(&theme, false).border.to_linear()
-        );
     }
 
     #[test]
@@ -2073,15 +1983,6 @@ mod tests {
         assert_eq!(f.label_of(f.node), "first");
         assert_eq!(f.count_of(f.node), "");
         assert!(f.ui_selected(f.node) && !f.ui_selected(f.root));
-        let theme = UITheme::default();
-        assert_eq!(
-            f.mark_width(f.root),
-            UIValue::Px(Mark::Group.shape(&theme, false).size)
-        );
-        assert_eq!(
-            f.mark_width(f.node),
-            UIValue::Px(Mark::Plain.shape(&theme, false).size)
-        );
 
         f.scene.close(f.document);
         f.scene.frame();

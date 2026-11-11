@@ -57,6 +57,10 @@ impl AssetEditor for InspectedAssetEditor {
             DocumentBones(None),
         ));
     }
+
+    fn form(&self) -> bool {
+        true
+    }
 }
 
 /// What a generic tab holds: its kind's record, the value being edited, and the file as last read or saved.

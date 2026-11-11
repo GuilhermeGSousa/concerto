@@ -26,10 +26,16 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::{BusyInputs, act::describe_pose, is_busy, value::value_names};
+use super::{
+    BusyInputs,
+    act::describe_pose,
+    is_busy,
+    layout::{LayoutInputs, layout_line, viewport_line},
+    value::value_names,
+};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
-    hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
+    hosted::{EditTarget, EditWorld, HostedApp, PlayState},
     inspector::{
         InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
         listed_paths, shown_paths,
@@ -40,7 +46,7 @@ use crate::{
     },
 };
 
-/// What the editor has open: the project, its documents, the active one and its values, the selection, the viewport's size, and whether it is busy.
+/// What the editor has open: the project, its documents, the active one and its values, the selection, the panels' sizes, the viewport's size, and whether it is busy.
 #[derive(Deserialize, JsonSchema)]
 pub struct Status {}
 
@@ -172,7 +178,7 @@ type StatusInputs = (
     Res<'static, ProjectState>,
     Option<Res<'static, AssetRegistry>>,
     Res<'static, ActiveEditor>,
-    Res<'static, ViewportShown>,
+    LayoutInputs,
     Query<
         'static,
         'static,
@@ -224,7 +230,7 @@ fn status_of_edit_target(
 }
 
 fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bool) -> String {
-    let (project, registry, active, viewport, documents, busy, values) = editor;
+    let (project, registry, active, layout, documents, busy, values) = editor;
     let mut lines = vec![
         match &project.project {
             Some(open) => format!("project: {}", open.root.display()),
@@ -250,10 +256,8 @@ fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bo
     ));
     lines.push(format!("values: {}", value_names(active, values)));
     lines.push(format!("selection: {selection}"));
-    lines.push(match viewport.0 {
-        Some(view) => format!("viewport: {}x{}", view.size.0, view.size.1),
-        None => "viewport: not shown".to_owned(),
-    });
+    lines.push(layout_line(layout));
+    lines.push(viewport_line(layout));
     lines.push(format!(
         "busy: {}",
         if loading || is_busy(busy) {

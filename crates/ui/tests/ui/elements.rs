@@ -9,7 +9,9 @@ use concerto_ui::{
     interaction::{UIClick, UIDrag, UIInteractionStyle, UIPointerDown, UIPointerEnter},
     material::UIMaterial,
     node::{AlignItems, UIBox, UILayout, UINode},
+    scroll::UISplitAxis,
     slider::{UISlider, UISliderChanged},
+    splitter::UISplitterDragged,
     text::UIText,
     text_input::UITextInput,
     theme::{ButtonVariant, UITheme},
@@ -303,6 +305,33 @@ fn a_slider_follows_the_pointer_and_reports_each_change() {
     );
 
     assert_eq!(heard(&world), ["2.5", "5", "10"]);
+}
+
+#[test]
+fn a_splitter_drag_reports_the_movement_along_its_axis_only() {
+    let t = theme();
+    let mut world = listening_world();
+    let report = |on: On<UISplitterDragged>, mut heard: ResMut<Heard>| {
+        heard.0.push(on.signal().delta.to_string());
+    };
+    let columns = world.spawn(t.splitter(UISplitAxis::Horizontal).on_drag(report));
+    let rows = world.spawn(t.splitter(UISplitAxis::Vertical).on_drag(report));
+    let drag = |delta: Vec2, button| UIDrag {
+        position: Vec2::ZERO,
+        delta,
+        button,
+    };
+
+    world.trigger_on(columns, drag(Vec2::new(7.0, 3.0), MouseButton::Left));
+    world.trigger_on(rows, drag(Vec2::new(7.0, -3.0), MouseButton::Left));
+    world.trigger_on(columns, drag(Vec2::new(0.0, 9.0), MouseButton::Left));
+    world.trigger_on(columns, drag(Vec2::new(5.0, 0.0), MouseButton::Right));
+
+    assert_eq!(
+        heard(&world),
+        ["7", "-3"],
+        "movement across the axis and other buttons send nothing"
+    );
 }
 
 #[test]

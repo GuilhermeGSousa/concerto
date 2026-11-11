@@ -13,7 +13,7 @@ use concerto_ecs::{
 use std::any::TypeId;
 
 use concerto_reflect::{PathSegment, PropertyPath};
-use concerto_ui::elements::prelude::*;
+use concerto_ui::elements::{Stack, prelude::*};
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},
     node::{UILayout, UINode, UIRect},
@@ -21,7 +21,7 @@ use concerto_ui::{
     theme::UITheme,
     transform::UIValue,
 };
-use taffy::FlexDirection;
+use taffy::{AlignItems, FlexDirection};
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, HostedEventsAppExt};
@@ -54,7 +54,7 @@ use add_component::{
 pub use name_field::{FocusNameField, NameField};
 use name_field::{name_field, update_name_field};
 pub use sync::{InspectedComponent, standard_row_node};
-use sync::{build_property_widgets, sync_inspected_components};
+use sync::{build_property_widgets, size_label_columns, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
 use color::refresh_color_swatches;
@@ -109,7 +109,10 @@ pub struct InspectorData {
     pub closable_scene_root: Option<Entity>,
 }
 
-const PROPERTY_LABEL_WIDTH: f32 = 72.0;
+const LABEL_SHARE: f32 = 0.38;
+const LABEL_MIN: f32 = 96.0;
+const LABEL_MAX: f32 = 260.0;
+const FORM_WIDTH: f32 = 760.0;
 
 fn label_for(path: &PropertyPath) -> String {
     let name = path
@@ -155,7 +158,7 @@ impl Plugin for InspectorPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
-            region: Region::Side,
+            region: Region::Right,
         });
         app.forward_hosted_event::<PropertyCommitted>();
         install_listeners(app.main_mut().world_mut());
@@ -174,6 +177,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
+            .add_system(LateUpdate, size_label_columns)
             .add_system(
                 LateUpdate,
                 (
@@ -263,7 +267,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent)
-        .add_child_with(theme.column().grow().clipped(), |mut details| {
+        .add_child_with(form_column(theme), |mut details| {
             details.add_child(name_field(theme)).add_child_with(
                 (
                     UINode::default()
@@ -295,6 +299,16 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 },
             );
         });
+}
+
+fn form_column(theme: &UITheme) -> Stack {
+    theme
+        .column()
+        .grow()
+        .clipped()
+        .width(UIValue::Percent(100.0))
+        .max_width(UIValue::Px(FORM_WIDTH))
+        .align_self(AlignItems::Center)
 }
 
 fn scrollbar_gutter(theme: &UITheme) -> f32 {
