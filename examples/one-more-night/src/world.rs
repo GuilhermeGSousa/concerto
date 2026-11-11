@@ -2129,8 +2129,36 @@ mod tests {
         reached
     }
 
+    fn walk_to_the_end(app: &mut App, walks: &[Walk]) {
+        let reached = walk_all(app, walks);
+        frames(app, 30);
+        for walk in walks {
+            let at = feet(app, walk.player).unwrap();
+            assert_eq!(
+                reached[walk.player as usize],
+                walk.legs.len(),
+                "player {} stopped at {at} on the way",
+                walk.player
+            );
+            assert!(
+                (at.y - walk.ends_at_height).abs() < 0.3,
+                "player {} ends at height {}",
+                walk.player,
+                at.y
+            );
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            assert_eq!(
+                data.level.room_at(at),
+                data.catalog.rooms.id(walk.ends_in),
+                "player {} ends in the {}",
+                walk.player,
+                walk.ends_in
+            );
+        }
+    }
+
     #[test]
-    fn the_manor_is_walked_down_its_main_stair_and_up_its_back_stairs() {
+    fn the_manor_is_walked_by_its_stairs_doors_and_steps() {
         let Some(mut app) = concerto::headless(|app| {
             crate::manor(app);
             let content = concerto::content_registry!();
@@ -2244,31 +2272,55 @@ mod tests {
                 ends_in: "backstairs",
             },
         ];
-        let reached = walk_all(&mut app, &walks);
-        frames(&mut app, 30);
+        walk_to_the_end(&mut app, &walks);
 
-        for walk in &walks {
-            let at = feet(&mut app, walk.player).unwrap();
-            assert_eq!(
-                reached[walk.player as usize],
-                walk.legs.len(),
-                "player {} stopped at {at} on the way",
-                walk.player
-            );
-            assert!(
-                (at.y - walk.ends_at_height).abs() < 0.3,
-                "player {} ends at height {}",
-                walk.player,
-                at.y
-            );
+        let garden_door = {
             let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
-            assert_eq!(
-                data.level.room_at(at),
-                data.catalog.rooms.id(walk.ends_in),
-                "player {} ends in the {}",
-                walk.player,
-                walk.ends_in
-            );
-        }
+            data.catalog.doors.id("d_hall_garden").unwrap()
+        };
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(13.0, 14.8)],
+                ends_at_height: 0.0,
+                ends_in: "hall",
+            }],
+        );
+        assert_eq!(
+            aimed_at(&mut app, 13.0, 16.0),
+            Some(super::Interactable::Door(garden_door))
+        );
+        tap(&mut app, 0, GamepadButton::West);
+        frames(&mut app, 5);
+        let ways_out = [
+            Walk {
+                player: 0,
+                legs: vec![leg(13.0, 18.0), leg(13.0, 23.0)],
+                ends_at_height: -0.6,
+                ends_in: "garden",
+            },
+            Walk {
+                player: 1,
+                legs: vec![
+                    leg(32.3, 10.6),
+                    leg(32.3, 15.3),
+                    leg(30.7, 15.3),
+                    leg(30.7, 10.6),
+                    leg(32.3, 10.6),
+                    leg(32.3, 15.3),
+                    leg(30.7, 15.3),
+                    leg(30.7, 10.6),
+                    leg(32.3, 10.6),
+                    leg(32.3, 15.3),
+                    leg(30.7, 15.3),
+                    leg(30.7, 10.6),
+                    leg(31.5, 9.2),
+                ],
+                ends_at_height: -3.0,
+                ends_in: "cellar_pass",
+            },
+        ];
+        walk_to_the_end(&mut app, &ways_out);
     }
 }
