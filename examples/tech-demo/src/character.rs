@@ -1,7 +1,7 @@
 use concerto::{asset_id, foundation::assets::AssetId};
 use std::f32::consts::PI;
 
-use concerto::animation::graph::AnimationGraph;
+use concerto::animation::graph::{AnimationGraph, AnimationNodeIndex};
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
 use concerto::color::Color;
 use concerto::director::VirtualCamera;
@@ -46,6 +46,8 @@ use concerto_motion_matching_gizmos::MotionMatchingGizmos;
 use concerto_procedural_animation_gizmos::FootLockGizmos;
 use glam::{EulerRot, Quat, Vec3};
 
+use crate::body::{Body, Recoil, bind_body_controls};
+use crate::footsteps::FootContacts;
 use crate::grid::Patrol;
 use crate::retarget::{RetargetedPlayer, retargeted_character};
 
@@ -59,6 +61,14 @@ const WALLS: [(Vec3, Vec3); 2] = [
 const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 const CAMERA_HEIGHT: f32 = 1.4;
+const SHOULDER: f32 = 0.45;
+const AIM_SHOULDER: f32 = 0.5;
+const FOLLOW_FOVY: f32 = 0.96;
+const AIM_FOVY: f32 = 0.7;
+const PITCH_LIMIT: f32 = 1.05;
+const CROUCH_HEIGHT: f32 = -0.45;
+const CROUCH_DISTANCE: f32 = 0.85;
+const AIM_DISTANCE: f32 = 0.55;
 
 define_action!(
     /// Runs while held: either Shift, or the left stick button.
@@ -93,15 +103,15 @@ pub(crate) fn bind_controls(actions: &mut ActionMap) {
     actions.bind_global(SwapShoulder, Shortcut::key(KeyCode::KeyQ));
     actions.bind_global(SwapShoulder, GamepadButton::RightBumper);
     actions.bind_global(FaceCamera, Shortcut::key(KeyCode::KeyF));
+    bind_body_controls(actions);
 }
 
-/// The player capsule's size, how far behind it the camera sits and whether walls pull it in and it has stances, and how the visible character follows it.
+/// The player capsule's size, how far behind its shoulder the camera follows, and how the visible character follows it.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub(crate) struct CharacterConfig {
     pub(crate) radius: f32,
     pub(crate) height: f32,
     pub(crate) camera_distance: f32,
-    pub(crate) camera_collision: bool,
     pub(crate) displacement: CharacterDisplacement,
 }
 
@@ -111,8 +121,7 @@ impl CharacterConfig {
         Self {
             radius: 0.3,
             height: 1.6,
-            camera_distance: 5.0,
-            camera_collision: false,
+            camera_distance: 2.2,
             displacement: CharacterDisplacement::default(),
         }
     }
@@ -122,8 +131,7 @@ impl CharacterConfig {
         Self {
             radius: 0.35,
             height: 1.8,
-            camera_distance: 3.0,
-            camera_collision: true,
+            camera_distance: 1.9,
             displacement: CharacterDisplacement::Synchronization(Synchronization {
                 data_factor: 1.0,
             }),
@@ -153,6 +161,7 @@ impl Default for Player {
 pub(crate) struct PendingLink {
     pub(crate) capsule: Entity,
     graph: AssetHandle<AnimationGraph>,
+    recoil: Option<AnimationNodeIndex>,
 }
 
 #[derive(Component, Reflect, Default, Debug, PartialEq)]
@@ -180,10 +189,11 @@ impl NpcSpawner {
     }
 }
 
-/// The scene a visible character spawns and the graph its skeleton plays.
+/// The scene a visible character spawns, the graph its skeleton plays, and the graph's node that plays a shot's kick, when it has one.
 pub(crate) struct CharacterAssets {
     pub(crate) scene: AssetHandle<Scene>,
     pub(crate) graph: AssetHandle<AnimationGraph>,
+    pub(crate) recoil: Option<AnimationNodeIndex>,
 }
 
 impl CharacterAssets {
@@ -191,8 +201,33 @@ impl CharacterAssets {
         Self {
             scene: asset_server.load(CHARACTER_SCENE),
             graph: asset_server.add(character_graph(asset_server.load(DATABASE))),
+            recoil: None,
         }
     }
+}
+
+/// A camera close over the right shoulder at `distance`: lower and nearer while crouched, and tight on the shoulder with a longer lens while aiming.
+pub(crate) fn grounded_camera(distance: f32) -> ThirdPersonCamera {
+    let follow = CameraFraming::default()
+        .with_shoulder(SHOULDER)
+        .with_distance(distance)
+        .with_fovy(FOLLOW_FOVY)
+        .with_pitch_limit(PITCH_LIMIT);
+    ThirdPersonCamera::default()
+        .with_follow(follow)
+        .with_crouch(
+            follow
+                .with_height(CROUCH_HEIGHT)
+                .with_distance(distance * CROUCH_DISTANCE),
+        )
+        .with_aim(
+            follow
+                .with_shoulder(AIM_SHOULDER)
+                .with_distance(distance * AIM_DISTANCE)
+                .with_fovy(AIM_FOVY)
+                .with_sensitivity_scale(0.5)
+                .with_halflife(0.1),
+        )
 }
 
 fn spawn_capsule(
@@ -226,6 +261,7 @@ fn spawn_capsule(
         PendingLink {
             capsule,
             graph: character.graph,
+            recoil: character.recoil,
         },
     ));
     capsule
@@ -257,7 +293,7 @@ pub(crate) fn spawn_character(
             CharacterAssets::lafan1(&asset_server)
         };
         let capsule = spawn_capsule(placement, &config, character, &mut cmd);
-        cmd.insert(Player::default(), capsule);
+        cmd.insert((Player::default(), Body::default()), capsule);
 
         let (yaw, _, _) = spawn_point.rotation.to_euler(EulerRot::YXZ);
         let mut pivot = cmd.spawn((
@@ -268,12 +304,7 @@ pub(crate) fn spawn_character(
                 offset: Vec3::Y * CAMERA_HEIGHT,
             },
         ));
-        if config.camera_collision {
-            pivot.insert(
-                ThirdPersonCamera::default()
-                    .with_follow(CameraFraming::default().with_distance(config.camera_distance)),
-            );
-        }
+        pivot.insert(grounded_camera(config.camera_distance));
         pivot.add_child_with(
             (
                 VirtualCamera::new(0),
@@ -283,12 +314,10 @@ pub(crate) fn spawn_character(
                 ),
             ),
             |mut camera| {
-                if config.camera_collision {
-                    camera.insert(CameraBoom {
-                        offset: Vec3::NEG_Z * config.camera_distance,
-                        ..Default::default()
-                    });
-                }
+                camera.insert(CameraBoom {
+                    offset: Vec3::NEG_Z * config.camera_distance,
+                    ..Default::default()
+                });
             },
         );
 
@@ -383,7 +412,7 @@ pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: Comman
     }
 }
 
-/// Gives each pending character's own `AnimationPlayer`, found among its descendants, the character's graph once that graph is in the store, starts its foot placement and foot locking at weight 0, adds foot lock gizmos when the capsule is the `Player`'s, and links the character to its capsule and skeleton.
+/// Gives each pending character's own `AnimationPlayer`, found among its descendants, the character's graph once that graph is in the store, starts its foot placement and foot locking at weight 0, adds foot lock gizmos and footstep tracking when the capsule is the `Player`'s and the `Recoil` node when the graph has one, and links the character to its capsule and skeleton.
 pub(crate) fn setup_character_animations(
     players: Query<&mut AnimationPlayer>,
     characters: Query<(Entity, &PendingLink)>,
@@ -411,7 +440,13 @@ pub(crate) fn setup_character_animations(
             skeleton,
         );
         if player_capsules.contains_entity(pending.capsule) {
-            cmd.insert(FootLockGizmos::default(), skeleton);
+            cmd.insert(
+                (FootLockGizmos::default(), FootContacts::default()),
+                skeleton,
+            );
+        }
+        if let Some(node) = pending.recoil {
+            cmd.insert(Recoil { node }, skeleton);
         }
         cmd.insert(
             CharacterLink {
@@ -545,7 +580,7 @@ pub(crate) fn facing(velocity: Vec3, current: Quat) -> Quat {
 }
 
 pub(crate) fn update_movement(
-    players: Query<(&mut Player, &mut DesiredMotion, &GroundProbe)>,
+    players: Query<(&mut Player, &mut DesiredMotion, &GroundProbe, Option<&Body>)>,
     pivots: Query<(&CameraPivot, Option<&ThirdPersonCamera>)>,
     input: Res<Input>,
     actions: Res<ActionMap>,
@@ -558,14 +593,14 @@ pub(crate) fn update_movement(
     let toggled = actions.is_just_pressed(FaceCamera, &input);
     let locking_toggled = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyL));
 
-    for (mut player, mut desired, ground) in players.iter() {
+    for (mut player, mut desired, ground, body) in players.iter() {
         if toggled {
             player.faces_camera = !player.faces_camera;
         }
         if locking_toggled {
             player.foot_locking = !player.foot_locking;
         }
-        let faces_camera = player.faces_camera || aiming;
+        let faces_camera = player.faces_camera || aiming || body.is_some_and(|body| body.aiming);
         let (velocity, rotation) = movement(&actions, &input, yaw, faces_camera, desired.rotation);
         if ground.is_grounded() {
             desired.velocity = velocity;
@@ -662,7 +697,12 @@ pub(crate) fn cycle_displacement(characters: Query<&mut CharacterDisplacement>, 
 
 #[cfg(test)]
 mod tests {
+    use concerto::animation::clip::AnimationClip;
     use concerto::animation::graph::{AnimationGraph, AnimationNodeIndex};
+    use concerto::animation::mask::BoneMask;
+    use concerto::animation::node::{
+        AdditiveNode, AimOffsetNode, AnimationClipNode, LayerNode, TwoBoneIkNode,
+    };
     use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
     use concerto::animation::retarget::{PoseRetarget, RetargetNode, RetargetRig};
     use concerto::app::{
@@ -704,7 +744,8 @@ mod tests {
         shape::MeshCollider,
     };
     use concerto::procedural_animation::{
-        FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, IgnoredBody,
+        AimNode, FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, IgnoredBody,
+        LookAtNode, ProceduralMotionNode,
     };
     use concerto::reflect::{apply_value, to_value};
     use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
@@ -725,7 +766,7 @@ mod tests {
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
     use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
 
-    use crate::retarget::{LAFAN1_RIG, RetargetedPlayer, UAL1_RIG, UAL1_SCENE};
+    use crate::retarget::{LAFAN1_RIG, PISTOL_SHOOT, RetargetedPlayer, UAL1_RIG, UAL1_SCENE};
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, NpcSpawner, PendingLink, Player, PlayerSpawner,
@@ -829,7 +870,7 @@ mod tests {
             .iter(&mut world)
             .map(|transform| transform.translation)
             .collect();
-        assert_eq!(cameras, vec![Vec3::NEG_Z * 3.0]);
+        assert_eq!(cameras, vec![Vec3::NEG_Z * 1.9]);
     }
 
     fn camera_booms(world: &mut World) -> Vec<Option<CameraBoom>> {
@@ -841,55 +882,35 @@ mod tests {
     }
 
     #[test]
-    fn the_sanatorium_camera_has_a_boom_as_long_as_its_distance() {
-        let (mut world, _) = world_with_spawner();
-        world.insert_resource(CharacterConfig::sanatorium());
+    fn every_level_follows_close_over_the_shoulder_on_a_boom_as_long_as_its_distance() {
+        for config in [CharacterConfig::forest(), CharacterConfig::sanatorium()] {
+            let distance = config.camera_distance;
+            let (mut world, _) = world_with_spawner();
+            world.insert_resource(config);
 
-        spawned(&mut world);
+            spawned(&mut world);
 
-        assert_eq!(
-            camera_booms(&mut world),
-            vec![Some(CameraBoom {
-                offset: Vec3::NEG_Z * 3.0,
-                ..Default::default()
-            })]
-        );
-    }
-
-    #[test]
-    fn the_forest_camera_has_no_boom() {
-        let (mut world, _) = world_with_spawner();
-
-        spawned(&mut world);
-
-        assert_eq!(camera_booms(&mut world), vec![None]);
-    }
-
-    fn follow_distances(world: &mut World) -> Vec<Option<f32>> {
-        world
-            .query::<(&CameraPivot, Option<&ThirdPersonCamera>), ()>()
-            .iter(world)
-            .map(|(_, rig)| rig.map(|rig| rig.follow.distance))
-            .collect()
-    }
-
-    #[test]
-    fn the_sanatorium_pivot_has_a_third_person_rig_that_follows_at_its_distance() {
-        let (mut world, _) = world_with_spawner();
-        world.insert_resource(CharacterConfig::sanatorium());
-
-        spawned(&mut world);
-
-        assert_eq!(follow_distances(&mut world), vec![Some(3.0)]);
-    }
-
-    #[test]
-    fn the_forest_pivot_has_no_third_person_rig() {
-        let (mut world, _) = world_with_spawner();
-
-        spawned(&mut world);
-
-        assert_eq!(follow_distances(&mut world), vec![None]);
+            assert_eq!(
+                camera_booms(&mut world),
+                vec![Some(CameraBoom {
+                    offset: Vec3::NEG_Z * distance,
+                    ..Default::default()
+                })]
+            );
+            let rigs: Vec<ThirdPersonCamera> = world
+                .query::<&ThirdPersonCamera, With<CameraPivot>>()
+                .iter(&mut world)
+                .cloned()
+                .collect();
+            assert_eq!(rigs.len(), 1);
+            let rig = &rigs[0];
+            assert_eq!(rig.follow.distance, distance);
+            assert!(distance <= 2.5);
+            assert!(rig.follow.shoulder > 0.0);
+            assert!(rig.aim.distance < rig.follow.distance);
+            assert!(rig.aim.fovy < rig.follow.fovy);
+            assert!(rig.crouch.height < rig.follow.height);
+        }
     }
 
     #[test]
@@ -1042,6 +1063,7 @@ mod tests {
         let npc_character = world.spawn(PendingLink {
             capsule: npc_capsule,
             graph,
+            recoil: None,
         });
         let npc_root = world.spawn(Transform::default());
         let npc_skeleton = world.spawn(AnimationPlayer::new(1));
@@ -1151,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn the_retargeted_character_locks_then_places_the_feet_on_lafan1_motion_matching_retargeted_onto_ual1()
+    fn the_retargeted_character_layers_the_pistol_and_the_tired_overlay_over_retargeted_motion_matching_and_fixes_the_feet_last()
      {
         let (mut world, _) = world_with_spawner();
         world.insert_resource(RetargetedPlayer);
@@ -1172,51 +1194,78 @@ mod tests {
         let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
         let graph = graphs.get(&handle).unwrap();
         let nodes: Vec<_> = graph.nodes().collect();
-        let of_type = |type_name: &str| {
-            graph
-                .iter()
-                .filter(|index| nodes[index.index()].type_name() == type_name)
-                .collect::<Vec<AnimationNodeIndex>>()
-        };
+        let type_of = |index: AnimationNodeIndex| nodes[index.index()].type_name();
         let inputs = |index: AnimationNodeIndex| {
             graph
                 .get_node_inputs(index)
-                .map(|input| nodes[input.index()].type_name())
-                .collect::<Vec<_>>()
+                .map(AnimationNodeIndex::from)
+                .collect::<Vec<AnimationNodeIndex>>()
         };
-        let placements = of_type(std::any::type_name::<FootPlacementNode>());
-        let locks = of_type(std::any::type_name::<FootLockNode>());
-        let retargets = of_type(std::any::type_name::<RetargetNode>());
-        assert_eq!(placements.len(), 1);
-        assert_eq!(locks.len(), 1);
-        assert_eq!(retargets.len(), 1);
-        assert_eq!(
-            inputs(placements[0]),
-            vec![std::any::type_name::<FootLockNode>()]
-        );
-        assert_eq!(
-            inputs(locks[0]),
-            vec![std::any::type_name::<RetargetNode>()]
-        );
-        assert!(inputs(retargets[0]).is_empty());
-        let expected_lock = FootLockNode::new()
-            .with_leg(FootLockLeg::new("foot_l").with_toe("ball_l"))
-            .with_leg(FootLockLeg::new("foot_r").with_toe("ball_r"))
-            .with_weight_param(name!("foot_lock_weight"));
-        assert_eq!(
-            nodes[locks[0].index()].value().unwrap().into_owned(),
-            to_value(&expected_lock).unwrap()
-        );
-        let expected_placement = FootPlacementNode::new("pelvis")
-            .with_leg(FootPlacementLeg::new("foot_l").with_toe("ball_l"))
-            .with_leg(FootPlacementLeg::new("foot_r").with_toe("ball_r"))
-            .with_weight_param(name!("foot_placement_weight"))
-            .with_ignore_param(name!("foot_placement_ignore"));
-        assert_eq!(
-            nodes[placements[0].index()].value().unwrap().into_owned(),
-            to_value(&expected_placement).unwrap()
-        );
+        let only = |type_name: &str| {
+            let found: Vec<AnimationNodeIndex> = graph
+                .iter()
+                .filter(|index| type_of(*index) == type_name)
+                .collect();
+            assert_eq!(found.len(), 1, "{type_name}");
+            found[0]
+        };
 
+        let mut trunk = Vec::new();
+        let mut node = only(std::any::type_name::<FootPlacementNode>());
+        loop {
+            trunk.push(type_of(node));
+            let below = inputs(node);
+            if below.len() != 1 {
+                break;
+            }
+            node = below[0];
+        }
+        assert_eq!(
+            trunk,
+            vec![
+                std::any::type_name::<FootPlacementNode>(),
+                std::any::type_name::<FootLockNode>(),
+                std::any::type_name::<TwoBoneIkNode>(),
+                std::any::type_name::<ProceduralMotionNode>(),
+                std::any::type_name::<LookAtNode>(),
+                std::any::type_name::<AdditiveNode>(),
+                std::any::type_name::<AimNode>(),
+                std::any::type_name::<AimOffsetNode>(),
+                std::any::type_name::<LayerNode>(),
+            ]
+        );
+        let layered: Vec<&str> = inputs(node).into_iter().map(type_of).collect();
+        assert_eq!(layered.len(), 2);
+        assert!(layered.contains(&std::any::type_name::<AdditiveNode>()));
+        assert!(layered.contains(&std::any::type_name::<AnimationClipNode>()));
+        let retargets = only(std::any::type_name::<RetargetNode>());
+        let tired = graph
+            .iter()
+            .find(|index| inputs(*index) == vec![retargets])
+            .unwrap();
+        assert_eq!(type_of(tired), std::any::type_name::<AdditiveNode>());
+        assert!(inputs(node).contains(&tired));
+
+        let recoil = world
+            .query::<&PendingLink, ()>()
+            .iter(&mut world)
+            .map(|pending| pending.recoil)
+            .next()
+            .unwrap()
+            .unwrap();
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let graph = graphs.get(&handle).unwrap();
+        let nodes: Vec<_> = graph.nodes().collect();
+        let mut shot = AdditiveNode::default();
+        assert!(apply_value(&mut shot, &nodes[recoil.index()].value().unwrap()).is_empty());
+        assert_eq!(shot.clip.id(), PISTOL_SHOOT);
+
+        let retargets: Vec<_> = graph
+            .iter()
+            .filter(|index| {
+                nodes[index.index()].type_name() == std::any::type_name::<RetargetNode>()
+            })
+            .collect();
         let mut retarget = RetargetNode::default();
         assert!(
             apply_value(&mut retarget, &nodes[retargets[0].index()].value().unwrap()).is_empty()
@@ -1229,6 +1278,7 @@ mod tests {
             .collect();
         let expected_matcher = MotionMatchingNode {
             database: AssetHandle::weak(DATABASE),
+            play_rate_param: Some(name!("pace")),
             ..Default::default()
         };
         assert_eq!(matchers, vec![to_value(&expected_matcher).unwrap()]);
@@ -1553,6 +1603,8 @@ mod tests {
         stored::<MotionDatabase>(&mut world, &mut server);
         stored::<RetargetRig>(&mut world, &mut server);
         stored::<Skeleton>(&mut world, &mut server);
+        stored::<AnimationClip>(&mut world, &mut server);
+        stored::<BoneMask>(&mut world, &mut server);
         world.insert_resource(server);
         world.insert_resource(CharacterConfig::forest());
         let spawn_point = Vec3::new(3.0, 1.5, -7.0);

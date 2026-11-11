@@ -1,3 +1,5 @@
+use concerto::ecs::IntoSystemConfig;
+use concerto::gameplay::third_person::update_third_person_cameras;
 use concerto::{
     DefaultPlugins,
     app::{
@@ -28,10 +30,11 @@ use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 use glam::{Affine3A, Quat, Vec3};
 
 use crate::{
+    body::install_body,
     character::{
         CharacterConfig, NpcSpawner, PlayerSpawner, bind_controls, cycle_displacement, debug_keys,
         feed_foot_placement, setup_character_animations, spawn_character, spawn_npc,
-        update_movement,
+        update_camera_stance, update_movement,
     },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
@@ -114,10 +117,15 @@ pub fn grid(app: &mut App) {
         .add_system(Startup, spawn_grounded_overlay)
         .add_system(Update, setup_character_animations)
         .add_system(Update, feed_foot_placement)
-        .add_system(Update, update_movement)
+        .add_system(Update, update_movement.after(update_camera_stance))
+        .add_system(
+            Update,
+            update_camera_stance.before(update_third_person_cameras),
+        )
         .add_system(Update, debug_keys)
         .add_system(Update, cycle_displacement)
         .add_system(Update, update_grounded_overlay);
+    install_body(app);
 }
 
 fn spawn_grid_level(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {

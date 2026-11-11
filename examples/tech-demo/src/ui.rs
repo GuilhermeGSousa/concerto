@@ -1,19 +1,30 @@
 use concerto::{
     animation::{graph::AnimationGraph, player::AnimationPlayer},
     color::Color,
-    ecs::{CommandQueue, Component, Entity, Query, Res, With},
+    ecs::{
+        CommandQueue, Component, Entity, Query, Res, With,
+        signal::{
+            On,
+            listener::{IntoListener, Listener},
+        },
+    },
     foundation::assets::asset_store::AssetStore,
     motion_matching::{CharacterDisplacement, CharacterLink, MotionDatabase, MotionMatchingNode},
     physics::ground::{GroundProbe, GroundState},
     ui::{
+        elements::prelude::*,
         material::UIMaterial,
         node::{UINode, UIRect},
+        slider::UISliderChanged,
         text::{FontFamily, UIText},
+        theme::UITheme,
         transform::UIValue,
     },
 };
 
+use crate::body::{Body, Stat};
 use crate::character::{PendingLink, Player};
+use crate::footsteps::{Foot, FootstepLog};
 
 const PANEL_WIDTH: f32 = 230.0;
 const PANEL_PADDING: UIRect = UIRect {
@@ -23,7 +34,11 @@ const PANEL_PADDING: UIRect = UIRect {
     left: 10.0,
 };
 const LINE_HEIGHT: f32 = 16.0;
-const LINES: usize = 10;
+const LINES: usize = 13;
+const SLIDER_GAP: f32 = 8.0;
+const SLIDER_LABEL_WIDTH: f32 = 110.0;
+const SLIDER_WIDTH: f32 = 100.0;
+const SLIDER_HEIGHT: f32 = 12.0;
 const STATS_CLEARANCE: f32 = 54.0;
 
 /// Marker for the readout's panel, whose colour tracks the grounded state.
@@ -82,6 +97,78 @@ fn readout(
          L foot lock: {foot_locking}\n\
          M method: {method}"
     )
+}
+
+fn body_lines(armed: bool, aiming: bool, steps: u32, last: Option<Foot>) -> String {
+    let pistol = match (armed, aiming) {
+        (false, _) => "holstered",
+        (true, false) => "out",
+        (true, true) => "aiming",
+    };
+    let last = last.map_or("--", Foot::letter);
+    format!(
+        "G pistol: {pistol}\n\
+         RMB aim, LMB fire\n\
+         steps: {steps} last: {last}"
+    )
+}
+
+fn stat_label(stat: Stat) -> String {
+    let range = stat.range();
+    format!("{} {}-{}", stat.label(), range.min, range.max)
+}
+
+fn set_stat(stat: Stat) -> Listener<UISliderChanged> {
+    (move |on: On<UISliderChanged>, bodies: Query<&mut Body>| {
+        for mut body in bodies.iter() {
+            body.set_stat(stat, on.signal().value);
+        }
+    })
+    .into_listener()
+}
+
+/// Spawns one slider per body stat in a column under the readout; dragging one sets its stat on every `Body`.
+pub(crate) fn spawn_stat_sliders(theme: Res<UITheme>, mut cmd: CommandQueue) {
+    let readout_height = LINE_HEIGHT * LINES as f32 + PANEL_PADDING.top + PANEL_PADDING.bottom;
+    let defaults = Body::default();
+    cmd.spawn(
+        theme
+            .column()
+            .width(UIValue::Px(PANEL_WIDTH))
+            .padding(UIRect {
+                top: STATS_CLEARANCE + readout_height + SLIDER_GAP,
+                right: 0.0,
+                bottom: 0.0,
+                left: 0.0,
+            }),
+    )
+    .add_child_with(
+        theme
+            .panel()
+            .column()
+            .width(UIValue::Px(PANEL_WIDTH))
+            .padding(PANEL_PADDING),
+        |mut panel| {
+            for stat in Stat::ALL {
+                let range = stat.range();
+                panel.add_child_with(theme.row().fixed(), |mut row| {
+                    row.add_child(
+                        theme
+                            .label(stat_label(stat))
+                            .font_size(12.0)
+                            .width(UIValue::Px(SLIDER_LABEL_WIDTH))
+                            .fixed(),
+                    );
+                    row.add_child(
+                        theme
+                            .slider(defaults.stat(stat), range.min, range.max)
+                            .size(UIValue::Px(SLIDER_WIDTH), UIValue::Px(SLIDER_HEIGHT))
+                            .on_change(set_stat(stat)),
+                    );
+                });
+            }
+        },
+    );
 }
 
 fn panel_color(is_grounded: bool) -> Color {
@@ -146,7 +233,8 @@ fn belongs_to(
 }
 
 pub(crate) fn update_grounded_overlay(
-    probes: Query<(Entity, &GroundProbe, &Player)>,
+    probes: Query<(Entity, &GroundProbe, &Player, Option<&Body>)>,
+    footsteps: Option<Res<FootstepLog>>,
     characters: Query<(
         &CharacterDisplacement,
         Option<&CharacterLink>,
@@ -158,7 +246,7 @@ pub(crate) fn update_grounded_overlay(
     texts: Query<&mut UIText, With<GroundedText>>,
     panels: Query<&mut UIMaterial, With<GroundedPanel>>,
 ) {
-    let Some((capsule, probe, player_state)) = probes.iter().next() else {
+    let Some((capsule, probe, player_state, body)) = probes.iter().next() else {
         return;
     };
     let Some((method, link, _)) = characters
@@ -204,6 +292,15 @@ pub(crate) fn update_grounded_overlay(
         method,
         player_state.faces_camera,
         player_state.foot_locking,
+    );
+    let text = format!(
+        "{text}\n{}",
+        body_lines(
+            body.is_some_and(|body| body.armed),
+            body.is_some_and(|body| body.aiming),
+            footsteps.as_ref().map_or(0, |log| log.count),
+            footsteps.as_ref().and_then(|log| log.last),
+        )
     );
     for mut ui_text in texts.iter() {
         if ui_text.text != text {

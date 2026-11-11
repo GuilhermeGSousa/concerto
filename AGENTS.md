@@ -48,6 +48,7 @@ cargo run -p tech-demo
 cargo run -p tech-demo -- --forest
 cargo run -p tech-demo -- --sanatorium
 cargo run -p tech-demo -- --retarget
+cargo run -p tech-demo -- --sanatorium --retarget
 cargo run -p one-more-night
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
@@ -90,8 +91,25 @@ motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
 method there; hold the right mouse button or the left trigger to aim, C or the
 east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
-matching through a retarget node; the NPC stays LAFAN1, and `--sanatorium` and
-`--forest` win over it. Its two rigs are content assets,
+matching through a retarget node; the NPC stays LAFAN1. `--sanatorium
+--retarget` puts the same player in the sanatorium, and `--forest` wins over
+`--retarget`. That player's graph is the main character's: a tired overlay
+(`Idle_Tired_Loop`, additive) over the retargeted locomotion, UAL1's pistol
+clips layered on the upper body, an aim offset and an aim that point the gun at
+a point thirty metres along the camera's view, a look-at on the head, sway and
+tremor on the gun arm, the off hand held on the gun by two-bone IK, and foot
+locking and foot placement last. G or the north face button draws and holsters
+the pistol; with it out, the aim button aims it and the left mouse button or
+the right trigger fires. Five sliders under the readout set fatigue, sway,
+tremor, the look-at weight and the pace of the locomotion while the game runs.
+Every level's camera sits close over the player's right shoulder on a boom
+that walls pull in, about two metres back; it moves in on the shoulder with a
+longer lens while the aim button is held, drops while crouched (C or the east
+face button), and Q or the right bumper swaps shoulders.
+Every level sends a `Footstep` event when a foot of the player's foot lock
+plants, drawn as a ring on the ground and counted in the readout. UAL1's
+`Pistol_Aim_Up`, `Pistol_Aim_Down`, `Pistol_Shoot` and `Idle_Tired_Loop` are
+additive clips, set in `assets/UAL1.glb.import.toml`. Its two rigs are content assets,
 `content/UAL1/rig.gasset` and `content/lafan1/model_skeleton/rig.gasset`, that
 the editor's rig tab edits. The sanatorium's Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
