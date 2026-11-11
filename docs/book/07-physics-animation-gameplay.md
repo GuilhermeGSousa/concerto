@@ -1229,7 +1229,7 @@ motion, still passes the events, and warns once.
   `CameraSettings::stick_turn_rate` radians per second at full deflection
   (3.0 by default), scaled the same way.
 - `gameplay::actions` holds the `Move` action (WASD, the arrow keys and the
-  left stick) and `Look` (the right stick). `GameplayPlugin` binds them through
+  left stick), `Look` (the right stick) and `Stroll` (left Shift). `GameplayPlugin` binds them through
   `bind_gameplay_actions`, which a test calls on its own `ActionMap`.
 - `gameplay::first_person` is a first-person character that walks, with no
   jump. `spawn_first_person_walker(&mut cmd, player, transform, walker)` spawns
@@ -1237,7 +1237,8 @@ motion, still passes the events, and warns once.
   entity; `player` is the `PlayerIndex` whose `Move` and `Look` drive it, so two
   walkers with two indices are two players. The left stick walks up to
   `walk_speed` (1.6 m/s) at `hurry_threshold` (0.7 of full deflection) and
-  rises to `hurry_speed` (3.4 m/s) at full; keys always push fully. The right
+  rises to `hurry_speed` (3.4 m/s) at full; keys always push fully, so holding
+  `Stroll`, left Shift, keeps a push at the walk. The right
   stick turns the view at `look_rate` radians per second, and the mouse turns
   it by `mouse_sensitivity` for the player who holds the mouse; `invert_y`
   flips the pitch. Sensitivity and inversion are fields of the walker, so they

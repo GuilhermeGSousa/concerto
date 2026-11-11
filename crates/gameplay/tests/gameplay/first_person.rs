@@ -14,7 +14,8 @@ use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_window::input::actions::ActionMap;
 use concerto_window::input::{
-    GamepadAxis, GamepadId, Input, JoinSettings, PlayerDevice, PlayerIndex, Players,
+    GamepadAxis, GamepadId, Input, JoinSettings, KeyCode, PhysicalKey, PlayerDevice, PlayerIndex,
+    Players,
 };
 use glam::{Vec2, Vec3};
 
@@ -119,7 +120,7 @@ fn a_walker_stands_on_the_floor_and_walks_then_hurries_where_it_faces() {
 
     simulate(&mut world, 1.0);
     let rest = position(&world, walker);
-    assert!(rest.y.abs() < 0.03, "feet rest on the floor, at {rest}");
+    assert!(rest.y.abs() < 0.005, "feet rest on the floor, at {rest}");
     assert!(
         rest.with_y(0.0).length() < 0.01,
         "it stands still, at {rest}"
@@ -227,6 +228,32 @@ fn each_walker_reads_its_own_players_stick_and_its_view_sits_at_its_eyes() {
         (position(&world, second) - held).length() < 0.05,
         "a walker that is not controlled ignores its stick"
     );
+
+    {
+        let input = world.get_resource_mut::<Input>().unwrap();
+        input.update_gamepad_axis(pads[0], GamepadAxis::LeftStickY, 1.0);
+        input.update_key_input(PhysicalKey::Code(KeyCode::ShiftLeft), true);
+    }
+    world
+        .get_resource_mut::<Players>()
+        .unwrap()
+        .assign(PlayerIndex::new(0), PlayerDevice::KeyboardMouse)
+        .unwrap();
+    run(&mut world, read_first_person_input);
+    let strolling = world
+        .get_component_for_entity::<FirstPersonWalker>(first)
+        .unwrap()
+        .desired_velocity()
+        .length();
+    assert!(
+        (strolling - FirstPersonWalker::default().walk_speed).abs() < 1e-4,
+        "Stroll holds a full push to walk speed, not {strolling}"
+    );
+    world
+        .get_resource_mut::<Input>()
+        .unwrap()
+        .update_gamepad_axis(pads[0], GamepadAxis::LeftStickY, 0.0);
+    run(&mut world, read_first_person_input);
 
     let still = position(&world, first);
     let moved = position(&world, second);

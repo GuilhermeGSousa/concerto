@@ -10,10 +10,11 @@ use concerto_physics::{
 use concerto_window::input::{Input, PlayerIndex, Players, actions::ActionMap};
 use glam::{Quat, Vec2, Vec3};
 
-use crate::actions::{Look, Move};
+use crate::actions::{Look, Move, Stroll};
 
 const GROUND_PROBE_SCALE: f32 = 0.9;
 const GROUND_FOLLOW_RATE: f32 = 15.0;
+const GRAVITY: f32 = 9.81;
 
 /// A first-person character with no jump: a capsule held `step_height` above the ground, so it walks up steps that high and stops at anything taller.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -247,6 +248,11 @@ pub fn read_first_person_input(
         }
         let actions = actions.player(*player, &input, &players);
         let push = actions.axis2d(Move);
+        let push = if actions.is_held(Stroll) {
+            push.clamp_length_max(walker.hurry_threshold)
+        } else {
+            push
+        };
         if walker.push != push {
             walker.steer(push);
         }
@@ -282,7 +288,7 @@ pub fn step_first_person_walkers(
         let vertical = match ground {
             Some(rise) => {
                 let limit = rise.abs() / dt;
-                (rise * GROUND_FOLLOW_RATE).clamp(-limit, limit)
+                (rise * GROUND_FOLLOW_RATE).clamp(-limit, limit) + GRAVITY * dt
             }
             None => physics.linear_velocity(*body).y,
         };
