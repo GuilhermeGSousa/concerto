@@ -101,6 +101,13 @@ fn position(world: &World, entity: Entity) -> Vec3 {
         .translation
 }
 
+fn eye_height_of(world: &World, walker: Entity) -> f32 {
+    world
+        .get_component_for_entity::<FirstPersonWalker>(walker)
+        .unwrap()
+        .eye_height
+}
+
 fn stairs(world: &mut World, first_step_z: f32, steps: u32) {
     for step in 0..steps {
         let top = STEP_RISE * (step + 1) as f32;
@@ -263,6 +270,23 @@ fn each_walker_reads_its_own_players_stick_and_its_view_sits_at_its_eyes() {
     );
     assert!(moved.z < -3.0, "player two's walker hurries, to {moved}");
     let eye_height = FirstPersonWalker::default().eye_height;
+    {
+        let walker = world
+            .get_component_for_entity_mut::<FirstPersonWalker>(second)
+            .unwrap();
+        walker.eye_forward = 0.2;
+        walker.look(std::f32::consts::FRAC_PI_2, 0.0);
+    }
+    run(&mut world, place_first_person_views);
+    let ahead = position(&world, view) - position(&world, second);
+    assert!(
+        (ahead - Vec3::new(-0.2, eye_height_of(&world, second), 0.0)).length() < 1e-4,
+        "eyes set forward sit ahead of the body the way it faces: {ahead}"
+    );
+    world
+        .get_component_for_entity_mut::<FirstPersonWalker>(second)
+        .unwrap()
+        .eye_forward = 0.0;
     run(&mut world, place_first_person_views);
     let eyes = position(&world, view);
     assert!(

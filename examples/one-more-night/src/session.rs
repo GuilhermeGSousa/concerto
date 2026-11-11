@@ -190,6 +190,14 @@ pub struct BookScreen {
     pub hint: String,
 }
 
+const HOW_TO_PLAY: [&str; 6] = [
+    "Something happens in this house tonight. Find out what.",
+    "X uses what you look at. Y opens the casebook.",
+    "The Guest talks to guests. The Staff talks to staff, opens service doors,",
+    "and hears through a door by standing at it and holding RB.",
+    "The night repeats. What you learn stays with you.",
+    "Hold LB for your watch; hold both watches together to pass the time.",
+];
 const FIRST_HOUR: u16 = 18;
 const HOURS: usize = 6;
 
@@ -1090,19 +1098,68 @@ impl Session {
             let term = pick.map_or("____", |term| data.text(case.terms.get(term).text));
             lines.push(format!("Blank {}: < {term} >", index + 1));
         }
+        let partner =
+            (0..PLAYER_COUNT).find(|other| *other != player && self.seats[*other as usize].present);
+        lines.push(String::new());
         if book.is_confirmed(deduction) {
-            lines.push("Confirmed.".into());
-        } else if draft.locked {
-            lines.push("Locked. Waiting for the other player.".into());
+            lines.push("Confirmed: this is what happened.".into());
+        } else {
+            lines.push(
+                if draft.locked {
+                    "You: LOCKED IN"
+                } else {
+                    "You: still choosing"
+                }
+                .into(),
+            );
+            match partner {
+                Some(partner) => {
+                    lines.push(
+                        if book.draft(case, partner, deduction).locked {
+                            "Other player: LOCKED IN"
+                        } else {
+                            "Other player: still choosing"
+                        }
+                        .into(),
+                    );
+                    lines.push(
+                        "Once you have both locked in, the casebook says if you agree and if it is right."
+                            .into(),
+                    );
+                }
+                None => lines.push("Lock in your answer to test it.".into()),
+            }
         }
         if let Some(message) = &self.seats[player as usize].message {
-            lines.push(message.clone());
+            lines.push(format!("Last try: {message}"));
         }
         ScreenText {
             title,
             lines,
             cursor: Some(1 + blank),
-            hint: "Up/Down: blank   Left/Right: word   A: lock or unlock   B: back".into(),
+            hint: if draft.locked {
+                "A: unlock to change your answer   B: back".into()
+            } else {
+                "Up/Down: blank   Left/Right: word   A: lock in   B: back".into()
+            },
+        }
+    }
+
+    /// The next thing worth doing, said to a player who is walking around; nothing once they have the hang of it.
+    pub fn guide(&self, player: u8, book: &Casebook, data: &CaseData) -> Option<&'static str> {
+        if !self.seats[player as usize].present || !self.is_walking(player) {
+            return None;
+        }
+        if book.facts().is_empty() {
+            Some("Find facts: look at things and press X, listen to people talking, ask questions.")
+        } else if book.finale_ready(&data.case) && !self.finished {
+            Some("You can say what happened. Strike the gong in the drawing room.")
+        } else if book.confirmed().is_empty() {
+            Some(
+                "Press Y for the casebook. Its last page, Deductions, is where facts become answers.",
+            )
+        } else {
+            None
         }
     }
 
@@ -1270,6 +1327,10 @@ impl Session {
                 }
                 lines.push(String::new());
                 lines.push(format!("You are {}.", self.role_title(player)));
+                if card.night == 1 {
+                    lines.push(String::new());
+                    lines.extend(HOW_TO_PLAY.iter().map(|line| line.to_string()));
+                }
                 Some(ScreenText {
                     title: format!("Night {}", card.night),
                     lines,
@@ -1431,7 +1492,10 @@ mod tests {
 
         let lines = t.lines(0);
         assert_eq!(lines[0], "[Mr Corwin] took [the snuffbox] from the study.");
-        assert!(lines.contains(&"Confirmed.".to_string()), "{lines:?}");
+        assert!(
+            lines.contains(&"Confirmed: this is what happened.".to_string()),
+            "{lines:?}"
+        );
         t.press(0, &[Press::Back]);
         assert_eq!(
             t.lines(0),
@@ -1548,6 +1612,65 @@ mod tests {
         assert!(
             matches!(t.session.mode(0), Mode::Book { row: 1, .. }),
             "it stops at the top"
+        );
+    }
+
+    #[test]
+    fn the_guide_and_the_deduction_screen_say_what_to_do_next() {
+        let mut t = Table::new();
+        assert!(
+            t.session
+                .guide(0, &t.book, &t.data)
+                .unwrap()
+                .starts_with("Find facts"),
+            "with nothing found, the guide says how facts are found"
+        );
+        t.fact("f_01");
+        assert!(
+            t.session
+                .guide(0, &t.book, &t.data)
+                .unwrap()
+                .starts_with("Press Y")
+        );
+
+        t.session.open_book(0);
+        assert_eq!(
+            t.session.guide(0, &t.book, &t.data),
+            None,
+            "a screen has its own hint"
+        );
+        t.press(0, &[Press::PagePrev, Press::Confirm]);
+        let waiting = t.lines(0);
+        assert!(
+            waiting.contains(&"You: still choosing".to_string()),
+            "{waiting:?}"
+        );
+        assert!(
+            waiting.contains(&"Other player: still choosing".to_string()),
+            "{waiting:?}"
+        );
+        t.press(0, &[Press::Confirm]);
+        let locked = t.lines(0);
+        assert!(locked.contains(&"You: LOCKED IN".to_string()), "{locked:?}");
+        let other = {
+            t.session.open_book(1);
+            t.press(1, &[Press::PagePrev, Press::Confirm]);
+            t.lines(1)
+        };
+        assert!(
+            other.contains(&"Other player: LOCKED IN".to_string()),
+            "{other:?}"
+        );
+        t.press(1, &[Press::Confirm]);
+        assert!(
+            t.lines(0).iter().any(|line| line.starts_with("Last try: ")),
+            "both locks are judged and the verdict stays on screen"
+        );
+
+        t.session.show_card(1, Vec::new());
+        assert!(
+            t.lines(0).iter().any(|line| line.contains("holding RB")),
+            "the first night's card says how to play"
         );
     }
 

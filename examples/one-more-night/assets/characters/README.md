@@ -10,6 +10,8 @@ silhouette and colour before any detail.
 | `lady` | Lady Ashby | A burgundy gown to the floor, long white gloves, grey hair in a bun, a brooch |
 | `gentleman` | Mr Corwin | Black tails, a white shirt front and bow tie, a moustache |
 | `footman` | Hobbs | Green livery with brass buttons, cream breeches, white stockings and gloves |
+| `guest` | The player who is the Guest | A navy suit with a white shirt front, grey trousers, brown shoes |
+| `maid` | The player who is the Staff | A black dress with a white apron, collar and cap |
 
 Every model is skinned to the skeleton of `UAL1.glb`, the Universal Animation
 Library's mannequin, and exported with five of its clips: `Idle_Loop`,

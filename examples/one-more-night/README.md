@@ -33,13 +33,18 @@ them swap.
 | A | Enter | Pick the highlighted row; go on |
 | D-pad | Arrow keys | Move on a screen |
 | LB / RB | Page Up / Page Down | Turn the casebook's pages |
-| LB, held | C | Pocket watch |
+| LB, held | C | Pocket watch; when every player holds theirs, time runs twelve times faster, unless someone is overhearing a conversation |
 | RB, held | R | The Staff listens at a door they stand by |
 | Start | Escape | Pause for both players; it also frees the mouse |
 
 - **Looking a prop over** brings it up in front of you: the right stick turns
   it, the left stick moves it nearer and farther, and the d-pad steps through
   its details.
+- **You can see each other.** Each player has a body, by role: the Guest in a
+  navy suit, the Staff as a maid. It follows the roles when they are swapped.
+- **The first night explains itself.** Its card lists the basics, and a line
+  under your role says what to try next until you confirm a deduction. When
+  the Staff stands at a door with talk behind it, the line says to hold RB.
 - **Facts** are found by looking a prop over, reading, overhearing and asking.
   Both players get a fact at once, and it is never lost.
 - **The casebook** has People, Timeline, Places, Objects and Deductions.
