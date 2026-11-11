@@ -1,0 +1,258 @@
+version = 1
+source_id = "9d51dba4-31f6-499a-bd99-78bff2a7073b"
+importer = "gltf"
+
+[outputs."material/0"]
+asset_id = "ccbd96ff-292c-46dc-995d-b21423e539c0"
+
+[outputs."material/1"]
+asset_id = "b422e41d-3e45-4cef-8f6b-5417d51dd772"
+
+[outputs."material/10"]
+asset_id = "7ab38de3-5361-4c0a-ac5c-84dddddc30aa"
+
+[outputs."material/2"]
+asset_id = "4e112606-0fc0-4a4d-9a48-496b5f980fd7"
+
+[outputs."material/3"]
+asset_id = "cace0486-d6b5-47be-a13a-ef994e2f03dd"
+
+[outputs."material/4"]
+asset_id = "86e5d249-a5b3-4abb-8449-57d3ad8d400e"
+
+[outputs."material/5"]
+asset_id = "4b8557ce-9601-481b-b282-597853570861"
+
+[outputs."material/6"]
+asset_id = "398ab133-df1e-4d68-9a4a-59fc1b3b9b1b"
+
+[outputs."material/7"]
+asset_id = "c103ce58-ee95-4c5b-824f-d3a9ea2dcce9"
+
+[outputs."material/8"]
+asset_id = "8121fd19-e8e5-4b05-b867-671ee1526eaa"
+
+[outputs."material/9"]
+asset_id = "2f32779c-b344-4860-844a-38b6582618c5"
+
+[outputs."mesh/0"]
+asset_id = "e100a115-5b42-4887-bf8b-9bb081f04015"
+
+[outputs."mesh/1"]
+asset_id = "1dd95905-a1e3-4c94-8450-25f4e49be0e6"
+
+[outputs."mesh/10"]
+asset_id = "40aa37d2-f5f9-4bb1-90b6-c9784c54b54f"
+
+[outputs."mesh/11"]
+asset_id = "de22de58-b49b-45be-bd77-fdbacbae1276"
+
+[outputs."mesh/12"]
+asset_id = "6d47d145-bc15-4e75-8caa-aceb0fc148d5"
+
+[outputs."mesh/13"]
+asset_id = "d13d5cdf-e388-411f-a80b-d17446f5de58"
+
+[outputs."mesh/14"]
+asset_id = "56e8c1d0-d010-433a-8e1d-59421ce98935"
+
+[outputs."mesh/15"]
+asset_id = "c06bb5d3-7333-4ece-ad0a-a4f285b0f43f"
+
+[outputs."mesh/16"]
+asset_id = "8c2f8cb8-dabb-4f57-9c0e-78eb35be8aaf"
+
+[outputs."mesh/17"]
+asset_id = "d0b22e4b-c3a9-4bfb-992e-0b5a81035b17"
+
+[outputs."mesh/18"]
+asset_id = "3921b3a6-3f91-4e67-83f9-980737a59c4c"
+
+[outputs."mesh/19"]
+asset_id = "e9fac75c-c02c-4dcf-99ee-7aaf279a27be"
+
+[outputs."mesh/2"]
+asset_id = "eb93fdc6-3538-4ee6-89c7-0fa1932b1505"
+
+[outputs."mesh/20"]
+asset_id = "831ae7b9-27be-43d4-9031-121d14d2027e"
+
+[outputs."mesh/21"]
+asset_id = "cd168272-9e76-4f4f-a017-876f99d858d2"
+
+[outputs."mesh/22"]
+asset_id = "c57e2a71-cdef-4b89-91f1-ecd9a0937dae"
+
+[outputs."mesh/23"]
+asset_id = "26460f73-1ef4-463a-b554-52a52c9925d7"
+
+[outputs."mesh/24"]
+asset_id = "7e39bcf1-2f25-4360-9c50-531be70ebb6c"
+
+[outputs."mesh/25"]
+asset_id = "bddfffa7-9001-4806-82b3-a32c731ec81e"
+
+[outputs."mesh/26"]
+asset_id = "1d097067-5408-4f77-bbe2-e8c4abb098ee"
+
+[outputs."mesh/27"]
+asset_id = "d0e16058-19e2-41cf-b461-7494b1f87c09"
+
+[outputs."mesh/28"]
+asset_id = "af309dad-44f7-4a2f-a7e9-b0a0f266c11d"
+
+[outputs."mesh/29"]
+asset_id = "08550b89-9ec8-4206-a388-e267d8344170"
+
+[outputs."mesh/3"]
+asset_id = "9f2595a3-6d56-4906-9453-1fdb88184c8f"
+
+[outputs."mesh/30"]
+asset_id = "61be8005-12b7-442b-82a2-668a45257a14"
+
+[outputs."mesh/31"]
+asset_id = "c5f188cd-72fd-440f-81c3-f8c5c21bfabb"
+
+[outputs."mesh/32"]
+asset_id = "510a5a7f-5ce8-4f49-a7d3-6702a6973204"
+
+[outputs."mesh/33"]
+asset_id = "eb9d7afb-05b4-4cf6-a326-897b8871bb30"
+
+[outputs."mesh/34"]
+asset_id = "8773a0d2-2361-49ba-a66c-d092d192c212"
+
+[outputs."mesh/35"]
+asset_id = "4565eea4-7392-4119-9cbf-5592faac446b"
+
+[outputs."mesh/36"]
+asset_id = "cec158e9-38ce-4f54-a123-fb2e1ee15715"
+
+[outputs."mesh/37"]
+asset_id = "fe48be09-f49b-45aa-8efd-1c039a9489f6"
+
+[outputs."mesh/38"]
+asset_id = "9cf049d1-83fc-4509-a286-d08101c4b00d"
+
+[outputs."mesh/39"]
+asset_id = "8f2fe656-4622-4559-ace1-c01a5e1cda79"
+
+[outputs."mesh/4"]
+asset_id = "09d2adb7-27c8-478c-a713-d56fd9220044"
+
+[outputs."mesh/40"]
+asset_id = "23e6a8a8-086f-465e-893a-c1da89c4bfaf"
+
+[outputs."mesh/41"]
+asset_id = "82f42818-3a06-424c-9b6b-311ab46d147f"
+
+[outputs."mesh/42"]
+asset_id = "39ed22d6-19c8-4c76-90bb-ea0c448e87ba"
+
+[outputs."mesh/43"]
+asset_id = "a5aa6db6-9e6a-401e-ad18-a599e836de3c"
+
+[outputs."mesh/44"]
+asset_id = "0abf950d-7a45-465d-99cb-bcd8eb7f8902"
+
+[outputs."mesh/45"]
+asset_id = "4ecdb4c2-823c-44ce-9a79-1ec9980b1889"
+
+[outputs."mesh/46"]
+asset_id = "46ab7425-6016-4012-89c0-3bfa236be8ab"
+
+[outputs."mesh/47"]
+asset_id = "d8599e91-a90f-4a7a-a3e0-452ca8c5eb7e"
+
+[outputs."mesh/48"]
+asset_id = "9e911456-f56a-42c5-bb0b-2265939dc24b"
+
+[outputs."mesh/49"]
+asset_id = "873082c2-e39c-461b-9f44-7e486900875a"
+
+[outputs."mesh/5"]
+asset_id = "ac8e11a1-1580-40f7-ab2b-6dd3c11782f0"
+
+[outputs."mesh/50"]
+asset_id = "cba65672-09b0-4487-94bc-12a8ac492cc6"
+
+[outputs."mesh/51"]
+asset_id = "91f7e6f4-6d46-4abd-a458-d3c6784e608f"
+
+[outputs."mesh/52"]
+asset_id = "7b3ce47f-0ef5-4569-9d4f-194eaf3a69f4"
+
+[outputs."mesh/53"]
+asset_id = "dd64c5b3-0ec1-4243-8510-a85355e2ce77"
+
+[outputs."mesh/54"]
+asset_id = "f7f71ee5-1519-46b3-bec3-c011e3cbc927"
+
+[outputs."mesh/55"]
+asset_id = "b22eda98-d406-4d99-a382-e2159006c2b5"
+
+[outputs."mesh/56"]
+asset_id = "1f805b58-be7b-436a-b93d-6d160dd6c441"
+
+[outputs."mesh/57"]
+asset_id = "896d53ca-6f6c-4241-99ef-3a5d0b36bc6d"
+
+[outputs."mesh/58"]
+asset_id = "fa8627ab-5ea3-4045-b95f-b51355a018a9"
+
+[outputs."mesh/59"]
+asset_id = "fe9ab589-a663-4848-b700-998176254689"
+
+[outputs."mesh/6"]
+asset_id = "84b0db5e-368d-4fd5-abc7-9943dd5a27dc"
+
+[outputs."mesh/60"]
+asset_id = "de42ceef-e0ff-4fc1-a329-05c1c0f5b35c"
+
+[outputs."mesh/61"]
+asset_id = "5c6ca0f9-a872-44e2-8ac5-f6019a105bed"
+
+[outputs."mesh/62"]
+asset_id = "e7a54c7c-6c79-4673-90d7-70c19a5437ae"
+
+[outputs."mesh/63"]
+asset_id = "0d1ed2ad-cef3-424d-b14b-ddedd9e2dc17"
+
+[outputs."mesh/64"]
+asset_id = "611284cd-760b-46d2-972e-b5dd08b782af"
+
+[outputs."mesh/65"]
+asset_id = "8749d510-4409-4d23-b3fe-c36f07a0be57"
+
+[outputs."mesh/66"]
+asset_id = "157fbb67-84e4-4a92-92e3-b13298251854"
+
+[outputs."mesh/67"]
+asset_id = "9b58c83d-96f4-4b0c-a00f-0e81ec411008"
+
+[outputs."mesh/68"]
+asset_id = "0c596e89-fd6d-4dc8-a725-bc95636ee128"
+
+[outputs."mesh/69"]
+asset_id = "443b274f-d78a-4073-be1c-203b6e871076"
+
+[outputs."mesh/7"]
+asset_id = "80c46fe2-b5b5-4866-8536-21aed95cc818"
+
+[outputs."mesh/70"]
+asset_id = "de5583a0-fda3-4f77-abf9-a3e7d15a7a3f"
+
+[outputs."mesh/71"]
+asset_id = "2eb1a761-524b-41af-bd29-12eef3d8d6e9"
+
+[outputs."mesh/72"]
+asset_id = "e837ec36-bb9c-4a10-93e8-d5a1bfb61f2b"
+
+[outputs."mesh/8"]
+asset_id = "4d7bbe03-24d0-4b66-ba5a-edaeb890d127"
+
+[outputs."mesh/9"]
+asset_id = "a8704ed4-3581-4698-87c1-fe48bddd6858"
+
+[outputs.scene]
+asset_id = "27272680-90c5-41af-b93b-a6b9ae31699b"

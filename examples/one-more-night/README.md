@@ -5,6 +5,7 @@ again and again. Only what the players learn survives the night.
 
 ```sh
 cargo run -p one-more-night
+cargo run -p one-more-night -- --manor
 cargo run -p one-more-night-editor -- --project <scratch copy of examples/one-more-night>
 ```
 
@@ -15,6 +16,13 @@ are figurines built in `assets/characters`, whose
 [README](assets/characters/README.md) describes them; they blend between
 standing, walking and sitting, and turn their heads to a player who is talking
 to them.
+
+`-- --manor` loads the manor's greybox, all five levels, with an empty case
+(`cases/manor_walk`): no characters or props, only the house. The Guest starts
+upstairs and the Staff in the servants' hall. Its walls, floors and furniture
+collide, its doors open, and its bells, bell board, beds and dumbwaiter stops
+are found by the names of the nodes in the export, with nothing placed by
+hand. It is lit flat, by one sun and no lamps.
 
 ## Playing
 
@@ -90,6 +98,9 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | F8 | Ends the night |
 | F9 | Confirms the next open deduction |
 | F10 | Brings the first inspectable prop up for the first player |
+
+With the `debug` feature, setting `ONE_MORE_NIGHT_NO_CARD` starts the night
+without its card, for looking at a level without a pad in hand.
 
 ## Code
 

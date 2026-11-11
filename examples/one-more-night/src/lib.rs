@@ -30,6 +30,15 @@ pub fn game(app: &mut App) {
     world::install(app, world::default_saves());
 }
 
+/// The manor's greybox with an empty case, for walking the house: `-- --manor`.
+pub fn manor(app: &mut App) {
+    players::install(app);
+    app.register_plugin(DefaultPlugins);
+    players::enable_joining(app);
+    app.register_plugin(NightClockPlugin::default());
+    world::install_stage(app, None, world::Stage::manor_walk());
+}
+
 /// The game as tests build it: the same, saving nowhere.
 pub fn game_without_saves(app: &mut App) {
     players::install(app);
