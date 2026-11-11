@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, hash_map::Entry};
 
 use concerto::ecs::Resource;
 use glam::{Vec2, Vec3};
@@ -220,8 +220,8 @@ impl Level {
                 } else {
                     continue;
                 };
-                if !came_by.contains_key(&next) {
-                    came_by.insert(next, Some(id));
+                if let Entry::Vacant(unseen) = came_by.entry(next) {
+                    unseen.insert(Some(id));
                     queue.push_back(next);
                 }
             }
