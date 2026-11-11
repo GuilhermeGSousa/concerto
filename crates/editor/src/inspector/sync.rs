@@ -401,13 +401,9 @@ pub(super) fn size_label_columns(
     nodes: Query<&mut UINode>,
 ) {
     for (card, layout) in cards.iter() {
-        let column = label_column(layout.rect.size.x);
+        let width = UIValue::Px(label_column(layout.rect.size.x));
         let rows = children.get_entity(card.body);
         for &row in rows.into_iter().flat_map(|rows| rows.iter()) {
-            let Some(indent) = nodes.get_entity(row).map(|node| node.padding.left) else {
-                continue;
-            };
-            let width = UIValue::Px((column - indent).max(0.0));
             let cells = children.get_entity(row);
             for &cell in cells.into_iter().flat_map(|cells| cells.iter()) {
                 if labels.get_entity(cell).is_some()

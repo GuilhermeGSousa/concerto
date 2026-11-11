@@ -214,7 +214,7 @@ changed by any of this, and the scene tab finds its width as it left it.
 The label column stops being 72 px: it becomes 38% of the card's width, no
 less than 96 px and no more than 260 px. The inspector computes it once per
 card from the card's laid-out width and writes it in pixels to that card's
-labels, less each row's indent, so nested rows line up with the rest.
+labels, so every row's value starts at the same place.
 `standard_row_node` keeps its signature. That holds on every tab, so a
 widened right panel on the scene or rig tab also gives labels room. It
 is meant to close #187, to be confirmed at the running editor, and gives #141 the space it asks for once the panel is dragged

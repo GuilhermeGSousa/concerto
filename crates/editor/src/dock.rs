@@ -644,8 +644,20 @@ mod tests {
         );
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct WindowSize {
+        width: u32,
+        height: u32,
+    }
+
+    impl WindowSize {
+        fn window(self) -> Window {
+            Window::new((self.width, self.height), 1.0)
+        }
+    }
+
     struct Resize {
-        window: (u32, u32),
+        window: WindowSize,
         browser: PanelState,
         panel: LayoutPanel,
         size: f32,
@@ -656,8 +668,14 @@ mod tests {
     fn a_resize_stores_the_size_clamped_to_what_the_window_leaves() {
         use LayoutPanel::{Bottom, Browser, Left, Right};
         use PanelState::{Fill, Sized};
-        let wide = (1280, 720);
-        let small = (900, 600);
+        let wide = WindowSize {
+            width: 1280,
+            height: 720,
+        };
+        let small = WindowSize {
+            width: 900,
+            height: 600,
+        };
         let case = |window, browser, panel, size, stored| Resize {
             window,
             browser,
@@ -683,7 +701,7 @@ mod tests {
         ];
         for (index, case) in cases.iter().enumerate() {
             let mut world = World::new();
-            world.insert_resource(Window::new(case.window, 1.0));
+            world.insert_resource(case.window.window());
             world.insert_resource(EditorLayout::default());
             world.insert_resource(PanelStates {
                 browser: case.browser,
