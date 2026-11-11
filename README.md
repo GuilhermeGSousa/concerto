@@ -1,3 +1,10 @@
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/concerto-logo-dark.svg">
+    <img alt="Concerto" src="docs/logo/concerto-logo-light.svg" height="64">
+  </picture>
+</p>
+
 # Concerto
 
 A Rust game engine for character-driven, cinematic games. It has its own

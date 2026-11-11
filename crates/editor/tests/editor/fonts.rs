@@ -9,6 +9,7 @@ fn fonts() -> UIFonts {
     fonts.add_face(include_bytes!("../../fonts/Inter/Inter-Medium.ttf").as_slice());
     fonts.add_face(include_bytes!("../../fonts/Inter/Inter-SemiBold.ttf").as_slice());
     fonts.add_face(include_bytes!("../../fonts/Phosphor/Phosphor.ttf").as_slice());
+    fonts.add_face(include_bytes!("../../fonts/Concerto/ConcertoMark.ttf").as_slice());
     fonts.set_sans_serif(concerto_editor::fonts::INTER);
     fonts
 }
@@ -41,7 +42,6 @@ fn glyph_ids(text: &str, family: &str) -> Vec<u16> {
 fn every_icon_constant_exists_in_the_phosphor_face() {
     use concerto_editor::fonts::glyph::*;
     let icons = [
-        ("RABBIT", RABBIT),
         ("CARET_RIGHT", CARET_RIGHT),
         ("CARET_DOWN", CARET_DOWN),
         ("CUBE", CUBE),
@@ -86,6 +86,21 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
             icon as u32
         );
     }
+}
+
+#[test]
+fn the_brand_face_holds_the_concerto_mark() {
+    use concerto_editor::fonts::{BRAND, BRAND_MARK};
+    let font_system = build_font_system(&fonts());
+    let face = font_system
+        .db()
+        .faces()
+        .find(|face| face.families.iter().any(|family| family.0 == BRAND))
+        .unwrap_or_else(|| panic!("no loaded face is named {BRAND}"));
+    assert_eq!(face.post_script_name, "ConcertoMark-Regular");
+    let ids = glyph_ids(&BRAND_MARK.to_string(), BRAND);
+    assert_eq!(ids.len(), 1);
+    assert_ne!(ids[0], 0, "the mark is not in the {BRAND} face");
 }
 
 struct IconCase {

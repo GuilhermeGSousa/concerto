@@ -3,7 +3,6 @@ use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, Query, Res, World,
     command::CommandQueue,
@@ -22,12 +21,13 @@ use concerto_ui::{
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::fonts::{ICON_COLUMN, ICON_SIZE, MEDIUM, glyph, icon};
+use crate::fonts::{ICON_COLUMN, ICON_SIZE, MEDIUM, brand_mark, glyph, icon};
 use crate::project::ProjectState;
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
 
 pub const BRAND_ID: &str = "concerto.brand";
+const BRAND_SIZE: f32 = 20.0;
 pub const CHATTER_ID: &str = "concerto.chatter";
 
 pub struct ShellPlugin;
@@ -59,30 +59,12 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
     if let Some(brand) = registry.body(BRAND_ID) {
         cmd.entity(brand)
             .add_child_with(theme.row().grow(), |mut row| {
-                row.add_child_with(
-                    theme
-                        .canvas()
-                        .fill(Color::TRANSPARENT)
-                        .border(theme.accent, 1.5)
-                        .radius(6.0)
-                        .size(UIValue::Px(13.0), UIValue::Px(19.0))
-                        .fixed()
-                        .align_items(taffy::AlignItems::Center)
-                        .padding(UIRect {
-                            top: 4.0,
-                            ..Default::default()
-                        }),
-                    |mut mark| {
-                        mark.add_child(
-                            theme
-                                .canvas()
-                                .fill(theme.accent)
-                                .radius(2.0)
-                                .size(UIValue::Px(4.0), UIValue::Px(4.0))
-                                .fixed(),
-                        );
-                    },
-                );
+                row.add_child((
+                    UINode::default()
+                        .with_width(UIValue::Px(BRAND_SIZE))
+                        .with_flex_shrink(0.0),
+                    brand_mark(&theme, BRAND_SIZE).color(theme.accent),
+                ));
 
                 row.add_child(theme.label("Concerto").weight(MEDIUM));
 

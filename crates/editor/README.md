@@ -456,6 +456,11 @@ region with no visible panel and no host is `Hidden`, and the Asset Browser is
 `Left` is `Hidden`, the `Centre` is hidden and `Right` is `Fill`.
 `ResizePanel` for a panel that is not `Sized` changes nothing.
 
+The brand in the top bar is the Concerto mark, `fonts::brand_mark`: the one
+glyph of the bundled `Concerto Mark` face, which
+[`docs/logo/build.py`](../../docs/logo/README.md) generates with the logo's
+SVGs.
+
 Every icon is a glyph of the bundled Phosphor face, drawn through
 `fonts::icon` from a constant in `fonts::glyph`, which carries the glyph's
 upstream name. There are two sizes. A row's icon is a 16 px glyph in a 20 px

@@ -29,6 +29,10 @@ use std::collections::HashMap;
 pub const INTER: &str = "Inter";
 /// Family name the icon face registers under.
 pub const PHOSPHOR: &str = "Phosphor";
+/// Family name the one-glyph face holding the Concerto mark registers under.
+pub const BRAND: &str = "Concerto Mark";
+/// The Concerto mark's codepoint in the `BRAND` face.
+pub const BRAND_MARK: char = '\u{E000}';
 
 /// Weight for headings and anything Nocturne sets in caps.
 pub const MEDIUM: u16 = 500;
@@ -48,6 +52,7 @@ impl Plugin for FontsPlugin {
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-Medium.ttf").as_slice());
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-SemiBold.ttf").as_slice());
         app.add_ui_font(include_bytes!("../fonts/Phosphor/Phosphor.ttf").as_slice());
+        app.add_ui_font(include_bytes!("../fonts/Concerto/ConcertoMark.ttf").as_slice());
         app.set_ui_sans_serif(INTER);
         app.register_asset_icon(Scene::name(), glyph::STACK)
             .register_asset_icon(Mesh::name(), glyph::CUBE)
@@ -195,10 +200,17 @@ pub fn icon(theme: &UITheme, glyph: char, size: f32) -> Text {
         .no_wrap()
 }
 
+/// A text node holding the Concerto mark.
+pub fn brand_mark(theme: &UITheme, size: f32) -> Text {
+    theme
+        .text(BRAND_MARK)
+        .family(FontFamily::Name(BRAND.into()))
+        .font_size(size)
+        .no_wrap()
+}
+
 /// Phosphor codepoints, by the name they carry upstream.
 pub mod glyph {
-    /// `rabbit` — the brand mark.
-    pub const RABBIT: char = '\u{EAC2}';
     /// `caret-right` — a collapsed tree row.
     pub const CARET_RIGHT: char = '\u{E13A}';
     /// `caret-down` — an expanded tree row.
