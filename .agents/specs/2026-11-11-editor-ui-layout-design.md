@@ -75,11 +75,15 @@ the Centre is exactly the space the panels leave.
 | Asset Browser | `Rail`, bottom | `Bottom` |
 | Inspector | `Side` | `Right` |
 | Chatter | `Foot`, between the cards | `Status`, full width |
-| Brand and tabs, stats, window buttons | `Brand`, `Stats` | unchanged, in a top bar with a surface fill |
+| Brand and tabs, stats, window buttons | `Brand`, `Stats` | unchanged, in a top bar on the backdrop |
 
-Panels are flat: no 18 px outer margin, no floating rounded cards. Each
-region has the panel surface colour and a 1 px border to its neighbour. The
-undecorated window's drag area stays the top bar, as today.
+Panels are tiled cards: each panel in `Left`, `Right` and `Bottom`, and each
+host, is the theme's panel with its large corner radius and a faint outline,
+and the viewport's picture has the same corners. The cards stand 8 px apart
+and 8 px from the window's left and right edges, on the opaque canvas
+backdrop; the gap between two cards is their splitter, which draws nothing
+until it is hovered or dragged. The top bar and the status line have no fill
+and no rule. The undecorated window's drag area stays the top bar, as today.
 
 A region with no visible panel collapses to nothing, and so does the splitter
 beside it. That is what gives a tab the whole width when it has nothing to
@@ -88,8 +92,8 @@ show on a side.
 ### 2. Splitters and the layout state
 
 **`UISplitter`** is a new public widget in `concerto-ui`, with the slider and
-the tree. It is a thin node between two siblings, 5 px of hit area drawing a
-1 px line, that lights to the accent colour while hovered or dragged. It
+the tree. It is a thin node between two siblings, 8 px of hit area that draws
+nothing at rest and a 1 px line in the accent colour while hovered or dragged. It
 carries its axis. A drag triggers `UISplitterDragged { delta }` on it, the
 pointer's movement along the axis since the last event, in logical pixels.
 The widget moves nothing itself; its owner decides what the drag means, as a

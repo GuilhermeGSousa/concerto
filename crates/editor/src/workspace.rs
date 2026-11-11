@@ -19,7 +19,7 @@ use concerto_window::input::actions::ActionMap;
 
 use crate::{
     asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, EditorHosts, EditorOwned},
-    dock::{PanelRegistry, PanelState, PanelStates, Region},
+    dock::{PanelRegistry, PanelState, PanelStates, Region, card},
     hosted::ViewportTarget,
     inspector::InspectedValues,
 };
@@ -49,23 +49,29 @@ pub(crate) fn create_editor_hosts(
                 };
                 let mut node = node.clone();
                 node.visible = false;
-                let surface = if index == 0 {
-                    theme.canvas()
+                let mut region = commands.entity(parent.parent());
+                let host = if form {
+                    region.spawn_child((
+                        UINode::default()
+                            .with_position(taffy::Position::Absolute)
+                            .with_visible(false),
+                        EditorOwned(editor),
+                        Interactable,
+                    ))
                 } else {
-                    theme.panel().radius(0.0)
-                };
-                let host = commands
-                    .entity(parent.parent())
-                    .spawn_child((surface.node(|_| node), EditorOwned(editor), Interactable))
-                    .entity();
+                    region.spawn_child((
+                        card(&theme).node(|_| node),
+                        EditorOwned(editor),
+                        Interactable,
+                    ))
+                }
+                .entity();
                 hosts[index] = Some(host);
             }
             if editors.bottom_host(doc.asset_type)
                 && let Some(strip) = registry.region(Region::Bottom)
             {
-                let surface = theme
-                    .panel()
-                    .radius(0.0)
+                let surface = card(&theme)
                     .width(UIValue::Px(0.0))
                     .min_width(UIValue::Px(0.0))
                     .grow()

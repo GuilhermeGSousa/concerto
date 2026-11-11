@@ -127,12 +127,10 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
     if let Some(chatter) = registry.body(CHATTER_ID) {
         cmd.entity(chatter).add_child_with(
             theme
-                .panel()
-                .radius(0.0)
-                .height(UIValue::Px(30.0))
-                .fixed()
-                .align_items(taffy::AlignItems::Center)
-                .padding(UIRect::axes(0.0, theme.spacing_md))
+                .row()
+                .gap(0.0)
+                .grow()
+                .padding(UIRect::axes(0.0, theme.spacing_xs))
                 .clipped(),
             |mut strip| {
                 strip

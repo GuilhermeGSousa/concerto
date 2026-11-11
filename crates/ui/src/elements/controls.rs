@@ -1,3 +1,4 @@
+use concerto_color::Color;
 use concerto_ecs::{
     component::bundle::IntoBundle,
     signal::listener::{IntoListener, Listener},
@@ -34,7 +35,7 @@ pub struct Slider {
     slider: UISlider,
 }
 
-/// A draggable line between two siblings; its owner decides what a drag means.
+/// A draggable gap between two siblings, with a line while hovered or dragged; its owner decides what a drag means.
 pub struct Splitter {
     node: UINode,
     splitter: UISplitter,
@@ -88,7 +89,7 @@ impl UITheme {
                 .with_justify_content(AlignContent::Center),
             splitter: UISplitter {
                 axis,
-                color: self.border,
+                color: Color::TRANSPARENT,
                 active_color: self.accent,
             },
         }

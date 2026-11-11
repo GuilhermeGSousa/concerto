@@ -419,9 +419,20 @@ and Chatter in `Status`. The viewport, and so the game while it plays, is
 exactly the space the panels leave. A panel declares its region in its
 `PanelDescriptor`, and `PanelRegistry::region` gives a region's node.
 
+Each panel in `Left`, `Right` and `Bottom` is a card, `dock::card`: the
+theme's panel with its large corner radius and a faint outline, on the opaque
+canvas backdrop. The viewport's picture has the same corners. The cards stand
+8 px apart and 8 px from the window's left and right edges; the top bar and
+the status line have no fill of their own. A tab's hosts are cards too, and
+two cards in one side region stand 8 px apart. The Play button on the Scene
+tab is a pill filled with the accent that shows `play` and "Play"; while the
+game runs it is outlined in the error colour and shows `stop` and "Stop".
+
 Four splitters resize the panels: between `Left` and `Centre`, between
 `Centre` and `Right`, above the `Bottom` strip, and, on a tab with a bottom
-host, between the Asset Browser and that host. The sizes are the
+host, between the Asset Browser and that host. A splitter is the gap between
+two cards: it draws nothing at rest, and a line in the accent colour while it
+is hovered or dragged. The sizes are the
 `EditorLayout` resource, in logical pixels: `left` 260, `right` 320, `bottom`
 220 and `browser` 420 to begin with. They are the same on every tab and last
 for the session; no file holds them. `ResizePanel { panel, size }`, with

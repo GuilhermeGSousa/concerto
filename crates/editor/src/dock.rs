@@ -1,10 +1,11 @@
-//! The shell's skeleton: tiled regions with splitters between them, and the sizes they show.
+//! The shell's skeleton: tiled cards with splitters in the gaps between them, and the sizes they show.
 use std::collections::HashMap;
 
 use concerto_app::{
     App, Plugin,
     schedule_groups::{Startup, Update},
 };
+use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource,
     command::CommandQueue,
@@ -15,7 +16,7 @@ use concerto_ecs::{
     },
 };
 use concerto_ui::{
-    elements::prelude::*,
+    elements::{Surface, prelude::*},
     interaction::Interactable,
     node::{UINode, UIRect},
     scroll::UISplitAxis,
@@ -42,6 +43,10 @@ pub enum Region {
 impl Region {
     fn is_titled(self) -> bool {
         matches!(self, Region::Left | Region::Right)
+    }
+
+    fn is_card(self) -> bool {
+        matches!(self, Region::Left | Region::Right | Region::Bottom)
     }
 }
 
@@ -209,8 +214,8 @@ const BOTTOM_HOST_MIN: f32 = 240.0;
 const TOP: f32 = 34.0;
 /// Height of the top bar.
 pub const TOP_STRIP: f32 = 40.0;
-const STATUS: f32 = 30.0;
-const RULE: f32 = 1.0;
+const STATUS: f32 = 28.0;
+const GAP: f32 = SPLITTER_HIT_SIZE;
 
 impl EditorLayout {
     /// The stored size of `panel`.
@@ -293,21 +298,21 @@ fn row_room(states: &PanelStates, window: Vec2) -> f32 {
         .into_iter()
         .filter(|state| *state == PanelState::Sized)
         .count() as f32
-        * SPLITTER_HIT_SIZE;
+        * GAP;
     let rest = if states.right == PanelState::Fill {
         RIGHT_MIN
     } else {
         CENTRE_MIN_WIDTH
     };
-    window.x - splitters - rest
+    window.x - GAP * 2.0 - splitters - rest
 }
 
 fn column_room(window: Vec2) -> f32 {
-    window.y - TOP_STRIP - STATUS - RULE * 2.0 - SPLITTER_HIT_SIZE - CENTRE_MIN_HEIGHT
+    window.y - TOP_STRIP - STATUS - GAP - CENTRE_MIN_HEIGHT
 }
 
 fn strip_room(window: Vec2) -> f32 {
-    window.x - SPLITTER_HIT_SIZE - BOTTOM_HOST_MIN
+    window.x - GAP * 3.0 - BOTTOM_HOST_MIN
 }
 
 /// Sets the stored size of a panel, clamped to what the window allows; ignored for a panel that is hidden or filling.
@@ -334,6 +339,14 @@ fn resize_panel(
     if layout.size(panel) != size {
         layout.set(panel, size);
     }
+}
+
+/// A region's card: the theme's panel, outlined so it reads on the backdrop.
+pub fn card(theme: &UITheme) -> Surface {
+    let border = theme.border.to_srgba();
+    theme
+        .panel()
+        .border(Color::srgba(border.r, border.g, border.b, 0.55), 1.0)
 }
 
 #[derive(Component, Clone, Copy)]
@@ -434,12 +447,11 @@ fn build_dock(
     let root = cmd
         .entity(backdrop)
         .spawn_child(
-            theme
-                .panel()
-                .radius(0.0)
-                .grow()
-                .min_height(UIValue::Px(0.0))
-                .column()
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_min_height(UIValue::Px(0.0))
+                .with_flex_direction(FlexDirection::Column)
+                .with_padding(UIRect::axes(0.0, GAP))
                 .clipped(),
         )
         .entity();
@@ -451,8 +463,7 @@ fn build_dock(
                 .with_height(UIValue::Px(TOP_STRIP))
                 .with_flex_shrink(0.0)
                 .with_flex_direction(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_padding(UIRect::axes(0.0, theme.spacing_md)),
+                .with_align_items(AlignItems::Center),
         )
         .entity();
     let chrome = |grow: f32| {
@@ -466,7 +477,6 @@ fn build_dock(
     };
     let brand = cmd.entity(bar).spawn_child(chrome(1.0)).entity();
     let stats = cmd.entity(bar).spawn_child(chrome(0.0)).entity();
-    cmd.entity(root).add_child(theme.divider());
 
     let row = cmd
         .entity(root)
@@ -481,6 +491,7 @@ fn build_dock(
         UINode::default()
             .with_flex_shrink(0.0)
             .with_flex_direction(FlexDirection::Column)
+            .with_gap(Vec2::new(0.0, GAP))
             .clipped()
     };
     let left = cmd
@@ -491,12 +502,11 @@ fn build_dock(
     let centre = cmd
         .entity(row)
         .spawn_child(
-            theme
-                .canvas()
-                .grow()
-                .min_width(UIValue::Px(0.0))
-                .min_height(UIValue::Px(0.0))
-                .column()
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_min_width(UIValue::Px(0.0))
+                .with_min_height(UIValue::Px(0.0))
+                .with_flex_direction(FlexDirection::Column)
                 .clipped(),
         )
         .entity();
@@ -517,7 +527,6 @@ fn build_dock(
             LayoutPart::Panel(LayoutPanel::Bottom),
         ))
         .entity();
-    cmd.entity(root).add_child(theme.divider());
     let status = cmd
         .entity(root)
         .spawn_child(
@@ -577,7 +586,11 @@ fn fill_region(
             node
         };
         let mut container_queue = cmd.entity(container);
-        let mut body_queue = container_queue.spawn_child(node);
+        let mut body_queue = if region.is_card() {
+            container_queue.spawn_child(card(theme).node(|_| node))
+        } else {
+            container_queue.spawn_child(node)
+        };
         let body = body_queue.entity();
         if region != Region::Centre {
             body_queue.insert(Interactable);
@@ -686,18 +699,18 @@ mod tests {
         let cases = [
             case(wide, Fill, Left, 300.0, 300.0),
             case(wide, Fill, Left, 100.0, 180.0),
-            case(wide, Fill, Left, 2000.0, 630.0),
+            case(wide, Fill, Left, 2000.0, 608.0),
             case(wide, Fill, Right, 100.0, 220.0),
-            case(wide, Fill, Right, 2000.0, 690.0),
+            case(wide, Fill, Right, 2000.0, 668.0),
             case(wide, Fill, Bottom, 50.0, 120.0),
-            case(wide, Fill, Bottom, 2000.0, 403.0),
+            case(wide, Fill, Bottom, 2000.0, 404.0),
             case(wide, Sized, Browser, 100.0, 200.0),
-            case(wide, Sized, Browser, 5000.0, 1035.0),
+            case(wide, Sized, Browser, 5000.0, 1016.0),
             case(wide, Fill, Browser, 300.0, 420.0),
             case(small, Fill, Left, 2000.0, 260.0),
-            case(small, Fill, Right, 2000.0, 310.0),
-            case(small, Fill, Bottom, 2000.0, 283.0),
-            case(small, Sized, Browser, 5000.0, 655.0),
+            case(small, Fill, Right, 2000.0, 288.0),
+            case(small, Fill, Bottom, 2000.0, 284.0),
+            case(small, Sized, Browser, 5000.0, 636.0),
         ];
         for (index, case) in cases.iter().enumerate() {
             let mut world = World::new();
@@ -744,11 +757,11 @@ mod tests {
             Fit {
                 window: small,
                 left: 260.0,
-                right: 310.0,
+                right: 288.0,
             },
             Fit {
                 window: narrow,
-                left: 250.0,
+                left: 228.0,
                 right: 220.0,
             },
         ];

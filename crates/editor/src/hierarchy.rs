@@ -223,13 +223,10 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent).add_child_with(
         (
-            theme
-                .panel()
-                .radius(0.0)
-                .width(UIValue::Percent(100.0))
-                .grow()
-                .column()
-                .padding(8.0)
+            UINode::default()
+                .with_width(UIValue::Percent(100.0))
+                .with_flex_grow(1.0)
+                .with_flex_direction(taffy::FlexDirection::Column)
                 .clipped(),
             Interactable,
         ),

@@ -21,9 +21,9 @@ use crate::{
 };
 
 /// The width of a [`UISplitter`]'s hit area across its axis, in logical pixels.
-pub const SPLITTER_HIT_SIZE: f32 = 5.0;
+pub const SPLITTER_HIT_SIZE: f32 = 8.0;
 
-/// A draggable line between two siblings that reports drags along its axis and moves nothing itself.
+/// A draggable gap between two siblings that reports drags along its axis and moves nothing itself.
 #[derive(Component)]
 pub struct UISplitter {
     pub axis: UISplitAxis,
@@ -37,7 +37,7 @@ impl UISplitter {
     pub fn new(axis: UISplitAxis) -> Self {
         Self {
             axis,
-            color: Color::rgba(0.25, 0.25, 0.25, 1.0),
+            color: Color::TRANSPARENT,
             active_color: Color::rgba(0.25, 0.55, 0.95, 1.0),
         }
     }

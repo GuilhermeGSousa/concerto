@@ -1322,8 +1322,8 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
             height: height - 80.0,
         },
         Shown {
-            layout: "left 550 · right 400 · bottom 300 · browser fill",
-            width: width - 370.0,
+            layout: "left 528 · right 400 · bottom 300 · browser fill",
+            width: width - 348.0,
             height: height - 80.0,
         },
     ];
