@@ -2,6 +2,7 @@ use concerto::{
     color::Color,
     ecs::{CommandQueue, Component, Entity, Query, Res},
     ui::{
+        grid::{UIGrid, UIGridCell},
         material::UIMaterial,
         node::{FlexDirection, UINode, UIRect},
         text::UIText,
@@ -12,7 +13,9 @@ use glam::Vec2;
 
 use crate::book::Casebook;
 use crate::casefile::CaseData;
-use crate::session::{BookBody, BookScreen, Page, Session};
+use crate::clock::NightClock;
+use crate::schedule::case_time;
+use crate::session::{BookBody, BookScreen, Mode, Page, ScreenText, Session};
 
 const HOUR_WIDTH: f32 = 54.0;
 /// The fill of a screen's panel.
@@ -178,7 +181,10 @@ fn build(cmd: &mut CommandQueue, panel: Entity, screen: &BookScreen) {
         } => {
             let grid = cmd
                 .entity(panel)
-                .spawn_child(column().with_gap(Vec2::splat(3.0)))
+                .spawn_child((
+                    column().with_gap(Vec2::splat(3.0)),
+                    UIGrid::new(rooms.len(), counts.len()).with_selected(*selected),
+                ))
                 .entity();
             let width = UIValue::Percent(88.0 / rooms.len().max(1) as f32);
             let header = cmd
@@ -205,18 +211,18 @@ fn build(cmd: &mut CommandQueue, panel: Entity, screen: &BookScreen) {
                 for room in 0..rooms.len() {
                     let cell = hour * rooms.len() + room;
                     let count = counts.get(cell).copied().unwrap_or(0);
-                    let colour = if cell == *selected {
-                        CHOSEN
-                    } else if count > 0 {
-                        NOTED
-                    } else {
-                        CELL
-                    };
+                    let colour = if count > 0 { NOTED } else { CELL };
                     cmd.entity(line).add_child((
                         UINode::default()
                             .with_size(width, UIValue::Px(24.0))
                             .with_padding(inset(1.0, 8.0)),
                         fill(colour, 4.0),
+                        UIGridCell {
+                            grid,
+                            index: cell,
+                            fill: colour,
+                            selected_fill: CHOSEN,
+                        },
                         label("o ".repeat(count), 15.0, GOLD),
                     ));
                 }
@@ -267,4 +273,85 @@ pub fn show_book(
         }
         panel.shown = screen;
     }
+}
+
+/// The panel a player's other screens are drawn in: talk, a prop, a page, the night card and the gathering.
+#[derive(Component)]
+pub struct ScreenPanel {
+    pub player: u8,
+    shown: Option<ScreenText>,
+}
+
+impl ScreenPanel {
+    pub fn new(player: u8) -> Self {
+        Self {
+            player,
+            shown: None,
+        }
+    }
+}
+
+fn build_screen(cmd: &mut CommandQueue, panel: Entity, screen: &ScreenText) {
+    cmd.entity(panel)
+        .add_child((UINode::default(), label(screen.title.clone(), 22.0, GOLD)));
+    let list = cmd.entity(panel).spawn_child(column()).entity();
+    for (index, line) in screen.lines.iter().enumerate() {
+        let chosen = Some(index) == screen.cursor;
+        let pad = if screen.cursor.is_some() { 5.0 } else { 1.0 };
+        cmd.entity(list).add_child((
+            UINode::default().with_padding(UIRect::all(pad)),
+            fill(if chosen { CHOSEN } else { CLEAR }, 5.0),
+            label(line.clone(), 19.0, INK),
+        ));
+    }
+    if !screen.hint.is_empty() {
+        cmd.entity(panel)
+            .add_child((UINode::default(), label(screen.hint.clone(), 15.0, MUTED)));
+    }
+}
+
+/// Shows each player's screen, other than the casebook, in their panel, rebuilding it when what it shows changes.
+pub fn show_screens(
+    panels: Query<(Entity, &mut ScreenPanel, &mut UINode)>,
+    session: Res<Session>,
+    book: Res<Casebook>,
+    data: Res<CaseData>,
+    clock: Res<NightClock>,
+    mut cmd: CommandQueue,
+) {
+    let time = case_time(clock.now().seconds());
+    for (entity, mut panel, mut node) in panels.iter() {
+        let screen = if matches!(session.mode(panel.player), Mode::Book { .. }) {
+            None
+        } else {
+            session.view(panel.player, &book, &data, time, data.case.phase_at(time))
+        };
+        if node.visible != screen.is_some() {
+            node.visible = screen.is_some();
+        }
+        if panel.shown == screen {
+            continue;
+        }
+        cmd.entity(entity).despawn_children();
+        if let Some(screen) = &screen {
+            build_screen(&mut cmd, entity, screen);
+        }
+        panel.shown = screen;
+    }
+}
+
+/// The node and fill of a line of the HUD that hides while it is empty.
+pub fn chip() -> (UINode, UIMaterial) {
+    (
+        UINode::default()
+            .with_padding(UIRect {
+                top: 5.0,
+                right: 12.0,
+                bottom: 5.0,
+                left: 12.0,
+            })
+            .with_align_self(concerto::ui::node::AlignItems::FlexStart)
+            .with_visible(false),
+        fill(PANEL, 6.0),
+    )
 }

@@ -85,7 +85,7 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | `schedule` | Where a schedule puts a character at a time; which line of a conversation is being said |
 | `rules` | Dialogue topics on offer; who may pass a door |
 | `session` | Each player's screen as a state machine over button presses |
-| `book_ui` | The open casebook drawn as tabs, lists and the timeline grid |
+| `book_ui` | The casebook drawn as tabs, lists and the timeline grid, and every other screen and HUD line |
 | `house` | Doors, items, bells, the dumbwaiter, beds and the gong; ending a night |
 | `save` | The save file and its backups |
 | `world` | The systems that run all of it: fixtures, characters, props, targeting, the HUD and the loop |

@@ -1,4 +1,5 @@
 use concerto::ecs::Resource;
+use concerto::ui::grid::{GridStep, grid_step};
 
 use crate::book::{Casebook, Verdict};
 use crate::case::{
@@ -499,29 +500,18 @@ impl Session {
                         }
                     }
                     (Some(_), Press::PagePrev | Press::PageNext) => {}
-                    (None, Press::Left | Press::Right) if page == Page::Timeline => {
-                        let column = row % rooms;
-                        let column = if press == Press::Right {
-                            (column + 1).min(rooms - 1)
-                        } else {
-                            column.saturating_sub(1)
+                    (None, Press::Up | Press::Down | Press::Left | Press::Right)
+                        if page == Page::Timeline =>
+                    {
+                        let step = match press {
+                            Press::Up => GridStep::Up,
+                            Press::Down => GridStep::Down,
+                            Press::Left => GridStep::Left,
+                            _ => GridStep::Right,
                         };
                         next = Mode::Book {
                             page,
-                            row: row - row % rooms + column,
-                            editing,
-                            blank,
-                        }
-                    }
-                    (None, Press::Up | Press::Down) if page == Page::Timeline => {
-                        let moved = if press == Press::Down {
-                            row + rooms
-                        } else {
-                            row.wrapping_sub(rooms)
-                        };
-                        next = Mode::Book {
-                            page,
-                            row: if moved < rows { moved } else { row },
+                            row: grid_step(row, rooms, rows, step),
                             editing,
                             blank,
                         }
