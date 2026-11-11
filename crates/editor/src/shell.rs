@@ -22,7 +22,7 @@ use concerto_ui::{
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::fonts::{MEDIUM, glyph, icon};
+use crate::fonts::{ICON_COLUMN, ICON_SIZE, MEDIUM, glyph, icon};
 use crate::project::ProjectState;
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
@@ -138,9 +138,9 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                 strip
                     .add_child((
                         UINode::default()
-                            .with_width(UIValue::Px(18.0))
+                            .with_width(UIValue::Px(ICON_COLUMN))
                             .with_flex_shrink(0.0),
-                        icon(&theme, glyph::INFO, theme.font_size_md).muted(),
+                        icon(&theme, glyph::INFO, ICON_SIZE).muted(),
                         Label::ChatterGlyph,
                     ))
                     .add_child((theme.label("").muted().single_line().grow(), Label::Chatter));

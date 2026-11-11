@@ -1,6 +1,6 @@
 //! The document tab strip.
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
-use concerto_ecs::query::filter::With;
+use concerto_ecs::query::filter::{With, Without};
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res, ResMut,
     command::CommandQueue,
@@ -27,7 +27,7 @@ use crate::{
         ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
         Unsaved,
     },
-    fonts::{glyph, icon},
+    fonts::{AssetIcons, ICON_COLUMN, ICON_SIZE, button_icon, draw_row_icon, glyph, icon},
     hosted::{PlayState, toggle_play},
 };
 use concerto_foundation::assets::Asset;
@@ -53,6 +53,11 @@ pub struct EditorTabPlay {
 
 #[derive(Component)]
 struct TabLabel {
+    document: Entity,
+}
+
+#[derive(Component)]
+struct TabIcon {
     document: Entity,
 }
 
@@ -154,13 +159,16 @@ fn sync_tabs(
     contents: Query<Entity, With<TabStripContent>>,
     documents: Query<(Entity, &EditorDocument)>,
     unsaved: Query<&Unsaved>,
-    labels: Query<(&TabLabel, &mut UIText)>,
+    (labels, tab_icons): (
+        Query<(&TabLabel, &mut UIText)>,
+        Query<(&TabIcon, &mut UIText), Without<TabLabel>>,
+    ),
     existing_tabs: Query<&EditorTab>,
     tab_button_entities: Query<(Entity, &EditorTab)>,
     tab_buttons: Query<(&EditorTab, &mut UIInteractionStyle)>,
     active: Res<ActiveEditor>,
     theme: Res<UITheme>,
-    registry: Res<AssetEditorRegistry>,
+    (registry, icons): (Res<AssetEditorRegistry>, Res<AssetIcons>),
     states: Query<&PlayState>,
 ) {
     let Some(content) = contents.iter().next() else {
@@ -204,6 +212,10 @@ fn sync_tabs(
             .map(|asset| asset.kind.as_str())
             .unwrap_or("Asset");
         let is_active = active.0 == Some(entity);
+        let mark = icons.glyph(kind);
+        if let Some((_, mut text)) = tab_icons.iter().find(|(icon, _)| icon.document == entity) {
+            draw_row_icon(&mut text, &theme, mark, is_active);
+        }
         if let Some((_, mut label)) = labels.iter().find(|(label, _)| label.document == entity) {
             if label.text != title {
                 label.text = title.clone();
@@ -226,11 +238,6 @@ fn sync_tabs(
             }
         }
         if !existing_tabs.iter().any(|tab| tab.document == entity) {
-            let mark = match kind {
-                "Scene" => glyph::CUBE,
-                "Texture" => glyph::IMAGE,
-                _ => glyph::FILE,
-            };
             let ink = if is_active {
                 theme.text
             } else {
@@ -258,9 +265,15 @@ fn sync_tabs(
                     let button = button
                         .add_child((
                             UINode::default()
-                                .with_width(UIValue::Px(16.0))
-                                .with_flex_shrink(0.0),
-                            icon(&theme, mark, theme.font_size_sm).color(ink),
+                                .with_width(UIValue::Px(ICON_COLUMN))
+                                .with_flex_shrink(0.0)
+                                .with_padding(UIRect::axes(0.0, (ICON_COLUMN - ICON_SIZE) / 2.0))
+                                .with_margin(UIRect {
+                                    right: theme.spacing_xs,
+                                    ..UIRect::default()
+                                }),
+                            icon(&theme, mark, ICON_SIZE).color(ink),
+                            TabIcon { document: entity },
                         ))
                         .add_child((
                             theme
@@ -273,11 +286,17 @@ fn sync_tabs(
                     if closable {
                         button.add_child((
                             UINode::default()
-                                .with_size(UIValue::Px(18.0), UIValue::Px(24.0))
-                                .with_padding(UIRect::axes(3.0, 3.0))
+                                .with_size(
+                                    UIValue::Px(theme.control_height),
+                                    UIValue::Px(theme.control_height),
+                                )
+                                .with_padding(UIRect::axes(
+                                    (theme.control_height - theme.line_height(ICON_SIZE)) / 2.0,
+                                    (theme.control_height - ICON_SIZE) / 2.0,
+                                ))
                                 .with_flex_shrink(0.0)
                                 .with_z_index(71),
-                            icon(&theme, glyph::X, theme.font_size_sm).muted(),
+                            button_icon(&theme, glyph::X),
                             Interactable,
                             EditorTabClose { document: entity },
                             close_tab.into_listener(),

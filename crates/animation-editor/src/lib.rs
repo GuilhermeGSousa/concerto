@@ -8,7 +8,11 @@ pub mod transport;
 
 use std::{collections::HashSet, path::Path, sync::Arc};
 
-use concerto_animation::clip::{AnimationChannel, AnimationClip};
+use concerto_animation::{
+    clip::{AnimationChannel, AnimationClip},
+    graph::AnimationGraph,
+    mask::BoneMask,
+};
 use concerto_app::{
     App,
     plugins::Plugin,
@@ -24,6 +28,7 @@ use concerto_editor::{
     asset_editor::{
         AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved, finish_asset_request,
     },
+    fonts::{AssetIconsAppExt, glyph},
     hosted::{Hosted, HostedEventsAppExt},
     preview::PreviewSignals,
     project::ProjectState,
@@ -31,7 +36,7 @@ use concerto_editor::{
     timeline::{TimelineTrack, frame_count},
 };
 use concerto_foundation::assets::{
-    AssetId,
+    Asset, AssetId,
     content::decode_content_asset,
     registry::{AssetEntry, AssetRegistry},
 };
@@ -356,6 +361,7 @@ pub struct AnimationClipEditorPlugin;
 
 impl Plugin for AnimationClipEditorPlugin {
     fn build(&self, app: &mut App) {
+        app.register_asset_icon(AnimationClip::name(), glyph::WAVEFORM);
         app.register_asset_editor::<AnimationClip, AnimationClipEditor>()
             .expect("the editor's App holds the asset-editor registry")
             .forward_hosted_event::<ClipPreviewBones>()
@@ -386,6 +392,8 @@ pub fn install(app: &mut App) {
     app.register_plugin(TransportPlugin)
         .register_plugin(AnimationClipEditorPlugin)
         .register_plugin(RetargetRigEditorPlugin);
+    app.register_asset_icon(AnimationGraph::name(), glyph::GRAPH)
+        .register_asset_icon(BoneMask::name(), glyph::MASK_HAPPY);
 }
 
 fn install_event_keys(app: &mut App) {

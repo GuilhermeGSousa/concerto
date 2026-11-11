@@ -45,11 +45,11 @@ use taffy::FlexDirection;
 
 use crate::asset_editor::{AssetEditorRegistry, MAX_NEW_NUMBER, new_asset_name, valid_asset_name};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::marks::{self, Mark};
+use crate::fonts::{AssetIcons, draw_row_icon, glyph, row_icon};
 use crate::project::{AssetsWritten, EditorCommand, EditorCommands, ProjectOpened, ProjectState};
 use crate::tree_items::{OrderItems, despawn_outermost, order_items};
 use concerto_foundation::assets::{
-    Asset, AssetId,
+    AssetId,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mesh::mesh::Mesh;
@@ -122,8 +122,8 @@ impl ContentState {
 #[derive(Component)]
 struct ContentItem {
     key: ContentKey,
-    mark: Mark,
-    mark_node: Entity,
+    icon: char,
+    icon_node: Entity,
     label: Entity,
 }
 
@@ -840,20 +840,6 @@ fn open_item(
     }
 }
 
-fn kind_mark(kind: &str) -> Mark {
-    if kind == Scene::name() {
-        Mark::Group
-    } else if kind == Mesh::name() {
-        Mark::Mesh
-    } else if kind == Texture::name() {
-        Mark::Texture
-    } else if kind == StandardMaterial::name() {
-        Mark::Material
-    } else {
-        Mark::Plain
-    }
-}
-
 #[derive(Default)]
 struct Folder<'a> {
     folders: BTreeMap<(String, &'a str), Folder<'a>>,
@@ -865,7 +851,7 @@ struct Listed<'a> {
     key: ContentKey,
     parent: Option<ContentKey>,
     name: &'a str,
-    mark: Mark,
+    icon: char,
 }
 
 fn inside_root<'a>(folder: &'a str, content_root: &str) -> &'a str {
@@ -897,6 +883,7 @@ fn list_folder<'a>(
     folder: &Folder<'a>,
     path: Option<&str>,
     pending: Option<&Listed<'a>>,
+    icons: &AssetIcons,
     listed: &mut Vec<Listed<'a>>,
 ) {
     let parent = path.map(|path| ContentKey::Folder(path.to_string()));
@@ -909,9 +896,9 @@ fn list_folder<'a>(
             key: ContentKey::Folder(child_path.clone()),
             parent: parent.clone(),
             name,
-            mark: Mark::Folder,
+            icon: glyph::FOLDER,
         });
-        list_folder(child, Some(&child_path), pending, listed);
+        list_folder(child, Some(&child_path), pending, icons, listed);
     }
     if let Some(pending) = pending.filter(|pending| pending.parent == parent) {
         listed.push(pending.clone());
@@ -930,13 +917,13 @@ fn list_folder<'a>(
             key: ContentKey::Asset(asset.id),
             parent: parent.clone(),
             name: asset.name(),
-            mark: kind_mark(&asset.kind),
+            icon: icons.glyph(&asset.kind),
         });
     }
 }
 
 fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: Entity) -> Entity {
-    let mark_node = cmd.spawn(marks::shaped(entry.mark, theme)).entity();
+    let icon_node = cmd.spawn(row_icon(theme, entry.icon)).entity();
     let label = cmd
         .spawn((
             UINode::default()
@@ -952,8 +939,8 @@ fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: E
             UITreeElement::default(),
             ContentItem {
                 key: entry.key.clone(),
-                mark: entry.mark,
-                mark_node,
+                icon: entry.icon,
+                icon_node,
                 label,
             },
             select_item.into_listener(),
@@ -964,7 +951,7 @@ fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: E
     if let ContentKey::Folder(key) = &entry.key {
         cmd.insert(open_folder_menu(key.clone()), item);
     }
-    for content in [mark_node, label] {
+    for content in [icon_node, label] {
         cmd.add_child(item, content);
     }
     item
@@ -977,7 +964,7 @@ fn spawn_pending_item(
     prefill: &str,
     parent: Entity,
 ) -> Entity {
-    let mark_node = cmd.spawn(marks::shaped(entry.mark, theme)).entity();
+    let icon_node = cmd.spawn(row_icon(theme, entry.icon)).entity();
     let field = cmd
         .spawn((
             theme
@@ -999,27 +986,31 @@ fn spawn_pending_item(
             UITreeElement::default(),
             ContentItem {
                 key: entry.key.clone(),
-                mark: entry.mark,
-                mark_node,
+                icon: entry.icon,
+                icon_node,
                 label: field,
             },
             select_item.into_listener(),
             ChildOf::new(parent),
         ))
         .entity();
-    for content in [mark_node, field] {
+    for content in [icon_node, field] {
         cmd.add_child(item, content);
     }
     item
 }
 
-fn pending_listing(pending: &PendingAsset, content_root: &str) -> Listed<'static> {
+fn pending_listing(
+    pending: &PendingAsset,
+    content_root: &str,
+    icons: &AssetIcons,
+) -> Listed<'static> {
     let inside = inside_root(&pending.folder, content_root).trim_start_matches('/');
     Listed {
         key: pending.key(),
         parent: (!inside.is_empty()).then(|| ContentKey::Folder(inside.to_string())),
         name: "",
-        mark: kind_mark(pending.kind),
+        icon: icons.glyph(pending.kind),
     }
 }
 
@@ -1034,10 +1025,12 @@ fn reconcile_content_tree(
     materials: Query<&mut UIMaterial>,
     counts: Query<Entity, With<CountLabel>>,
     theme: Res<UITheme>,
+    icons: Res<AssetIcons>,
     mut cmd: CommandQueue,
 ) {
     if !project.is_changed()
         && !registry.is_changed()
+        && !icons.is_changed()
         && !state.is_changed()
         && state.reveal.is_none()
     {
@@ -1059,11 +1052,12 @@ fn reconcile_content_tree(
         let pending = state
             .pending
             .as_ref()
-            .map(|pending| pending_listing(pending, &project.content_root));
+            .map(|pending| pending_listing(pending, &project.content_root, &icons));
         list_folder(
             &folder_tree(registry.iter(), &project.content_root),
             None,
             pending.as_ref(),
+            &icons,
             &mut listed,
         );
         if let Some(pending) = pending
@@ -1100,8 +1094,8 @@ fn reconcile_content_tree(
                     cmd.add_child(parent, item);
                 }
                 if let Some((mut content, hidden, _)) = items.get_entity(item) {
-                    if content.mark != entry.mark {
-                        content.mark = entry.mark;
+                    if content.icon != entry.icon {
+                        content.icon = entry.icon;
                     }
                     if let ContentKey::Pending { .. } = entry.key {
                         if let Some(mut material) = materials.get_entity(content.label)
@@ -1179,22 +1173,27 @@ fn reconcile_content_tree(
 }
 
 fn sync_content_items(
-    items: Query<(&ContentItem, Option<&UISelected>)>,
-    changed: Query<Entity, Or<(Changed<ContentItem>, Added<UISelected>)>>,
+    items: Query<(&ContentItem, &UITreeElement, Option<&UISelected>)>,
+    changed: Query<
+        Entity,
+        Or<(
+            Changed<ContentItem>,
+            Changed<UITreeElement>,
+            Added<UISelected>,
+        )>,
+    >,
     mut deselected: RemovedComponents<UISelected>,
-    marks: Query<(&mut UINode, &mut UIMaterial)>,
+    texts: Query<&mut UIText>,
     theme: Res<UITheme>,
 ) {
     let mut rows: HashSet<Entity> = deselected.read().collect();
-    let apply = |(item, selected): (&ContentItem, Option<&UISelected>)| {
-        if let Some((mut node, mut material)) = marks.get_entity(item.mark_node) {
-            marks::apply(
-                item.mark,
-                &theme,
-                selected.is_some(),
-                &mut node,
-                &mut material,
-            );
+    let apply = |(item, element, selected): (&ContentItem, &UITreeElement, Option<&UISelected>)| {
+        let glyph = match item.key {
+            ContentKey::Folder(_) if element.expanded => glyph::FOLDER_OPEN,
+            _ => item.icon,
+        };
+        if let Some(mut text) = texts.get_entity(item.icon_node) {
+            draw_row_icon(&mut text, &theme, glyph, selected.is_some());
         }
     };
     if theme.is_changed() {
@@ -1241,7 +1240,7 @@ mod tests {
         Event, IntoSystem, System,
         entity::hierarchy::{ChildOf, Children},
         events::event_channel::EventChannel,
-        query::filter::{Changed, Or, With},
+        query::filter::{Changed, With},
         system::BoxedSystem,
     };
     use concerto_foundation::assets::{Asset, content::read_content_asset};
@@ -1281,6 +1280,9 @@ mod tests {
         }
         if world.get_resource::<EditorCommands>().is_none() {
             world.insert_resource(EditorCommands::default());
+        }
+        if world.get_resource::<AssetIcons>().is_none() {
+            world.insert_resource(AssetIcons::default());
         }
         channel::<UITextInputChanged>(world);
         channel::<UITextInputSubmitted>(world);
@@ -1802,16 +1804,16 @@ mod tests {
                 .0
         }
 
-        fn mark_border(&self, item: Entity) -> concerto_color::LinearRgba {
-            let mark = self
+        fn icon(&self, item: Entity) -> UIText {
+            let icon = self
                 .world
                 .get_component_for_entity::<ContentItem>(item)
                 .unwrap()
-                .mark_node;
+                .icon_node;
             self.world
-                .get_component_for_entity::<UIMaterial>(mark)
+                .get_component_for_entity::<UIText>(icon)
                 .unwrap()
-                .border_color
+                .clone()
         }
 
         fn busy(&mut self) -> std::sync::mpsc::Sender<()> {
@@ -1885,20 +1887,6 @@ mod tests {
         let view = f.view();
 
         assert_eq!(f.labels_under(view), ["birch", "moss", "alpha", "zeta"]);
-        let theme = UITheme::default();
-        let birch = f.item(&folder("birch"));
-        let mark = f
-            .world
-            .get_component_for_entity::<ContentItem>(birch)
-            .unwrap()
-            .mark_node;
-        assert_eq!(
-            f.world
-                .get_component_for_entity::<UIMaterial>(mark)
-                .unwrap()
-                .border_color,
-            Mark::Folder.shape(&theme, false).border.to_linear()
-        );
     }
 
     #[test]
@@ -2038,26 +2026,7 @@ mod tests {
         assert_eq!(f.state().selected(), Some(level));
         assert!(f.ui_selected(item));
         assert!(!f.ui_selected(f.asset_item("content/rock.gasset")));
-        let theme = UITheme::default();
-        let mark = f
-            .world
-            .get_component_for_entity::<ContentItem>(item)
-            .unwrap()
-            .mark_node;
-        assert_eq!(
-            f.world
-                .get_component_for_entity::<UINode>(mark)
-                .unwrap()
-                .width,
-            UIValue::Px(Mark::Group.shape(&theme, true).size)
-        );
-        assert_eq!(
-            f.world
-                .get_component_for_entity::<UIMaterial>(mark)
-                .unwrap()
-                .border_color,
-            Mark::Group.shape(&theme, true).border.to_linear()
-        );
+        assert_eq!(f.icon(item).color, UITheme::default().text);
         assert!(f.opened().is_empty());
     }
 
@@ -2076,20 +2045,8 @@ mod tests {
         f.refresh();
 
         assert!(!f.ui_selected(level));
-        assert_eq!(
-            f.mark_border(level),
-            Mark::Group
-                .shape(&UITheme::default(), false)
-                .border
-                .to_linear()
-        );
-        assert_eq!(
-            f.mark_border(rock),
-            Mark::Mesh
-                .shape(&UITheme::default(), true)
-                .border
-                .to_linear()
-        );
+        assert_eq!(f.icon(level).color, UITheme::default().text_muted);
+        assert_eq!(f.icon(rock).color, UITheme::default().text);
     }
 
     #[test]
@@ -2127,14 +2084,8 @@ mod tests {
         assert!(!f.ui_selected(level_item));
         assert_eq!(f.state().selected(), Some(level));
         let theme = UITheme::default();
-        assert_eq!(
-            f.mark_border(forest),
-            Mark::Folder.shape(&theme, true).border.to_linear()
-        );
-        assert_eq!(
-            f.mark_border(level_item),
-            Mark::Group.shape(&theme, false).border.to_linear()
-        );
+        assert_eq!(f.icon(forest).color, theme.text);
+        assert_eq!(f.icon(level_item).color, theme.text_muted);
     }
 
     #[test]
@@ -2218,11 +2169,11 @@ mod tests {
             .world
             .query::<&ContentItem, ()>()
             .iter(&mut f.world)
-            .map(|item| item.mark_node)
+            .map(|item| item.icon_node)
             .collect();
         let changed: Vec<Entity> = f
             .world
-            .query::<Entity, Or<(Changed<UINode>, Changed<UIMaterial>)>>()
+            .query::<Entity, Changed<UIText>>()
             .iter(&mut f.world)
             .filter(|entity| marks.contains(entity))
             .collect();

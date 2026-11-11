@@ -12,6 +12,7 @@ use concerto_editor::{
         ActiveEditor, AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
         EditorDocument, Unsaved,
     },
+    fonts::AssetIcons,
     hosted::{PlayState, StopPlay},
     scene::{Play, SceneEditor},
     tabs::{
@@ -82,6 +83,7 @@ fn setup_with(extra: impl FnOnce(&mut App)) -> (App, Entity, Entity) {
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(UITheme::default());
     app.insert_resource(HoveredNode::default());
+    app.insert_resource(AssetIcons::default());
     app.register_event::<WindowEvent>();
     app.register_plugin(TabsPlugin);
     extra(&mut app);

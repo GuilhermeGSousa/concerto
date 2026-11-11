@@ -14,7 +14,6 @@ pub mod import;
 pub mod inspected_asset;
 pub mod inspector;
 pub mod joint_picker;
-pub mod marks;
 pub mod mcp;
 pub mod name_menu;
 pub mod preview;

@@ -32,7 +32,7 @@ use crate::asset_picker::{
     ITEM_HEIGHT, LIST_MAX_HEIGHT, MENU_WIDTH, SCROLLBAR_GUTTER, menu_panel, picker_button,
     picker_caret, picker_label,
 };
-use crate::fonts::{glyph, icon};
+use crate::fonts::{button_icon, glyph, icon_button};
 use crate::hierarchy::{HierarchyState, ListRoot, ListedEntity, listed_entities};
 use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState};
 use crate::inspector::{
@@ -112,20 +112,9 @@ impl PropertyEditor<SceneEntityRef> for EntityPicker {
 }
 
 fn select_button(theme: &UITheme, row: Entity) -> (Listening<Pressable, UIClick>, Text) {
-    let size = theme.font_size_md;
-    let vertical = (theme.control_height - theme.line_height(size)) / 2.0;
-    let horizontal = (theme.control_height - size) / 2.0;
     (
-        theme
-            .pressable()
-            .size(
-                UIValue::Px(theme.control_height),
-                UIValue::Px(theme.control_height),
-            )
-            .padding(UIRect::axes(vertical, horizontal))
-            .fixed()
-            .on_click(select_referenced(row)),
-        icon(theme, glyph::CROSSHAIR, size).muted(),
+        icon_button(theme).on_click(select_referenced(row)),
+        button_icon(theme, glyph::CROSSHAIR),
     )
 }
 

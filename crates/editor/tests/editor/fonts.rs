@@ -63,6 +63,19 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
         ("X", X),
         ("DOTS_THREE", DOTS_THREE),
         ("DOT", DOT),
+        ("PLAY", PLAY),
+        ("PAUSE", PAUSE),
+        ("SKIP_BACK", SKIP_BACK),
+        ("SKIP_FORWARD", SKIP_FORWARD),
+        ("CROSSHAIR", CROSSHAIR),
+        ("BONE", BONE),
+        ("FOLDER", FOLDER),
+        ("FOLDER_OPEN", FOLDER_OPEN),
+        ("FOLDER_SIMPLE", FOLDER_SIMPLE),
+        ("PERSON_ARMS_SPREAD", PERSON_ARMS_SPREAD),
+        ("MASK_HAPPY", MASK_HAPPY),
+        ("GRAPH", GRAPH),
+        ("DATABASE", DATABASE),
     ];
     for (name, icon) in icons {
         let ids = glyph_ids(&icon.to_string(), concerto_editor::fonts::PHOSPHOR);
@@ -72,6 +85,58 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
             "{name} (U+{:04X}) is not in the Phosphor face",
             icon as u32
         );
+    }
+}
+
+struct IconCase {
+    kind: &'static str,
+    glyph: char,
+}
+
+#[test]
+fn an_asset_kind_shows_the_glyph_registered_last_and_the_file_when_none_is() {
+    use concerto_editor::fonts::{AssetIcons, AssetIconsAppExt, FontsPlugin, glyph};
+    let mut app = concerto_app::App::new();
+    app.register_asset_icon("Dialogue", glyph::IMAGE);
+    app.register_plugin(FontsPlugin);
+    app.register_asset_icon("AnimationClip", glyph::WAVEFORM)
+        .register_asset_icon("Dialogue", glyph::GRAPH);
+    let icons = app.get_resource::<AssetIcons>().unwrap();
+    for case in [
+        IconCase {
+            kind: "Scene",
+            glyph: glyph::STACK,
+        },
+        IconCase {
+            kind: "Mesh",
+            glyph: glyph::CUBE,
+        },
+        IconCase {
+            kind: "Texture",
+            glyph: glyph::IMAGE,
+        },
+        IconCase {
+            kind: "StandardMaterial",
+            glyph: glyph::CIRCLES_THREE,
+        },
+        IconCase {
+            kind: "Skeleton",
+            glyph: glyph::BONE,
+        },
+        IconCase {
+            kind: "AnimationClip",
+            glyph: glyph::WAVEFORM,
+        },
+        IconCase {
+            kind: "Dialogue",
+            glyph: glyph::GRAPH,
+        },
+        IconCase {
+            kind: "NavMesh",
+            glyph: glyph::FILE,
+        },
+    ] {
+        assert_eq!(icons.glyph(case.kind), case.glyph, "{}", case.kind);
     }
 }
 

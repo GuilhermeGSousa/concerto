@@ -1,7 +1,7 @@
 //! The "⋯" button on a component card and the menu it opens.
 use super::*;
 
-use crate::fonts::{glyph, icon};
+use crate::fonts::{button_icon, glyph, icon_button};
 use concerto_ecs::component::bundle::IntoBundle;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorTarget, UIAnchoredPanel},
@@ -47,12 +47,8 @@ pub(super) fn menu_button(
     component: TypeId,
 ) -> impl IntoBundle<Bundle: 'static> + use<> {
     (
-        theme
-            .pressable()
-            .size(UIValue::Px(22.0), UIValue::Px(20.0))
-            .padding(UIRect::axes(0.0, 4.0))
-            .on_click(toggle_component_menu),
-        icon(theme, glyph::DOTS_THREE, theme.font_size_lg).muted(),
+        icon_button(theme).on_click(toggle_component_menu),
+        button_icon(theme, glyph::DOTS_THREE),
         ComponentMenuButton {
             scene_entity,
             component,

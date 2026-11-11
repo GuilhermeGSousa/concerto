@@ -20,6 +20,7 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::{AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec},
+    fonts::{AssetIconsAppExt, glyph},
     hosted::Hosted,
     inspected_asset::{InspectedAssetEditor, InspectedAssetSystems, InspectedDocument},
     inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, TargetWorld},
@@ -1075,6 +1076,7 @@ pub struct RetargetRigEditorPlugin;
 
 impl Plugin for RetargetRigEditorPlugin {
     fn build(&self, app: &mut App) {
+        app.register_asset_icon(RetargetRig::name(), glyph::PERSON_ARMS_SPREAD);
         app.register_creatable_asset_editor::<RetargetRig, RetargetRigEditor>()
             .expect("the editor's App holds the asset-editor registry")
             .register_asset::<RetargetRig>()

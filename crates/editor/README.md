@@ -426,6 +426,34 @@ region with no visible panel and no host is `Hidden`, and the Asset Browser is
 `Left` is `Hidden`, the `Centre` is hidden and `Right` is `Fill`.
 `ResizePanel` for a panel that is not `Sized` changes nothing.
 
+Every icon is a glyph of the bundled Phosphor face, drawn through
+`fonts::icon` from a constant in `fonts::glyph`, which carries the glyph's
+upstream name. There are two sizes. A row's icon, in a tree row or on a tab,
+is `fonts::row_icon`: a 16 px glyph in a 20 px column. An icon button is
+`fonts::icon_button` with `fonts::button_icon`: a 16 px glyph in a square of
+the theme's control height. An icon is the muted text colour at rest and the
+text colour while its row is hovered or selected; the glyph, not a colour,
+tells kinds apart. The hierarchy shows `stack` for the scene root, `camera`,
+`lightbulb` and `cube` for an entity with a camera, a light or a mesh,
+`folder-simple` for any other entity with children, and `dot` for the rest.
+
+The `AssetIcons` resource, which `FontsPlugin` inserts, maps an asset kind's
+`Asset::name()` to its glyph, and the Asset Browser's rows and the tab strip
+both read it. The editor registers `Scene`, `Mesh`, `Texture`,
+`StandardMaterial` and `Skeleton`; a kind nothing registered shows `file`. An
+extension crate registers its own kinds, and a later registration of a kind
+replaces the earlier one:
+
+```rust,ignore
+use concerto_editor::fonts::{AssetIconsAppExt, glyph};
+
+app.register_asset_icon(AnimationClip::name(), glyph::WAVEFORM);
+```
+
+`concerto-animation-editor` registers `AnimationClip`, `AnimationGraph`,
+`BoneMask` and `RetargetRig`, and `concerto-motion-matching-editor` registers
+`MotionDatabase`.
+
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
 same function the game's own `main` hands to `concerto::run`. Each scene's edit
@@ -482,8 +510,9 @@ and which is empty while no project is open. The editor scans only then; content
 that git or a file explorer changes while the project is open shows after it is
 reopened. The tree mirrors the
 project's `content/` folder: the folders and
-assets directly inside it are the top-level rows, a folder shows a folder mark
-and holds its subfolders and assets, and an asset shows its kind mark and name.
+assets directly inside it are the top-level rows, a folder shows the `folder`
+glyph, `folder-open` while expanded, and holds its subfolders and assets, and
+an asset shows its kind's glyph from `AssetIcons` and its name.
 A folder appears once it holds an asset at any depth; empty directories are not
 shown. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an
