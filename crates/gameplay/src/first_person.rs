@@ -35,6 +35,8 @@ pub struct FirstPersonWalker {
     pub height: f32,
     /// From the feet to the eyes, where a `FirstPersonView` sits.
     pub eye_height: f32,
+    /// How far ahead of the body's centre the eyes are, so a view looks out past a body drawn on the walker; keep it inside `radius`.
+    pub eye_forward: f32,
     /// Radians per second the view turns with the `Look` stick pushed all the way.
     pub look_rate: f32,
     /// Radians the view turns per unit of mouse motion.
@@ -62,6 +64,7 @@ impl Default for FirstPersonWalker {
             radius: 0.3,
             height: 1.8,
             eye_height: 1.65,
+            eye_forward: 0.0,
             look_rate: 2.5,
             mouse_sensitivity: 0.002,
             pitch_limit: 80f32.to_radians(),
@@ -113,6 +116,11 @@ impl FirstPersonWalker {
 
     pub fn with_eye_height(mut self, eye_height: f32) -> Self {
         self.eye_height = eye_height;
+        self
+    }
+
+    pub fn with_eye_forward(mut self, eye_forward: f32) -> Self {
+        self.eye_forward = eye_forward;
         self
     }
 
@@ -308,7 +316,8 @@ pub fn place_first_person_views(
         let Some((walker, body)) = walkers.get_entity(view.walker) else {
             continue;
         };
-        transform.translation = body.translation + Vec3::Y * walker.eye_height;
+        let ahead = Quat::from_rotation_y(walker.yaw()) * Vec3::NEG_Z * walker.eye_forward;
+        transform.translation = body.translation + Vec3::Y * walker.eye_height + ahead;
         transform.rotation = walker.view_rotation();
     }
 }
