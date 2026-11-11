@@ -437,12 +437,13 @@ tells kinds apart. The hierarchy shows `stack` for the scene root, `camera`,
 `lightbulb` and `cube` for an entity with a camera, a light or a mesh,
 `folder-simple` for any other entity with children, and `dot` for the rest.
 
-The `AssetIcons` resource, which `FontsPlugin` inserts, maps an asset kind's
-`Asset::name()` to its glyph, and the Asset Browser's rows and the tab strip
-both read it. The editor registers `Scene`, `Mesh`, `Texture`,
-`StandardMaterial` and `Skeleton`; a kind nothing registered shows `file`. An
-extension crate registers its own kinds, and a later registration of a kind
-replaces the earlier one:
+The `AssetIcons` resource maps an asset kind's `Asset::name()` to its glyph,
+and the Asset Browser's rows and the tab strip both read it. `ContentPlugin`,
+`TabsPlugin` and the first `register_asset_icon` each insert it when it is
+missing, so either plugin works without `FontsPlugin`. `FontsPlugin` registers
+`Scene`, `Mesh`, `Texture`, `StandardMaterial` and `Skeleton`; a kind nothing
+registered shows `file`. An extension crate registers its own kinds, and a
+later registration of a kind replaces the earlier one:
 
 ```rust,ignore
 use concerto_editor::fonts::{AssetIconsAppExt, glyph};

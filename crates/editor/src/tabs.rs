@@ -77,6 +77,9 @@ pub struct TabsPlugin;
 
 impl Plugin for TabsPlugin {
     fn build(&self, app: &mut App) {
+        if app.get_resource::<AssetIcons>().is_none() {
+            app.insert_resource(AssetIcons::default());
+        }
         app.add_system(LateUpdate, scroll_tabs)
             .add_system(LateUpdate, sync_tabs.before(UiSet::Materials))
             .add_system(

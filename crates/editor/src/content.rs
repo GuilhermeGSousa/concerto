@@ -164,6 +164,9 @@ pub struct ContentPlugin;
 impl Plugin for ContentPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ContentState::default());
+        if app.get_resource::<AssetIcons>().is_none() {
+            app.insert_resource(AssetIcons::default());
+        }
         app.track_removals::<UISelected>();
         install_listeners(app.main_mut().world_mut());
         app.add_panel(PanelDescriptor {
