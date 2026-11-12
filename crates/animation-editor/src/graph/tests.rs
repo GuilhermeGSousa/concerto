@@ -13,20 +13,32 @@ use concerto_animation::{
     retarget::RetargetNode,
 };
 use concerto_app::App;
-use concerto_foundation::assets::{
-    Asset, AssetId,
-    content::{ContentAssetHeader, decode_content_asset, read_content_asset, write_content_asset},
-    handle::AssetHandle,
+use concerto_ecs::component::scene::SceneEntityRef;
+use concerto_foundation::{
+    assets::{
+        Asset, AssetId,
+        content::{
+            ContentAssetHeader, decode_content_asset, read_content_asset, save_content_asset_into,
+            write_content_asset,
+        },
+        handle::AssetHandle,
+        registry::AssetRegistry,
+    },
+    transform::Transform,
 };
 use concerto_mcp::host::run_with;
+use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_render::gpu::Gpu;
+use concerto_scene::scene::{Scene, SceneNode};
+use glam::Mat4;
 use rmcp::{
     RoleClient, ServiceExt,
     model::{CallToolRequestParams, CallToolResult},
     service::RunningService,
 };
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 const SIZE: (u32, u32) = (800, 600);
 const PATIENCE: Duration = Duration::from_secs(120);
@@ -626,22 +638,71 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
     );
 }
 
+fn write_stage(root: &Path) -> AssetId {
+    let mut registry = AssetRegistry::new();
+    let skeleton = Skeleton::new(
+        vec![Mat4::IDENTITY; 2],
+        vec![None, Some(0)],
+        vec!["root".into(), "driven".into()],
+        vec![JointPose::IDENTITY; 2],
+        vec![Uuid::from_u128(1), Uuid::from_u128(2)],
+    )
+    .unwrap();
+    let skeleton =
+        save_content_asset_into(&skeleton, root, "content/skeleton.gasset", &mut registry).unwrap();
+    let node = |name: &str, children: Vec<usize>| {
+        let mut node = SceneNode {
+            name: name.into(),
+            children,
+            components: vec![],
+        };
+        node.push_component(&Transform::IDENTITY).unwrap();
+        node
+    };
+    let mut armature = node("armature", vec![1]);
+    armature
+        .push_component(&SkeletonComponent::new(
+            AssetHandle::weak(skeleton),
+            [1, 2].map(SceneEntityRef::Index).to_vec(),
+            Some(SceneEntityRef::Index(1)),
+        ))
+        .unwrap();
+    let scene = Scene {
+        nodes: vec![armature, node("root", vec![2]), node("driven", vec![])],
+        referenced_assets: vec![skeleton],
+    };
+    save_content_asset_into(&scene, root, "content/scene.gasset", &mut registry).unwrap();
+    let bare = Scene {
+        nodes: vec![node("prop", vec![])],
+        referenced_assets: vec![],
+    };
+    save_content_asset_into(&bare, root, "content/bare.gasset", &mut registry).unwrap()
+}
+
 struct Previewed {
+    optional: Value,
+    ambiguous: Value,
+    cleared: Value,
+    unfit: Value,
     inspected: String,
     set: String,
     after_set: String,
+    diagram: String,
     from: Value,
     back: Value,
     refused_from: String,
     unknown: Value,
     status: String,
+    unplayed: String,
+    paused: String,
 }
 
 #[test]
-fn the_preview_and_the_parameters_of_a_graph_are_read_and_set_over_mcp() {
+fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_over_mcp() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().to_path_buf();
     write_broken_graph(&root);
+    let bare = write_stage(&root).simple_hex();
     let Some(previewed) = serve(&root, move |client| async move {
         until_idle(&client).await;
         ok(
@@ -690,15 +751,54 @@ fn the_preview_and_the_parameters_of_a_graph_are_read_and_set_over_mcp() {
         )
         .await;
         ok(&client, "graph_up", json!({})).await;
-        ok(&client, "save", json!({})).await;
-        let inspected = ok(&client, "graph_inspect", json!({})).await;
-        let set = ok(
+        ok(&client, "graph_add_node", json!({ "type": "LayerNode" })).await;
+        ok(&client, "graph_select", json!({ "node": 3 })).await;
+        let optional = ok(
+            &client,
+            "set_property",
+            json!({
+                "target": "Node",
+                "path": "weight_param",
+                "value": { "Some": { "0": "moving" } }
+            }),
+        )
+        .await;
+        let ambiguous = error(
             &client,
             "graph_set_param",
             json!({ "name": "moving", "value": true }),
         )
         .await;
+        let cleared = ok(
+            &client,
+            "set_property",
+            json!({ "target": "Node", "path": "weight_param", "value": "None" }),
+        )
+        .await;
+        let unfit = error(
+            &client,
+            "graph_set_param",
+            json!({ "name": "moving", "value": "yes" }),
+        )
+        .await;
+        ok(&client, "save", json!({})).await;
+        let inspected = ok(&client, "graph_inspect", json!({})).await;
+        let mut set = String::new();
+        for _ in 0..10 {
+            set = ok(
+                &client,
+                "graph_set_param",
+                json!({ "name": "moving", "value": true }),
+            )
+            .await;
+            if set.contains("in Walk") {
+                break;
+            }
+        }
         let after_set = ok(&client, "graph_inspect", json!({})).await;
+        ok(&client, "graph_open", json!({ "node": 1 })).await;
+        let diagram = ok(&client, "graph_inspect", json!({})).await;
+        ok(&client, "graph_up", json!({})).await;
         let from = ok(
             &client,
             "set_property",
@@ -732,36 +832,102 @@ fn the_preview_and_the_parameters_of_a_graph_are_read_and_set_over_mcp() {
         )
         .await;
         let status = ok(&client, "status", json!({})).await;
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "Preview", "path": "scene", "value": bare }),
+        )
+        .await;
+        let unplayed = ok(
+            &client,
+            "graph_set_param",
+            json!({ "name": "moving", "value": true }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "Preview", "path": "playing", "value": false }),
+        )
+        .await;
+        let paused = ok(
+            &client,
+            "graph_set_param",
+            json!({ "name": "moving", "value": false }),
+        )
+        .await;
         client.cancel().await.unwrap();
         Previewed {
+            optional: serde_json::from_str(&optional).unwrap(),
+            ambiguous,
+            cleared: serde_json::from_str(&cleared).unwrap(),
+            unfit,
             inspected,
             set,
             after_set,
+            diagram,
             from: serde_json::from_str(&from).unwrap(),
             back: serde_json::from_str(&back).unwrap(),
             refused_from,
             unknown,
             status,
+            unplayed,
+            paused,
         }
     }) else {
         return;
     };
 
     assert_eq!(
-        previewed.inspected,
-        "Locomotion\n\
+        previewed.optional["value"]["weight_param"],
+        json!({ "Some": { "0": "moving" } }),
+        "{}",
+        previewed.optional
+    );
+    assert_eq!(
+        previewed.ambiguous["message"],
+        "moving is read as several types, bool and f32; give type."
+    );
+    assert_eq!(
+        previewed.cleared["value"]["weight_param"], "None",
+        "{}",
+        previewed.cleared
+    );
+    assert_eq!(previewed.unfit["code"], "refused", "{}", previewed.unfit);
+    assert!(
+        previewed.unfit["message"]
+            .as_str()
+            .unwrap()
+            .contains("\"yes\" does not fit"),
+        "{}",
+        previewed.unfit
+    );
+    let graph = "Locomotion\n\
          0 · ResultNode · result\n\
          1 · AnimationStateMachine · 0#0\n\
          2 · BlendSpace2DNode · loose\n\
+         3 · LayerNode · loose\n\
          parameters:\n\
-         direction · Vec2 · [0.0,0.0]\n\
-         moving · bool · false"
-    );
-    assert_eq!(previewed.set, "Set moving to true.");
+         direction · Vec2 · [0.0,0.0]\n";
     assert!(
-        previewed.after_set.ends_with("moving · bool · true"),
+        previewed
+            .inspected
+            .starts_with(&format!("{graph}moving · bool · false")),
         "{}",
-        previewed.after_set
+        previewed.inspected
+    );
+    let live = "live:\n\
+         0 · weight 1.00\n\
+         1 · weight 1.00 · in Walk";
+    assert_eq!(previewed.set, format!("Set moving to true.\n{live}"));
+    assert_eq!(
+        previewed.after_set,
+        format!("{graph}moving · bool · true\n{live}")
+    );
+    assert!(
+        previewed.diagram.ends_with("live:\nin Walk"),
+        "{}",
+        previewed.diagram
     );
     assert_eq!(
         previewed.from["value"]["from"],
@@ -799,5 +965,13 @@ fn the_preview_and_the_parameters_of_a_graph_are_read_and_set_over_mcp() {
         !previewed.status.contains("unsaved"),
         "{}",
         previewed.status
+    );
+    assert_eq!(
+        previewed.unplayed,
+        "Set moving to true. No preview is playing the graph, so no live state follows; set scene on the Preview value to a scene with a skeleton."
+    );
+    assert_eq!(
+        previewed.paused,
+        "Set moving to false. The preview is paused, so no live state follows; set playing on the Preview value to see the graph play."
     );
 }

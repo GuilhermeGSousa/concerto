@@ -298,7 +298,9 @@ view: the breadcrumb, then for a pose graph one line per node,
 for a state machine one line per state, `name · initial · graph address`, then
 one per transition, `from → to #index · trigger · blend`; when the graph names
 parameters, a `parameters:` line follows and one line per parameter,
-`name · type · value`. `graph_add_node` adds
+`name · type · value`, and once the preview has reported what it plays, a
+`live:` line and under it the weight of each playing node, the time of a clip
+node, and the current state and transition of a state machine. `graph_add_node` adds
 a node of `type`, a short name such as `LayerNode` or a full path, as an input
 of `parent` at `slot`, or loose without a parent, and answers its id.
 `graph_add_state` adds a state `name` to the state machine in view, playing
@@ -315,7 +317,10 @@ or a transition, which becomes the front document's value `Node`, `State` or
 that plays a graph into that graph, or into the graph of `state`, and
 `graph_up` goes back up one level; both answer `Showing <breadcrumb>.`.
 `graph_set_param` sets the parameter `name` on the preview's players to
-`value`, JSON of the parameter's type, and answers `Set moving to true.`; a
+`value`, JSON of the parameter's type, runs frames until the preview next
+reports what it plays, and answers `Set moving to true.` with that `live:`
+block under it; while the preview is paused, or no player plays the graph, it
+answers at once and says so. A
 name the graph does not read answers `refused` listing the parameters with
 their types, and a name the graph reads as several types needs `type`. The
 tab's preview is the value `Preview`, whose `scene`, `skeleton`, `playing`,

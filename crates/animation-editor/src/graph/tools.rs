@@ -1,4 +1,4 @@
-use concerto_animation::node::state_machine::AnimationStateMachine;
+use concerto_animation::node::{StateMachineReport, state_machine::AnimationStateMachine};
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
     Component, Entity, Query, Res, command::CommandQueue, events::event_reader::EventReader,
@@ -25,11 +25,13 @@ use super::{
         EditGraph, GraphChange, GraphDocument, GraphEdit, GraphEdited, GraphSelection, OpenTarget,
         Sources, TransitionRef, shown_transitions,
     },
-    panels::subtitle,
+    panels::{subtitle, time_text, weight_text},
     params::{FoundParam, short_type},
+    preview::GraphPreviewState,
+    stage::{GraphLive, LiveView, SentPreview},
 };
 
-/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`.
+/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`. Once the preview has reported what it plays, a `live:` line follows: for a pose graph one line per playing node, `id · weight · time` for a clip and `in state · from → to progress` for a state machine, and for a state machine that one part alone.
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphInspect {}
 
@@ -113,7 +115,7 @@ pub struct GraphOpen {
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphUp {}
 
-/// Sets a parameter of the graph the front animation graph tab shows, on the blackboard of the preview's players. graph_inspect lists the parameters with their types and values. Never saved.
+/// Sets a parameter of the graph the front animation graph tab shows, on the blackboard of the preview's players, and answers with the `live:` block of graph_inspect as the preview next reports it, or says that no preview is playing. graph_inspect lists the parameters with their types and values. Never saved.
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphSetParam {
     /// The parameter's name, as graph_inspect lists it.
@@ -124,13 +126,23 @@ pub struct GraphSetParam {
     pub r#type: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ParamStep {
+    Committing { waited: bool },
+    Sending,
+    Playing,
+}
+
 #[derive(Component)]
 struct SettingParam {
     document: Entity,
     label: &'static str,
     answer: String,
-    waited: bool,
+    step: ParamStep,
 }
+
+const PAUSED: &str = "The preview is paused, so no live state follows; set playing on the Preview value to see the graph play.";
+const NOT_PLAYING: &str = "No preview is playing the graph, so no live state follows; set scene on the Preview value to a scene with a skeleton.";
 
 #[derive(Component)]
 struct EditingGraph {
@@ -747,51 +759,124 @@ fn graph_set_param(
                 document,
                 label,
                 answer: format!("Set {} to {}.", arguments.name, arguments.value),
-                waited: false,
+                step: ParamStep::Committing { waited: false },
             },
         ));
     }
 }
 
+fn machine_part(machine: &StateMachineReport) -> String {
+    let mut part = match machine.current {
+        Some(current) => format!("in {current}"),
+        None => "in no state".to_owned(),
+    };
+    if let Some(transition) = machine.transition {
+        part.push_str(&format!(
+            " · {} → {} {}",
+            transition.from,
+            transition.to,
+            weight_text(transition.progress)
+        ));
+    }
+    part
+}
+
+fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
+    let mut lines = Vec::new();
+    if let Some(node) = state.shown_machine() {
+        let machine = live.node(node)?.report.state_machine?;
+        lines.push(machine_part(&machine));
+    } else {
+        for node in state.graph()?.nodes() {
+            let Some(playing) = live.node(node.id) else {
+                continue;
+            };
+            let mut line = format!("{} · weight {}", node.id, weight_text(playing.weight));
+            if let Some(time) = playing.report.clip_time {
+                line.push_str(&format!(" · time {}", time_text(time)));
+            }
+            if let Some(machine) = &playing.report.state_machine {
+                line.push_str(&format!(" · {}", machine_part(machine)));
+            }
+            lines.push(line);
+        }
+    }
+    (!lines.is_empty()).then(|| format!("live:\n{}", lines.join("\n")))
+}
+
 fn answer_param_sets(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
-    waiting: Query<(Entity, &PendingCall, &mut SettingParam)>,
-    documents: Query<&EditorDocument>,
+    mut reported: EventReader<Hosted<GraphPreviewState>>,
+    waiting: Query<(Entity, &mut PendingCall, &mut SettingParam)>,
+    documents: Query<(&EditorDocument, &GraphDocument, &SentPreview)>,
     mut cmd: CommandQueue,
 ) {
     let written: Vec<&Hosted<PropertyCommitted>> = committed
         .read()
         .filter(|hosted| !hosted.event.address.target.saved())
         .collect();
-    for (call, pending, mut setting) in waiting.iter() {
-        let result = written
-            .iter()
-            .find(|hosted| {
-                hosted.document == setting.document
-                    && hosted
-                        .event
-                        .address
-                        .path
-                        .get_depth(0)
-                        .is_some_and(|segment| segment == setting.label)
-            })
-            .map(|hosted| &hosted.event.result);
-        match result {
-            Some(Ok(())) => pending.reply.ok(setting.answer.clone()),
-            Some(Err(refusal)) => pending.reply.err(refused(refusal.status().to_string())),
-            None if setting.waited => {
-                let status = documents
-                    .get_entity(setting.document)
-                    .map_or("The parameter was not set", |document| {
-                        document.status.as_str()
-                    });
-                pending.reply.err(refused(format!("{status}.")));
+    let reported: Vec<&Hosted<GraphPreviewState>> = reported.read().collect();
+    for (call, mut pending, mut setting) in waiting.iter() {
+        let Some((document, state, sent)) = documents.get_entity(setting.document) else {
+            pending.reply.err(refused(
+                "The graph's tab closed before the parameter was set.",
+            ));
+            cmd.despawn(call);
+            continue;
+        };
+        if let ParamStep::Committing { waited } = setting.step {
+            let result = written
+                .iter()
+                .find(|hosted| {
+                    hosted.document == setting.document
+                        && hosted
+                            .event
+                            .address
+                            .path
+                            .get_depth(0)
+                            .is_some_and(|segment| segment == setting.label)
+                })
+                .map(|hosted| &hosted.event.result);
+            match result {
+                Some(Ok(())) if !state.preview.playing => {
+                    pending.reply.ok(format!("{} {PAUSED}", setting.answer));
+                }
+                Some(Ok(())) => {
+                    setting.step = ParamStep::Sending;
+                    pending.waiting_for = "the preview to report what it plays";
+                }
+                Some(Err(refusal)) => pending.reply.err(refused(refusal.status().to_string())),
+                None if waited => {
+                    pending.reply.err(refused(format!("{}.", document.status)));
+                }
+                None => {
+                    setting.step = ParamStep::Committing { waited: true };
+                    continue;
+                }
             }
-            None => {
-                setting.waited = true;
+            if setting.step != ParamStep::Sending {
+                cmd.despawn(call);
                 continue;
             }
         }
+        if setting.step == ParamStep::Sending {
+            if sent.holds_params(state) {
+                setting.step = ParamStep::Playing;
+            }
+            continue;
+        }
+        let Some(played) = reported
+            .iter()
+            .rev()
+            .find(|hosted| hosted.document == setting.document)
+        else {
+            continue;
+        };
+        let live = LiveView::of(&played.event, sent).and_then(|live| live_block(state, live));
+        pending.reply.ok(match live {
+            Some(live) => format!("{}\n{live}", setting.answer),
+            None => format!("{} {NOT_PLAYING}", setting.answer),
+        });
         cmd.despawn(call);
     }
 }
@@ -799,13 +884,13 @@ fn answer_param_sets(
 fn graph_inspect(
     mut calls: ToolCalls<GraphInspect>,
     active: Res<ActiveEditor>,
-    documents: Query<(&GraphDocument, Option<&HostedApp>)>,
+    documents: Query<(&GraphDocument, &GraphLive, &SentPreview, Option<&HostedApp>)>,
     assets: Res<AssetRegistry>,
     project: Res<ProjectState>,
 ) {
     for (_, reply) in calls.read() {
         let front = active.0.and_then(|document| documents.get_entity(document));
-        let Some((state, hosted)) = front else {
+        let Some((state, live, sent, hosted)) = front else {
             reply.err(no_graph_tab());
             continue;
         };
@@ -826,11 +911,13 @@ fn graph_inspect(
                 .map(|project| project.root.as_path()),
         });
         let types = types.as_ref().map(|types| types.read());
+        let live = LiveView::latest(live, sent).and_then(|live| live_block(state, live));
         if let Some(machine) = state.machine() {
             state_lines(machine, &assets, &mut lines);
             if let Some(types) = types.as_deref() {
                 param_lines(state, &found, types, &mut lines);
             }
+            lines.extend(live);
             reply.ok(lines.join("\n"));
             continue;
         }
@@ -850,6 +937,7 @@ fn graph_inspect(
         if let Some(types) = types.as_deref() {
             param_lines(state, &found, types, &mut lines);
         }
+        lines.extend(live);
         reply.ok(lines.join("\n"));
     }
 }
