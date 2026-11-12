@@ -14,6 +14,7 @@ use concerto::{
     ecs::{
         CommandQueue, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
         Without,
+        component::name::Name,
         entity::hierarchy::Children,
         events::event_reader::EventReader,
         reflect::{ReflectComponent, ReflectSceneComponent},
@@ -24,7 +25,7 @@ use concerto::{
         transform::Transform,
     },
     gameplay::first_person::{FirstPersonView, FirstPersonWalker},
-    mesh::skeleton::JointName,
+    mesh::{mesh::MeshComponent, skeleton::JointName},
     name::name,
     physics::{
         body::BodyId,
@@ -32,10 +33,11 @@ use concerto::{
         physics_state::PhysicsState,
         query::QueryFilter,
         rigid_body::{AllowedDofs, MotionType, RigidBody},
+        shape::MeshCollider,
     },
     procedural_animation::{LookAtBone, LookAtNode},
     reflect::{Reflect, ReflectDefault},
-    render::components::camera::Camera,
+    render::components::{camera::Camera, light::Light},
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
     ui::{
         material::UIMaterial,
@@ -62,7 +64,7 @@ use crate::controls::{
     PagePrev, Pause, Watch, bind_controls,
 };
 use crate::house::{House, Interactable, ItemPlace, end_night};
-use crate::players::{PLAYER_COUNT, SeatEntity, Seated};
+use crate::players::{PLAYER_COUNT, SeatEntity, Seated, SpawnPoint};
 use crate::rules::name_of;
 use crate::save::{SaveFile, save_dir};
 use crate::schedule::{NpcPose, WALK_SPEED, case_time, entries_of, line_at, pose_at, talks_at};
@@ -77,6 +79,8 @@ const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
 const NPC_DOOR_REACH: f32 = 1.1;
+const GREYBOX_SUN: f32 = 1.4;
+const DEVICE_HALF_EXTENTS: Vec3 = Vec3::new(0.35, 0.5, 0.3);
 const PASSING_HASTE: f64 = 12.0;
 const HELD_SIZE: f32 = 0.15;
 const HELD_NEAR: f32 = 0.32;
@@ -164,6 +168,13 @@ struct Adopted;
 
 #[derive(Component)]
 struct DoorPanel {
+    door: crate::case::DoorId,
+    closed: Transform,
+    shown_open: bool,
+}
+
+#[derive(Component)]
+struct LeafPanel {
     door: crate::case::DoorId,
     closed: Transform,
     shown_open: bool,
@@ -332,7 +343,55 @@ pub struct DebugPause(pub bool);
 
 /// Adds the night's mechanics over the test case: the house, its characters and props, each player's screen and HUD, and the loop.
 pub fn install(app: &mut App, saves: Option<PathBuf>) {
-    let data = CaseData::test();
+    install_stage(app, saves, Stage::test());
+}
+
+/// What is played: a case over its level, the scenes that draw the level, and whether the level's doors and devices are scene nodes found by name.
+pub struct Stage {
+    pub data: CaseData,
+    pub scenes: Vec<AssetId>,
+    pub named_nodes: bool,
+}
+
+impl Stage {
+    /// The open test case on its two-room level, whose fixtures are placed in the level scene.
+    pub fn test() -> Self {
+        Self {
+            data: CaseData::test(),
+            scenes: vec![LEVEL_ART],
+            named_nodes: false,
+        }
+    }
+
+    /// The manor's greybox with an empty case, its doors and devices read from node names.
+    pub fn manor_walk() -> Self {
+        Self {
+            data: CaseData::manor_walk(),
+            scenes: vec![
+                asset_id!("content/manor/export/manor_ground/scene.gasset"),
+                asset_id!("content/manor/export/manor_first/scene.gasset"),
+                asset_id!("content/manor/export/manor_attic/scene.gasset"),
+                asset_id!("content/manor/export/manor_cellar/scene.gasset"),
+                asset_id!("content/manor/export/manor_grounds/scene.gasset"),
+            ],
+            named_nodes: true,
+        }
+    }
+}
+
+#[derive(Resource)]
+struct StageArt {
+    scenes: Vec<AssetId>,
+    named_nodes: bool,
+}
+
+/// Adds the night's mechanics over `stage`.
+pub fn install_stage(app: &mut App, saves: Option<PathBuf>, stage: Stage) {
+    app.insert_resource(StageArt {
+        scenes: stage.scenes,
+        named_nodes: stage.named_nodes,
+    });
+    let data = stage.data;
     let mut session = Session::default();
     let mut book = Casebook::default();
     if let Some(save) = saves.as_deref().and_then(SaveFile::read) {
@@ -341,6 +400,13 @@ pub fn install(app: &mut App, saves: Option<PathBuf>) {
         session.roles = restored.roles;
     }
     session.show_card(book.loops() + 1, Vec::new());
+    #[cfg(feature = "debug")]
+    if std::env::var_os("ONE_MORE_NIGHT_NO_CARD").is_some() {
+        session.card = None;
+        for seat in &mut session.seats {
+            seat.mode = Mode::Walking;
+        }
+    }
     bind_controls(
         app.get_resource_mut::<ActionMap>()
             .expect("DefaultPlugins inserts the ActionMap"),
@@ -355,6 +421,8 @@ pub fn install(app: &mut App, saves: Option<PathBuf>) {
         .register_type::<Fixture>()
         .add_system(Startup, spawn_case)
         .add_system(Update, adopt_fixtures)
+        .add_system(Update, adopt_named_nodes)
+        .add_system(Update, swing_leaves.after(play))
         .add_system(Update, build_huds)
         .add_system(Update, find_targets)
         .add_system(Update, play.after(find_targets))
@@ -435,12 +503,24 @@ fn spawn_case(
     house: Res<House>,
     clock: Res<NightClock>,
     assets: Res<AssetServer>,
+    stage: Res<StageArt>,
     mut cmd: CommandQueue,
 ) {
-    cmd.spawn((
-        SceneSpawnerComponent(assets.load::<Scene>(LEVEL_ART)),
-        Transform::default(),
-    ));
+    for scene in &stage.scenes {
+        cmd.spawn((
+            SceneSpawnerComponent(assets.load::<Scene>(*scene)),
+            Transform::default(),
+        ));
+    }
+    if stage.named_nodes {
+        cmd.spawn((
+            Light::directional_light().with_intensity(GREYBOX_SUN),
+            Transform::from_translation_rotation(
+                Vec3::ZERO,
+                Quat::from_rotation_y(0.6) * Quat::from_rotation_x(-0.9),
+            ),
+        ));
+    }
     for npc in data.case.characters.ids() {
         let Some(pose) = npc_pose(&data, &house, npc, now_seconds(&clock)) else {
             continue;
@@ -498,6 +578,116 @@ fn spawn_case(
             SceneSpawnerComponent(assets.load::<Scene>(art.scene)),
             Transform::default(),
         ));
+    }
+}
+
+fn adopt_named_nodes(
+    nodes: Query<(Entity, &Name, &Transform, Option<&MeshComponent>), Without<Adopted>>,
+    stage: Res<StageArt>,
+    mut data: ResMut<CaseData>,
+    mut cmd: CommandQueue,
+) {
+    if !stage.named_nodes {
+        return;
+    }
+    for (entity, name, transform, mesh) in nodes.iter() {
+        cmd.insert(Adopted, entity);
+        let name = name.as_str();
+        let (kind, rest) = name.split_once('.').unwrap_or((name, ""));
+        let features = &data.case.features;
+        let hidden = data
+            .level
+            .hidden_nodes(|feature| features.is_on(feature))
+            .contains(&name);
+        let helper = matches!(kind, "room" | "nav" | "acoustic") || hidden;
+        if helper {
+            if mesh.is_some() {
+                cmd.remove::<MeshComponent>(entity);
+            }
+            continue;
+        }
+        let solid = |cmd: &mut CommandQueue| {
+            if mesh.is_some() {
+                cmd.insert(MeshCollider, entity);
+            } else {
+                cmd.insert(
+                    BoxCollider {
+                        half_extents: DEVICE_HALF_EXTENTS,
+                    },
+                    entity,
+                );
+            }
+        };
+        let target = match kind {
+            "anchor" => continue,
+            "door" => {
+                if let Some(door) = data.catalog.doors.id(rest) {
+                    data.level.place_door(door, transform.translation);
+                }
+                continue;
+            }
+            "doorleaf" => {
+                let door = data.catalog.doors.id(rest).or_else(|| {
+                    rest.rsplit_once('.')
+                        .and_then(|(door, _)| data.catalog.doors.id(door))
+                });
+                door.map(|door| {
+                    cmd.insert(
+                        LeafPanel {
+                            door,
+                            closed: transform.clone(),
+                            shown_open: false,
+                        },
+                        entity,
+                    );
+                    Interactable::Door(door)
+                })
+            }
+            "bell" => data.catalog.rooms.id(rest).map(Interactable::BellPull),
+            "bellboard" => Some(Interactable::BellBoard),
+            "dumbwaiter" => match rest {
+                "kitchen" => Some(Interactable::Lift(0)),
+                "pantry" => Some(Interactable::Lift(1)),
+                "gallery" => Some(Interactable::Lift(2)),
+                _ => None,
+            },
+            "bed" => match rest {
+                "guest" => Some(Interactable::Bed(0)),
+                "staff" => Some(Interactable::Bed(1)),
+                _ => None,
+            },
+            "spawn" => {
+                let player = u32::from(rest == "staff");
+                cmd.insert(SpawnPoint { player }, entity);
+                continue;
+            }
+            _ => None,
+        };
+        if let Some(target) = target {
+            cmd.insert(target, entity);
+        }
+        solid(&mut cmd);
+    }
+}
+
+fn swing_leaves(
+    leaves: Query<(Entity, &mut LeafPanel, &mut Transform)>,
+    house: Res<House>,
+    mut cmd: CommandQueue,
+) {
+    for (entity, mut leaf, mut transform) in leaves.iter() {
+        let open = house.stands_open(leaf.door);
+        if leaf.shown_open == open {
+            continue;
+        }
+        leaf.shown_open = open;
+        let turn = if open {
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
+        } else {
+            Quat::IDENTITY
+        };
+        transform.rotation = leaf.closed.rotation * turn;
+        cmd.remove::<Collider>(entity);
     }
 }
 

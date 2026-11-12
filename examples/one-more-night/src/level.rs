@@ -4,7 +4,9 @@ use concerto::ecs::Resource;
 use glam::{Vec2, Vec3};
 use serde::Deserialize;
 
-use crate::case::{AnchorId, CaseError, Catalog, DoorId, DoorState, Id, RoomId, Zone};
+use crate::case::{AnchorId, CaseError, Catalog, DoorId, DoorState, FeatureId, Id, RoomId, Zone};
+
+const STEP_UP: f32 = 0.6;
 
 #[derive(Deserialize)]
 #[serde(rename = "LevelManifest")]
@@ -12,6 +14,8 @@ struct RawManifest {
     rooms: Vec<RawRoom>,
     doors: Vec<RawDoor>,
     anchors: Vec<RawAnchor>,
+    #[serde(default)]
+    features: Vec<RawFeature>,
 }
 
 #[derive(Deserialize)]
@@ -23,10 +27,37 @@ struct RawSpan(RawCorner, RawCorner);
 #[derive(Deserialize)]
 struct RawPoint(f32, f32, f32);
 
+#[derive(Deserialize, Clone, Copy)]
+enum RawZone {
+    Public,
+    Service,
+    Private,
+    Open,
+}
+
+impl RawZone {
+    fn zone(self) -> Zone {
+        match self {
+            RawZone::Public | RawZone::Open => Zone::Public,
+            RawZone::Service => Zone::Service,
+            RawZone::Private => Zone::Private,
+        }
+    }
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+enum RawDoorState {
+    Open,
+    Closed,
+    Locked,
+    AlwaysOpen,
+}
+
 #[derive(Deserialize)]
 #[serde(rename = "Room")]
 struct RawRoom {
-    zone: Zone,
+    id: String,
+    zone: RawZone,
     bounds: Vec<RawSpan>,
 }
 
@@ -35,9 +66,18 @@ struct RawRoom {
 struct RawDoor {
     a: String,
     b: String,
-    zone: Zone,
-    default: DoorState,
+    zone: RawZone,
+    default: RawDoorState,
     key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename = "Feature")]
+struct RawFeature {
+    #[serde(default)]
+    on: Vec<String>,
+    #[serde(default)]
+    off: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -69,6 +109,8 @@ impl FloorRect {
 pub struct Room {
     pub zone: Zone,
     pub bounds: Vec<FloorRect>,
+    /// The height of its floor, taken from its lowest anchor.
+    pub floor: f32,
 }
 
 /// A named place of the level: where a character stands or a prop sits.
@@ -88,6 +130,15 @@ pub struct LevelDoor {
     pub zone: Zone,
     pub state: DoorState,
     pub key: Option<String>,
+    /// An opening with nothing to close, such as an archway.
+    pub always_open: bool,
+}
+
+/// The scene nodes a feature of the level shows when it is on and when it is off.
+#[derive(Clone, Debug, Default)]
+pub struct FeatureNodes {
+    pub on: Vec<String>,
+    pub off: Vec<String>,
 }
 
 /// The level's rooms, anchors and doors, in the engine's space: a manifest point `(x, y, z)` is `(x, z, -y)` here.
@@ -96,6 +147,7 @@ pub struct Level {
     rooms: Vec<Room>,
     anchors: Vec<Anchor>,
     doors: Vec<LevelDoor>,
+    features: Vec<FeatureNodes>,
     door_positions: HashMap<DoorId, Vec3>,
 }
 
@@ -104,9 +156,11 @@ pub fn from_manifest(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, z, -y)
 }
 
-/// Turns a manifest facing, degrees clockwise from +y, into a yaw about the engine's +Y.
+/// Turns a manifest facing, degrees counter-clockwise from north (+y), into a yaw about the engine's +Y, within half a turn of zero.
 pub fn yaw_from_facing(degrees: f32) -> f32 {
-    -degrees.to_radians()
+    let turn = std::f32::consts::TAU;
+    let yaw = degrees.to_radians().rem_euclid(turn);
+    if yaw > turn / 2.0 { yaw - turn } else { yaw }
 }
 
 impl Level {
@@ -123,7 +177,14 @@ impl Level {
                 .rooms
                 .iter()
                 .map(|room| Room {
-                    zone: room.zone,
+                    floor: raw
+                        .anchors
+                        .iter()
+                        .filter(|anchor| anchor.room == room.id)
+                        .map(|anchor| anchor.pos.2)
+                        .min_by(f32::total_cmp)
+                        .unwrap_or(0.0),
+                    zone: room.zone.zone(),
                     bounds: room
                         .bounds
                         .iter()
@@ -153,9 +214,22 @@ impl Level {
                 .map(|door| LevelDoor {
                     a: room(&door.a),
                     b: room(&door.b),
-                    zone: door.zone,
-                    state: door.default,
+                    zone: door.zone.zone(),
+                    state: match door.default {
+                        RawDoorState::Open | RawDoorState::AlwaysOpen => DoorState::Open,
+                        RawDoorState::Closed => DoorState::Closed,
+                        RawDoorState::Locked => DoorState::Locked,
+                    },
                     key: door.key.clone(),
+                    always_open: door.default == RawDoorState::AlwaysOpen,
+                })
+                .collect(),
+            features: raw
+                .features
+                .into_iter()
+                .map(|feature| FeatureNodes {
+                    on: feature.on,
+                    off: feature.off,
                 })
                 .collect(),
             door_positions: HashMap::new(),
@@ -178,12 +252,33 @@ impl Level {
         (0..self.doors.len()).map(DoorId::from_index)
     }
 
-    /// The room whose floor `position` is over.
+    /// The room `position` stands in: of the rooms whose floor plan holds it, the one with the highest floor at or below it.
     pub fn room_at(&self, position: Vec3) -> Option<RoomId> {
         self.rooms
             .iter()
-            .position(|room| room.bounds.iter().any(|rect| rect.contains(position)))
-            .map(RoomId::from_index)
+            .enumerate()
+            .filter(|(_, room)| {
+                room.floor <= position.y + STEP_UP
+                    && room.bounds.iter().any(|rect| rect.contains(position))
+            })
+            .max_by(|a, b| a.1.floor.total_cmp(&b.1.floor))
+            .map(|(index, _)| RoomId::from_index(index))
+    }
+
+    /// The scene nodes to hide given which features are on: the `on` nodes of a feature that is off, and the `off` nodes of one that is on.
+    pub fn hidden_nodes(&self, is_on: impl Fn(FeatureId) -> bool) -> Vec<&str> {
+        self.features
+            .iter()
+            .enumerate()
+            .flat_map(|(index, feature)| {
+                if is_on(FeatureId::from_index(index)) {
+                    &feature.off
+                } else {
+                    &feature.on
+                }
+            })
+            .map(String::as_str)
+            .collect()
     }
 
     /// Records where the scene put `door`, which routes then pass through.
@@ -279,6 +374,37 @@ mod tests {
 
     use super::{path_length, point_along};
     use crate::casefile::CaseData;
+
+    #[test]
+    fn the_manor_reads_its_floors_archways_and_feature_nodes() {
+        let data = CaseData::manor_walk();
+        let room = |name: &str| data.catalog.rooms.id(name).unwrap();
+        let door = |name: &str| data.catalog.doors.id(name).unwrap();
+        let level = &data.level;
+
+        assert_eq!(data.catalog.rooms.len(), 40);
+        assert_eq!(level.doors().count(), 53);
+        assert!(level.door(door("a_hall_e")).always_open);
+        assert!(!level.door(door("d_back")).always_open);
+
+        let bedroom = level.room(room("g1"));
+        let middle = (bedroom.bounds[0].min + bedroom.bounds[0].max) / 2.0;
+        let upstairs = Vec3::new(middle.x, bedroom.floor + 0.1, middle.y);
+        assert!(bedroom.floor > 2.0, "a bedroom is a floor up");
+        assert_eq!(level.room_at(upstairs), Some(room("g1")));
+        assert_ne!(
+            level.room_at(upstairs.with_y(0.0)),
+            Some(room("g1")),
+            "the same spot on the ground floor is another room, or none"
+        );
+
+        let hidden = level.hidden_nodes(|_| false);
+        assert!(hidden.contains(&"acoustic.F01.src"));
+        assert!(
+            !hidden.contains(&"F01.bolt"),
+            "a feature that is off shows its off nodes"
+        );
+    }
 
     #[test]
     fn the_test_level_reads_rooms_anchors_and_routes_through_placed_doors() {

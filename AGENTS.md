@@ -50,6 +50,7 @@ cargo run -p tech-demo -- --sanatorium
 cargo run -p tech-demo -- --retarget
 cargo run -p tech-demo -- --sanatorium --retarget
 cargo run -p one-more-night
+cargo run -p one-more-night -- --manor
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>

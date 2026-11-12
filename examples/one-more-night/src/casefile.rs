@@ -93,6 +93,49 @@ impl CaseData {
         Self::load(&files, test_file!("level_manifest")).expect("the open test case loads")
     }
 
+    /// An empty case over the manor, for walking the house.
+    pub fn manor_walk() -> Self {
+        let files = [
+            ("case", include_str!("../cases/manor_walk/case.ron")),
+            ("strings", include_str!("../cases/manor_walk/strings.ron")),
+            (
+                "characters",
+                include_str!("../cases/manor_walk/characters.ron"),
+            ),
+            (
+                "schedules",
+                include_str!("../cases/manor_walk/schedules.ron"),
+            ),
+            (
+                "conversations",
+                include_str!("../cases/manor_walk/conversations.ron"),
+            ),
+            ("dialogue", include_str!("../cases/manor_walk/dialogue.ron")),
+            ("facts", include_str!("../cases/manor_walk/facts.ron")),
+            ("terms", include_str!("../cases/manor_walk/terms.ron")),
+            (
+                "deductions",
+                include_str!("../cases/manor_walk/deductions.ron"),
+            ),
+            ("finale", include_str!("../cases/manor_walk/finale.ron")),
+            (
+                "placements",
+                include_str!("../cases/manor_walk/placements.ron"),
+            ),
+            ("doors", include_str!("../cases/manor_walk/doors.ron")),
+            ("features", include_str!("../cases/manor_walk/features.ron")),
+        ]
+        .into_iter()
+        .fold(CaseFiles::new(), |files, file| {
+            files.with_file(file.0, file.1)
+        });
+        Self::load(
+            &files,
+            include_str!("../assets/manor/export/level_manifest.ron"),
+        )
+        .expect("the manor walk loads")
+    }
+
     /// The text of a string of the case.
     pub fn text(&self, id: StrId) -> &str {
         self.case.strings.get(id).as_str()
