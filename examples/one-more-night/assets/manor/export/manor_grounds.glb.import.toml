@@ -32,6 +32,9 @@ asset_id = "1db45901-e458-4135-9fa4-e49e25834039"
 [outputs."material/17"]
 asset_id = "133f8c54-b0aa-4c7a-a04a-46a78ebbbe2e"
 
+[outputs."material/18"]
+asset_id = "5fc911c9-f638-4e80-b8af-3e282ecd4b91"
+
 [outputs."material/2"]
 asset_id = "e44b22f1-9c2e-4903-b59f-3345e9a2b709"
 
@@ -271,3 +274,18 @@ asset_id = "2092df95-ea34-4671-b8ea-90641da66566"
 
 [outputs.scene]
 asset_id = "c96891ca-8f5c-4cc1-98ac-77ba08569993"
+
+[outputs."texture/0_linear"]
+asset_id = "88726e00-ebe0-428b-9a4b-fe4f67b405de"
+
+[outputs."texture/1"]
+asset_id = "8f3c0850-8408-4da5-aad9-d0dd0d9eb69e"
+
+[outputs."texture/2_linear"]
+asset_id = "80e93ca0-2797-420f-83d9-9ebe2f9da299"
+
+[outputs."texture/3"]
+asset_id = "8ea05621-2017-46f6-b150-1c51d6e9d95f"
+
+[outputs."texture/4_linear"]
+asset_id = "7f29bfdb-aac1-4e90-a9ca-0b6bbbb8c8cb"

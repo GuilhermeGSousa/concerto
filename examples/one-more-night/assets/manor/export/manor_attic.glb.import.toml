@@ -256,3 +256,9 @@ asset_id = "a8704ed4-3581-4698-87c1-fe48bddd6858"
 
 [outputs.scene]
 asset_id = "27272680-90c5-41af-b93b-a6b9ae31699b"
+
+[outputs."texture/0_linear"]
+asset_id = "ebef19d2-fff9-48de-97d2-3207a5e50c41"
+
+[outputs."texture/1"]
+asset_id = "c98b4350-3430-4ead-8336-4c8b1a021db0"
