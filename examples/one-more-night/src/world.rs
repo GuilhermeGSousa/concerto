@@ -11,6 +11,7 @@ use concerto::{
         schedule_groups::{FixedUpdate, Startup, Update},
     },
     asset_id,
+    color::Color,
     ecs::{
         CommandQueue, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
         Without,
@@ -61,7 +62,7 @@ use crate::book::Casebook;
 use crate::book_ui::{
     BookPanel, PANEL, ScreenPanel, book_panel_node, chip, show_book, show_screens,
 };
-use crate::case::{Id, NpcId, PlacementId, Role};
+use crate::case::{Id, NpcId, PlacementId, Role, Zone};
 use crate::casefile::CaseData;
 use crate::clock::{GameTime, Midnight, NightClock, NightPaused};
 use crate::controls::{
@@ -85,7 +86,12 @@ const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
 const NPC_DOOR_REACH: f32 = 1.1;
-const GREYBOX_SUN: f32 = 1.4;
+const MOONLIGHT: f32 = 0.18;
+const MOON_COLOR: Color = Color::rgba(0.62, 0.72, 1.0, 1.0);
+const LAMP_GLOW: f32 = 5.0;
+const SERVICE_LAMP_GLOW: f32 = 3.6;
+const LAMP_COLOR: Color = Color::rgba(1.0, 0.74, 0.46, 1.0);
+const SERVICE_LAMP_COLOR: Color = Color::rgba(1.0, 0.88, 0.7, 1.0);
 const DEVICE_HALF_EXTENTS: Vec3 = Vec3::new(0.35, 0.5, 0.3);
 const PASSING_HASTE: f64 = 12.0;
 const HELD_SIZE: f32 = 0.15;
@@ -553,12 +559,33 @@ fn spawn_case(
     }
     if stage.named_nodes {
         cmd.spawn((
-            Light::directional_light().with_intensity(GREYBOX_SUN),
+            Light::directional_light()
+                .with_intensity(MOONLIGHT)
+                .with_color(MOON_COLOR),
             Transform::from_translation_rotation(
                 Vec3::ZERO,
                 Quat::from_rotation_y(0.6) * Quat::from_rotation_x(-0.9),
             ),
         ));
+        for lamp in data.level.lamps() {
+            let service = data.level.room(lamp.room).zone == Zone::Service;
+            let light = if service {
+                Light::point_light()
+                    .with_intensity(SERVICE_LAMP_GLOW)
+                    .with_color(SERVICE_LAMP_COLOR)
+            } else {
+                Light::point_light()
+                    .with_intensity(LAMP_GLOW)
+                    .with_color(LAMP_COLOR)
+            };
+            cmd.spawn((
+                Light {
+                    intensity: light.intensity * lamp.glow,
+                    ..light.with_range(lamp.range)
+                },
+                Transform::from_translation(lamp.position),
+            ));
+        }
     }
     for npc in data.case.characters.ids() {
         let Some(pose) = npc_pose(&data, &house, npc, now_seconds(&clock)) else {
