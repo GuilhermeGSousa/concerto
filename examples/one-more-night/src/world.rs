@@ -249,17 +249,15 @@ struct CharacterArt {
 }
 
 fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
-    match data
-        .catalog
-        .portraits
-        .name(data.case.characters.get(npc).portrait)
-    {
-        "portrait_01" => CharacterArt {
-            scene: asset_id!("content/characters/export/lady/scene.gasset"),
-            idle: asset_id!("content/characters/export/lady/animation_Idle_Loop.gasset"),
-            walk: asset_id!("content/characters/export/lady/animation_Walk_Loop.gasset"),
-            sit: asset_id!("content/characters/export/lady/animation_Sitting_Idle_Loop.gasset"),
-        },
+    figure_of(
+        data.catalog
+            .portraits
+            .name(data.case.characters.get(npc).portrait),
+    )
+}
+
+fn figure_of(portrait: &str) -> CharacterArt {
+    match portrait {
         "portrait_02" => CharacterArt {
             scene: asset_id!("content/characters/export/gentleman/scene.gasset"),
             idle: asset_id!("content/characters/export/gentleman/animation_Idle_Loop.gasset"),
@@ -268,11 +266,65 @@ fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
                 "content/characters/export/gentleman/animation_Sitting_Idle_Loop.gasset"
             ),
         },
-        _ => CharacterArt {
+        "portrait_03" => CharacterArt {
             scene: asset_id!("content/characters/export/footman/scene.gasset"),
             idle: asset_id!("content/characters/export/footman/animation_Idle_Loop.gasset"),
             walk: asset_id!("content/characters/export/footman/animation_Walk_Loop.gasset"),
             sit: asset_id!("content/characters/export/footman/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_04" => CharacterArt {
+            scene: asset_id!("content/characters/export/colonel/scene.gasset"),
+            idle: asset_id!("content/characters/export/colonel/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/colonel/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/colonel/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_05" => CharacterArt {
+            scene: asset_id!("content/characters/export/debutante/scene.gasset"),
+            idle: asset_id!("content/characters/export/debutante/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/debutante/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/debutante/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        "portrait_06" => CharacterArt {
+            scene: asset_id!("content/characters/export/doctor/scene.gasset"),
+            idle: asset_id!("content/characters/export/doctor/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/doctor/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/doctor/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_07" => CharacterArt {
+            scene: asset_id!("content/characters/export/butler/scene.gasset"),
+            idle: asset_id!("content/characters/export/butler/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/butler/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/butler/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_08" => CharacterArt {
+            scene: asset_id!("content/characters/export/cook/scene.gasset"),
+            idle: asset_id!("content/characters/export/cook/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/cook/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/cook/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_09" => CharacterArt {
+            scene: asset_id!("content/characters/export/housekeeper/scene.gasset"),
+            idle: asset_id!("content/characters/export/housekeeper/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/housekeeper/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/housekeeper/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        "portrait_10" => CharacterArt {
+            scene: asset_id!("content/characters/export/chauffeur/scene.gasset"),
+            idle: asset_id!("content/characters/export/chauffeur/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/chauffeur/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/chauffeur/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        _ => CharacterArt {
+            scene: asset_id!("content/characters/export/lady/scene.gasset"),
+            idle: asset_id!("content/characters/export/lady/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/lady/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/lady/animation_Sitting_Idle_Loop.gasset"),
         },
     }
 }
@@ -2269,6 +2321,23 @@ mod tests {
                 walk.ends_in
             );
         }
+    }
+
+    #[test]
+    fn every_portrait_a_case_can_name_has_its_own_figure_and_picture() {
+        let figures: Vec<_> = crate::casefile::PORTRAITS
+            .iter()
+            .map(|portrait| super::figure_of(portrait).scene)
+            .collect();
+        assert_eq!(figures.len(), 10);
+        for (index, figure) in figures.iter().enumerate() {
+            assert!(
+                !figures[..index].contains(figure),
+                "{} wears a figure of its own",
+                crate::casefile::PORTRAITS[index]
+            );
+        }
+        assert_eq!(crate::book_ui::PORTRAITS.len(), figures.len());
     }
 
     #[test]
