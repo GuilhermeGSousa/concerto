@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
 use crate::param::Param;
@@ -75,6 +76,46 @@ pub(crate) struct AnimationStateMachineTransition {
 
 #[derive(Clone, Copy, Default, Deref, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct StateId(usize);
+
+/// One state of an [`AnimationStateMachine`], as its read access shows it.
+pub struct AnimationFSMStateView<'a> {
+    pub name: Name,
+    pub graph: &'a AssetHandle<AnimationGraph>,
+}
+
+/// One transition of an [`AnimationStateMachine`]; `index` is its place among its source state's transitions.
+pub struct AnimationFSMTransitionView<'a> {
+    pub index: usize,
+    pub target: Name,
+    pub trigger: &'a AnimationFSMTrigger,
+    pub blend_time: f32,
+}
+
+/// Why an edit of an [`AnimationStateMachine`] was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StateMachineEditError {
+    UnknownState { name: Name },
+    DuplicateState { name: Name },
+    TransitionOutOfRange { from: Name, index: usize },
+}
+
+impl fmt::Display for StateMachineEditError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StateMachineEditError::UnknownState { name } => {
+                write!(f, "the state machine has no state named {name}")
+            }
+            StateMachineEditError::DuplicateState { name } => {
+                write!(f, "the state machine already has a state named {name}")
+            }
+            StateMachineEditError::TransitionOutOfRange { from, index } => {
+                write!(f, "state {from} has no transition at index {index}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for StateMachineEditError {}
 
 impl From<usize> for StateId {
     fn from(value: usize) -> Self {
@@ -165,6 +206,156 @@ impl AnimationStateMachine {
         };
         f(&mut tb);
         builder
+    }
+
+    /// The states in order.
+    pub fn states(&self) -> impl Iterator<Item = AnimationFSMStateView<'_>> + '_ {
+        self.states.iter().map(|state| AnimationFSMStateView {
+            name: state.name,
+            graph: &state.graph,
+        })
+    }
+
+    /// The state the machine starts in; none for a machine without states.
+    pub fn initial_state(&self) -> Option<Name> {
+        self.states.get(*self.initial_state).map(|state| state.name)
+    }
+
+    /// The transitions out of `from`, in the order the machine tries them.
+    pub fn transitions(
+        &self,
+        from: Name,
+    ) -> Result<impl Iterator<Item = AnimationFSMTransitionView<'_>> + '_, StateMachineEditError>
+    {
+        let from = self.state_index(from)?;
+        Ok(self.transitions[from]
+            .iter()
+            .enumerate()
+            .filter_map(|(index, transition)| {
+                Some(AnimationFSMTransitionView {
+                    index,
+                    target: self.states.get(*transition.next_state)?.name,
+                    trigger: &transition.trigger,
+                    blend_time: transition.blend_time,
+                })
+            }))
+    }
+
+    /// Adds a state after the others; the first state added is the initial one.
+    pub fn add_state(
+        &mut self,
+        name: Name,
+        graph: AssetHandle<AnimationGraph>,
+    ) -> Result<(), StateMachineEditError> {
+        if self.state_index(name).is_ok() {
+            return Err(StateMachineEditError::DuplicateState { name });
+        }
+        self.states.push(AnimationFSMState { name, graph });
+        self.transitions.push(Vec::new());
+        Ok(())
+    }
+
+    /// Removes a state with every transition to or from it; a removed initial state hands over to the first state.
+    pub fn remove_state(&mut self, name: Name) -> Result<(), StateMachineEditError> {
+        let removed = self.state_index(name)?;
+        self.states.remove(removed);
+        self.transitions.remove(removed);
+        let renumbered = |state: StateId| StateId(*state - usize::from(*state > removed));
+        for transitions in &mut self.transitions {
+            transitions.retain(|transition| *transition.next_state != removed);
+            for transition in transitions {
+                transition.next_state = renumbered(transition.next_state);
+            }
+        }
+        self.initial_state = if *self.initial_state == removed {
+            StateId(0)
+        } else {
+            renumbered(self.initial_state)
+        };
+        Ok(())
+    }
+
+    /// Renames a state; its transitions follow it.
+    pub fn rename_state(&mut self, name: Name, to: Name) -> Result<(), StateMachineEditError> {
+        let index = self.state_index(name)?;
+        if to != name && self.state_index(to).is_ok() {
+            return Err(StateMachineEditError::DuplicateState { name: to });
+        }
+        self.states[index].name = to;
+        Ok(())
+    }
+
+    /// Replaces the graph a state plays.
+    pub fn set_state_graph(
+        &mut self,
+        name: Name,
+        graph: AssetHandle<AnimationGraph>,
+    ) -> Result<(), StateMachineEditError> {
+        let index = self.state_index(name)?;
+        self.states[index].graph = graph;
+        Ok(())
+    }
+
+    /// Adds a transition after the others out of `from` and returns its index among them.
+    pub fn add_transition(
+        &mut self,
+        from: Name,
+        to: Name,
+        trigger: AnimationFSMTrigger,
+        blend_time: f32,
+    ) -> Result<usize, StateMachineEditError> {
+        let from = self.state_index(from)?;
+        let next_state = StateId(self.state_index(to)?);
+        self.transitions[from].push(AnimationStateMachineTransition {
+            next_state,
+            trigger,
+            blend_time,
+        });
+        Ok(self.transitions[from].len() - 1)
+    }
+
+    /// Removes the transition at `index` among those out of `from`.
+    pub fn remove_transition(
+        &mut self,
+        from: Name,
+        index: usize,
+    ) -> Result<(), StateMachineEditError> {
+        let state = self.state_index(from)?;
+        if index >= self.transitions[state].len() {
+            return Err(StateMachineEditError::TransitionOutOfRange { from, index });
+        }
+        self.transitions[state].remove(index);
+        Ok(())
+    }
+
+    /// Replaces the trigger and blend time of the transition at `index` among those out of `from`.
+    pub fn set_transition(
+        &mut self,
+        from: Name,
+        index: usize,
+        trigger: AnimationFSMTrigger,
+        blend_time: f32,
+    ) -> Result<(), StateMachineEditError> {
+        let state = self.state_index(from)?;
+        let transition = self.transitions[state]
+            .get_mut(index)
+            .ok_or(StateMachineEditError::TransitionOutOfRange { from, index })?;
+        transition.trigger = trigger;
+        transition.blend_time = blend_time;
+        Ok(())
+    }
+
+    /// Makes a state the one the machine starts in.
+    pub fn set_initial(&mut self, name: Name) -> Result<(), StateMachineEditError> {
+        self.initial_state = StateId(self.state_index(name)?);
+        Ok(())
+    }
+
+    fn state_index(&self, name: Name) -> Result<usize, StateMachineEditError> {
+        self.states
+            .iter()
+            .position(|state| state.name == name)
+            .ok_or(StateMachineEditError::UnknownState { name })
     }
 
     pub(crate) fn state_graphs(&self) -> impl Iterator<Item = &AssetHandle<AnimationGraph>> {
@@ -487,12 +678,17 @@ impl TransitionBuilder<'_> {
 
 #[cfg(test)]
 mod tests {
-    use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+    use concerto_foundation::assets::{
+        asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+    };
     use concerto_name::name;
     use concerto_reflect::{Reflect, TypeRegistry};
     use uuid::Uuid;
 
-    use super::{AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState};
+    use super::{
+        AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
+        StateMachineEditError,
+    };
     use crate::{
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
@@ -608,6 +804,326 @@ mod tests {
         let machine = state.downcast_mut::<AnimationStateMachineState>().unwrap();
         assert_eq!(updates_in_state(machine, 0, &walks), Some(3));
         assert_eq!(updates_in_state(machine, 1, &walks), Some(0));
+    }
+
+    enum Graph {
+        A,
+        B,
+    }
+
+    enum Edit {
+        AddState(&'static str, Graph),
+        RemoveState(&'static str),
+        RenameState(&'static str, &'static str),
+        SetStateGraph(&'static str, Graph),
+        AddTransition(&'static str, &'static str, AnimationFSMTrigger, f32),
+        RemoveTransition(&'static str, usize),
+        SetTransition(&'static str, usize, AnimationFSMTrigger, f32),
+        SetInitial(&'static str),
+    }
+
+    struct EditCase {
+        edit: Edit,
+        refused: Option<StateMachineEditError>,
+        machine: &'static [&'static str],
+    }
+
+    fn described(machine: &AnimationStateMachine, a: &AssetHandle<AnimationGraph>) -> Vec<String> {
+        machine
+            .states()
+            .map(|state| {
+                let initial = if machine.initial_state() == Some(state.name) {
+                    "*"
+                } else {
+                    ""
+                };
+                let graph = if state.graph == a { "a" } else { "b" };
+                let transitions: Vec<String> = machine
+                    .transitions(state.name)
+                    .unwrap()
+                    .map(|transition| {
+                        let trigger = match transition.trigger {
+                            AnimationFSMTrigger::Instant => "instant",
+                            AnimationFSMTrigger::OnAnimationEnd => "end",
+                            AnimationFSMTrigger::BoolEquals { .. } => "bool",
+                            AnimationFSMTrigger::Vec2NonZero { .. } => "vec2",
+                        };
+                        format!(
+                            "{}:{} {trigger} {}",
+                            transition.index, transition.target, transition.blend_time
+                        )
+                    })
+                    .collect();
+                format!(
+                    "{}{initial} {graph} -> {}",
+                    state.name,
+                    transitions.join(", ")
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn edits_keep_states_and_transitions_consistent() {
+        use AnimationFSMTrigger::{Instant, OnAnimationEnd};
+        use Edit::*;
+
+        let mut server = AssetServer::new();
+        let graphs = AssetStore::<AnimationGraph>::new();
+        server.register_asset(&graphs);
+        let a = server.add(AnimationGraph::default());
+        let b = server.add(AnimationGraph::default());
+        let unknown = |name: &str| Some(StateMachineEditError::UnknownState { name: name.into() });
+        let duplicate =
+            |name: &str| Some(StateMachineEditError::DuplicateState { name: name.into() });
+        let out_of_range = |from: &str, index: usize| {
+            Some(StateMachineEditError::TransitionOutOfRange {
+                from: from.into(),
+                index,
+            })
+        };
+        let cases = [
+            EditCase {
+                edit: AddState("idle", Graph::A),
+                refused: None,
+                machine: &["idle* a -> "],
+            },
+            EditCase {
+                edit: AddState("walk", Graph::B),
+                refused: None,
+                machine: &["idle* a -> ", "walk b -> "],
+            },
+            EditCase {
+                edit: AddState("run", Graph::A),
+                refused: None,
+                machine: &["idle* a -> ", "walk b -> ", "run a -> "],
+            },
+            EditCase {
+                edit: AddState("walk", Graph::A),
+                refused: duplicate("walk"),
+                machine: &["idle* a -> ", "walk b -> ", "run a -> "],
+            },
+            EditCase {
+                edit: AddTransition("idle", "walk", Instant, 0.2),
+                refused: None,
+                machine: &["idle* a -> 0:walk instant 0.2", "walk b -> ", "run a -> "],
+            },
+            EditCase {
+                edit: AddTransition("idle", "run", OnAnimationEnd, 0.3),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "walk b -> ",
+                    "run a -> ",
+                ],
+            },
+            EditCase {
+                edit: AddTransition("idle", "gone", Instant, 0.1),
+                refused: unknown("gone"),
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "walk b -> ",
+                    "run a -> ",
+                ],
+            },
+            EditCase {
+                edit: AddTransition("gone", "idle", Instant, 0.1),
+                refused: unknown("gone"),
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "walk b -> ",
+                    "run a -> ",
+                ],
+            },
+            EditCase {
+                edit: AddTransition("walk", "run", Instant, 0.4),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "walk b -> 0:run instant 0.4",
+                    "run a -> ",
+                ],
+            },
+            EditCase {
+                edit: AddTransition("run", "idle", Instant, 0.1),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "walk b -> 0:run instant 0.4",
+                    "run a -> 0:idle instant 0.1",
+                ],
+            },
+            EditCase {
+                edit: AddTransition("run", "walk", OnAnimationEnd, 0.6),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "walk b -> 0:run instant 0.4",
+                    "run a -> 0:idle instant 0.1, 1:walk end 0.6",
+                ],
+            },
+            EditCase {
+                edit: AddTransition("run", "idle", OnAnimationEnd, 0.7),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "walk b -> 0:run instant 0.4",
+                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: SetTransition("idle", 1, Instant, 0.5),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
+                    "walk b -> 0:run instant 0.4",
+                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: SetTransition("idle", 2, Instant, 0.5),
+                refused: out_of_range("idle", 2),
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
+                    "walk b -> 0:run instant 0.4",
+                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: SetTransition("gone", 0, Instant, 0.5),
+                refused: unknown("gone"),
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
+                    "walk b -> 0:run instant 0.4",
+                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: RenameState("run", "sprint"),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk b -> 0:sprint instant 0.4",
+                    "sprint a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: RenameState("walk", "idle"),
+                refused: duplicate("idle"),
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk b -> 0:sprint instant 0.4",
+                    "sprint a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: RenameState("run", "jog"),
+                refused: unknown("run"),
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk b -> 0:sprint instant 0.4",
+                    "sprint a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: SetStateGraph("sprint", Graph::B),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk b -> 0:sprint instant 0.4",
+                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: SetStateGraph("run", Graph::B),
+                refused: unknown("run"),
+                machine: &[
+                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk b -> 0:sprint instant 0.4",
+                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: SetInitial("walk"),
+                refused: None,
+                machine: &[
+                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk* b -> 0:sprint instant 0.4",
+                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: SetInitial("run"),
+                refused: unknown("run"),
+                machine: &[
+                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk* b -> 0:sprint instant 0.4",
+                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: RemoveTransition("sprint", 0),
+                refused: None,
+                machine: &[
+                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk* b -> 0:sprint instant 0.4",
+                    "sprint b -> 0:walk end 0.6, 1:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: RemoveTransition("sprint", 2),
+                refused: out_of_range("sprint", 2),
+                machine: &[
+                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk* b -> 0:sprint instant 0.4",
+                    "sprint b -> 0:walk end 0.6, 1:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: RemoveState("run"),
+                refused: unknown("run"),
+                machine: &[
+                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
+                    "walk* b -> 0:sprint instant 0.4",
+                    "sprint b -> 0:walk end 0.6, 1:idle end 0.7",
+                ],
+            },
+            EditCase {
+                edit: RemoveState("walk"),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:sprint instant 0.5",
+                    "sprint b -> 0:idle end 0.7",
+                ],
+            },
+        ];
+
+        let mut machine = AnimationStateMachine::default();
+        for (row, case) in cases.into_iter().enumerate() {
+            let graph = |graph: Graph| match graph {
+                Graph::A => a.clone(),
+                Graph::B => b.clone(),
+            };
+            let result = match case.edit {
+                AddState(name, state_graph) => machine.add_state(name.into(), graph(state_graph)),
+                RemoveState(name) => machine.remove_state(name.into()),
+                RenameState(name, to) => machine.rename_state(name.into(), to.into()),
+                SetStateGraph(name, state_graph) => {
+                    machine.set_state_graph(name.into(), graph(state_graph))
+                }
+                AddTransition(from, to, trigger, blend_time) => machine
+                    .add_transition(from.into(), to.into(), trigger, blend_time)
+                    .map(|_| ()),
+                RemoveTransition(from, index) => machine.remove_transition(from.into(), index),
+                SetTransition(from, index, trigger, blend_time) => {
+                    machine.set_transition(from.into(), index, trigger, blend_time)
+                }
+                SetInitial(name) => machine.set_initial(name.into()),
+            };
+
+            assert_eq!(result.err(), case.refused, "row {row}");
+            assert_eq!(described(&machine, &a), case.machine, "row {row}");
+        }
     }
 
     #[test]

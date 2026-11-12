@@ -392,7 +392,14 @@ A graph is a tree of nodes under a result node:
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
   default, fades the old state out over `blend_time` seconds, and
   `Inertialization` plays only the new state and decays the pose difference
-  to the old one with `blend_time` as the halflife.
+  to the old one with `blend_time` as the halflife. A built machine is read
+  with `states()`, `initial_state()` and `transitions(from)`, and edited by
+  state name with `add_state`, `remove_state`, `rename_state`,
+  `set_state_graph`, `set_initial`, `add_transition`, `remove_transition` and
+  `set_transition`; a transition is named by its source state and its index
+  among that state's transitions, and each edit returns a
+  `StateMachineEditError` for an unknown state, a duplicate name or an index
+  out of range. Removing a state removes every transition to or from it.
 - **Two-bone IK** (`TwoBoneIkNode`) bends a limb so its tip reaches a goal.
   The `tip` bone names the chain: its parent is the elbow or knee and its
   grandparent the shoulder or hip, all under bone 0. The `target` is an
