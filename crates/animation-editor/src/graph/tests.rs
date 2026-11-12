@@ -405,6 +405,7 @@ struct Drill {
     walk: Vec<u8>,
     nested_saved: String,
     nested_edited: String,
+    state_of_graph: String,
     handed_over: Value,
     restored_root: String,
     restored_nested: String,
@@ -554,6 +555,12 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         ok(&client, "graph_remove", json!({ "node": 1 })).await;
         let nested_edited = ok(&client, "graph_inspect", json!({})).await;
         ok(&client, "graph_up", json!({})).await;
+        let state_of_graph = ok(
+            &client,
+            "graph_add_state",
+            json!({ "name": "Rest", "graph": IDLE }),
+        )
+        .await;
         ok(&client, "graph_select", json!({ "state": "Idle" })).await;
         ok(&client, "graph_remove", json!({ "state": "Run" })).await;
         let handed_over = ok(&client, "inspect", json!({ "target": "State" })).await;
@@ -587,6 +594,7 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
             walk,
             nested_saved,
             nested_edited,
+            state_of_graph,
             handed_over: serde_json::from_str(&handed_over).unwrap(),
             restored_root,
             restored_nested,
@@ -691,6 +699,10 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
          2 · AnimationClipNode · loose"
     );
     assert_eq!(
+        drill.state_of_graph,
+        format!("Added state Rest, playing {IDLE}.")
+    );
+    assert_eq!(
         drill.handed_over["value"]["initial"], true,
         "{}",
         drill.handed_over
@@ -752,6 +764,28 @@ fn write_stage(root: &Path) -> AssetId {
     save_content_asset_into(&bare, root, "content/bare.gasset", &mut registry).unwrap()
 }
 
+async fn previewed_from(client: &Client, node: u32) -> String {
+    ok(
+        client,
+        "set_property",
+        json!({ "target": "Preview", "path": "from", "value": { "Some": { "0": node } } }),
+    )
+    .await;
+    let mut live = String::new();
+    for _ in 0..10 {
+        live = ok(
+            client,
+            "graph_set_param",
+            json!({ "name": "direction", "value": [0.0, 0.0] }),
+        )
+        .await;
+        if live.contains(&format!("live:\n{node} ·")) {
+            break;
+        }
+    }
+    live
+}
+
 struct Previewed {
     optional: Value,
     ambiguous: Value,
@@ -762,6 +796,7 @@ struct Previewed {
     after_set: String,
     diagram: String,
     from: Value,
+    subtree: Vec<String>,
     back: Value,
     refused_from: String,
     unknown: Value,
@@ -878,6 +913,7 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
             json!({ "target": "Preview", "path": "from", "value": { "Some": { "0": 2 } } }),
         )
         .await;
+        let subtree = vec![previewed_from(&client, 2).await];
         let back = ok(
             &client,
             "set_property",
@@ -940,6 +976,7 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
             after_set,
             diagram,
             from: serde_json::from_str(&from).unwrap(),
+            subtree,
             back: serde_json::from_str(&back).unwrap(),
             refused_from,
             unknown,
@@ -1007,6 +1044,10 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
         json!({ "Some": { "0": 2 } }),
         "{}",
         previewed.from
+    );
+    assert_eq!(
+        previewed.subtree,
+        ["Set direction to [0.0,0.0].\nlive:\n2 · weight 1.00",]
     );
     assert_eq!(
         previewed.back["value"]["from"], "None",
