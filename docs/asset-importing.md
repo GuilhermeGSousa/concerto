@@ -643,6 +643,10 @@ caller's choosing instead of a fresh one: it runs `on_load`, drops a load of
 that id still pending, and from then on `load(id)` returns the inserted asset
 and reads no file. Inserting again under the same id replaces it. An editor
 uses it to have a preview play a working copy in place of the saved file.
+`AssetServer::name_asset::<A>()` is for a server that edits references to a
+kind it must not load, as the editor's does for `AnimationGraph`: a handle to
+`A` set through it is weak, naming its asset and loading nothing, and
+`names_asset::<A>()` says whether that is so.
 
 ### The startup scene
 

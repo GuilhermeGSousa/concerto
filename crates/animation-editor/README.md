@@ -24,7 +24,9 @@ its reference clip; and `AnimationGraphEditorPlugin`, which registers
 `New AnimationGraph`, registers `BoneMask` in the editor's `AssetServer` and
 names `AnimationGraph` there with `name_asset`, so a layer's mask and a state's
 or a retarget node's graph can be picked while the editor never loads a graph
-against its own type registry, registers the editor of a `Param<T>` field for
+against its own type registry, names `Scene` the same way unless the editor
+already registered it, so the `Preview` value's `scene` can be set, registers
+the editor of a `Param<T>` field for
 the engine's parameter types, and adds the graph tools when the editor serves
 MCP. A
 game that doesn't list it has no clip, rig or graph tab: a clip or a graph stays
@@ -471,7 +473,8 @@ subtitle is the name of the asset its first handle field names, when the
 project has that asset. Its pins come from `input_slots()`: none, one per named
 slot, or for a node that takes any number of inputs one per input and an empty
 one after them. Every node but the result node has an output pin. When a graph
-comes into view the canvas scrolls its result node into view.
+comes into view the canvas scrolls its result node into view, and when a state
+machine does, its first state.
 
 - Pressing a node or a link selects it; a click on empty space clears the
   selection.
