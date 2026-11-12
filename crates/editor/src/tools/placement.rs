@@ -63,12 +63,12 @@ pub enum PlaceAt {
 /// How one `PlaceAsset` ended: the entity it made, or the status text saying why it made none.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct AssetPlaced {
-    pub asset: AssetId,
+    pub request: PlaceAsset,
     pub result: Result<Entity, String>,
 }
 
 struct Placement {
-    asset: AssetId,
+    request: PlaceAsset,
     kind: PlaceableKind,
     name: String,
     parent: Entity,
@@ -96,20 +96,20 @@ pub(crate) fn build(app: &mut App) {
 pub(crate) fn place_asset(on: On<PlaceAsset>, world: &mut World) {
     let request = on.signal();
     match resolve(world, request) {
-        Ok(placement) if (placement.kind.is_loaded)(world, placement.asset) => {
+        Ok(placement) if (placement.kind.is_loaded)(world, request.asset) => {
             finish(world, &placement)
         }
         Ok(placement) => {
-            (placement.kind.request_load)(world, placement.asset);
+            (placement.kind.request_load)(world, request.asset);
             match world.get_resource_mut::<PendingPlacements>() {
                 Some(pending) => pending.0.push(placement),
                 None => {
-                    (placement.kind.release)(world, placement.asset);
-                    report(world, placement.asset, Err(LOAD_FAILED.to_owned()));
+                    (placement.kind.release)(world, request.asset);
+                    report(world, placement.request, Err(LOAD_FAILED.to_owned()));
                 }
             }
         }
-        Err(error) => report(world, request.asset, Err(format!("{error:#}"))),
+        Err(error) => report(world, request.clone(), Err(format!("{error:#}"))),
     }
 }
 
@@ -135,23 +135,24 @@ fn finish_placements(on: On<FinishPlacements>, world: &mut World) {
     };
     let mut waiting = Vec::new();
     for placement in std::mem::take(&mut pending.0) {
-        let result = if (placement.kind.is_loaded)(world, placement.asset) {
+        let asset = placement.request.asset;
+        let result = if (placement.kind.is_loaded)(world, asset) {
             spawn(world, &placement).map_err(|error| format!("{error:#}"))
         } else if world
             .get_resource::<AssetServer>()
-            .is_some_and(|server| server.is_loading_or_loaded(placement.asset))
+            .is_some_and(|server| server.is_loading_or_loaded(asset))
         {
             waiting.push(placement);
             continue;
-        } else if on.signal().failed.contains(&placement.asset) {
+        } else if on.signal().failed.contains(&asset) {
             Err(LOAD_FAILED.to_owned())
         } else {
             Err(LOAD_CANCELLED.to_owned())
         };
         if result.is_err() {
-            (placement.kind.release)(world, placement.asset);
+            (placement.kind.release)(world, asset);
         }
-        report(world, placement.asset, result);
+        report(world, placement.request, result);
     }
     if let Some(pending) = world.get_resource_mut::<PendingPlacements>() {
         pending.0.extend(waiting);
@@ -160,10 +161,10 @@ fn finish_placements(on: On<FinishPlacements>, world: &mut World) {
 
 fn finish(world: &mut World, placement: &Placement) {
     let result = spawn(world, placement).map_err(|error| format!("{error:#}"));
-    report(world, placement.asset, result);
+    report(world, placement.request.clone(), result);
 }
 
-fn report(world: &mut World, asset: AssetId, result: Result<Entity, String>) {
+fn report(world: &mut World, request: PlaceAsset, result: Result<Entity, String>) {
     match &result {
         Ok(entity) => {
             world.trigger(Select(Some(*entity)));
@@ -172,7 +173,7 @@ fn report(world: &mut World, asset: AssetId, result: Result<Entity, String>) {
         }
         Err(error) => write(world, SceneStatus(error.clone())),
     }
-    write(world, AssetPlaced { asset, result });
+    write(world, AssetPlaced { request, result });
 }
 
 fn scene_root(world: &mut World) -> anyhow::Result<Entity> {
@@ -222,7 +223,7 @@ fn resolve(world: &mut World, request: &PlaceAsset) -> anyhow::Result<Placement>
         PlaceAt::Pointer(pointer) => under_pointer(world, pointer)?,
     };
     Ok(Placement {
-        asset: request.asset,
+        request: request.clone(),
         kind,
         name: entry.name().to_owned(),
         parent,
@@ -245,7 +246,7 @@ fn spawn(world: &mut World, placement: &Placement) -> anyhow::Result<Entity> {
         SyncWithRenderWorld,
     ));
     world.entity_mut(placement.parent).add_child(entity);
-    (placement.kind.fill)(world, placement.asset, entity);
+    (placement.kind.fill)(world, placement.request.asset, entity);
     Ok(entity)
 }
 
@@ -602,16 +603,17 @@ mod tests {
         let mut f = fixture();
         let (root, anchor, scene, mesh, prop) = (f.root, f.anchor, f.scene, f.mesh, f.prop);
 
-        f.world().trigger(PlaceAsset {
+        let request = PlaceAsset {
             asset: scene,
             parent: None,
             at: PlaceAt::Position(Vec3::new(1.0, 0.0, 2.0)),
-        });
+        };
+        f.world().trigger(request.clone());
         assert_eq!(f.children(root), [anchor], "nothing spawns before the load");
         assert!(!f.dirty());
         let placed = f.settle(1);
         let pair = placed.result.clone().unwrap();
-        assert_eq!(placed.asset, scene);
+        assert_eq!(placed.request, request);
         assert_eq!(f.name(pair), "pair");
         assert_eq!(f.children(root), [anchor, pair]);
         assert!(near(f.world_position(pair), Vec3::new(1.0, 0.0, 2.0)));
@@ -919,12 +921,12 @@ mod tests {
             },
         ];
         for (index, case) in cases.into_iter().enumerate() {
-            let asset = case.request.asset;
+            let request = case.request.clone();
             f.world().trigger(case.request);
             (case.then)(&mut f);
             let placed = f.settle(index + 1);
             let error = placed.result.expect_err(case.what);
-            assert_eq!(placed.asset, asset, "{}", case.what);
+            assert_eq!(placed.request, request, "{}", case.what);
             assert!(error.contains(case.says), "{}: {error}", case.what);
             assert_eq!(
                 f.heard::<SceneStatus>().last().map(|status| &status.0),

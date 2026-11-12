@@ -95,7 +95,7 @@ pub struct PlaceAssetArgs {
 #[derive(Component)]
 struct Placing {
     document: Entity,
-    asset: AssetId,
+    request: PlaceAsset,
 }
 
 fn place_asset(
@@ -142,10 +142,11 @@ fn place_asset(
             }
             None => PlaceAt::Origin,
         };
-        scene.trigger(PlaceAsset { asset, parent, at });
+        let request = PlaceAsset { asset, parent, at };
+        scene.trigger(request.clone());
         cmd.spawn((
             PendingCall::new(reply, "the asset to be placed"),
-            Placing { document, asset },
+            Placing { document, request },
         ));
     }
 }
@@ -158,7 +159,7 @@ fn answer_placements(
 ) {
     for Hosted { document, event } in placed.read() {
         for (call, pending, placing) in waiting.iter() {
-            if placing.document != *document || placing.asset != event.asset {
+            if placing.document != *document || placing.request != event.request {
                 continue;
             }
             match &event.result {
@@ -323,6 +324,16 @@ mod tests {
         serde_json::from_str(&answer.text).unwrap()
     }
 
+    fn place_the_same_asset_by_pointer(waiting: Query<&Placing>, mut scene: EditWorldSignals) {
+        for placing in waiting.iter() {
+            scene.trigger(PlaceAsset {
+                asset: placing.request.asset,
+                parent: None,
+                at: PlaceAt::Pointer(glam::Vec2::ZERO),
+            });
+        }
+    }
+
     #[test]
     fn place_asset_puts_an_asset_in_the_scene_and_list_assets_marks_what_it_takes() {
         let directory = tempfile::tempdir().unwrap();
@@ -385,7 +396,8 @@ mod tests {
             .forward_hosted_event::<AssetPlaced>()
             .register_plugin(AssetPlacementPlugin)
             .register_plugin(McpPlugin)
-            .register_plugin(EditorMcpPlugin);
+            .register_plugin(EditorMcpPlugin)
+            .add_system(Update, place_the_same_asset_by_pointer);
         app.finish_plugin_build();
         app.insert_resource(ViewportShown(Some(ViewportView {
             origin: glam::Vec2::ZERO,

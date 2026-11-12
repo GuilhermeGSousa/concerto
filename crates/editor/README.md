@@ -804,8 +804,10 @@ edit signal: `EntityEdited { edit, result }`, whose result is the entity a
 create or duplicate made; `PropertyCommitted { address, result }`, whose refusal
 is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
 `Refused` for any other reason;
-`ComponentEdited { edit, result }`; and `AssetPlaced { asset, result }`, whose
-result is the entity a `PlaceAsset` made. A refused edit's result is the text its
+`ComponentEdited { edit, result }`; and `AssetPlaced { request, result }`, which
+carries the `PlaceAsset` it answers, so whoever triggered one knows its outcome
+from another placement of the same asset, and whose
+result is the entity that `PlaceAsset` made. A refused edit's result is the text its
 `SceneStatus` carries, so a refused property or component edit also shows in
 Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
 the shape `inspect` reports, into the field at `path` of a component, or into
@@ -882,7 +884,9 @@ Placing is the `PlaceAsset` signal of the scene tools, described under
 [Saving](#saving) with the other edit signals, and its outcome is
 `Hosted<AssetPlaced>`. The `place_asset` tool triggers it with
 `PlaceAt::Position`, or with `PlaceAt::Origin`, the parent's origin, when the
-call gives no position, and answers when the outcome arrives. The plugin adds
+call gives no position, and answers when the `AssetPlaced` that carries the
+request it triggered arrives; another placement of the same asset ending in the
+meantime does not answer the call. The plugin adds
 the tool in its `finish`, when the `App` has `McpPlugin`, so the editor without
 `--mcp` has the resource and no tool.
 
