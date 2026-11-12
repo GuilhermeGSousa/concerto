@@ -117,6 +117,7 @@ pub(crate) struct AssetServerData {
     #[cfg(not(target_arch = "wasm32"))]
     cook_hooks: RwLock<HashMap<&'static str, CookHook>>,
     derived_cache: RwLock<DerivedDataCache>,
+    named: RwLock<HashSet<TypeId>>,
 }
 
 struct ContentState {
@@ -153,6 +154,7 @@ impl AssetServer {
             #[cfg(not(target_arch = "wasm32"))]
             cook_hooks: RwLock::new(HashMap::new()),
             derived_cache: RwLock::new(DerivedDataCache::none()),
+            named: RwLock::new(HashSet::new()),
         };
 
         Self {
@@ -334,6 +336,16 @@ impl AssetServer {
     /// Whether `A` was registered, without which `load` and `add` panic.
     pub fn is_registered<A: Asset>(&self) -> bool {
         self.data.handle_provider.is_registered::<A>()
+    }
+
+    /// Lets a handle to `A` be set through this server as a weak one that names its asset and loads nothing, for an editor that edits references to a kind it does not load.
+    pub fn name_asset<A: Asset>(&self) {
+        self.data.named.write().unwrap().insert(TypeId::of::<A>());
+    }
+
+    /// Whether handles to `A` set through this server only name their asset.
+    pub fn names_asset<A: Asset>(&self) -> bool {
+        self.data.named.read().unwrap().contains(&TypeId::of::<A>())
     }
 
     /// Adds a built asset, running its `on_load` inline before it reaches the world; a failing `on_load` is logged and the returned handle never resolves.
@@ -839,6 +851,13 @@ mod tests {
         handle.set(&mut value, &server, id).unwrap();
         assert!(matches!(value, AssetHandle::Strong(..)));
         assert_eq!(value.id(), id);
+
+        let naming = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        naming.name_asset::<FixtureAsset>();
+        let mut named = AssetHandle::<FixtureAsset>::default();
+        handle.set(&mut named, &naming, id).unwrap();
+        assert_eq!(named, AssetHandle::weak(id));
+        assert!(!naming.is_loading_or_loaded(id));
 
         std::fs::remove_dir_all(&dir).ok();
     }

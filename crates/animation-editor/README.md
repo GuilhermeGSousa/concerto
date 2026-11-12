@@ -21,7 +21,11 @@ which registers `RetargetRigEditor` as a creatable asset editor and registers
 rig tab can pick a rig and a clip, and a loaded rig can load its skeleton and
 its reference clip; and `AnimationGraphEditorPlugin`, which registers
 `AnimationGraphEditor` as a creatable asset editor, so New lists
-`New AnimationGraph`, and adds the graph tools when the editor serves MCP. A
+`New AnimationGraph`, registers `BoneMask` in the editor's `AssetServer` and
+names `AnimationGraph` there with `name_asset`, so a layer's mask and a state's
+or a retarget node's graph can be picked while the editor never loads a graph
+against its own type registry, and adds the graph tools when the editor serves
+MCP. A
 game that doesn't list it has no clip, rig or graph tab: a clip or a graph stays
 selected in the content browser and opens nothing, and a rig opens in the
 generic inspector. Listing

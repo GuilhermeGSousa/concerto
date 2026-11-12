@@ -1001,7 +1001,11 @@ with `EditError::MissingAssets`. That is a limit on handles: the editor's server
 knows only what its own `App` registered, which is `RenderPlugin`'s `Mesh`,
 `Texture` and `Skeleton` and whatever an extension adds with `register_asset`.
 So a value holding another handle type cannot take a picker edit, even when its
-types come from a preview that knows the asset. A commit queued before the
+types come from a preview that knows the asset. An extension that edits
+references to a kind the editor must not load calls
+`AssetServer::name_asset::<A>()` instead: a handle to `A` is then written weak,
+naming the asset and loading nothing, as the graph tab does for
+`AnimationGraph`. A commit queued before the
 editor registrations changed is refused and reported, where a component's is
 only logged. The outcome is one `Hosted<PropertyCommitted>`, naming the value's
 document and not the active one,
@@ -1116,7 +1120,8 @@ The row names the asset the handle holds, "None" for an empty handle or
 project's assets of that kind. Picking one writes a handle loaded through the
 scene's `AssetServer`, so the viewport shows the new asset at once. The edit is
 refused if the id is not an asset of that kind, or if the scene `App` never
-registered the asset type with `register_asset`. `AssetPickerPlugin` keeps the
+registered the asset type with `register_asset` nor named it with
+`AssetServer::name_asset`. `AssetPickerPlugin` keeps the
 row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
 handle's id, so MCP's `set_property` on a handle field picks that asset through
 the same checks.

@@ -5,10 +5,11 @@ mod panels;
 mod save;
 mod tools;
 
-use concerto_animation::graph::AnimationGraph;
+use concerto_animation::{graph::AnimationGraph, mask::BoneMask};
 use concerto_app::{App, plugins::Plugin, schedule_groups::Update};
 use concerto_ecs::IntoSystemConfig;
 use concerto_editor::asset_editor::AssetEditorAppExt;
+use concerto_foundation::assets::asset_server::AssetServer;
 
 pub use copy::{Connected, GraphCopy, GraphLink, GraphNodeId, HeldNode, HeldValue};
 pub use document::{
@@ -28,6 +29,10 @@ pub struct AnimationGraphEditorPlugin;
 
 impl Plugin for AnimationGraphEditorPlugin {
     fn build(&self, app: &mut App) {
+        app.register_asset::<BoneMask>();
+        if let Some(server) = app.get_resource::<AssetServer>() {
+            server.name_asset::<AnimationGraph>();
+        }
         app.register_creatable_asset_editor::<AnimationGraph, AnimationGraphEditor>()
             .expect("the editor's App holds the asset-editor registry")
             .register_event::<GraphEdited>()
