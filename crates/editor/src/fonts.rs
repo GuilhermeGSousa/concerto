@@ -213,6 +213,8 @@ pub fn brand_mark(theme: &UITheme, size: f32) -> Text {
 pub mod glyph {
     /// `caret-right` — a collapsed tree row.
     pub const CARET_RIGHT: char = '\u{E13A}';
+    /// `caret-left` — the head of a link that points left.
+    pub const CARET_LEFT: char = '\u{E138}';
     /// `caret-down` — an expanded tree row.
     pub const CARET_DOWN: char = '\u{E136}';
     /// `cube` — a mesh.

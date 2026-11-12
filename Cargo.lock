@@ -1284,6 +1284,7 @@ dependencies = [
  "image",
  "log",
  "profiling",
+ "proptest",
  "rfd",
  "rmcp",
  "schemars",

@@ -1473,3 +1473,93 @@ what they decide: a `Timeline` nobody writes to does not move, and a marker
 nobody moves stays where it was. `frame_at`,
 `time_of_frame` and `frame_count` are the widget's conversions. Ticks keep at
 least 64 px between labels. There is no zoom.
+
+### The graph canvas
+
+`concerto_editor::graph_canvas::GraphCanvas` is a component on a UI node, which
+`GraphCanvasPlugin` turns into a canvas of boxes joined by links. The node's
+owner sizes it and writes its `nodes`, `links`, `mode` and `selection`; the
+widget never writes them. Every gesture is a signal sent to the `GraphCanvas`
+entity, and a canvas nobody answers changes nothing.
+
+- A `CanvasNode::new(id, title)` is a box, 176 px wide, with its title on the
+  first row. `with_subtitle` adds a muted second row, `with_input(label)` adds
+  one input pin with its label, `with_output()` gives it an output pin,
+  `with_badge` puts a short readout at the right of the title row, and
+  `with_emphasis` outlines it: `CanvasEmphasis::Active` in the theme's second
+  accent, `Warning` in the warning colour. The `id` is a `CanvasNodeId`, a
+  `u32` the owner chooses; links, the selection and the signals name a node by
+  it.
+- A `CanvasLink::new(from, to)` runs out of `from` and into `to`. `with_slot`
+  names the input pin of `to` it ends on, `with_label` writes a label beside
+  its vertical run, and `with_emphasis` colours it as it does a node. A link
+  whose `from` or `to` is no node's id is not drawn. A link is named by its
+  index in `links`.
+- `mode` is a `CanvasMode`. In `Flow` a node shows its pins, an input per row
+  down its left side and the output at the right of its title row, and a link
+  runs from an output pin to the input pin of its slot. In `Diagram` no pin is
+  drawn, `inputs` and `output` are ignored, and a link is an arrow from box to
+  box.
+- `selection` is an `Option<CanvasTarget>`, `Node(id)` or `Link(index)`, drawn
+  in the accent colour.
+
+`GraphCanvas::new(mode)`, `with_node` and `with_link` build one. An owner
+compares what it wants with what is shown and writes only when they differ.
+
+- Pressing a node or a link sends `CanvasSelected { target: Some(..) }`; a
+  click on empty space sends `target: None`. Pressing a pin selects nothing.
+- A double click on a node, or Enter with a node selected, sends
+  `CanvasActivated { node }`.
+- In `Flow`, a drag from an output pin that ends on an input pin of another
+  node sends `CanvasConnected { from, to, slot: Some(slot) }`. In `Diagram`, a
+  drag from one box that ends on another sends it with `slot: None`. A line
+  follows the pointer during the drag. A drag that ends anywhere else sends
+  nothing.
+- Delete with something selected sends `CanvasDeleted { target }`.
+- A right click sends `CanvasMenuRequested { at, on }`: `at` is the pointer's
+  position in the window, and `on` is a `CanvasPart`, one of `Node(id)`,
+  `Input { node, slot }`, `Output(id)`, `Link(index)` or `Empty`.
+
+A pin is hit within 7 px of its centre and a link within 4 px of its line; a
+pin wins over the node it sits on, and a node over a link behind it. Delete and
+Enter are the actions `DeleteCanvasSelection` and `ActivateCanvasSelection`,
+bound in `CanvasContext`, which is pushed after `EditorContextSet` while the
+pointer is over a canvas or one has keyboard focus, and not while the
+unsaved-changes prompt or the import dialog is open. They go to the canvas
+under the pointer, or else the focused one.
+
+The widget owns the view. A drag with the middle button pans it, without
+limit, and sending `FrameCanvasNode { node }` to the canvas scrolls that node
+into view, 24 px inside the edge, once the canvas has been laid out. There is
+no zoom.
+
+Where things sit is `graph_canvas::layout::layout(nodes, links, mode)`, a pure
+function that returns a `CanvasLayout`: a `NodeBox` per node with its
+rectangle and pin centres, a `LinkRoute` per link, and the content's size.
+`CanvasLayout::part_at(point)` is the hit test.
+
+- `Flow`: a node that is no link's `from` is a root, and each root is a tree
+  growing leftward from it: a node's inputs are one column to its left,
+  stacked top to bottom by `slot`, each with its own subtree, and the node is
+  centred on them. Roots stack top to bottom in node order, with the deepest
+  tree's leaves in the first column. A node a link would place twice, as a
+  loop does, stays where it was first placed.
+- `Diagram`: a node's column is its distance from the first node along links,
+  in the direction they point. Nodes stack in node order within a column, and
+  those no path reaches share a last column.
+
+A link is three thin boxes: out of its start, up or down, and into its end. In
+`Diagram` it ends in an arrowhead, the `caret-right` or `caret-left` glyph. A
+link to a later column leaves the right side of its box a third of the way
+down and enters the left side at the same height; a link to an earlier column
+leaves the left side two thirds of the way down and enters the right side
+there. A link within a column, or from a node to itself, leaves the right side
+at the upper height and comes back into the right side at the lower one. Two
+links between the same pair in opposite directions so differ in height at
+both ends and in where they turn. Nodes are drawn over links, so a link that
+spans several columns passes behind the boxes between.
+
+The boxes are rebuilt only when the layout could change: the mode, a node's
+id, title, pins or having a subtitle, or a link's ends, slot or label. A
+changed selection, emphasis, badge or subtitle text is written to the nodes
+that are there.

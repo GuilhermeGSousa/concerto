@@ -43,6 +43,7 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
     use concerto_editor::fonts::glyph::*;
     let icons = [
         ("CARET_RIGHT", CARET_RIGHT),
+        ("CARET_LEFT", CARET_LEFT),
         ("CARET_DOWN", CARET_DOWN),
         ("CUBE", CUBE),
         ("CAMERA", CAMERA),
