@@ -2,7 +2,7 @@ use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
 use concerto_name::name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Quat;
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ use crate::{
 
 /// Lays its second input over its first on the bones of a mask, by the mask's weights times the layer weight.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct LayerNode {
     pub mask: AssetHandle<BoneMask>,
     pub space: LayerSpace,

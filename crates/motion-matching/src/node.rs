@@ -66,7 +66,7 @@ fn sources<'a>(
 
 /// Plays a motion database, jumping to the frame whose features best match the character's predicted trajectory.
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct MotionMatchingNode {
     pub database: AssetHandle<MotionDatabase>,
     pub search_period: f32,

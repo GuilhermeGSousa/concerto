@@ -1,7 +1,7 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,7 +19,7 @@ use crate::{
 
 /// Plays an additive clip's delta over its input, weighted by `weight` times the float under `weight_param`.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct AdditiveNode {
     pub clip: AssetHandle<AnimationClip>,
     pub weight: f32,

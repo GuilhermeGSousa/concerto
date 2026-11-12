@@ -14,7 +14,7 @@ use concerto_animation::{
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -24,7 +24,7 @@ const SNAP_WEIGHT: f32 = 1.0e-4;
 
 /// Turns a chain of bones, then each eye, toward a world-space point; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct LookAtNode {
     pub chain: Vec<LookAtBone>,
     pub eyes: Vec<LookAtEye>,

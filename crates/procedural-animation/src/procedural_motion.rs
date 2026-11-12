@@ -16,7 +16,7 @@ use concerto_foundation::{
 use concerto_mesh::Skeleton;
 use concerto_name::name;
 use concerto_noise::{fractal_noise, mix_seed, unit_from_seed};
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 /// Adds rotations that wave or wander over time to the bones of each channel's mask; passes its first input through first.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct ProceduralMotionNode {
     pub channels: Vec<ProceduralMotionChannel>,
     pub seed: u64,

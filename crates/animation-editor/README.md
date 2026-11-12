@@ -596,7 +596,12 @@ transitions between that pair, 0 without one.
 
 The preview is driven through the value `Preview`: `set_property` with target
 `Preview` and path `scene`, `skeleton`, `playing`, `speed` or `from`, the last
-as `{"Some": {"0": 3}}` for node 3 and `"None"` for the whole graph. The
+as `{"Some": {"0": 3}}` for node 3 and `"None"` for the whole graph. An
+optional parameter of a node, such as a layer's `weight_param`, is set the same
+way through the value `Node`, `{"Some": {"0": "fatigue"}}`, and cleared with
+`"None"`; that needs the node's type to reflect its `Default`, with
+`#[reflect(AnimationNode, Default)]`, as the engine's nodes with an optional
+parameter do. The
 parameters are also the value `Parameters`, one path per parameter. `inspect`
 reads both back, and neither marks the tab unsaved.
 

@@ -20,7 +20,7 @@ use crate::{
 
 /// Bends the chain ending at `tip` so the tip reaches `target`; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct TwoBoneIkNode {
     pub tip: JointName,
     pub target: IkGoal,

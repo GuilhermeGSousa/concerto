@@ -11,7 +11,7 @@ use concerto_animation::{
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -23,7 +23,7 @@ const RELEASED: f32 = 1.0e-3;
 
 /// Holds each planted foot where it was planted, horizontally, and eases back to the animated foot when the plant ends; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct FootLockNode {
     pub legs: Vec<FootLockLeg>,
     pub plant_speed: f32,

@@ -8,7 +8,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Vec2, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -33,7 +33,7 @@ const SNAP_WEIGHT: f32 = 1.0e-4;
 
 /// Layers additive aim clips, chosen by the target's yaw and pitch from a chosen bone, over its first input.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct AimOffsetNode {
     pub points: Vec<AimPoint>,
     pub frame_bone: JointName,

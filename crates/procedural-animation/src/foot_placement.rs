@@ -13,7 +13,7 @@ use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::name;
 use concerto_physics::{body::BodyId, physics_state::PhysicsState, query::QueryFilter};
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Affine3A, Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -26,7 +26,7 @@ const MIN_WEIGHT: f32 = 1.0e-4;
 
 /// Puts each leg's foot on the ground under it and lowers the pelvis for the lowest; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct FootPlacementNode {
     pub pelvis: JointName,
     pub legs: Vec<FootPlacementLeg>,

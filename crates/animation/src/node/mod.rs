@@ -1,7 +1,7 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use uuid::Uuid;
 
 use crate::{
@@ -462,7 +462,7 @@ fn sample_root(channels: &[AnimationChannel], rest: &JointPose, time: f32) -> Jo
 }
 
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct AnimationClipNode {
     clip: AssetHandle<AnimationClip>,
     play_mode: AnimationPlayMode,
