@@ -358,7 +358,8 @@ pub(crate) fn queue_material_meshes<M: Material>(
                 .iter()
                 .filter_map(|(main_entity, skeleton, material)| {
                     let instance = render_mesh_instances.get(main_entity)?;
-                    if !render_meshes.contains(&instance.mesh_asset_id)
+                    if !instance.layers.intersects(render_camera.layers)
+                        || !render_meshes.contains(&instance.mesh_asset_id)
                         || !render_materials.contains(&material.material_asset_id)
                     {
                         return None;

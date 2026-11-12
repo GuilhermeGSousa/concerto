@@ -19,6 +19,7 @@ use concerto_window::plugin::Window;
 use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
+use crate::components::visibility::RenderLayers;
 use crate::{
     assets::texture::Texture,
     components::{
@@ -263,6 +264,7 @@ pub struct RenderCamera {
     pub(crate) depth_texture: RenderTexture,
     pub render_target: Option<RenderTexture>,
     pub(crate) viewport: Option<Viewport>,
+    pub(crate) layers: RenderLayers,
 }
 
 impl RenderCamera {
@@ -328,6 +330,7 @@ pub(crate) fn extract_cameras(
             Entity,
             &Camera,
             Option<&CameraEnvironment>,
+            Option<&RenderLayers>,
             &GlobalTransform,
             &RenderEntity,
         )>,
@@ -341,7 +344,8 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
-    for (entity, camera, environment, transform, render_entity) in cameras.iter() {
+    for (entity, camera, environment, layers, transform, render_entity) in cameras.iter() {
+        let layers = layers.copied().unwrap_or_default();
         if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
             continue;
         }
@@ -354,6 +358,7 @@ pub(crate) fn extract_cameras(
             render_camera.camera_uniform = camera_uniform;
             render_camera.clear_color = camera.clear_color.to_linear();
             render_camera.viewport = camera.viewport;
+            render_camera.layers = layers;
 
             if let RenderTarget::Texture(handle) = &camera.render_target {
                 if let Some(texture) = texture_assets.get(handle) {
@@ -438,6 +443,7 @@ pub(crate) fn extract_cameras(
             clear_color: camera.clear_color.to_linear(),
             render_target,
             viewport: camera.viewport,
+            layers,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);
 

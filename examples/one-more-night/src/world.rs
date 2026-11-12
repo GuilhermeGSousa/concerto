@@ -64,12 +64,13 @@ use crate::controls::{
     PagePrev, Pause, Watch, bind_controls,
 };
 use crate::house::{House, Interactable, ItemPlace, end_night};
-use crate::players::{PLAYER_COUNT, SeatEntity, Seated, SpawnPoint};
+use crate::players::{PLAYER_COUNT, SeatEntity, Seated, SpawnPoint, body_layer};
 use crate::rules::name_of;
 use crate::save::{SaveFile, save_dir};
 use crate::schedule::{NpcPose, WALK_SPEED, case_time, entries_of, line_at, pose_at, talks_at};
 use crate::session::{Effect, Mode, Press, Session};
 use concerto::gameplay::actions::{Look, Move};
+use concerto::render::components::visibility::RenderLayers;
 
 const SEATS: usize = PLAYER_COUNT as usize;
 const REACH: f32 = 2.6;
@@ -1411,6 +1412,7 @@ fn dress_players(
     visuals: Query<(Entity, &mut PlayerVisual, &mut Transform)>,
     children: Query<&Children>,
     players: Query<&mut AnimationPlayer>,
+    undrawn: Query<Entity, (With<MeshComponent>, Without<RenderLayers>)>,
     session: Res<Session>,
     assets: Res<AssetServer>,
     time: Res<Time>,
@@ -1428,6 +1430,15 @@ fn dress_players(
             continue;
         }
         dressed.push(visual.walker);
+        let mut below = vec![entity];
+        while let Some(part) = below.pop() {
+            if undrawn.contains_entity(part) {
+                cmd.insert(body_layer(*player), part);
+            }
+            if let Some(parts) = children.get_entity(part) {
+                below.extend(parts.iter().copied());
+            }
+        }
         transform.translation = body.translation;
         transform.rotation = Quat::from_rotation_y(walker.yaw() + MODEL_TURN);
         if visual.animator.is_none()

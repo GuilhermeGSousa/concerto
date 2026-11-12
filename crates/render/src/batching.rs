@@ -276,6 +276,7 @@ mod tests {
                 }
                 .transformed(transform),
             ),
+            layers: Default::default(),
         }
     }
 

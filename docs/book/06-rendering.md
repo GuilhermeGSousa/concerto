@@ -84,6 +84,27 @@ cmd.spawn((
   stack, but nothing follows them. Move your cameras' `Transform`s yourself,
   from your own controllers.
 
+### Layers
+
+A camera draws a mesh when the two share a layer. `RenderLayers` goes on
+either: `RenderLayers::layer(1)` is layer 1 alone, and `with(n)` and
+`without(n)` add and drop one. There are 32, numbered from 0, and an entity or
+camera without the component is on layer 0. It is not inherited: a mesh under
+a parent with layers is still on layer 0 unless it carries its own.
+
+```rust
+use concerto::render::components::visibility::RenderLayers;
+
+cmd.spawn((body_mesh, body_material, RenderLayers::layer(1)));
+cmd.spawn((Camera::default(), RenderLayers::DEFAULT));
+cmd.spawn((Camera::default(), RenderLayers::DEFAULT.with(1)));
+```
+
+The first camera never draws the body and the second does, which is how a
+first-person player's own body is hidden from their view and shown to
+everyone else. Layers decide only what a camera draws: a mesh still casts
+shadows whatever its layers.
+
 ## Lights
 
 ```rust
