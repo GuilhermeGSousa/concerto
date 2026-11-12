@@ -523,8 +523,10 @@ and blend time. An edit the machine refuses changes nothing and is refused with
 the reason, in the status and in `set_property`'s reply, as
 `Set State.name failed: the state machine already has a state named Idle`: a
 name another state has, an empty name, and `initial` set to false, since a
-machine always starts somewhere. A selected link, a placeholder, or nothing selected
-shows no card for the selection. The `Preview` and `Parameters` cards follow
+machine always starts somewhere. A selected link, a placeholder, a state
+machine node, or nothing selected shows no card for the selection: a state
+machine's states and transitions are edited in its diagram, never as fields of
+a `Node` value, and `graph_select` on one says to `graph_open` it. The `Preview` and `Parameters` cards follow
 it.
 
 ### Editing
@@ -599,7 +601,7 @@ transitions between that pair, 0 without one.
 | `graph_add_state` | `name`, and optionally `graph`, an existing `AnimationGraph` by address or id; without one a graph asset of that name is created beside the graph that holds the machine. Answers `Added state Idle, the initial state, playing content/Idle.gasset.` |
 | `graph_connect` | In a pose graph `child`, `parent` and optionally `slot`; answers `Node 4 is input 0 of node 2; node 3, which was there, is loose.` In a state machine `from` and `to`, equal for a transition to itself; answers `Added transition Idle → Walk #0.` and selects it |
 | `graph_remove` | One of `node`, `link` (the node the link makes an input), `state`, or a transition by `from`, `to` and `index`; several or none answers `invalid_arguments` |
-| `graph_select` | `node`, `state`, or a transition by `from`, `to` and `index`, or nothing to clear the selection. What is selected is then the value `Node`, `State` or `Transition` of `status`'s `values:` line, which `inspect`, `set_property`, `list_push` and `list_remove` take as `target` |
+| `graph_select` | `node`, `state`, or a transition by `from`, `to` and `index`, or nothing to clear the selection. What is selected is then the value `Node`, `State` or `Transition` of `status`'s `values:` line, which `inspect`, `set_property`, `list_push` and `list_remove` take as `target`. A state machine node is selected without a `Node` value, and the answer says to open its diagram with `graph_open` |
 | `graph_open` | `node`, a state machine or a node that plays a graph, or `state`, a state of the machine in view. Answers `Showing Locomotion › States › Run (state).` |
 | `graph_up` | Goes up one level and answers the same way; refused on the tab's own graph |
 | `graph_set_param` | `name` and `value`, JSON of the parameter's type, and `type` when the graph reads the name as several types. Sets the parameter on the preview's players, as an edit of the `Parameters` value does, runs frames until the preview next reports what it plays, and answers `Set moving to true.` with the `live:` block of `graph_inspect` under it, so the reply shows the state the parameter led to; a transition that takes several frames to start shows on a later `graph_inspect`. While the preview is paused it answers at once, `Set moving to true. The preview is paused, so no live state follows; …`, and when no player plays the graph, as with no skeleton in the preview's scene, `Set moving to true. No preview is playing the graph, so no live state follows; …`. A preview that reports nothing within 30 s answers `timeout`. A name the graph does not read answers `refused` with `There is no parameter speed; the parameters are direction (Vec2), moving (bool).`, a name read as several types with no `type` answers `refused` with `moving is read as several types, bool and f32; give type.`, and a value that does not fit the type answers `refused` with the reason |

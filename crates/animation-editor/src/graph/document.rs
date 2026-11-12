@@ -367,6 +367,18 @@ impl GraphDocument {
             .downcast_ref()
     }
 
+    /// Whether the node `id` of the pose graph in view is a state machine, which its diagram edits and no `Node` value does.
+    pub fn is_state_machine(&self, id: GraphNodeId) -> bool {
+        self.graph()
+            .and_then(|copy| copy.node(id))
+            .and_then(|node| node.live())
+            .is_some_and(|live| {
+                live.as_reflect()
+                    .downcast_ref::<AnimationStateMachine>()
+                    .is_some()
+            })
+    }
+
     fn machine_mut(&mut self) -> Option<&mut AnimationStateMachine> {
         let node = self.shown_machine()?;
         self.held_mut()?
@@ -1139,6 +1151,7 @@ fn publish_selection(document: Entity, state: &mut GraphDocument, cmd: &mut Comm
             .graph()
             .and_then(|copy| copy.node(id))
             .and_then(|node| node.live())
+            .filter(|_| !state.is_state_machine(id))
             .map(|_| node_value(document, id)),
         Some(GraphSelection::State(_)) => state
             .selected_state()

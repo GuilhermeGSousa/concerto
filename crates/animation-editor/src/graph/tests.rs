@@ -367,6 +367,8 @@ fn id_of(file: &[u8]) -> AssetId {
 struct Drill {
     unset: Value,
     held: Value,
+    machine_selected: String,
+    machine_values: String,
     opened: Vec<String>,
     states: Vec<String>,
     duplicate: Value,
@@ -452,6 +454,8 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         )
         .await;
         let held = error(&client, "graph_open", json!({ "node": 2 })).await;
+        let machine_selected = ok(&client, "graph_select", json!({ "node": 1 })).await;
+        let machine_values = ok(&client, "status", json!({})).await;
         let mut opened = vec![ok(&client, "graph_open", json!({ "node": 1 })).await];
         let states = vec![
             ok(&client, "graph_add_state", json!({ "name": "Idle" })).await,
@@ -537,6 +541,8 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         Drill {
             unset,
             held,
+            machine_selected,
+            machine_values,
             opened,
             states,
             duplicate,
@@ -567,6 +573,15 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
     assert_eq!(
         message(&drill.held),
         "Locomotion is already open in this tab, above what is in view; a graph cannot be opened inside itself."
+    );
+    assert_eq!(
+        drill.machine_selected,
+        "Selected node 1, an AnimationStateMachine; its states and transitions are edited in its diagram, which graph_open node=1 shows, so it has no Node value."
+    );
+    assert!(
+        drill.machine_values.contains("values: Preview, Parameters"),
+        "{}",
+        drill.machine_values
     );
     assert_eq!(
         drill.opened,

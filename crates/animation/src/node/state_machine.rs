@@ -231,8 +231,11 @@ impl AnimationStateMachine {
     ) -> Result<impl Iterator<Item = AnimationFSMTransitionView<'_>> + '_, StateMachineEditError>
     {
         let from = self.state_index(from)?;
-        Ok(self.transitions[from]
-            .iter()
+        Ok(self
+            .transitions
+            .get(from)
+            .into_iter()
+            .flatten()
             .enumerate()
             .filter_map(|(index, transition)| {
                 Some(AnimationFSMTransitionView {
@@ -262,7 +265,9 @@ impl AnimationStateMachine {
     pub fn remove_state(&mut self, name: Name) -> Result<(), StateMachineEditError> {
         let removed = self.state_index(name)?;
         self.states.remove(removed);
-        self.transitions.remove(removed);
+        if removed < self.transitions.len() {
+            self.transitions.remove(removed);
+        }
         let renumbered = |state: StateId| StateId(*state - usize::from(*state > removed));
         for transitions in &mut self.transitions {
             transitions.retain(|transition| *transition.next_state != removed);
@@ -309,12 +314,16 @@ impl AnimationStateMachine {
     ) -> Result<usize, StateMachineEditError> {
         let from = self.state_index(from)?;
         let next_state = StateId(self.state_index(to)?);
-        self.transitions[from].push(AnimationStateMachineTransition {
+        if self.transitions.len() <= from {
+            self.transitions.resize_with(from + 1, Vec::new);
+        }
+        let transitions = &mut self.transitions[from];
+        transitions.push(AnimationStateMachineTransition {
             next_state,
             trigger,
             blend_time,
         });
-        Ok(self.transitions[from].len() - 1)
+        Ok(transitions.len() - 1)
     }
 
     /// Removes the transition at `index` among those out of `from`.
@@ -324,11 +333,13 @@ impl AnimationStateMachine {
         index: usize,
     ) -> Result<(), StateMachineEditError> {
         let state = self.state_index(from)?;
-        if index >= self.transitions[state].len() {
-            return Err(StateMachineEditError::TransitionOutOfRange { from, index });
+        match self.transitions.get_mut(state) {
+            Some(transitions) if index < transitions.len() => {
+                transitions.remove(index);
+                Ok(())
+            }
+            _ => Err(StateMachineEditError::TransitionOutOfRange { from, index }),
         }
-        self.transitions[state].remove(index);
-        Ok(())
     }
 
     /// Replaces the trigger and blend time of the transition at `index` among those out of `from`.
@@ -340,8 +351,10 @@ impl AnimationStateMachine {
         blend_time: f32,
     ) -> Result<(), StateMachineEditError> {
         let state = self.state_index(from)?;
-        let transition = self.transitions[state]
-            .get_mut(index)
+        let transition = self
+            .transitions
+            .get_mut(state)
+            .and_then(|transitions| transitions.get_mut(index))
             .ok_or(StateMachineEditError::TransitionOutOfRange { from, index })?;
         transition.trigger = trigger;
         transition.blend_time = blend_time;
@@ -844,6 +857,13 @@ mod tests {
         RemoveTransition(&'static str, usize),
         SetTransition(&'static str, usize, AnimationFSMTrigger, f32),
         SetInitial(&'static str),
+        LoseLastTransitionList,
+    }
+
+    fn without_last_transition_list(machine: &AnimationStateMachine) -> AnimationStateMachine {
+        let mut stored = serde_json::to_value(machine).unwrap();
+        stored["transitions"].as_array_mut().unwrap().pop();
+        serde_json::from_value(stored).unwrap()
     }
 
     struct EditCase {
@@ -861,7 +881,7 @@ mod tests {
                 } else {
                     ""
                 };
-                let graph = if state.graph == a { "a" } else { "b" };
+                let graph = if state.graph.id() == a.id() { "a" } else { "b" };
                 let transitions: Vec<String> = machine
                     .transitions(state.name)
                     .unwrap()
@@ -1120,6 +1140,39 @@ mod tests {
                     "sprint b -> 0:idle end 0.7",
                 ],
             },
+            EditCase {
+                edit: LoseLastTransitionList,
+                refused: None,
+                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
+            },
+            EditCase {
+                edit: SetTransition("sprint", 0, Instant, 0.5),
+                refused: out_of_range("sprint", 0),
+                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
+            },
+            EditCase {
+                edit: RemoveTransition("sprint", 0),
+                refused: out_of_range("sprint", 0),
+                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
+            },
+            EditCase {
+                edit: AddTransition("sprint", "idle", Instant, 0.1),
+                refused: None,
+                machine: &[
+                    "idle* a -> 0:sprint instant 0.5",
+                    "sprint b -> 0:idle instant 0.1",
+                ],
+            },
+            EditCase {
+                edit: LoseLastTransitionList,
+                refused: None,
+                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
+            },
+            EditCase {
+                edit: RemoveState("sprint"),
+                refused: None,
+                machine: &["idle* a -> "],
+            },
         ];
 
         let mut machine = AnimationStateMachine::default();
@@ -1143,6 +1196,10 @@ mod tests {
                     machine.set_transition(from.into(), index, trigger, blend_time)
                 }
                 SetInitial(name) => machine.set_initial(name.into()),
+                LoseLastTransitionList => {
+                    machine = without_last_transition_list(&machine);
+                    Ok(())
+                }
             };
 
             assert_eq!(result.err(), case.refused, "row {row}");

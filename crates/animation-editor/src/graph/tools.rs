@@ -87,7 +87,7 @@ pub struct GraphRemove {
     pub index: Option<usize>,
 }
 
-/// Selects a node, a state or a transition of what the front animation graph tab shows, or nothing, publishing it as the value Node, State or Transition that inspect, set_property, list_push and list_remove take as target.
+/// Selects a node, a state or a transition of what the front animation graph tab shows, or nothing, publishing it as the value Node, State or Transition that inspect, set_property, list_push and list_remove take as target. A state machine node has no Node value: graph_open shows its states and transitions.
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphSelect {
     /// The node to select, by its id in graph_inspect.
@@ -533,7 +533,12 @@ fn answer(
             let live = copy
                 .and_then(|copy| copy.node(*node))
                 .is_some_and(|node| node.live().is_some());
-            if live {
+            if state.is_some_and(|state| state.is_state_machine(*node)) {
+                format!(
+                    "Selected node {node}, {}; its states and transitions are edited in its diagram, which graph_open node={node} shows, so it has no Node value.",
+                    kind(copy, *node)
+                )
+            } else if live {
                 format!(
                     "Selected node {node}, {}; inspect and set_property take it as target Node.",
                     kind(copy, *node)
