@@ -190,6 +190,8 @@ struct Walk {
     inspected: String,
     saved: String,
     file: Vec<u8>,
+    parented: String,
+    childless: Value,
     removed: Vec<String>,
     edited: String,
     open_failed: Value,
@@ -265,6 +267,18 @@ fn a_graph_is_created_wired_edited_saved_and_restored_by_a_discard_over_mcp() {
         let inspected = ok(&client, "graph_inspect", json!({})).await;
         let saved = ok(&client, "save", json!({})).await;
         let file = std::fs::read(project.join(GRAPH)).unwrap();
+        let parented = ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "LayerNode", "child": 3 }),
+        )
+        .await;
+        let childless = error(
+            &client,
+            "graph_add_node",
+            json!({ "type": "AnimationClipNode", "child": 3 }),
+        )
+        .await;
         let removed = vec![
             ok(&client, "graph_remove", json!({ "link": 1 })).await,
             ok(&client, "graph_remove", json!({ "node": 2 })).await,
@@ -288,6 +302,8 @@ fn a_graph_is_created_wired_edited_saved_and_restored_by_a_discard_over_mcp() {
             inspected,
             saved,
             file,
+            parented,
+            childless,
             removed,
             edited,
             open_failed,
@@ -344,14 +360,20 @@ fn a_graph_is_created_wired_edited_saved_and_restored_by_a_discard_over_mcp() {
         .unwrap()
         .1;
     assert_eq!(described(&saved), described(&expected_graph()));
+    assert_eq!(
+        walk.parented,
+        "Added node 5, a LayerNode, with node 3 as input 0."
+    );
+    assert_eq!(walk.childless["code"], "refused", "{}", walk.childless);
     assert_eq!(walk.removed, ["Node 1 is loose.", "Removed node 2."]);
     assert_eq!(
         walk.edited,
         "Locomotion\n\
          0 · ResultNode · result\n\
          1 · AnimationClipNode · loose\n\
-         3 · AnimationClipNode · loose\n\
-         4 · AnimationClipNode · loose"
+         3 · AnimationClipNode · 5#0\n\
+         4 · AnimationClipNode · loose\n\
+         5 · LayerNode · loose"
     );
     assert_eq!(walk.open_failed["code"], "open_failed");
     assert_eq!(walk.discarded, walk.inspected);

@@ -44,6 +44,8 @@ pub struct GraphAddNode {
     pub parent: Option<u32>,
     /// The parent's input slot, from 0; its first empty slot without one.
     pub slot: Option<usize>,
+    /// A node to make the new node's first input, as dropping its link on empty space does; give it instead of parent and slot. A type that takes no inputs is refused and adds nothing.
+    pub child: Option<u32>,
 }
 
 /// Adds a state to the state machine the front tab shows; the first state added is the initial one.
@@ -232,10 +234,22 @@ fn graph_add_node(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        let edit = GraphEdit::AddNode {
-            type_name: arguments.r#type,
-            parent: arguments.parent.map(GraphNodeId),
-            slot: arguments.slot,
+        let edit = match arguments.child {
+            Some(_) if arguments.parent.is_some() || arguments.slot.is_some() => {
+                reply.err(invalid(
+                    "Give child, the node that becomes the new node's first input, or parent and slot, not both.",
+                ));
+                continue;
+            }
+            Some(child) => GraphEdit::AddParent {
+                type_name: arguments.r#type,
+                child: GraphNodeId(child),
+            },
+            None => GraphEdit::AddNode {
+                type_name: arguments.r#type,
+                parent: arguments.parent.map(GraphNodeId),
+                slot: arguments.slot,
+            },
         };
         start(reply, edit, &active, &graphs, &mut cmd);
     }
