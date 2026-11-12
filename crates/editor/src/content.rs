@@ -119,6 +119,12 @@ impl ContentState {
     }
 }
 
+/// On a content browser item that shows an asset: which one.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct ContentAsset {
+    pub id: AssetId,
+}
+
 #[derive(Component)]
 struct ContentItem {
     key: ContentKey,
@@ -1029,8 +1035,10 @@ fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: E
             ChildOf::new(parent),
         ))
         .entity();
-    if let ContentKey::Folder(key) = &entry.key {
-        cmd.insert(open_folder_menu(key.clone()), item);
+    match &entry.key {
+        ContentKey::Folder(key) => cmd.insert(open_folder_menu(key.clone()), item),
+        ContentKey::Asset(id) => cmd.insert(ContentAsset { id: *id }, item),
+        ContentKey::Pending { .. } => {}
     }
     for content in [icon_node, label] {
         cmd.add_child(item, content);
@@ -1923,6 +1931,16 @@ mod tests {
         let mesh = f.asset("content/characters/hero/mesh.gasset");
         assert_eq!(f.keys_under(hero), [ContentKey::Asset(mesh)]);
         assert_eq!(f.labels_under(hero), ["mesh"]);
+        let tile = f.item(&ContentKey::Asset(mesh));
+        assert_eq!(
+            f.world.get_component_for_entity::<ContentAsset>(tile),
+            Some(&ContentAsset { id: mesh })
+        );
+        assert!(
+            f.world
+                .get_component_for_entity::<ContentAsset>(hero)
+                .is_none()
+        );
         let forest = f.item(&folder("forest"));
         assert_eq!(f.labels_under(forest), ["a"]);
         assert_eq!(f.state().items.len(), 5);

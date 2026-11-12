@@ -890,6 +890,28 @@ meantime does not answer the call. The plugin adds
 the tool in its `finish`, when the `App` has `McpPlugin`, so the editor without
 `--mcp` has the resource and no tool.
 
+A person places an asset by dragging its tile from the Asset Browser into the
+viewport, with the [drag and drop](#drag-and-drop) widget. The payload is
+`AssetDrag { id }`. The plugin gives a tile a `DragSource<AssetDrag>`, labelled
+with the asset's name, when the asset's kind is in `PlaceableKinds`, so a
+texture's tile does not drag and the tiles of a project opened before its scene
+become draggable once the scene opens. It finds the tiles by `ContentAsset
+{ id }`, the component the content browser puts on every item that shows an
+asset. While the front document's game is starting or playing no tile is a
+drag source. Every `ViewportRegion` is a `DropTarget<AssetDrag>`: a drop
+triggers `PlaceAsset` under the scene root with `PlaceAt::Pointer`, the drop
+position less the region's laid-out top-left corner, both in logical pixels.
+The entity lands where `PlaceAt::Pointer` says, is selected, and a refusal
+shows in Chatter as any refused edit does. With no scene as the edit target the
+drop does nothing. The drop and `place_asset` trigger the same signal, so an
+agent places by `position` what a person places by pointer.
+
+The press of a drag starts in the browser and never reaches the edit `App`,
+which sees only the cursor moving over the picture and the release. The gizmo
+starts a drag only on a press and picking selects only on a release that
+follows a press on the picture, so the drop moves and selects nothing but the
+entity it places; a gizmo handle may highlight under the dragged label.
+
 ## Custom property editors
 
 The inspector edits live reflected values, a scene's components and the

@@ -1,24 +1,33 @@
-//! Placing assets in the open scene: which kinds can be placed, and the `place_asset` MCP tool.
+//! Placing assets in the open scene: which kinds can be placed, the `place_asset` MCP tool, and dragging a content tile into the viewport.
 use concerto_app::{
     App, PlaceableAssets, Plugin,
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue, component::name::Name,
-    events::event_reader::EventReader, query::filter::With,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
+    command::CommandQueue,
+    component::name::Name,
+    events::event_reader::EventReader,
+    query::filter::With,
+    signal::{On, lifecycle::Add, listener::IntoListener},
 };
 use concerto_foundation::assets::{AssetId, registry::AssetRegistry};
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, ToolCalls, ToolError, ToolRegistry};
+use concerto_ui::node::UILayout;
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{
-    hosted::{EditTarget, EditWorld, EditWorldSignals, HostRole, Hosted, HostedApp},
+    asset_editor::ActiveEditor,
+    content::ContentAsset,
+    drag_drop::{DragDropAppExt, DragSource, DropTarget, Dropped},
+    hosted::{EditTarget, EditWorld, EditWorldSignals, HostRole, Hosted, HostedApp, PlayState},
     inspector::refused,
     mcp::{SceneEntities, resolve},
     scene::SceneOpened,
     tools::placement::{AssetPlaced, PlaceAsset, PlaceAt},
+    viewport::ViewportRegion,
 };
 
 /// Places assets in the open scene: keeps [`PlaceableKinds`] and, when the editor serves MCP, adds the `place_asset` tool.
@@ -27,7 +36,10 @@ pub struct AssetPlacementPlugin;
 impl Plugin for AssetPlacementPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PlaceableKinds::default())
-            .add_system(Update, note_placeable_kinds);
+            .add_drag_payload::<AssetDrag>()
+            .add_system(Update, note_placeable_kinds)
+            .add_system(Update, offer_placeable_tiles.after(note_placeable_kinds))
+            .add_listener(take_asset_drops);
     }
 
     fn finish(&self, app: &mut App) {
@@ -40,6 +52,12 @@ impl Plugin for AssetPlacementPlugin {
         )
         .add_system(LateUpdate, answer_placements);
     }
+}
+
+/// What a content tile of a placeable asset carries while it is dragged; dropped on the viewport, the asset is placed under the pointer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssetDrag {
+    pub id: AssetId,
 }
 
 /// The asset kinds the recipe registered with `register_placeable_asset`, as of the last scene opened; empty before any has.
@@ -79,6 +97,63 @@ fn note_placeable_kinds(
             kinds.0 = found;
         }
     }
+}
+
+fn offer_placeable_tiles(
+    kinds: Res<PlaceableKinds>,
+    registry: Res<AssetRegistry>,
+    active: Res<ActiveEditor>,
+    states: Query<&PlayState>,
+    tiles: Query<(Entity, &ContentAsset, Option<&DragSource<AssetDrag>>)>,
+    mut cmd: CommandQueue,
+) {
+    let playing = active
+        .0
+        .and_then(|document| states.get_entity(document))
+        .is_some_and(|state| state.is_on());
+    for (tile, asset, source) in tiles.iter() {
+        let wanted = registry
+            .get(asset.id)
+            .filter(|entry| !playing && kinds.contains(&entry.kind))
+            .map(|entry| DragSource::new(AssetDrag { id: entry.id }, entry.name()));
+        match (source, wanted) {
+            (None, Some(wanted)) => cmd.insert(wanted, tile),
+            (Some(source), wanted)
+                if wanted.as_ref().is_none_or(|wanted| {
+                    wanted.payload != source.payload || wanted.label != source.label
+                }) =>
+            {
+                cmd.remove::<DragSource<AssetDrag>>(tile)
+            }
+            _ => {}
+        }
+    }
+}
+
+fn take_asset_drops(on: On<Add<ViewportRegion>>, mut cmd: CommandQueue) {
+    cmd.insert(
+        (
+            DropTarget::<AssetDrag>::new(),
+            place_dropped_asset.into_listener(),
+        ),
+        on.signal().entity,
+    );
+}
+
+fn place_dropped_asset(
+    on: On<Dropped<AssetDrag>>,
+    regions: Query<&UILayout, With<ViewportRegion>>,
+    mut scene: EditWorldSignals,
+) {
+    let Some(layout) = regions.get_entity(on.entity()) else {
+        return;
+    };
+    let dropped = on.signal();
+    scene.trigger(PlaceAsset {
+        asset: dropped.payload.id,
+        parent: None,
+        at: PlaceAt::Pointer(dropped.position - layout.rect.min),
+    });
 }
 
 /// Places an asset in the open scene as a new entity named after the asset's file, selects it, and answers `placed <name> as entity <id>`.
@@ -179,11 +254,14 @@ fn answer_placements(
 mod tests {
     use std::time::{Duration, Instant};
 
+    use concerto_app::edit_time::AtEditTime;
     use concerto_app::main_schedule::MainSchedulePlugin;
     use concerto_app::plugins::TimePlugin;
     use concerto_ecs::{
+        World,
         entity::hierarchy::{ChildOf, Children},
         events::event_channel::EventChannel,
+        signal::{On, Signal},
     };
     use concerto_foundation::{
         assets::{
@@ -194,23 +272,38 @@ mod tests {
     };
     use concerto_mcp::{McpPlugin, spawn_server};
     use concerto_mesh::Mesh;
+    use concerto_render::components::camera::Camera;
     use concerto_scene::scene::{Scene, SceneNode};
+    use concerto_ui::{
+        interaction::UIInputState,
+        node::{UIBox, UILayout},
+        theme::UITheme,
+    };
     use concerto_window::plugin::{Window, WindowPlugin};
-    use glam::{Mat4, Quat};
+    use glam::{Mat4, Quat, Vec2};
     use rmcp::{ServiceExt, model::CallToolRequestParams};
     use serde_json::{Value, json};
 
     use super::*;
     use crate::{
         asset_editor::ActiveEditor,
+        content::ContentAsset,
+        drag_drop::{DragDropPlugin, DragSource, Dropped},
         hosted::{
-            HostedEventsAppExt, HostedPlugin, SetEditTarget,
+            HostedEventsAppExt, HostedPlugin, PlayState, SetEditTarget,
             input::{ViewportShown, ViewportView},
             testing::{hosted_now, scene_recipe},
+            trigger_on,
         },
         mcp::EditorMcpPlugin,
         project::{Project, ProjectState},
-        tools::{EditToolsCorePlugin, scene::SceneRoot},
+        tools::{
+            EditToolsCorePlugin,
+            camera::{EditorCamera, ViewportPointer},
+            picking::world_to_viewport,
+            scene::SceneRoot,
+        },
+        viewport::ViewportRegion,
     };
 
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -231,8 +324,50 @@ mod tests {
         anchor: Entity,
     }
 
+    const PICTURE: Vec2 = Vec2::new(640.0, 480.0);
+    const PICTURE_AT: Vec2 = Vec2::new(300.0, 40.0);
+    const EYE: Vec3 = Vec3::new(0.0, 2.0, 6.0);
+
+    fn picture_camera() -> Camera {
+        Camera {
+            aspect: PICTURE.x / PICTURE.y,
+            ..Default::default()
+        }
+    }
+
+    struct ShowAPicture;
+    impl Signal for ShowAPicture {}
+
+    fn show_a_picture(_: On<ShowAPicture>, mut cmd: CommandQueue) {
+        cmd.spawn((
+            EditorCamera,
+            picture_camera(),
+            Transform::from_translation(EYE),
+        ));
+        cmd.insert_resource(ViewportPointer {
+            size: PICTURE,
+            ..Default::default()
+        });
+    }
+
+    fn scene(app: &App, document: Entity) -> &World {
+        app.main()
+            .world()
+            .get_component_for_entity::<HostedApp>(document)
+            .unwrap()
+            .world()
+    }
+
+    fn dragged(app: &App, tile: Entity) -> Option<DragSource<AssetDrag>> {
+        app.main()
+            .world()
+            .get_component_for_entity::<DragSource<AssetDrag>>(tile)
+            .cloned()
+    }
+
     fn open_a_scene(app: &mut App) -> Opened {
-        app.register_plugin(EditToolsCorePlugin);
+        app.register_plugin(EditToolsCorePlugin)
+            .add_listener(show_a_picture.at_edit_time());
         let world = app.main_mut().world_mut();
         let root = world.spawn((
             Name::new("root"),
@@ -391,6 +526,9 @@ mod tests {
             .insert_resource(ActiveEditor::default())
             .insert_resource(project)
             .insert_resource(registry.clone())
+            .insert_resource(UITheme::default())
+            .insert_resource(UIInputState::default())
+            .register_plugin(DragDropPlugin)
             .register_plugin(HostedPlugin)
             .register_event::<SceneOpened>()
             .forward_hosted_event::<AssetPlaced>()
@@ -409,7 +547,32 @@ mod tests {
         let document = world.spawn(hosted);
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
         world.trigger(SetEditTarget(Some(document)));
-        world
+        let shown = UIBox {
+            min: PICTURE_AT,
+            size: PICTURE,
+        };
+        let region = world.spawn((
+            ViewportRegion,
+            UILayout {
+                rect: shown,
+                content_rect: shown,
+                clip_rect: shown,
+                paint_order: 0,
+            },
+        ));
+        let pair_tile = world.spawn(ContentAsset { id: pair });
+        let mesh_tile = world.spawn(ContentAsset { id: mesh });
+        let note_tile = world.spawn(ContentAsset { id: note });
+        app.update();
+        app.update();
+        for tile in [pair_tile, mesh_tile, note_tile] {
+            assert!(
+                dragged(&app, tile).is_none(),
+                "nothing is known to be placeable before a scene opens"
+            );
+        }
+        app.main_mut()
+            .world_mut()
             .get_resource_mut::<EventChannel<SceneOpened>>()
             .unwrap()
             .push_event(SceneOpened {
@@ -461,12 +624,7 @@ mod tests {
             ]
         );
 
-        let world = app
-            .main()
-            .world()
-            .get_component_for_entity::<HostedApp>(document)
-            .unwrap()
-            .world();
+        let world = scene(&app, document);
         let parent = |entity| {
             world
                 .get_component_for_entity::<ChildOf>(entity)
@@ -525,6 +683,75 @@ mod tests {
                 .get_component_for_entity::<Children>(root)
                 .map(|children| children.iter().count()),
             Some(3)
+        );
+
+        let source = dragged(&app, mesh_tile).expect("a tile of a placeable asset can be dragged");
+        assert_eq!(source.payload, AssetDrag { id: mesh });
+        assert_eq!(source.label, "crate");
+        assert_eq!(
+            dragged(&app, pair_tile).map(|source| source.payload),
+            Some(AssetDrag { id: pair })
+        );
+        assert!(dragged(&app, note_tile).is_none());
+
+        app.main_mut()
+            .world_mut()
+            .insert(PlayState::Playing, document);
+        app.update();
+        app.update();
+        assert!(
+            dragged(&app, mesh_tile).is_none(),
+            "no tile can be dragged while the game plays"
+        );
+        app.main_mut()
+            .world_mut()
+            .insert(PlayState::Editing, document);
+        app.update();
+        app.update();
+        assert!(dragged(&app, mesh_tile).is_some());
+
+        trigger_on(app.main_mut().world_mut(), document, ShowAPicture);
+        let pointer = Vec2::new(400.0, 300.0);
+        app.main_mut().world_mut().trigger_on(
+            region,
+            Dropped {
+                payload: AssetDrag { id: mesh },
+                position: PICTURE_AT + pointer,
+            },
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let dropped = loop {
+            app.update();
+            let children: Vec<Entity> = scene(&app, document)
+                .get_component_for_entity::<Children>(root)
+                .map(|children| children.iter().copied().collect())
+                .unwrap_or_default();
+            if children.len() == 4 {
+                break children[3];
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the dropped asset was never placed"
+            );
+        };
+        let world = scene(&app, document);
+        assert_eq!(
+            world
+                .get_component_for_entity::<Name>(dropped)
+                .map(Name::as_str),
+            Some("crate")
+        );
+        let landed = world
+            .get_component_for_entity::<Transform>(dropped)
+            .unwrap()
+            .translation;
+        assert!(landed.y.abs() < 1e-3, "{landed:?} is not on the ground");
+        let view_proj = picture_camera().build_projection_matrix()
+            * Transform::from_translation(EYE).compute_matrix().inverse();
+        let seen = world_to_viewport(landed, PICTURE, view_proj).unwrap();
+        assert!(
+            (seen - pointer).length() < 0.5,
+            "{landed:?} shows at {seen:?}, not under the pointer at {pointer:?}"
         );
     }
 }

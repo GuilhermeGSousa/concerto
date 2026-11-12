@@ -337,6 +337,13 @@ fix the entry in the same commit as the change that made it false.
   so nothing from the viewport half runs in a game. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
+- **A placeable asset kind is registered in the game's recipe, not in the
+  editor `App`.** `PlaceAsset` runs in the edit `App` and reads its
+  `PlaceableAssets`, which `app.register_placeable_asset::<A>()` fills there.
+  The same call on the editor `App` places nothing and marks nothing: the
+  editor's `PlaceableKinds` is a copy of the names taken from the edit `App`
+  each time a scene opens, and it is empty until one has. An editor extension
+  that brings a placeable kind must have the recipe register it.
 - **`EditWorld<T>` and `EditWorldSignals` skip their system** while no document
   has `EditTarget`: no scene is open in the front tab, the front tab's `App` is
   a preview, or its game is starting. Whatever such a system drew stays on screen unless an
