@@ -3,6 +3,7 @@ name = "one-more-night"
 version = "0.1.0"
 edition = "2024"
 publish = false
+default-run = "one-more-night"
 description.workspace = true
 repository.workspace = true
 license.workspace = true
