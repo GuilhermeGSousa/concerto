@@ -518,7 +518,7 @@ pub fn install_stage(app: &mut App, saves: Option<PathBuf>, stage: Stage) {
             let (hour, minute) = start.split_once(':')?;
             Some(GameTime::hm(hour.parse().ok()?, minute.parse().ok()?))
         })
-        && let Some(mut clock) = app.get_resource_mut::<NightClock>()
+        && let Some(clock) = app.get_resource_mut::<NightClock>()
     {
         clock.jump_to(start);
     }
@@ -850,6 +850,7 @@ fn adopt_named_nodes(
                 "staff" => Some(Interactable::Bed(1)),
                 _ => None,
             },
+            "furniture" if rest == "hall.gong_01" => Some(Interactable::Gong),
             "spawn" => {
                 let player = u32::from(rest == "staff");
                 cmd.insert(SpawnPoint { player }, entity);
@@ -1828,6 +1829,9 @@ fn debug_keys(
             readout(clock.now())
         ));
     }
+    if pressed(KeyCode::F8) {
+        sight.night_over = true;
+    }
     if pressed(KeyCode::F6) {
         pause.0 = !pause.0;
         session.notice(if pause.0 {
@@ -1835,6 +1839,13 @@ fn debug_keys(
         } else {
             "Debug: the clock runs"
         });
+    }
+    let reveals = [KeyCode::F7, KeyCode::F9, KeyCode::F10];
+    if data.sealed {
+        if reveals.into_iter().any(pressed) {
+            session.notice("Debug: not with a sealed case");
+        }
+        return;
     }
     if pressed(KeyCode::F7)
         && let Some(fact) = data.case.facts.ids().find(|fact| !book.knows(*fact))
@@ -1852,9 +1863,6 @@ fn debug_keys(
         })
     {
         session.examine(player, placement, &mut book, &data);
-    }
-    if pressed(KeyCode::F8) {
-        sight.night_over = true;
     }
     if pressed(KeyCode::F9)
         && let Some(deduction) = book
@@ -2605,6 +2613,21 @@ mod tests {
             },
         ];
         walk_to_the_end(&mut app, &walks);
+
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(17.2, 6.5)],
+                ends_at_height: 0.0,
+                ends_in: "hall",
+            }],
+        );
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(18.68, 0.7, -6.5)),
+            Some(super::Interactable::Gong),
+            "the dinner gong stands in the hall"
+        );
 
         let staff_room = {
             let data = app.get_resource::<crate::casefile::CaseData>().unwrap();

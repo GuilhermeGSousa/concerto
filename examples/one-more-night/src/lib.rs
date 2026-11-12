@@ -70,7 +70,7 @@ fn sealed_case() -> Option<casefile::CaseData> {
             return None;
         }
     };
-    match casefile::CaseData::manor(&files) {
+    match casefile::CaseData::sealed_manor(&files) {
         Ok(data) => Some(data),
         Err(_) => {
             eprintln!("The sealed case opened and did not load. Playing the open walk.");

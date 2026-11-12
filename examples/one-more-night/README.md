@@ -21,9 +21,9 @@ to them.
 that solves nothing (`cases/manor_walk`): ten characters, one of each
 figurine, standing about the house to be met, and no props or facts. The Guest starts
 upstairs and the Staff in the servants' hall. Its walls, floors and furniture
-collide, its doors open, and its bells, bell board, beds and dumbwaiter stops
-are found by the names of the nodes in the export, with nothing placed by
-hand. A door leaf that stands open is walked through and does not block the
+collide, its doors open, and its bells, bell board, beds, dumbwaiter stops
+and the dinner gong in the hall are found by the names of the nodes in the
+export, with nothing placed by hand. A door leaf that stands open is walked through and does not block the
 way; aim at it to close it. Every indoor room has ceiling lamps, placed from the
 room plan: warm in the guest rooms, paler in the service ones, hung lower under
 the cellar's and attic's low ceilings. Outdoors there is only moonlight.
@@ -43,8 +43,8 @@ cargo run -p one-more-night --bin seal-case -- <case directory>
 ```
 
 `seal-case` checks that the case loads over the manor and writes the bundle,
-making a key if there is none. It prints PASS or FAIL and nothing about the
-case. `ONE_MORE_NIGHT_CASE` and `ONE_MORE_NIGHT_KEY` name other paths for the
+making a key if there is none. It prints PASS, or FAIL with the file and the
+id that did not load, and nothing else about the case. `ONE_MORE_NIGHT_CASE` and `ONE_MORE_NIGHT_KEY` name other paths for the
 two files. This keeps the case from being read by accident; it does not stop
 someone who sets out to open it with the key.
 
@@ -126,6 +126,9 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | F8 | Ends the night |
 | F9 | Confirms the next open deduction |
 | F10 | Brings the first inspectable prop up for the first player |
+
+With a sealed case loaded, F7, F9 and F10 do nothing but say so: they would
+give the case away.
 
 With the `debug` feature, setting `ONE_MORE_NIGHT_NO_CARD` starts the night
 without its card, for looking at a level without a pad in hand, and
