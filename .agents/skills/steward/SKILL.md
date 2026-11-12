@@ -23,3 +23,7 @@ how to act on a PR event.
 - A cloud session checks with `cargo fmt --all -- --check` only, plus
   `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
   and leaves clippy, tests and wasm to CI.
+- A CI job that failed without starting, with an annotation about billing or
+  the spending limit, did not run. It is not red: do not fix it, retry it or
+  wait for it. Go on, and name it in the review comment with the done gate
+  commands left unrun.

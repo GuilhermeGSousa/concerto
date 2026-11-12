@@ -166,7 +166,8 @@ Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
 alone needs none of them. A cloud pipeline session runs only the first, and
 the `cargo metadata` step below when a `Cargo.toml` changed, and leaves the
-rest to CI.
+rest to CI. When CI could not start its jobs, for want of Actions minutes, the
+session goes on and reports those commands as not run.
 
 A change to a `Cargo.toml` commits the `Cargo.lock` that cargo rewrites. A
 session that doesn't build runs `cargo metadata --format-version 1 > /dev/null`,
