@@ -1,3 +1,5 @@
+mod graph;
+
 use std::{
     any::{Any, TypeId},
     sync::Arc,
