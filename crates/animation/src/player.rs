@@ -325,8 +325,8 @@ mod tests {
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
         node::{
-            AnimationClipNode, AnimationNode, BlendNode, ReflectAnimationNode, ResultNode,
-            register_node_inputs,
+            AnimationClipNode, AnimationNode, BlendNode, InputSlots, ReflectAnimationNode,
+            ResultNode, register_node_inputs,
         },
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
@@ -342,6 +342,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0

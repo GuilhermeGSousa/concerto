@@ -1,7 +1,7 @@
 use concerto_animation::{
     evaluation::AnimationGraphContext,
     graph::AnimationGraph,
-    node::{AnimationNode, ReflectAnimationNode},
+    node::{AnimationNode, InputSlots, ReflectAnimationNode},
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion},
@@ -19,6 +19,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_name::name;
 use concerto_reflect::{GetTypeRegistration, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
@@ -104,6 +105,10 @@ impl AnimationNode for Capture {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> Option<Frame> {
         None

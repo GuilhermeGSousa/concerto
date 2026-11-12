@@ -5,6 +5,7 @@ use concerto_ecs::{
     system::input::{ReadOnlySystemInput, SystemInputData, register_input},
 };
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
+use concerto_name::{Name, name};
 use concerto_reflect::{
     EncodeError, FromType, Reflect, ReflectedValue, TypeData, ValueWarning, apply_value_with,
     to_value,
@@ -62,6 +63,15 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         true
     }
 
+    /// The inputs this node takes, in the order `evaluate` receives them.
+    fn input_slots(&self) -> InputSlots;
+
+    /// Called when an editor gives the node an input at `index`.
+    fn input_added(&mut self, _index: usize) {}
+
+    /// Called when an editor takes the node's input at `index` away.
+    fn input_removed(&mut self, _index: usize) {}
+
     /// Visits the graph assets this node plays inside itself.
     fn inner_graphs(&self, _visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {}
 
@@ -77,6 +87,17 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         _visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
     }
+}
+
+/// The inputs a kind of node takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputSlots {
+    /// No inputs: a clip, motion matching, a state machine.
+    None,
+    /// A fixed set, each named: a layer's `base` and `overlay`.
+    Fixed(Vec<Name>),
+    /// Any number, unnamed: a blend.
+    Variable,
 }
 
 /// The graph walk that creates node states; its input set holds every registered node's `CreateInput`.
@@ -120,6 +141,12 @@ pub trait ErasedAnimationNode: Send + Sync {
     fn is_finished(&self, state: &NodeState) -> bool;
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
+
+    fn input_slots(&self) -> InputSlots;
+
+    fn input_added(&mut self, index: usize);
+
+    fn input_removed(&mut self, index: usize);
 
     fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState));
 
@@ -196,6 +223,18 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
         AnimationNode::inner_graphs(self, visit);
+    }
+
+    fn input_slots(&self) -> InputSlots {
+        AnimationNode::input_slots(self)
+    }
+
+    fn input_added(&mut self, index: usize) {
+        AnimationNode::input_added(self, index);
+    }
+
+    fn input_removed(&mut self, index: usize) {
+        AnimationNode::input_removed(self, index);
     }
 
     fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState)) {
@@ -280,6 +319,10 @@ impl AnimationNode for PlaceholderNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -332,6 +375,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Step>;
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> GainState {
             GainState::default()

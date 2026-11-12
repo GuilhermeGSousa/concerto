@@ -1,5 +1,6 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_name::name;
 use concerto_reflect::Reflect;
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use crate::{
     clip::{Additive, AnimationClip},
     evaluation::AnimationGraphContext,
     node::{
-        AnimationNode, AnimationPlayMode, ClipClock, ClockSpan, ReflectAnimationNode,
+        AnimationNode, AnimationPlayMode, ClipClock, ClockSpan, InputSlots, ReflectAnimationNode,
         effective_play_rate, effective_weight,
     },
     param::Param,
@@ -119,6 +120,10 @@ impl AnimationNode for AdditiveNode {
     type CreateInput = ();
     type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AdditiveNodeState {
         AdditiveNodeState {

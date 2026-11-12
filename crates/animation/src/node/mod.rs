@@ -1,5 +1,6 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_name::name;
 use concerto_reflect::Reflect;
 use uuid::Uuid;
 
@@ -25,8 +26,8 @@ pub mod two_bone_ik;
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
-    AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, NodeState,
-    PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,
+    AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, InputSlots,
+    NodeState, PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
@@ -90,6 +91,10 @@ impl AnimationNode for ResultNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -115,6 +120,10 @@ impl AnimationNode for BlendNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Variable
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
@@ -304,6 +313,10 @@ impl AnimationNode for AnimationClipNode {
     type CreateInput = ();
     type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AnimationClipNodeState {
         AnimationClipNodeState::new().with_start_time(self.start_time)

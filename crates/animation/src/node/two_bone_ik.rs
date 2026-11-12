@@ -1,4 +1,5 @@
 use concerto_mesh::{JointName, Skeleton};
+use concerto_name::name;
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 use log::warn;
@@ -9,7 +10,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     ik::{TwoBoneChain, solve_two_bone},
     node::{
-        AnimationNode, ReflectAnimationNode, effective_weight,
+        AnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
         model_space::{ModelJoint, WorldToModel, bone_under_first, model_joint, parent},
         pass_through,
     },
@@ -255,6 +256,10 @@ impl AnimationNode for TwoBoneIkNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> TwoBoneIkState {
         TwoBoneIkState::default()

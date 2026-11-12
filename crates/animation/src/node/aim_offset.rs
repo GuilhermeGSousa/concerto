@@ -7,6 +7,7 @@ use concerto_foundation::{
     math::{Spring, SpringValue},
 };
 use concerto_mesh::{JointName, Skeleton};
+use concerto_name::name;
 use concerto_reflect::Reflect;
 use glam::{Vec2, Vec3};
 use log::warn;
@@ -18,7 +19,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     look_at::{LookFrame, yaw_pitch_to},
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint},
         pass_through,
     },
@@ -336,6 +337,10 @@ impl AnimationNode for AimOffsetNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimOffsetState {
         AimOffsetState {

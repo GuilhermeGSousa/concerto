@@ -2,7 +2,7 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, RootBone},
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, model_joint},
     },
     param::Param,
@@ -10,6 +10,7 @@ use concerto_animation::{
 };
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
+use concerto_name::name;
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 use log::warn;
@@ -366,6 +367,10 @@ impl AnimationNode for FootLockNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> FootLockState {
         FootLockState::new(self)
     }
@@ -489,7 +494,7 @@ impl AnimationNode for FootLockNode {
 mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
-        node::{AnimationNode, ReflectAnimationNode},
+        node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion},
         root::AnimationRootBone,
@@ -578,6 +583,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

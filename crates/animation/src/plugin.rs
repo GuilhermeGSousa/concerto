@@ -142,7 +142,7 @@ mod tests {
     use crate::{
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
-        node::{AnimationNode, CreateNodeInputs, ReflectAnimationNode},
+        node::{AnimationNode, CreateNodeInputs, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
         target::{animate_targets, initialize_animation_players, update_animation_players},
@@ -157,6 +157,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> bool {
             false
@@ -266,6 +270,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Speed>;
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

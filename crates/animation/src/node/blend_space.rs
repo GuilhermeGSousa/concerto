@@ -10,7 +10,7 @@ use crate::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
-    node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
+    node::{AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode},
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
@@ -64,6 +64,10 @@ impl AnimationNode for BlendSpace2DNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Variable
+    }
 
     fn create_state(
         &self,
@@ -130,6 +134,16 @@ impl AnimationNode for BlendSpace2DNode {
 
     fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
         state.current_triangulated_point = None;
+    }
+
+    fn input_added(&mut self, index: usize) {
+        self.points.insert(index.min(self.points.len()), Vec2::ZERO);
+    }
+
+    fn input_removed(&mut self, index: usize) {
+        if index < self.points.len() {
+            self.points.remove(index);
+        }
     }
 }
 
@@ -245,5 +259,23 @@ mod tests {
                 event.weight
             );
         }
+    }
+
+    #[test]
+    fn the_blend_space_keeps_a_point_per_input_as_inputs_come_and_go() {
+        let mut space = BlendSpace2DNode::new(
+            vec![Vec2::X, Vec2::Y],
+            BlendInput {
+                param: name!("at").into(),
+            },
+        );
+
+        space.input_added(1);
+        space.input_added(3);
+        assert_eq!(space.points(), [Vec2::X, Vec2::ZERO, Vec2::Y, Vec2::ZERO]);
+
+        space.input_removed(0);
+        space.input_removed(2);
+        assert_eq!(space.points(), [Vec2::ZERO, Vec2::Y]);
     }
 }

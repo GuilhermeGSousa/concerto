@@ -9,7 +9,7 @@ use crate::transition::{
 };
 use crate::{
     evaluation::AnimationGraphContext,
-    node::{AnimationNode, ReflectAnimationNode},
+    node::{AnimationNode, InputSlots, ReflectAnimationNode},
 };
 
 use concerto_ecs::Res;
@@ -263,6 +263,10 @@ impl AnimationNode for AnimationStateMachine {
     type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
+
     fn create_state(
         &self,
         graphs: &Res<AssetStore<AnimationGraph>>,
@@ -493,7 +497,10 @@ mod tests {
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
         graph::{AnimationGraph, GraphId},
-        node::{AnimationNode, ErasedAnimationNode, ReflectAnimationNode, register_node_inputs},
+        node::{
+            AnimationNode, ErasedAnimationNode, InputSlots, ReflectAnimationNode,
+            register_node_inputs,
+        },
         player::AnimationPlayer,
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
@@ -509,6 +516,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0

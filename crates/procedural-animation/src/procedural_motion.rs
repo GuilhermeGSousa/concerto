@@ -4,7 +4,7 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
     mask::{BoneMask, MaskResolution, resolve_mask},
-    node::{AnimationNode, ReflectAnimationNode, model_space::parent},
+    node::{AnimationNode, InputSlots, ReflectAnimationNode, model_space::parent},
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
@@ -14,6 +14,7 @@ use concerto_foundation::{
     math::Spring,
 };
 use concerto_mesh::Skeleton;
+use concerto_name::name;
 use concerto_noise::{fractal_noise, mix_seed, unit_from_seed};
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
@@ -394,6 +395,10 @@ impl AnimationNode for ProceduralMotionNode {
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> ProceduralMotionState {
         let mut state = ProceduralMotionState::default();
         state.keep_up(self);
@@ -450,7 +455,7 @@ mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
         mask::{BoneMask, BoneMaskBranch},
-        node::{AnimationNode, ReflectAnimationNode},
+        node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
         root::AnimationRootBone,
@@ -551,6 +556,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

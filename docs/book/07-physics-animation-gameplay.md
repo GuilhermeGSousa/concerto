@@ -652,7 +652,7 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
-    // create_state, update, evaluate, reset; is_finished defaults to true
+    // input_slots, create_state, update, evaluate, reset; is_finished defaults to true
 }
 ```
 
@@ -664,6 +664,14 @@ a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
 through `inner_graphs` and their states through `inner_states`, and, under
 `cfg(test)` or the `test-support` feature, mutably through `inner_states_mut`.
+
+`input_slots` says which inputs the node takes, in the order `evaluate`
+receives them in `evaluated_inputs`: `InputSlots::None` for a node that reads
+none, as a clip does; `InputSlots::Fixed` with a name for each, as a layer's
+`base` and `overlay`; or `InputSlots::Variable` for any number, as a blend
+takes. A node that keeps data for each input, as the blend space keeps a point,
+also implements `input_added(index)` and `input_removed(index)`, which an
+editor calls when it gives the node an input or takes one away.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and

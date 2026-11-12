@@ -1,6 +1,7 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
+use concerto_name::name;
 use concerto_reflect::Reflect;
 use glam::Quat;
 use log::warn;
@@ -10,7 +11,9 @@ use uuid::Uuid;
 use crate::{
     evaluation::AnimationGraphContext,
     mask::{BoneMask, MaskResolution, resolve_mask},
-    node::{AnimationNode, ReflectAnimationNode, effective_weight, model_space::parent},
+    node::{
+        AnimationNode, InputSlots, ReflectAnimationNode, effective_weight, model_space::parent,
+    },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose},
 };
@@ -89,6 +92,10 @@ impl AnimationNode for LayerNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("base"), name!("overlay")])
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> LayerState {
         LayerState::default()

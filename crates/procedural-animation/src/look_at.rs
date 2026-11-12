@@ -5,7 +5,7 @@ use concerto_animation::{
     evaluation::AnimationGraphContext,
     look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint, parent},
     },
     param::Param,
@@ -13,6 +13,7 @@ use concerto_animation::{
 };
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
+use concerto_name::name;
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 use log::warn;
@@ -348,6 +349,10 @@ impl AnimationNode for LookAtNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> LookAtState {
         LookAtState {
             elapsed: 0.0,
@@ -463,7 +468,7 @@ mod tests {
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
         look_at::{LookFrame, YawPitch, yaw_pitch_to},
-        node::{AnimationNode, ReflectAnimationNode},
+        node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
     };
@@ -561,6 +566,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

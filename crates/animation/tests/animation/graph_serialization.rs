@@ -13,8 +13,8 @@ use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
     AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, AnimationNode, AnimationPlayMode,
-    ErasedAnimationNode, IkGoal, LayerNode, LayerSpace, ReflectAnimationNode, TipRotation,
-    TwoBoneIkNode,
+    ErasedAnimationNode, IkGoal, InputSlots, LayerNode, LayerSpace, ReflectAnimationNode,
+    TipRotation, TwoBoneIkNode,
 };
 use concerto_animation::param::Param;
 use concerto_animation::plugin::register_animation_types;
@@ -47,6 +47,10 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
