@@ -1125,9 +1125,10 @@ The generic tab of an [inspected asset](#inspected-assets) fills its
 `DocumentBones`. An editor of its own fills it however it reads the skeleton,
 as the motion database editor does.
 
-The menu is `name_menu`'s `NameMenu`, opened with `open_name_menu` and closed
-with `close_menu`; `close_name_menu` closes it when another tab comes to the
-front. An extension crate opens it for names of its own, as the motion database
+The menu is `name_menu`'s `NameMenu`, opened under a button with
+`open_name_menu`, or at a point in the window with `open_name_menu_at`, as a
+right-click menu is, and closed with `close_menu`; `close_name_menu` closes it
+when another tab comes to the front. An extension crate opens it for names of its own, as the motion database
 editor's channel-type picker does.
 
 ### Entity references
