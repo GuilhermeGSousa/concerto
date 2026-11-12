@@ -638,6 +638,11 @@ internally from the registry when reading asset bytes.
 
 Configure the root before content loading starts; changing projects requires a
 separate server. Procedural assets can still be inserted with `AssetServer::add`.
+`AssetServer::insert_loaded(id, asset)` puts a built asset under an id of the
+caller's choosing instead of a fresh one: it runs `on_load`, drops a load of
+that id still pending, and from then on `load(id)` returns the inserted asset
+and reads no file. Inserting again under the same id replaces it. An editor
+uses it to have a preview play a working copy in place of the saved file.
 
 ### The startup scene
 

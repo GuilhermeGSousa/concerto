@@ -372,6 +372,37 @@ impl AssetServer {
         handle
     }
 
+    /// Puts a built asset in its store under `id`, running its `on_load` inline and dropping a pending load of that id, so `load(id)` returns it and reads no file; inserting again replaces it, and a failing `on_load` is logged and leaves what was there.
+    pub fn insert_loaded<A: LoadableAsset>(&self, id: AssetId, mut asset: A) -> AssetHandle<A> {
+        let handle = self.data.handle_provider.request_handle(id);
+        let was_loaded = {
+            let mut pending = self.data.pending_tasks.write().unwrap();
+            if let Some(load) = pending.remove(&id) {
+                load.cancelled.store(true, Ordering::SeqCst);
+            }
+            !self.data.loaded_assets.write().unwrap().insert(id)
+        };
+        let context = AssetLoadContext::new(self.clone(), id);
+        if let Err(error) = asset.on_load(&context) {
+            log::error!(
+                "Failed to insert asset (type {}): {:#}",
+                std::any::type_name::<A>(),
+                error
+            );
+            if !was_loaded {
+                self.data.loaded_assets.write().unwrap().remove(&id);
+            }
+            return handle;
+        }
+        let _ = self
+            .data
+            .asset_load_event_sender
+            .send(AssetLoadEvent::Loaded {
+                asset: LoadedAsset::new(id, asset),
+            });
+        handle
+    }
+
     /// Loads a stored asset using its persistent UUID, obtained from `asset_id!`
     /// or a serialized asset reference. Repeated requests share handles and loads.
     pub fn load<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
@@ -942,6 +973,33 @@ mod tests {
             .unwrap();
         assert_eq!(store.into_iter().count(), 1);
         assert_eq!(fixture.value(&first), Some(42));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_inserted_asset_stands_in_for_its_file_and_a_second_insert_replaces_it() {
+        let dir = temp_root("insert-loaded");
+        let saved = saved_fixture(&dir, 1);
+        let id = saved.id;
+        let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
+        let pending = fixture.server.load::<FixtureAsset>(id);
+
+        let inserted = fixture.server.insert_loaded(id, FixtureAsset::new(2));
+        let loaded = fixture.server.load::<FixtureAsset>(id);
+
+        assert_eq!(inserted.id(), id);
+        assert!(fixture.server.data.pending_tasks.read().unwrap().is_empty());
+        handle_asset_load_events(&mut fixture.world);
+        assert!(!fixture.server.is_loading());
+        assert_eq!(fixture.value(&loaded), Some(2));
+        assert_eq!(fixture.value(&pending), Some(2));
+
+        fixture.server.insert_loaded(id, FixtureAsset::new(3));
+        fixture.server.insert_loaded(id, FixtureAsset::new(REFUSED));
+        handle_asset_load_events(&mut fixture.world);
+
+        assert_eq!(fixture.value(&loaded), Some(3));
+        assert!(fixture.server.is_loading_or_loaded(id));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
