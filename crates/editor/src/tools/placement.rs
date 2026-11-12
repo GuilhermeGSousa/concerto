@@ -54,6 +54,8 @@ impl Signal for PlaceAsset {}
 pub enum PlaceAt {
     /// A point in world space.
     Position(Vec3),
+    /// The origin of the parent, which is the scene root when none is named.
+    Origin,
     /// What is under a point of the viewport, in logical pixels from its top-left corner: a mesh of the scene, else the ground plane, else a point ahead of the camera.
     Pointer(Vec2),
 }
@@ -216,6 +218,7 @@ fn resolve(world: &mut World, request: &PlaceAsset) -> anyhow::Result<Placement>
     };
     let position = match request.at {
         PlaceAt::Position(position) => position,
+        PlaceAt::Origin => world_matrix(world, parent).transform_point3(Vec3::ZERO),
         PlaceAt::Pointer(pointer) => under_pointer(world, pointer)?,
     };
     Ok(Placement {
@@ -671,7 +674,19 @@ mod tests {
             Some(&Lamp { size: 3 })
         );
         assert_eq!(f.selected(), Some(lamp));
-        assert_eq!(f.heard::<SceneEdited>().len(), 3);
+
+        let hook = f
+            .place(PlaceAsset {
+                asset: prop,
+                parent: Some(anchor),
+                at: PlaceAt::Origin,
+            })
+            .result
+            .unwrap();
+        assert_eq!(f.parent(hook), Some(anchor));
+        assert!(near(f.local(hook), Vec3::ZERO));
+        assert!(near(f.world_position(hook), Vec3::new(10.0, 0.0, 0.0)));
+        assert_eq!(f.heard::<SceneEdited>().len(), 4);
         assert!(f.heard::<SceneStatus>().is_empty());
     }
 

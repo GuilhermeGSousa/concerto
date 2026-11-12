@@ -98,7 +98,9 @@ lets take the space that is left. The `viewport:` line is the picture's size
 in physical pixels; under `--mcp` the scale is 1, so the two agree. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
-call that shows the rest. `scene_tree` shows the edited scene, or while a game
+call that shows the rest. A line that ends `· placeable` is an asset
+`place_asset` takes; the marks appear once a scene has opened, since the
+placeable kinds are the recipe's. `scene_tree` shows the edited scene, or while a game
 plays its top-level entities as the hierarchy does, one `id name [components]`
 line per entity, indented, from `root` if given, `depth` levels deep (3) and at
 most `limit` entities (200); a cut subtree or a cut list ends with the call that
@@ -192,6 +194,14 @@ reports the outcome; an edit the tools refuse answers `refused` with their
 status text, the same text the scene's status line shows. `create_entity` adds
 an entity named Entity as the last child of `parent`, or of the scene's top
 level without one, and answers `Created <id> Entity in <parent>.`.
+`place_asset` adds an entity that uses `asset`, an address or an id from
+`list_assets`, named after the asset's file, as a child of `parent` or of the
+scene root, at `position`, `[x, y, z]` in world space, or at the parent's
+origin without one, and selects it. It answers `placed <name> as entity <id>`
+once the asset has loaded and the entity exists. An address that names nothing
+answers `unknown_asset`; an id the project does not have, a kind that cannot
+be placed, which names the kinds that can, a load that fails and a game that
+is playing answer `refused` (see [Placing assets](#placing-assets)).
 `delete_entity` deletes `entity` and its descendants and answers what is
 selected afterwards. `duplicate_entity` copies `entity` beside it and answers
 the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
@@ -810,7 +820,7 @@ a refused set leaves the component as it was.
 `PlaceAsset { asset, parent, at }` adds an entity that uses an asset whose kind
 the recipe registered with `register_placeable_asset`: named after the asset's
 file, under `parent` or the scene root, at `PlaceAt::Position`, a point in
-world space, or at `PlaceAt::Pointer`, a point of the viewport in logical
+world space, at `PlaceAt::Origin`, the parent's origin, or at `PlaceAt::Pointer`, a point of the viewport in logical
 pixels, which lands on the scene mesh under it, else on the y = 0 plane within
 200 m, else 10 m along the ray. The entity is spawned and selected once the
 asset has loaded, so its `AssetPlaced` can come frames later; a load that
@@ -855,6 +865,26 @@ Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the
 wheel dollies or adjusts flight speed while looking. F frames the selection;
 Shift-F frames the scene.
+
+## Placing assets
+
+`AssetPlacementPlugin` (`placement.rs`) puts an asset in the open scene as an
+entity. What the entity is made of is the asset kind's `PlaceableAsset::place`,
+which the game's recipe registers with `register_placeable_asset`; the engine
+registers `Scene`, whose root nodes become children of the entity, and `Mesh`,
+which gives it a `MeshComponent`. The editor never names a kind: the plugin
+copies the kinds' names out of the edit `App`'s `PlaceableAssets` into its
+`PlaceableKinds` resource each time a scene opens, so a panel or a tool can ask
+`PlaceableKinds::contains(kind)` or walk `PlaceableKinds::iter()` with no scene
+as the edit target. Before any scene has opened it is empty.
+
+Placing is the `PlaceAsset` signal of the scene tools, described under
+[Saving](#saving) with the other edit signals, and its outcome is
+`Hosted<AssetPlaced>`. The `place_asset` tool triggers it with
+`PlaceAt::Position`, or with `PlaceAt::Origin`, the parent's origin, when the
+call gives no position, and answers when the outcome arrives. The plugin adds
+the tool in its `finish`, when the `App` has `McpPlugin`, so the editor without
+`--mcp` has the resource and no tool.
 
 ## Custom property editors
 
