@@ -27,7 +27,8 @@ pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
     AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, InputSlots,
-    NodeState, PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,
+    NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode, StateMachineReport,
+    TransitionReport, UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
@@ -399,6 +400,13 @@ impl AnimationNode for AnimationClipNode {
             context.root(),
             bone_ids,
         ));
+    }
+
+    fn report(&self, state: &AnimationClipNodeState) -> NodeReport {
+        NodeReport {
+            clip_time: Some(state.current_time()),
+            state_machine: None,
+        }
     }
 
     fn reset(&self, state: &mut AnimationClipNodeState) {

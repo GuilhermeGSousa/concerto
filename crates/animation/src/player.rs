@@ -19,7 +19,7 @@ use glam::{Affine3A, Vec2, Vec3};
 use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, RootBone},
-    graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex},
+    graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
     pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
@@ -140,6 +140,15 @@ impl AnimationPlayer {
         f: impl FnMut(&N, &N::State, &AnimationBlackboard),
     ) {
         self.graph_state.for_each_state(graphs, &self.blackboard, f);
+    }
+
+    /// Calls `f` with each playing node of the player's graph, inner graphs included: its path from the root graph, its weight and what it reports.
+    pub fn for_each_node(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        f: impl FnMut(&NodeVisit<'_>),
+    ) {
+        self.graph_state.for_each_node(graphs, f);
     }
 
     /// Calls `f` with each live node of type `N` in the player's graph, inner graphs included, its mutable state and the blackboard.

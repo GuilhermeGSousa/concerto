@@ -75,8 +75,18 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// Visits the graph assets this node plays inside itself.
     fn inner_graphs(&self, _visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {}
 
-    /// Visits the graph states this node's state holds for the graphs it plays inside itself.
-    fn inner_states(&self, _state: &Self::State, _visit: &mut dyn FnMut(&AnimationGraphState)) {}
+    /// Visits the graph states this node's state holds for the graphs it plays inside itself, each with the state that plays it when the node is a state machine.
+    fn inner_states(
+        &self,
+        _state: &Self::State,
+        _visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    ) {
+    }
+
+    /// What the node shows an editor of its state as it plays; nothing unless the node says otherwise.
+    fn report(&self, _state: &Self::State) -> NodeReport {
+        NodeReport::default()
+    }
 
     /// Visits, mutably, the graph states this node's state holds for the graphs it plays inside itself.
     #[cfg(any(test, feature = "test-support"))]
@@ -87,6 +97,30 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         _visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
     }
+}
+
+/// What a playing node shows an editor beyond its weight.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NodeReport {
+    /// The time a clip node plays at, in seconds.
+    pub clip_time: Option<f32>,
+    /// A state machine's current state and transition.
+    pub state_machine: Option<StateMachineReport>,
+}
+
+/// The state a playing state machine is in and the transition it is blending through.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StateMachineReport {
+    pub current: Option<Name>,
+    pub transition: Option<TransitionReport>,
+}
+
+/// A transition in flight; `progress` runs from 0 to 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransitionReport {
+    pub from: Name,
+    pub to: Name,
+    pub progress: f32,
 }
 
 /// The inputs a kind of node takes.
@@ -148,7 +182,13 @@ pub trait ErasedAnimationNode: Send + Sync {
 
     fn input_removed(&mut self, index: usize);
 
-    fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState));
+    fn inner_states(
+        &self,
+        state: &NodeState,
+        visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    );
+
+    fn report(&self, state: &NodeState) -> NodeReport;
 
     #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
@@ -237,10 +277,22 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         AnimationNode::input_removed(self, index);
     }
 
-    fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState)) {
+    fn inner_states(
+        &self,
+        state: &NodeState,
+        visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    ) {
         if let Some(state) = state.downcast_ref::<T::State>() {
             AnimationNode::inner_states(self, state, visit);
         }
+    }
+
+    fn report(&self, state: &NodeState) -> NodeReport {
+        state
+            .downcast_ref::<T::State>()
+            .map_or_else(NodeReport::default, |state| {
+                AnimationNode::report(self, state)
+            })
     }
 
     #[cfg(any(test, feature = "test-support"))]

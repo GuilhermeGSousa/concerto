@@ -1358,9 +1358,13 @@ impl AnimationNode for RetargetNode {
         visit(&self.graph);
     }
 
-    fn inner_states(&self, state: &RetargetNodeState, visit: &mut dyn FnMut(&AnimationGraphState)) {
+    fn inner_states(
+        &self,
+        state: &RetargetNodeState,
+        visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    ) {
         if let Some(inner) = state.inner() {
-            visit(inner);
+            visit(None, inner);
         }
     }
 

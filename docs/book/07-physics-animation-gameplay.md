@@ -674,8 +674,12 @@ player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
 receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
 a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
-through `inner_graphs` and their states through `inner_states`, and, under
-`cfg(test)` or the `test-support` feature, mutably through `inner_states_mut`.
+through `inner_graphs` and their states through `inner_states`, each with the
+state that plays it when the node is a state machine, and, under `cfg(test)` or
+the `test-support` feature, mutably through `inner_states_mut`. `report` says
+what the node shows an editor of its state as it plays, a `NodeReport`; it is
+empty unless the node overrides it, as a clip does with its time and the state
+machine with its current state and transition.
 
 `input_slots` says which inputs the node takes, in the order `evaluate`
 receives them in `evaluated_inputs`: `InputSlots::None` for a node that reads
@@ -766,6 +770,26 @@ set a node up; it exists only under `cfg(test)` or the crate's `test-support`
 feature, which a dependent crate enables in its dev-dependencies. A player whose
 graph is not loaded or not yet initialized visits nothing. Order the system after
 `animate_targets` to read what the last evaluation left in the state.
+
+`for_each_node` visits every playing node whatever its type, in node order,
+with the nodes of the graphs a node plays inside itself right after it. Each
+`NodeVisit` holds the node's `weight`, its `report` (`clip_time` for a clip
+node; for a state machine, `state_machine` with the `current` state and the
+`transition` in flight as `from`, `to` and a `progress` from 0 to 1, which
+under the inertialization blender is the share of the offset decayed so far)
+and its `path` from the player's graph: one `NodePathStep` per graph on the
+way, each the `node` index in that graph and, when the next step is inside a
+state machine's state, that `state`. The last step is the node itself. An
+editor shows a playing graph from it; `AnimationGraphState::for_each_node` is
+the same walk from a graph state.
+
+```rust
+player.for_each_node(&graphs, |visit| {
+    if let Some(machine) = &visit.report.state_machine {
+        log::info!("{:?} is in {:?}", visit.path, machine.current);
+    }
+});
+```
 
 ### Root motion
 

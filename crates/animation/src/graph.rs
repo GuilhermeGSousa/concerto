@@ -6,6 +6,7 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     handle::{AssetHandle, LiveLeaves},
 };
+use concerto_name::Name;
 use concerto_reflect::{EncodeError, ReflectedValue, TypeRegistry, ValueWarning, to_value};
 use glam::Vec2;
 use log::warn;
@@ -21,8 +22,8 @@ use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
-        AnimationNode, ErasedAnimationNode, LayerNode, PlaceholderNode, ReflectAnimationNode,
-        ResultNode, blend_space::BlendSpace2DBuilderContext,
+        AnimationNode, ErasedAnimationNode, LayerNode, NodeReport, PlaceholderNode,
+        ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
     },
     param::Param,
     player::ActiveNodeState,
@@ -525,6 +526,20 @@ impl<'a> AnimationNodeContext<'a> {
     }
 }
 
+/// One step of the path to a playing node from a player's graph: a node of the graph the step is in and, when the next step is in a state's graph, that state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodePathStep {
+    pub node: AnimationNodeIndex,
+    pub state: Option<Name>,
+}
+
+/// One playing node as [`AnimationGraphState::for_each_node`] visits it; the last step of `path` is the node itself.
+pub struct NodeVisit<'a> {
+    pub path: &'a [NodePathStep],
+    pub weight: f32,
+    pub report: NodeReport,
+}
+
 /// The per-player state of one graph: its handle and its nodes' states.
 #[derive(Default)]
 pub struct AnimationGraphState {
@@ -589,7 +604,7 @@ impl AnimationGraphState {
             let Some(live) = graph.live_node(*node_index) else {
                 continue;
             };
-            live.inner_states(&node_state.node_state, &mut |inner| {
+            live.inner_states(&node_state.node_state, &mut |_, inner| {
                 inner.visit_states(graphs, blackboard, f)
             });
             let Some(node) = live.as_reflect().downcast_ref::<N>() else {
@@ -599,6 +614,45 @@ impl AnimationGraphState {
                 continue;
             };
             f(node, state, blackboard);
+        }
+    }
+
+    /// Calls `f` with each playing node in node order, the nodes of the graphs it plays inside itself after it: its path from this graph, its weight and what it reports.
+    pub fn for_each_node(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        mut f: impl FnMut(&NodeVisit<'_>),
+    ) {
+        self.visit_nodes(graphs, &mut Vec::new(), &mut f);
+    }
+
+    fn visit_nodes(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        path: &mut Vec<NodePathStep>,
+        f: &mut dyn FnMut(&NodeVisit<'_>),
+    ) {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return;
+        };
+        for node in graph.node_indices() {
+            let (Some(live), Some(active)) = (graph.live_node(node), self.graph_state.get(&node))
+            else {
+                continue;
+            };
+            path.push(NodePathStep { node, state: None });
+            f(&NodeVisit {
+                path,
+                weight: active.weight,
+                report: live.report(&active.node_state),
+            });
+            live.inner_states(&active.node_state, &mut |state, inner| {
+                if let Some(step) = path.last_mut() {
+                    step.state = state;
+                }
+                inner.visit_nodes(graphs, path, f);
+            });
+            path.pop();
         }
     }
 
@@ -693,7 +747,7 @@ impl AnimationGraphState {
                 return Some(node.type_name());
             };
             let mut found = None;
-            live.inner_states(&node_state.node_state, &mut |inner| {
+            live.inner_states(&node_state.node_state, &mut |_, inner| {
                 if found.is_none() {
                     found = inner.stateless_node(graphs);
                 }

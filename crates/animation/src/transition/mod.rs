@@ -28,8 +28,16 @@ pub enum TransitionBlender {
     Inertialization,
 }
 
+pub(crate) struct BlendInFlight {
+    pub(crate) from: GraphId,
+    pub(crate) to: GraphId,
+    pub(crate) progress: f32,
+}
+
 pub(crate) trait AnimationTransitionBlender: Send + Sync {
     fn current(&self) -> GraphId;
+
+    fn in_flight(&self) -> Option<BlendInFlight>;
 
     fn sample(
         &mut self,

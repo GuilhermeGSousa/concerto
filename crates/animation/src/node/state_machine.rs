@@ -10,7 +10,10 @@ use crate::transition::{
 };
 use crate::{
     evaluation::AnimationGraphContext,
-    node::{AnimationNode, InputSlots, ReflectAnimationNode},
+    node::{
+        AnimationNode, InputSlots, NodeReport, ReflectAnimationNode, StateMachineReport,
+        TransitionReport,
+    },
 };
 
 use concerto_ecs::Res;
@@ -555,9 +558,29 @@ impl AnimationNode for AnimationStateMachine {
     fn inner_states(
         &self,
         state: &AnimationStateMachineState,
-        visit: &mut dyn FnMut(&AnimationGraphState),
+        visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
     ) {
-        state.state_graphs.iter().for_each(visit);
+        for (graph, name) in state.state_graphs.iter().zip(&state.state_names) {
+            visit(Some(*name), graph);
+        }
+    }
+
+    fn report(&self, state: &AnimationStateMachineState) -> NodeReport {
+        let named = |graph: GraphId| state.state_names.get(*graph).copied();
+        let transition = state.blender.in_flight().and_then(|blend| {
+            Some(TransitionReport {
+                from: named(blend.from)?,
+                to: named(blend.to)?,
+                progress: blend.progress,
+            })
+        });
+        NodeReport {
+            clip_time: None,
+            state_machine: Some(StateMachineReport {
+                current: state.current_state_name(),
+                transition,
+            }),
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -679,7 +702,7 @@ impl TransitionBuilder<'_> {
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{
-        asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+        AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use concerto_name::name;
     use concerto_reflect::{Reflect, TypeRegistry};
@@ -691,11 +714,12 @@ mod tests {
     };
     use crate::{
         blackboard::AnimationBlackboard,
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::AnimationGraphContext,
         graph::{AnimationGraph, GraphId},
         node::{
-            AnimationNode, ErasedAnimationNode, InputSlots, ReflectAnimationNode,
-            register_node_inputs,
+            AnimationClipNode, AnimationNode, ErasedAnimationNode, InputSlots,
+            ReflectAnimationNode, register_node_inputs,
         },
         player::AnimationPlayer,
         plugin::register_animation_types,
@@ -1124,6 +1148,101 @@ mod tests {
             assert_eq!(result.err(), case.refused, "row {row}");
             assert_eq!(described(&machine, &a), case.machine, "row {row}");
         }
+    }
+
+    fn visited(player: &AnimationPlayer, walks: &Walks) -> Vec<String> {
+        let mut visits = Vec::new();
+        player.for_each_node(walks.graphs(), |visit| {
+            let path: Vec<String> = visit
+                .path
+                .iter()
+                .map(|step| match step.state {
+                    Some(state) => format!("{}:{state}", step.node.index()),
+                    None => step.node.index().to_string(),
+                })
+                .collect();
+            let mut line = format!("{} w{}", path.join("/"), visit.weight);
+            if let Some(time) = visit.report.clip_time {
+                line.push_str(&format!(" t{time:.2}"));
+            }
+            if let Some(machine) = &visit.report.state_machine {
+                let current = machine.current.map_or("none", |current| current.as_str());
+                line.push_str(&format!(" in {current}"));
+                if let Some(transition) = machine.transition {
+                    line.push_str(&format!(
+                        " {}>{} {:.2}",
+                        transition.from, transition.to, transition.progress
+                    ));
+                }
+            }
+            visits.push(line);
+        });
+        visits
+    }
+
+    #[test]
+    fn for_each_node_names_each_node_by_its_path_and_follows_the_machine_through_a_transition() {
+        let idle_clip = AssetId::from_path("for_each_node_idle_clip");
+        let mut held = AnimationClip::default();
+        held.add_channel(
+            Uuid::from_u128(1),
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::from_translation([[0.0; 3]; 2].into_iter()),
+            ),
+        );
+        let mut clips = AssetStore::<AnimationClip>::new();
+        clips.insert(idle_clip, held);
+        let idle = AssetId::from_path("for_each_node_idle");
+        let walk = AssetId::from_path("for_each_node_walk");
+        let top = AssetId::from_path("for_each_node_top");
+        let machine = AnimationStateMachine::from_initial_state(
+            name!("idle"),
+            AssetHandle::weak(idle),
+            |transition| {
+                transition.to(
+                    name!("walk"),
+                    AnimationFSMTrigger::on_bool(name!("go"), true),
+                    0.2,
+                );
+            },
+        )
+        .state(name!("walk"), AssetHandle::weak(walk), |_| {})
+        .build();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        graphs.insert(
+            idle,
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(
+                AssetHandle::weak(idle_clip),
+            ))),
+        );
+        graphs.insert(walk, counting_graph());
+        graphs.insert(top, made_live(AnimationGraph::from_node(machine)));
+        let walks = Walks::with(clips, graphs, register_node_inputs::<Counter>);
+        let mut player = AnimationPlayer::new(1);
+        walks.initialize(&mut player, AssetHandle::weak(top));
+
+        walks.advance(&mut player, 0.05);
+        assert_eq!(
+            visited(&player, &walks),
+            [
+                "0 w1",
+                "1 w1 in idle",
+                "1:idle/0 w1",
+                "1:idle/1 w1 t0.05",
+                "1:walk/0 w1",
+                "1:walk/1 w1",
+            ]
+        );
+
+        player.set_bool_param(name!("go"), true);
+        walks.advance(&mut player, 0.05);
+        assert_eq!(visited(&player, &walks)[1], "1 w1 in walk idle>walk 0.25");
+
+        for _ in 0..4 {
+            walks.advance(&mut player, 0.05);
+        }
+        assert_eq!(visited(&player, &walks)[1], "1 w1 in walk");
     }
 
     #[test]
