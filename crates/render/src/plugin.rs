@@ -22,7 +22,7 @@ use crate::{
     draw_target::DrawTarget,
     gpu::Gpu,
     layouts::{CameraLayout, LightingLayout, SkeletonLayout},
-    material_plugin::clear_cameras,
+    material_plugin::{assign_fallback_material, clear_cameras},
     queue::RenderQueue,
     render_asset::{
         register_render_asset_budget,
@@ -151,6 +151,7 @@ impl Plugin for RenderPlugin {
         )
         .add_render_system(Render, clear_cameras)
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
+        .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
         .add_render_system(Render, assign_shadow_layers.in_set(RenderSet::Lights))
         .add_render_system(
             Render,

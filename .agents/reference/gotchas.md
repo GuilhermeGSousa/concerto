@@ -122,12 +122,21 @@ fix the entry in the same commit as the change that made it false.
   register the plugin before anything spawns meshes, or the registration
   panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an
   editor-created `Name` + `Transform` entity requires nothing.
-- **Extract only inserts and updates, except for meshes.** Removing
-  `MeshComponent` from a living entity drops it from `RenderMeshInstances` and
-  frees its instance slot, through `RemovedComponents<MeshComponent>`. Removing
-  `Light`, `Camera`, a material, or a skeleton still leaves its render-world
+- **Extract only inserts and updates, except for meshes and materials.**
+  Removing `MeshComponent` from a living entity drops it from
+  `RenderMeshInstances` and frees its instance slot, through
+  `RemovedComponents<MeshComponent>`. Removing a `MaterialComponent<M>`, or
+  setting its handle to nil, takes its render-world copy away, and the mesh
+  draws with the renderer's grey fallback material from the next frame.
+  Removing `Light`, `Camera`, or a skeleton still leaves its render-world
   copy in place, so a removed light keeps shining. Those mirrors go away only
   when the main entity is despawned. Do not fix this in passing.
+- **A mesh with no material draws grey; it is not hidden.**
+  `assign_fallback_material` gives every render-world mesh entity that no
+  `MaterialPlugin<M>` marked with `HasMaterial` a
+  `RenderMaterialComponent<StandardMaterial>` naming a material that exists
+  only in the render world. It needs `MaterialPlugin<StandardMaterial>`;
+  without it such a mesh is still not drawn.
 - **Skinned meshes use an identity instance matrix, and are neither batched
   nor culled.** The bone palette carries the world transform, and the shader
   applies it to the position. Giving a skinned mesh entity a real world

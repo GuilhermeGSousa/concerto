@@ -68,6 +68,8 @@ fn spawn_hero(mut cmd: CommandQueue, assets: Res<AssetServer>) {
 scene has loaded. Other handles go in their own components: a mesh in
 `MeshComponent`, a material in `MaterialComponent`, an animation graph in
 `AnimationHandleComponent`.
+A mesh with no material, or with a `MaterialComponent` whose handle
+is nil, draws plain grey.
 
 Assets made in code are added rather than loaded:
 
