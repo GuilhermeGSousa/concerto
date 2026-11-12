@@ -289,7 +289,7 @@ it plays. The tab's preview plays the graph on a character.
 with the `AnimationPlayer` the animation plugin puts on every rooted skeleton
 playing a graph, and the root motion of the first rooted skeleton moving the
 scene, so the character walks and the orbit camera follows. It listens for
-three signals, sent with `PreviewSignals`:
+three signals, sent with `PreviewSignals`, and writes one event:
 
 - `ShowGraphs { graphs, play }`. Each of `graphs` is a `GraphBytes { id, bytes }`,
   a graph as a save writes it, made with `GraphBytes::of(id, &graph)`. The
@@ -308,6 +308,15 @@ three signals, sent with `PreviewSignals`:
 - `SetGraphPlayback { playing, speed }` pauses the players or lets them play,
   and sets the preview's time scale. A graph has no duration, so there is no
   timeline and no step.
+- `GraphPreviewState { nodes }` is the event, written on every frame the
+  preview plays and on none while it is paused or its players are restarting.
+  It is what `AnimationPlayer::for_each_node` visits on the first player that
+  plays, the one with the lowest entity index: a `PreviewNode` per playing
+  node with its `path` from the graph `ShowGraphs` named, its `weight` and its
+  `report`, the clip time of a clip node and the current state and transition
+  of a state machine. `nodes` is empty while no player plays the graph, as on
+  a stage with no skeleton. The tab forwards it with `forward_hosted_event`,
+  so `EventReader<Hosted<GraphPreviewState>>` reads it in the editor.
 
 A node that reads the world, such as foot placement, a look-at target or motion
 matching's trajectory, gets nothing from the preview's world and passes its
@@ -346,6 +355,29 @@ scene that failed to load under them, a Play checkbox, and the speeds 0.25×,
 pose graph offers Preview from here, which sets `from`; the row over the canvas
 then reads `Previewing node 3, a LayerNode` beside a Whole graph button that
 sets it back.
+
+### Live state
+
+The tab keeps the last `GraphPreviewState` its preview wrote in `GraphLive`, on
+the document, and shows the part of it that is in view on the canvas:
+
+- a node of a pose graph has its weight as its badge, `1.00`, and a clip node
+  whose clip the project has reads `Walk · 0.42s`, the clip's name and the
+  time it plays at;
+- in a state machine's diagram the current state is outlined with
+  `CanvasEmphasis::Active`, and while a transition blends every arrow from its
+  source state to its target state is drawn the same way.
+
+A node is found in the state by the index it has in the graph last sent to the
+preview, which `GraphCopy::build` and `build_from` answer beside the graph, so
+a loose node, and with `from` set a node outside what plays, shows nothing.
+`LiveView` is that lookup: `LiveView::latest(live, sent)` and then
+`node(id)`. Paused, the canvas keeps the last state. The state is dropped
+whenever the tab sends `ShowGraphs`, since the nodes it names are those of the
+graphs before, and the next frame the preview plays brings a new one. The
+badges and subtitles are rewritten in place, so no box is rebuilt, and under
+`--mcp` they do not keep the editor busy: the state arrives only on frames
+that run for another reason.
 
 ### Parameters
 

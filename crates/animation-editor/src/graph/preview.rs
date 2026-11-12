@@ -1,7 +1,7 @@
 //! What runs in a graph tab's preview `App`: the stage, a player on every rooted skeleton, and the graphs they play.
 use concerto_animation::{
-    graph::AnimationGraph,
-    node::state_machine::AnimationFSMTrigger,
+    graph::{AnimationGraph, NodePathStep},
+    node::{NodeReport, state_machine::AnimationFSMTrigger},
     param::ReflectParam,
     player::{AnimationHandleComponent, AnimationPlayer},
     root::AnimationRootBone,
@@ -13,13 +13,14 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
+    Entity, Event, IntoSystemConfig, Query, Res, ResMut, Resource, With,
     command::CommandQueue,
+    events::event_writer::EventWriter,
     reflect::AppTypeRegistry,
     signal::{On, Signal},
 };
 use concerto_foundation::{
-    assets::{AssetId, asset_server::AssetServer, handle::AssetHandle},
+    assets::{AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
     time::Time,
     transform::{GlobalTransform, Transform},
 };
@@ -73,6 +74,20 @@ pub struct SetGraphPlayback {
     pub speed: f32,
 }
 impl Signal for SetGraphPlayback {}
+
+/// One playing node of a [`GraphPreviewState`]: its path from the graph the preview plays, its weight and what it reports.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreviewNode {
+    pub path: Vec<NodePathStep>,
+    pub weight: f32,
+    pub report: NodeReport,
+}
+
+/// What a graph preview's first player plays, written each frame the preview plays; `nodes` is empty while no player plays the graph.
+#[derive(Event, Clone, Debug, Default, PartialEq)]
+pub struct GraphPreviewState {
+    pub nodes: Vec<PreviewNode>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Restart {
@@ -229,6 +244,32 @@ fn start_graph_players(
     }
 }
 
+fn report_graph_state(
+    stage: Res<GraphStage>,
+    players: Query<(Entity, &AnimationPlayer), With<AnimationHandleComponent>>,
+    graphs: Option<Res<AssetStore<AnimationGraph>>>,
+    mut states: EventWriter<GraphPreviewState>,
+) {
+    if !stage.playing || stage.restart != Restart::Settled {
+        return;
+    }
+    let mut state = GraphPreviewState::default();
+    let first = players
+        .iter()
+        .filter(|(_, player)| !player.is_paused())
+        .min_by_key(|(entity, _)| entity.index());
+    if let (Some((_, player)), Some(graphs)) = (first, graphs) {
+        player.for_each_node(&graphs, |visit| {
+            state.nodes.push(PreviewNode {
+                path: visit.path.to_vec(),
+                weight: visit.weight,
+                report: visit.report.clone(),
+            });
+        });
+    }
+    states.write(state);
+}
+
 fn carry_root_motion(
     skeletons: Query<(Entity, &SkeletonComponent)>,
     spaces: Query<&GlobalTransform>,
@@ -269,10 +310,13 @@ pub fn graph_preview(app: &mut App) {
         .register_type::<GraphPreview>()
         .register_type::<GraphParameters>()
         .insert_resource(GraphStage::default())
+        .register_event::<GraphPreviewState>()
         .add_system(Update, start_graph_players.at_preview_time())
         .add_system(
             LateUpdate,
-            carry_root_motion.after(animate_targets).at_preview_time(),
+            (carry_root_motion, report_graph_state)
+                .after(animate_targets)
+                .at_preview_time(),
         )
         .add_listener(show_graphs.at_preview_time())
         .add_listener(set_graph_param.at_preview_time())
@@ -284,13 +328,15 @@ mod tests {
     use super::*;
     use concerto_animation::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        node::{AnimationClipNode, state_machine::AnimationStateMachine},
+        node::{AnimationClipNode, StateMachineReport, state_machine::AnimationStateMachine},
         plugin::AnimationPlugin,
     };
     use concerto_app::plugins::{AssetManagerPlugin, TransformPlugin};
-    use concerto_ecs::component::scene::SceneEntityRef;
+    use concerto_ecs::{
+        component::scene::SceneEntityRef,
+        events::{event_channel::EventChannel, event_cursor::EventCursor},
+    };
     use concerto_editor::{hosted::testing::plain_recipe, preview::PreviewPlugin};
-    use concerto_foundation::assets::asset_store::AssetStore;
     use concerto_mesh::skeleton::{JointPose, Skeleton};
     use concerto_name::name;
     use concerto_reflect::to_value;
@@ -351,7 +397,7 @@ mod tests {
                     param: name!("moving").into(),
                     value: true,
                 },
-                0.0,
+                0.05,
             )
             .unwrap();
         AnimationGraph::from_node(machine)
@@ -361,6 +407,28 @@ mod tests {
         app: App,
         driven: Entity,
         _clips: Vec<AssetHandle<AnimationClip>>,
+        read: EventCursor<GraphPreviewState>,
+        states: Vec<GraphPreviewState>,
+    }
+
+    fn path(node: &PreviewNode) -> String {
+        let steps: Vec<String> = node
+            .path
+            .iter()
+            .map(|step| match step.state {
+                Some(state) => format!("{}:{state}", step.node.index()),
+                None => step.node.index().to_string(),
+            })
+            .collect();
+        steps.join("/")
+    }
+
+    fn machine(state: &GraphPreviewState) -> Option<StateMachineReport> {
+        state
+            .nodes
+            .iter()
+            .find(|node| path(node) == "1")
+            .and_then(|node| node.report.state_machine)
     }
 
     impl Stage {
@@ -386,11 +454,23 @@ mod tests {
             });
         }
 
+        fn frame(&mut self) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            self.app.update();
+            let written = self
+                .app
+                .get_resource::<EventChannel<GraphPreviewState>>()
+                .unwrap()
+                .read_from(&mut self.read)
+                .cloned()
+                .collect::<Vec<_>>();
+            self.states.extend(written);
+        }
+
         fn plays(&mut self, at: Vec3, what: &str) {
             let mut shown = Vec3::NAN;
             for _ in 0..200 {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-                self.app.update();
+                self.frame();
                 shown = self
                     .app
                     .main()
@@ -444,6 +524,8 @@ mod tests {
             app,
             driven,
             _clips: Vec::new(),
+            read: EventCursor::default(),
+            states: Vec::new(),
         }
     }
 
@@ -485,9 +567,64 @@ mod tests {
 
         stage.show(shown(&samples), root);
         stage.plays(IDLE_AT, "the nested working copy of the initial state");
+        let idling = stage.states.last().expect("a playing preview reports");
+        assert_eq!(
+            machine(idling),
+            Some(StateMachineReport {
+                current: Some(name!("Idle")),
+                transition: None,
+            })
+        );
+        let clip = idling
+            .nodes
+            .iter()
+            .find(|node| path(node) == "1:Idle/1")
+            .expect("the state's clip node is reported under its state");
+        assert_eq!(clip.weight, 1.0);
+        assert!(clip.report.clip_time.is_some_and(|time| time > 0.0));
 
+        let before = stage.states.len();
         stage.set(name!("moving"), true);
         stage.plays(NEAR_AT, "the state the bool parameter leads to");
+        stage.frame();
+        let since = &stage.states[before..];
+        assert!(
+            since.iter().any(|state| {
+                machine(state)
+                    .and_then(|machine| machine.transition)
+                    .is_some_and(|transition| {
+                        transition.from == name!("Idle")
+                            && transition.to == name!("Moving")
+                            && transition.progress > 0.0
+                            && transition.progress < 1.0
+                    })
+            }),
+            "the transition is reported while it blends"
+        );
+        assert_eq!(
+            since.last().and_then(machine),
+            Some(StateMachineReport {
+                current: Some(name!("Moving")),
+                transition: None,
+            })
+        );
+
+        stage.app.main_mut().world_mut().trigger(SetGraphPlayback {
+            playing: false,
+            speed: 1.0,
+        });
+        stage.frame();
+        let paused = stage.states.len();
+        stage.frame();
+        assert_eq!(
+            stage.states.len(),
+            paused,
+            "a paused preview reports nothing"
+        );
+        stage.app.main_mut().world_mut().trigger(SetGraphPlayback {
+            playing: true,
+            speed: 1.0,
+        });
 
         samples.push(Sample {
             clip: stage.clip(FAR_AT),

@@ -1,4 +1,6 @@
-use concerto_animation::node::{InputSlots, state_machine::AnimationStateMachine};
+use concerto_animation::node::{
+    InputSlots, StateMachineReport, state_machine::AnimationStateMachine,
+};
 use concerto_ecs::{
     Added, Component, Entity, Query, Res, ResMut, With,
     command::{CommandQueue, EntityCommandQueue},
@@ -48,6 +50,7 @@ use super::{
         EditGraph, GraphDocument, GraphEdit, GraphLevel, GraphSelection, OpenTarget, node_types,
         shown_transitions,
     },
+    stage::{GraphLive, LiveView, SentPreview},
     tools::param_line,
 };
 use crate::{
@@ -279,6 +282,7 @@ fn state_id(index: usize) -> CanvasNodeId {
 fn shown_diagram(
     machine: &AnimationStateMachine,
     selection: Option<GraphSelection>,
+    playing: Option<StateMachineReport>,
     assets: &AssetRegistry,
 ) -> GraphCanvas {
     let mut canvas = GraphCanvas::new(CanvasMode::Diagram);
@@ -298,14 +302,22 @@ fn shown_diagram(
         if initial == Some(state.name) {
             shown = shown.with_badge("initial");
         }
+        if playing.is_some_and(|playing| playing.current == Some(state.name)) {
+            shown = shown.with_emphasis(CanvasEmphasis::Active);
+        }
         canvas.nodes.push(shown);
     }
+    let blending = playing.and_then(|playing| playing.transition);
     let transitions = shown_transitions(machine);
     for shown in &transitions {
         if let (Some(from), Some(to)) = (id_of(shown.named.from), id_of(shown.named.to)) {
-            canvas
-                .links
-                .push(CanvasLink::new(from, to).with_label(shown.trigger.clone()));
+            let mut link = CanvasLink::new(from, to).with_label(shown.trigger.clone());
+            if blending.is_some_and(|blending| {
+                blending.from == shown.named.from && blending.to == shown.named.to
+            }) {
+                link = link.with_emphasis(CanvasEmphasis::Active);
+            }
+            canvas.links.push(link);
         }
     }
     canvas.selection = match selection {
@@ -319,13 +331,27 @@ fn shown_diagram(
     canvas
 }
 
+/// A weight as a node's badge and the live block show it.
+pub(crate) fn weight_text(weight: f32) -> String {
+    format!("{weight:.2}")
+}
+
+/// A clip node's time as its subtitle and the live block show it.
+pub(crate) fn time_text(time: f32) -> String {
+    format!("{time:.2}s")
+}
+
 fn shown_canvas(
     state: &GraphDocument,
+    live: Option<LiveView>,
     types: Option<&TypeRegistry>,
     assets: &AssetRegistry,
 ) -> GraphCanvas {
     if let Some(machine) = state.machine() {
-        return shown_diagram(machine, state.selection, assets);
+        let playing = state
+            .shown_machine()
+            .and_then(|node| live?.node(node)?.report.state_machine);
+        return shown_diagram(machine, state.selection, playing, assets);
     }
     let mut canvas = GraphCanvas::new(CanvasMode::Flow);
     let Some(copy) = state.graph() else {
@@ -333,8 +359,16 @@ fn shown_canvas(
     };
     for node in copy.nodes() {
         let mut shown = CanvasNode::new(canvas_id(node.id), node.short_name());
+        let playing = live.and_then(|live| live.node(node.id));
+        if let Some(playing) = playing {
+            shown = shown.with_badge(weight_text(playing.weight));
+        }
         if let Some(subtitle) = subtitle(node, types, assets) {
-            shown = shown.with_subtitle(subtitle);
+            shown =
+                shown.with_subtitle(match playing.and_then(|playing| playing.report.clip_time) {
+                    Some(time) => format!("{subtitle} · {}", time_text(time)),
+                    None => subtitle,
+                });
         }
         for pin in pins(node) {
             shown = shown.with_input(pin);
@@ -860,6 +894,8 @@ pub(crate) fn sync_graph_panels(
         Entity,
         &EditorDocument,
         &GraphDocument,
+        &GraphLive,
+        &SentPreview,
         &mut GraphPanels,
         Option<&HostedApp>,
     )>,
@@ -901,10 +937,11 @@ pub(crate) fn sync_graph_panels(
             **style = wanted;
         }
     };
-    for (document, editor, state, mut panels, hosted) in documents.iter() {
+    for (document, editor, state, live, sent, mut panels, hosted) in documents.iter() {
         let types = hosted.and_then(HostedApp::type_registry);
         let types = types.as_ref().map(|types| types.read());
-        let wanted = shown_canvas(state, types.as_deref(), &assets);
+        let live = LiveView::latest(live, sent);
+        let wanted = shown_canvas(state, live, types.as_deref(), &assets);
         if let Some(mut canvas) = canvases.get_entity(panels.canvas)
             && **canvas != wanted
         {

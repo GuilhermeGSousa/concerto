@@ -30,6 +30,7 @@ use concerto_ui::{sets::UiSet, text::UIText, text_input::UITextInput};
 
 use crate::{
     asset_editor::{BackgroundWork, EditorDocument, SaveRequested},
+    graph_canvas::CanvasReadout,
     guard::{GuardChoice, UnsavedGuard},
     hosted::{
         EditWorld, HostRole, HostedApp, PendingApp, PendingPlayApp, PlayState, ViewportTarget,
@@ -136,7 +137,14 @@ fn is_busy(
 }
 
 fn note_text_changes(
-    changes: Query<Entity, (TextChanges, Without<TimelineReadout>)>,
+    changes: Query<
+        Entity,
+        (
+            TextChanges,
+            Without<TimelineReadout>,
+            Without<CanvasReadout>,
+        ),
+    >,
     mut changed: ResMut<PanelTextChanged>,
 ) {
     let now = changes.iter().next().is_some();
@@ -244,6 +252,7 @@ mod tests {
         world.register_component::<UIText>();
         world.register_component::<UITextInput>();
         world.register_component::<TimelineReadout>();
+        world.register_component::<CanvasReadout>();
         spawn(&mut world);
         let mut system = note_text_changes.into_system();
         system.initialize(&mut world);
@@ -259,9 +268,10 @@ mod tests {
     }
 
     #[test]
-    fn a_timeline_readout_counting_through_playback_does_not() {
+    fn a_readout_counting_through_playback_does_not() {
         assert!(!notes_a_change(|world| {
             world.spawn((UIText::default(), TimelineReadout));
+            world.spawn((UIText::default(), CanvasReadout));
         }));
     }
 }

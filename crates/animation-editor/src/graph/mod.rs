@@ -12,12 +12,14 @@ mod tools;
 use concerto_animation::{graph::AnimationGraph, mask::BoneMask, node::IkTarget};
 use concerto_app::{App, plugins::Plugin, schedule_groups::Update};
 use concerto_ecs::IntoSystemConfig;
-use concerto_editor::asset_editor::AssetEditorAppExt;
+use concerto_editor::{asset_editor::AssetEditorAppExt, hosted::HostedEventsAppExt};
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_scene::scene::Scene;
 use glam::{Vec2, Vec3};
 
-pub use copy::{Connected, GraphCopy, GraphLink, GraphNodeId, HeldNode, HeldValue};
+pub use copy::{
+    BuiltGraph, BuiltNode, Connected, GraphCopy, GraphLink, GraphNodeId, HeldNode, HeldValue,
+};
 pub use document::{
     AnimationGraphEditor, EditGraph, GraphChange, GraphDocument, GraphEdit, GraphEdited,
     GraphLevel, GraphSelection, HeldGraph, OpenTarget, ShownTransition, Sources, StateValue,
@@ -25,8 +27,11 @@ pub use document::{
 };
 pub use param_editor::{ParamEditorAppExt, ParamNameEditor};
 pub use params::{FoundParam, GraphParam, GraphParameters, find_params};
-pub use preview::{GraphBytes, SetGraphParam, SetGraphPlayback, ShowGraphs, graph_preview};
-pub use stage::{GraphPreview, ParametersValue, PreviewValue, SentPreview};
+pub use preview::{
+    GraphBytes, GraphPreviewState, PreviewNode, SetGraphParam, SetGraphPlayback, ShowGraphs,
+    graph_preview,
+};
+pub use stage::{GraphLive, GraphPreview, LiveView, ParametersValue, PreviewValue, SentPreview};
 pub use tools::{
     GraphAddNode, GraphAddState, GraphConnect, GraphInspect, GraphOpen, GraphRemove, GraphSelect,
     GraphSetParam, GraphUp,
@@ -39,7 +44,7 @@ use document::{
 use panels::{build_graph_panels, name_new_states, sync_graph_panels};
 use param_editor::{commit_param_fields, refresh_param_fields};
 use save::save_graphs;
-use stage::sync_graph_preview;
+use stage::{follow_graph_state, sync_graph_preview};
 
 /// Registers [`AnimationGraphEditor`] as a creatable asset editor, runs the graph tab's systems and adds its MCP tools.
 pub struct AnimationGraphEditorPlugin;
@@ -62,6 +67,7 @@ impl Plugin for AnimationGraphEditorPlugin {
         app.register_creatable_asset_editor::<AnimationGraph, AnimationGraphEditor>()
             .expect("the editor's App holds the asset-editor registry")
             .register_event::<GraphEdited>()
+            .forward_hosted_event::<GraphPreviewState>()
             .add_system(
                 Update,
                 (
@@ -69,6 +75,7 @@ impl Plugin for AnimationGraphEditorPlugin {
                     finish_state_creation,
                     save_graphs,
                     load_graph,
+                    follow_graph_state,
                     sync_graph_preview,
                     build_graph_panels,
                     name_new_states,

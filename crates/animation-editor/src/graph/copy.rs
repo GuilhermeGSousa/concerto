@@ -87,6 +87,19 @@ pub struct Connected {
     pub loose: Option<GraphNodeId>,
 }
 
+/// Where a node of a working copy sits in a graph built from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuiltNode {
+    pub id: GraphNodeId,
+    pub index: AnimationNodeIndex,
+}
+
+/// A graph built from a working copy, with the index each node of the copy has in it.
+pub struct BuiltGraph {
+    pub graph: AnimationGraph,
+    pub nodes: Vec<BuiltNode>,
+}
+
 struct Feed {
     node: GraphNodeId,
     parent: AnimationNodeIndex,
@@ -180,7 +193,7 @@ impl GraphCopy {
     }
 
     /// A fresh graph of what the copy holds: the result node, then every node in id order, connected in slot order.
-    pub fn build(&self) -> anyhow::Result<AnimationGraph> {
+    pub fn build(&self) -> anyhow::Result<BuiltGraph> {
         let mut graph = AnimationGraph::new();
         let mut indices = HashMap::from([(self.result, graph.result_index())]);
         for node in &self.nodes {
@@ -195,12 +208,21 @@ impl GraphCopy {
                 graph.connect(indices[&node.id], indices[input])?;
             }
         }
-        Ok(graph)
+        let nodes = self
+            .nodes
+            .iter()
+            .map(|node| BuiltNode {
+                id: node.id,
+                index: indices[&node.id],
+            })
+            .collect();
+        Ok(BuiltGraph { graph, nodes })
     }
 
     /// A fresh graph whose result node is fed by the node `from` and everything that feeds it.
-    pub fn build_from(&self, from: GraphNodeId) -> anyhow::Result<AnimationGraph> {
+    pub fn build_from(&self, from: GraphNodeId) -> anyhow::Result<BuiltGraph> {
         let mut graph = AnimationGraph::new();
+        let mut nodes = Vec::new();
         let mut open = vec![Feed {
             node: from,
             parent: graph.result_index(),
@@ -211,12 +233,16 @@ impl GraphCopy {
                 .ok_or_else(|| anyhow::anyhow!("There is no node {}", feed.node))?;
             let index = graph.insert_node(Self::stored(node)?);
             graph.connect(feed.parent, index)?;
+            nodes.push(BuiltNode {
+                id: feed.node,
+                index,
+            });
             open.extend(node.inputs.iter().rev().map(|input| Feed {
                 node: *input,
                 parent: index,
             }));
         }
-        Ok(graph)
+        Ok(BuiltGraph { graph, nodes })
     }
 
     /// Whether the nodes are live, so the graph can be edited.

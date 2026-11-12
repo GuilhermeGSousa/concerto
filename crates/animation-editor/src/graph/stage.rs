@@ -1,8 +1,11 @@
 //! The editor's side of a graph tab's preview: the `Preview` and `Parameters` values and what is sent to the preview when they or the graphs change.
-use concerto_ecs::{Changed, Component, Entity, Query, Res, World, reflect::AppTypeRegistry};
+use concerto_ecs::{
+    Changed, Component, Entity, Query, Res, World, events::event_reader::EventReader,
+    reflect::AppTypeRegistry,
+};
 use concerto_editor::{
     asset_editor::EditorDocument,
-    hosted::HostedApp,
+    hosted::{Hosted, HostedApp},
     inspector::{PropertyTarget, TargetWorld},
     preview::PreviewSignals,
     project::ProjectState,
@@ -12,9 +15,11 @@ use concerto_reflect::{Reflect, ReflectDefault, to_value};
 use concerto_scene::scene::Scene;
 
 use super::{
-    copy::GraphNodeId,
+    copy::{BuiltNode, GraphNodeId},
     document::{GraphDocument, Sources},
-    preview::{GraphBytes, SetGraphParam, SetGraphPlayback, ShowGraphs},
+    preview::{
+        GraphBytes, GraphPreviewState, PreviewNode, SetGraphParam, SetGraphPlayback, ShowGraphs,
+    },
 };
 use crate::{
     preview::{SetSkeletonGizmo, ShowClipScene},
@@ -167,6 +172,7 @@ pub struct SentPreview {
     own: AssetId,
     graphs: Vec<GraphBytes>,
     play: Option<AssetId>,
+    nodes: Vec<BuiltNode>,
     scene: Option<SceneKey>,
     skeleton: Option<bool>,
     playback: Option<Playback>,
@@ -179,6 +185,7 @@ impl Default for SentPreview {
             own: AssetId::new(),
             graphs: Vec::new(),
             play: None,
+            nodes: Vec::new(),
             scene: None,
             skeleton: None,
             playback: None,
@@ -187,9 +194,67 @@ impl Default for SentPreview {
     }
 }
 
+impl SentPreview {
+    /// Whether the preview was sent every parameter value `state` holds.
+    pub fn holds_params(&self, state: &GraphDocument) -> bool {
+        self.params == wanted_params(state)
+    }
+}
+
+/// The last state a graph tab's preview reported, kept on the document until the preview is shown other graphs.
+#[derive(Component, Default)]
+pub struct GraphLive {
+    state: Option<GraphPreviewState>,
+}
+
+/// What the nodes of the graph in view play: a reported state read through the indices of the graph last sent.
+#[derive(Clone, Copy)]
+pub struct LiveView<'a> {
+    state: &'a GraphPreviewState,
+    nodes: &'a [BuiltNode],
+}
+
+impl<'a> LiveView<'a> {
+    /// The last state `live` holds, or none when none arrived or no player plays the graph.
+    pub fn latest(live: &'a GraphLive, sent: &'a SentPreview) -> Option<Self> {
+        Self::of(live.state.as_ref()?, sent)
+    }
+
+    /// `state` as the graph `sent` names plays it, or none when no player plays the graph.
+    pub fn of(state: &'a GraphPreviewState, sent: &'a SentPreview) -> Option<Self> {
+        (!state.nodes.is_empty()).then_some(Self {
+            state,
+            nodes: &sent.nodes,
+        })
+    }
+
+    /// What the node `id` of the graph in view plays, or none for a node the played graph does not reach.
+    pub fn node(&self, id: GraphNodeId) -> Option<&'a PreviewNode> {
+        let index = self.nodes.iter().find(|built| built.id == id)?.index;
+        self.state.nodes.iter().find(|node| match &node.path[..] {
+            [step] => step.node == index,
+            _ => false,
+        })
+    }
+}
+
+pub(crate) fn follow_graph_state(
+    mut states: EventReader<Hosted<GraphPreviewState>>,
+    lives: Query<&mut GraphLive>,
+) {
+    for Hosted { document, event } in states.read() {
+        if let Some(mut live) = lives.get_entity(*document)
+            && live.state.as_ref() != Some(event)
+        {
+            live.state = Some(event.clone());
+        }
+    }
+}
+
 struct Played {
     graphs: Vec<GraphBytes>,
     play: AssetId,
+    nodes: Vec<BuiltNode>,
 }
 
 fn played(state: &GraphDocument, own: AssetId) -> anyhow::Result<Option<Played>> {
@@ -197,15 +262,26 @@ fn played(state: &GraphDocument, own: AssetId) -> anyhow::Result<Option<Played>>
         return Ok(None);
     };
     let mut graphs = Vec::new();
+    let mut nodes = Vec::new();
     for held in state.graphs() {
-        graphs.push(GraphBytes::of(held.asset.id, &held.copy.build()?)?);
+        let built = held.copy.build()?;
+        graphs.push(GraphBytes::of(held.asset.id, &built.graph)?);
+        if held.asset.id == shown {
+            nodes = built.nodes;
+        }
     }
     let mut play = shown;
     if let (Some(from), Some(copy)) = (state.preview.from, state.graph()) {
-        graphs.push(GraphBytes::of(own, &copy.build_from(GraphNodeId(from))?)?);
+        let built = copy.build_from(GraphNodeId(from))?;
+        graphs.push(GraphBytes::of(own, &built.graph)?);
+        nodes = built.nodes;
         play = own;
     }
-    Ok(Some(Played { graphs, play }))
+    Ok(Some(Played {
+        graphs,
+        play,
+        nodes,
+    }))
 }
 
 fn wanted_params(state: &GraphDocument) -> Vec<SetGraphParam> {
@@ -229,6 +305,7 @@ pub(crate) fn sync_graph_preview(
             &mut EditorDocument,
             &mut GraphDocument,
             &mut SentPreview,
+            &mut GraphLive,
             &HostedApp,
         ),
         Changed<GraphDocument>,
@@ -244,7 +321,7 @@ pub(crate) fn sync_graph_preview(
     else {
         return;
     };
-    for (document, mut editor, mut state, mut sent, hosted) in documents.iter() {
+    for (document, mut editor, mut state, mut sent, mut live, hosted) in documents.iter() {
         if state.shown_asset().is_none() {
             continue;
         }
@@ -312,7 +389,11 @@ pub(crate) fn sync_graph_preview(
                 if sent.graphs != played.graphs || sent.play != Some(played.play) {
                     sent.graphs = played.graphs.clone();
                     sent.play = Some(played.play);
+                    sent.nodes = played.nodes;
                     sent.params.clear();
+                    if live.state.is_some() {
+                        live.state = None;
+                    }
                     previews.trigger(
                         document,
                         ShowGraphs {

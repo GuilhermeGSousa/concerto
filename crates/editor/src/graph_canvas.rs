@@ -298,6 +298,10 @@ canvas_signals!(
     FrameCanvasNode,
 );
 
+/// On a node's badge and subtitle, whose text an owner may rewrite on every frame of playback.
+#[derive(Component)]
+pub(crate) struct CanvasReadout;
+
 #[derive(Component)]
 struct CanvasParts {
     surface: Entity,
@@ -725,7 +729,7 @@ fn build_node(
             .clipped(),
     );
     let badge = header
-        .spawn_child(
+        .spawn_child((
             theme
                 .label(node.badge.clone().unwrap_or_default())
                 .small()
@@ -735,7 +739,8 @@ fn build_node(
                 .size(UIValue::Px(BADGE_WIDTH), UIValue::Px(small_line))
                 .fixed()
                 .clipped(),
-        )
+            CanvasReadout,
+        ))
         .entity();
     let row = |text: &str, height: f32| {
         theme
@@ -752,10 +757,11 @@ fn build_node(
                 ..Default::default()
             })
     };
-    let subtitle = node
-        .subtitle
-        .as_ref()
-        .map(|subtitle| frame.spawn_child(row(subtitle, SUBTITLE_HEIGHT)).entity());
+    let subtitle = node.subtitle.as_ref().map(|subtitle| {
+        frame
+            .spawn_child((row(subtitle, SUBTITLE_HEIGHT), CanvasReadout))
+            .entity()
+    });
     for input in node.inputs.iter().take(placed.inputs.len()) {
         frame.add_child(row(input, PIN_ROW_HEIGHT));
     }

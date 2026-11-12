@@ -39,7 +39,7 @@ fn save_document(
         if !held.changed {
             continue;
         }
-        let graph = held.copy.build()?;
+        let graph = held.copy.build()?.graph;
         let id = save_content_asset_into(&graph, root, &held.asset.address, assets)?;
         let saved = assets
             .get(id)

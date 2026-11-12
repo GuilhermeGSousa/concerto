@@ -97,8 +97,9 @@ project or scene opening, the assets of the edited scene or the preview in
 front still loading, a game starting or playing, a save under way, a document
 holding `BackgroundWork`, or text in the panels changed in the last frame and
 may not be drawn yet. A timeline's
-readout does not count, so a clip that is playing does not keep the editor busy
-and advances only while frames run. An idle editor runs none, so once
+readout and the badges and subtitles of a graph canvas do not count, so a clip
+or a graph that is playing does not keep the editor busy and advances only
+while frames run. An idle editor runs none, so once
 `status` reports `busy: no` the viewport shows the scene with everything it
 loads and the panels show what they hold. The tools that look answer between frames, without running one; the
 tools that act run in frames, one at a time, and a second one waits until the
@@ -1562,7 +1563,9 @@ entity, and a canvas nobody answers changes nothing.
   `with_emphasis` outlines it: `CanvasEmphasis::Active` in the theme's second
   accent, `Warning` in the warning colour. The `id` is a `CanvasNodeId`, a
   `u32` the owner chooses; links, the selection and the signals name a node by
-  it.
+  it. An owner may rewrite a badge and a subtitle on every frame: they change
+  in place, and under `--mcp` a change of either does not keep the editor
+  busy.
 - A `CanvasLink::new(from, to)` runs out of `from` and into `to`. `with_slot`
   names the input pin of `to` it ends on, `with_label` writes a label beside
   its vertical run, and `with_emphasis` colours it as it does a node. A link

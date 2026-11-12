@@ -37,7 +37,7 @@ use super::{
     copy::{GraphCopy, GraphNodeId},
     params::{FoundParam, GraphParameters, find_params},
     preview::graph_preview,
-    stage::{GraphPreview, ParametersValue, PreviewValue, SentPreview},
+    stage::{GraphLive, GraphPreview, ParametersValue, PreviewValue, SentPreview},
 };
 
 const GRAPH_EXTENSION: &str = "gasset";
@@ -339,7 +339,8 @@ impl GraphDocument {
         })
     }
 
-    fn shown_machine(&self) -> Option<GraphNodeId> {
+    /// The state machine node whose diagram is in view, or none while a pose graph is.
+    pub fn shown_machine(&self) -> Option<GraphNodeId> {
         match self.levels.last()? {
             GraphLevel::Machine { node } => Some(*node),
             GraphLevel::Graph { .. } => None,
@@ -906,7 +907,7 @@ impl AssetEditor for AnimationGraphEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
         let state = GraphDocument::of(editor.entity());
         let values = InspectedValues(state.fixed.clone());
-        editor.insert((state, values, SentPreview::default()));
+        editor.insert((state, values, SentPreview::default(), GraphLive::default()));
     }
 
     fn preview(&self) -> Option<PreviewSpec> {
