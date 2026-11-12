@@ -5,7 +5,7 @@ use concerto::{
         mask::{BoneMask, BoneMaskBranch},
         node::{
             AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, AnimationPlayMode, IkGoal,
-            LayerNode, TipRotation, TwoBoneIkNode,
+            LayerNode, LayerSpace, TipRotation, TwoBoneIkNode,
         },
         retarget::RetargetNode,
     },
@@ -41,8 +41,21 @@ pub(crate) const PISTOL_AIM_UP: AssetId = asset_id!("content/UAL1/animation_Pist
 pub(crate) const PISTOL_AIM_DOWN: AssetId =
     asset_id!("content/UAL1/animation_Pistol_Aim_Down.gasset");
 pub(crate) const PISTOL_SHOOT: AssetId = asset_id!("content/UAL1/animation_Pistol_Shoot.gasset");
+pub(crate) const IDLE: AssetId = asset_id!("content/UAL1/animation_Idle_Loop.gasset");
 pub(crate) const IDLE_TIRED: AssetId = asset_id!("content/UAL1/animation_Idle_Tired_Loop.gasset");
 
+const FINGERS: [&str; 10] = [
+    "thumb_01_l",
+    "index_01_l",
+    "middle_01_l",
+    "ring_01_l",
+    "pinky_01_l",
+    "thumb_01_r",
+    "index_01_r",
+    "middle_01_r",
+    "ring_01_r",
+    "pinky_01_r",
+];
 const AIM_UP_PITCH: f32 = 1.49;
 const AIM_DOWN_PITCH: f32 = -1.55;
 const BARREL: Vec3 = Vec3::new(0.03, 0.982, -0.184);
@@ -113,6 +126,7 @@ struct BodyClips {
     aim_down: AssetHandle<AnimationClip>,
     shoot: AssetHandle<AnimationClip>,
     tired: AssetHandle<AnimationClip>,
+    idle: AssetHandle<AnimationClip>,
 }
 
 impl BodyClips {
@@ -128,6 +142,7 @@ impl BodyClips {
             aim_down: asset_server.load(PISTOL_AIM_DOWN),
             shoot: asset_server.load(PISTOL_SHOOT),
             tired: asset_server.load(IDLE_TIRED),
+            idle: asset_server.load(IDLE),
         }
     }
 }
@@ -137,6 +152,7 @@ struct BodyMasks {
     chest: AssetHandle<BoneMask>,
     aim_arm: AssetHandle<BoneMask>,
     gun_hand: AssetHandle<BoneMask>,
+    fingers: AssetHandle<BoneMask>,
 }
 
 impl BodyMasks {
@@ -150,6 +166,9 @@ impl BodyMasks {
             chest: mask("spine_02", 1),
             aim_arm: mask("upperarm_r", 0),
             gun_hand: mask("hand_r", 0),
+            fingers: asset_server.add(FINGERS.iter().fold(BoneMask::new(), |mask, finger| {
+                mask.with_branch(BoneMaskBranch::new(*finger))
+            })),
         }
     }
 }
@@ -294,7 +313,21 @@ fn retargeted_graph(retarget: RetargetNode, clips: BodyClips, masks: BodyMasks) 
                                                     AdditiveNode::new(clips.tired.clone())
                                                         .with_weight_param(fatigue()),
                                                     |mut tired| {
-                                                        tired.with_input(retarget, |_| {});
+                                                        tired.with_layer_input(
+                                                            LayerNode::new(masks.fingers.clone())
+                                                                .with_space(LayerSpace::Local),
+                                                            |mut body| {
+                                                                body.with_input(retarget, |_| {});
+                                                            },
+                                                            |mut fingers| {
+                                                                fingers.with_input(
+                                                                    AnimationClipNode::new(
+                                                                        clips.idle.clone(),
+                                                                    ),
+                                                                    |_| {},
+                                                                );
+                                                            },
+                                                        );
                                                     },
                                                 );
                                             },
@@ -321,7 +354,7 @@ fn retargeted_graph(retarget: RetargetNode, clips: BodyClips, masks: BodyMasks) 
     }
 }
 
-/// UAL1's character: LAFAN1's motion matching retargeted onto its skeleton under a tired overlay, the pistol layered over the upper body and aimed, the head turned to the aim point, the aim arm swaying, the off hand held on the gun, and the feet locked and placed last.
+/// UAL1's character: LAFAN1's motion matching retargeted onto its skeleton, its fingers, which LAFAN1's motion does not move, taken from UAL1's own idle, a tired overlay over both, the pistol layered over the upper body and aimed, the head turned to the aim point, the aim arm swaying, the off hand held on the gun, and the feet locked and placed last.
 pub(crate) fn retargeted_character(asset_server: &AssetServer) -> CharacterAssets {
     let motion = asset_server.add(motion_matching_graph(asset_server.load(DATABASE)));
     let source = asset_server.load(LAFAN1_RIG);

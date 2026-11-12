@@ -1239,9 +1239,17 @@ mod tests {
         assert!(layered.contains(&std::any::type_name::<AdditiveNode>()));
         assert!(layered.contains(&std::any::type_name::<AnimationClipNode>()));
         let retargets = only(std::any::type_name::<RetargetNode>());
+        let fingers = graph
+            .iter()
+            .find(|index| inputs(*index).contains(&retargets))
+            .unwrap();
+        assert_eq!(type_of(fingers), std::any::type_name::<LayerNode>());
+        let fingered: Vec<&str> = inputs(fingers).into_iter().map(type_of).collect();
+        assert_eq!(fingered.len(), 2);
+        assert!(fingered.contains(&std::any::type_name::<AnimationClipNode>()));
         let tired = graph
             .iter()
-            .find(|index| inputs(*index) == vec![retargets])
+            .find(|index| inputs(*index) == vec![fingers])
             .unwrap();
         assert_eq!(type_of(tired), std::any::type_name::<AdditiveNode>());
         assert!(inputs(node).contains(&tired));
