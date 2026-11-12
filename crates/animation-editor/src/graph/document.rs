@@ -7,7 +7,6 @@ use concerto_animation::{
         state_machine::{AnimationFSMTrigger, AnimationStateMachine, StateMachineEditError},
     },
 };
-use concerto_app::App;
 use concerto_ecs::{
     Component, Entity, Event, Query, Res,
     command::{CommandQueue, EntityCommandQueue},
@@ -34,7 +33,10 @@ use concerto_foundation::assets::{
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue, TypeRegistration, TypeRegistry};
 
-use super::copy::{GraphCopy, GraphNodeId};
+use super::{
+    copy::{GraphCopy, GraphNodeId},
+    preview::graph_preview,
+};
 
 const GRAPH_EXTENSION: &str = "gasset";
 const NODE: &str = "Node";
@@ -811,13 +813,6 @@ impl AssetEditor for AnimationGraphEditor {
     fn bottom_host(&self) -> bool {
         true
     }
-}
-
-/// What a graph's preview adds to the game's recipe: the types of the `State` and `Transition` values.
-pub fn graph_preview(app: &mut App) {
-    app.register_type::<StateValue>()
-        .register_type::<TransitionValue>()
-        .register_type::<AnimationFSMTrigger>();
 }
 
 /// The node types a graph tab can add, in short-name order: every registered animation node but the result node and the placeholder.

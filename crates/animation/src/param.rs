@@ -60,11 +60,13 @@ impl<T: Reflect> JsonLeaf for Param<T> {
     }
 }
 
-/// Reads the name a reflected [`Param`] holds and the type of the value it names.
+/// Reads the name a reflected [`Param`] holds, and names and builds the value it names.
 #[derive(Clone, Copy)]
 pub struct ReflectParam {
     name: fn(&dyn Reflect) -> Option<Name>,
     value_type: TypeId,
+    value_type_name: &'static str,
+    default_value: fn() -> Box<dyn Reflect>,
 }
 
 impl ReflectParam {
@@ -77,15 +79,27 @@ impl ReflectParam {
     pub fn value_type(&self) -> TypeId {
         self.value_type
     }
+
+    /// That type's name, as [`std::any::type_name`] writes it.
+    pub fn value_type_name(&self) -> &'static str {
+        self.value_type_name
+    }
+
+    /// A `Default` value of that type, for an editor to edit and put on a blackboard.
+    pub fn default_value(&self) -> Box<dyn Reflect> {
+        (self.default_value)()
+    }
 }
 
 impl TypeData for ReflectParam {}
 
-impl<T: Reflect> FromType<Param<T>> for ReflectParam {
+impl<T: Reflect + Default> FromType<Param<T>> for ReflectParam {
     fn from_type() -> Self {
         Self {
             name: |value| value.downcast_ref::<Param<T>>().map(|param| param.0),
             value_type: TypeId::of::<T>(),
+            value_type_name: std::any::type_name::<T>(),
+            default_value: || Box::new(T::default()),
         }
     }
 }

@@ -47,6 +47,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<Param<Vec2>>();
     registry.register::<Param<Vec3>>();
     registry.register::<Param<IkTarget>>();
+    registry.register::<IkTarget>();
 }
 
 /// Registers the inputs of the built-in animation nodes with the graph walks of `world`.

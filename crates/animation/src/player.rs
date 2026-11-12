@@ -92,6 +92,11 @@ impl AnimationPlayer {
         self.blackboard.set(key, value);
     }
 
+    /// Sets a parameter to a value whose type is known only at run time, as an editor's preview does.
+    pub fn set_boxed_param(&mut self, key: Name, value: Box<dyn Reflect>) {
+        self.blackboard.set_boxed(key, value);
+    }
+
     pub fn set_bool_param(&mut self, key: Name, value: bool) {
         self.set_param(key, value);
     }

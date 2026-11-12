@@ -1,6 +1,6 @@
 use concerto_mesh::{JointName, Skeleton};
 use concerto_name::name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -69,7 +69,8 @@ impl Default for IkGoal {
 }
 
 /// A world-space IK goal a game puts on the blackboard.
-#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
 pub struct IkTarget {
     pub position: Vec3,
     pub rotation: Option<Quat>,

@@ -628,7 +628,12 @@ take a `Name` or a `Param<T>`; a struct literal writes
 `name!("aim_weight").into()`. `AnimationBlackboard::read(&param)` returns the
 value as that type, and `None` when it is missing or holds another. A
 `Param<T>` is stored as its `Name`, and a plugin registers each `Param<T>` its
-nodes hold with the type registry, as it registers their asset handles.
+nodes hold with the type registry, as it registers their asset handles. `T` is
+`Default`: the registration carries `ReflectParam`, which gives an editor the
+parameter's name, the value's type and its name, and a `Default` value of that
+type to edit, and the graph tab lists a parameter only through it.
+`AnimationPlayer::set_boxed_param(key, value)` sets a parameter to such a
+`Box<dyn Reflect>`.
 A node can read its playback rate from a float parameter: the rate is the
 node's own rate times the parameter, and no parameter (`None`, the default), or
 one that is missing or holds another type, leaves the node's rate alone. A product that is negative or not

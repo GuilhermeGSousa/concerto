@@ -37,8 +37,10 @@ lists both.
 other editors that play a clip. `clip_playback` holds the clip, the time, the
 rate, playing and looping, advances the time, writes `ClipPreviewProgress`, and
 listens for `ShowClip`, `ClearClip`, `SetClipTransport` and `SeekClip`; it poses
-nothing. `clip_preview` calls it and adds the posing: every rooted skeleton,
-root motion, the scene, the skeleton gizmo and `ClipPreviewBones`.
+nothing. `preview_stage` is the stage a preview plays on: the scene
+`ShowClipScene` gives it, the bones `SetSkeletonGizmo` draws, and the orbit
+camera following the first rooted skeleton. `clip_preview` calls both and adds
+the posing: every rooted skeleton, root motion and `ClipPreviewBones`.
 `concerto-motion-matching-editor` uses them, with no need for this crate's
 `install`. `events` holds `TabEvent`, the event as the tab edits it, with
 `read_events` and `write_events` to convert a clip's `ClipEventKey`s.
@@ -278,8 +280,38 @@ Opening an `AnimationGraph` opens a tab that shows the graph's nodes on a
 added, wired, removed and inspected, and Save writes the graph back. A node
 that plays another graph inside itself is drilled into in the same tab: a state
 machine into a diagram of its states, a state or a retarget node into the graph
-it plays. The tab has a preview, which shows an empty stage: nothing plays the
-graph yet.
+it plays. The tab's preview plays the graph on a character.
+
+### The preview recipe
+
+`graph::graph_preview` is the recipe of the tab's preview `App`: `preview_stage`,
+with the `AnimationPlayer` the animation plugin puts on every rooted skeleton
+playing a graph, and the root motion of the first rooted skeleton moving the
+scene, so the character walks and the orbit camera follows. It listens for
+three signals, sent with `PreviewSignals`:
+
+- `ShowGraphs { graphs, play }`. Each of `graphs` is a `GraphBytes { id, bytes }`,
+  a graph as a save writes it, made with `GraphBytes::of(id, &graph)`. The
+  preview decodes each and stands it in for the asset `id` with
+  `AssetServer::insert_loaded`, so a handle to that id, a state's or a retarget
+  node's, plays the graph sent and not the file. Every player then restarts on
+  the graph `play`: the players are paused while the graphs are swapped, start
+  again once nothing is loading, and a skeleton that appears later starts on
+  the same graph.
+- `SetGraphParam { name, type_name, value }` sets a parameter on every player's
+  blackboard. `value` is the `ReflectedValue` of a value of the type
+  `type_name`, which is built from the `Default` of the registered `Param<T>`
+  that names that type; a type no registered `Param` names is logged and
+  ignored. The preview keeps the parameters it was sent and gives them to a
+  player that appears later.
+- `SetGraphPlayback { playing, speed }` pauses the players or lets them play,
+  and sets the preview's time scale. A graph has no duration, so there is no
+  timeline and no step.
+
+A node that reads the world, such as foot placement, a look-at target or motion
+matching's trajectory, gets nothing from the preview's world and passes its
+input through or holds. A `BlendNode` blends by node weights only game code
+sets, so all its inputs play at 1.
 
 ### The stack
 

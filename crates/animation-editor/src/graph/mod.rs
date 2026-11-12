@@ -2,6 +2,7 @@
 mod copy;
 mod document;
 mod panels;
+mod preview;
 mod save;
 mod tools;
 
@@ -15,8 +16,9 @@ pub use copy::{Connected, GraphCopy, GraphLink, GraphNodeId, HeldNode, HeldValue
 pub use document::{
     AnimationGraphEditor, EditGraph, GraphChange, GraphDocument, GraphEdit, GraphEdited,
     GraphLevel, GraphSelection, HeldGraph, OpenTarget, ShownTransition, StateValue, TransitionRef,
-    TransitionValue, graph_preview, node_types, read_graph, shown_transitions,
+    TransitionValue, node_types, read_graph, shown_transitions,
 };
+pub use preview::{GraphBytes, SetGraphParam, SetGraphPlayback, ShowGraphs, graph_preview};
 pub use tools::{
     GraphAddNode, GraphAddState, GraphConnect, GraphInspect, GraphOpen, GraphRemove, GraphSelect,
     GraphUp,

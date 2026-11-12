@@ -17,6 +17,11 @@ impl AnimationBlackboard {
         self.values.insert(key, Box::new(value));
     }
 
+    /// Stores a value built elsewhere under `key`, as [`set`](Self::set) does.
+    pub fn set_boxed(&mut self, key: Name, value: Box<dyn Reflect>) {
+        self.values.insert(key, value);
+    }
+
     /// The value under `key` as `T`, or `None` if it is missing or of another type.
     pub fn get<T: Reflect>(&self, key: Name) -> Option<&T> {
         self.values.get(&key)?.downcast_ref::<T>()
