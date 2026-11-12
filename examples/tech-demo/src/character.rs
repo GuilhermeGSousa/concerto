@@ -368,30 +368,22 @@ pub(crate) fn foot_lock_weight() -> Name {
 
 fn character_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(
-        FootPlacementNode::new("Hips")
-            .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
-            .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
-            .with_weight_param(foot_placement_weight())
-            .with_ignore_param(foot_placement_ignore()),
-        |mut placement| {
-            placement.with_input(
-                FootLockNode::new()
-                    .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
-                    .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
-                    .with_weight_param(foot_lock_weight()),
-                |mut lock| {
-                    lock.with_input(
-                        MotionMatchingNode {
-                            database,
-                            ..Default::default()
-                        },
-                        |_| {},
-                    );
-                },
-            );
-        },
-    );
+    graph
+        .result_node()
+        .input(
+            FootPlacementNode::new("Hips")
+                .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+                .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
+                .with_weight_param(foot_placement_weight())
+                .with_ignore_param(foot_placement_ignore()),
+        )
+        .input(
+            FootLockNode::new()
+                .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
+                .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
+                .with_weight_param(foot_lock_weight()),
+        )
+        .add_input(MotionMatchingNode::new(database));
     graph
 }
 
@@ -1019,10 +1011,7 @@ mod tests {
             .filter(|node| node.type_name() == std::any::type_name::<MotionMatchingNode>())
             .map(|node| node.value().unwrap().into_owned())
             .collect();
-        let expected = MotionMatchingNode {
-            database: AssetHandle::weak(DATABASE),
-            ..Default::default()
-        };
+        let expected = MotionMatchingNode::new(AssetHandle::weak(DATABASE));
         assert_eq!(nodes, vec![to_value(&expected).unwrap()]);
         assert_eq!(
             world
@@ -1284,11 +1273,8 @@ mod tests {
             .filter(|node| node.type_name() == std::any::type_name::<MotionMatchingNode>())
             .map(|node| node.value().unwrap().into_owned())
             .collect();
-        let expected_matcher = MotionMatchingNode {
-            database: AssetHandle::weak(DATABASE),
-            play_rate_param: Some(name!("pace")),
-            ..Default::default()
-        };
+        let expected_matcher = MotionMatchingNode::new(AssetHandle::weak(DATABASE))
+            .with_play_rate_param(name!("pace"));
         assert_eq!(matchers, vec![to_value(&expected_matcher).unwrap()]);
         assert_eq!(inner.nodes().count(), 2);
 

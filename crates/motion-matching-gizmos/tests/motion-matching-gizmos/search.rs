@@ -236,10 +236,9 @@ impl Stage {
             skeleton_handle.clone(),
             [server.add(walk()), server.add(turn())],
         );
-        let graph = server.add(AnimationGraph::from_node(MotionMatchingNode {
-            database: server.add(database.clone()),
-            ..Default::default()
-        }));
+        let graph = server.add(AnimationGraph::from_node(MotionMatchingNode::new(
+            server.add(database.clone()),
+        )));
 
         let bones: Vec<SceneEntityRef> = (0..4)
             .map(|_| SceneEntityRef::Entity(world.spawn(Transform::IDENTITY)))
