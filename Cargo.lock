@@ -1078,6 +1078,7 @@ dependencies = [
  "concerto-mcp",
  "concerto-mesh",
  "concerto-name",
+ "concerto-procedural-animation",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",

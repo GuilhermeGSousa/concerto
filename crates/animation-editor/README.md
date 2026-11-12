@@ -410,7 +410,7 @@ A `Param<T>` field of a node, such as a blend space's `input.param`, is edited
 by `ParamNameEditor<T>`: a text field for the name and a button that lists the
 names the tab has found for that `T`. Over MCP, `set_property` takes the name
 as a JSON string. The plugin registers the editor for `bool`, `f32`, `u64`,
-`Vec2`, `Vec3` and `IkTarget`; an editor crate registers it for a type of its
+`Vec2`, `Vec3`, `IkTarget` and `IgnoredBody`; an editor crate registers it for a type of its
 own with `app.register_param_editor::<T>()`, from `graph::ParamEditorAppExt`.
 A `Param` of a type with no editor registered shows as a row with no editor
 and is still written by `set_property`.

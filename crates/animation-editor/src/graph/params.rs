@@ -1,4 +1,3 @@
-//! The parameters a graph names, found in its nodes and held with the values a tab's preview plays them at.
 use std::any::{Any, TypeId};
 
 use concerto_animation::param::ReflectParam;

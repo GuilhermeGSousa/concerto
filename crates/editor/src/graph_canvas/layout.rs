@@ -1,4 +1,3 @@
-//! Where a graph canvas puts its nodes and links: a pure function of what the canvas holds.
 use std::collections::{HashMap, VecDeque};
 
 use concerto_ui::node::UIBox;

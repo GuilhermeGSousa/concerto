@@ -1,4 +1,3 @@
-//! The editor's side of a graph tab's preview: the `Preview` and `Parameters` values and what is sent to the preview when they or the graphs change.
 use concerto_ecs::{
     Changed, Component, Entity, Query, Res, World, events::event_reader::EventReader,
     reflect::AppTypeRegistry,

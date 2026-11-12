@@ -1,4 +1,3 @@
-//! What runs in a graph tab's preview `App`: the stage, a player on every rooted skeleton, and the graphs they play.
 use concerto_animation::{
     graph::{AnimationGraph, NodePathStep},
     node::{NodeReport, state_machine::AnimationFSMTrigger},

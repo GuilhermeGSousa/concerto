@@ -52,7 +52,10 @@ pub fn install(app: &mut App) {
 
 `add_tool` does nothing in an `App` without `McpPlugin`, so the tool and its
 system exist only when the editor serves an agent. `describe_need` still
-panics without `McpPlugin`; it is the editor's to call.
+panics without `McpPlugin`; it is the editor's to call. A tool's name is its
+own: an extension tool named as an editor tool, or as another extension's, is
+refused when the `App` is built under `--mcp`, with the panic
+``MCP tool `<name>` is added twice``, so the editor never starts with it.
 
 An extension crate's tests can use the `testing` feature, which exposes
 `hosted::testing` and its `SceneFixture` and `forwarding`, the system that

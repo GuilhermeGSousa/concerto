@@ -1,4 +1,3 @@
-//! A canvas of boxes joined by links, drawn on the UI node that holds a [`GraphCanvas`].
 pub mod layout;
 
 use concerto_app::{
@@ -1400,72 +1399,103 @@ mod tests {
         assert_eq!(f.heard().activated, [CLIP_A]);
     }
 
-    #[test]
-    fn a_drag_from_an_output_connects_to_the_input_it_ends_on() {
-        let mut f = Fixture::new(flow());
-        let placed = f.placed();
-        let output = placed.node(CLIP_B).unwrap().output.unwrap();
-        let input = placed.node(BLEND).unwrap().inputs[1];
-        let preview = f.parts().preview[0];
-        let shown = |f: &Fixture| {
-            f.world
-                .get_component_for_entity::<UINode>(preview)
-                .unwrap()
-                .visible
-        };
+    struct Gesture {
+        press: Vec2,
+        release: Vec2,
+    }
 
-        f.press(output);
-        f.drag(input, input - output, MouseButton::Left);
-        assert!(shown(&f));
-        assert!(f.heard().connected.is_empty());
-        f.release(input);
-        assert!(!shown(&f));
-
-        f.press(output);
-        f.release(Vec2::new(2.0, 2.0));
-        f.press(output);
-        f.release(centre(placed.node(BLEND).unwrap().rect));
-        f.press(centre(placed.node(CLIP_B).unwrap().rect));
-        f.release(input);
-
-        assert_eq!(
-            f.heard().connected,
-            [CanvasConnected {
-                from: CLIP_B,
-                to: BLEND,
-                slot: Some(1),
-            }]
-        );
-        assert_eq!(
-            f.heard().dropped,
-            [CanvasLinkDropped {
-                from: CLIP_B,
-                at: ORIGIN + Vec2::new(2.0, 2.0),
-            }]
-        );
+    struct ConnectCase {
+        canvas: GraphCanvas,
+        connect: Gesture,
+        misses: Vec<Gesture>,
+        connected: CanvasConnected,
+        dropped: Vec<CanvasLinkDropped>,
     }
 
     #[test]
-    fn in_a_diagram_a_drag_from_one_box_connects_to_the_box_it_ends_on() {
-        let mut f = Fixture::new(diagram());
-        let placed = f.placed();
-        let idle = centre(placed.node(IDLE).unwrap().rect);
-        let walk = centre(placed.node(WALK).unwrap().rect);
+    fn a_drag_connects_what_it_starts_on_to_what_it_ends_on_in_either_mode() {
+        let flow_placed = Fixture::new(flow()).placed();
+        let output = flow_placed.node(CLIP_B).unwrap().output.unwrap();
+        let input = flow_placed.node(BLEND).unwrap().inputs[1];
+        let diagram_placed = Fixture::new(diagram()).placed();
+        let idle = centre(diagram_placed.node(IDLE).unwrap().rect);
+        let walk = centre(diagram_placed.node(WALK).unwrap().rect);
+        let empty = Vec2::new(2.0, 2.0);
+        let cases = [
+            ConnectCase {
+                canvas: flow(),
+                connect: Gesture {
+                    press: output,
+                    release: input,
+                },
+                misses: vec![
+                    Gesture {
+                        press: output,
+                        release: empty,
+                    },
+                    Gesture {
+                        press: output,
+                        release: centre(flow_placed.node(BLEND).unwrap().rect),
+                    },
+                    Gesture {
+                        press: centre(flow_placed.node(CLIP_B).unwrap().rect),
+                        release: input,
+                    },
+                ],
+                connected: CanvasConnected {
+                    from: CLIP_B,
+                    to: BLEND,
+                    slot: Some(1),
+                },
+                dropped: vec![CanvasLinkDropped {
+                    from: CLIP_B,
+                    at: ORIGIN + empty,
+                }],
+            },
+            ConnectCase {
+                canvas: diagram(),
+                connect: Gesture {
+                    press: walk,
+                    release: idle,
+                },
+                misses: vec![Gesture {
+                    press: walk,
+                    release: walk + Vec2::new(6.0, 0.0),
+                }],
+                connected: CanvasConnected {
+                    from: WALK,
+                    to: IDLE,
+                    slot: None,
+                },
+                dropped: Vec::new(),
+            },
+        ];
 
-        f.press(walk);
-        f.drag(idle, idle - walk, MouseButton::Left);
-        f.release(idle);
-        f.press(walk);
-        f.release(walk + Vec2::new(6.0, 0.0));
+        for (row, case) in cases.into_iter().enumerate() {
+            let mut f = Fixture::new(case.canvas);
+            let preview = f.parts().preview[0];
+            let shown = |f: &Fixture| {
+                f.world
+                    .get_component_for_entity::<UINode>(preview)
+                    .unwrap()
+                    .visible
+            };
+            let Gesture { press, release } = case.connect;
 
-        assert_eq!(
-            f.heard().connected,
-            [CanvasConnected {
-                from: WALK,
-                to: IDLE,
-                slot: None,
-            }]
-        );
+            f.press(press);
+            f.drag(release, release - press, MouseButton::Left);
+            assert!(shown(&f), "row {row}");
+            assert!(f.heard().connected.is_empty(), "row {row}");
+            f.release(release);
+            assert!(!shown(&f), "row {row}");
+            for miss in case.misses {
+                f.press(miss.press);
+                f.release(miss.release);
+            }
+
+            assert_eq!(f.heard().connected, [case.connected], "row {row}");
+            assert_eq!(f.heard().dropped, case.dropped, "row {row}");
+        }
     }
 
     #[test]

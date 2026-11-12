@@ -849,14 +849,40 @@ mod tests {
     }
 
     enum Edit {
-        AddState(&'static str, Graph),
-        RemoveState(&'static str),
-        RenameState(&'static str, &'static str),
-        SetStateGraph(&'static str, Graph),
-        AddTransition(&'static str, &'static str, AnimationFSMTrigger, f32),
-        RemoveTransition(&'static str, usize),
-        SetTransition(&'static str, usize, AnimationFSMTrigger, f32),
-        SetInitial(&'static str),
+        AddState {
+            name: &'static str,
+            graph: Graph,
+        },
+        RemoveState {
+            name: &'static str,
+        },
+        RenameState {
+            name: &'static str,
+            to: &'static str,
+        },
+        SetStateGraph {
+            name: &'static str,
+            graph: Graph,
+        },
+        AddTransition {
+            from: &'static str,
+            to: &'static str,
+            trigger: AnimationFSMTrigger,
+            blend_time: f32,
+        },
+        RemoveTransition {
+            from: &'static str,
+            index: usize,
+        },
+        SetTransition {
+            from: &'static str,
+            index: usize,
+            trigger: AnimationFSMTrigger,
+            blend_time: f32,
+        },
+        SetInitial {
+            name: &'static str,
+        },
         LoseLastTransitionList,
     }
 
@@ -928,32 +954,54 @@ mod tests {
         };
         let cases = [
             EditCase {
-                edit: AddState("idle", Graph::A),
+                edit: AddState {
+                    name: "idle",
+                    graph: Graph::A,
+                },
                 refused: None,
                 machine: &["idle* a -> "],
             },
             EditCase {
-                edit: AddState("walk", Graph::B),
+                edit: AddState {
+                    name: "walk",
+                    graph: Graph::B,
+                },
                 refused: None,
                 machine: &["idle* a -> ", "walk b -> "],
             },
             EditCase {
-                edit: AddState("run", Graph::A),
+                edit: AddState {
+                    name: "run",
+                    graph: Graph::A,
+                },
                 refused: None,
                 machine: &["idle* a -> ", "walk b -> ", "run a -> "],
             },
             EditCase {
-                edit: AddState("walk", Graph::A),
+                edit: AddState {
+                    name: "walk",
+                    graph: Graph::A,
+                },
                 refused: duplicate("walk"),
                 machine: &["idle* a -> ", "walk b -> ", "run a -> "],
             },
             EditCase {
-                edit: AddTransition("idle", "walk", Instant, 0.2),
+                edit: AddTransition {
+                    from: "idle",
+                    to: "walk",
+                    trigger: Instant,
+                    blend_time: 0.2,
+                },
                 refused: None,
                 machine: &["idle* a -> 0:walk instant 0.2", "walk b -> ", "run a -> "],
             },
             EditCase {
-                edit: AddTransition("idle", "run", OnAnimationEnd, 0.3),
+                edit: AddTransition {
+                    from: "idle",
+                    to: "run",
+                    trigger: OnAnimationEnd,
+                    blend_time: 0.3,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
@@ -962,7 +1010,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: AddTransition("idle", "gone", Instant, 0.1),
+                edit: AddTransition {
+                    from: "idle",
+                    to: "gone",
+                    trigger: Instant,
+                    blend_time: 0.1,
+                },
                 refused: unknown("gone"),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
@@ -971,7 +1024,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: AddTransition("gone", "idle", Instant, 0.1),
+                edit: AddTransition {
+                    from: "gone",
+                    to: "idle",
+                    trigger: Instant,
+                    blend_time: 0.1,
+                },
                 refused: unknown("gone"),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
@@ -980,7 +1038,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: AddTransition("walk", "run", Instant, 0.4),
+                edit: AddTransition {
+                    from: "walk",
+                    to: "run",
+                    trigger: Instant,
+                    blend_time: 0.4,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
@@ -989,7 +1052,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: AddTransition("run", "idle", Instant, 0.1),
+                edit: AddTransition {
+                    from: "run",
+                    to: "idle",
+                    trigger: Instant,
+                    blend_time: 0.1,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
@@ -998,7 +1066,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: AddTransition("run", "walk", OnAnimationEnd, 0.6),
+                edit: AddTransition {
+                    from: "run",
+                    to: "walk",
+                    trigger: OnAnimationEnd,
+                    blend_time: 0.6,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
@@ -1007,7 +1080,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: AddTransition("run", "idle", OnAnimationEnd, 0.7),
+                edit: AddTransition {
+                    from: "run",
+                    to: "idle",
+                    trigger: OnAnimationEnd,
+                    blend_time: 0.7,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
@@ -1016,7 +1094,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetTransition("idle", 1, Instant, 0.5),
+                edit: SetTransition {
+                    from: "idle",
+                    index: 1,
+                    trigger: Instant,
+                    blend_time: 0.5,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
@@ -1025,7 +1108,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetTransition("idle", 2, Instant, 0.5),
+                edit: SetTransition {
+                    from: "idle",
+                    index: 2,
+                    trigger: Instant,
+                    blend_time: 0.5,
+                },
                 refused: out_of_range("idle", 2),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
@@ -1034,7 +1122,12 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetTransition("gone", 0, Instant, 0.5),
+                edit: SetTransition {
+                    from: "gone",
+                    index: 0,
+                    trigger: Instant,
+                    blend_time: 0.5,
+                },
                 refused: unknown("gone"),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
@@ -1043,7 +1136,10 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: RenameState("run", "sprint"),
+                edit: RenameState {
+                    name: "run",
+                    to: "sprint",
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1052,7 +1148,10 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: RenameState("walk", "idle"),
+                edit: RenameState {
+                    name: "walk",
+                    to: "idle",
+                },
                 refused: duplicate("idle"),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1061,7 +1160,10 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: RenameState("run", "jog"),
+                edit: RenameState {
+                    name: "run",
+                    to: "jog",
+                },
                 refused: unknown("run"),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1070,7 +1172,10 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetStateGraph("sprint", Graph::B),
+                edit: SetStateGraph {
+                    name: "sprint",
+                    graph: Graph::B,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1079,7 +1184,10 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetStateGraph("run", Graph::B),
+                edit: SetStateGraph {
+                    name: "run",
+                    graph: Graph::B,
+                },
                 refused: unknown("run"),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1088,7 +1196,7 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetInitial("walk"),
+                edit: SetInitial { name: "walk" },
                 refused: None,
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1097,7 +1205,7 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetInitial("run"),
+                edit: SetInitial { name: "run" },
                 refused: unknown("run"),
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1106,7 +1214,10 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: RemoveTransition("sprint", 0),
+                edit: RemoveTransition {
+                    from: "sprint",
+                    index: 0,
+                },
                 refused: None,
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1115,7 +1226,10 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: RemoveTransition("sprint", 2),
+                edit: RemoveTransition {
+                    from: "sprint",
+                    index: 2,
+                },
                 refused: out_of_range("sprint", 2),
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1124,7 +1238,7 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: RemoveState("run"),
+                edit: RemoveState { name: "run" },
                 refused: unknown("run"),
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
@@ -1133,7 +1247,7 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: RemoveState("walk"),
+                edit: RemoveState { name: "walk" },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:sprint instant 0.5",
@@ -1146,17 +1260,30 @@ mod tests {
                 machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
             },
             EditCase {
-                edit: SetTransition("sprint", 0, Instant, 0.5),
+                edit: SetTransition {
+                    from: "sprint",
+                    index: 0,
+                    trigger: Instant,
+                    blend_time: 0.5,
+                },
                 refused: out_of_range("sprint", 0),
                 machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
             },
             EditCase {
-                edit: RemoveTransition("sprint", 0),
+                edit: RemoveTransition {
+                    from: "sprint",
+                    index: 0,
+                },
                 refused: out_of_range("sprint", 0),
                 machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
             },
             EditCase {
-                edit: AddTransition("sprint", "idle", Instant, 0.1),
+                edit: AddTransition {
+                    from: "sprint",
+                    to: "idle",
+                    trigger: Instant,
+                    blend_time: 0.1,
+                },
                 refused: None,
                 machine: &[
                     "idle* a -> 0:sprint instant 0.5",
@@ -1169,7 +1296,7 @@ mod tests {
                 machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
             },
             EditCase {
-                edit: RemoveState("sprint"),
+                edit: RemoveState { name: "sprint" },
                 refused: None,
                 machine: &["idle* a -> "],
             },
@@ -1182,20 +1309,32 @@ mod tests {
                 Graph::B => b.clone(),
             };
             let result = match case.edit {
-                AddState(name, state_graph) => machine.add_state(name.into(), graph(state_graph)),
-                RemoveState(name) => machine.remove_state(name.into()),
-                RenameState(name, to) => machine.rename_state(name.into(), to.into()),
-                SetStateGraph(name, state_graph) => {
-                    machine.set_state_graph(name.into(), graph(state_graph))
-                }
-                AddTransition(from, to, trigger, blend_time) => machine
+                AddState {
+                    name,
+                    graph: state_graph,
+                } => machine.add_state(name.into(), graph(state_graph)),
+                RemoveState { name } => machine.remove_state(name.into()),
+                RenameState { name, to } => machine.rename_state(name.into(), to.into()),
+                SetStateGraph {
+                    name,
+                    graph: state_graph,
+                } => machine.set_state_graph(name.into(), graph(state_graph)),
+                AddTransition {
+                    from,
+                    to,
+                    trigger,
+                    blend_time,
+                } => machine
                     .add_transition(from.into(), to.into(), trigger, blend_time)
                     .map(|_| ()),
-                RemoveTransition(from, index) => machine.remove_transition(from.into(), index),
-                SetTransition(from, index, trigger, blend_time) => {
-                    machine.set_transition(from.into(), index, trigger, blend_time)
-                }
-                SetInitial(name) => machine.set_initial(name.into()),
+                RemoveTransition { from, index } => machine.remove_transition(from.into(), index),
+                SetTransition {
+                    from,
+                    index,
+                    trigger,
+                    blend_time,
+                } => machine.set_transition(from.into(), index, trigger, blend_time),
+                SetInitial { name } => machine.set_initial(name.into()),
                 LoseLastTransitionList => {
                     machine = without_last_transition_list(&machine);
                     Ok(())

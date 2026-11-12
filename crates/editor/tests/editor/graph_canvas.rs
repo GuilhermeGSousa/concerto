@@ -1,4 +1,3 @@
-//! Where a graph canvas puts what it holds.
 use concerto_editor::graph_canvas::{
     CanvasLink, CanvasMode, CanvasNode, CanvasNodeId,
     layout::{CanvasLayout, layout},

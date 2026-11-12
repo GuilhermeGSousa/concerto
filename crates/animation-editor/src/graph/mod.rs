@@ -1,4 +1,3 @@
-//! The editor of an animation graph: its nodes on a canvas, wired and edited through signals, and saved as a fresh graph.
 mod copy;
 mod document;
 mod panels;
@@ -14,6 +13,7 @@ use concerto_app::{App, plugins::Plugin, schedule_groups::Update};
 use concerto_ecs::IntoSystemConfig;
 use concerto_editor::{asset_editor::AssetEditorAppExt, hosted::HostedEventsAppExt};
 use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_procedural_animation::IgnoredBody;
 use concerto_scene::scene::Scene;
 use glam::{Vec2, Vec3};
 
@@ -57,7 +57,8 @@ impl Plugin for AnimationGraphEditorPlugin {
             .register_param_editor::<u64>()
             .register_param_editor::<Vec2>()
             .register_param_editor::<Vec3>()
-            .register_param_editor::<IkTarget>();
+            .register_param_editor::<IkTarget>()
+            .register_param_editor::<IgnoredBody>();
         if let Some(server) = app.get_resource::<AssetServer>() {
             server.name_asset::<AnimationGraph>();
             if !server.is_registered::<Scene>() {

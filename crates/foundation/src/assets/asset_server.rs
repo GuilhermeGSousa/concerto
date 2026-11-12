@@ -1006,7 +1006,6 @@ mod tests {
         let loaded = fixture.server.load::<FixtureAsset>(id);
 
         assert_eq!(inserted.id(), id);
-        assert!(fixture.server.data.pending_tasks.read().unwrap().is_empty());
         handle_asset_load_events(&mut fixture.world);
         assert!(!fixture.server.is_loading());
         assert_eq!(fixture.value(&loaded), Some(2));

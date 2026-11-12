@@ -1,4 +1,3 @@
-//! The property editor of a `Param<T>` field: the parameter's name as text, with a menu of the names the front graph tab has found for `T`.
 use std::{any::TypeId, marker::PhantomData};
 
 use concerto_animation::param::Param;
