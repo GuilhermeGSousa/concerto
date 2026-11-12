@@ -28,6 +28,26 @@ way; aim at it to close it. Every indoor room has ceiling lamps, placed from the
 room plan: warm in the guest rooms, paler in the service ones, hung lower under
 the cellar's and attic's low ceilings. Outdoors there is only moonlight.
 
+### The sealed case
+
+The real case is never in the repository and never on disk in the clear. It is
+one file, `sealed/case.sealed`: the case's files compressed with zstd and
+encrypted with ChaCha20-Poly1305 under the key in `sealed/case.key`. Git
+ignores both. `-- --manor` plays it when both are there, opening it in memory
+only, and saves to `saves/manor`; without them it plays the open walk. If the
+bundle does not open or load, the game says so in one line that tells nothing
+of what is inside, and plays the open walk.
+
+```sh
+cargo run -p one-more-night --bin seal-case -- <case directory>
+```
+
+`seal-case` checks that the case loads over the manor and writes the bundle,
+making a key if there is none. It prints PASS or FAIL and nothing about the
+case. `ONE_MORE_NIGHT_CASE` and `ONE_MORE_NIGHT_KEY` name other paths for the
+two files. This keeps the case from being read by accident; it does not stop
+someone who sets out to open it with the key.
+
 ## Playing
 
 The window is split in two. A pad joins by pressing A (South) or Start; the
@@ -123,6 +143,7 @@ without its card, for looking at a level without a pad in hand, and
 | `book_ui` | The casebook drawn as tabs, lists and the timeline grid, and every other screen and HUD line |
 | `house` | Doors, items, bells, the dumbwaiter, beds and the gong; ending a night |
 | `save` | The save file and its backups |
+| `seal` | The sealed case bundle: sealing it and opening it in memory |
 | `world` | The systems that run all of it: fixtures, characters, props, targeting, the HUD and the loop |
 | `players`, `controls`, `clock` | Split-screen seats, the actions, the night clock |
 
