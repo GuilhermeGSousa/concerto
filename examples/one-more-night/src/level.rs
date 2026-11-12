@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::case::{AnchorId, CaseError, Catalog, DoorId, DoorState, FeatureId, Id, RoomId, Zone};
 
 const STEP_UP: f32 = 0.6;
+const STOREY: f32 = 3.4;
 
 #[derive(Deserialize)]
 #[serde(rename = "LevelManifest")]
@@ -111,6 +112,8 @@ pub struct Room {
     pub bounds: Vec<FloorRect>,
     /// The height of its floor, taken from its lowest anchor.
     pub floor: f32,
+    /// How high it reaches: a storey above its floor, or a step above its highest anchor when it runs through several storeys.
+    pub top: f32,
 }
 
 /// A named place of the level: where a character stands or a prop sits.
@@ -176,27 +179,32 @@ impl Level {
             rooms: raw
                 .rooms
                 .iter()
-                .map(|room| Room {
-                    floor: raw
-                        .anchors
-                        .iter()
-                        .filter(|anchor| anchor.room == room.id)
-                        .map(|anchor| anchor.pos.2)
-                        .min_by(f32::total_cmp)
-                        .unwrap_or(0.0),
-                    zone: room.zone.zone(),
-                    bounds: room
-                        .bounds
-                        .iter()
-                        .map(|span| {
-                            let a = from_manifest(span.0.0, span.0.1, 0.0);
-                            let b = from_manifest(span.1.0, span.1.1, 0.0);
-                            FloorRect {
-                                min: Vec2::new(a.x.min(b.x), a.z.min(b.z)),
-                                max: Vec2::new(a.x.max(b.x), a.z.max(b.z)),
-                            }
-                        })
-                        .collect(),
+                .map(|room| {
+                    let heights = || {
+                        raw.anchors
+                            .iter()
+                            .filter(|anchor| anchor.room == room.id)
+                            .map(|anchor| anchor.pos.2)
+                    };
+                    let floor = heights().min_by(f32::total_cmp).unwrap_or(0.0);
+                    let highest = heights().max_by(f32::total_cmp).unwrap_or(0.0);
+                    Room {
+                        floor,
+                        top: (floor + STOREY).max(highest + STEP_UP),
+                        zone: room.zone.zone(),
+                        bounds: room
+                            .bounds
+                            .iter()
+                            .map(|span| {
+                                let a = from_manifest(span.0.0, span.0.1, 0.0);
+                                let b = from_manifest(span.1.0, span.1.1, 0.0);
+                                FloorRect {
+                                    min: Vec2::new(a.x.min(b.x), a.z.min(b.z)),
+                                    max: Vec2::new(a.x.max(b.x), a.z.max(b.z)),
+                                }
+                            })
+                            .collect(),
+                    }
                 })
                 .collect(),
             anchors: raw
@@ -252,13 +260,14 @@ impl Level {
         (0..self.doors.len()).map(DoorId::from_index)
     }
 
-    /// The room `position` stands in: of the rooms whose floor plan holds it, the one with the highest floor at or below it.
+    /// The room `position` stands in: of the rooms that reach its height and whose floor plan holds it, the one with the highest floor at or below it.
     pub fn room_at(&self, position: Vec3) -> Option<RoomId> {
         self.rooms
             .iter()
             .enumerate()
             .filter(|(_, room)| {
                 room.floor <= position.y + STEP_UP
+                    && position.y <= room.top
                     && room.bounds.iter().any(|rect| rect.contains(position))
             })
             .max_by(|a, b| a.1.floor.total_cmp(&b.1.floor))
@@ -396,6 +405,21 @@ mod tests {
             level.room_at(upstairs.with_y(0.0)),
             Some(room("g1")),
             "the same spot on the ground floor is another room, or none"
+        );
+
+        let lobby = |height: f32| level.room_at(Vec3::new(32.2, height, -9.0));
+        assert_eq!(lobby(0.0), Some(room("passage")));
+        assert_eq!(
+            lobby(3.8),
+            Some(room("backstairs")),
+            "the back stairs' lobby a floor above the passage"
+        );
+        assert_eq!(lobby(7.2), Some(room("backstairs")));
+        assert_eq!(lobby(-3.0), Some(room("cellar_pass")));
+        assert_eq!(
+            level.room_at(Vec3::new(18.2, 3.0, -13.0)),
+            Some(room("hall")),
+            "the main stair climbs inside the hall"
         );
 
         let hidden = level.hidden_nodes(|_| false);

@@ -20,12 +20,17 @@ use concerto::{
         reflect::{ReflectComponent, ReflectSceneComponent},
     },
     foundation::{
-        assets::{AssetId, asset_server::AssetServer, handle::AssetHandle},
+        assets::{
+            AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+        },
         time::Time,
         transform::Transform,
     },
     gameplay::first_person::{FirstPersonView, FirstPersonWalker},
-    mesh::{mesh::MeshComponent, skeleton::JointName},
+    mesh::{
+        mesh::{Aabb, Mesh, MeshComponent},
+        skeleton::JointName,
+    },
     name::name,
     physics::{
         body::BodyId,
@@ -168,6 +173,9 @@ pub struct Fixture {
 struct Adopted;
 
 #[derive(Component)]
+struct LevelScene;
+
+#[derive(Component)]
 struct DoorPanel {
     door: crate::case::DoorId,
     closed: Transform,
@@ -179,6 +187,35 @@ struct LeafPanel {
     door: crate::case::DoorId,
     closed: Transform,
     shown_open: bool,
+    bounds: Option<Aabb>,
+}
+
+fn ray_to_box(origin: Vec3, direction: Vec3, bounds: Aabb) -> Option<f32> {
+    let mut near = 0.0f32;
+    let mut far = f32::INFINITY;
+    for axis in 0..3 {
+        let (from, along) = (origin[axis], direction[axis]);
+        let (low, high) = (bounds.min[axis], bounds.max[axis]);
+        if along.abs() < 1e-6 {
+            if from < low || from > high {
+                return None;
+            }
+            continue;
+        }
+        let (a, b) = ((low - from) / along, (high - from) / along);
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+    }
+    (near <= far).then_some(near)
+}
+
+fn aim_at_leaf(eye: Vec3, aim: Vec3, leaf: &Transform, bounds: Aabb) -> Option<f32> {
+    let into = leaf.rotation.inverse();
+    let reach = Aabb {
+        min: bounds.min * leaf.scale - Vec3::splat(AIM_RADIUS),
+        max: bounds.max * leaf.scale + Vec3::splat(AIM_RADIUS),
+    };
+    ray_to_box(into * (eye - leaf.translation), into * aim, reach)
 }
 
 #[derive(Component)]
@@ -511,6 +548,7 @@ fn spawn_case(
         cmd.spawn((
             SceneSpawnerComponent(assets.load::<Scene>(*scene)),
             Transform::default(),
+            LevelScene,
         ));
     }
     if stage.named_nodes {
@@ -583,7 +621,9 @@ fn spawn_case(
 }
 
 fn adopt_named_nodes(
-    nodes: Query<(Entity, &Name, &Transform, Option<&MeshComponent>), Without<Adopted>>,
+    scenes: Query<(Entity, &Children), (With<LevelScene>, Without<Adopted>)>,
+    children: Query<&Children>,
+    nodes: Query<(&Name, &Transform, Option<&MeshComponent>)>,
     stage: Res<StageArt>,
     mut data: ResMut<CaseData>,
     mut cmd: CommandQueue,
@@ -591,8 +631,18 @@ fn adopt_named_nodes(
     if !stage.named_nodes {
         return;
     }
-    for (entity, name, transform, mesh) in nodes.iter() {
-        cmd.insert(Adopted, entity);
+    let mut below = Vec::new();
+    for (scene, roots) in scenes.iter() {
+        cmd.insert(Adopted, scene);
+        below.extend(roots.iter().copied());
+    }
+    while let Some(entity) = below.pop() {
+        if let Some(parts) = children.get_entity(entity) {
+            below.extend(parts.iter().copied());
+        }
+        let Some((name, transform, mesh)) = nodes.get_entity(entity) else {
+            continue;
+        };
         let name = name.as_str();
         let (kind, rest) = name.split_once('.').unwrap_or((name, ""));
         let features = &data.case.features;
@@ -638,6 +688,7 @@ fn adopt_named_nodes(
                             door,
                             closed: transform.clone(),
                             shown_open: false,
+                            bounds: None,
                         },
                         entity,
                     );
@@ -672,11 +723,17 @@ fn adopt_named_nodes(
 }
 
 fn swing_leaves(
-    leaves: Query<(Entity, &mut LeafPanel, &mut Transform)>,
+    leaves: Query<(Entity, &mut LeafPanel, &mut Transform, &MeshComponent)>,
+    meshes: Res<AssetStore<Mesh>>,
     house: Res<House>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, mut leaf, mut transform) in leaves.iter() {
+    for (entity, mut leaf, mut transform, mesh) in leaves.iter() {
+        if leaf.bounds.is_none()
+            && let Some(bounds) = meshes.get(&mesh.handle).and_then(Mesh::local_aabb)
+        {
+            leaf.bounds = Some(bounds);
+        }
         let open = house.stands_open(leaf.door);
         if leaf.shown_open == open {
             continue;
@@ -689,6 +746,11 @@ fn swing_leaves(
         };
         transform.rotation = leaf.closed.rotation * turn;
         cmd.remove::<Collider>(entity);
+        if open {
+            cmd.remove::<MeshCollider>(entity);
+        } else {
+            cmd.insert(MeshCollider, entity);
+        }
     }
 }
 
@@ -810,10 +872,16 @@ fn build_huds(
     }
 }
 
+struct OpenLeaf {
+    door: crate::case::DoorId,
+    distance: f32,
+}
+
 fn find_targets(
     cameras: Query<(&PlayerIndex, &Transform, &FirstPersonView), With<Camera>>,
     bodies: Query<&BodyId>,
     targets: Query<&Interactable>,
+    leaves: Query<(&LeafPanel, &Transform)>,
     physics: Res<PhysicsState>,
     house: Res<House>,
     mut sight: ResMut<Sight>,
@@ -824,16 +892,31 @@ fn find_targets(
         let filter = QueryFilter {
             ignore: own.as_slice(),
         };
-        let reach = transform.rotation * Vec3::NEG_Z * REACH;
-        seen[player.index() as usize] = physics
-            .cast_sphere(transform.translation, AIM_RADIUS, reach, filter)
-            .and_then(|hit| hit.entity)
-            .and_then(|entity| targets.get_entity(entity))
-            .copied()
-            .filter(|target| match target {
-                Interactable::Placement(placement) => house.in_the_open(*placement),
-                _ => true,
-            });
+        let aim = transform.rotation * Vec3::NEG_Z;
+        let hit = physics.cast_sphere(transform.translation, AIM_RADIUS, aim * REACH, filter);
+        let solid_at = hit.as_ref().map_or(REACH, |hit| hit.fraction * REACH);
+        let open_leaf = leaves
+            .iter()
+            .filter(|(leaf, _)| leaf.shown_open)
+            .filter_map(|(leaf, at)| {
+                let distance = aim_at_leaf(transform.translation, aim, at, leaf.bounds?)?;
+                (distance < solid_at).then_some(OpenLeaf {
+                    door: leaf.door,
+                    distance,
+                })
+            })
+            .min_by(|a, b| a.distance.total_cmp(&b.distance));
+        seen[player.index() as usize] = match open_leaf {
+            Some(leaf) => Some(Interactable::Door(leaf.door)),
+            None => hit
+                .and_then(|hit| hit.entity)
+                .and_then(|entity| targets.get_entity(entity))
+                .copied()
+                .filter(|target| match target {
+                    Interactable::Placement(placement) => house.in_the_open(*placement),
+                    _ => true,
+                }),
+        };
     }
     if sight.targets != seen {
         sight.targets = seen;
@@ -1627,15 +1710,21 @@ fn debug_keys(
 
 #[cfg(test)]
 mod tests {
+    use concerto::mesh::mesh::Aabb;
     use concerto::{
         app::App,
         ecs::Entity,
-        foundation::transform::Transform,
+        foundation::{
+            assets::{ContentAssetRoot, asset_server::AssetServer, registry::AssetRegistry},
+            transform::Transform,
+        },
         gameplay::first_person::FirstPersonWalker,
         physics::collider::BoxCollider,
-        window::input::{GamepadButton, GamepadId, Input, PlayerDevice, PlayerIndex, Players},
+        window::input::{
+            GamepadAxis, GamepadButton, GamepadId, Input, PlayerDevice, PlayerIndex, Players,
+        },
     };
-    use glam::Vec3;
+    use glam::{Quat, Vec3};
 
     use super::Sight;
     use crate::book::Casebook;
@@ -1942,5 +2031,296 @@ mod tests {
         let after = walkers(&mut app);
         assert_eq!(after.len(), 2, "both players are seated again");
         assert!(after.iter().all(|walker| !before.contains(walker)));
+    }
+
+    #[test]
+    fn an_aim_reaches_a_leaf_that_stands_open_and_misses_one_behind_it() {
+        let bounds = Aabb {
+            min: Vec3::new(0.0, 0.0, -0.02),
+            max: Vec3::new(0.9, 2.1, 0.02),
+        };
+        let leaf = Transform::from_translation_rotation(
+            Vec3::new(4.0, 0.0, -2.0),
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+        );
+        let eye = Vec3::new(3.0, 1.6, -2.5);
+
+        let reached = super::aim_at_leaf(eye, Vec3::X, &leaf, bounds).unwrap();
+        assert!((reached - (1.0 - 0.02 - super::AIM_RADIUS)).abs() < 1e-4);
+        assert_eq!(super::aim_at_leaf(eye, Vec3::NEG_X, &leaf, bounds), None);
+        assert_eq!(super::aim_at_leaf(eye, Vec3::Z, &leaf, bounds), None);
+        assert_eq!(
+            super::aim_at_leaf(eye.with_z(-4.0), Vec3::X, &leaf, bounds),
+            None,
+            "past the leaf's free edge"
+        );
+    }
+
+    struct Leg {
+        x: f32,
+        y: f32,
+    }
+
+    struct Walk {
+        player: u8,
+        legs: Vec<Leg>,
+        ends_at_height: f32,
+        ends_in: &'static str,
+    }
+
+    fn leg(x: f32, y: f32) -> Leg {
+        Leg { x, y }
+    }
+
+    fn feet(app: &mut App, player: u8) -> Option<Vec3> {
+        let world = app.main_mut().world_mut();
+        let mut walkers = world.query::<(&PlayerIndex, &FirstPersonWalker, &Transform), ()>();
+        walkers
+            .iter(world)
+            .find(|(index, ..)| index.index() == player)
+            .map(|(_, _, transform)| transform.translation)
+    }
+
+    fn head_for(app: &mut App, player: u8, target: Vec3) {
+        let world = app.main_mut().world_mut();
+        let mut walkers = world.query::<(&PlayerIndex, &mut FirstPersonWalker, &Transform), ()>();
+        for (index, mut walker, transform) in walkers.iter(world) {
+            if index.index() != player {
+                continue;
+            }
+            let to = target - transform.translation;
+            let yaw = (-to.x).atan2(-to.z);
+            let turn = yaw - walker.yaw();
+            walker.look(turn, 0.0);
+        }
+    }
+
+    fn walk_all(app: &mut App, walks: &[Walk]) -> [usize; 2] {
+        let mut reached = [0usize; 2];
+        for _ in 0..12_000 {
+            let mut walking = false;
+            for walk in walks {
+                let player = walk.player as usize;
+                let at = feet(app, walk.player).expect("the player has a walker");
+                while reached[player] < walk.legs.len() {
+                    let leg = &walk.legs[reached[player]];
+                    let target = Vec3::new(leg.x, at.y, -leg.y);
+                    if at.distance(target) > 0.25 {
+                        head_for(app, walk.player, target);
+                        break;
+                    }
+                    reached[player] += 1;
+                }
+                let push = if reached[player] < walk.legs.len() {
+                    walking = true;
+                    1.0
+                } else {
+                    0.0
+                };
+                app.get_resource_mut::<Input>()
+                    .unwrap()
+                    .update_gamepad_axis(PADS[player], GamepadAxis::LeftStickY, push);
+            }
+            if !walking {
+                break;
+            }
+            frames(app, 1);
+        }
+        reached
+    }
+
+    fn walk_to_the_end(app: &mut App, walks: &[Walk]) {
+        let reached = walk_all(app, walks);
+        frames(app, 30);
+        for walk in walks {
+            let at = feet(app, walk.player).unwrap();
+            assert_eq!(
+                reached[walk.player as usize],
+                walk.legs.len(),
+                "player {} stopped at {at} on the way",
+                walk.player
+            );
+            assert!(
+                (at.y - walk.ends_at_height).abs() < 0.3,
+                "player {} ends at height {}",
+                walk.player,
+                at.y
+            );
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            assert_eq!(
+                data.level.room_at(at),
+                data.catalog.rooms.id(walk.ends_in),
+                "player {} ends in the {}",
+                walk.player,
+                walk.ends_in
+            );
+        }
+    }
+
+    #[test]
+    fn the_manor_is_walked_by_its_stairs_doors_and_steps() {
+        let Some(mut app) = concerto::headless(|app| {
+            crate::manor(app);
+            let content = concerto::content_registry!();
+            app.get_resource::<AssetServer>()
+                .unwrap()
+                .publish_content_source(
+                    ContentAssetRoot::Directory(env!("CARGO_MANIFEST_DIR").into()),
+                    AssetRegistry::parse(content.registry).unwrap(),
+                );
+        }) else {
+            return;
+        };
+        for (index, pad) in PADS.into_iter().enumerate() {
+            app.get_resource_mut::<Input>()
+                .unwrap()
+                .connect_gamepad(pad, "Test pad");
+            app.get_resource_mut::<Players>()
+                .unwrap()
+                .assign(PlayerIndex::new(index as u8), PlayerDevice::Gamepad(pad))
+                .unwrap();
+        }
+        frames(&mut app, 30);
+        tap(&mut app, 0, GamepadButton::South);
+        assert!(session(&app).is_walking(0) && session(&app).is_walking(1));
+        for _ in 0..4000 {
+            frames(&mut app, 5);
+            if walkers(&mut app).len() == 2 {
+                break;
+            }
+        }
+        frames(&mut app, 60);
+        let bedroom = {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            data.catalog.doors.id("d_g5").unwrap()
+        };
+        let aimed_at = |app: &mut App, x: f32, y: f32| {
+            let at = feet(app, 0).unwrap();
+            head_for(app, 0, Vec3::new(x, at.y, -y));
+            frames(app, 3);
+            app.get_resource::<Sight>().unwrap().targets[0]
+        };
+        let stands_open = |app: &App| {
+            app.get_resource::<crate::house::House>()
+                .unwrap()
+                .stands_open(bedroom)
+        };
+        let to_the_door = [Walk {
+            player: 0,
+            legs: vec![leg(21.75, 11.2)],
+            ends_at_height: 3.8,
+            ends_in: "g5",
+        }];
+        walk_all(&mut app, &to_the_door);
+        assert_eq!(
+            aimed_at(&mut app, 21.75, 10.0),
+            Some(super::Interactable::Door(bedroom)),
+            "the Guest faces their closed bedroom door"
+        );
+        tap(&mut app, 0, GamepadButton::West);
+        frames(&mut app, 5);
+        assert!(stands_open(&app));
+        assert_eq!(
+            aimed_at(&mut app, 21.26, 10.6),
+            Some(super::Interactable::Door(bedroom)),
+            "the leaf standing open beside them is still theirs to close"
+        );
+        tap(&mut app, 0, GamepadButton::West);
+        frames(&mut app, 5);
+        assert!(!stands_open(&app));
+        assert_eq!(
+            aimed_at(&mut app, 21.75, 10.0),
+            Some(super::Interactable::Door(bedroom))
+        );
+        tap(&mut app, 0, GamepadButton::West);
+        frames(&mut app, 5);
+        assert!(stands_open(&app));
+
+        let walks = [
+            Walk {
+                player: 0,
+                legs: vec![
+                    leg(21.75, 9.0),
+                    leg(18.2, 9.0),
+                    leg(18.2, 11.8),
+                    leg(18.2, 15.0),
+                    leg(16.2, 15.0),
+                    leg(16.2, 10.8),
+                    leg(13.6, 6.5),
+                ],
+                ends_at_height: 0.0,
+                ends_in: "hall",
+            },
+            Walk {
+                player: 1,
+                legs: vec![
+                    leg(39.5, 7.0),
+                    leg(39.5, 9.5),
+                    leg(31.5, 9.5),
+                    leg(31.5, 10.6),
+                    leg(30.7, 10.6),
+                    leg(30.7, 15.3),
+                    leg(32.3, 15.3),
+                    leg(32.3, 10.6),
+                    leg(30.7, 10.6),
+                    leg(30.7, 15.3),
+                    leg(32.3, 15.3),
+                    leg(32.3, 10.6),
+                    leg(32.2, 9.0),
+                ],
+                ends_at_height: 7.2,
+                ends_in: "backstairs",
+            },
+        ];
+        walk_to_the_end(&mut app, &walks);
+
+        let garden_door = {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            data.catalog.doors.id("d_hall_garden").unwrap()
+        };
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(13.0, 14.8)],
+                ends_at_height: 0.0,
+                ends_in: "hall",
+            }],
+        );
+        assert_eq!(
+            aimed_at(&mut app, 13.0, 16.0),
+            Some(super::Interactable::Door(garden_door))
+        );
+        tap(&mut app, 0, GamepadButton::West);
+        frames(&mut app, 5);
+        let ways_out = [
+            Walk {
+                player: 0,
+                legs: vec![leg(13.0, 18.0), leg(13.0, 23.0)],
+                ends_at_height: -0.6,
+                ends_in: "garden",
+            },
+            Walk {
+                player: 1,
+                legs: vec![
+                    leg(32.3, 10.6),
+                    leg(32.3, 15.3),
+                    leg(30.7, 15.3),
+                    leg(30.7, 10.6),
+                    leg(32.3, 10.6),
+                    leg(32.3, 15.3),
+                    leg(30.7, 15.3),
+                    leg(30.7, 10.6),
+                    leg(32.3, 10.6),
+                    leg(32.3, 15.3),
+                    leg(30.7, 15.3),
+                    leg(30.7, 10.6),
+                    leg(31.5, 9.2),
+                ],
+                ends_at_height: -3.0,
+                ends_in: "cellar_pass",
+            },
+        ];
+        walk_to_the_end(&mut app, &ways_out);
     }
 }
