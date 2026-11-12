@@ -375,6 +375,8 @@ the document, and shows the part of it that is in view on the canvas:
 A node is found in the state by the index it has in the graph last sent to the
 preview, which `GraphCopy::build` and `build_from` answer beside the graph, so
 a loose node, and with `from` set a node outside what plays, shows nothing.
+The tab keeps those indices for what it has in view even when nothing is sent
+again, as when `from` moves between two subtrees that build the same graph.
 `LiveView` is that lookup: `LiveView::latest(live, sent)` and then
 `node(id)`. Paused, the canvas keeps the last state. The state is dropped
 whenever the tab sends `ShowGraphs`, since the nodes it names are those of the

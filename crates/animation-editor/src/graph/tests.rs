@@ -889,6 +889,14 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
             json!({ "name": "moving", "value": "yes" }),
         )
         .await;
+        for _ in 0..2 {
+            ok(
+                &client,
+                "graph_add_node",
+                json!({ "type": "AnimationClipNode" }),
+            )
+            .await;
+        }
         ok(&client, "save", json!({})).await;
         let inspected = ok(&client, "graph_inspect", json!({})).await;
         let mut set = String::new();
@@ -913,7 +921,11 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
             json!({ "target": "Preview", "path": "from", "value": { "Some": { "0": 2 } } }),
         )
         .await;
-        let subtree = vec![previewed_from(&client, 2).await];
+        let subtree = vec![
+            previewed_from(&client, 2).await,
+            previewed_from(&client, 4).await,
+            previewed_from(&client, 5).await,
+        ];
         let back = ok(
             &client,
             "set_property",
@@ -1017,6 +1029,8 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
          1 · AnimationStateMachine · 0#0\n\
          2 · BlendSpace2DNode · loose\n\
          3 · LayerNode · loose\n\
+         4 · AnimationClipNode · loose\n\
+         5 · AnimationClipNode · loose\n\
          parameters:\n\
          direction · Vec2 · [0.0,0.0]\n";
     assert!(
@@ -1047,7 +1061,11 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
     );
     assert_eq!(
         previewed.subtree,
-        ["Set direction to [0.0,0.0].\nlive:\n2 · weight 1.00",]
+        [
+            "Set direction to [0.0,0.0].\nlive:\n2 · weight 1.00",
+            "Set direction to [0.0,0.0].\nlive:\n4 · weight 1.00 · time 0.00s",
+            "Set direction to [0.0,0.0].\nlive:\n5 · weight 1.00 · time 0.00s",
+        ]
     );
     assert_eq!(
         previewed.back["value"]["from"], "None",

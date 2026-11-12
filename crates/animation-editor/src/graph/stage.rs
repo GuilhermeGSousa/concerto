@@ -386,10 +386,12 @@ pub(crate) fn sync_graph_preview(
 
         match played(&state, sent.own) {
             Ok(Some(played)) => {
+                if sent.nodes != played.nodes {
+                    sent.nodes = played.nodes;
+                }
                 if sent.graphs != played.graphs || sent.play != Some(played.play) {
                     sent.graphs = played.graphs.clone();
                     sent.play = Some(played.play);
-                    sent.nodes = played.nodes;
                     sent.params.clear();
                     if live.state.is_some() {
                         live.state = None;
