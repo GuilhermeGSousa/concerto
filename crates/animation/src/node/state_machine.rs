@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
+use crate::param::Param;
 use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use crate::transition::{
     AnimationTransitionBlender, TransitionBlender, blend_stack::BlendStack,
@@ -16,6 +17,7 @@ use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::Name;
 use concerto_reflect::Reflect;
 use derive_more::Deref;
+use glam::Vec2;
 use uuid::Uuid;
 
 pub struct AnimationFSMStateDefinition {
@@ -35,21 +37,26 @@ pub enum AnimationFSMTrigger {
     Instant,
     OnAnimationEnd,
     BoolEquals {
-        param: Name,
+        param: Param<bool>,
         value: bool,
     },
     Vec2NonZero {
-        param: Name,
+        param: Param<Vec2>,
     },
 }
 
 impl AnimationFSMTrigger {
-    pub fn on_bool(param: Name, cond: bool) -> Self {
-        Self::BoolEquals { param, value: cond }
+    pub fn on_bool(param: impl Into<Param<bool>>, cond: bool) -> Self {
+        Self::BoolEquals {
+            param: param.into(),
+            value: cond,
+        }
     }
 
-    pub fn on_non_zero_vec(param: Name) -> Self {
-        Self::Vec2NonZero { param }
+    pub fn on_non_zero_vec(param: impl Into<Param<Vec2>>) -> Self {
+        Self::Vec2NonZero {
+            param: param.into(),
+        }
     }
 }
 
@@ -291,11 +298,7 @@ impl AnimationNode for AnimationStateMachine {
                     break;
                 }
                 AnimationFSMTrigger::BoolEquals { param, value } => {
-                    if context
-                        .blackboard()
-                        .get_bool(*param)
-                        .is_some_and(|v| v == *value)
-                    {
+                    if context.blackboard().read(param).is_some_and(|v| v == value) {
                         state.transition(graphs, transition);
                         break;
                     }
@@ -303,7 +306,7 @@ impl AnimationNode for AnimationStateMachine {
                 AnimationFSMTrigger::Vec2NonZero { param } => {
                     if context
                         .blackboard()
-                        .get_vec2(*param)
+                        .read(param)
                         .is_some_and(|v| v.length_squared() > f32::EPSILON)
                     {
                         state.transition(graphs, transition);

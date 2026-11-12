@@ -1,6 +1,5 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
-use concerto_name::Name;
 use concerto_reflect::Reflect;
 use uuid::Uuid;
 
@@ -8,6 +7,7 @@ use crate::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, RootBone},
+    param::Param,
     pose::{
         AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion, twist_about,
     },
@@ -34,10 +34,10 @@ pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkSta
 /// The rate a node plays at: `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None` or holds no `f32`; never negative.
 pub fn effective_play_rate(
     play_rate: f32,
-    param: Option<Name>,
+    param: Option<Param<f32>>,
     blackboard: &AnimationBlackboard,
 ) -> f32 {
-    let scale = param.and_then(|param| blackboard.get_float(param));
+    let scale = param.and_then(|param| blackboard.read(&param).copied());
     let rate = play_rate * scale.unwrap_or(1.0);
     if rate.is_finite() && rate > 0.0 {
         rate
@@ -47,8 +47,12 @@ pub fn effective_play_rate(
 }
 
 /// The weight a node applies: `weight` times the `f32` under `param`, or `weight` alone when `param` is `None` or holds no `f32`; clamped to [0, 1], and 0 when NaN.
-pub fn effective_weight(weight: f32, param: Option<Name>, blackboard: &AnimationBlackboard) -> f32 {
-    let scale = param.and_then(|param| blackboard.get_float(param));
+pub fn effective_weight(
+    weight: f32,
+    param: Option<Param<f32>>,
+    blackboard: &AnimationBlackboard,
+) -> f32 {
+    let scale = param.and_then(|param| blackboard.read(&param).copied());
     let weight = weight * scale.unwrap_or(1.0);
     if weight.is_nan() {
         0.0
@@ -443,7 +447,7 @@ pub struct AnimationClipNode {
     play_mode: AnimationPlayMode,
     start_time: f32,
     play_rate: f32,
-    play_rate_param: Option<Name>,
+    play_rate_param: Option<Param<f32>>,
 }
 
 impl Default for AnimationClipNode {
@@ -485,8 +489,8 @@ impl AnimationClipNode {
     }
 
     /// Multiplies the play rate by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_play_rate_param(mut self, param: Name) -> Self {
-        self.play_rate_param = Some(param);
+    pub fn with_play_rate_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.play_rate_param = Some(param.into());
         self
     }
 }
@@ -1285,7 +1289,7 @@ mod tests {
 
         for case in cases {
             assert_eq!(
-                effective_play_rate(case.rate, case.param, &blackboard),
+                effective_play_rate(case.rate, case.param.map(Into::into), &blackboard),
                 case.effective,
                 "{}",
                 case.name
@@ -1325,7 +1329,7 @@ mod tests {
 
         for case in cases {
             assert_eq!(
-                effective_weight(case.rate, case.param, &blackboard),
+                effective_weight(case.rate, case.param.map(Into::into), &blackboard),
                 case.effective,
                 "{}",
                 case.name

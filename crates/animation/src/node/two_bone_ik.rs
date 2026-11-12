@@ -1,5 +1,4 @@
 use concerto_mesh::{JointName, Skeleton};
-use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 use log::warn;
@@ -14,6 +13,7 @@ use crate::{
         model_space::{ModelJoint, WorldToModel, bone_under_first, model_joint, parent},
         pass_through,
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
 
@@ -27,7 +27,7 @@ pub struct TwoBoneIkNode {
     pub tip_rotation: TipRotation,
     pub softness: f32,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
 }
 
 impl Default for TwoBoneIkNode {
@@ -54,7 +54,7 @@ pub enum IkGoal {
         rotation: Quat,
     },
     /// The `IkTarget` the game set under `param`, in world space.
-    Param { param: Name },
+    Param { param: Param<IkTarget> },
 }
 
 impl Default for IkGoal {
@@ -105,7 +105,7 @@ enum ResolvedGoal {
         translation: Vec3,
         rotation: Quat,
     },
-    Param(Name),
+    Param(Param<IkTarget>),
 }
 
 struct Goal {
@@ -215,7 +215,7 @@ impl ResolvedGoal {
                 }
             }
             ResolvedGoal::Param(param) => {
-                let Some(target) = blackboard.get::<IkTarget>(*param) else {
+                let Some(target) = blackboard.read(param) else {
                     return if is_target { None } else { Some(None) };
                 };
                 if !world_to_model.is_finite() {
@@ -500,7 +500,7 @@ mod tests {
 
     fn on_param() -> IkGoal {
         IkGoal::Param {
-            param: name!("hand_target"),
+            param: name!("hand_target").into(),
         }
     }
 
@@ -767,7 +767,7 @@ mod tests {
                     );
                     TwoBoneIkNode {
                         pole: Some(IkGoal::Param {
-                            param: name!("elbow_pole"),
+                            param: name!("elbow_pole").into(),
                         }),
                         ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
                     }
@@ -817,7 +817,7 @@ mod tests {
 
         let frame = rig.solve(&TwoBoneIkNode {
             pole: Some(IkGoal::Param {
-                param: name!("elbow_pole"),
+                param: name!("elbow_pole").into(),
             }),
             ..unpoled.clone()
         });
@@ -838,7 +838,7 @@ mod tests {
             ..full.clone()
         });
         let by_param = rig.solve(&TwoBoneIkNode {
-            weight_param: Some(name!("ik_weight")),
+            weight_param: Some(name!("ik_weight").into()),
             ..full.clone()
         });
 

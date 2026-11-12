@@ -521,7 +521,7 @@ A graph is a tree of nodes under a result node:
   `ProceduralMotionChannel::breathing`, `sway` and `tremor` start from
   numbers that suit those uses. Each channel's phase and noise come from the
   node's `seed` mixed with the seed the game set on the blackboard under
-  `seed_param`, a `u64` or an int param, 0 when there is none: players with
+  `seed_param`, a `u64` param, 0 when there is none: players with
   the same seeds move in step, so set each character's from something stable
   across runs, such as its spawn index. Resetting the node keeps its
   phases, so re-entering a state does not replay the same stretch of motion.
@@ -612,6 +612,16 @@ literal or `Name::new(text)` otherwise, that compares as one integer. They live
 on a blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
 takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key is
 missing or holds another type; the typed methods are wrappers over those two.
+A node names the parameter it reads with a `Param<T>`
+(`concerto::animation::param`): a `Name` that carries the type of the value
+the node reads, so `weight_param` is an `Option<Param<f32>>` and a look-at's
+`target_param` a `Param<Vec3>`. Every `with_*_param` builder, the state
+machine's `on_bool` and `on_non_zero_vec`, and `with_blend_space_2d_input`
+take a `Name` or a `Param<T>`; a struct literal writes
+`name!("aim_weight").into()`. `AnimationBlackboard::read(&param)` returns the
+value as that type, and `None` when it is missing or holds another. A
+`Param<T>` is stored as its `Name`, and a plugin registers each `Param<T>` its
+nodes hold with the type registry, as it registers their asset handles.
 A node can read its playback rate from a float parameter: the rate is the
 node's own rate times the parameter, and no parameter (`None`, the default), or
 one that is missing or holds another type, leaves the node's rate alone. A product that is negative or not

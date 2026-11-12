@@ -106,7 +106,7 @@ fn a_float_param_on_the_blackboard_drives_the_nodes_play_rate() {
         world,
         MotionMatchingNode {
             database: database_handle,
-            play_rate_param: Some(name!("speed")),
+            play_rate_param: Some(name!("speed").into()),
             ..Default::default()
         },
     );

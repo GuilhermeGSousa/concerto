@@ -88,9 +88,9 @@ fn look_at() -> LookAtNode {
         ],
         forward: glam::Vec3::new(0.0, 0.1, 1.0),
         up: glam::Vec3::new(0.1, 1.0, 0.0),
-        target_param: name!("gaze_target"),
+        target_param: name!("gaze_target").into(),
         weight: 0.8,
-        weight_param: Some(name!("gaze_weight")),
+        weight_param: Some(name!("gaze_weight").into()),
         weight_halflife: 0.35,
         max_angle: 1.5,
     };

@@ -8,11 +8,11 @@ use concerto_animation::{
         AnimationNode, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint, parent},
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
-use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 use log::warn;
@@ -29,9 +29,9 @@ pub struct LookAtNode {
     pub eyes: Vec<LookAtEye>,
     pub forward: Vec3,
     pub up: Vec3,
-    pub target_param: Name,
+    pub target_param: Param<Vec3>,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
     pub weight_halflife: f32,
     pub max_angle: f32,
 }
@@ -43,7 +43,7 @@ impl Default for LookAtNode {
             eyes: Vec::new(),
             forward: Vec3::Z,
             up: Vec3::Y,
-            target_param: Name::default(),
+            target_param: Param::default(),
             weight: 1.0,
             weight_param: None,
             weight_halflife: 0.2,
@@ -154,7 +154,7 @@ impl LookAtNode {
     fn effective_weight(&self, blackboard: &AnimationBlackboard) -> f32 {
         let scale = self
             .weight_param
-            .and_then(|param| blackboard.get_float(param))
+            .and_then(|param| blackboard.read(&param).copied())
             .unwrap_or(1.0);
         let weight = self.weight * scale;
         if weight.is_nan() {
@@ -238,7 +238,7 @@ impl LookAtNode {
     }
 
     fn target(&self, context: &AnimationGraphContext<'_>) -> Option<Vec3> {
-        let target = *context.blackboard().get::<Vec3>(self.target_param)?;
+        let target = *context.blackboard().read(&self.target_param)?;
         let world_to_model = WorldToModel::new(context.model_to_world().unwrap_or_default());
         if !world_to_model.is_finite() {
             return None;
@@ -394,7 +394,7 @@ impl AnimationNode for LookAtNode {
                 if !state.warned {
                     warn!(
                         "look-at toward `{}` skipped: {reason}",
-                        self.target_param.as_str()
+                        self.target_param.0.as_str()
                     );
                     state.warned = true;
                 }
@@ -767,7 +767,7 @@ mod tests {
 
         fn forget_target(&mut self) {
             let node = LookAtNode {
-                target_param: name!("no_target"),
+                target_param: name!("no_target").into(),
                 ..self.node.clone()
             };
             self.set_node(node);
@@ -842,7 +842,7 @@ mod tests {
     fn look() -> LookAtNode {
         LookAtNode {
             chain: links(&["spine", "neck", "head"]),
-            target_param: name!("look_target"),
+            target_param: name!("look_target").into(),
             weight_halflife: 0.0,
             ..LookAtNode::default()
         }
@@ -1251,7 +1251,7 @@ mod tests {
             Untouched {
                 name: "a weight param of zero",
                 node: LookAtNode {
-                    weight_param: Some(name!("look_weight")),
+                    weight_param: Some(name!("look_weight").into()),
                     ..with_eyes()
                 },
                 rig: || {
@@ -1364,7 +1364,7 @@ mod tests {
                 ..full.clone()
             });
             let by_param = solve(LookAtNode {
-                weight_param: Some(name!("look_weight")),
+                weight_param: Some(name!("look_weight").into()),
                 ..full.clone()
             });
             let off = solve(LookAtNode {

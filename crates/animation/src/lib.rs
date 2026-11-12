@@ -9,6 +9,7 @@ pub mod look_at;
 pub mod mask;
 pub mod mirror;
 pub mod node;
+pub mod param;
 pub mod player;
 pub mod plugin;
 pub mod pose;

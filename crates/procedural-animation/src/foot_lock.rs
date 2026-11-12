@@ -5,11 +5,11 @@ use concerto_animation::{
         AnimationNode, ReflectAnimationNode,
         model_space::{WorldToModel, model_joint},
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
-use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 use log::warn;
@@ -31,7 +31,7 @@ pub struct FootLockNode {
     pub release_halflife: f32,
     pub softness: f32,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
     pub weight_halflife: f32,
 }
 
@@ -100,8 +100,8 @@ impl FootLockNode {
     }
 
     /// Sets the float param the weight is multiplied by.
-    pub fn with_weight_param(mut self, weight_param: Name) -> Self {
-        self.weight_param = Some(weight_param);
+    pub fn with_weight_param(mut self, weight_param: impl Into<Param<f32>>) -> Self {
+        self.weight_param = Some(weight_param.into());
         self
     }
 
@@ -228,7 +228,7 @@ impl FootLockNode {
     fn weight_target(&self, blackboard: &AnimationBlackboard) -> f32 {
         let scale = self
             .weight_param
-            .and_then(|param| blackboard.get_float(param))
+            .and_then(|param| blackboard.read(&param).copied())
             .unwrap_or(1.0);
         let weight = self.weight * scale;
         if weight.is_nan() {

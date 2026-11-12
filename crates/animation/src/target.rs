@@ -1187,7 +1187,7 @@ mod tests {
             made_live(AnimationGraph::from_node(TwoBoneIkNode {
                 tip: "hand".into(),
                 target: IkGoal::Param {
-                    param: name!("hand_target"),
+                    param: name!("hand_target").into(),
                 },
                 ..TwoBoneIkNode::default()
             })),

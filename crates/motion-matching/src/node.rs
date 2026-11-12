@@ -2,6 +2,7 @@ use concerto_animation::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
     node::{effective_play_rate, AnimationNode, ReflectAnimationNode},
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -76,7 +77,7 @@ pub struct MotionMatchingNode {
     pub ignore_range_end: usize,
     pub blend_halflife: f32,
     pub play_rate: f32,
-    pub play_rate_param: Option<Name>,
+    pub play_rate_param: Option<Param<f32>>,
 }
 
 impl Default for MotionMatchingNode {
@@ -222,7 +223,7 @@ mod tests {
             ignore_range_end: 9,
             blend_halflife: 0.4,
             play_rate: 1.5,
-            play_rate_param: Some(name!("speed")),
+            play_rate_param: Some(name!("speed").into()),
             ..Default::default()
         };
         let graph = AnimationGraph::from_node(node);
@@ -241,7 +242,10 @@ mod tests {
         assert_eq!(restored.ignore_range_end, 9);
         assert_eq!(restored.blend_halflife, 0.4);
         assert_eq!(restored.play_rate, 1.5);
-        assert_eq!(restored.play_rate_param, Some(name!("speed")));
+        assert_eq!(
+            restored.play_rate_param,
+            Some(name!("speed")).map(Into::into)
+        );
     }
 
     #[test]
@@ -250,7 +254,7 @@ mod tests {
         let node = MotionMatchingNode {
             search_period: 0.25,
             play_rate: 1.5,
-            play_rate_param: Some(name!("speed")),
+            play_rate_param: Some(name!("speed").into()),
             ..Default::default()
         };
         let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {

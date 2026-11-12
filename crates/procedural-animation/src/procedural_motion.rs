@@ -5,6 +5,7 @@ use concerto_animation::{
     evaluation::AnimationGraphContext,
     mask::{BoneMask, MaskResolution, resolve_mask},
     node::{AnimationNode, ReflectAnimationNode, model_space::parent},
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -13,7 +14,6 @@ use concerto_foundation::{
     math::Spring,
 };
 use concerto_mesh::Skeleton;
-use concerto_name::Name;
 use concerto_noise::{fractal_noise, mix_seed, unit_from_seed};
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
@@ -27,7 +27,7 @@ use uuid::Uuid;
 pub struct ProceduralMotionNode {
     pub channels: Vec<ProceduralMotionChannel>,
     pub seed: u64,
-    pub seed_param: Option<Name>,
+    pub seed_param: Option<Param<u64>>,
 }
 
 impl ProceduralMotionNode {
@@ -48,9 +48,9 @@ impl ProceduralMotionNode {
         self
     }
 
-    /// Mixes in the `u64` or `u32` blackboard param named `param`, so each character can move out of step.
-    pub fn with_seed_param(mut self, param: Name) -> Self {
-        self.seed_param = Some(param);
+    /// Mixes in the `u64` blackboard param named `param`, so each character can move out of step.
+    pub fn with_seed_param(mut self, param: impl Into<Param<u64>>) -> Self {
+        self.seed_param = Some(param.into());
         self
     }
 
@@ -58,11 +58,7 @@ impl ProceduralMotionNode {
         let Some(param) = self.seed_param else {
             return 0;
         };
-        blackboard
-            .get::<u64>(param)
-            .copied()
-            .or_else(|| blackboard.get_int(param).map(u64::from))
-            .unwrap_or(0)
+        blackboard.read(&param).copied().unwrap_or(0)
     }
 }
 
@@ -73,7 +69,7 @@ pub struct ProceduralMotionChannel {
     pub waveform: Waveform,
     pub frequency: f32,
     pub amplitude: Vec3,
-    pub magnitude_param: Option<Name>,
+    pub magnitude_param: Option<Param<f32>>,
     pub magnitude_halflife: f32,
 }
 
@@ -146,8 +142,8 @@ impl ProceduralMotionChannel {
     }
 
     /// Scales the motion by the `f32` blackboard param named `param`.
-    pub fn with_magnitude_param(mut self, param: Name) -> Self {
-        self.magnitude_param = Some(param);
+    pub fn with_magnitude_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.magnitude_param = Some(param.into());
         self
     }
 
@@ -160,7 +156,7 @@ impl ProceduralMotionChannel {
     fn goal_magnitude(&self, blackboard: &AnimationBlackboard) -> f32 {
         let magnitude = self
             .magnitude_param
-            .and_then(|param| blackboard.get_float(param))
+            .and_then(|param| blackboard.read(&param).copied())
             .unwrap_or(1.0);
         if magnitude.is_finite() && magnitude > 0.0 {
             magnitude
@@ -1002,7 +998,6 @@ mod tests {
     enum Seed {
         Missing,
         Wide(u64),
-        Int(u32),
         Float(f32),
     }
 
@@ -1023,13 +1018,11 @@ mod tests {
             match seed {
                 Seed::Missing => {}
                 Seed::Wide(value) => stage.set_param(name!("character_seed"), value),
-                Seed::Int(value) => stage.set_param(name!("character_seed"), value),
                 Seed::Float(value) => stage.set_param(name!("character_seed"), value),
             }
             stage.step(1.3).joints
         };
         let wide = by_seed(Seed::Wide(5));
-        assert_eq!(by_seed(Seed::Int(5)), wide);
         assert_ne!(by_seed(Seed::Missing), wide);
         assert_eq!(by_seed(Seed::Float(5.0)), unseeded.joints);
         assert_eq!(by_seed(Seed::Missing), unseeded.joints);

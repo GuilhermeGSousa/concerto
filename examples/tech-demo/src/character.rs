@@ -1286,7 +1286,7 @@ mod tests {
             .collect();
         let expected_matcher = MotionMatchingNode {
             database: AssetHandle::weak(DATABASE),
-            play_rate_param: Some(name!("pace")),
+            play_rate_param: Some(name!("pace").into()),
             ..Default::default()
         };
         assert_eq!(matchers, vec![to_value(&expected_matcher).unwrap()]);

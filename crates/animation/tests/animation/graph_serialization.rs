@@ -16,6 +16,7 @@ use concerto_animation::node::{
     ErasedAnimationNode, IkGoal, LayerNode, LayerSpace, ReflectAnimationNode, TipRotation,
     TwoBoneIkNode,
 };
+use concerto_animation::param::Param;
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use concerto_animation::retarget::{
@@ -186,7 +187,7 @@ fn a_mixed_graph_loaded_from_its_bytes_matches_the_one_built_in_code_node_for_no
         AssetId::from_path("outer_pose")
     );
     let blend_space = live_node::<BlendSpace2DNode>(&restored).expect("blend space survived");
-    assert_eq!(blend_space.input().param, name!("movement"));
+    assert_eq!(blend_space.input().param, name!("movement").into());
     assert_eq!(
         blend_space.points(),
         &[glam::Vec2::ZERO, glam::Vec2::new(0.0, 1.0)]
@@ -195,11 +196,11 @@ fn a_mixed_graph_loaded_from_its_bytes_matches_the_one_built_in_code_node_for_no
     let triggers: Vec<&AnimationFSMTrigger> = machine.triggers().collect();
     assert!(triggers.iter().any(|trigger| matches!(
         trigger,
-        AnimationFSMTrigger::BoolEquals { param, value: true } if *param == name!("go")
+        AnimationFSMTrigger::BoolEquals { param, value: true } if *param == name!("go").into()
     )));
     assert!(triggers.iter().any(|trigger| matches!(
         trigger,
-        AnimationFSMTrigger::Vec2NonZero { param } if *param == name!("move")
+        AnimationFSMTrigger::Vec2NonZero { param } if *param == name!("move").into()
     )));
     assert!(
         triggers
@@ -269,12 +270,12 @@ fn the_ik_layer_and_aim_offset_nodes_keep_every_field_and_their_inputs_through_a
             rotation: glam::Quat::from_rotation_y(0.4),
         },
         pole: Some(IkGoal::Param {
-            param: name!("elbow_pole"),
+            param: name!("elbow_pole").into(),
         }),
         tip_rotation: TipRotation::FromTarget,
         softness: 0.03,
         weight: 0.75,
-        weight_param: Some(name!("grip_weight")),
+        weight_param: Some(name!("grip_weight").into()),
     };
     assert_ne!(ik, TwoBoneIkNode::default());
     restored(&mut AnimationGraph::from_node(ik.clone()), &ik);
@@ -449,30 +450,41 @@ struct StoredRate {
     name: &'static str,
     play_rate_param: Option<ReflectedValue>,
     warnings: usize,
+    loaded: AnimationClipNode,
 }
 
 #[test]
-fn a_stored_clip_node_whose_play_rate_param_is_missing_or_a_string_loads_with_no_param() {
+fn a_stored_play_rate_param_loads_from_a_name_and_as_no_param_when_missing_or_a_string() {
     let registry = registry(false);
-    let node = AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let node = || AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let draw_speed = to_value(&Some(name!("draw_speed"))).unwrap();
     let cases = [
         StoredRate {
             name: "missing",
             play_rate_param: None,
             warnings: 0,
+            loaded: node(),
         },
         StoredRate {
             name: "a string",
             play_rate_param: Some(to_value(&String::from("draw_speed")).unwrap()),
             warnings: 1,
+            loaded: node(),
+        },
+        StoredRate {
+            name: "a name",
+            play_rate_param: Some(draw_speed.clone()),
+            warnings: 0,
+            loaded: node().with_play_rate_param(Param::<f32>::from(name!("draw_speed"))),
         },
     ];
 
     for case in cases {
-        let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+        let ReflectedValue::Struct(mut fields) = to_value(&node()).unwrap() else {
             panic!("a clip node is stored as a struct");
         };
         fields.retain(|(name, _)| name != "play_rate_param");
+        let stored_name = case.play_rate_param.as_ref() == Some(&draw_speed);
         if let Some(value) = case.play_rate_param {
             fields.push(("play_rate_param".to_owned(), value));
         }
@@ -489,13 +501,23 @@ fn a_stored_clip_node_whose_play_rate_param_is_missing_or_a_string_loads_with_no
         for warning in &loaded.warnings {
             assert_eq!(warning.reason, "stored data is a different kind of value");
         }
+        let expected = if stored_name {
+            draw_speed.clone()
+        } else {
+            to_value(&None::<Name>).unwrap()
+        };
         assert_eq!(
             play_rate_param_of(&loaded.built),
-            &to_value(&None::<Name>).unwrap(),
+            &expected,
             "{}",
             case.name
         );
-        assert_eq!(loaded.built, to_value(&node).unwrap(), "{}", case.name);
+        assert_eq!(
+            loaded.built,
+            to_value(&case.loaded).unwrap(),
+            "{}",
+            case.name
+        );
     }
 }
 

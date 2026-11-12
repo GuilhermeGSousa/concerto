@@ -303,8 +303,8 @@ fn character_graph(assets: &AssetServer, art: &CharacterArt) -> AnimationGraph {
                 ..Default::default()
             },
         ],
-        target_param: name!("look_target"),
-        weight_param: Some(name!("look_weight")),
+        target_param: name!("look_target").into(),
+        weight_param: Some(name!("look_weight").into()),
         ..Default::default()
     };
     let mut graph = AnimationGraph::new();

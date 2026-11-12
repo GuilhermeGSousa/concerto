@@ -178,7 +178,7 @@ fn motion_matching_graph(database: AssetHandle<MotionDatabase>) -> AnimationGrap
     graph.result_node().with_input(
         MotionMatchingNode {
             database,
-            play_rate_param: Some(pace()),
+            play_rate_param: Some(pace().into()),
             ..Default::default()
         },
         |_| {},
@@ -210,7 +210,7 @@ fn off_hand() -> TwoBoneIkNode {
             rotation: OFF_HAND_ROTATION.normalize(),
         },
         tip_rotation: TipRotation::FromTarget,
-        weight_param: Some(pistol_weight()),
+        weight_param: Some(pistol_weight().into()),
         ..Default::default()
     }
 }
@@ -251,8 +251,8 @@ fn look() -> LookAtNode {
                 ..Default::default()
             },
         ],
-        target_param: aim_target(),
-        weight_param: Some(look_weight()),
+        target_param: aim_target().into(),
+        weight_param: Some(look_weight().into()),
         ..Default::default()
     }
 }

@@ -1,6 +1,5 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
-use concerto_name::Name;
 use concerto_reflect::Reflect;
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -13,6 +12,7 @@ use crate::{
         AnimationNode, AnimationPlayMode, ClipClock, ClockSpan, ReflectAnimationNode,
         effective_play_rate, effective_weight,
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, apply_additive, twist_about},
 };
 
@@ -22,11 +22,11 @@ use crate::{
 pub struct AdditiveNode {
     pub clip: AssetHandle<AnimationClip>,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
     pub play_mode: AnimationPlayMode,
     pub start_time: f32,
     pub play_rate: f32,
-    pub play_rate_param: Option<Name>,
+    pub play_rate_param: Option<Param<f32>>,
 }
 
 impl Default for AdditiveNode {
@@ -56,8 +56,8 @@ impl AdditiveNode {
     }
 
     /// Multiplies the weight by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_weight_param(mut self, param: Name) -> Self {
-        self.weight_param = Some(param);
+    pub fn with_weight_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.weight_param = Some(param.into());
         self
     }
 
@@ -80,8 +80,8 @@ impl AdditiveNode {
     }
 
     /// Multiplies the play rate by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_play_rate_param(mut self, param: Name) -> Self {
-        self.play_rate_param = Some(param);
+    pub fn with_play_rate_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.play_rate_param = Some(param.into());
         self
     }
 }

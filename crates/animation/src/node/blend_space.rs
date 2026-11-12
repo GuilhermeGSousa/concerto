@@ -2,7 +2,6 @@ use concerto_foundation::{
     assets::handle::AssetHandle,
     geometry::delauney::{TriangulatedPoint2D, Triangulation2D},
 };
-use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::Vec2;
 use log::warn;
@@ -12,14 +11,15 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 
 /// Which blackboard `Vec2` param drives a blend space. Read with
-/// `blackboard.get_vec2(param).unwrap_or(Vec2::ZERO)`.
+/// `blackboard.read(&param).copied().unwrap_or(Vec2::ZERO)`.
 #[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct BlendInput {
-    pub param: Name,
+    pub param: Param<Vec2>,
 }
 
 /// A 2D blend space definition: the sample points and which blackboard `Vec2`
@@ -82,7 +82,8 @@ impl AnimationNode for BlendSpace2DNode {
     ) {
         let sample = context
             .blackboard()
-            .get_vec2(self.input.param)
+            .read(&self.input.param)
+            .copied()
             .unwrap_or(Vec2::ZERO);
         state.current_triangulated_point = Some(state.triangulation.locate_or_nearest(sample));
     }
@@ -207,7 +208,9 @@ mod tests {
     fn each_corner_event_carries_its_barycentric_weight() {
         let space = BlendSpace2DNode::new(
             vec![Vec2::ZERO, Vec2::X, Vec2::Y],
-            BlendInput { param: name!("at") },
+            BlendInput {
+                param: name!("at").into(),
+            },
         );
         let walks = Walks::new(AssetStore::new(), AssetStore::new());
         let mut blackboard = AnimationBlackboard::default();
