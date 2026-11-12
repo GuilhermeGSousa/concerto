@@ -33,8 +33,26 @@ editor <dir> --update` regenerates `editor/` to call
 `concerto_editor::run_with(recipe, project_root, plugins)`, as the project
 tool's [README](../project/README.md#editor-plugins) describes. `run_with` is
 `run` with `plugins` added to the editor's `App` in order, after `EditorPlugin`
-and everything else the editor registers, and before the MCP plugins under
-`--mcp`. `run` is `run_with` with an empty list.
+and everything else the editor registers. Under `--mcp` they come after
+`McpPlugin` and before the editor's own tools. `run` is `run_with` with an
+empty list.
+
+An extension brings its MCP tools with it: its plugin depends on
+`concerto-mcp` and calls `add_tool` like the editor does, with no check for
+`--mcp`.
+
+```rust
+pub fn install(app: &mut App) {
+    app.add_tool::<GraphNodes, _>(
+        McpTool::read_only("graph_nodes").needs(Needs::Project),
+        graph_nodes,
+    );
+}
+```
+
+`add_tool` does nothing in an `App` without `McpPlugin`, so the tool and its
+system exist only when the editor serves an agent. `describe_need` still
+panics without `McpPlugin`; it is the editor's to call.
 
 An extension crate's tests can use the `testing` feature, which exposes
 `hosted::testing` and its `SceneFixture` and `forwarding`, the system that
@@ -69,6 +87,10 @@ The editor draws into a 1600×900 picture unless `--mcp-size <width>x<height>`
 names another size. `--decorated` is ignored there, and `--mcp-size` without
 `--mcp` is a bad argument. Without a GPU adapter it exits with status 1 and a
 message naming lavapipe.
+
+The tools below are the editor's. An extension crate adds its own with
+`add_tool` from its plugin, as [Extension crates](#extension-crates) shows, and
+they are listed and called like these.
 
 Frames run on demand, only while a call needs one or the editor is busy: a
 project or scene opening, the assets of the edited scene or the preview in

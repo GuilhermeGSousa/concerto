@@ -45,16 +45,17 @@ impl From<WriteRefusal> for ToolError {
     }
 }
 
-/// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project` with `plugins` added, and [`McpPlugin`] and [`EditorMcpPlugin`].
+/// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project`, [`McpPlugin`], then `plugins`, which can add tools, and [`EditorMcpPlugin`].
 pub fn editor(
     recipe: fn(&mut App),
     project: PathBuf,
     plugins: Vec<fn(&mut App)>,
 ) -> impl FnOnce(&mut App) {
     move |app| {
-        crate::run::register_editor(app, recipe, project, false, &plugins);
-        app.register_plugin(McpPlugin)
-            .register_plugin(EditorMcpPlugin);
+        crate::run::register_editor(app, recipe, project, false, &[]);
+        app.register_plugin(McpPlugin);
+        crate::run::apply_plugins(app, &plugins);
+        app.register_plugin(EditorMcpPlugin);
     }
 }
 
