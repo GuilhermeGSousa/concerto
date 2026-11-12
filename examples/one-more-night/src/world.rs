@@ -1755,6 +1755,7 @@ mod tests {
 
     use super::Sight;
     use crate::book::Casebook;
+    use crate::case::Id;
     use crate::clock::{GameTime, NightClock};
     use crate::players::SpawnPoint;
     use crate::session::{Mode, Session};
@@ -2083,6 +2084,8 @@ mod tests {
         );
     }
 
+    const EYE_HEIGHT: f32 = 1.62;
+
     struct Leg {
         x: f32,
         y: f32,
@@ -2120,6 +2123,29 @@ mod tests {
             let turn = yaw - walker.yaw();
             walker.look(turn, 0.0);
         }
+    }
+
+    fn aiming_at(app: &mut App, player: u8, point: Vec3) -> Option<super::Interactable> {
+        let world = app.main_mut().world_mut();
+        let mut walkers = world.query::<(&PlayerIndex, &mut FirstPersonWalker, &Transform), ()>();
+        for (index, mut walker, transform) in walkers.iter(world) {
+            if index.index() != player {
+                continue;
+            }
+            let to = point - (transform.translation + Vec3::Y * EYE_HEIGHT);
+            let yaw = (-to.x).atan2(-to.z);
+            let pitch = to.y.atan2(to.x.hypot(to.z));
+            let turn = yaw - walker.yaw();
+            let tilt = pitch - walker.pitch();
+            walker.look(turn, tilt);
+        }
+        frames(app, 3);
+        app.get_resource::<Sight>().unwrap().targets[player as usize]
+    }
+
+    fn uses(app: &mut App, player: u8) {
+        tap(app, player as usize, GamepadButton::West);
+        frames(app, 5);
     }
 
     fn walk_all(app: &mut App, walks: &[Walk]) -> [usize; 2] {
@@ -2185,7 +2211,7 @@ mod tests {
     }
 
     #[test]
-    fn the_manor_is_walked_by_its_stairs_doors_and_steps() {
+    fn the_manor_is_walked_and_its_doors_bells_beds_and_dumbwaiter_answer() {
         let Some(mut app) = concerto::headless(|app| {
             crate::manor(app);
             let content = concerto::content_registry!();
@@ -2223,10 +2249,50 @@ mod tests {
         };
         let aimed_at = |app: &mut App, x: f32, y: f32| {
             let at = feet(app, 0).unwrap();
-            head_for(app, 0, Vec3::new(x, at.y, -y));
-            frames(app, 3);
-            app.get_resource::<Sight>().unwrap().targets[0]
+            aiming_at(app, 0, Vec3::new(x, at.y + EYE_HEIGHT, -y))
         };
+        let house = |app: &App| app.get_resource::<crate::house::House>().unwrap().clone();
+        let room = |app: &App, name: &str| {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            data.catalog.rooms.id(name).unwrap()
+        };
+        let in_bed = |app: &App, player: usize| session(app).seats[player].in_bed;
+
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(20.1, 4.35, -13.5)),
+            Some(super::Interactable::Bed(0)),
+            "the Guest starts beside their bed"
+        );
+        uses(&mut app, 0);
+        assert!(in_bed(&app, 0));
+        uses(&mut app, 0);
+        assert!(!in_bed(&app, 0));
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(23.2, 13.8)],
+                ends_at_height: 3.8,
+                ends_in: "g5",
+            }],
+        );
+        let bedroom_bell = room(&app, "g5");
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(24.35, 5.4, -14.1)),
+            Some(super::Interactable::BellPull(bedroom_bell))
+        );
+        uses(&mut app, 0);
+        assert!(house(&app).bells[bedroom_bell.index()]);
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(37.14, 2.0, -6.2)),
+            Some(super::Interactable::BellBoard),
+            "the Staff starts by the bell board"
+        );
+        uses(&mut app, 1);
+        assert!(
+            !house(&app).bells[bedroom_bell.index()],
+            "the Staff reading the board drops its flags"
+        );
         let stands_open = |app: &App| {
             app.get_resource::<crate::house::House>()
                 .unwrap()
@@ -2266,8 +2332,40 @@ mod tests {
         let walks = [
             Walk {
                 player: 0,
+                legs: vec![leg(21.75, 9.0), leg(28.6, 9.0)],
+                ends_at_height: 3.8,
+                ends_in: "gallery",
+            },
+            Walk {
+                player: 1,
                 legs: vec![
-                    leg(21.75, 9.0),
+                    leg(37.9, 4.0),
+                    leg(36.0, 4.0),
+                    leg(35.5, 5.9),
+                    leg(31.2, 6.6),
+                ],
+                ends_at_height: 0.0,
+                ends_in: "kitchen",
+            },
+        ];
+        walk_to_the_end(&mut app, &walks);
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(29.55, 4.7, -8.1)),
+            Some(super::Interactable::Lift(2))
+        );
+        uses(&mut app, 0);
+        assert_eq!(house(&app).lift_at, 2, "the gallery stop calls the car up");
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(30.1, 0.9, -7.55)),
+            Some(super::Interactable::Lift(0))
+        );
+        uses(&mut app, 1);
+        assert_eq!(house(&app).lift_at, 0, "and the kitchen stop calls it back");
+
+        let walks = [
+            Walk {
+                player: 0,
+                legs: vec![
                     leg(18.2, 9.0),
                     leg(18.2, 11.8),
                     leg(18.2, 15.0),
@@ -2281,8 +2379,8 @@ mod tests {
             Walk {
                 player: 1,
                 legs: vec![
-                    leg(39.5, 7.0),
-                    leg(39.5, 9.5),
+                    leg(33.5, 7.0),
+                    leg(33.5, 9.0),
                     leg(31.5, 9.5),
                     leg(31.5, 10.6),
                     leg(30.7, 10.6),
@@ -2300,6 +2398,52 @@ mod tests {
             },
         ];
         walk_to_the_end(&mut app, &walks);
+
+        let staff_room = {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            data.catalog.doors.id("d_staffroom").unwrap()
+        };
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 1,
+                legs: vec![leg(21.75, 9.0)],
+                ends_at_height: 7.2,
+                ends_in: "attic_corr",
+            }],
+        );
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(21.75, 8.3, -10.0)),
+            Some(super::Interactable::Door(staff_room))
+        );
+        uses(&mut app, 1);
+        walk_to_the_end(
+            &mut app,
+            &[Walk {
+                player: 1,
+                legs: vec![leg(21.75, 11.0), leg(22.0, 12.0)],
+                ends_at_height: 7.2,
+                ends_in: "attic_staff",
+            }],
+        );
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(23.45, 7.7, -12.85)),
+            Some(super::Interactable::Bed(1)),
+            "the Staff's bed is under the attic roof"
+        );
+        uses(&mut app, 1);
+        assert!(in_bed(&app, 1));
+        uses(&mut app, 1);
+        assert!(!in_bed(&app, 1));
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 1,
+                legs: vec![leg(21.75, 11.0), leg(21.75, 9.0), leg(32.2, 9.0)],
+                ends_at_height: 7.2,
+                ends_in: "backstairs",
+            }],
+        );
 
         let garden_door = {
             let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
