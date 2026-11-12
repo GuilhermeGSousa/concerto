@@ -53,7 +53,7 @@ impl Default for GraphPreview {
     }
 }
 
-fn hosted_types(world: &World, document: Entity) -> Option<AppTypeRegistry> {
+pub(super) fn hosted_types(world: &World, document: Entity) -> Option<AppTypeRegistry> {
     world
         .get_component_for_entity::<HostedApp>(document)
         .and_then(HostedApp::type_registry)

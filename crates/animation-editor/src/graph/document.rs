@@ -8,7 +8,7 @@ use concerto_animation::{
     },
 };
 use concerto_ecs::{
-    Component, Entity, Event, Query, Res,
+    Component, Entity, Event, Query, Res, World,
     command::{CommandQueue, EntityCommandQueue},
     events::{event_reader::EventReader, event_writer::EventWriter},
     reflect::AppTypeRegistry,
@@ -19,7 +19,7 @@ use concerto_editor::{
     content::{AssetCreation, CreateAsset},
     guard::DiscardEdits,
     hosted::{Hosted, HostedApp},
-    inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector},
+    inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, TargetWorld},
     preview::PreviewFailed,
     project::ProjectState,
     tools::edits::PropertyCommitted,
@@ -37,7 +37,7 @@ use super::{
     copy::{GraphCopy, GraphNodeId},
     params::{FoundParam, GraphParameters, find_params},
     preview::graph_preview,
-    stage::{GraphLive, GraphPreview, ParametersValue, PreviewValue, SentPreview},
+    stage::{GraphLive, GraphPreview, ParametersValue, PreviewValue, SentPreview, hosted_types},
 };
 
 const GRAPH_EXTENSION: &str = "gasset";
@@ -46,6 +46,7 @@ const STATE: &str = "State";
 const TRANSITION: &str = "Transition";
 const READ_ONLY: &str = "The preview is not running, so the graph is read-only";
 const IN_DIAGRAM: &str = "A state machine is in view, which holds states and transitions, not nodes; graph_up goes back to its graph";
+const NO_MACHINE: &str = "no state machine is in view";
 const IN_FLOW: &str =
     "The graph in view is not a state machine; open a state machine node with graph_open first";
 
@@ -204,11 +205,6 @@ struct CreatingState {
     name: Name,
 }
 
-struct WriteBack {
-    applied: bool,
-    refused: Option<String>,
-}
-
 /// What a graph's tab holds: the stack from its asset down to what is in view, a working copy per graph, and the selection.
 #[derive(Component, Default)]
 pub struct GraphDocument {
@@ -223,8 +219,6 @@ pub struct GraphDocument {
     pub shown_scene: Option<AssetId>,
     /// Why the preview's scene could not be read.
     pub scene_error: Option<String>,
-    state: Option<StateValue>,
-    transition: Option<TransitionValue>,
     creating: Vec<CreatingState>,
     fixed: Vec<Arc<dyn PropertyTarget>>,
 }
@@ -455,20 +449,56 @@ impl GraphDocument {
         }
     }
 
-    fn mirror(&mut self) {
-        let machine = self.machine();
-        let state = match (self.selection, machine) {
-            (Some(GraphSelection::State(name)), Some(machine)) => state_value(machine, name),
+    fn selected_state(&self) -> Option<StateValue> {
+        match self.selection {
+            Some(GraphSelection::State(name)) => state_value(self.machine()?, name),
             _ => None,
-        };
-        let transition = match (self.selection, machine) {
-            (Some(GraphSelection::Transition(named)), Some(machine)) => {
-                transition_value(machine, named)
-            }
+        }
+    }
+
+    fn selected_transition(&self) -> Option<TransitionValue> {
+        match self.selection {
+            Some(GraphSelection::Transition(named)) => transition_value(self.machine()?, named),
             _ => None,
+        }
+    }
+
+    fn write_state(&mut self, before: &StateValue, value: StateValue) -> Result<(), String> {
+        if value.name.as_str().is_empty() {
+            return Err("a state needs a name".to_owned());
+        }
+        if before.initial && !value.initial {
+            return Err(
+                "a machine always starts in a state; set initial on the state it should start in"
+                    .to_owned(),
+            );
+        }
+        let machine = self.machine_mut().ok_or(NO_MACHINE)?;
+        let refused = |error: StateMachineEditError| error.to_string();
+        machine
+            .rename_state(before.name, value.name)
+            .map_err(refused)?;
+        if value.graph.id() != before.graph.id() {
+            machine
+                .set_state_graph(value.name, value.graph)
+                .map_err(refused)?;
+        }
+        if value.initial && !before.initial {
+            machine.set_initial(value.name).map_err(refused)?;
+        }
+        self.selection = Some(GraphSelection::State(value.name));
+        Ok(())
+    }
+
+    fn write_transition(&mut self, value: TransitionValue) -> Result<(), String> {
+        let Some(GraphSelection::Transition(named)) = self.selection else {
+            return Err(NO_MACHINE.to_owned());
         };
-        self.state = state;
-        self.transition = transition;
+        let machine = self.machine_mut().ok_or(NO_MACHINE)?;
+        let place = place_of(machine, named)?;
+        machine
+            .set_transition(named.from, place, value.trigger, value.blend_time)
+            .map_err(|error| error.to_string())
     }
 
     fn show(&mut self, root: HeldGraph) {
@@ -719,78 +749,6 @@ impl GraphDocument {
             }
             _ => Ok(GraphChange::default()),
         }
-    }
-
-    fn write_back(&mut self) -> WriteBack {
-        let mut outcome = WriteBack {
-            applied: false,
-            refused: None,
-        };
-        let (selection, state, transition) =
-            (self.selection, self.state.clone(), self.transition.clone());
-        let Some(machine) = self.machine_mut() else {
-            return outcome;
-        };
-        match selection {
-            Some(GraphSelection::State(old)) => {
-                let Some(value) = state else {
-                    return outcome;
-                };
-                let mut name = old;
-                if value.name != old {
-                    let renamed = if value.name.as_str().is_empty() {
-                        Err("Give the state a name".to_owned())
-                    } else {
-                        machine.rename_state(old, value.name).map_err(sentence)
-                    };
-                    match renamed {
-                        Ok(()) => {
-                            name = value.name;
-                            outcome.applied = true;
-                        }
-                        Err(reason) => outcome.refused = Some(reason),
-                    }
-                }
-                let held = machine
-                    .states()
-                    .find(|state| state.name == name)
-                    .map(|state| state.graph.id());
-                if held.is_some_and(|held| held != value.graph.id())
-                    && machine.set_state_graph(name, value.graph.clone()).is_ok()
-                {
-                    outcome.applied = true;
-                }
-                if value.initial
-                    && machine.initial_state() != Some(name)
-                    && machine.set_initial(name).is_ok()
-                {
-                    outcome.applied = true;
-                }
-                self.selection = Some(GraphSelection::State(name));
-            }
-            Some(GraphSelection::Transition(named)) => {
-                let Some(value) = transition else {
-                    return outcome;
-                };
-                let written = place_of(machine, named).and_then(|place| {
-                    machine
-                        .set_transition(named.from, place, value.trigger, value.blend_time)
-                        .map_err(sentence)
-                });
-                match written {
-                    Ok(()) => outcome.applied = true,
-                    Err(reason) => outcome.refused = Some(reason),
-                }
-            }
-            _ => return outcome,
-        }
-        self.mirror();
-        if outcome.applied
-            && let Some(held) = self.held_mut()
-        {
-            held.changed = true;
-        }
-        outcome
     }
 }
 
@@ -1064,42 +1022,130 @@ fn node_value(document: Entity, id: GraphNodeId) -> Arc<dyn PropertyTarget> {
     })
 }
 
-fn mirrored_state(document: Entity) -> Arc<dyn PropertyTarget> {
-    Arc::new(DocumentValue::<GraphDocument> {
-        name: STATE.to_owned(),
-        document,
-        read: Box::new(|state| state.state.as_ref().map(|value| value as &dyn Reflect)),
-        edit: Box::new(|state| state.state.as_mut().map(|value| value as &mut dyn Reflect)),
-    })
+struct StateTarget {
+    document: Entity,
 }
 
-fn mirrored_transition(document: Entity) -> Arc<dyn PropertyTarget> {
-    Arc::new(DocumentValue::<GraphDocument> {
-        name: TRANSITION.to_owned(),
-        document,
-        read: Box::new(|state| state.transition.as_ref().map(|value| value as &dyn Reflect)),
-        edit: Box::new(|state| {
-            state
-                .transition
-                .as_mut()
-                .map(|value| value as &mut dyn Reflect)
-        }),
-    })
+impl PropertyTarget for StateTarget {
+    fn name(&self) -> String {
+        STATE.to_owned()
+    }
+
+    fn world(&self) -> TargetWorld {
+        TargetWorld::Editor
+    }
+
+    fn read(&self, world: &World, read: &mut dyn FnMut(&dyn Reflect)) -> bool {
+        let value = world
+            .get_component_for_entity::<GraphDocument>(self.document)
+            .and_then(GraphDocument::selected_state);
+        let Some(value) = value else {
+            return false;
+        };
+        read(&value);
+        true
+    }
+
+    fn edit(&self, world: &mut World, edit: &mut dyn FnMut(&mut dyn Reflect)) -> bool {
+        self.try_edit(world, edit).unwrap_or(false)
+    }
+
+    fn try_edit(
+        &self,
+        world: &mut World,
+        edit: &mut dyn FnMut(&mut dyn Reflect),
+    ) -> Result<bool, String> {
+        let before = world
+            .get_component_for_entity::<GraphDocument>(self.document)
+            .and_then(GraphDocument::selected_state);
+        let Some(before) = before else {
+            return Ok(false);
+        };
+        let mut value = before.clone();
+        edit(&mut value);
+        let Some(held) = world.get_component_for_entity_mut::<GraphDocument>(self.document) else {
+            return Ok(false);
+        };
+        held.write_state(&before, value).map(|()| true)
+    }
+
+    fn types(&self, world: &World) -> Option<AppTypeRegistry> {
+        hosted_types(world, self.document)
+    }
+
+    fn document(&self) -> Option<Entity> {
+        Some(self.document)
+    }
+}
+
+struct TransitionTarget {
+    document: Entity,
+}
+
+impl PropertyTarget for TransitionTarget {
+    fn name(&self) -> String {
+        TRANSITION.to_owned()
+    }
+
+    fn world(&self) -> TargetWorld {
+        TargetWorld::Editor
+    }
+
+    fn read(&self, world: &World, read: &mut dyn FnMut(&dyn Reflect)) -> bool {
+        let value = world
+            .get_component_for_entity::<GraphDocument>(self.document)
+            .and_then(GraphDocument::selected_transition);
+        let Some(value) = value else {
+            return false;
+        };
+        read(&value);
+        true
+    }
+
+    fn edit(&self, world: &mut World, edit: &mut dyn FnMut(&mut dyn Reflect)) -> bool {
+        self.try_edit(world, edit).unwrap_or(false)
+    }
+
+    fn try_edit(
+        &self,
+        world: &mut World,
+        edit: &mut dyn FnMut(&mut dyn Reflect),
+    ) -> Result<bool, String> {
+        let value = world
+            .get_component_for_entity::<GraphDocument>(self.document)
+            .and_then(GraphDocument::selected_transition);
+        let Some(mut value) = value else {
+            return Ok(false);
+        };
+        edit(&mut value);
+        let Some(held) = world.get_component_for_entity_mut::<GraphDocument>(self.document) else {
+            return Ok(false);
+        };
+        held.write_transition(value).map(|()| true)
+    }
+
+    fn types(&self, world: &World) -> Option<AppTypeRegistry> {
+        hosted_types(world, self.document)
+    }
+
+    fn document(&self) -> Option<Entity> {
+        Some(self.document)
+    }
 }
 
 fn publish_selection(document: Entity, state: &mut GraphDocument, cmd: &mut CommandQueue) {
-    state.mirror();
-    let value = match state.selection {
+    let value: Option<Arc<dyn PropertyTarget>> = match state.selection {
         Some(GraphSelection::Node(id)) => state
             .graph()
             .and_then(|copy| copy.node(id))
             .and_then(|node| node.live())
             .map(|_| node_value(document, id)),
-        Some(GraphSelection::State(_)) => state.state.as_ref().map(|_| mirrored_state(document)),
+        Some(GraphSelection::State(_)) => state
+            .selected_state()
+            .map(|_| Arc::new(StateTarget { document }) as Arc<dyn PropertyTarget>),
         Some(GraphSelection::Transition(_)) => state
-            .transition
-            .as_ref()
-            .map(|_| mirrored_transition(document)),
+            .selected_transition()
+            .map(|_| Arc::new(TransitionTarget { document }) as Arc<dyn PropertyTarget>),
         Some(GraphSelection::Link { .. }) | None => None,
     };
     let values = value.into_iter().chain(state.fixed.iter().cloned());
@@ -1345,35 +1391,20 @@ pub(crate) fn restore_discarded_graph(
 
 pub(crate) fn follow_value_edits(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
-    documents: Query<(&mut EditorDocument, &mut GraphDocument)>,
+    documents: Query<&mut GraphDocument>,
     mut cmd: CommandQueue,
 ) {
     for hosted in committed.read() {
         if hosted.event.result.is_err() || !hosted.event.address.target.saved() {
             continue;
         }
-        let Some((mut editor, mut state)) = documents.get_entity(hosted.document) else {
+        let Some(mut state) = documents.get_entity(hosted.document) else {
             continue;
         };
-        let applied = match state.selection {
-            Some(GraphSelection::State(_) | GraphSelection::Transition(_)) => {
-                let outcome = state.write_back();
-                if let Some(reason) = outcome.refused {
-                    editor.status = reason;
-                    cmd.trigger(RefreshInspector);
-                }
-                outcome.applied
-            }
-            _ => {
-                if let Some(held) = state.held_mut() {
-                    held.changed = true;
-                }
-                true
-            }
-        };
-        if applied {
-            cmd.insert(Unsaved, hosted.document);
+        if let Some(held) = state.held_mut() {
+            held.changed = true;
         }
+        cmd.insert(Unsaved, hosted.document);
     }
 }
 

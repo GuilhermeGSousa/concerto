@@ -514,13 +514,16 @@ The `inspector` host has the title, Graph, and the document's status on a line
 of its own when it is not empty. Under it the inspector shows the selected
 node as the document value `Node`, with the property editors its fields have
 anywhere else. A selected state is the value `State { name, graph, initial }`
-and a selected transition `Transition { trigger, blend_time }`; an edit of
-either is written into the machine with its edit methods: a new `name` renames
+and a selected transition `Transition { trigger, blend_time }`. Neither is
+stored: each is a `PropertyTarget` that reads the machine and writes an edit
+into it with its edit methods before the edit is answered: a new `name` renames
 the state, `graph` replaces the graph it plays, `initial` set to true makes it
 the state the machine starts in, and a transition's fields replace its trigger
-and blend time. A name another state has is refused, the value goes back, and
-the status says why; setting `initial` to false does nothing, since a machine
-always starts somewhere. A selected link, a placeholder, or nothing selected
+and blend time. An edit the machine refuses changes nothing and is refused with
+the reason, in the status and in `set_property`'s reply, as
+`Set State.name failed: the state machine already has a state named Idle`: a
+name another state has, an empty name, and `initial` set to false, since a
+machine always starts somewhere. A selected link, a placeholder, or nothing selected
 shows no card for the selection. The `Preview` and `Parameters` cards follow
 it.
 

@@ -997,7 +997,10 @@ While that document is the active one, the panel shows one card per target,
 titled by its name, with no name field, add-component row or ⋯ menu, since those
 belong to entity cards. `read` or `edit` returning `None` means the value is
 gone: its card has no rows and an edit is refused with
-`EditError::MissingTarget`. The workspace shows the inspector with the document's
+`EditError::MissingTarget`. A target that checks an edit before it keeps it
+implements `PropertyTarget::try_edit` as well, which answers the reason for a
+refusal; the reason is the edit's `PropertyRefusal`, the document's status and
+`set_property`'s reply. The workspace shows the inspector with the document's
 `inspector` host above it, and the host neither grows nor shrinks while
 `InspectedValues` is there, so the two do not split the card in half and what
 the host holds is not clipped. `InspectedValues` is replaced, never removed,

@@ -254,11 +254,14 @@ fn write_json(
     hook: &mut LiveLeaves,
 ) -> Result<(), PropertyRefusal> {
     let mut warnings = Vec::new();
-    let found = address.target.edit(world, &mut |value| {
-        let _ = with_property_mut(value, &address.path, &mut |value| {
-            warnings = apply_value_with(value, stored, hook);
-        });
-    });
+    let found = address
+        .target
+        .try_edit(world, &mut |value| {
+            let _ = with_property_mut(value, &address.path, &mut |value| {
+                warnings = apply_value_with(value, stored, hook);
+            });
+        })
+        .map_err(PropertyRefusal::Refused)?;
     if found {
         applied(&warnings)
     } else {

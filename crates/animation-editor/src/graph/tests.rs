@@ -372,6 +372,7 @@ struct Drill {
     duplicate: Value,
     transitions: Vec<String>,
     selected: Vec<String>,
+    taken: Value,
     diagram: String,
     nested_added: String,
     saved: String,
@@ -379,6 +380,7 @@ struct Drill {
     idle: Vec<u8>,
     walk: Vec<u8>,
     nested_edited: String,
+    handed_over: Value,
     restored_root: String,
     restored_nested: String,
 }
@@ -485,6 +487,12 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         )
         .await;
         selected.push(ok(&client, "graph_select", json!({ "state": "Walk" })).await);
+        let taken = error(
+            &client,
+            "set_property",
+            json!({ "target": "State", "path": "name", "value": "Idle" }),
+        )
+        .await;
         ok(
             &client,
             "set_property",
@@ -511,6 +519,10 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         ok(&client, "graph_open", json!({ "state": "Run" })).await;
         ok(&client, "graph_remove", json!({ "node": 1 })).await;
         let nested_edited = ok(&client, "graph_inspect", json!({})).await;
+        ok(&client, "graph_up", json!({})).await;
+        ok(&client, "graph_select", json!({ "state": "Idle" })).await;
+        ok(&client, "graph_remove", json!({ "state": "Run" })).await;
+        let handed_over = ok(&client, "inspect", json!({ "target": "State" })).await;
         error(
             &client,
             "open_asset",
@@ -530,6 +542,7 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
             duplicate,
             transitions,
             selected,
+            taken,
             diagram,
             nested_added,
             saved,
@@ -537,6 +550,7 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
             idle,
             walk,
             nested_edited,
+            handed_over: serde_json::from_str(&handed_over).unwrap(),
             restored_root,
             restored_nested,
         }
@@ -588,6 +602,10 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         ]
     );
     assert_eq!(
+        message(&drill.taken),
+        "Set State.name failed: the state machine already has a state named Idle"
+    );
+    assert_eq!(
         drill.diagram,
         format!(
             "Locomotion › States\n\
@@ -622,6 +640,11 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
     assert_eq!(
         drill.nested_edited,
         "Locomotion › States › Run (state)\n0 · ResultNode · result"
+    );
+    assert_eq!(
+        drill.handed_over["value"]["initial"], true,
+        "{}",
+        drill.handed_over
     );
     assert_eq!(
         drill.restored_root,
