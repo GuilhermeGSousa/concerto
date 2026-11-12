@@ -5,6 +5,7 @@ pub mod asset_picker;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
+pub mod drag_drop;
 pub mod entity_picker;
 pub mod fonts;
 pub mod guard;
@@ -89,6 +90,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(inspected_asset::InspectedAssetPlugin);
         app.register_plugin(placement::AssetPlacementPlugin);
         app.register_plugin(timeline::TimelinePlugin);
+        app.register_plugin(drag_drop::DragDropPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::create_editor_hosts,

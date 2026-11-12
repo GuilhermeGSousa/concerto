@@ -110,7 +110,8 @@ impl CaptureOutcome {
     }
 }
 
-pub(crate) const DRAG_THRESHOLD: f32 = 4.0;
+/// How far, in logical pixels, a held pointer moves from its press before the release stops being a click.
+pub const DRAG_THRESHOLD: f32 = 4.0;
 pub(crate) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 fn advance_capture(

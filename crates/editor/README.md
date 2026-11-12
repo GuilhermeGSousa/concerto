@@ -1514,3 +1514,35 @@ what they decide: a `Timeline` nobody writes to does not move, and a marker
 nobody moves stays where it was. `frame_at`,
 `time_of_frame` and `frame_count` are the widget's conversions. Ticks keep at
 least 64 px between labels. There is no zoom.
+
+### Drag and drop
+
+`concerto_editor::drag_drop` carries a value from one UI node to another under
+the left button. `DragDropPlugin` draws the label and cancels a drag; a payload
+type `P`, any `Clone + Send + Sync + 'static` value, is registered once with
+`app.add_drag_payload::<P>()` (`DragDropAppExt`), and a second call for the
+same `P` does nothing.
+
+- `DragSource<P> { payload, label }`, built with `DragSource::new(payload,
+  label)`, on an `Interactable` node makes it draggable. It can be inserted or
+  removed at any time: the widget puts its own `UIDrag` and `UIPointerUp`
+  listeners on the node when the component appears, with the payload and label
+  as they were then, and takes them off when it goes. The node keeps its click
+  and double-click listeners, but a `UIDrag` or `UIPointerUp` listener of its
+  own would be replaced.
+- `DropTarget<P>`, built with `DropTarget::new()`, marks a node that takes a
+  `P`. The drop goes to the nearest target among the hovered node and its
+  ancestors, so the target or a node inside it must be `Interactable`.
+- `Dropped<P> { payload, position }` is sent to that target when the button is
+  released over it, with the pointer position in logical pixels from the
+  window's top-left corner. Put the listener on the target.
+
+A press becomes a drag once the pointer is `DRAG_THRESHOLD`, 4 px, from where
+it went down, the distance at which the UI stops treating the release as a
+click, so a press that does not move still clicks. From then the label follows
+the cursor on a layer above everything else, outlined in the accent colour
+over a target and muted anywhere else. It is not `Interactable`, so it never
+becomes the hovered node. Releasing anywhere but over a target sends nothing.
+Esc cancels the drag, and it stays cancelled until the button is released. A
+drag also ends when its source is despawned or loses its `DragSource<P>`, or
+when the press is taken from the source some other way.
