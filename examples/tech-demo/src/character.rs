@@ -368,30 +368,25 @@ pub(crate) fn foot_lock_weight() -> Name {
 
 fn character_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(
-        FootPlacementNode::new("Hips")
-            .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
-            .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
-            .with_weight_param(foot_placement_weight())
-            .with_ignore_param(foot_placement_ignore()),
-        |mut placement| {
-            placement.with_input(
-                FootLockNode::new()
-                    .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
-                    .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
-                    .with_weight_param(foot_lock_weight()),
-                |mut lock| {
-                    lock.with_input(
-                        MotionMatchingNode {
-                            database,
-                            ..Default::default()
-                        },
-                        |_| {},
-                    );
-                },
-            );
-        },
-    );
+    graph
+        .result_node()
+        .input(
+            FootPlacementNode::new("Hips")
+                .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+                .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
+                .with_weight_param(foot_placement_weight())
+                .with_ignore_param(foot_placement_ignore()),
+        )
+        .input(
+            FootLockNode::new()
+                .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
+                .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
+                .with_weight_param(foot_lock_weight()),
+        )
+        .add_input(MotionMatchingNode {
+            database,
+            ..Default::default()
+        });
     graph
 }
 
