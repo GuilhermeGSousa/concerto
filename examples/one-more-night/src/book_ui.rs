@@ -30,10 +30,17 @@ const CELL: Color = Color::srgba(0.1, 0.1, 0.14, 0.9);
 const INK: Color = Color::srgba(0.945, 0.925, 0.885, 1.0);
 const MUTED: Color = Color::srgba(0.66, 0.64, 0.6, 1.0);
 const GOLD: Color = Color::srgba(0.9, 0.72, 0.32, 1.0);
-const PORTRAITS: [AssetId; 3] = [
+pub(crate) const PORTRAITS: [AssetId; 10] = [
     asset_id!("content/characters/portraits/portrait_01/main.gasset"),
     asset_id!("content/characters/portraits/portrait_02/main.gasset"),
     asset_id!("content/characters/portraits/portrait_03/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_04/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_05/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_06/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_07/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_08/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_09/main.gasset"),
+    asset_id!("content/characters/portraits/portrait_10/main.gasset"),
 ];
 
 /// The panel a player's open casebook is drawn in, and the screen it last drew.

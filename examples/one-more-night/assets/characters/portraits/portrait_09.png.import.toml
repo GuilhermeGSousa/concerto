@@ -1,0 +1,6 @@
+version = 1
+source_id = "1d02b3e1-3d19-4b75-85a8-7b4a1df51679"
+importer = "image"
+
+[outputs.main]
+asset_id = "33d5b43b-95fb-479f-afc4-d4206b28d216"

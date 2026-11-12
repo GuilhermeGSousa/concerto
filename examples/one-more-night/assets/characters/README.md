@@ -10,13 +10,21 @@ silhouette and colour before any detail.
 | `lady` | Lady Ashby | A burgundy gown to the floor, long white gloves, grey hair in a bun, a brooch |
 | `gentleman` | Mr Corwin | Black tails, a white shirt front and bow tie, a moustache |
 | `footman` | Hobbs | Green livery with brass buttons, cream breeches, white stockings and gloves |
+| `colonel` | Nobody yet | A khaki tweed jacket, brown trousers, white hair and moustache |
+| `debutante` | Nobody yet | A sea-green gown, bare arms, fair hair, a brooch |
+| `doctor` | Nobody yet | A grey suit, black hair, brass spectacles |
+| `butler` | Nobody yet | Black tails over grey trousers, grey hair, white gloves |
+| `cook` | Nobody yet | A white jacket with rolled sleeves, a blue-grey skirt, apron and cap, red hair |
+| `housekeeper` | Nobody yet | A dark plum dress to the floor, a white collar, a bun, a brooch |
+| `chauffeur` | Nobody yet | A blue-grey tunic with brass buttons, a peaked cap, black gauntlets and boots |
 | `guest` | The player who is the Guest | A navy suit with a white shirt front, grey trousers, brown shoes |
 | `maid` | The player who is the Staff | A black dress with a white apron, collar and cap |
 
 Every model is skinned to the skeleton of `UAL1.glb`, the Universal Animation
 Library's mannequin, and exported with five of its clips: `Idle_Loop`,
 `Walk_Loop`, `Sitting_Idle_Loop`, `Sitting_Enter` and `Sitting_Exit`. A new
-character is a new entry in `LOOKS` in `tools/build_characters.py`.
+character is a new entry in `LOOKS` in `tools/build_characters.py`, a new arm
+in `figure_of` in `src/world.rs`, and a new row in the two `PORTRAITS` tables.
 
 | Path | What it holds |
 |---|---|
@@ -28,8 +36,10 @@ character is a new entry in `LOOKS` in `tools/build_characters.py`.
 | `characters.blend` | The scene the script leaves behind |
 
 The game picks a model by the character's `portrait` id in the case:
-`portrait_01` is the lady, `portrait_02` the gentleman, `portrait_03` the
-footman.
+`portrait_01` to `portrait_10` are the lady, the gentleman, the footman, the
+colonel, the debutante, the doctor, the butler, the cook, the housekeeper and
+the chauffeur. A look's `portrait` number in `LOOKS` sets it; the players'
+models have none.
 
 ## Rebuilding
 

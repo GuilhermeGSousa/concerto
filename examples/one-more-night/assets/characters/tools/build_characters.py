@@ -29,6 +29,7 @@ LOOKS = {
         "skirt": (0.36, 0.07, 0.11),
         "bun": True,
         "brooch": True,
+        "portrait": 1,
     },
     "gentleman": {
         "hair": (0.16, 0.1, 0.06),
@@ -42,6 +43,7 @@ LOOKS = {
         "tails": True,
         "shirt": True,
         "moustache": True,
+        "portrait": 2,
     },
     "footman": {
         "hair": (0.5, 0.36, 0.18),
@@ -55,6 +57,7 @@ LOOKS = {
         "tails": True,
         "buttons": True,
         "collar": True,
+        "portrait": 3,
     },
     "guest": {
         "hair": (0.32, 0.14, 0.08),
@@ -80,6 +83,102 @@ LOOKS = {
         "collar": True,
         "apron": True,
         "cap": True,
+    },
+    "colonel": {
+        "hair": (0.8, 0.8, 0.78),
+        "coat": (0.42, 0.36, 0.2),
+        "arms": (0.42, 0.36, 0.2),
+        "forearms": (0.42, 0.36, 0.2),
+        "hands": SKIN,
+        "thighs": (0.3, 0.2, 0.12),
+        "calves": (0.3, 0.2, 0.12),
+        "shoes": (0.22, 0.12, 0.06),
+        "shirt": True,
+        "moustache": True,
+        "portrait": 4,
+    },
+    "debutante": {
+        "hair": (0.85, 0.68, 0.3),
+        "coat": (0.45, 0.72, 0.68),
+        "arms": SKIN,
+        "forearms": SKIN,
+        "hands": SKIN,
+        "thighs": (0.45, 0.72, 0.68),
+        "calves": WHITE,
+        "shoes": (0.8, 0.74, 0.6),
+        "skirt": (0.45, 0.72, 0.68),
+        "brooch": True,
+        "portrait": 5,
+    },
+    "doctor": {
+        "hair": (0.08, 0.07, 0.07),
+        "coat": (0.42, 0.43, 0.46),
+        "arms": (0.42, 0.43, 0.46),
+        "forearms": (0.42, 0.43, 0.46),
+        "hands": SKIN,
+        "thighs": (0.42, 0.43, 0.46),
+        "calves": (0.42, 0.43, 0.46),
+        "shoes": BLACK,
+        "shirt": True,
+        "spectacles": True,
+        "portrait": 6,
+    },
+    "butler": {
+        "hair": (0.55, 0.55, 0.56),
+        "coat": BLACK,
+        "arms": BLACK,
+        "forearms": BLACK,
+        "hands": WHITE,
+        "thighs": (0.3, 0.3, 0.32),
+        "calves": (0.3, 0.3, 0.32),
+        "shoes": BLACK,
+        "tails": True,
+        "shirt": True,
+        "portrait": 7,
+    },
+    "cook": {
+        "hair": (0.55, 0.2, 0.08),
+        "coat": WHITE,
+        "arms": WHITE,
+        "forearms": SKIN,
+        "hands": SKIN,
+        "thighs": WHITE,
+        "calves": BLACK,
+        "shoes": BLACK,
+        "skirt": (0.55, 0.62, 0.72),
+        "apron": True,
+        "cap": True,
+        "portrait": 8,
+    },
+    "housekeeper": {
+        "hair": (0.2, 0.18, 0.18),
+        "coat": (0.2, 0.14, 0.26),
+        "arms": (0.2, 0.14, 0.26),
+        "forearms": (0.2, 0.14, 0.26),
+        "hands": SKIN,
+        "thighs": (0.2, 0.14, 0.26),
+        "calves": BLACK,
+        "shoes": BLACK,
+        "skirt": (0.2, 0.14, 0.26),
+        "collar": True,
+        "bun": True,
+        "brooch": True,
+        "portrait": 9,
+    },
+    "chauffeur": {
+        "hair": (0.3, 0.2, 0.1),
+        "coat": (0.16, 0.2, 0.3),
+        "arms": (0.16, 0.2, 0.3),
+        "forearms": BLACK,
+        "hands": BLACK,
+        "thighs": (0.16, 0.2, 0.3),
+        "calves": BLACK,
+        "shoes": BLACK,
+        "buttons": True,
+        "cap": True,
+        "cap_colour": (0.16, 0.2, 0.3),
+        "peak": True,
+        "portrait": 10,
     },
 }
 
@@ -277,7 +376,13 @@ def figure(name, look, armature, joints):
         made.box((0, -0.125, chest.z - 0.02), (0.2, 0.02, 0.26), WHITE, "spine_02")
         made.box((0, -0.19, 0.72), (0.3, 0.02, 0.5), WHITE, "pelvis")
     if look.get("cap"):
-        made.ball(head + Vector((0, 0.02, 0.1)), (0.085, 0.085, 0.04), WHITE, "Head", segments=8)
+        made.ball(head + Vector((0, 0.02, 0.1)), (0.085, 0.085, 0.04), look.get("cap_colour", WHITE), "Head", segments=8)
+    if look.get("peak"):
+        made.box(head + Vector((0, -0.095, 0.082)), (0.13, 0.07, 0.012), BLACK, "Head")
+    if look.get("spectacles"):
+        for side in (-1, 1):
+            made.box(head + Vector((side * 0.034, -0.104, 0.016)), (0.04, 0.006, 0.034), BRASS, "Head", metallic=1.0)
+        made.box(head + Vector((0, -0.104, 0.022)), (0.03, 0.006, 0.008), BRASS, "Head", metallic=1.0)
     if look.get("brooch"):
         made.ball((0, -0.12, chest.z + 0.07), (0.02, 0.012, 0.02), BRASS, "spine_03", metallic=1.0, segments=6)
     return made.join()
@@ -337,7 +442,10 @@ def lineup(bodies):
     camera.rotation_euler = (math.radians(90), 0, 0)
     camera.data.lens = 85
     os.makedirs(os.path.join(HERE, "portraits"), exist_ok=True)
-    for number, body in enumerate(bodies[:3], start=1):
+    for body in bodies:
+        number = LOOKS[body.name].get("portrait")
+        if number is None:
+            continue
         for other in bodies:
             other.hide_render = other is not body
         scene.render.filepath = os.path.join(HERE, "portraits", f"portrait_{number:02}.png")
