@@ -111,6 +111,19 @@ pub fn door_rule(data: &CaseData, door: DoorId) -> DoorRule {
     }
 }
 
+/// What a private door finds when a player tries it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Privacy {
+    /// The player stands outside a private room the door leads into.
+    pub entering: bool,
+    /// That room is the player's own.
+    pub own: bool,
+    /// A character is in it.
+    pub someone_in: bool,
+    /// Its bell flag is up on the board.
+    pub rung: bool,
+}
+
 /// Why a door stays shut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
@@ -118,6 +131,10 @@ pub enum Refusal {
     ServiceOnly,
     /// It is locked and the player has neither its key nor the key ring for it.
     Locked,
+    /// Someone's room with nobody in it, and the Guest is trying it without its key.
+    NobodyIn,
+    /// Someone is in their room, and the Staff is trying it without being rung for.
+    Occupied,
 }
 
 impl Refusal {
@@ -126,22 +143,34 @@ impl Refusal {
         match self {
             Refusal::ServiceOnly => "Staff only. A guest has no business back there.",
             Refusal::Locked => "Locked.",
+            Refusal::NobodyIn => "Nobody answers. It is not your room to walk into.",
+            Refusal::Occupied => "Someone is in. The staff wait to be rung for.",
         }
     }
 }
 
-/// Whether a player in `role`, carrying `carried`, may work a door whose lock is `locked` at `now`.
+/// Whether a player in `role`, carrying `carried`, may work a door whose lock is `locked` at `now`. A private room lets the Guest in while someone is there to answer, and the Staff while nobody is, or when it rang.
 pub fn may_pass(
     rule: &DoorRule,
     locked: bool,
     role: Role,
     carried: Option<KeyId>,
     now: GameTime,
+    at_the_door: Privacy,
 ) -> Result<(), Refusal> {
     if rule.zone == Zone::Service && role == Role::Guest {
         return Err(Refusal::ServiceOnly);
     }
     let has_key = rule.key.is_some() && rule.key == carried;
+    if rule.zone == Zone::Private && at_the_door.entering && !at_the_door.own {
+        match role {
+            Role::Guest if !at_the_door.someone_in && !has_key => return Err(Refusal::NobodyIn),
+            Role::Staff if at_the_door.someone_in && !at_the_door.rung => {
+                return Err(Refusal::Occupied);
+            }
+            _ => {}
+        }
+    }
     let ring = role == Role::Staff && rule.staff_opens;
     let barred = locked || rule.locked.iter().any(|window| window.contains(now));
     if barred && !has_key && !ring {
@@ -152,9 +181,9 @@ pub fn may_pass(
 
 #[cfg(test)]
 mod tests {
-    use super::{Offer, Refusal, ask_label, door_rule, may_pass, offers};
+    use super::{DoorRule, Offer, Privacy, Refusal, ask_label, door_rule, may_pass, offers};
     use crate::book::Casebook;
-    use crate::case::{DoorState, GameTime, Phase, Role};
+    use crate::case::{DoorState, GameTime, Phase, Role, Zone};
     use crate::casefile::CaseData;
 
     fn at(hour: u16, minute: u16) -> GameTime {
@@ -238,28 +267,164 @@ mod tests {
         assert_eq!(service.key, key);
         let locked = service.state == DoorState::Locked;
         assert_eq!(
-            may_pass(&service, locked, Role::Guest, key, at(18, 0)),
+            may_pass(
+                &service,
+                locked,
+                Role::Guest,
+                key,
+                at(18, 0),
+                Privacy::default()
+            ),
             Err(Refusal::ServiceOnly),
             "a service door refuses the Guest even with its key"
         );
         assert_eq!(
-            may_pass(&service, locked, Role::Staff, None, at(18, 0)),
+            may_pass(
+                &service,
+                locked,
+                Role::Staff,
+                None,
+                at(18, 0),
+                Privacy::default()
+            ),
             Ok(())
         );
 
         assert_eq!(
-            may_pass(&public, false, Role::Guest, None, at(23, 29)),
+            may_pass(
+                &public,
+                false,
+                Role::Guest,
+                None,
+                at(23, 29),
+                Privacy::default()
+            ),
             Ok(())
         );
         assert_eq!(
-            may_pass(&public, false, Role::Guest, None, at(23, 30)),
+            may_pass(
+                &public,
+                false,
+                Role::Guest,
+                None,
+                at(23, 30),
+                Privacy::default()
+            ),
             Err(Refusal::Locked),
             "the case locks it for the last half hour"
         );
         assert_eq!(
-            may_pass(&public, true, Role::Staff, None, at(18, 0)),
+            may_pass(
+                &public,
+                true,
+                Role::Staff,
+                None,
+                at(18, 0),
+                Privacy::default()
+            ),
             Err(Refusal::Locked),
             "the key ring opens only what the case lists"
+        );
+
+        struct Knock {
+            role: Role,
+            at_the_door: Privacy,
+            answer: Result<(), Refusal>,
+            why: &'static str,
+        }
+        let private = DoorRule {
+            zone: Zone::Private,
+            ..public.clone()
+        };
+        let outside = Privacy {
+            entering: true,
+            ..Privacy::default()
+        };
+        let knocks = [
+            Knock {
+                role: Role::Guest,
+                at_the_door: outside,
+                answer: Err(Refusal::NobodyIn),
+                why: "a guest does not walk into an empty room that is not theirs",
+            },
+            Knock {
+                role: Role::Guest,
+                at_the_door: Privacy {
+                    someone_in: true,
+                    ..outside
+                },
+                answer: Ok(()),
+                why: "whoever is in lets a guest in",
+            },
+            Knock {
+                role: Role::Guest,
+                at_the_door: Privacy {
+                    own: true,
+                    ..outside
+                },
+                answer: Ok(()),
+                why: "a guest's own room is theirs to enter",
+            },
+            Knock {
+                role: Role::Guest,
+                at_the_door: Privacy::default(),
+                answer: Ok(()),
+                why: "nobody is kept from leaving",
+            },
+            Knock {
+                role: Role::Staff,
+                at_the_door: outside,
+                answer: Ok(()),
+                why: "the staff do an empty room",
+            },
+            Knock {
+                role: Role::Staff,
+                at_the_door: Privacy {
+                    someone_in: true,
+                    ..outside
+                },
+                answer: Err(Refusal::Occupied),
+                why: "the staff do not walk in on anyone",
+            },
+            Knock {
+                role: Role::Staff,
+                at_the_door: Privacy {
+                    someone_in: true,
+                    rung: true,
+                    ..outside
+                },
+                answer: Ok(()),
+                why: "unless the room rang for them",
+            },
+        ];
+        for knock in knocks {
+            assert_eq!(
+                may_pass(
+                    &private,
+                    false,
+                    knock.role,
+                    None,
+                    at(18, 0),
+                    knock.at_the_door
+                ),
+                knock.answer,
+                "{}",
+                knock.why
+            );
+        }
+        assert_eq!(
+            may_pass(&private, false, Role::Guest, key, at(18, 0), outside),
+            Err(Refusal::NobodyIn),
+            "a key to another door does not help"
+        );
+        let keyed = DoorRule {
+            key,
+            ..private.clone()
+        };
+        assert_eq!(
+            may_pass(&keyed, true, Role::Guest, key, at(18, 0), outside),
+            Ok(()),
+            "a guest holding a room's key lets themselves in"
         );
     }
 }

@@ -196,6 +196,7 @@ pub struct Level {
     doors: Vec<LevelDoor>,
     features: Vec<FeatureNodes>,
     door_positions: HashMap<DoorId, Vec3>,
+    homes: HashMap<u8, RoomId>,
 }
 
 /// Turns a manifest point, z up, into the engine's, y up.
@@ -287,6 +288,7 @@ impl Level {
                 })
                 .collect(),
             door_positions: HashMap::new(),
+            homes: HashMap::new(),
         })
     }
 
@@ -381,6 +383,16 @@ impl Level {
     /// Records where the scene put `door`, which routes then pass through.
     pub fn place_door(&mut self, door: DoorId, position: Vec3) {
         self.door_positions.insert(door, position);
+    }
+
+    /// Records the room `player` starts the night in as their own.
+    pub fn place_home(&mut self, player: u8, room: RoomId) {
+        self.homes.insert(player, room);
+    }
+
+    /// The room that is `player`'s own, once the scene has placed their start.
+    pub fn home(&self, player: u8) -> Option<RoomId> {
+        self.homes.get(&player).copied()
     }
 
     pub fn door_position(&self, door: DoorId) -> Option<Vec3> {
