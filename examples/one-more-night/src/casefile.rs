@@ -32,6 +32,8 @@ pub struct CaseData {
     pub case: Case,
     pub catalog: Catalog,
     pub level: Level,
+    /// The case came out of a sealed bundle, so nothing about it may be shown outside play.
+    pub sealed: bool,
 }
 
 macro_rules! test_file {
@@ -59,6 +61,7 @@ impl CaseData {
             case,
             catalog,
             level,
+            sealed: false,
         })
     }
 
@@ -153,6 +156,14 @@ impl CaseData {
             files,
             include_str!("../assets/manor/export/level_manifest.ron"),
         )
+    }
+
+    /// The same, marked as having come out of a sealed bundle.
+    pub fn sealed_manor(files: &CaseFiles) -> Result<Self, CaseError> {
+        Ok(Self {
+            sealed: true,
+            ..Self::manor(files)?
+        })
     }
 
     /// The text of a string of the case.

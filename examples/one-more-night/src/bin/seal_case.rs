@@ -15,8 +15,8 @@ fn main() -> std::process::ExitCode {
         eprintln!("FAIL: the case directory could not be read");
         return ExitCode::FAILURE;
     };
-    if CaseData::manor(&files).is_err() {
-        eprintln!("FAIL: the case does not load over the manor");
+    if let Err(error) = CaseData::manor(&files) {
+        eprintln!("FAIL: the case does not load over the manor: {error:?}");
         return ExitCode::FAILURE;
     }
     let (bundle, key_file) = (bundle_path(), key_path());
