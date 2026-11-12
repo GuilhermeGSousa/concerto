@@ -2,7 +2,7 @@ use concerto_foundation::assets::asset_server::{
     handle_asset_load_events, sync_asset_registry, AssetServer,
 };
 use concerto_foundation::assets::derived::DerivedDataCache;
-use concerto_foundation::assets::handle::AssetLifetimeEvent;
+use concerto_foundation::assets::handle::{AssetLifetimeEvent, AssetLoadFailed};
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::time::{FrameStats, Time};
 
@@ -98,6 +98,7 @@ impl Plugin for AssetManagerPlugin {
         server.set_type_registry(app.main_mut().world_mut().type_registry());
         app.insert_resource(server);
         app.register_event::<AssetLifetimeEvent>();
+        app.register_event::<AssetLoadFailed>();
         app.add_system(LateUpdate, handle_asset_load_events.at_edit_time());
         app.add_system(First, sync_asset_registry.at_edit_time());
     }

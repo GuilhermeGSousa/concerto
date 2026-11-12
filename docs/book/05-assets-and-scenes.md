@@ -98,6 +98,11 @@ fn on_mesh_loaded(mut loaded: EventReader<AssetLoaded<Mesh>>) {
 }
 ```
 
+A load that fails, because the id is not in the registry, the file is missing
+or corrupt, or `on_load` returns an error, sends `AssetLoadFailed` with the id
+that was asked for. The event is the same for every asset type, and the reason
+is in the log. An `assets.add` whose `on_load` fails only logs.
+
 ## Scenes
 
 A scene is a tree of entities saved to a `.gasset`. Importing a model makes
