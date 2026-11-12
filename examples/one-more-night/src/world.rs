@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use concerto::{
     animation::{
@@ -477,6 +477,7 @@ impl Stage {
                 asset_id!("content/manor/export/manor_attic/scene.gasset"),
                 asset_id!("content/manor/export/manor_cellar/scene.gasset"),
                 asset_id!("content/manor/export/manor_grounds/scene.gasset"),
+                asset_id!("content/manor/export/manor_art/scene.gasset"),
             ],
             named_nodes: true,
         }
@@ -763,41 +764,59 @@ fn spawn_case(
 }
 
 fn adopt_named_nodes(
-    scenes: Query<(Entity, &Children), (With<LevelScene>, Without<Adopted>)>,
+    scenes: Query<(Entity, Option<&Children>), (With<LevelScene>, Without<Adopted>)>,
     children: Query<&Children>,
     nodes: Query<(&Name, &Transform, Option<&MeshComponent>)>,
     stage: Res<StageArt>,
     mut data: ResMut<CaseData>,
     mut cmd: CommandQueue,
 ) {
-    if !stage.named_nodes {
+    if !stage.named_nodes || scenes.iter().any(|(_, roots)| roots.is_none()) {
         return;
     }
     let mut below = Vec::new();
     for (scene, roots) in scenes.iter() {
         cmd.insert(Adopted, scene);
-        below.extend(roots.iter().copied());
+        below.extend(roots.into_iter().flatten().copied());
+    }
+    let mut covered = HashSet::new();
+    let mut unread = below.clone();
+    while let Some(entity) = unread.pop() {
+        if let Some(parts) = children.get_entity(entity) {
+            unread.extend(parts.iter().copied());
+        }
+        if let Some((name, _, _)) = nodes.get_entity(entity)
+            && let Some(under) = name.as_str().strip_prefix("art.")
+        {
+            covered.insert(under.to_string());
+        }
     }
     while let Some(entity) = below.pop() {
-        if let Some(parts) = children.get_entity(entity) {
+        let node = nodes.get_entity(entity);
+        let art = node.is_some_and(|(name, _, _)| name.as_str().starts_with("art."));
+        if !art && let Some(parts) = children.get_entity(entity) {
             below.extend(parts.iter().copied());
         }
-        let Some((name, transform, mesh)) = nodes.get_entity(entity) else {
+        let Some((name, transform, mesh)) = node else {
             continue;
         };
         let name = name.as_str();
         let (kind, rest) = name.split_once('.').unwrap_or((name, ""));
         let features = &data.case.features;
-        let hidden = data
-            .level
-            .hidden_nodes(|feature| features.is_on(feature))
-            .contains(&name);
+        let hidden_nodes = data.level.hidden_nodes(|feature| features.is_on(feature));
+        let hidden = hidden_nodes.contains(&name) || (art && hidden_nodes.contains(&rest));
         let helper = matches!(kind, "room" | "nav" | "acoustic") || hidden;
         if helper {
             if mesh.is_some() {
                 cmd.remove::<MeshComponent>(entity);
             }
             continue;
+        }
+        if art {
+            continue;
+        }
+        if mesh.is_some() && covered.contains(name) {
+            cmd.insert(RenderLayers::NONE, entity);
         }
         let solid = |cmd: &mut CommandQueue| {
             if mesh.is_some() {
@@ -2445,6 +2464,35 @@ mod tests {
             assert!(on_the_stair, "she comes down the main stair to dinner");
             assert!(knock(0, 18.2).someone_in, "she is in until seven");
             assert!(!knock(1, 20.0).someone_in, "and out in the gallery after");
+        }
+        {
+            let world = app.main_mut().world_mut();
+            let mut named = world.query::<(
+                &super::Name,
+                Option<&super::Collider>,
+                Option<&super::MeshCollider>,
+                Option<&super::RenderLayers>,
+            ), ()>();
+            let mut art_seen = false;
+            let mut box_seen = false;
+            for (name, collider, mesh_collider, layers) in named.iter(world) {
+                match name.as_str() {
+                    "art.furniture.hall.gong_01" => {
+                        art_seen = true;
+                        assert!(
+                            collider.is_none() && mesh_collider.is_none(),
+                            "art is drawn and never solid"
+                        );
+                    }
+                    "furniture.hall.gong_01" => {
+                        box_seen = true;
+                        assert!(collider.is_some(), "the box under the art stays solid");
+                        assert_eq!(layers, Some(&super::RenderLayers::NONE), "and is not drawn");
+                    }
+                    _ => {}
+                }
+            }
+            assert!(art_seen && box_seen, "the gong has its box and its art");
         }
         assert_eq!(
             aiming_at(&mut app, 0, Vec3::new(20.1, 4.35, -13.5)),
