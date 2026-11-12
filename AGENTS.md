@@ -94,7 +94,8 @@ east face button to lower the camera, Q or the right bumper to swap shoulders). 
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1. `--sanatorium
 --retarget` puts the same player in the sanatorium, and `--forest` wins over
-`--retarget`. That player's graph is the main character's: a tired overlay
+`--retarget`. That player's graph is the main character's: the fingers, which LAFAN1's
+motion does not move, taken from UAL1's `Idle_Loop`, a tired overlay
 (`Idle_Tired_Loop`, additive) over the retargeted locomotion, UAL1's pistol
 clips layered on the upper body, an aim offset and an aim that point the gun at
 a point thirty metres along the camera's view, a look-at on the head, sway and
@@ -165,7 +166,8 @@ Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
 alone needs none of them. A cloud pipeline session runs only the first, and
 the `cargo metadata` step below when a `Cargo.toml` changed, and leaves the
-rest to CI.
+rest to CI. When CI could not start its jobs, for want of Actions minutes, the
+session goes on and reports those commands as not run.
 
 A change to a `Cargo.toml` commits the `Cargo.lock` that cargo rewrites. A
 session that doesn't build runs `cargo metadata --format-version 1 > /dev/null`,

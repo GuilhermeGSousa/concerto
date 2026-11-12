@@ -262,10 +262,7 @@ fn a_transition_lands_on_the_frame_the_normalised_query_finds() {
 #[test]
 fn a_search_skips_the_frames_the_node_ignores_around_the_current_one() {
     let fixture = fixture(1.0);
-    let node = MotionMatchingNode {
-        ignore_surrounding: 1000,
-        ..Default::default()
-    };
+    let node = MotionMatchingNode::default().with_ignore_surrounding(1000);
 
     let state = searched(&fixture, &node);
 
@@ -275,10 +272,7 @@ fn a_search_skips_the_frames_the_node_ignores_around_the_current_one() {
 #[test]
 fn a_search_skips_the_range_ends_the_node_ignores() {
     let fixture = fixture(1.0);
-    let node = MotionMatchingNode {
-        ignore_range_end: 1000,
-        ..Default::default()
-    };
+    let node = MotionMatchingNode::default().with_ignore_range_end(1000);
 
     let state = searched(&fixture, &node);
 
@@ -370,11 +364,9 @@ fn a_search_keeps_the_cost_of_the_frame_it_found() {
 #[test]
 fn the_node_passes_each_exclusion_to_its_own_side_of_the_search() {
     let fixture = fixture(1.0);
-    let node = MotionMatchingNode {
-        ignore_surrounding: 1,
-        ignore_range_end: 60,
-        ..Default::default()
-    };
+    let node = MotionMatchingNode::default()
+        .with_ignore_surrounding(1)
+        .with_ignore_range_end(60);
 
     let state = searched(&fixture, &node);
 
@@ -592,11 +584,9 @@ fn a_nan_query_leaves_no_best_cost() {
 #[test]
 fn a_velocity_change_that_settles_forces_one_search() {
     let fixture = fixture(1.0);
-    let node = MotionMatchingNode {
-        search_period: 100.0,
-        velocity_change_threshold: 1.0,
-        ..Default::default()
-    };
+    let node = MotionMatchingNode::default()
+        .with_search_period(100.0)
+        .with_velocity_change_threshold(1.0);
     let mut state = state(&node, 0.0);
     state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     state.search_timer = 100.0;
@@ -1141,11 +1131,9 @@ fn at_rate_zero_the_end_of_a_range_does_not_search() {
 #[test]
 fn at_rate_zero_a_forced_search_is_dropped_and_its_cooldown_spent() {
     let fixture = fixture(1.0);
-    let node = MotionMatchingNode {
-        search_period: 100.0,
-        velocity_change_threshold: 1.0,
-        ..Default::default()
-    };
+    let node = MotionMatchingNode::default()
+        .with_search_period(100.0)
+        .with_velocity_change_threshold(1.0);
     let mut state = started(&fixture, &node);
     state.search_timer = 100.0;
 

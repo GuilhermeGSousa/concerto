@@ -211,7 +211,8 @@ owner next comments or reviews.
 - Cloud: `cargo fmt --all -- --check` when Rust changed, and
   `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
   committing the `Cargo.lock` it rewrites. Clippy, tests and the wasm build are
-  CI's.
+  CI's; when CI does not run them, they are reported as not run, as "When CI
+  does not run" says.
 - Local: the per-task gate from `AGENTS.md` after each plan task, the full
   done gate once before review, and
   `visual-verification` where `AGENTS.md` asks for a look at the running
@@ -278,16 +279,39 @@ other issue takes the short path, "Without `agent:spec`".
 ### Review
 
 1. Wait for CI to finish on the head commit.
-2. CI red: fix it, as under After review. Do not review a red head.
-3. CI green: run `branch-reviewer` with the branch and the spec copy, or the
+2. CI red: fix it, as under After review. Do not review a red head. A job
+   that did not run is not red; see "When CI does not run".
+3. CI green, or every job that is not green did not run: run
+   `branch-reviewer` with the branch and the spec copy, or the
    issue body without `agent:spec`, telling it whether it runs in a cloud or
    local session. Fix what it finds, push, and return to step 1. After 2
    rounds that still leave findings, post them and wait on the owner.
 4. Post the report as a comment. In the cloud, when the change touches
    rendering, UI or the editor, list the visual checks the owner must make.
-   Locally, report what `visual-verification` showed.
+   Locally, report what `visual-verification` showed. When CI did not run on
+   the head, say so as "When CI does not run" asks.
 5. Mark the PR ready for review and wait on the owner. GitHub takes no review
    request for a PR's own author, so the label is the request.
+
+### When CI does not run
+
+The repository's Actions minutes can run out. GitHub then fails every job
+without starting it: the job has no steps and no log, and its annotation says
+it was not started because of billing or the spending limit. Such a job did
+not run. It is neither red nor green, and it never blocks you.
+
+- Read the failed job before calling CI red. A job that ran a step and failed
+  is red, whatever happened to the others.
+- Never try to fix a job that did not run, never push to make it run again,
+  and do not wait for it or for the owner because of it. A push that leaves
+  only such jobs failed does not count towards the 3 red pushes under After
+  review, and such a job on `master` does not make `master` red.
+- Locally, the done gate you ran stands in for CI.
+- In the cloud, go on with your own checks alone. The review comment names
+  the jobs that did not run and lists, as not run, the done gate commands that
+  nothing has run on the head commit. The owner or the local runner runs them
+  before the merge.
+- If CI later runs on the head and is red, fix it as under After review.
 
 ### After review
 

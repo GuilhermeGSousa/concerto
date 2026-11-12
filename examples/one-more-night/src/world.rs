@@ -368,14 +368,15 @@ fn character_graph(assets: &AssetServer, art: &CharacterArt) -> AnimationGraph {
         ..Default::default()
     };
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(look, |mut body| {
-        body.with_blend_space_2d_input(name!("gait"), |space| {
+    graph
+        .result_node()
+        .input(look)
+        .add_blend_space_2d_input_with(name!("gait"), |space| {
             space
                 .animation_clip_input(assets.load::<AnimationClip>(art.idle), GAIT_IDLE)
                 .animation_clip_input(assets.load::<AnimationClip>(art.walk), GAIT_WALK)
                 .animation_clip_input(assets.load::<AnimationClip>(art.sit), GAIT_SIT);
         });
-    });
     graph
 }
 

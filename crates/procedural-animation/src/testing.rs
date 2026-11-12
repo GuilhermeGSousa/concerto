@@ -160,11 +160,11 @@ where
     registry.register::<I>();
     registry.register::<Capture>();
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(Capture {}, |mut capture| {
-        capture.with_input(node, |mut node| {
-            node.with_input(input, |_| {});
-        });
-    });
+    graph
+        .result_node()
+        .input(Capture {})
+        .input(node)
+        .add_input(input);
     graph.make_live(&registry, None).unwrap();
     graph
 }

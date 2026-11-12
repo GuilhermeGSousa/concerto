@@ -343,7 +343,18 @@ impl<'a> AnimationNodeContext<'a> {
         self.node_index
     }
 
-    pub fn with_input<T: AnimationNode>(
+    /// Adds `node` as an input and returns the input's context, so a chain of single inputs reads flat.
+    pub fn input<T: AnimationNode>(self, node: T) -> AnimationNodeContext<'a> {
+        self.graph.add_node(node, self.node_index)
+    }
+
+    /// Adds `node` as an input with no inputs of its own.
+    pub fn add_input<T: AnimationNode>(&mut self, node: T) -> &mut Self {
+        self.add_input_with(node, |_| {})
+    }
+
+    /// Adds `node` as an input and hands its context to `f`.
+    pub fn add_input_with<T: AnimationNode>(
         &mut self,
         node: T,
         f: impl FnOnce(AnimationNodeContext<'_>),
@@ -352,7 +363,8 @@ impl<'a> AnimationNodeContext<'a> {
         self
     }
 
-    pub fn with_blend_space_2d_input(
+    /// Adds a 2D blend space driven by `param` as an input, its points and their inputs added through `f`.
+    pub fn add_blend_space_2d_input_with(
         &mut self,
         param: Name,
         f: impl FnOnce(&mut BlendSpace2DBuilderContext<'_>),
@@ -372,20 +384,38 @@ impl<'a> AnimationNodeContext<'a> {
         self
     }
 
+    /// Adds `node` as an input, with `base` and then `overlay` as its two inputs.
+    pub fn add_layer_input<B: AnimationNode, O: AnimationNode>(
+        &mut self,
+        node: LayerNode,
+        base: B,
+        overlay: O,
+    ) -> &mut Self {
+        self.add_layer_input_with(
+            node,
+            |mut layer| {
+                layer.add_input(base);
+            },
+            |mut layer| {
+                layer.add_input(overlay);
+            },
+        )
+    }
+
     /// Adds `node` as an input, its base through `base` and then its overlay through `overlay`; panics unless each closure adds exactly one input.
-    pub fn with_layer_input(
+    pub fn add_layer_input_with(
         &mut self,
         node: LayerNode,
         base: impl FnOnce(AnimationNodeContext<'_>),
         overlay: impl FnOnce(AnimationNodeContext<'_>),
     ) -> &mut Self {
         let layer = self.graph.add_node(node, self.node_index).index();
-        self.add_layer_input(layer, "base", base);
-        self.add_layer_input(layer, "overlay", overlay);
+        self.add_layer_side(layer, "base", base);
+        self.add_layer_side(layer, "overlay", overlay);
         self
     }
 
-    fn add_layer_input(
+    fn add_layer_side(
         &mut self,
         layer: AnimationNodeIndex,
         closure: &str,
@@ -399,7 +429,7 @@ impl<'a> AnimationNodeContext<'a> {
         let added = self.graph.get_node_inputs(layer).count() - before;
         assert!(
             added == 1,
-            "with_layer_input: the {closure} closure added {added} inputs to the layer node, and must add exactly one"
+            "add_layer_input_with: the {closure} closure added {added} inputs to the layer node, and must add exactly one"
         );
     }
 }
@@ -820,14 +850,10 @@ mod tests {
 
         fn graph(&self) -> AnimationGraph {
             let mut graph = AnimationGraph::new();
-            graph.result_node().with_layer_input(
+            graph.result_node().add_layer_input(
                 LayerNode::new(self.mask.clone()).with_space(LayerSpace::Local),
-                |mut base| {
-                    base.with_input(AnimationClipNode::new(self.base.clone()), |_| {});
-                },
-                |mut overlay| {
-                    overlay.with_input(AnimationClipNode::new(self.overlay.clone()), |_| {});
-                },
+                AnimationClipNode::new(self.base.clone()),
+                AnimationClipNode::new(self.overlay.clone()),
             );
             graph
         }
@@ -878,8 +904,8 @@ mod tests {
     }
 
     #[test]
-    fn with_layer_input_hands_the_layer_its_base_first_and_its_overlay_second_and_a_load_keeps_them()
-     {
+    fn add_layer_input_hands_the_layer_its_base_first_and_its_overlay_second_and_a_load_keeps_them()
+    {
         let mut layered = Layered::new();
         let built = layered.graph();
         let bytes = bincode::serialize(&layered.graph()).unwrap();
@@ -896,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn with_layer_input_panics_unless_each_closure_adds_one_input() {
+    fn add_layer_input_with_panics_unless_each_closure_adds_one_input() {
         let cases = [
             Misbuilt {
                 base: 0,
@@ -918,16 +944,16 @@ mod tests {
         for case in cases {
             let panicked = std::panic::catch_unwind(|| {
                 let mut graph = AnimationGraph::new();
-                graph.result_node().with_layer_input(
+                graph.result_node().add_layer_input_with(
                     LayerNode::default(),
                     |mut base| {
                         for _ in 0..case.base {
-                            base.with_input(BlendNode {}, |_| {});
+                            base.add_input(BlendNode {});
                         }
                     },
                     |mut overlay| {
                         for _ in 0..case.overlay {
-                            overlay.with_input(BlendNode {}, |_| {});
+                            overlay.add_input(BlendNode {});
                         }
                     },
                 );
