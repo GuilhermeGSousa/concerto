@@ -1,7 +1,8 @@
 # concerto-animation-editor
 
-The asset editors of an `AnimationClip` and of a `RetargetRig`, and the clip
-transport widget they play clips with, as an extension of `concerto-editor`.
+The asset editors of an `AnimationClip`, of a `RetargetRig` and of an
+`AnimationGraph`, and the clip transport widget the first two play clips with,
+as an extension of `concerto-editor`.
 Only editor crates depend on it. `cargo concerto new` writes this entry into a new
 project. A game made without it adds it to its own `Cargo.toml`, and
 `cargo concerto editor <dir> --update` writes the call into the game's generated
@@ -12,13 +13,16 @@ project. A game made without it adds it to its own `Cargo.toml`, and
 plugins = [{ package = "concerto-animation-editor", install = "concerto_animation_editor::install" }]
 ```
 
-`install` adds three plugins: `TransportPlugin`, the transport widget below;
+`install` adds four plugins: `TransportPlugin`, the transport widget below;
 `AnimationClipEditorPlugin`, which registers `AnimationClipEditor` as an asset
-editor and forwards what its preview reports; and `RetargetRigEditorPlugin`,
+editor and forwards what its preview reports; `RetargetRigEditorPlugin`,
 which registers `RetargetRigEditor` as a creatable asset editor and registers
 `RetargetRig`, `Skeleton` and `AnimationClip` in the editor's `AssetServer`, so a
 rig tab can pick a rig and a clip, and a loaded rig can load its skeleton and
-its reference clip. A game that doesn't list it has no clip or rig tab: a clip stays
+its reference clip; and `AnimationGraphEditorPlugin`, which registers
+`AnimationGraphEditor` as a creatable asset editor, so New lists
+`New AnimationGraph`. A
+game that doesn't list it has no clip, rig or graph tab: a clip or a graph stays
 selected in the content browser and opens nothing, and a rig opens in the
 generic inspector. Listing
 `concerto-motion-matching-editor` doesn't bring it, so a game that wants both
@@ -262,3 +266,100 @@ The tab needs no tool of its own. `open_asset`, `inspect`, `set_property`,
 inspected asset, and `set_property` on `Preview` drives everything the tab's
 controls do; `inspect` reads both back. `status` shows the status line and
 `screenshot` shows the preview.
+
+## The graph tab
+
+Opening an `AnimationGraph` opens a tab that shows the graph's nodes on a
+[graph canvas](../editor/README.md#the-graph-canvas) and edits them: nodes are
+added, wired, removed and inspected, and Save writes the graph back. The tab
+shows one graph. A node that plays another graph inside itself, a state machine
+or a retarget node, is edited as a node; its graphs are opened as assets of
+their own. The tab has a preview, which shows an empty stage: nothing plays the
+graph yet.
+
+### The working copy
+
+The tab never edits an `AnimationGraph` in place. Its document, `GraphDocument`,
+holds a `GraphCopy`: every node of the graph under a `GraphNodeId`, each with its
+inputs in slot order, loose nodes included. A node's id is the node's index in
+the file when the graph is read and the next free number when it is added; ids
+last while the graph stays open, are not saved, and are what the canvas and the
+signals name a node by.
+
+The nodes are live, built with `AnimationGraph::make_live` from the types the
+tab's preview `App` registers, which are the game's. So the tab waits for its
+preview before it reads the file, and a game's own node types are listed,
+built and inspected like the engine's. A node whose type the game does not
+register, or whose stored value cannot be built, is a placeholder: it keeps its
+stored value, a save writes it back as it was, the canvas outlines it in the
+warning colour, and selecting it puts the reason in the status. If the preview
+failed to build, the graph is shown read-only, with every node held as its
+stored value, and every edit is refused with
+`The preview is not running, so the graph is read-only`.
+
+The copy tells a node when its inputs change: it calls the parent's
+`input_added(index)` when it gives it an input and `input_removed(index)` when it
+takes one away, so a `BlendSpace2DNode` keeps a point per input.
+
+### The panels
+
+The `bottom` host holds a row with the graph's name and, under it, the canvas
+in `Flow` mode. A node's title is the last segment of its type name. Its
+subtitle is the name of the asset its first handle field names, when the
+project has that asset. Its pins come from `input_slots()`: none, one per named
+slot, or for a node that takes any number of inputs one per input and an empty
+one after them. Every node but the result node has an output pin. When a graph
+comes into view the canvas scrolls its result node into view.
+
+- Pressing a node or a link selects it; a click on empty space clears the
+  selection.
+- Dragging from a node's output pin to an input pin connects them.
+- Delete removes the selected node or link.
+- A right click on empty space lists the node types that can be added: every
+  type registered with `#[reflect(AnimationNode)]` but `ResultNode` and
+  `PlaceholderNode`, by short name, or by full path where two share one.
+  Picking one adds a loose node.
+
+The `inspector` host has the title, Graph, and the document's status on a line
+of its own when it is not empty. Under it the inspector shows the selected
+node as the document value `Node`, with the property editors its fields have
+anywhere else. A selected link, a placeholder, or nothing selected shows no
+card.
+
+### Editing
+
+Every gesture triggers one signal, `EditGraph { document, edit }`. `edit` is a
+`GraphEdit`:
+
+- `AddNode { type_name, parent, slot }` adds a node of a type named by its
+  short name or its full path, at its `Default` value, loose or connected as
+  `Connect` connects. A connection that is refused adds no node.
+- `Connect { child, parent, slot }` makes `child` an input of `parent`. On a
+  node with named slots, a `slot` that is taken replaces the input there, which
+  becomes loose, and any other `slot`, or none, puts the child in the first
+  empty slot; with every slot taken and no `slot` it is refused. On a node that
+  takes any number of inputs, `slot` is the position to insert at, the end
+  without one. A child that already has a parent is moved. It is refused when
+  the child is the result node, when it would close a cycle, when the parent
+  takes no inputs, and when `slot` is past a node's named slots.
+- `RemoveNode(id)` removes a node and leaves its inputs loose; the result node
+  is refused. `RemoveLink { child }` takes `child` out of its parent's inputs.
+  Either way the later inputs of that parent move up a slot.
+- `Select(selection)` selects a node, a link or nothing.
+
+Each ends in a `GraphEdited { document, edit, result }` event: a `GraphChange`
+naming the node added, the slot a connection took and the input it displaced,
+or the reason for a refusal, which is also the tab's status. An edit that
+changes the graph marks the tab `Unsaved`, as an edit of the `Node` value in
+the inspector does. Selecting does not.
+
+### Save and Discard
+
+Save (Ctrl+S) builds a fresh `AnimationGraph` from the copy, the result node
+first, then every node in id order, each connected to its inputs in slot order,
+and writes it over the file, keeping the asset's id. Loose nodes are saved; the
+runtime ignores what the result node does not reach. The status then reads
+`Saved <address>`, or `Save failed: …` with the tab left `Unsaved`.
+
+Discard reads the file again, so the tab shows the graph as last saved, with
+nothing selected.

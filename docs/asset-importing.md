@@ -492,7 +492,9 @@ the file.
 
 The editor scans the content tree once, when a project opens. After that, an
 import inserts the entries it returns, a New in the Asset Browser inserts the
-created asset's entry, and a scene save upserts the scene's entry, all in
+created asset's entry (New lists the kinds with a creatable editor: `Scene`,
+and with the animation editors `RetargetRig`, `AnimationGraph` and
+`MotionDatabase`), and a scene save upserts the scene's entry, all in
 memory, with no rescan and no file written beyond the asset itself. Content that git or
 a file explorer changes while the editor is open shows after the project is
 reopened. An import still scans the tree itself before writing, to find

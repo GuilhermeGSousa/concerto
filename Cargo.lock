@@ -1082,6 +1082,7 @@ dependencies = [
  "concerto-ui",
  "concerto-window",
  "glam 0.33.12",
+ "log",
  "serde_json",
  "tempfile",
  "uuid",

@@ -1,5 +1,6 @@
 //! The editor of an animation clip: it plays the clip on a skeleton, shows its bones, and edits and saves its events.
 pub mod events;
+pub mod graph;
 mod panels;
 pub mod preview;
 pub mod rig;
@@ -45,6 +46,7 @@ use concerto_window::{define_action, define_context};
 use uuid::Uuid;
 
 use events::{TabEvent, read_events};
+use graph::AnimationGraphEditorPlugin;
 use panels::{
     apply_clip_event_fields, bind_clip_keys, build_clip_panels, remove_clip_event,
     sync_clip_event_context, sync_clip_events, sync_clip_panels,
@@ -387,11 +389,12 @@ impl Plugin for AnimationClipEditorPlugin {
     }
 }
 
-/// Adds the clip and rig editors and the transport they play clips with to the editor's `App`.
+/// Adds the clip, rig and graph editors and the transport they play clips with to the editor's `App`.
 pub fn install(app: &mut App) {
     app.register_plugin(TransportPlugin)
         .register_plugin(AnimationClipEditorPlugin)
-        .register_plugin(RetargetRigEditorPlugin);
+        .register_plugin(RetargetRigEditorPlugin)
+        .register_plugin(AnimationGraphEditorPlugin);
     app.register_asset_icon(AnimationGraph::name(), glyph::GRAPH)
         .register_asset_icon(BoneMask::name(), glyph::MASK_HAPPY);
 }

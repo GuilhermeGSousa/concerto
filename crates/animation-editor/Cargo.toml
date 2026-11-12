@@ -24,6 +24,7 @@ concerto-scene.workspace = true
 concerto-ui.workspace = true
 concerto-window.workspace = true
 glam.workspace = true
+log = "0.4"
 serde_json = "1"
 uuid = "1.18.1"
 
