@@ -1,1 +1,62 @@
-[]
+[
+    Dialogue(
+        npc: "npc_01",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_01.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_02",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_02.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_03",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_03.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_04",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_04.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_05",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_05.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_06",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_06.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_07",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_07.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_08",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_08.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_09",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_09.who"])])],
+    ),
+    Dialogue(
+        npc: "npc_10",
+        brush_off: "busy",
+        no_answer: "no_answer",
+        topics: [Topic(ask: Question("who"), responses: [Response(lines: ["npc_10.who"])])],
+    ),
+]

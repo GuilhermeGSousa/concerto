@@ -249,17 +249,15 @@ struct CharacterArt {
 }
 
 fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
-    match data
-        .catalog
-        .portraits
-        .name(data.case.characters.get(npc).portrait)
-    {
-        "portrait_01" => CharacterArt {
-            scene: asset_id!("content/characters/export/lady/scene.gasset"),
-            idle: asset_id!("content/characters/export/lady/animation_Idle_Loop.gasset"),
-            walk: asset_id!("content/characters/export/lady/animation_Walk_Loop.gasset"),
-            sit: asset_id!("content/characters/export/lady/animation_Sitting_Idle_Loop.gasset"),
-        },
+    figure_of(
+        data.catalog
+            .portraits
+            .name(data.case.characters.get(npc).portrait),
+    )
+}
+
+fn figure_of(portrait: &str) -> CharacterArt {
+    match portrait {
         "portrait_02" => CharacterArt {
             scene: asset_id!("content/characters/export/gentleman/scene.gasset"),
             idle: asset_id!("content/characters/export/gentleman/animation_Idle_Loop.gasset"),
@@ -268,11 +266,65 @@ fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
                 "content/characters/export/gentleman/animation_Sitting_Idle_Loop.gasset"
             ),
         },
-        _ => CharacterArt {
+        "portrait_03" => CharacterArt {
             scene: asset_id!("content/characters/export/footman/scene.gasset"),
             idle: asset_id!("content/characters/export/footman/animation_Idle_Loop.gasset"),
             walk: asset_id!("content/characters/export/footman/animation_Walk_Loop.gasset"),
             sit: asset_id!("content/characters/export/footman/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_04" => CharacterArt {
+            scene: asset_id!("content/characters/export/colonel/scene.gasset"),
+            idle: asset_id!("content/characters/export/colonel/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/colonel/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/colonel/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_05" => CharacterArt {
+            scene: asset_id!("content/characters/export/debutante/scene.gasset"),
+            idle: asset_id!("content/characters/export/debutante/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/debutante/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/debutante/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        "portrait_06" => CharacterArt {
+            scene: asset_id!("content/characters/export/doctor/scene.gasset"),
+            idle: asset_id!("content/characters/export/doctor/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/doctor/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/doctor/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_07" => CharacterArt {
+            scene: asset_id!("content/characters/export/butler/scene.gasset"),
+            idle: asset_id!("content/characters/export/butler/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/butler/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/butler/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_08" => CharacterArt {
+            scene: asset_id!("content/characters/export/cook/scene.gasset"),
+            idle: asset_id!("content/characters/export/cook/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/cook/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/cook/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_09" => CharacterArt {
+            scene: asset_id!("content/characters/export/housekeeper/scene.gasset"),
+            idle: asset_id!("content/characters/export/housekeeper/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/housekeeper/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/housekeeper/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        "portrait_10" => CharacterArt {
+            scene: asset_id!("content/characters/export/chauffeur/scene.gasset"),
+            idle: asset_id!("content/characters/export/chauffeur/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/chauffeur/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/chauffeur/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        _ => CharacterArt {
+            scene: asset_id!("content/characters/export/lady/scene.gasset"),
+            idle: asset_id!("content/characters/export/lady/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/lady/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/lady/animation_Sitting_Idle_Loop.gasset"),
         },
     }
 }
@@ -515,7 +567,7 @@ fn npc_pose(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<NpcP
     {
         let anchor = data.level.anchor(staging.anchor);
         return Some(NpcPose {
-            position: anchor.position.with_y(0.0),
+            position: data.level.footing(staging.anchor),
             yaw: anchor.yaw,
             entry: 0,
             walking: false,
@@ -2272,6 +2324,23 @@ mod tests {
     }
 
     #[test]
+    fn every_portrait_a_case_can_name_has_its_own_figure_and_picture() {
+        let figures: Vec<_> = crate::casefile::PORTRAITS
+            .iter()
+            .map(|portrait| super::figure_of(portrait).scene)
+            .collect();
+        assert_eq!(figures.len(), 10);
+        for (index, figure) in figures.iter().enumerate() {
+            assert!(
+                !figures[..index].contains(figure),
+                "{} wears a figure of its own",
+                crate::casefile::PORTRAITS[index]
+            );
+        }
+        assert_eq!(crate::book_ui::PORTRAITS.len(), figures.len());
+    }
+
+    #[test]
     fn the_manor_is_walked_and_its_doors_bells_beds_and_dumbwaiter_answer() {
         let Some(mut app) = concerto::headless(|app| {
             crate::manor(app);
@@ -2319,6 +2388,30 @@ mod tests {
         };
         let in_bed = |app: &App, player: usize| session(app).seats[player].in_bed;
 
+        {
+            let world = app.main_mut().world_mut();
+            let mut bodies = world.query::<(&super::NpcBody, &Transform), ()>();
+            let heights: Vec<f32> = bodies
+                .iter(world)
+                .map(|(_, transform)| transform.translation.y)
+                .collect();
+            assert_eq!(heights.len(), 10, "the house holds its ten characters");
+            assert_eq!(
+                heights
+                    .iter()
+                    .filter(|height| (**height - 3.8).abs() < 0.2)
+                    .count(),
+                1,
+                "the one who is upstairs stands on that floor"
+            );
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            let her_door = data.catalog.doors.id("d_g1").unwrap();
+            let knock = |player: u8, hour: f64| {
+                super::privacy_at(data, &house(&app), her_door, player, None, hour * 3600.0)
+            };
+            assert!(knock(0, 18.2).someone_in, "she is in until seven");
+            assert!(!knock(1, 20.0).someone_in, "and out in the gallery after");
+        }
         assert_eq!(
             aiming_at(&mut app, 0, Vec3::new(20.1, 4.35, -13.5)),
             Some(super::Interactable::Bed(0)),

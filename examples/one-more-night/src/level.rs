@@ -441,17 +441,27 @@ impl Level {
         doors
     }
 
-    /// The points to walk from one anchor to another: both ends, and between them each door on the way that the scene has placed.
+    /// Where a character at `anchor` puts their feet: under it, on the floor of its room.
+    pub fn footing(&self, anchor: AnchorId) -> Vec3 {
+        let anchor = self.anchor(anchor);
+        anchor.position.with_y(self.room(anchor.room).floor)
+    }
+
+    /// The points to walk from one anchor to another, each on its floor: both ends, and between them each door on the way that the scene has placed, at the higher of the floors it joins.
     pub fn route(&self, from: AnchorId, to: AnchorId) -> Vec<Vec3> {
         let (start, end) = (self.anchor(from), self.anchor(to));
-        let mut points = vec![start.position.with_y(0.0)];
+        let mut points = vec![self.footing(from)];
         points.extend(
             self.doors_on_the_way(start.room, end.room)
                 .into_iter()
-                .filter_map(|door| self.door_position(door))
-                .map(|position| position.with_y(0.0)),
+                .filter_map(|door| {
+                    let sides = self.door(door);
+                    let floor = self.room(sides.a).floor.max(self.room(sides.b).floor);
+                    self.door_position(door)
+                        .map(|position| position.with_y(floor))
+                }),
         );
-        points.push(end.position.with_y(0.0));
+        points.push(self.footing(to));
         points
     }
 }
@@ -547,6 +557,15 @@ mod tests {
                 .iter()
                 .all(|lamp| lamp.position.distance(garden) > lamp.range),
             "no lamp reaches the middle of the garden"
+        );
+
+        let anchor = |name: &str| data.catalog.anchors.id(name).unwrap();
+        let upstairs_walk = level.route(anchor("g1_p01_a"), anchor("gallery_p01_a"));
+        assert!(
+            upstairs_walk
+                .iter()
+                .all(|point| (point.y - bedroom.floor).abs() < 1e-4),
+            "a walk between two rooms upstairs stays on their floor"
         );
 
         let hidden = level.hidden_nodes(|_| false);
