@@ -253,6 +253,13 @@ pub struct CanvasConnected {
     pub slot: Option<usize>,
 }
 
+/// Sent to a [`GraphCanvas`] when a connect drag from `from` ends on empty space, with the pointer's window position.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasLinkDropped {
+    pub from: CanvasNodeId,
+    pub at: Vec2,
+}
+
 /// Sent to a [`GraphCanvas`] when Delete is pressed with something selected.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasDeleted {
@@ -285,6 +292,7 @@ canvas_signals!(
     CanvasSelected,
     CanvasActivated,
     CanvasConnected,
+    CanvasLinkDropped,
     CanvasDeleted,
     CanvasMenuRequested,
     FrameCanvasNode,
@@ -545,23 +553,28 @@ fn release_surface(canvas: Entity) -> Listener<UIPointerUp> {
             return;
         };
         let from = connecting.from;
-        let connected = match built.pointed(signal.position, surface, view.offset).part {
-            CanvasPart::Input { node, slot } if node != from => Some(CanvasConnected {
-                from,
-                to: node,
-                slot: Some(slot),
-            }),
+        match built.pointed(signal.position, surface, view.offset).part {
+            CanvasPart::Input { node, slot } if node != from => {
+                cmd.entity(canvas).trigger(CanvasConnected {
+                    from,
+                    to: node,
+                    slot: Some(slot),
+                });
+            }
             CanvasPart::Node(node) if node != from && built.draws(CanvasMode::Diagram) => {
-                Some(CanvasConnected {
+                cmd.entity(canvas).trigger(CanvasConnected {
                     from,
                     to: node,
                     slot: None,
-                })
+                });
             }
-            _ => None,
-        };
-        if let Some(connected) = connected {
-            cmd.entity(canvas).trigger(connected);
+            CanvasPart::Empty => {
+                cmd.entity(canvas).trigger(CanvasLinkDropped {
+                    from,
+                    at: signal.position,
+                });
+            }
+            _ => {}
         }
     })
     .into_listener()
@@ -1085,6 +1098,7 @@ mod tests {
         selected: Vec<Option<CanvasTarget>>,
         activated: Vec<CanvasNodeId>,
         connected: Vec<CanvasConnected>,
+        dropped: Vec<CanvasLinkDropped>,
         deleted: Vec<CanvasTarget>,
         menus: Vec<CanvasMenuRequested>,
     }
@@ -1144,6 +1158,10 @@ mod tests {
                 .into_listener(),
                 (|on: On<CanvasConnected>, mut heard: ResMut<Heard>| {
                     heard.connected.push(*on.signal());
+                })
+                .into_listener(),
+                (|on: On<CanvasLinkDropped>, mut heard: ResMut<Heard>| {
+                    heard.dropped.push(*on.signal());
                 })
                 .into_listener(),
                 (|on: On<CanvasDeleted>, mut heard: ResMut<Heard>| {
@@ -1410,6 +1428,13 @@ mod tests {
                 from: CLIP_B,
                 to: BLEND,
                 slot: Some(1),
+            }]
+        );
+        assert_eq!(
+            f.heard().dropped,
+            [CanvasLinkDropped {
+                from: CLIP_B,
+                at: ORIGIN + Vec2::new(2.0, 2.0),
             }]
         );
     }

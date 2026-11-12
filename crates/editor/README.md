@@ -1556,7 +1556,9 @@ compares what it wants with what is shown and writes only when they differ.
 - In `Flow`, a drag from an output pin that ends on an input pin of another
   node sends `CanvasConnected { from, to, slot: Some(slot) }`. In `Diagram`, a
   drag from one box that ends on another sends it with `slot: None`. A line
-  follows the pointer during the drag. A drag that ends anywhere else sends
+  follows the pointer during the drag. A drag that ends on empty space sends
+  `CanvasLinkDropped { from, at }`, `at` being the pointer's position in the
+  window, and one that ends anywhere else, its own node included, sends
   nothing.
 - Delete with something selected sends `CanvasDeleted { target }`.
 - A right click sends `CanvasMenuRequested { at, on }`: `at` is the pointer's
