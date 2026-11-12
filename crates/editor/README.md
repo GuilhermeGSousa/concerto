@@ -793,8 +793,9 @@ scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
 edit signal: `EntityEdited { edit, result }`, whose result is the entity a
 create or duplicate made; `PropertyCommitted { address, result }`, whose refusal
 is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
-`Refused` for any other reason; and
-`ComponentEdited { edit, result }`. A refused edit's result is the text its
+`Refused` for any other reason;
+`ComponentEdited { edit, result }`; and `AssetPlaced { asset, result }`, whose
+result is the entity a `PlaceAsset` made. A refused edit's result is the text its
 `SceneStatus` carries, so a refused property or component edit also shows in
 Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
 the shape `inspect` reports, into the field at `path` of a component, or into
@@ -805,7 +806,17 @@ references are live entity ids such as `42v3`, asset handles are asset ids and
 load through the edit `App`'s `AssetServer` as a spawned scene's do, and colors
 are their linear `[r, g, b, a]`. It refuses the scene root, an unknown path, a
 value that does not decode, and an entity or component that is not there, and
-a refused set leaves the component as it was. An outcome written by a signal reaches the editor a frame later, as
+a refused set leaves the component as it was.
+`PlaceAsset { asset, parent, at }` adds an entity that uses an asset whose kind
+the recipe registered with `register_placeable_asset`: named after the asset's
+file, under `parent` or the scene root, at `PlaceAt::Position`, a point in
+world space, or at `PlaceAt::Pointer`, a point of the viewport in logical
+pixels, which lands on the scene mesh under it, else on the y = 0 plane within
+200 m, else 10 m along the ray. The entity is spawned and selected once the
+asset has loaded, so its `AssetPlaced` can come frames later; a load that
+fails or is cancelled ends it with an error and spawns nothing. It is refused
+without an open scene, which is the case while the game plays, and is there
+only in a recipe with a renderer. An outcome written by a signal reaches the editor a frame later, as
 any forwarded event does. An edit of a document's value does not pass through a
 hosted `App`: its `Hosted<PropertyCommitted>` is written straight into the
 editor's world, naming the value's document, with no frame's lag.

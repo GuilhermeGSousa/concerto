@@ -78,12 +78,28 @@ pub fn world_to_viewport(point: Vec3, size: Vec2, view_proj: Mat4) -> Option<Vec
     Some(uv * size)
 }
 
+/// The mesh a ray hits first: its entity and how far along the ray the hit is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PickHit {
+    pub entity: Entity,
+    pub distance: f32,
+}
+
 /// The entity whose mesh `ray` hits first.
 pub fn pick<'a>(
     ray: &Ray,
     meshes: &AssetStore<Mesh>,
     nodes: impl Iterator<Item = (Entity, &'a MeshComponent, &'a Aabb, &'a GlobalTransform)>,
 ) -> Option<Entity> {
+    pick_hit(ray, meshes, nodes).map(|hit| hit.entity)
+}
+
+/// The nearest mesh hit of `ray` among `nodes`.
+pub fn pick_hit<'a>(
+    ray: &Ray,
+    meshes: &AssetStore<Mesh>,
+    nodes: impl Iterator<Item = (Entity, &'a MeshComponent, &'a Aabb, &'a GlobalTransform)>,
+) -> Option<PickHit> {
     let mut candidates: Vec<_> = nodes
         .filter_map(|(entity, mesh, aabb, transform)| {
             let matrix = transform.matrix();
@@ -97,20 +113,20 @@ pub fn pick<'a>(
         .collect();
     candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    let mut nearest: Option<(f32, Entity)> = None;
+    let mut nearest: Option<PickHit> = None;
     for (entry, entity, local, mesh) in candidates {
-        if nearest.is_some_and(|(distance, _)| entry > distance) {
+        if nearest.is_some_and(|hit| entry > hit.distance) {
             break;
         }
         if let Some(distance) = meshes
             .get(&mesh.handle)
             .and_then(|mesh| mesh.ray_hit(&local))
-            && nearest.is_none_or(|(best, _)| distance < best)
+            && nearest.is_none_or(|hit| distance < hit.distance)
         {
-            nearest = Some((distance, entity));
+            nearest = Some(PickHit { entity, distance });
         }
     }
-    nearest.map(|(_, entity)| entity)
+    nearest
 }
 
 #[allow(clippy::too_many_arguments)]

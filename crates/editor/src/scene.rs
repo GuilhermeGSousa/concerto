@@ -42,6 +42,7 @@ use crate::{
         EditToolsCorePlugin, EditToolsPlugin,
         edits::{ComponentEdited, PropertyCommitted},
         entity_ops::EntityEdited,
+        placement::AssetPlaced,
         scene::{OpenScene, RevealEntity, SceneEdited, SceneStatus, write},
     },
 };
@@ -165,6 +166,7 @@ impl Plugin for ScenePlugin {
             .forward_hosted_event::<SceneStatus>()
             .forward_hosted_event::<RevealEntity>()
             .forward_hosted_event::<EntityEdited>()
+            .forward_hosted_event::<AssetPlaced>()
             .forward_hosted_event::<PropertyCommitted>()
             .forward_hosted_event::<ComponentEdited>();
         app.add_system(

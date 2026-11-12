@@ -145,7 +145,7 @@ fn exists(world: &World, entity: Entity) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn new_parent(world: &mut World, parent: Option<Entity>) -> anyhow::Result<()> {
+pub(crate) fn new_parent(world: &mut World, parent: Option<Entity>) -> anyhow::Result<()> {
     if has_scene_root(world) {
         scene_member(
             world,
