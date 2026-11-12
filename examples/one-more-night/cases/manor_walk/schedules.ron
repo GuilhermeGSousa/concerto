@@ -2,14 +2,51 @@
     Schedule(npc: "npc_01", entries: [
         ScheduleEntry(start: "18:00", anchor: "g1_p01_a", activity: "stand", phase: Before),
         ScheduleEntry(start: "19:00", anchor: "gallery_p01_a", activity: "stand", phase: Before),
+        ScheduleEntry(start: "20:00", anchor: "dining_04", activity: "sit", phase: Before),
+        ScheduleEntry(start: "21:30", anchor: "drawing_p01_a", activity: "sit", phase: Before),
+        ScheduleEntry(start: "23:00", anchor: "g1_p01_a", activity: "stand", phase: Before),
     ]),
-    Schedule(npc: "npc_02", entries: [ScheduleEntry(start: "18:00", anchor: "drawing_p03_a", activity: "stand", phase: Before)]),
-    Schedule(npc: "npc_03", entries: [ScheduleEntry(start: "18:00", anchor: "servhall_p01_a", activity: "stand", phase: Before)]),
-    Schedule(npc: "npc_04", entries: [ScheduleEntry(start: "18:00", anchor: "billiard_p02_a", activity: "stand", phase: Before)]),
-    Schedule(npc: "npc_05", entries: [ScheduleEntry(start: "18:00", anchor: "drawing_p03_b", activity: "stand", phase: Before)]),
-    Schedule(npc: "npc_06", entries: [ScheduleEntry(start: "18:00", anchor: "billiard_p02_b", activity: "stand", phase: Before)]),
-    Schedule(npc: "npc_07", entries: [ScheduleEntry(start: "18:00", anchor: "dining_17", activity: "stand", phase: Before)]),
-    Schedule(npc: "npc_08", entries: [ScheduleEntry(start: "18:00", anchor: "kitchen_02", activity: "stand", phase: Before)]),
-    Schedule(npc: "npc_09", entries: [ScheduleEntry(start: "18:00", anchor: "housekeeper_03", activity: "sit", phase: Before)]),
-    Schedule(npc: "npc_10", entries: [ScheduleEntry(start: "18:00", anchor: "garage_08", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_02", entries: [
+        ScheduleEntry(start: "18:00", anchor: "drawing_p03_a", activity: "stand", phase: Before),
+        ScheduleEntry(start: "20:00", anchor: "dining_05", activity: "sit", phase: Before),
+        ScheduleEntry(start: "21:30", anchor: "library_p02_a", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_03", entries: [
+        ScheduleEntry(start: "18:00", anchor: "servhall_p01_a", activity: "stand", phase: Before),
+        ScheduleEntry(start: "19:45", anchor: "dining_p01_a", activity: "stand", phase: Before),
+        ScheduleEntry(start: "21:30", anchor: "servhall_p01_a", activity: "stand", phase: Before),
+        ScheduleEntry(start: "23:00", anchor: "attic_men_11", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_04", entries: [
+        ScheduleEntry(start: "18:00", anchor: "billiard_p02_a", activity: "stand", phase: Before),
+        ScheduleEntry(start: "20:00", anchor: "dining_09", activity: "sit", phase: Before),
+        ScheduleEntry(start: "21:30", anchor: "billiard_p02_a", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_05", entries: [
+        ScheduleEntry(start: "18:00", anchor: "drawing_p03_b", activity: "stand", phase: Before),
+        ScheduleEntry(start: "20:00", anchor: "dining_08", activity: "sit", phase: Before),
+        ScheduleEntry(start: "21:30", anchor: "drawing_p01_b", activity: "sit", phase: Before),
+        ScheduleEntry(start: "23:15", anchor: "g3_p01_a", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_06", entries: [
+        ScheduleEntry(start: "18:00", anchor: "billiard_p02_b", activity: "stand", phase: Before),
+        ScheduleEntry(start: "20:00", anchor: "dining_06", activity: "sit", phase: Before),
+        ScheduleEntry(start: "21:30", anchor: "billiard_p02_b", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_07", entries: [
+        ScheduleEntry(start: "18:00", anchor: "dining_17", activity: "stand", phase: Before),
+        ScheduleEntry(start: "21:30", anchor: "pantry_03", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_08", entries: [
+        ScheduleEntry(start: "18:00", anchor: "kitchen_02", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_09", entries: [
+        ScheduleEntry(start: "18:00", anchor: "housekeeper_03", activity: "sit", phase: Before),
+        ScheduleEntry(start: "22:00", anchor: "gallery_17", activity: "stand", phase: Before),
+        ScheduleEntry(start: "22:30", anchor: "housekeeper_03", activity: "sit", phase: Before),
+    ]),
+    Schedule(npc: "npc_10", entries: [
+        ScheduleEntry(start: "18:00", anchor: "garage_08", activity: "stand", phase: Before),
+        ScheduleEntry(start: "21:00", anchor: "servhall_p01_b", activity: "stand", phase: Before),
+    ]),
 ]

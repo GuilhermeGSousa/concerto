@@ -87,6 +87,7 @@ const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
 const NPC_DOOR_REACH: f32 = 1.1;
+const NPC_DOOR_STOREY: f32 = 1.5;
 const MOONLIGHT: f32 = 0.18;
 const MOON_COLOR: Color = Color::rgba(0.62, 0.72, 1.0, 1.0);
 const LAMP_GLOW: f32 = 5.0;
@@ -503,6 +504,17 @@ pub fn install_stage(app: &mut App, saves: Option<PathBuf>, stage: Stage) {
         for seat in &mut session.seats {
             seat.mode = Mode::Walking;
         }
+    }
+    #[cfg(feature = "debug")]
+    if let Some(start) = std::env::var("ONE_MORE_NIGHT_START")
+        .ok()
+        .and_then(|start| {
+            let (hour, minute) = start.split_once(':')?;
+            Some(GameTime::hm(hour.parse().ok()?, minute.parse().ok()?))
+        })
+        && let Some(mut clock) = app.get_resource_mut::<NightClock>()
+    {
+        clock.jump_to(start);
     }
     bind_controls(
         app.get_resource_mut::<ActionMap>()
@@ -1495,7 +1507,7 @@ fn move_npcs(
             continue;
         };
         let at = physics.body_transform(*body).translation;
-        let step = (pose.position - at).with_y(0.0);
+        let step = pose.position - at;
         let velocity = if step.length() > NPC_SNAP {
             step / dt
         } else {
@@ -1529,7 +1541,8 @@ fn hold_doors_for_npcs(
     for door in data.level.doors() {
         let held = data.level.door_position(door).is_some_and(|position| {
             npcs.iter().any(|npc| {
-                npc.translation.with_y(0.0).distance(position.with_y(0.0)) <= NPC_DOOR_REACH
+                npc.translation.distance(position.with_y(npc.translation.y)) <= NPC_DOOR_REACH
+                    && (npc.translation.y - position.y).abs() < NPC_DOOR_STOREY
             })
         });
         if house.held_open[door.index()] != held {
@@ -2409,6 +2422,13 @@ mod tests {
             let knock = |player: u8, hour: f64| {
                 super::privacy_at(data, &house(&app), her_door, player, None, hour * 3600.0)
             };
+            let lady = data.case.characters.id("npc_01").unwrap();
+            let on_the_stair = (0..90).any(|step| {
+                let now = 19.5 * 3600.0 + f64::from(step) * 20.0;
+                super::npc_pose(data, &house(&app), lady, now)
+                    .is_some_and(|pose| pose.walking && (0.5..3.3).contains(&pose.position.y))
+            });
+            assert!(on_the_stair, "she comes down the main stair to dinner");
             assert!(knock(0, 18.2).someone_in, "she is in until seven");
             assert!(!knock(1, 20.0).someone_in, "and out in the gallery after");
         }

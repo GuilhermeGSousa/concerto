@@ -108,7 +108,8 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | F10 | Brings the first inspectable prop up for the first player |
 
 With the `debug` feature, setting `ONE_MORE_NIGHT_NO_CARD` starts the night
-without its card, for looking at a level without a pad in hand.
+without its card, for looking at a level without a pad in hand, and
+`ONE_MORE_NIGHT_START=19:50` starts the first night at that time.
 
 ## Code
 

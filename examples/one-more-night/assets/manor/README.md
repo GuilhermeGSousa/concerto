@@ -87,6 +87,13 @@ code is 1 when the lint fails.
 In `level_manifest.ron`, coordinates are metres with +X east, +Y north and +Z
 up, and `facing` is degrees counter-clockwise from north. `travel` holds one
 representative anchor per room; every anchor pair is in `travel_full.csv`.
+`ways` and `paths` are the walk graph the times were measured on: every
+standing anchor, door threshold, stair end and landing, and a grid of free
+floor, joined where one can be walked to from the other. The game routes its
+characters over it.
+
+`-- <out> --manifest-only` rewrites the manifest, the lint and the travel table
+and leaves the `.glb` files alone.
 The `.glb` files are Y up, with each object's custom properties as glTF
 extras.
 

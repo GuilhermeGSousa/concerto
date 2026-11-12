@@ -1,4 +1,6 @@
-use std::collections::{HashMap, VecDeque, hash_map::Entry};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, VecDeque, hash_map::Entry};
+use std::sync::{Arc, Mutex};
 
 use concerto::ecs::Resource;
 use glam::{Vec2, Vec3};
@@ -22,6 +24,24 @@ struct RawManifest {
     anchors: Vec<RawAnchor>,
     #[serde(default)]
     features: Vec<RawFeature>,
+    #[serde(default)]
+    ways: Vec<RawWay>,
+    #[serde(default)]
+    paths: Vec<RawPath>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename = "Way")]
+struct RawWay {
+    id: String,
+    pos: RawPoint,
+}
+
+#[derive(Deserialize)]
+#[serde(rename = "Path")]
+struct RawPath {
+    a: String,
+    b: String,
 }
 
 #[derive(Deserialize)]
@@ -188,6 +208,106 @@ pub struct FeatureNodes {
     pub off: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct RouteEnds {
+    from: u32,
+    to: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Reached {
+    millimetres: u32,
+    node: u32,
+}
+
+#[derive(Clone, Debug, Default)]
+struct WalkGraph {
+    points: Vec<Vec3>,
+    links: Vec<Vec<u32>>,
+    anchors: HashMap<AnchorId, u32>,
+    found: Arc<Mutex<HashMap<RouteEnds, Vec<Vec3>>>>,
+}
+
+impl WalkGraph {
+    fn read(raw: &RawManifest, catalog: &Catalog) -> Self {
+        let index: HashMap<&str, u32> = raw
+            .ways
+            .iter()
+            .enumerate()
+            .map(|(at, way)| (way.id.as_str(), at as u32))
+            .collect();
+        let mut links = vec![Vec::new(); raw.ways.len()];
+        for path in &raw.paths {
+            if let (Some(a), Some(b)) = (index.get(path.a.as_str()), index.get(path.b.as_str())) {
+                links[*a as usize].push(*b);
+                links[*b as usize].push(*a);
+            }
+        }
+        Self {
+            points: raw
+                .ways
+                .iter()
+                .map(|way| from_manifest(way.pos.0, way.pos.1, way.pos.2))
+                .collect(),
+            links,
+            anchors: raw
+                .ways
+                .iter()
+                .enumerate()
+                .filter_map(|(at, way)| Some((catalog.anchors.id(&way.id)?, at as u32)))
+                .collect(),
+            found: Arc::default(),
+        }
+    }
+
+    fn shortest(&self, ends: RouteEnds) -> Option<Vec<Vec3>> {
+        let mut found = self.found.lock().ok()?;
+        if let Some(route) = found.get(&ends) {
+            return Some(route.clone());
+        }
+        let mut best = vec![u32::MAX; self.points.len()];
+        let mut came_from = vec![u32::MAX; self.points.len()];
+        let mut open = BinaryHeap::from([Reverse(Reached {
+            millimetres: 0,
+            node: ends.from,
+        })]);
+        best[ends.from as usize] = 0;
+        while let Some(Reverse(reached)) = open.pop() {
+            if reached.node == ends.to {
+                break;
+            }
+            if reached.millimetres > best[reached.node as usize] {
+                continue;
+            }
+            let here = self.points[reached.node as usize];
+            for next in &self.links[reached.node as usize] {
+                let step = (here.distance(self.points[*next as usize]) * 1000.0) as u32;
+                let millimetres = reached.millimetres.saturating_add(step);
+                if millimetres < best[*next as usize] {
+                    best[*next as usize] = millimetres;
+                    came_from[*next as usize] = reached.node;
+                    open.push(Reverse(Reached {
+                        millimetres,
+                        node: *next,
+                    }));
+                }
+            }
+        }
+        if best[ends.to as usize] == u32::MAX {
+            return None;
+        }
+        let mut route = vec![self.points[ends.to as usize]];
+        let mut node = ends.to;
+        while node != ends.from {
+            node = came_from[node as usize];
+            route.push(self.points[node as usize]);
+        }
+        route.reverse();
+        found.insert(ends, route.clone());
+        Some(route)
+    }
+}
+
 /// The level's rooms, anchors and doors, in the engine's space: a manifest point `(x, y, z)` is `(x, z, -y)` here.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct Level {
@@ -197,6 +317,7 @@ pub struct Level {
     features: Vec<FeatureNodes>,
     door_positions: HashMap<DoorId, Vec3>,
     homes: HashMap<u8, RoomId>,
+    walk: WalkGraph,
 }
 
 /// Turns a manifest point, z up, into the engine's, y up.
@@ -281,14 +402,15 @@ impl Level {
                 .collect(),
             features: raw
                 .features
-                .into_iter()
+                .iter()
                 .map(|feature| FeatureNodes {
-                    on: feature.on,
-                    off: feature.off,
+                    on: feature.on.clone(),
+                    off: feature.off.clone(),
                 })
                 .collect(),
             door_positions: HashMap::new(),
             homes: HashMap::new(),
+            walk: WalkGraph::read(&raw, catalog),
         })
     }
 
@@ -441,14 +563,23 @@ impl Level {
         doors
     }
 
-    /// Where a character at `anchor` puts their feet: under it, on the floor of its room.
+    /// Where a character at `anchor` puts their feet: its place on the level's walk graph, or under it on the floor of its room.
     pub fn footing(&self, anchor: AnchorId) -> Vec3 {
+        if let Some(node) = self.walk.anchors.get(&anchor) {
+            return self.walk.points[*node as usize];
+        }
         let anchor = self.anchor(anchor);
         anchor.position.with_y(self.room(anchor.room).floor)
     }
 
-    /// The points to walk from one anchor to another, each on its floor: both ends, and between them each door on the way that the scene has placed, at the higher of the floors it joins.
+    /// The points to walk from one anchor to another: the shortest way over the level's walk graph, round the furniture and by the stairs. A level without one gives both ends, each on its floor, and between them each door on the way that the scene has placed, at the higher of the floors it joins.
     pub fn route(&self, from: AnchorId, to: AnchorId) -> Vec<Vec3> {
+        if from != to
+            && let (Some(a), Some(b)) = (self.walk.anchors.get(&from), self.walk.anchors.get(&to))
+            && let Some(route) = self.walk.shortest(RouteEnds { from: *a, to: *b })
+        {
+            return route;
+        }
         let (start, end) = (self.anchor(from), self.anchor(to));
         let mut points = vec![self.footing(from)];
         points.extend(
@@ -566,6 +697,24 @@ mod tests {
                 .iter()
                 .all(|point| (point.y - bedroom.floor).abs() < 1e-4),
             "a walk between two rooms upstairs stays on their floor"
+        );
+
+        let upstairs = level.route(anchor("drawing_p03_a"), anchor("gallery_p01_a"));
+        assert_eq!(upstairs.first().map(|point| point.y), Some(0.0));
+        assert!(
+            upstairs.iter().any(|point| (point.y - 1.99).abs() < 0.05),
+            "the way up from the drawing room crosses the main stair's landing"
+        );
+        assert!(
+            upstairs
+                .windows(2)
+                .all(|pair| (pair[1].y - pair[0].y).abs() <= 0.5 * pair[0].distance(pair[1]) + 0.3),
+            "and never climbs steeper than a stair"
+        );
+        let to_bed = path_length(&level.route(anchor("servhall_p02_b"), anchor("attic_staff_09")));
+        assert!(
+            (38.0..50.0).contains(&to_bed),
+            "the Staff's walk to bed is the back stairs' length, not {to_bed} m"
         );
 
         let hidden = level.hidden_nodes(|_| false);
