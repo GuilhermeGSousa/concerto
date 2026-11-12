@@ -634,6 +634,14 @@ def run(out_dir=None, export_glb=True):
                 t = travel_full.get((a, b)) or travel_full.get((b, a))
                 if t is not None:
                     L.append(f"        Travel(from: {q(a)}, to: {q(b)}, seconds: {t:.1f}),")
+        L += ["    ],", "    ways: ["]
+        for nid in sorted(g.nodes):
+            p = g.nodes[nid]["pos"]
+            L.append(f"        Way(id: {q(nid)}, pos: ({f2(p[0])}, {f2(p[1])}, {f2(p[2])})),")
+        L += ["    ],", "    paths: ["]
+        for a in sorted(g.adj):
+            for b in sorted({b for b, _, _ in g.adj[a] if a < b}):
+                L.append(f"        Path(a: {q(a)}, b: {q(b)}),")
         L += ["    ],", ")", ""]
         text = "\n".join(L)
         mpath = os.path.join(out_dir, "level_manifest.ron")
@@ -728,8 +736,8 @@ def main(out_dir=None, export_glb=True):
 
 if __name__ == "__main__":
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    out = os.path.abspath(argv[0]) if argv else os.path.join(ROOT, "export")
-    rep = main(out)
+    out = os.path.abspath(argv[0]) if argv and not argv[0].startswith("--") else os.path.join(ROOT, "export")
+    rep = main(out, "--manifest-only" not in argv)
     print(rep.get("lint_text", ""))
     for lvl, g_ in rep.get("glb", {}).items():
         print(f"wrote {g_['path']} ({g_['objects']} objects, {g_['bytes']} bytes)")
