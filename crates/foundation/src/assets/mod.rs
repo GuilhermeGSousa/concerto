@@ -151,6 +151,17 @@ pub trait LoadableAsset: Asset {
     }
 }
 
+/// An asset that can be placed in a scene as an entity.
+pub trait PlaceableAsset: LoadableAsset {
+    /// Adds to `entity` what makes it show or use the asset behind `handle`.
+    fn place(
+        asset: &Self,
+        handle: handle::AssetHandle<Self>,
+        entity: concerto_ecs::Entity,
+        cmd: &mut concerto_ecs::CommandQueue,
+    );
+}
+
 #[cfg(test)]
 mod content_root_tests {
     use super::{content_root_for_exe, directory_of, AssetId};

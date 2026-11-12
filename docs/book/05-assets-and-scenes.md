@@ -148,6 +148,36 @@ reflection has to build from nothing: a type held in an `Option` or a `Vec`,
 and the fields of an enum's variants. Asset handles are saved as their ids,
 and entity references as positions in the scene's tree.
 
+### Making an asset placeable
+
+An asset kind that can stand in a scene as an entity says how, by implementing
+`PlaceableAsset`. `place` is handed an entity that already exists, named,
+positioned and parented, and adds to it what shows or uses the asset:
+components on the entity, children under it.
+
+```rust
+use concerto::{
+    ecs::{CommandQueue, Entity},
+    foundation::assets::{handle::AssetHandle, PlaceableAsset},
+};
+
+impl PlaceableAsset for Prop {
+    fn place(asset: &Self, handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
+        cmd.insert(PropComponent { handle }, entity);
+    }
+}
+
+app.register_placeable_asset::<Prop>();
+```
+
+`register_placeable_asset` registers the asset as `register_asset` does and
+records the kind in the `PlaceableAssets` resource. A record is for code that
+knows the kind only by its name: `request_load` starts the load and keeps the
+asset alive, `is_loaded` says when it has landed, and `fill` runs `place` on an
+entity and lets the asset go, so it lives on only through the handles `place`
+stored. A load that fails lets it go too. Register the kind in the game's
+recipe, with its other assets, so the editor has it.
+
 ## More
 
 [docs/asset-importing.md](../asset-importing.md) covers the registry, the
