@@ -7,14 +7,16 @@ use concerto_animation::clip::{
 };
 use concerto_animation::evaluation::AnimationGraphContext;
 use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
-use concerto_animation::graph::AnimationGraph;
+use concerto_animation::graph::{
+    AnimationGraph, AnimationNodeData, AnimationNodeIndex, ConnectError,
+};
 use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
     AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, AnimationNode, AnimationPlayMode,
-    ErasedAnimationNode, IkGoal, InputSlots, LayerNode, LayerSpace, ReflectAnimationNode,
-    TipRotation, TwoBoneIkNode,
+    BlendNode, ErasedAnimationNode, IkGoal, InputSlots, LayerNode, LayerSpace,
+    ReflectAnimationNode, TipRotation, TwoBoneIkNode,
 };
 use concerto_animation::param::Param;
 use concerto_animation::plugin::register_animation_types;
@@ -34,6 +36,7 @@ use concerto_foundation::assets::content::{
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use proptest::prelude::*;
 use uuid::Uuid;
 
 #[derive(Default, Reflect)]
@@ -813,4 +816,174 @@ fn a_version_1_retarget_rig_migrates_to_a_rig_with_no_goals() {
 
     assert_eq!(rig, version_1_rig());
     assert!(rig.goals.is_empty());
+}
+
+struct Refusal {
+    parent: AnimationNodeIndex,
+    child: AnimationNodeIndex,
+    error: ConnectError,
+}
+
+#[test]
+fn connect_refuses_what_would_stop_the_graph_being_a_tree_under_its_result() {
+    let mut larger = AnimationGraph::new();
+    for _ in 0..4 {
+        larger.insert_node(AnimationNodeData::of(&BlendNode {}));
+    }
+    let outside = larger.node_indices().last().unwrap();
+
+    let mut graph = AnimationGraph::new();
+    let result = graph.result_index();
+    let blend = graph.insert_node(AnimationNodeData::of(&BlendNode {}));
+    let gain = graph.insert_node(AnimationNodeData::from_live(Box::new(Gain { amount: 1.0 })));
+    let loose = graph.insert_node(AnimationNodeData::of(&BlendNode {}));
+    graph.connect(result, blend).unwrap();
+    graph.connect(blend, gain).unwrap();
+
+    let cases = [
+        Refusal {
+            parent: loose,
+            child: gain,
+            error: ConnectError::ChildHasParent { child: gain },
+        },
+        Refusal {
+            parent: loose,
+            child: result,
+            error: ConnectError::ChildIsResult,
+        },
+        Refusal {
+            parent: gain,
+            child: blend,
+            error: ConnectError::ChildHasParent { child: blend },
+        },
+        Refusal {
+            parent: loose,
+            child: loose,
+            error: ConnectError::Cycle,
+        },
+        Refusal {
+            parent: outside,
+            child: loose,
+            error: ConnectError::NotANode { index: outside },
+        },
+        Refusal {
+            parent: loose,
+            child: outside,
+            error: ConnectError::NotANode { index: outside },
+        },
+    ];
+
+    for case in cases {
+        assert_eq!(graph.connect(case.parent, case.child), Err(case.error));
+    }
+    graph.connect(gain, loose).unwrap();
+    assert_eq!(
+        graph.connect(loose, blend),
+        Err(ConnectError::ChildHasParent { child: blend })
+    );
+    let mut unrooted = AnimationGraph::new();
+    let upper = unrooted.insert_node(AnimationNodeData::of(&BlendNode {}));
+    let lower = unrooted.insert_node(AnimationNodeData::of(&BlendNode {}));
+    unrooted.connect(upper, lower).unwrap();
+    assert_eq!(unrooted.connect(lower, upper), Err(ConnectError::Cycle));
+
+    assert_eq!(graph.inputs(result), vec![blend]);
+    assert_eq!(graph.inputs(blend), vec![gain]);
+    assert_eq!(graph.inputs(gain), vec![loose]);
+    assert!(graph.inputs(loose).is_empty());
+}
+
+#[derive(Clone, Debug)]
+struct ForestNode {
+    gain: bool,
+    parent: Option<prop::sample::Index>,
+}
+
+#[derive(Clone, Debug)]
+struct ForestLink {
+    parent: usize,
+    child: usize,
+}
+
+#[derive(Clone, Debug)]
+struct Forest {
+    nodes: Vec<ForestNode>,
+    links: Vec<ForestLink>,
+}
+
+#[derive(Debug, PartialEq)]
+struct ReadNode {
+    type_name: String,
+    inputs: Vec<usize>,
+}
+
+fn forest() -> impl Strategy<Value = Forest> {
+    let node = (
+        any::<bool>(),
+        prop::option::of(any::<prop::sample::Index>()),
+    )
+        .prop_map(|(gain, parent)| ForestNode { gain, parent });
+    prop::collection::vec(node, 0..16).prop_flat_map(|nodes| {
+        let links: Vec<ForestLink> = nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(position, node)| {
+                Some(ForestLink {
+                    parent: node.parent?.index(position + 1),
+                    child: position + 1,
+                })
+            })
+            .collect();
+        Just(links).prop_shuffle().prop_map(move |links| Forest {
+            nodes: nodes.clone(),
+            links,
+        })
+    })
+}
+
+fn read(graph: &AnimationGraph) -> Vec<ReadNode> {
+    graph
+        .node_indices()
+        .map(|index| ReadNode {
+            type_name: graph.node(index).unwrap().type_name().to_owned(),
+            inputs: graph
+                .inputs(index)
+                .into_iter()
+                .map(|input| input.index())
+                .collect(),
+        })
+        .collect()
+}
+
+proptest! {
+    #[test]
+    fn a_graph_built_from_any_forest_saves_and_loads_as_that_forest_with_every_input_in_its_slot(
+        forest in forest(),
+    ) {
+        let mut graph = AnimationGraph::new();
+        let mut indices = vec![graph.result_index()];
+        let mut expected = vec![ReadNode {
+            type_name: graph.node(graph.result_index()).unwrap().type_name().to_owned(),
+            inputs: Vec::new(),
+        }];
+        for node in &forest.nodes {
+            let data = if node.gain {
+                AnimationNodeData::of(&Gain { amount: 0.5 })
+            } else {
+                AnimationNodeData::of(&BlendNode {})
+            };
+            expected.push(ReadNode {
+                type_name: data.type_name().to_owned(),
+                inputs: Vec::new(),
+            });
+            indices.push(graph.insert_node(data));
+        }
+        for link in &forest.links {
+            graph.connect(indices[link.parent], indices[link.child]).unwrap();
+            expected[link.parent].inputs.push(indices[link.child].index());
+        }
+
+        prop_assert_eq!(&read(&graph), &expected);
+        prop_assert_eq!(&read(&round_trip(&graph)), &expected);
+    }
 }

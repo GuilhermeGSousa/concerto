@@ -702,6 +702,18 @@ Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
 `AnimationGraph::from_node`.
 
+A tool that edits a graph reads it and puts it together without the builder.
+`node_indices()` lists every node, `node(index)` gives its `AnimationNodeData`,
+`result_index()` names the result node, and `inputs(index)` gives a node's
+inputs in slot order, the order they were added and the order `evaluate`
+receives them in. `insert_node(data)` adds a node with no parent, from
+`AnimationNodeData::of(&node)` or `AnimationNodeData::from_live(boxed)`, and
+`connect(parent, child)` appends `child` as `parent`'s next input. It answers
+a `ConnectError` and changes nothing when `child` already has a parent, is the
+result node, would close a cycle, or either index is not a node of the graph.
+`node_mut(index)` and `AnimationNodeData::live_mut()` reach a live node to edit
+it through `as_reflect_mut`.
+
 A graph holds each node as an `AnimationNodeData`, written to a `.gasset` file
 as its registry `type_name` plus its reflected value. A node added in code or
 read from disk is `Stored`; `make_live` builds it `Live`, and the asset server

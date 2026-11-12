@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashMap, fmt, ops::Deref};
 
 use concerto_foundation::assets::{
-    Asset, LoadableAsset,
+    Asset, CreatableAsset, LoadableAsset,
     asset_server::{AssetLoadContext, AssetServer},
     asset_store::AssetStore,
     handle::{AssetHandle, LiveLeaves},
@@ -10,7 +10,8 @@ use concerto_reflect::{EncodeError, ReflectedValue, TypeRegistry, ValueWarning, 
 use glam::Vec2;
 use log::warn;
 use petgraph::{
-    Direction::Outgoing,
+    Direction::{Incoming, Outgoing},
+    algo::has_path_connecting,
     graph::{DiGraph, Neighbors, NodeIndex},
     visit::{Dfs, DfsPostOrder, Walker},
 };
@@ -49,10 +50,19 @@ pub enum AnimationNodeData {
 }
 
 impl AnimationNodeData {
-    pub(crate) fn of<T: AnimationNode>(node: &T) -> Self {
+    /// The stored data of a typed node.
+    pub fn of<T: AnimationNode>(node: &T) -> Self {
         Self::Stored {
             type_name: std::any::type_name::<T>().to_owned(),
             value: to_value(node).expect("an animation node encodes through reflection"),
+        }
+    }
+
+    /// The data of a node that is already built, which plays without [`AnimationGraph::make_live`].
+    pub fn from_live(node: Box<dyn ErasedAnimationNode>) -> Self {
+        Self::Live {
+            type_name: node.as_reflect().type_name().to_owned(),
+            node,
         }
     }
 
@@ -81,6 +91,14 @@ impl AnimationNodeData {
             Self::Stored { .. } => None,
             Self::Live { node, .. } => Some(node.as_ref()),
             Self::Placeholder { .. } => Some(&PLACEHOLDER),
+        }
+    }
+
+    /// The live node to edit in place; none for a stored node or a placeholder.
+    pub fn live_mut(&mut self) -> Option<&mut dyn ErasedAnimationNode> {
+        match self {
+            Self::Live { node, .. } => Some(node.as_mut()),
+            Self::Stored { .. } | Self::Placeholder { .. } => None,
         }
     }
 }
@@ -141,7 +159,7 @@ impl PartialEq for AnimationNodeData {
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimationNodeIndex(NodeIndex);
 
 impl Deref for AnimationNodeIndex {
@@ -157,6 +175,36 @@ impl From<NodeIndex> for AnimationNodeIndex {
         AnimationNodeIndex(value)
     }
 }
+
+/// Why [`AnimationGraph::connect`] refused a connection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectError {
+    NotANode { index: AnimationNodeIndex },
+    ChildIsResult,
+    ChildHasParent { child: AnimationNodeIndex },
+    Cycle,
+}
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnectError::NotANode { index } => {
+                write!(f, "{} is not a node of the graph", index.index())
+            }
+            ConnectError::ChildIsResult => {
+                write!(f, "the result node cannot be an input of another node")
+            }
+            ConnectError::ChildHasParent { child } => write!(
+                f,
+                "node {} is already an input of another node",
+                child.index()
+            ),
+            ConnectError::Cycle => write!(f, "the connection would close a cycle"),
+        }
+    }
+}
+
+impl std::error::Error for ConnectError {}
 
 #[derive(Asset, serde::Serialize, serde::Deserialize)]
 pub struct AnimationGraph {
@@ -174,6 +222,12 @@ impl LoadableAsset for AnimationGraph {
             warn!("animation graph {:?}: {warning}", context.asset_id());
         }
         Ok(())
+    }
+}
+
+impl CreatableAsset for AnimationGraph {
+    fn new_asset() -> Self {
+        Self::new()
     }
 }
 
@@ -323,8 +377,72 @@ impl AnimationGraph {
             .and_then(AnimationNodeData::live)
     }
 
-    pub fn get_node_inputs(&self, node_index: AnimationNodeIndex) -> Neighbors<'_, (), u32> {
+    pub(crate) fn get_node_inputs(&self, node_index: AnimationNodeIndex) -> Neighbors<'_, (), u32> {
         self.nodes.neighbors_directed(*node_index, Outgoing)
+    }
+
+    /// Every node's index, in node order, whether or not the result node reaches it.
+    pub fn node_indices(&self) -> impl Iterator<Item = AnimationNodeIndex> + '_ {
+        self.nodes.node_indices().map(AnimationNodeIndex::from)
+    }
+
+    /// The node at `index`.
+    pub fn node(&self, index: AnimationNodeIndex) -> Option<&AnimationNodeData> {
+        self.nodes.node_weight(*index)
+    }
+
+    /// The node at `index`, to edit in place.
+    pub fn node_mut(&mut self, index: AnimationNodeIndex) -> Option<&mut AnimationNodeData> {
+        self.nodes.node_weight_mut(*index)
+    }
+
+    /// The index of the result node.
+    pub fn result_index(&self) -> AnimationNodeIndex {
+        self.result_node
+    }
+
+    /// The inputs of the node at `index` in slot order, the order they were added and the order the node evaluates them in.
+    pub fn inputs(&self, index: AnimationNodeIndex) -> Vec<AnimationNodeIndex> {
+        let mut inputs: Vec<AnimationNodeIndex> = self
+            .get_node_inputs(index)
+            .map(AnimationNodeIndex::from)
+            .collect();
+        inputs.reverse();
+        inputs
+    }
+
+    /// Adds a node that is no node's input yet.
+    pub fn insert_node(&mut self, data: AnimationNodeData) -> AnimationNodeIndex {
+        self.nodes.add_node(data).into()
+    }
+
+    /// Appends `child` as the next input of `parent`.
+    pub fn connect(
+        &mut self,
+        parent: AnimationNodeIndex,
+        child: AnimationNodeIndex,
+    ) -> Result<(), ConnectError> {
+        for index in [parent, child] {
+            if self.nodes.node_weight(*index).is_none() {
+                return Err(ConnectError::NotANode { index });
+            }
+        }
+        if child == self.result_node {
+            return Err(ConnectError::ChildIsResult);
+        }
+        if self
+            .nodes
+            .neighbors_directed(*child, Incoming)
+            .next()
+            .is_some()
+        {
+            return Err(ConnectError::ChildHasParent { child });
+        }
+        if has_path_connecting(&self.nodes, *child, *parent, None) {
+            return Err(ConnectError::Cycle);
+        }
+        self.nodes.add_edge(*parent, *child, ());
+        Ok(())
     }
 }
 
