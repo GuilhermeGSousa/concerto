@@ -175,11 +175,9 @@ impl BodyMasks {
 
 fn motion_matching_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
-    graph.result_node().add_input(MotionMatchingNode {
-        database,
-        play_rate_param: Some(pace()),
-        ..Default::default()
-    });
+    graph
+        .result_node()
+        .add_input(MotionMatchingNode::new(database).with_play_rate_param(pace()));
     graph
 }
 
