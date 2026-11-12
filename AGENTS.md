@@ -94,7 +94,8 @@ east face button to lower the camera, Q or the right bumper to swap shoulders). 
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1. `--sanatorium
 --retarget` puts the same player in the sanatorium, and `--forest` wins over
-`--retarget`. That player's graph is the main character's: a tired overlay
+`--retarget`. That player's graph is the main character's: the fingers, which LAFAN1's
+motion does not move, taken from UAL1's `Idle_Loop`, a tired overlay
 (`Idle_Tired_Loop`, additive) over the retargeted locomotion, UAL1's pistol
 clips layered on the upper body, an aim offset and an aim that point the gun at
 a point thirty metres along the camera's view, a look-at on the head, sway and
