@@ -27,7 +27,11 @@ use concerto_mesh::skeleton::SkeletonComponent;
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, apply_value};
 
-use super::document::{StateValue, TransitionValue};
+use super::{
+    document::{StateValue, TransitionValue},
+    params::GraphParameters,
+    stage::GraphPreview,
+};
 use crate::preview::{ClipPreviewRoot, first_rooted, preview_stage};
 
 /// One graph for a preview to play in place of its file: the asset's id and the graph as a save writes it.
@@ -262,6 +266,8 @@ pub fn graph_preview(app: &mut App) {
     app.register_type::<StateValue>()
         .register_type::<TransitionValue>()
         .register_type::<AnimationFSMTrigger>()
+        .register_type::<GraphPreview>()
+        .register_type::<GraphParameters>()
         .insert_resource(GraphStage::default())
         .add_system(Update, start_graph_players.at_preview_time())
         .add_system(

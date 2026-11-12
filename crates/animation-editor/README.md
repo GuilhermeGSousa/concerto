@@ -24,7 +24,8 @@ its reference clip; and `AnimationGraphEditorPlugin`, which registers
 `New AnimationGraph`, registers `BoneMask` in the editor's `AssetServer` and
 names `AnimationGraph` there with `name_asset`, so a layer's mask and a state's
 or a retarget node's graph can be picked while the editor never loads a graph
-against its own type registry, and adds the graph tools when the editor serves
+against its own type registry, registers the editor of a `Param<T>` field for
+the engine's parameter types, and adds the graph tools when the editor serves
 MCP. A
 game that doesn't list it has no clip, rig or graph tab: a clip or a graph stays
 selected in the content browser and opens nothing, and a rig opens in the
@@ -313,6 +314,69 @@ matching's trajectory, gets nothing from the preview's world and passes its
 input through or holds. A `BlendNode` blends by node weights only game code
 sets, so all its inputs play at 1.
 
+### The preview
+
+The preview plays the graph in view. While a state machine is in view it plays
+the graph that holds the machine. Whenever a working copy changes, or what is in
+view or the preview target does, the tab sends `ShowGraphs` with the working
+copy of every graph it holds, the ones it has drilled into included, so an
+unsaved edit is what plays and a state's or a retarget node's handle plays the
+working copy of its graph; a nested graph the tab has not opened plays from its
+file. Selecting a node sends nothing, so the players keep playing.
+
+`Preview` is a value in the inspector, never saved, so editing it leaves the
+tab clean, and it lasts while the tab is open:
+
+- `scene`, the `Scene` the character comes from. Unset, it is the `Scene` named
+  `scene` in the folder of the tab's graph, or an empty stage when there is
+  none;
+- `skeleton`, whether the skeleton's bones are drawn, on by default;
+- `playing`, and `speed`, the preview's time scale, any finite value above 0;
+- `from`, the node of the pose graph in view to preview from. Set, the tab
+  builds a graph whose result node is fed by that node and everything that
+  feeds it, sends it under an id of its own and plays that. A node that is not
+  in the pose graph in view, or the result node, is refused: `from` goes back
+  to none and the status says why. Going up or down a level, loading and
+  Discard set it back to none.
+
+The `left` host, titled Preview, holds the controls that write `Preview`: the
+scene picker and the Skeleton checkbox the clip tab has, with the error of a
+scene that failed to load under them, a Play checkbox, and the speeds 0.25×,
+0.5×, 1× and 2×, the one equal to `speed` selected. Right-clicking a node of a
+pose graph offers Preview from here, which sets `from`; the row over the canvas
+then reads `Previewing node 3, a LayerNode` beside a Whole graph button that
+sets it back.
+
+### Parameters
+
+A graph declares no parameters: the tab finds them. It walks the reflected
+value of every node of the graph in view and of every graph those nodes play
+inside themselves, through working copies where the tab holds one and through
+the files otherwise, and collects each `Param<T>` that names something, inside
+nested values, lists, options and enum variants, such as a transition's
+trigger. A parameter is a name and the type its `Param<T>` reads it as.
+
+`Parameters` is a value in the inspector with one field per parameter found,
+each edited by the property editor its type has anywhere else, starting at the
+type's `Default`. A value lasts while the tab is open, also while its parameter
+is out of view, and is never saved. An edit is sent to the preview with
+`SetGraphParam`, and every value is sent again after each `ShowGraphs`. A name
+the graph reads as two types is two fields, `speed (f32)` and `speed (bool)`.
+The players keep one value per name, so the one set last wins.
+
+Under the controls, the `left` host's Parameters section lists each parameter
+as `name · type · value`, a name read as several types in the warning colour
+with `read as several types`, or `None` when the graph names none.
+
+A `Param<T>` field of a node, such as a blend space's `input.param`, is edited
+by `ParamNameEditor<T>`: a text field for the name and a button that lists the
+names the tab has found for that `T`. Over MCP, `set_property` takes the name
+as a JSON string. The plugin registers the editor for `bool`, `f32`, `u64`,
+`Vec2`, `Vec3` and `IkTarget`; an editor crate registers it for a type of its
+own with `app.register_param_editor::<T>()`, from `graph::ParamEditorAppExt`.
+A `Param` of a type with no editor registered shows as a row with no editor
+and is still written by `set_property`.
+
 ### The stack
 
 The document keeps the chain of levels from the tab's own graph down to what is
@@ -420,7 +484,8 @@ the state the machine starts in, and a transition's fields replace its trigger
 and blend time. A name another state has is refused, the value goes back, and
 the status says why; setting `initial` to false does nothing, since a machine
 always starts somewhere. A selected link, a placeholder, or nothing selected
-shows no card.
+shows no card for the selection. The `Preview` and `Parameters` cards follow
+it.
 
 ### Editing
 
@@ -462,7 +527,8 @@ the transition added or the graph a new state plays, or the reason for a
 refusal, which is also the tab's status. An `AddState` that creates its graph
 ends when the `AssetCreation` for it arrives. An edit that changes a graph marks
 the tab `Unsaved`, as an edit of the `Node`, `State` or `Transition` value in
-the inspector does. Selecting and moving through the stack do not.
+the inspector does. Selecting, moving through the stack, and editing `Preview`
+or `Parameters` do not.
 
 ### Save and Discard
 
@@ -479,14 +545,14 @@ its file the next time it is opened.
 
 ### MCP
 
-All eight tools act on what the front graph tab has in view and answer
+All nine tools act on what the front graph tab has in view and answer
 `refused`, saying to open a graph, on any other tab. A state is named by its
 name, and a transition by `from`, `to` and `index`, its place among the
 transitions between that pair, 0 without one.
 
 | Tool | Does |
 | --- | --- |
-| `graph_inspect` | Read-only. The breadcrumb, then for a pose graph one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none. For a state machine, one line per state, `name · initial · graph address`, with `initial` only on the initial state and `no graph` or `missing graph` in place of an address, then one per transition, `from → to #index · trigger · blend`, such as `Idle → Run #0 · Instant · 0.25s` |
+| `graph_inspect` | Read-only. The breadcrumb, then for a pose graph one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none. For a state machine, one line per state, `name · initial · graph address`, with `initial` only on the initial state and `no graph` or `missing graph` in place of an address, then one per transition, `from → to #index · trigger · blend`, such as `Idle → Run #0 · Instant · 0.25s`. When the graph names parameters, the line `parameters:` and one line per parameter follow, `name · type · value`, such as `moving · bool · false`, the type by the last segment of its name and the value as JSON, with ` · read as several types` after a name the graph reads as more than one |
 | `graph_add_node` | `type`, by short name or full path, and optionally `parent` and `slot`. Answers `Added node 4, a LayerNode, as input 0 of node 0.`, or `…, loose.` |
 | `graph_add_state` | `name`, and optionally `graph`, an existing `AnimationGraph` by address or id; without one a graph asset of that name is created beside the graph that holds the machine. Answers `Added state Idle, the initial state, playing content/Idle.gasset.` |
 | `graph_connect` | In a pose graph `child`, `parent` and optionally `slot`; answers `Node 4 is input 0 of node 2; node 3, which was there, is loose.` In a state machine `from` and `to`, equal for a transition to itself; answers `Added transition Idle → Walk #0.` and selects it |
@@ -494,6 +560,13 @@ transitions between that pair, 0 without one.
 | `graph_select` | `node`, `state`, or a transition by `from`, `to` and `index`, or nothing to clear the selection. What is selected is then the value `Node`, `State` or `Transition` of `status`'s `values:` line, which `inspect`, `set_property`, `list_push` and `list_remove` take as `target` |
 | `graph_open` | `node`, a state machine or a node that plays a graph, or `state`, a state of the machine in view. Answers `Showing Locomotion › States › Run (state).` |
 | `graph_up` | Goes up one level and answers the same way; refused on the tab's own graph |
+| `graph_set_param` | `name` and `value`, JSON of the parameter's type, and `type` when the graph reads the name as several types. Sets the parameter on the preview's players, as an edit of the `Parameters` value does, and answers `Set moving to true.` A name the graph does not read answers `refused` with `There is no parameter speed; the parameters are direction (Vec2), moving (bool).`, and a value that does not fit the type answers `refused` with the reason |
+
+The preview is driven through the value `Preview`: `set_property` with target
+`Preview` and path `scene`, `skeleton`, `playing`, `speed` or `from`, the last
+as `{"Some": {"0": 3}}` for node 3 and `"None"` for the whole graph. The
+parameters are also the value `Parameters`, one path per parameter. `inspect`
+reads both back, and neither marks the tab unsaved.
 
 An edit the tab refuses answers `refused` with the tab's status text.
 `create_asset` with kind `AnimationGraph` makes an empty graph, `open_asset`

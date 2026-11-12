@@ -295,7 +295,9 @@ view: the breadcrumb, then for a pose graph one line per node,
 `id · type · parent#slot · subtitle`, with `result` or `loose` in place of
 `parent#slot` for the result node and for a node that is nobody's input, and
 for a state machine one line per state, `name · initial · graph address`, then
-one per transition, `from → to #index · trigger · blend`. `graph_add_node` adds
+one per transition, `from → to #index · trigger · blend`; when the graph names
+parameters, a `parameters:` line follows and one line per parameter,
+`name · type · value`. `graph_add_node` adds
 a node of `type`, a short name such as `LayerNode` or a full path, as an input
 of `parent` at `slot`, or loose without a parent, and answers its id.
 `graph_add_state` adds a state `name` to the state machine in view, playing
@@ -310,7 +312,15 @@ or a transition, which becomes the front document's value `Node`, `State` or
 `Transition` for `inspect`, `set_property`, `list_push` and `list_remove`.
 `graph_open` drills into `node`, a state machine into its states and a node
 that plays a graph into that graph, or into the graph of `state`, and
-`graph_up` goes back up one level; both answer `Showing <breadcrumb>.`. An
+`graph_up` goes back up one level; both answer `Showing <breadcrumb>.`.
+`graph_set_param` sets the parameter `name` on the preview's players to
+`value`, JSON of the parameter's type, and answers `Set moving to true.`; a
+name the graph does not read answers `refused` listing the parameters with
+their types, and a name the graph reads as several types needs `type`. The
+tab's preview is the value `Preview`, whose `scene`, `skeleton`, `playing`,
+`speed` and `from`, the node to preview from, `set_property` writes, and its
+parameters are the value `Parameters`, one field per parameter; neither is
+saved. An
 edit the tab refuses, such as a connection that would close a cycle or opening
 a node whose graph is not set, answers `refused` with the reason and what to
 do.
@@ -1480,7 +1490,8 @@ side in its preview. Both play through the crate's transport widget, a play,
 step, loop and speed row and a timeline over the document's `ClipTransport`,
 public for any tab whose preview plays a clip. The graph tab shows a graph's
 nodes on a [graph canvas](#the-graph-canvas), where they are added, wired,
-inspected and saved. In a game that doesn't list the crate a clip or a graph
+inspected and saved, and plays the graph in view on a character in its preview,
+at the parameters set in the tab. In a game that doesn't list the crate a clip or a graph
 has no editor, so opening one opens no tab, and a rig opens in the generic
 inspector.
 

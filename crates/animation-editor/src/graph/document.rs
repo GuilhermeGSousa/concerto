@@ -35,7 +35,9 @@ use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue, TypeRegistration
 
 use super::{
     copy::{GraphCopy, GraphNodeId},
+    params::{FoundParam, GraphParameters, find_params},
     preview::graph_preview,
+    stage::{GraphPreview, ParametersValue, PreviewValue, SentPreview},
 };
 
 const GRAPH_EXTENSION: &str = "gasset";
@@ -213,12 +215,107 @@ pub struct GraphDocument {
     graphs: Vec<HeldGraph>,
     levels: Vec<GraphLevel>,
     pub selection: Option<GraphSelection>,
+    /// How the preview shows and plays the graph, the document value `Preview`.
+    pub preview: GraphPreview,
+    /// The parameters the graph in view names, the document value `Parameters`.
+    pub parameters: GraphParameters,
+    /// The scene the preview shows, or none for an empty stage.
+    pub shown_scene: Option<AssetId>,
+    /// Why the preview's scene could not be read.
+    pub scene_error: Option<String>,
     state: Option<StateValue>,
     transition: Option<TransitionValue>,
     creating: Vec<CreatingState>,
+    fixed: Vec<Arc<dyn PropertyTarget>>,
 }
 
 impl GraphDocument {
+    /// The document of the tab `document`, publishing its `Preview` and `Parameters` values.
+    pub fn of(document: Entity) -> Self {
+        Self {
+            fixed: vec![
+                Arc::new(PreviewValue { document }),
+                Arc::new(ParametersValue { document }),
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// The `Preview` value, as `WriteValue` and `set_property` address it.
+    pub fn preview_value(&self) -> Option<Arc<dyn PropertyTarget>> {
+        self.fixed.first().cloned()
+    }
+
+    /// The `Parameters` value, as `WriteValue` and `set_property` address it.
+    pub fn parameters_value(&self) -> Option<Arc<dyn PropertyTarget>> {
+        self.fixed.get(1).cloned()
+    }
+
+    /// Why `node` cannot be previewed from, or none when it can.
+    pub fn preview_refusal(&self, node: GraphNodeId) -> Option<String> {
+        if self.shown_machine().is_some() {
+            return Some(format!(
+                "A state machine is in view, so there is no node {node} to preview from; graph_up goes back to its graph"
+            ));
+        }
+        let copy = self.graph()?;
+        if copy.node(node).is_none() {
+            return Some(format!(
+                "There is no node {node} to preview from; graph_inspect lists the nodes"
+            ));
+        }
+        (node == copy.result())
+            .then(|| format!("Node {node} is the result node, which plays the whole graph already"))
+    }
+
+    /// Every parameter the graph in view names, the graphs its nodes play inside themselves included, by name and then by type.
+    pub fn found_params(&self, sources: &Sources) -> Vec<FoundParam> {
+        let mut found = Vec::new();
+        let (Some(types), Some(shown)) = (sources.types, self.shown_asset()) else {
+            return found;
+        };
+        let registry = types.read();
+        let mut seen = vec![shown];
+        let mut open = vec![shown];
+        while let Some(asset) = open.pop() {
+            let read;
+            let copy = match self.graphs.iter().find(|held| held.asset.id == asset) {
+                Some(held) => &held.copy,
+                None => {
+                    let nested = sources
+                        .root
+                        .zip(sources.assets.get(asset))
+                        .and_then(|(root, entry)| read_copy(root, entry, sources.types).ok());
+                    let Some(nested) = nested else {
+                        continue;
+                    };
+                    read = nested;
+                    &read
+                }
+            };
+            for node in copy.nodes() {
+                let Some(live) = node.live() else {
+                    continue;
+                };
+                find_params(live.as_reflect(), &registry, &mut found);
+                live.inner_graphs(&mut |handle| {
+                    let inner = handle.id();
+                    if !inner.is_nil() && !seen.contains(&inner) {
+                        seen.push(inner);
+                        open.push(inner);
+                    }
+                });
+            }
+        }
+        found.sort_by(|a, b| {
+            a.name
+                .as_str()
+                .cmp(b.name.as_str())
+                .then_with(|| a.data.value_type_name().cmp(b.data.value_type_name()))
+        });
+        found
+    }
+
     /// The stack, from the tab's asset down to the level in view.
     pub fn levels(&self) -> &[GraphLevel] {
         &self.levels
@@ -234,7 +331,8 @@ impl GraphDocument {
         &mut self.graphs
     }
 
-    fn shown_asset(&self) -> Option<AssetId> {
+    /// The graph asset in view, or under a state diagram the one that holds the machine.
+    pub fn shown_asset(&self) -> Option<AssetId> {
         self.levels.iter().rev().find_map(|level| match level {
             GraphLevel::Graph { asset, .. } => Some(*asset),
             GraphLevel::Machine { .. } => None,
@@ -379,6 +477,7 @@ impl GraphDocument {
         }];
         self.graphs = vec![root];
         self.selection = None;
+        self.preview.from = None;
         self.creating.clear();
     }
 
@@ -389,6 +488,7 @@ impl GraphDocument {
         let kept = self.levels.len().saturating_sub(count).max(1);
         self.levels.truncate(kept);
         self.selection = None;
+        self.preview.from = None;
         Ok(GraphChange::default())
     }
 
@@ -412,6 +512,7 @@ impl GraphDocument {
                 {
                     self.levels.push(GraphLevel::Machine { node: id });
                     self.selection = None;
+                    self.preview.from = None;
                     return Ok(GraphChange::default());
                 }
                 let mut inner = None;
@@ -482,6 +583,7 @@ impl GraphDocument {
             state: opened.state,
         });
         self.selection = None;
+        self.preview.from = None;
         Ok(GraphChange::default())
     }
 
@@ -697,10 +799,11 @@ struct Opened {
     unset: String,
 }
 
-struct Sources<'a> {
-    types: Option<&'a AppTypeRegistry>,
-    assets: &'a AssetRegistry,
-    root: Option<&'a Path>,
+/// What reading a graph's nested graphs needs: the preview's types, the project's assets and its root.
+pub struct Sources<'a> {
+    pub types: Option<&'a AppTypeRegistry>,
+    pub assets: &'a AssetRegistry,
+    pub root: Option<&'a Path>,
 }
 
 /// What a graph tab drills into: a node that plays a graph inside itself, or a state of the machine in view.
@@ -801,7 +904,9 @@ pub struct AnimationGraphEditor;
 
 impl AssetEditor for AnimationGraphEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
-        editor.insert((GraphDocument::default(), InspectedValues::default()));
+        let state = GraphDocument::of(editor.entity());
+        let values = InspectedValues(state.fixed.clone());
+        editor.insert((state, values, SentPreview::default()));
     }
 
     fn preview(&self) -> Option<PreviewSpec> {
@@ -996,7 +1101,8 @@ fn publish_selection(document: Entity, state: &mut GraphDocument, cmd: &mut Comm
             .map(|_| mirrored_transition(document)),
         Some(GraphSelection::Link { .. }) | None => None,
     };
-    cmd.insert(InspectedValues(value.into_iter().collect()), document);
+    let values = value.into_iter().chain(state.fixed.iter().cloned());
+    cmd.insert(InspectedValues(values.collect()), document);
     cmd.trigger(RefreshInspector);
 }
 
@@ -1242,7 +1348,7 @@ pub(crate) fn follow_value_edits(
     mut cmd: CommandQueue,
 ) {
     for hosted in committed.read() {
-        if hosted.event.result.is_err() {
+        if hosted.event.result.is_err() || !hosted.event.address.target.saved() {
             continue;
         }
         let Some((mut editor, mut state)) = documents.get_entity(hosted.document) else {

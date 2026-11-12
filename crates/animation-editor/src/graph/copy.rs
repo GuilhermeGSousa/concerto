@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt};
 
 use concerto_animation::{
-    graph::{AnimationGraph, AnimationNodeData},
+    graph::{AnimationGraph, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationNode, ErasedAnimationNode, InputSlots, PlaceholderNode},
 };
 use concerto_reflect::{ReflectedValue, to_value};
@@ -87,6 +87,11 @@ pub struct Connected {
     pub loose: Option<GraphNodeId>,
 }
 
+struct Feed {
+    node: GraphNodeId,
+    parent: AnimationNodeIndex,
+}
+
 enum Place {
     Insert(usize),
     Replace(usize),
@@ -163,6 +168,17 @@ impl GraphCopy {
         }
     }
 
+    fn stored(node: &HeldNode) -> anyhow::Result<AnimationNodeData> {
+        let value = match &node.value {
+            HeldValue::Live(live) => to_value(live.as_reflect())?,
+            HeldValue::Stored(value) => value.clone(),
+        };
+        Ok(AnimationNodeData::Stored {
+            type_name: node.type_name.clone(),
+            value,
+        })
+    }
+
     /// A fresh graph of what the copy holds: the result node, then every node in id order, connected in slot order.
     pub fn build(&self) -> anyhow::Result<AnimationGraph> {
         let mut graph = AnimationGraph::new();
@@ -171,20 +187,34 @@ impl GraphCopy {
             if node.id == self.result {
                 continue;
             }
-            let value = match &node.value {
-                HeldValue::Live(live) => to_value(live.as_reflect())?,
-                HeldValue::Stored(value) => value.clone(),
-            };
-            let index = graph.insert_node(AnimationNodeData::Stored {
-                type_name: node.type_name.clone(),
-                value,
-            });
+            let index = graph.insert_node(Self::stored(node)?);
             indices.insert(node.id, index);
         }
         for node in &self.nodes {
             for input in &node.inputs {
                 graph.connect(indices[&node.id], indices[input])?;
             }
+        }
+        Ok(graph)
+    }
+
+    /// A fresh graph whose result node is fed by the node `from` and everything that feeds it.
+    pub fn build_from(&self, from: GraphNodeId) -> anyhow::Result<AnimationGraph> {
+        let mut graph = AnimationGraph::new();
+        let mut open = vec![Feed {
+            node: from,
+            parent: graph.result_index(),
+        }];
+        while let Some(feed) = open.pop() {
+            let node = self
+                .node(feed.node)
+                .ok_or_else(|| anyhow::anyhow!("There is no node {}", feed.node))?;
+            let index = graph.insert_node(Self::stored(node)?);
+            graph.connect(feed.parent, index)?;
+            open.extend(node.inputs.iter().rev().map(|input| Feed {
+                node: *input,
+                parent: index,
+            }));
         }
         Ok(graph)
     }

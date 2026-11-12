@@ -10,30 +10,37 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::{EditorDocument, EditorHosts},
+    asset_picker::{AssetPickerMenu, asset_name, open_asset_menu},
     graph_canvas::{
         CanvasActivated, CanvasConnected, CanvasDeleted, CanvasEmphasis, CanvasLink,
         CanvasLinkDropped, CanvasMenuRequested, CanvasMode, CanvasNode, CanvasNodeId, CanvasPart,
         CanvasSelected, CanvasTarget, FrameCanvasNode, GraphCanvas,
     },
     hosted::HostedApp,
+    inspector::WriteValue,
     name_menu::{NameMenu, close_menu, open_name_menu_at},
 };
-use concerto_foundation::assets::{AssetId, handle::ReflectAssetHandle, registry::AssetRegistry};
+use concerto_foundation::assets::{
+    Asset, AssetId, handle::ReflectAssetHandle, registry::AssetRegistry,
+};
 use concerto_name::Name;
 use concerto_reflect::{PropertyVisitor, Reflect, TypeRegistry};
+use concerto_scene::scene::Scene;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::UIAnchoredPanel,
+    checkbox::{UICheckbox, UICheckboxChanged},
     focus::FocusedWidget,
-    interaction::UIClick,
+    interaction::{UIClick, UIInteractionStyle},
     node::{UINode, UIRect},
     text::UIText,
     text_input::{UITextInput, UITextInputSubmitted},
-    theme::UITheme,
+    theme::{ButtonVariant, UITheme},
     transform::UIValue,
 };
 use concerto_window::input::MouseButton;
 use glam::Vec2;
+use serde_json::{Value, json};
 
 use super::{
     copy::{GraphCopy, GraphNodeId, HeldNode},
@@ -41,18 +48,171 @@ use super::{
         EditGraph, GraphDocument, GraphEdit, GraphLevel, GraphSelection, OpenTarget, node_types,
         shown_transitions,
     },
+    tools::param_line,
 };
-use crate::panels::{error_line, title};
+use crate::{
+    panels::{NO_VALUE, StageControls, check_row, error_line, stage_controls, title},
+    transport::SPEEDS,
+};
 
 /// The widgets of a graph's tab that follow its document, kept on the document.
 #[derive(Component)]
 pub(crate) struct GraphPanels {
+    left: LeftPanel,
     breadcrumb: Entity,
     name: Entity,
+    target: Entity,
+    reset: Entity,
     canvas: Entity,
     status: Entity,
     crumbs: Vec<String>,
+    params: Vec<ParamRow>,
     framed: Vec<GraphLevel>,
+}
+
+struct LeftPanel {
+    stage: StageControls,
+    playing: Entity,
+    speeds: [Entity; SPEEDS.len()],
+    params: Entity,
+}
+
+#[derive(PartialEq)]
+struct ParamRow {
+    text: String,
+    shared: bool,
+}
+
+fn write_preview(document: Entity, path: &'static str, json: Value) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           documents: Query<&GraphDocument>,
+           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        close_menu(&menus);
+        let target = documents
+            .get_entity(document)
+            .and_then(GraphDocument::preview_value);
+        if let Some(target) = target {
+            cmd.trigger(WriteValue {
+                target,
+                path: path.to_owned(),
+                json: json.clone(),
+            });
+        }
+    })
+    .into_listener()
+}
+
+fn check_preview(document: Entity, path: &'static str) -> Listener<UICheckboxChanged> {
+    (move |on: On<UICheckboxChanged>, documents: Query<&GraphDocument>, mut cmd: CommandQueue| {
+        let target = documents
+            .get_entity(document)
+            .and_then(GraphDocument::preview_value);
+        if let Some(target) = target {
+            cmd.trigger(WriteValue {
+                target,
+                path: path.to_owned(),
+                json: on.signal().checked.into(),
+            });
+        }
+    })
+    .into_listener()
+}
+
+fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           documents: Query<&GraphDocument>,
+           menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+           assets: Res<AssetRegistry>,
+           theme: Res<UITheme>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let current = documents
+            .get_entity(document)
+            .and_then(|state| state.shown_scene);
+        open_asset_menu(
+            on.entity(),
+            Scene::name(),
+            None,
+            current,
+            pick_scene(document),
+            &menus,
+            &assets,
+            &theme,
+            &mut cmd,
+        );
+    })
+    .into_listener()
+}
+
+fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
+    move |id| {
+        (move |on: On<UIClick>,
+               menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
+               documents: Query<&GraphDocument>,
+               mut cmd: CommandQueue| {
+            if on.signal().button != MouseButton::Left {
+                return;
+            }
+            for mut panel in menus.iter() {
+                panel.open = false;
+            }
+            let target = documents
+                .get_entity(document)
+                .and_then(GraphDocument::preview_value);
+            if let Some(target) = target {
+                cmd.trigger(WriteValue {
+                    target,
+                    path: "scene".to_owned(),
+                    json: id.simple_hex().into(),
+                });
+            }
+        })
+        .into_listener()
+    }
+}
+
+fn build_left(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) -> LeftPanel {
+    let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm));
+    panel.add_child(title(theme, "Preview"));
+    let stage = stage_controls(
+        &mut panel,
+        toggle_scene_picker(document),
+        check_preview(document, "skeleton"),
+        theme,
+    );
+    let playing = check_row(
+        &mut panel,
+        "Play",
+        check_preview(document, "playing"),
+        theme,
+    );
+    let speeds = {
+        let mut row = panel.spawn_child(theme.row().gap(theme.spacing_xs).fixed());
+        SPEEDS.map(|speed| {
+            row.spawn_child(theme.button(speed.label).ghost().on_click(write_preview(
+                document,
+                "speed",
+                json!(speed.rate),
+            )))
+            .entity()
+        })
+    };
+    panel.add_child(title(theme, "Parameters"));
+    let params = panel
+        .spawn_child(theme.column().gap(theme.spacing_xs).fixed())
+        .entity();
+    LeftPanel {
+        stage,
+        playing,
+        speeds,
+        params,
+    }
 }
 
 struct FirstHandle<'a> {
@@ -433,6 +593,7 @@ fn open_type_menu(
 
 const NEW_STATE: &str = "New state";
 const TO_SELF: &str = "Transition to self";
+const PREVIEW_FROM: &str = "Preview from here";
 
 fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuRequested> {
     (move |on: On<CanvasMenuRequested>,
@@ -443,10 +604,22 @@ fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuReques
         let Some((state, hosted)) = documents.get_entity(document) else {
             return;
         };
+        let CanvasMenuRequested { at, on: part } = *on.signal();
+        if let (None, CanvasPart::Node(id)) = (state.machine(), part) {
+            let from = json!({ "Some": { "0": id.0 } });
+            open_name_menu_at(
+                at,
+                &[PREVIEW_FROM],
+                |_| write_preview(document, "from", from.clone()),
+                &menus,
+                &theme,
+                &mut cmd,
+            );
+            return;
+        }
         if !state.graph().is_some_and(GraphCopy::editable) {
             return;
         }
-        let CanvasMenuRequested { at, on: part } = *on.signal();
         match (state.machine(), part) {
             (Some(_), CanvasPart::Empty) => open_name_menu_at(
                 at,
@@ -530,6 +703,8 @@ fn build_inspector(host: &mut EntityCommandQueue, theme: &UITheme) -> Entity {
 struct BottomPanel {
     breadcrumb: Entity,
     name: Entity,
+    target: Entity,
+    reset: Entity,
     canvas: Entity,
 }
 
@@ -553,6 +728,16 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
                 .hidden(),
         )
         .entity();
+    let target = row
+        .spawn_child(theme.label("").small().muted().no_wrap().fixed().hidden())
+        .entity();
+    let reset = row
+        .spawn_child(theme.button("Whole graph").ghost().on_click(write_preview(
+            document,
+            "from",
+            json!("None"),
+        )))
+        .entity();
     let canvas = panel
         .spawn_child((
             UINode::default().with_flex_grow(1.0),
@@ -568,6 +753,8 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
     BottomPanel {
         breadcrumb,
         name,
+        target,
+        reset,
         canvas,
     }
 }
@@ -578,18 +765,25 @@ pub(crate) fn build_graph_panels(
     mut cmd: CommandQueue,
 ) {
     for (document, hosts) in documents.iter() {
-        let (Some(inspector), Some(bottom)) = (hosts.inspector, hosts.bottom) else {
+        let (Some(left), Some(inspector), Some(bottom)) =
+            (hosts.left, hosts.inspector, hosts.bottom)
+        else {
             continue;
         };
+        let left = build_left(&mut cmd.entity(left), document, &theme);
         let status = build_inspector(&mut cmd.entity(inspector), &theme);
         let bottom = build_bottom(&mut cmd.entity(bottom), document, &theme);
         cmd.insert(
             GraphPanels {
+                left,
                 breadcrumb: bottom.breadcrumb,
                 name: bottom.name,
+                target: bottom.target,
+                reset: bottom.reset,
                 canvas: bottom.canvas,
                 status,
                 crumbs: Vec::new(),
+                params: Vec::new(),
                 framed: Vec::new(),
             },
             document,
@@ -672,6 +866,8 @@ pub(crate) fn sync_graph_panels(
     canvases: Query<&mut GraphCanvas>,
     texts: Query<&mut UIText>,
     nodes: Query<&mut UINode>,
+    checkboxes: Query<&mut UICheckbox>,
+    styles: Query<&mut UIInteractionStyle>,
     assets: Res<AssetRegistry>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
@@ -681,6 +877,28 @@ pub(crate) fn sync_graph_panels(
             && node.visible != visible
         {
             node.visible = visible;
+        }
+    };
+    let write_text = |entity: Entity, value: &str| {
+        if let Some(mut text) = texts.get_entity(entity)
+            && text.text != value
+        {
+            text.text = value.to_owned();
+        }
+    };
+    let write_checked = |entity: Entity, checked: bool| {
+        if let Some(mut checkbox) = checkboxes.get_entity(entity)
+            && checkbox.checked != checked
+        {
+            checkbox.checked = checked;
+        }
+    };
+    let write_selected = |entity: Entity, selected: bool| {
+        let wanted = theme.interaction(ButtonVariant::Ghost, selected);
+        if let Some(mut style) = styles.get_entity(entity)
+            && style.normal != wanted.normal
+        {
+            **style = wanted;
         }
     };
     for (document, editor, state, mut panels, hosted) in documents.iter() {
@@ -699,12 +917,62 @@ pub(crate) fn sync_graph_panels(
             panels.crumbs = crumbs;
         }
         show(panels.name, state.machine().is_some());
-        if let Some(mut text) = texts.get_entity(panels.status)
-            && text.text != editor.status
-        {
-            text.text = editor.status.clone();
-        }
+        write_text(panels.status, &editor.status);
         show(panels.status, !editor.status.is_empty());
+
+        let preview = &state.preview;
+        let scene = state
+            .shown_scene
+            .map_or_else(|| NO_VALUE.to_owned(), |id| asset_name(&assets, id));
+        write_text(panels.left.stage.scene, &scene);
+        write_checked(panels.left.stage.skeleton, preview.skeleton);
+        let scene_error = state.scene_error.as_deref().unwrap_or("");
+        write_text(panels.left.stage.scene_error, scene_error);
+        show(panels.left.stage.scene_error, !scene_error.is_empty());
+        write_checked(panels.left.playing, preview.playing);
+        for (button, speed) in panels.left.speeds.into_iter().zip(SPEEDS) {
+            write_selected(button, speed.rate == preview.speed);
+        }
+        let from = preview.from.map(GraphNodeId).and_then(|from| {
+            let node = state.graph()?.node(from)?;
+            Some(format!("Previewing node {from}, {}", node.described()))
+        });
+        write_text(panels.target, from.as_deref().unwrap_or(""));
+        show(panels.target, from.is_some());
+        show(panels.reset, from.is_some());
+
+        let params: Vec<ParamRow> = state
+            .parameters
+            .shown()
+            .map(|param| ParamRow {
+                text: match types.as_deref() {
+                    Some(types) => param_line(
+                        param.name,
+                        param.type_name,
+                        param.value(),
+                        param.shared,
+                        types,
+                    ),
+                    None => format!("{} · {}", param.name, param.short_type()),
+                },
+                shared: param.shared,
+            })
+            .collect();
+        if panels.params != params {
+            let mut list = cmd.entity(panels.left.params).despawn_children();
+            for param in &params {
+                let line = theme.label(param.text.as_str()).small().fixed();
+                if param.shared {
+                    list.add_child(line.color(theme.warning));
+                } else {
+                    list.add_child(line);
+                }
+            }
+            if params.is_empty() {
+                list.add_child(theme.label(NO_VALUE).small().muted().fixed());
+            }
+            panels.params = params;
+        }
         if panels.framed != state.levels() {
             panels.framed = state.levels().to_vec();
             let first = match (state.machine(), state.graph()) {

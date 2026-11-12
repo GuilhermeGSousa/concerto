@@ -625,3 +625,179 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
          1 · AnimationClipNode · 0#0"
     );
 }
+
+struct Previewed {
+    inspected: String,
+    set: String,
+    after_set: String,
+    from: Value,
+    back: Value,
+    refused_from: String,
+    unknown: Value,
+    status: String,
+}
+
+#[test]
+fn the_preview_and_the_parameters_of_a_graph_are_read_and_set_over_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().to_path_buf();
+    write_broken_graph(&root);
+    let Some(previewed) = serve(&root, move |client| async move {
+        until_idle(&client).await;
+        ok(
+            &client,
+            "create_asset",
+            json!({ "kind": "AnimationGraph", "name": "Locomotion" }),
+        )
+        .await;
+        ok(&client, "open_asset", json!({ "asset": GRAPH })).await;
+        ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "AnimationStateMachine", "parent": 0 }),
+        )
+        .await;
+        ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "BlendSpace2DNode" }),
+        )
+        .await;
+        ok(&client, "graph_select", json!({ "node": 2 })).await;
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "Node", "path": "input.param", "value": "direction" }),
+        )
+        .await;
+        ok(&client, "graph_open", json!({ "node": 1 })).await;
+        ok(&client, "graph_add_state", json!({ "name": "Idle" })).await;
+        ok(&client, "graph_add_state", json!({ "name": "Walk" })).await;
+        ok(
+            &client,
+            "graph_connect",
+            json!({ "from": "Idle", "to": "Walk" }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({
+                "target": "Transition",
+                "path": "trigger",
+                "value": { "BoolEquals": { "param": "moving", "value": true } }
+            }),
+        )
+        .await;
+        ok(&client, "graph_up", json!({})).await;
+        ok(&client, "save", json!({})).await;
+        let inspected = ok(&client, "graph_inspect", json!({})).await;
+        let set = ok(
+            &client,
+            "graph_set_param",
+            json!({ "name": "moving", "value": true }),
+        )
+        .await;
+        let after_set = ok(&client, "graph_inspect", json!({})).await;
+        let from = ok(
+            &client,
+            "set_property",
+            json!({ "target": "Preview", "path": "from", "value": { "Some": { "0": 2 } } }),
+        )
+        .await;
+        let back = ok(
+            &client,
+            "set_property",
+            json!({ "target": "Preview", "path": "from", "value": "None" }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "Preview", "path": "from", "value": { "Some": { "0": 9 } } }),
+        )
+        .await;
+        until_idle(&client).await;
+        let refused_from = ok(&client, "status", json!({})).await;
+        let unknown = error(
+            &client,
+            "graph_set_param",
+            json!({ "name": "speed", "value": 1.0 }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "Preview", "path": "speed", "value": 0.5 }),
+        )
+        .await;
+        let status = ok(&client, "status", json!({})).await;
+        client.cancel().await.unwrap();
+        Previewed {
+            inspected,
+            set,
+            after_set,
+            from: serde_json::from_str(&from).unwrap(),
+            back: serde_json::from_str(&back).unwrap(),
+            refused_from,
+            unknown,
+            status,
+        }
+    }) else {
+        return;
+    };
+
+    assert_eq!(
+        previewed.inspected,
+        "Locomotion\n\
+         0 · ResultNode · result\n\
+         1 · AnimationStateMachine · 0#0\n\
+         2 · BlendSpace2DNode · loose\n\
+         parameters:\n\
+         direction · Vec2 · [0.0,0.0]\n\
+         moving · bool · false"
+    );
+    assert_eq!(previewed.set, "Set moving to true.");
+    assert!(
+        previewed.after_set.ends_with("moving · bool · true"),
+        "{}",
+        previewed.after_set
+    );
+    assert_eq!(
+        previewed.from["value"]["from"],
+        json!({ "Some": { "0": 2 } }),
+        "{}",
+        previewed.from
+    );
+    assert_eq!(
+        previewed.back["value"]["from"], "None",
+        "{}",
+        previewed.back
+    );
+    assert!(
+        previewed
+            .refused_from
+            .contains("There is no node 9 to preview from"),
+        "{}",
+        previewed.refused_from
+    );
+    assert_eq!(
+        previewed.unknown["code"], "refused",
+        "{}",
+        previewed.unknown
+    );
+    assert_eq!(
+        previewed.unknown["message"],
+        "There is no parameter speed; the parameters are direction (Vec2), moving (bool)."
+    );
+    assert!(
+        previewed.status.contains("values: Preview, Parameters"),
+        "{}",
+        previewed.status
+    );
+    assert!(
+        !previewed.status.contains("unsaved"),
+        "{}",
+        previewed.status
+    );
+}

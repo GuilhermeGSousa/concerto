@@ -3,12 +3,19 @@ use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
     Component, Entity, Query, Res, command::CommandQueue, events::event_reader::EventReader,
 };
-use concerto_editor::{asset_editor::ActiveEditor, hosted::HostedApp};
+use concerto_editor::{
+    asset_editor::{ActiveEditor, EditorDocument},
+    hosted::{Hosted, HostedApp},
+    inspector::WriteValue,
+    project::ProjectState,
+    tools::edits::PropertyCommitted,
+};
 use concerto_foundation::assets::{AssetId, registry::AssetRegistry};
 use concerto_mcp::{
     AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError, ToolRegistry,
 };
 use concerto_name::Name;
+use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -16,12 +23,13 @@ use super::{
     copy::{GraphCopy, GraphNodeId},
     document::{
         EditGraph, GraphChange, GraphDocument, GraphEdit, GraphEdited, GraphSelection, OpenTarget,
-        TransitionRef, shown_transitions,
+        Sources, TransitionRef, shown_transitions,
     },
     panels::subtitle,
+    params::{FoundParam, short_type},
 };
 
-/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`.
+/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`.
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphInspect {}
 
@@ -105,6 +113,25 @@ pub struct GraphOpen {
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphUp {}
 
+/// Sets a parameter of the graph the front animation graph tab shows, on the blackboard of the preview's players. graph_inspect lists the parameters with their types and values. Never saved.
+#[derive(Deserialize, JsonSchema)]
+pub struct GraphSetParam {
+    /// The parameter's name, as graph_inspect lists it.
+    pub name: String,
+    /// The value, as JSON of the parameter's type: true, 0.5, [1.0, 0.0].
+    pub value: serde_json::Value,
+    /// The parameter's type, as graph_inspect shows it, when the graph reads the name as several types.
+    pub r#type: Option<String>,
+}
+
+#[derive(Component)]
+struct SettingParam {
+    document: Entity,
+    label: &'static str,
+    answer: String,
+    waited: bool,
+}
+
 #[derive(Component)]
 struct EditingGraph {
     document: Entity,
@@ -141,7 +168,12 @@ pub(super) fn build(app: &mut App) {
     )
     .add_tool::<GraphOpen, _>(McpTool::new("graph_open").needs(Needs::Project), graph_open)
     .add_tool::<GraphUp, _>(McpTool::new("graph_up").needs(Needs::Project), graph_up)
-    .add_system(LateUpdate, answer_graph_edits);
+    .add_tool::<GraphSetParam, _>(
+        McpTool::new("graph_set_param").needs(Needs::Project),
+        graph_set_param,
+    )
+    .add_system(LateUpdate, answer_graph_edits)
+    .add_system(LateUpdate, answer_param_sets);
 }
 
 fn refused(reason: impl Into<String>) -> ToolError {
@@ -560,11 +592,216 @@ fn state_lines(machine: &AnimationStateMachine, assets: &AssetRegistry, lines: &
     }
 }
 
+/// One parameter as graph_inspect and the Parameters section show it: `name · type · value`.
+pub(super) fn param_line(
+    name: Name,
+    type_name: &str,
+    value: &dyn Reflect,
+    shared: bool,
+    types: &TypeRegistry,
+) -> String {
+    let mut line = format!(
+        "{name} · {} · {}",
+        short_type(type_name),
+        to_json(value, types)
+    );
+    if shared {
+        line.push_str(" · read as several types");
+    }
+    line
+}
+
+fn param_lines(
+    state: &GraphDocument,
+    found: &[FoundParam],
+    types: &TypeRegistry,
+    lines: &mut Vec<String>,
+) {
+    if found.is_empty() {
+        return;
+    }
+    lines.push("parameters:".to_owned());
+    for param in found {
+        let default;
+        let value = match state.parameters.held(param) {
+            Some(held) => held.value(),
+            None => {
+                default = param.data.default_value();
+                default.as_ref()
+            }
+        };
+        let shared = found
+            .iter()
+            .filter(|other| other.name == param.name)
+            .count()
+            > 1;
+        lines.push(param_line(
+            param.name,
+            param.data.value_type_name(),
+            value,
+            shared,
+            types,
+        ));
+    }
+}
+
+fn typed(found: &[FoundParam]) -> String {
+    found
+        .iter()
+        .map(|param| {
+            format!(
+                "{} ({})",
+                param.name,
+                short_type(param.data.value_type_name())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn graph_set_param(
+    mut calls: ToolCalls<GraphSetParam>,
+    active: Res<ActiveEditor>,
+    documents: Query<(&mut GraphDocument, Option<&HostedApp>)>,
+    assets: Res<AssetRegistry>,
+    project: Res<ProjectState>,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        let front = active
+            .0
+            .and_then(|document| Some((document, documents.get_entity(document)?)));
+        let Some((document, (mut state, hosted))) = front else {
+            reply.err(no_graph_tab());
+            continue;
+        };
+        let Some(types) = hosted.and_then(HostedApp::type_registry) else {
+            reply.err(refused(
+                "The preview is not running, so there is no parameter to set; call status until it says busy: no.",
+            ));
+            continue;
+        };
+        let found = state.found_params(&Sources {
+            types: Some(&types),
+            assets: &assets,
+            root: project
+                .project
+                .as_ref()
+                .map(|project| project.root.as_path()),
+        });
+        if !state.parameters.shows(&found) {
+            state.parameters.show(&found);
+        }
+        let named: Vec<&FoundParam> = found
+            .iter()
+            .filter(|param| param.name.as_str() == arguments.name)
+            .filter(|param| {
+                arguments.r#type.as_deref().is_none_or(|wanted| {
+                    let type_name = param.data.value_type_name();
+                    wanted == type_name || wanted == short_type(type_name)
+                })
+            })
+            .collect();
+        let label = match named[..] {
+            [param] => state.parameters.held(param).map(|held| held.label()),
+            [] if found.is_empty() => {
+                reply.err(refused(format!(
+                    "There is no parameter {}; the graph in view names no parameters.",
+                    arguments.name
+                )));
+                continue;
+            }
+            [] => {
+                reply.err(refused(format!(
+                    "There is no parameter {}; the parameters are {}.",
+                    arguments.name,
+                    typed(&found)
+                )));
+                continue;
+            }
+            _ => {
+                let types: Vec<&str> = named
+                    .iter()
+                    .map(|param| short_type(param.data.value_type_name()))
+                    .collect();
+                reply.err(refused(format!(
+                    "{} is read as several types, {}; give type.",
+                    arguments.name,
+                    types.join(" and ")
+                )));
+                continue;
+            }
+        };
+        let (Some(label), Some(target)) = (label, state.parameters_value()) else {
+            reply.err(refused("The tab publishes no Parameters value."));
+            continue;
+        };
+        cmd.trigger(WriteValue {
+            target,
+            path: label.to_owned(),
+            json: arguments.value.clone(),
+        });
+        cmd.spawn((
+            PendingCall::new(reply, "the parameter"),
+            SettingParam {
+                document,
+                label,
+                answer: format!("Set {} to {}.", arguments.name, arguments.value),
+                waited: false,
+            },
+        ));
+    }
+}
+
+fn answer_param_sets(
+    mut committed: EventReader<Hosted<PropertyCommitted>>,
+    waiting: Query<(Entity, &PendingCall, &mut SettingParam)>,
+    documents: Query<&EditorDocument>,
+    mut cmd: CommandQueue,
+) {
+    let written: Vec<&Hosted<PropertyCommitted>> = committed
+        .read()
+        .filter(|hosted| !hosted.event.address.target.saved())
+        .collect();
+    for (call, pending, mut setting) in waiting.iter() {
+        let result = written
+            .iter()
+            .find(|hosted| {
+                hosted.document == setting.document
+                    && hosted
+                        .event
+                        .address
+                        .path
+                        .get_depth(0)
+                        .is_some_and(|segment| segment == setting.label)
+            })
+            .map(|hosted| &hosted.event.result);
+        match result {
+            Some(Ok(())) => pending.reply.ok(setting.answer.clone()),
+            Some(Err(refusal)) => pending.reply.err(refused(refusal.status().to_string())),
+            None if setting.waited => {
+                let status = documents
+                    .get_entity(setting.document)
+                    .map_or("The parameter was not set", |document| {
+                        document.status.as_str()
+                    });
+                pending.reply.err(refused(format!("{status}.")));
+            }
+            None => {
+                setting.waited = true;
+                continue;
+            }
+        }
+        cmd.despawn(call);
+    }
+}
+
 fn graph_inspect(
     mut calls: ToolCalls<GraphInspect>,
     active: Res<ActiveEditor>,
     documents: Query<(&GraphDocument, Option<&HostedApp>)>,
     assets: Res<AssetRegistry>,
+    project: Res<ProjectState>,
 ) {
     for (_, reply) in calls.read() {
         let front = active.0.and_then(|document| documents.get_entity(document));
@@ -579,13 +816,24 @@ fn graph_inspect(
             continue;
         };
         let mut lines = vec![state.breadcrumb().join(" › ")];
+        let types = hosted.and_then(HostedApp::type_registry);
+        let found = state.found_params(&Sources {
+            types: types.as_ref(),
+            assets: &assets,
+            root: project
+                .project
+                .as_ref()
+                .map(|project| project.root.as_path()),
+        });
+        let types = types.as_ref().map(|types| types.read());
         if let Some(machine) = state.machine() {
             state_lines(machine, &assets, &mut lines);
+            if let Some(types) = types.as_deref() {
+                param_lines(state, &found, types, &mut lines);
+            }
             reply.ok(lines.join("\n"));
             continue;
         }
-        let types = hosted.and_then(HostedApp::type_registry);
-        let types = types.as_ref().map(|types| types.read());
         for node in copy.nodes() {
             let place = match copy.link_of(node.id) {
                 Some(link) => format!("{}#{}", link.parent, link.slot),
@@ -598,6 +846,9 @@ fn graph_inspect(
                 line.push_str(&subtitle);
             }
             lines.push(line);
+        }
+        if let Some(types) = types.as_deref() {
+            param_lines(state, &found, types, &mut lines);
         }
         reply.ok(lines.join("\n"));
     }
