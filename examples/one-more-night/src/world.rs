@@ -567,7 +567,7 @@ fn npc_pose(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<NpcP
     {
         let anchor = data.level.anchor(staging.anchor);
         return Some(NpcPose {
-            position: anchor.position.with_y(0.0),
+            position: data.level.footing(staging.anchor),
             yaw: anchor.yaw,
             entry: 0,
             walking: false,
@@ -2388,6 +2388,30 @@ mod tests {
         };
         let in_bed = |app: &App, player: usize| session(app).seats[player].in_bed;
 
+        {
+            let world = app.main_mut().world_mut();
+            let mut bodies = world.query::<(&super::NpcBody, &Transform), ()>();
+            let heights: Vec<f32> = bodies
+                .iter(world)
+                .map(|(_, transform)| transform.translation.y)
+                .collect();
+            assert_eq!(heights.len(), 10, "the house holds its ten characters");
+            assert_eq!(
+                heights
+                    .iter()
+                    .filter(|height| (**height - 3.8).abs() < 0.2)
+                    .count(),
+                1,
+                "the one who is upstairs stands on that floor"
+            );
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            let her_door = data.catalog.doors.id("d_g1").unwrap();
+            let knock = |player: u8, hour: f64| {
+                super::privacy_at(data, &house(&app), her_door, player, None, hour * 3600.0)
+            };
+            assert!(knock(0, 18.2).someone_in, "she is in until seven");
+            assert!(!knock(1, 20.0).someone_in, "and out in the gallery after");
+        }
         assert_eq!(
             aiming_at(&mut app, 0, Vec3::new(20.1, 4.35, -13.5)),
             Some(super::Interactable::Bed(0)),
