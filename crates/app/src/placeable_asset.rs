@@ -42,6 +42,7 @@ pub struct PlaceableKind {
     pub request_load: fn(&mut World, AssetId),
     pub is_loaded: fn(&World, AssetId) -> bool,
     pub fill: fn(&mut World, AssetId, Entity),
+    pub release: fn(&mut World, AssetId),
 }
 
 impl PlaceableKind {
@@ -52,6 +53,7 @@ impl PlaceableKind {
             request_load: request_load::<A>,
             is_loaded: is_loaded::<A>,
             fill: fill::<A>,
+            release,
         }
     }
 }
@@ -141,6 +143,10 @@ fn is_loaded<A: PlaceableAsset>(world: &World, asset: AssetId) -> bool {
 
 fn fill<A: PlaceableAsset>(world: &mut World, asset: AssetId, entity: Entity) {
     world.trigger(FillPlaced::<A>::new(asset, entity));
+    release(world, asset);
+}
+
+fn release(world: &mut World, asset: AssetId) {
     if let Some(loads) = world.get_resource_mut::<PlacementLoads>() {
         loads.0.remove(&asset);
     }
@@ -276,6 +282,14 @@ mod tests {
             })
         );
         run_until(&mut app, "the unload of the placed prop", |app| {
+            !loaded(first)(app)
+        });
+
+        (kind.request_load)(app.main_mut().world_mut(), first);
+        run_until(&mut app, "the second load of the first prop", loaded(first));
+        (kind.release)(app.main_mut().world_mut(), first);
+        (kind.release)(app.main_mut().world_mut(), first);
+        run_until(&mut app, "the unload of the released prop", |app| {
             !loaded(first)(app)
         });
 

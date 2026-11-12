@@ -51,11 +51,11 @@ pub(crate) fn build_core(app: &mut App) {
     selection::build(app);
     entity_ops::build(app);
     edits::build(app);
+    placement::build(app);
 }
 
 pub(crate) fn build_viewport(app: &mut App) {
     camera::build(app);
     picking::build(app);
-    placement::build(app);
     gizmo::build(app);
 }

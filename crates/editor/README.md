@@ -815,8 +815,8 @@ pixels, which lands on the scene mesh under it, else on the y = 0 plane within
 200 m, else 10 m along the ray. The entity is spawned and selected once the
 asset has loaded, so its `AssetPlaced` can come frames later; a load that
 fails or is cancelled ends it with an error and spawns nothing. It is refused
-without an open scene, which is the case while the game plays, and is there
-only in a recipe with a renderer. An outcome written by a signal reaches the editor a frame later, as
+without an open scene, which is the case while the game plays, and
+`PlaceAt::Pointer` is refused without the viewport's camera. An outcome written by a signal reaches the editor a frame later, as
 any forwarded event does. An edit of a document's value does not pass through a
 hosted `App`: its `Hosted<PropertyCommitted>` is written straight into the
 editor's world, naming the value's document, with no frame's lag.

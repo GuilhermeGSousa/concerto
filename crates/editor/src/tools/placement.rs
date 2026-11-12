@@ -8,8 +8,9 @@ use concerto_ecs::{
     command::CommandQueue,
     component::name::Name,
     entity::hierarchy::{ChildOf, Children},
-    events::{Event, event_reader::EventReader},
+    events::{Event, event_channel::EventChannel, event_cursor::EventCursor},
     signal::{On, Signal},
+    system::input::SystemLocal,
 };
 use concerto_foundation::{
     assets::{
@@ -100,7 +101,10 @@ pub(crate) fn place_asset(on: On<PlaceAsset>, world: &mut World) {
             (placement.kind.request_load)(world, placement.asset);
             match world.get_resource_mut::<PendingPlacements>() {
                 Some(pending) => pending.0.push(placement),
-                None => report(world, placement.asset, Err(LOAD_FAILED.to_owned())),
+                None => {
+                    (placement.kind.release)(world, placement.asset);
+                    report(world, placement.asset, Err(LOAD_FAILED.to_owned()));
+                }
             }
         }
         Err(error) => report(world, request.asset, Err(format!("{error:#}"))),
@@ -109,10 +113,15 @@ pub(crate) fn place_asset(on: On<PlaceAsset>, world: &mut World) {
 
 fn request_finish(
     pending: Res<PendingPlacements>,
-    mut failed: EventReader<AssetLoadFailed>,
+    failures: Option<Res<EventChannel<AssetLoadFailed>>>,
+    mut read: SystemLocal<EventCursor<AssetLoadFailed>>,
     mut cmd: CommandQueue,
 ) {
-    let failed: Vec<AssetId> = failed.read().map(|event| event.id).collect();
+    let failed: Vec<AssetId> = failures
+        .iter()
+        .flat_map(|failures| failures.read_from(&mut read))
+        .map(|event| event.id)
+        .collect();
     if !pending.0.is_empty() {
         cmd.trigger(FinishPlacements { failed });
     }
@@ -124,18 +133,23 @@ fn finish_placements(on: On<FinishPlacements>, world: &mut World) {
     };
     let mut waiting = Vec::new();
     for placement in std::mem::take(&mut pending.0) {
-        if (placement.kind.is_loaded)(world, placement.asset) {
-            finish(world, &placement);
+        let result = if (placement.kind.is_loaded)(world, placement.asset) {
+            spawn(world, &placement).map_err(|error| format!("{error:#}"))
         } else if world
             .get_resource::<AssetServer>()
             .is_some_and(|server| server.is_loading_or_loaded(placement.asset))
         {
             waiting.push(placement);
+            continue;
         } else if on.signal().failed.contains(&placement.asset) {
-            report(world, placement.asset, Err(LOAD_FAILED.to_owned()));
+            Err(LOAD_FAILED.to_owned())
         } else {
-            report(world, placement.asset, Err(LOAD_CANCELLED.to_owned()));
+            Err(LOAD_CANCELLED.to_owned())
+        };
+        if result.is_err() {
+            (placement.kind.release)(world, placement.asset);
         }
+        report(world, placement.asset, result);
     }
     if let Some(pending) = world.get_resource_mut::<PendingPlacements>() {
         pending.0.extend(waiting);
@@ -340,7 +354,7 @@ mod tests {
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     };
-    use concerto_ecs::{Component, ResMut};
+    use concerto_ecs::{Component, ResMut, events::event_reader::EventReader};
     use concerto_foundation::assets::{
         Asset, LoadableAsset, PlaceableAsset, content::save_content_asset_into,
         registry::AssetRegistry,
@@ -461,7 +475,6 @@ mod tests {
             .register_placeable_asset::<Mesh>()
             .register_placeable_asset::<Prop>();
         crate::tools::build_core(&mut app);
-        build(&mut app);
         app.insert_resource(ViewportPointer::default())
             .insert_resource(Heard::<AssetPlaced>(vec![]))
             .insert_resource(Heard::<SceneStatus>(vec![]))
@@ -909,5 +922,20 @@ mod tests {
         assert!(!f.dirty());
         assert_eq!(f.selected(), None);
         assert!(f.heard::<SceneEdited>().is_empty());
+        let prop = f.prop;
+        let kind = *f
+            .app
+            .get_resource::<PlaceableAssets>()
+            .unwrap()
+            .get("TestProp")
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while (kind.is_loaded)(f.world(), prop) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a refused placement kept its asset loaded"
+            );
+            f.app.update();
+        }
     }
 }

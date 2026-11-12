@@ -175,7 +175,8 @@ records the kind in the `PlaceableAssets` resource. A record is for code that
 knows the kind only by its name: `request_load` starts the load and keeps the
 asset alive, `is_loaded` says when it has landed, and `fill` runs `place` on an
 entity and lets the asset go, so it lives on only through the handles `place`
-stored. A load that fails lets it go too. Register the kind in the game's
+stored. A load that fails lets it go too, and `release` lets it go when the
+caller gives up on a load it asked for. Register the kind in the game's
 recipe, with its other assets, so the editor has it.
 
 The engine places two kinds itself. `ScenePlugin` registers `Scene`, whose
