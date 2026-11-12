@@ -297,7 +297,9 @@ three signals, sent with `PreviewSignals`, and writes one event:
   a graph as a save writes it, made with `GraphBytes::of(id, &graph)`. The
   preview decodes each and stands it in for the asset `id` with
   `AssetServer::insert_loaded`, so a handle to that id, a state's or a retarget
-  node's, plays the graph sent and not the file. Every player then restarts on
+  node's, plays the graph sent and not the file. A graph the preview was shown
+  before and is not shown now goes back to its file, read again with
+  `AssetServer::reload`. Every player then restarts on
   the graph `play`: the players are paused while the graphs are swapped, start
   again once nothing is loading, and a skeleton that appears later starts on
   the same graph.
@@ -576,7 +578,9 @@ or `Save failed: …` with the tab left `Unsaved`.
 
 Discard drops every working copy and reads the tab's graph again, so the tab
 shows it as last saved, with nothing selected, and a nested graph is read from
-its file the next time it is opened.
+its file the next time it is opened. The preview is then shown the tab's graph
+alone, so it plays every nested graph from its file too, as it does when the
+tab opens another graph.
 
 ### MCP
 

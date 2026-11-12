@@ -52,7 +52,7 @@ impl GraphBytes {
     }
 }
 
-/// Stands each of `graphs` in for its asset and restarts every player on the graph `play`.
+/// Stands each of `graphs` in for its asset, puts a graph shown before and left out now back to its file, and restarts every player on the graph `play`.
 pub struct ShowGraphs {
     pub graphs: Vec<GraphBytes>,
     pub play: AssetId,
@@ -156,6 +156,14 @@ fn show_graphs(
                 "Graph {} cannot be previewed: {error}",
                 graph.id.simple_hex()
             ),
+        }
+    }
+    let files = server.registry();
+    for dropped in &stage.graphs {
+        let id = dropped.id();
+        let filed = files.as_ref().is_some_and(|files| files.get(id).is_some());
+        if filed && !shown.graphs.iter().any(|graph| graph.id == id) {
+            server.reload::<AnimationGraph>(id);
         }
     }
     stage.play = Some(server.load(shown.play));
@@ -337,6 +345,9 @@ mod tests {
         events::{event_channel::EventChannel, event_cursor::EventCursor},
     };
     use concerto_editor::{hosted::testing::plain_recipe, preview::PreviewPlugin};
+    use concerto_foundation::assets::{
+        ContentAssetRoot, content::save_content_asset_into, registry::AssetRegistry,
+    };
     use concerto_mesh::skeleton::{JointPose, Skeleton};
     use concerto_name::name;
     use concerto_reflect::to_value;
@@ -351,6 +362,7 @@ mod tests {
     const UP_AT: Vec3 = Vec3::new(0.0, 4.0, 0.0);
     const FAR_AT: Vec3 = Vec3::new(0.0, 0.0, 5.0);
     const FAR: Vec2 = Vec2::new(5.0, 5.0);
+    const FILED_AT: Vec3 = Vec3::new(6.0, 0.0, 0.0);
 
     fn held_clip(at: Vec3) -> AnimationClip {
         let mut clip = AnimationClip::default();
@@ -549,8 +561,25 @@ mod tests {
             },
         ];
         let root = AssetId::new();
-        let idle = AssetId::new();
         let moving = AssetId::new();
+        let directory = tempfile::tempdir().unwrap();
+        let filed_clip = stage.clip(FILED_AT);
+        let mut registry = AssetRegistry::new();
+        let idle = save_content_asset_into(
+            &AnimationGraph::from_node(AnimationClipNode::new(AssetHandle::weak(filed_clip))),
+            directory.path(),
+            "content/Idle.gasset",
+            &mut registry,
+        )
+        .unwrap();
+        stage
+            .app
+            .get_resource::<AssetServer>()
+            .unwrap()
+            .publish_content_source(
+                ContentAssetRoot::Directory(directory.path().to_owned()),
+                registry,
+            );
         let fixed = [
             GraphBytes::of(root, &machine_graph(idle, moving)).unwrap(),
             GraphBytes::of(
@@ -633,5 +662,12 @@ mod tests {
         stage.show(shown(&samples), root);
         stage.set(name!("direction"), FAR);
         stage.plays(FAR_AT, "the blend space's new input");
+
+        stage.set(name!("moving"), false);
+        stage.show(vec![fixed[0].clone()], root);
+        stage.plays(
+            FILED_AT,
+            "the file of a graph the preview is no longer shown",
+        );
     }
 }

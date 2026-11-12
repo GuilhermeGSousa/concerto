@@ -410,17 +410,35 @@ impl AssetServer {
         // spawn duplicate loads for the same persistent UUID.
         let mut pending = self.data.pending_tasks.write().unwrap();
         if !pending.contains_key(&id) && !self.data.loaded_assets.read().unwrap().contains(&id) {
-            let cancelled = Arc::new(AtomicBool::new(false));
-            let task = self.request_load::<A>(id, Arc::clone(&cancelled));
-            pending.insert(
-                id,
-                PendingLoad {
-                    _task: task,
-                    cancelled,
-                },
-            );
+            self.start_load::<A>(id, &mut pending);
         }
         self.data.handle_provider.request_handle(id)
+    }
+
+    /// Reads the asset `id` from its file again, though it is loaded or was inserted, and replaces it once the read lands; a read that fails leaves what was there.
+    pub fn reload<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
+        let mut pending = self.data.pending_tasks.write().unwrap();
+        if let Some(load) = pending.remove(&id) {
+            load.cancelled.store(true, Ordering::SeqCst);
+        }
+        self.start_load::<A>(id, &mut pending);
+        self.data.handle_provider.request_handle(id)
+    }
+
+    fn start_load<A: LoadableAsset + 'static>(
+        &self,
+        id: AssetId,
+        pending: &mut HashMap<AssetId, PendingLoad>,
+    ) {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let task = self.request_load::<A>(id, Arc::clone(&cancelled));
+        pending.insert(
+            id,
+            PendingLoad {
+                _task: task,
+                cancelled,
+            },
+        );
     }
 
     pub(crate) fn process_handle_drop(&mut self, id: &AssetId) -> bool {
