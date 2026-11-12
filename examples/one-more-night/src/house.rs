@@ -7,7 +7,7 @@ use crate::case::{
 };
 use crate::casefile::{CaseData, room_title};
 use crate::players::PLAYER_COUNT;
-use crate::rules::{door_rule, may_pass, name_of};
+use crate::rules::{Privacy, door_rule, may_pass, name_of};
 use crate::session::{Effect, Session};
 
 /// How many stops the dumbwaiter serves.
@@ -161,7 +161,7 @@ impl House {
         }
     }
 
-    /// `player` uses what they look at. `busy` says a character is in an entry that cannot be interrupted.
+    /// `player` uses what they look at. `busy` says a character is in an entry that cannot be interrupted, and `at_the_door` what a private door finds.
     pub fn use_target(
         &mut self,
         session: &mut Session,
@@ -171,6 +171,7 @@ impl House {
         target: Interactable,
         now: GameTime,
         busy: bool,
+        at_the_door: Privacy,
     ) -> Vec<Effect> {
         let seat = player as usize;
         let role = session.role(player);
@@ -217,7 +218,7 @@ impl House {
                     return effects;
                 }
                 let key = Self::key_carried(session, data, player);
-                match may_pass(&rule, state.locked, role, key, now) {
+                match may_pass(&rule, state.locked, role, key, now, at_the_door) {
                     Ok(()) => {
                         state.locked = false;
                         state.open = !state.open;
@@ -381,6 +382,7 @@ mod tests {
     use crate::book::Casebook;
     use crate::case::{GameTime, Id};
     use crate::casefile::CaseData;
+    use crate::rules::Privacy;
     use crate::session::{Effect, Mode, Session};
 
     struct Night {
@@ -413,6 +415,7 @@ mod tests {
                 target,
                 GameTime::from_hm(20, 0).unwrap(),
                 false,
+                Privacy::default(),
             )
         }
 

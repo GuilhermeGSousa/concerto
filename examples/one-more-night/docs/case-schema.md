@@ -343,7 +343,7 @@ Doors(
 | `enabled` | bool | False removes the connection for this case. |
 | `state` | `Open`, `Closed` or `Locked` | The state each loop starts with. |
 | `key` | key id | The key that opens it. |
-| `zone` | `Public`, `Service` or `Private` | Who may pass. |
+| `zone` | `Public`, `Service` or `Private` | Who may pass: anyone, the Staff only, or by who is in the room, as [access-design.md](access-design.md) sets out. |
 | `locked` | list of `TimeWindow` | Spans in which it is locked whatever its state. Left out, the case adds none. |
 
 `key` can replace a door's key and cannot remove it.
