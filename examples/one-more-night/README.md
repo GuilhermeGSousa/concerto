@@ -17,8 +17,9 @@ are figurines built in `assets/characters`, whose
 standing, walking and sitting, and turn their heads to a player who is talking
 to them.
 
-`-- --manor` loads the manor's greybox, all five levels, with an empty case
-(`cases/manor_walk`): no characters or props, only the house. The Guest starts
+`-- --manor` loads the manor's greybox, all five levels, with an open case
+that solves nothing (`cases/manor_walk`): ten characters, one of each
+figurine, standing about the house to be met, and no props or facts. The Guest starts
 upstairs and the Staff in the servants' hall. Its walls, floors and furniture
 collide, its doors open, and its bells, bell board, beds and dumbwaiter stops
 are found by the names of the nodes in the export, with nothing placed by

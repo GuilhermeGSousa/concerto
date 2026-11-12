@@ -1,1 +1,15 @@
-[]
+[
+    Schedule(npc: "npc_01", entries: [
+        ScheduleEntry(start: "18:00", anchor: "g1_p01_a", activity: "stand", phase: Before),
+        ScheduleEntry(start: "19:00", anchor: "gallery_p01_a", activity: "stand", phase: Before),
+    ]),
+    Schedule(npc: "npc_02", entries: [ScheduleEntry(start: "18:00", anchor: "drawing_p03_a", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_03", entries: [ScheduleEntry(start: "18:00", anchor: "servhall_p01_a", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_04", entries: [ScheduleEntry(start: "18:00", anchor: "billiard_p02_a", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_05", entries: [ScheduleEntry(start: "18:00", anchor: "drawing_p03_b", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_06", entries: [ScheduleEntry(start: "18:00", anchor: "billiard_p02_b", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_07", entries: [ScheduleEntry(start: "18:00", anchor: "dining_17", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_08", entries: [ScheduleEntry(start: "18:00", anchor: "kitchen_02", activity: "stand", phase: Before)]),
+    Schedule(npc: "npc_09", entries: [ScheduleEntry(start: "18:00", anchor: "housekeeper_03", activity: "sit", phase: Before)]),
+    Schedule(npc: "npc_10", entries: [ScheduleEntry(start: "18:00", anchor: "garage_08", activity: "stand", phase: Before)]),
+]
