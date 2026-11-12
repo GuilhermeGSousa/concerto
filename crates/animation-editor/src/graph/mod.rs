@@ -3,6 +3,7 @@ mod copy;
 mod document;
 mod panels;
 mod save;
+mod tools;
 
 use concerto_animation::graph::AnimationGraph;
 use concerto_app::{App, plugins::Plugin, schedule_groups::Update};
@@ -14,6 +15,7 @@ pub use document::{
     AnimationGraphEditor, EditGraph, GraphChange, GraphDocument, GraphEdit, GraphEdited,
     GraphSelection, graph_preview, node_types, read_graph,
 };
+pub use tools::{GraphAddNode, GraphConnect, GraphInspect, GraphRemove, GraphSelect};
 
 use document::{
     apply_graph_edit, clear_status_on_edit, follow_node_edits, load_graph, restore_discarded_graph,
@@ -21,7 +23,7 @@ use document::{
 use panels::{build_graph_panels, sync_graph_panels};
 use save::save_graphs;
 
-/// Registers [`AnimationGraphEditor`] as a creatable asset editor and runs the graph tab's systems.
+/// Registers [`AnimationGraphEditor`] as a creatable asset editor, runs the graph tab's systems and adds its MCP tools.
 pub struct AnimationGraphEditorPlugin;
 
 impl Plugin for AnimationGraphEditorPlugin {
@@ -43,5 +45,9 @@ impl Plugin for AnimationGraphEditorPlugin {
             .add_listener(apply_graph_edit)
             .add_listener(clear_status_on_edit)
             .add_listener(restore_discarded_graph);
+        tools::build(app);
     }
 }
+
+#[cfg(test)]
+mod tests;

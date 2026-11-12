@@ -284,6 +284,23 @@ in the registry its target names. `list_push` and `list_remove` answer the new
 length. An edit reports `Hosted<PropertyCommitted>`, as one from the inspector
 does, and what it means to the document is up to its asset editor.
 
+The graph tools come with
+[`concerto-animation-editor`](../animation-editor/README.md#the-graph-tab) and
+act on the animation graph the front tab shows; on any other tab each answers
+`refused`, saying to open a graph. A node is named by the id `graph_inspect`
+shows, and a link by the node it makes an input. `graph_inspect` reads the
+graph: its name, then one line per node, `id · type · parent#slot · subtitle`,
+with `result` or `loose` in place of `parent#slot` for the result node and for
+a node that is nobody's input. `graph_add_node` adds a node of `type`, a short
+name such as `LayerNode` or a full path, as an input of `parent` at `slot`, or
+loose without a parent, and answers its id. `graph_connect` makes `child` an
+input of `parent`, at `slot` or at its first empty slot, replacing what a taken
+named slot holds. `graph_remove` removes `node`, leaving its inputs loose, or
+`link`. `graph_select` selects `node`, which becomes the front document's value
+`Node` for `inspect`, `set_property`, `list_push` and `list_remove`. An edit
+the tab refuses, such as a connection that would close a cycle, answers
+`refused` with the reason.
+
 `save` writes `document`, or the active document without one, to its file as
 Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
 no unsaved changes answers `Nothing to save in document <id> <address>.`, which

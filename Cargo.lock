@@ -1067,6 +1067,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "concerto",
  "concerto-animation",
  "concerto-app",
  "concerto-color",
@@ -1074,6 +1075,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-editor",
  "concerto-foundation",
+ "concerto-mcp",
  "concerto-mesh",
  "concerto-name",
  "concerto-reflect",
@@ -1083,8 +1085,12 @@ dependencies = [
  "concerto-window",
  "glam 0.33.12",
  "log",
+ "rmcp",
+ "schemars",
+ "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "uuid",
 ]
 

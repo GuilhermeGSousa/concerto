@@ -21,7 +21,7 @@ which registers `RetargetRigEditor` as a creatable asset editor and registers
 rig tab can pick a rig and a clip, and a loaded rig can load its skeleton and
 its reference clip; and `AnimationGraphEditorPlugin`, which registers
 `AnimationGraphEditor` as a creatable asset editor, so New lists
-`New AnimationGraph`. A
+`New AnimationGraph`, and adds the graph tools when the editor serves MCP. A
 game that doesn't list it has no clip, rig or graph tab: a clip or a graph stays
 selected in the content browser and opens nothing, and a rig opens in the
 generic inspector. Listing
@@ -283,8 +283,8 @@ The tab never edits an `AnimationGraph` in place. Its document, `GraphDocument`,
 holds a `GraphCopy`: every node of the graph under a `GraphNodeId`, each with its
 inputs in slot order, loose nodes included. A node's id is the node's index in
 the file when the graph is read and the next free number when it is added; ids
-last while the graph stays open, are not saved, and are what the canvas and the
-signals name a node by.
+last while the graph stays open, are not saved, and are what the canvas, the
+signals and the MCP tools name a node by.
 
 The nodes are live, built with `AnimationGraph::make_live` from the types the
 tab's preview `App` registers, which are the game's. So the tab waits for its
@@ -328,8 +328,8 @@ card.
 
 ### Editing
 
-Every gesture triggers one signal, `EditGraph { document, edit }`. `edit` is a
-`GraphEdit`:
+Every gesture triggers one signal, `EditGraph { document, edit }`, and the MCP
+tools trigger the same one. `edit` is a `GraphEdit`:
 
 - `AddNode { type_name, parent, slot }` adds a node of a type named by its
   short name or its full path, at its `Default` value, loose or connected as
@@ -363,3 +363,20 @@ runtime ignores what the result node does not reach. The status then reads
 
 Discard reads the file again, so the tab shows the graph as last saved, with
 nothing selected.
+
+### MCP
+
+All five tools act on the graph the front tab shows and answer `refused`,
+saying to open a graph, on any other tab.
+
+| Tool | Does |
+| --- | --- |
+| `graph_inspect` | Read-only. The graph's name, then one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none |
+| `graph_add_node` | `type`, by short name or full path, and optionally `parent` and `slot`. Answers `Added node 4, a LayerNode, as input 0 of node 0.`, or `…, loose.` |
+| `graph_connect` | `child`, `parent` and optionally `slot`. Answers `Node 4 is input 0 of node 2; node 3, which was there, is loose.` |
+| `graph_remove` | `node`, or `link`, the node the link makes an input; giving both or neither answers `invalid_arguments` |
+| `graph_select` | `node`, or nothing to clear the selection. The node is then the value `Node` of `status`'s `values:` line, which `inspect`, `set_property`, `list_push` and `list_remove` take as `target` |
+
+An edit the tab refuses answers `refused` with the tab's status text.
+`create_asset` with kind `AnimationGraph` makes an empty graph, `open_asset`
+opens it, and `save` and `status` work as on any tab.
