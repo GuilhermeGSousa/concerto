@@ -7,6 +7,7 @@
             Topic(ask: Question("npc_01.q1"), responses: [Response(lines: ["npc_01.q1.r1"])]),
             Topic(ask: Fact("f_01"), responses: [Response(lines: ["npc_01.f_01.r1", "npc_01.f_01.r2"], grants: ["f_06"])]),
             Topic(ask: Person("npc_02"), responses: [Response(lines: ["npc_01.npc_02.r1"])]),
+            Topic(ask: Item("p_cufflink"), responses: [Response(lines: ["npc_01.cufflink.r1", "npc_01.cufflink.r2"], grants: ["f_09"])]),
         ],
     ),
     Dialogue(

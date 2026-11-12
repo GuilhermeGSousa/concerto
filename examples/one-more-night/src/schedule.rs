@@ -201,7 +201,7 @@ mod tests {
 
         let last = pose_at(&entries, &level, at(23, 59), WALK_SPEED).unwrap();
         assert_eq!(last.position, seat);
-        assert_eq!(last.entry, 2);
+        assert_eq!(last.entry, 3);
     }
 
     #[test]

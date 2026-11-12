@@ -161,6 +161,7 @@ A list of `Schedule`, at most one per character.
 | `phase` | `Before` or `After` | Before or after the discovery. |
 | `critical` | bool, optional, false | The NPC is busy and cannot be interrupted. |
 | `conversation` | conversation id, optional | The conversation that starts with this entry. |
+| `rings` | list of fact ids, optional | When present, even empty, the character rings the bell of the anchor's room as the entry starts. The flag stays up on the bell board until the Staff reads it, and reading it grants these facts. |
 
 A conversation starts when the entries that name it start. Each participant's
 schedule should name it at the same time; the loader checks only that whoever
@@ -203,7 +204,7 @@ A list of `Dialogue`, at most one per character.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `ask` | `Question(string id)`, `Fact(fact id)` or `Person(character id)` | A fixed question with its prompt, or an "Ask about…" entry. |
+| `ask` | `Question(string id)`, `Fact(fact id)`, `Person(character id)` or `Item(placement id)` | A fixed question with its prompt, an "Ask about…" entry, or an item shown: an `Item` topic is offered only while the asking player carries that placement. |
 | `responses` | list of `Response` | The first whose condition holds is given. A topic with none that holds is not offered. |
 
 `Response`:
@@ -363,6 +364,5 @@ one.
 Each of these is left to the issue that builds the system, which adds it here
 before the freeze if it turns out to be case data:
 
-- An NPC ringing a bell on schedule.
 - Anything about the dumbwaiter.
 - Removing a door's key, and a door that is always open.

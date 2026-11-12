@@ -353,7 +353,7 @@ mod tests {
         book.toggle_lock(case, 0, d1, BOTH);
         assert_eq!(book.toggle_lock(case, 1, d1, BOTH), Some(Verdict::Close));
 
-        book.grant(fact("f_02"));
+        book.grant(fact("f_09"));
         for player in 0..2 {
             book.cycle(case, player, d1, 0, true);
         }

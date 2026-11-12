@@ -124,6 +124,10 @@ fn prop_art(data: &CaseData, placement: PlacementId) -> PropArt {
             scene: asset_id!("content/art/export/kit_prop_basket/scene.gasset"),
             size: Vec3::new(0.6, 0.45, 0.45),
         },
+        "prop_cufflink" => PropArt {
+            scene: asset_id!("content/art/export/kit_prop_key/scene.gasset"),
+            size: Vec3::new(0.14, 0.02, 0.06),
+        },
         "prop_key" => PropArt {
             scene: asset_id!("content/art/export/kit_prop_key/scene.gasset"),
             size: Vec3::new(0.14, 0.02, 0.06),
@@ -661,6 +665,9 @@ fn play(
 ) {
     let now = now_seconds(&clock);
     let time = case_time(now);
+    if session.card.is_none() {
+        house.ring_scheduled(&mut session, &data, time);
+    }
     let mut effects = Vec::new();
     for player in 0..PLAYER_COUNT {
         let seat = player as usize;

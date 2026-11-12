@@ -591,7 +591,7 @@ impl Session {
             Mode::Talking { npc, row, saying } => {
                 let dialogue = data.case.dialogue(npc);
                 let on_offer = dialogue
-                    .map(|dialogue| offers(dialogue, now, phase, book))
+                    .map(|dialogue| offers(dialogue, now, phase, book, self.seats[seat].carried))
                     .unwrap_or_default();
                 let mut next = Mode::Talking {
                     npc,
@@ -1211,10 +1211,16 @@ impl Session {
                     let mut lines: Vec<String> = case
                         .dialogue(*npc)
                         .map(|dialogue| {
-                            offers(dialogue, now, phase, book)
-                                .iter()
-                                .map(|offer| ask_label(case, dialogue.topics[offer.topic].ask))
-                                .collect()
+                            offers(
+                                dialogue,
+                                now,
+                                phase,
+                                book,
+                                self.seats[player as usize].carried,
+                            )
+                            .iter()
+                            .map(|offer| ask_label(case, dialogue.topics[offer.topic].ask))
+                            .collect()
                         })
                         .unwrap_or_default();
                     lines.push("Leave".into());
@@ -1467,7 +1473,7 @@ mod tests {
     fn both_players_fill_a_deduction_in_the_casebook_and_lock_it() {
         let mut t = Table::new();
         t.fact("f_01");
-        t.fact("f_02");
+        t.fact("f_09");
         for player in 0..2 {
             t.session.open_book(player);
             t.press(player, &[Press::Left]);
@@ -1511,7 +1517,7 @@ mod tests {
     #[test]
     fn the_gathering_asks_each_statement_and_a_wrong_answer_ends_the_night() {
         let mut t = Table::new();
-        for fact in ["f_01", "f_02", "f_03", "f_04", "f_05", "f_06"] {
+        for fact in ["f_01", "f_09", "f_03", "f_04", "f_05", "f_06"] {
             t.fact(fact);
         }
         t.confirm("d_01");
