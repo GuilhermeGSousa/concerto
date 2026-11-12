@@ -462,10 +462,15 @@ impl Stage {
         }
     }
 
-    /// The manor's greybox with an empty case, its doors and devices read from node names.
+    /// The manor's greybox with its open case that solves nothing.
     pub fn manor_walk() -> Self {
+        Self::manor(CaseData::manor_walk())
+    }
+
+    /// The manor's greybox under `data`, its doors and devices read from node names.
+    pub fn manor(data: CaseData) -> Self {
         Self {
-            data: CaseData::manor_walk(),
+            data,
             scenes: vec![
                 asset_id!("content/manor/export/manor_ground/scene.gasset"),
                 asset_id!("content/manor/export/manor_first/scene.gasset"),
@@ -2357,7 +2362,7 @@ mod tests {
     #[test]
     fn the_manor_is_walked_and_its_doors_bells_beds_and_dumbwaiter_answer() {
         let Some(mut app) = concerto::headless(|app| {
-            crate::manor(app);
+            crate::manor_walk(app);
             let content = concerto::content_registry!();
             app.get_resource::<AssetServer>()
                 .unwrap()

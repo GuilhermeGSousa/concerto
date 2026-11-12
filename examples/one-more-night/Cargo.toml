@@ -22,6 +22,10 @@ tracy = ["concerto/tracy"]
 name = "one-more-night"
 path = "src/main.rs"
 
+[[bin]]
+name = "seal-case"
+path = "src/bin/seal_case.rs"
+
 [dependencies]
 concerto = { version = "0.1.0", path = "../.." }
 one-more-night-case = { path = "case" }
@@ -29,6 +33,10 @@ glam.workspace = true
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+chacha20poly1305 = "0.10"
+zstd = "0.13"
 
 [build-dependencies]
 concerto-asset-build = { version = "0.1.0", path = "../../crates/asset-build" }

@@ -147,6 +147,14 @@ impl CaseData {
         .expect("the manor walk loads")
     }
 
+    /// A case over the manor's level manifest.
+    pub fn manor(files: &CaseFiles) -> Result<Self, CaseError> {
+        Self::load(
+            files,
+            include_str!("../assets/manor/export/level_manifest.ron"),
+        )
+    }
+
     /// The text of a string of the case.
     pub fn text(&self, id: StrId) -> &str {
         self.case.strings.get(id).as_str()
