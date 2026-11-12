@@ -275,11 +275,41 @@ controls do; `inspect` reads both back. `status` shows the status line and
 
 Opening an `AnimationGraph` opens a tab that shows the graph's nodes on a
 [graph canvas](../editor/README.md#the-graph-canvas) and edits them: nodes are
-added, wired, removed and inspected, and Save writes the graph back. The tab
-shows one graph. A node that plays another graph inside itself, a state machine
-or a retarget node, is edited as a node; its graphs are opened as assets of
-their own. The tab has a preview, which shows an empty stage: nothing plays the
+added, wired, removed and inspected, and Save writes the graph back. A node
+that plays another graph inside itself is drilled into in the same tab: a state
+machine into a diagram of its states, a state or a retarget node into the graph
+it plays. The tab has a preview, which shows an empty stage: nothing plays the
 graph yet.
+
+### The stack
+
+The document keeps the chain of levels from the tab's own graph down to what is
+in view, `GraphDocument::levels()`. A `GraphLevel` is a graph asset, shown as a
+pose graph, or a state machine node of the graph above it, shown as a state
+diagram. A diagram is not a graph of its own: it edits that node in the working
+copy of the graph that holds it. The breadcrumb over the canvas shows the
+chain, `Locomotion › States › Run (state)`: a graph by its asset's name, a
+state machine as `States`, and a state's graph as `<state> (state)`. Each entry
+above the last is a button that goes back up to it.
+
+- Double-clicking a state machine node, or Enter with it selected, opens its
+  diagram. Double-clicking any other node that plays a graph inside itself, a
+  `RetargetNode`, opens that graph. Double-clicking a state opens its graph.
+- A node or a state whose graph is not set is refused with
+  `Node 2 names no graph; select it and set its graph`, as is one whose id is
+  not an `AnimationGraph` of the project.
+- A graph already in the stack is refused: a state that plays the graph that
+  holds its machine cannot be opened inside itself.
+
+Every graph the tab drills into gets a working copy, kept until the tab loads
+another asset or its edits are discarded, so going up and back down shows the
+same nodes under the same ids. An edit to a nested graph is an edit to that
+asset: the tab is `Unsaved`, Save writes every graph that changed, and Discard
+restores every one and goes back to the tab's own graph.
+
+The editor keeps one tab per asset kind, so there is never a second graph tab:
+opening another graph, one this tab has drilled into included, replaces what
+the tab shows, after the unsaved-changes prompt when it has edits.
 
 ### The working copy
 
@@ -307,8 +337,8 @@ takes one away, so a `BlendSpace2DNode` keeps a point per input.
 
 ### The panels
 
-The `bottom` host holds a row with the graph's name and, under it, the canvas
-in `Flow` mode. A node's title is the last segment of its type name. Its
+The `bottom` host holds a row with the breadcrumb and, under it, the canvas, in
+`Flow` mode for a pose graph. A node's title is the last segment of its type name. Its
 subtitle is the name of the asset its first handle field names, when the
 project has that asset. Its pins come from `input_slots()`: none, one per named
 slot, or for a node that takes any number of inputs one per input and an empty
@@ -323,12 +353,42 @@ comes into view the canvas scrolls its result node into view.
   type registered with `#[reflect(AnimationNode)]` but `ResultNode` and
   `PlaceholderNode`, by short name, or by full path where two share one.
   Picking one adds a loose node.
+- Dragging from a node's output pin and letting go on empty space lists the
+  same types there; picking one adds that node and makes the dragged node its
+  first input. A type that takes no inputs is refused and adds nothing.
+
+For a state machine the canvas is in `Diagram` mode: a box per state, titled
+with its name, its subtitle the name of the graph it plays or `no graph` in the
+warning colour, and the initial state with the badge `initial`; an arrow per
+transition, labelled with its trigger: `Instant`, `OnAnimationEnd`,
+`<param> = <value>` or `<param> ≠ 0`.
+
+- A right click on empty space offers New state, which puts the keyboard in
+  the name field beside the breadcrumb, shown only for a diagram. Enter there
+  creates an `AnimationGraph` asset of that name in the folder of the graph
+  that holds the machine, through `CreateAsset`, and adds a state of that name
+  playing it. A name `CreateAsset` refuses, invalid or taken, or one the
+  machine already has, adds no state and the status says why. The created file
+  stays on disk if the tab's edits are later discarded.
+- Dragging from one state to another adds a transition with an `Instant`
+  trigger and no blend time, and selects it. The canvas sends nothing for a
+  drag that ends on its own box, so a transition from a state to itself is made
+  with Transition to self in the state's right-click menu.
+- Delete removes the selected transition, or the selected state with every
+  transition to or from it. The state's graph asset stays on disk.
 
 The `inspector` host has the title, Graph, and the document's status on a line
 of its own when it is not empty. Under it the inspector shows the selected
 node as the document value `Node`, with the property editors its fields have
-anywhere else. A selected link, a placeholder, or nothing selected shows no
-card.
+anywhere else. A selected state is the value `State { name, graph, initial }`
+and a selected transition `Transition { trigger, blend_time }`; an edit of
+either is written into the machine with its edit methods: a new `name` renames
+the state, `graph` replaces the graph it plays, `initial` set to true makes it
+the state the machine starts in, and a transition's fields replace its trigger
+and blend time. A name another state has is refused, the value goes back, and
+the status says why; setting `initial` to false does nothing, since a machine
+always starts somewhere. A selected link, a placeholder, or nothing selected
+shows no card.
 
 ### Editing
 
@@ -349,37 +409,59 @@ tools trigger the same one. `edit` is a `GraphEdit`:
 - `RemoveNode(id)` removes a node and leaves its inputs loose; the result node
   is refused. `RemoveLink { child }` takes `child` out of its parent's inputs.
   Either way the later inputs of that parent move up a slot.
-- `Select(selection)` selects a node, a link or nothing.
+- `AddParent { type_name, child }` adds a node and makes `child` its first
+  input, as dropping a link on empty space does.
+- `AddState { name, graph }` adds a state playing `graph`, or with none a graph
+  asset it creates as New state does. `AddTransition { from, to }` adds an
+  `Instant` transition with no blend time and selects it. `RemoveState(name)`
+  and `RemoveTransition(transition)` remove one. A transition is a
+  `TransitionRef { from, to, index }`, `index` counting the transitions between
+  that pair in the order the machine tries them.
+- `Open(target)` drills into `OpenTarget::Node(id)` or `OpenTarget::State(name)`
+  and `Up(levels)` goes back up, stopping at the tab's own graph.
+- `Select(selection)` selects a node, a link, a state, a transition or nothing.
+
+Node and link edits are refused while a state machine is in view, and state and
+transition edits while a pose graph is, each saying which tool gets there.
 
 Each ends in a `GraphEdited { document, edit, result }` event: a `GraphChange`
 naming the node added, the slot a connection took and the input it displaced,
-or the reason for a refusal, which is also the tab's status. An edit that
-changes the graph marks the tab `Unsaved`, as an edit of the `Node` value in
-the inspector does. Selecting does not.
+the transition added or the graph a new state plays, or the reason for a
+refusal, which is also the tab's status. An `AddState` that creates its graph
+ends when the `AssetCreation` for it arrives. An edit that changes a graph marks
+the tab `Unsaved`, as an edit of the `Node`, `State` or `Transition` value in
+the inspector does. Selecting and moving through the stack do not.
 
 ### Save and Discard
 
-Save (Ctrl+S) builds a fresh `AnimationGraph` from the copy, the result node
-first, then every node in id order, each connected to its inputs in slot order,
-and writes it over the file, keeping the asset's id. Loose nodes are saved; the
-runtime ignores what the result node does not reach. The status then reads
-`Saved <address>`, or `Save failed: …` with the tab left `Unsaved`.
+Save (Ctrl+S) builds a fresh `AnimationGraph` from each working copy that
+changed, the result node first, then every node in id order, each connected to
+its inputs in slot order, and writes it over its file, keeping the asset's id.
+Loose nodes are saved; the runtime ignores what the result node does not reach.
+The status then reads `Saved <address>, <address>`, naming each file written,
+or `Save failed: …` with the tab left `Unsaved`.
 
-Discard reads the file again, so the tab shows the graph as last saved, with
-nothing selected.
+Discard drops every working copy and reads the tab's graph again, so the tab
+shows it as last saved, with nothing selected, and a nested graph is read from
+its file the next time it is opened.
 
 ### MCP
 
-All five tools act on the graph the front tab shows and answer `refused`,
-saying to open a graph, on any other tab.
+All eight tools act on what the front graph tab has in view and answer
+`refused`, saying to open a graph, on any other tab. A state is named by its
+name, and a transition by `from`, `to` and `index`, its place among the
+transitions between that pair, 0 without one.
 
 | Tool | Does |
 | --- | --- |
-| `graph_inspect` | Read-only. The graph's name, then one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none |
+| `graph_inspect` | Read-only. The breadcrumb, then for a pose graph one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none. For a state machine, one line per state, `name · initial · graph address`, with `initial` only on the initial state and `no graph` or `missing graph` in place of an address, then one per transition, `from → to #index · trigger · blend`, such as `Idle → Run #0 · Instant · 0.25s` |
 | `graph_add_node` | `type`, by short name or full path, and optionally `parent` and `slot`. Answers `Added node 4, a LayerNode, as input 0 of node 0.`, or `…, loose.` |
-| `graph_connect` | `child`, `parent` and optionally `slot`. Answers `Node 4 is input 0 of node 2; node 3, which was there, is loose.` |
-| `graph_remove` | `node`, or `link`, the node the link makes an input; giving both or neither answers `invalid_arguments` |
-| `graph_select` | `node`, or nothing to clear the selection. The node is then the value `Node` of `status`'s `values:` line, which `inspect`, `set_property`, `list_push` and `list_remove` take as `target` |
+| `graph_add_state` | `name`, and optionally `graph`, an existing `AnimationGraph` by address or id; without one a graph asset of that name is created beside the graph that holds the machine. Answers `Added state Idle, the initial state, playing content/Idle.gasset.` |
+| `graph_connect` | In a pose graph `child`, `parent` and optionally `slot`; answers `Node 4 is input 0 of node 2; node 3, which was there, is loose.` In a state machine `from` and `to`, equal for a transition to itself; answers `Added transition Idle → Walk #0.` and selects it |
+| `graph_remove` | One of `node`, `link` (the node the link makes an input), `state`, or a transition by `from`, `to` and `index`; several or none answers `invalid_arguments` |
+| `graph_select` | `node`, `state`, or a transition by `from`, `to` and `index`, or nothing to clear the selection. What is selected is then the value `Node`, `State` or `Transition` of `status`'s `values:` line, which `inspect`, `set_property`, `list_push` and `list_remove` take as `target` |
+| `graph_open` | `node`, a state machine or a node that plays a graph, or `state`, a state of the machine in view. Answers `Showing Locomotion › States › Run (state).` |
+| `graph_up` | Goes up one level and answers the same way; refused on the tab's own graph |
 
 An edit the tab refuses answers `refused` with the tab's status text.
 `create_asset` with kind `AnimationGraph` makes an empty graph, `open_asset`

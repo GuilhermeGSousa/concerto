@@ -6,14 +6,20 @@ use std::{
 
 use concerto_animation::{
     graph::{AnimationGraph, AnimationNodeData},
-    node::{AnimationClipNode, LayerNode},
+    node::{
+        AnimationClipNode, LayerNode,
+        state_machine::{AnimationFSMTrigger, AnimationStateMachine},
+    },
+    retarget::RetargetNode,
 };
 use concerto_app::App;
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{ContentAssetHeader, decode_content_asset, write_content_asset},
+    content::{ContentAssetHeader, decode_content_asset, read_content_asset, write_content_asset},
+    handle::AssetHandle,
 };
 use concerto_mcp::host::run_with;
+use concerto_name::Name;
 use concerto_render::gpu::Gpu;
 use rmcp::{
     RoleClient, ServiceExt,
@@ -337,4 +343,285 @@ fn a_graph_is_created_wired_edited_saved_and_restored_by_a_discard_over_mcp() {
     );
     assert_eq!(walk.open_failed["code"], "open_failed");
     assert_eq!(walk.discarded, walk.inspected);
+}
+
+const IDLE: &str = "content/Idle.gasset";
+const WALK: &str = "content/Walk.gasset";
+
+fn id_of(file: &[u8]) -> AssetId {
+    read_content_asset(file).unwrap().0.asset_id
+}
+
+struct Drill {
+    unset: Value,
+    held: Value,
+    opened: Vec<String>,
+    states: Vec<String>,
+    duplicate: Value,
+    transitions: Vec<String>,
+    selected: Vec<String>,
+    diagram: String,
+    nested_added: String,
+    saved: String,
+    root: Vec<u8>,
+    idle: Vec<u8>,
+    walk: Vec<u8>,
+    nested_edited: String,
+    restored_root: String,
+    restored_nested: String,
+}
+
+fn expected_root(root: AssetId, idle: AssetId, walk: AssetId) -> AnimationGraph {
+    let idle_name = Name::new("Idle");
+    let run = Name::new("Run");
+    let mut machine = AnimationStateMachine::default();
+    machine
+        .add_state(idle_name, AssetHandle::weak(idle))
+        .unwrap();
+    machine.add_state(run, AssetHandle::weak(walk)).unwrap();
+    machine
+        .add_transition(idle_name, run, AnimationFSMTrigger::Instant, 0.0)
+        .unwrap();
+    machine
+        .add_transition(run, run, AnimationFSMTrigger::Instant, 0.25)
+        .unwrap();
+    machine.set_initial(run).unwrap();
+    let mut graph = AnimationGraph::new();
+    let result = graph.result_index();
+    let states = graph.insert_node(AnimationNodeData::of(&machine));
+    graph.insert_node(AnimationNodeData::of(&RetargetNode {
+        graph: AssetHandle::weak(root),
+        ..Default::default()
+    }));
+    graph.connect(result, states).unwrap();
+    graph
+}
+
+fn expected_nested() -> AnimationGraph {
+    let mut graph = AnimationGraph::new();
+    let result = graph.result_index();
+    let clip = graph.insert_node(AnimationNodeData::of(&AnimationClipNode::default()));
+    graph.connect(result, clip).unwrap();
+    graph
+}
+
+#[test]
+fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_restored_over_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().to_path_buf();
+    write_broken_graph(&root);
+    let project = root.clone();
+    let Some(drill) = serve(&root, move |client| async move {
+        until_idle(&client).await;
+        ok(
+            &client,
+            "create_asset",
+            json!({ "kind": "AnimationGraph", "name": "Locomotion" }),
+        )
+        .await;
+        ok(&client, "open_asset", json!({ "asset": GRAPH })).await;
+        let read = |address: &str| std::fs::read(project.join(address)).unwrap();
+        let own = id_of(&read(GRAPH)).simple_hex();
+        ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "AnimationStateMachine", "parent": 0 }),
+        )
+        .await;
+        ok(&client, "graph_add_node", json!({ "type": "RetargetNode" })).await;
+        let unset = error(&client, "graph_open", json!({ "node": 2 })).await;
+        ok(&client, "graph_select", json!({ "node": 2 })).await;
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "Node", "path": "graph", "value": own }),
+        )
+        .await;
+        let held = error(&client, "graph_open", json!({ "node": 2 })).await;
+        let mut opened = vec![ok(&client, "graph_open", json!({ "node": 1 })).await];
+        let states = vec![
+            ok(&client, "graph_add_state", json!({ "name": "Idle" })).await,
+            ok(&client, "graph_add_state", json!({ "name": "Walk" })).await,
+        ];
+        let duplicate = error(&client, "graph_add_state", json!({ "name": "Idle" })).await;
+        let transitions = vec![
+            ok(
+                &client,
+                "graph_connect",
+                json!({ "from": "Idle", "to": "Walk" }),
+            )
+            .await,
+            ok(
+                &client,
+                "graph_connect",
+                json!({ "from": "Walk", "to": "Walk" }),
+            )
+            .await,
+        ];
+        let mut selected = vec![
+            ok(
+                &client,
+                "graph_select",
+                json!({ "from": "Walk", "to": "Walk", "index": 0 }),
+            )
+            .await,
+        ];
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "Transition", "path": "blend_time", "value": 0.25 }),
+        )
+        .await;
+        selected.push(ok(&client, "graph_select", json!({ "state": "Walk" })).await);
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "State", "path": "name", "value": "Run" }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({ "target": "State", "path": "initial", "value": true }),
+        )
+        .await;
+        let diagram = ok(&client, "graph_inspect", json!({})).await;
+        opened.push(ok(&client, "graph_open", json!({ "state": "Run" })).await);
+        let nested_added = ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "AnimationClipNode", "parent": 0 }),
+        )
+        .await;
+        opened.push(ok(&client, "graph_up", json!({})).await);
+        let saved = ok(&client, "save", json!({})).await;
+        let (root, idle, walk) = (read(GRAPH), read(IDLE), read(WALK));
+        ok(&client, "graph_open", json!({ "state": "Run" })).await;
+        ok(&client, "graph_remove", json!({ "node": 1 })).await;
+        let nested_edited = ok(&client, "graph_inspect", json!({})).await;
+        error(
+            &client,
+            "open_asset",
+            json!({ "asset": BROKEN, "unsaved": "discard" }),
+        )
+        .await;
+        let restored_root = ok(&client, "graph_inspect", json!({})).await;
+        ok(&client, "graph_open", json!({ "node": 1 })).await;
+        ok(&client, "graph_open", json!({ "state": "Run" })).await;
+        let restored_nested = ok(&client, "graph_inspect", json!({})).await;
+        client.cancel().await.unwrap();
+        Drill {
+            unset,
+            held,
+            opened,
+            states,
+            duplicate,
+            transitions,
+            selected,
+            diagram,
+            nested_added,
+            saved,
+            root,
+            idle,
+            walk,
+            nested_edited,
+            restored_root,
+            restored_nested,
+        }
+    }) else {
+        return;
+    };
+
+    let message = |refusal: &Value| refusal["message"].as_str().unwrap().to_owned();
+    assert_eq!(drill.unset["code"], "refused", "{}", drill.unset);
+    assert_eq!(
+        message(&drill.unset),
+        "Node 2 names no graph; select it and set its graph."
+    );
+    assert_eq!(
+        message(&drill.held),
+        "Locomotion is already open in this tab, above what is in view; a graph cannot be opened inside itself."
+    );
+    assert_eq!(
+        drill.opened,
+        [
+            "Showing Locomotion › States.",
+            "Showing Locomotion › States › Run (state).",
+            "Showing Locomotion › States.",
+        ]
+    );
+    assert_eq!(
+        drill.states,
+        [
+            format!("Added state Idle, the initial state, playing {IDLE}."),
+            format!("Added state Walk, playing {WALK}."),
+        ]
+    );
+    assert_eq!(
+        message(&drill.duplicate),
+        "The state machine already has a state named Idle."
+    );
+    assert_eq!(
+        drill.transitions,
+        [
+            "Added transition Idle → Walk #0.",
+            "Added transition Walk → Walk #0.",
+        ]
+    );
+    assert_eq!(
+        drill.selected,
+        [
+            "Selected transition Walk → Walk #0; inspect and set_property take it as target Transition.",
+            "Selected state Walk; inspect and set_property take it as target State.",
+        ]
+    );
+    assert_eq!(
+        drill.diagram,
+        format!(
+            "Locomotion › States\n\
+             Idle · {IDLE}\n\
+             Run · initial · {WALK}\n\
+             Idle → Run #0 · Instant · 0s\n\
+             Run → Run #0 · Instant · 0.25s"
+        )
+    );
+    assert_eq!(
+        drill.nested_added,
+        "Added node 1, an AnimationClipNode, as input 0 of node 0."
+    );
+    assert_eq!(drill.saved, format!("Saved {GRAPH}."));
+    let decoded = |file: &[u8]| decode_content_asset::<AnimationGraph>(file).unwrap().1;
+    assert_eq!(
+        described(&decoded(&drill.root)),
+        described(&expected_root(
+            id_of(&drill.root),
+            id_of(&drill.idle),
+            id_of(&drill.walk)
+        ))
+    );
+    assert_eq!(
+        described(&decoded(&drill.walk)),
+        described(&expected_nested())
+    );
+    assert_eq!(
+        described(&decoded(&drill.idle)),
+        described(&AnimationGraph::new())
+    );
+    assert_eq!(
+        drill.nested_edited,
+        "Locomotion › States › Run (state)\n0 · ResultNode · result"
+    );
+    assert_eq!(
+        drill.restored_root,
+        "Locomotion\n\
+         0 · ResultNode · result\n\
+         1 · AnimationStateMachine · 0#0\n\
+         2 · RetargetNode · loose · Locomotion"
+    );
+    assert_eq!(
+        drill.restored_nested,
+        "Locomotion › States › Run (state)\n\
+         0 · ResultNode · result\n\
+         1 · AnimationClipNode · 0#0"
+    );
 }

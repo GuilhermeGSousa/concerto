@@ -286,20 +286,34 @@ does, and what it means to the document is up to its asset editor.
 
 The graph tools come with
 [`concerto-animation-editor`](../animation-editor/README.md#the-graph-tab) and
-act on the animation graph the front tab shows; on any other tab each answers
-`refused`, saying to open a graph. A node is named by the id `graph_inspect`
-shows, and a link by the node it makes an input. `graph_inspect` reads the
-graph: its name, then one line per node, `id · type · parent#slot · subtitle`,
-with `result` or `loose` in place of `parent#slot` for the result node and for
-a node that is nobody's input. `graph_add_node` adds a node of `type`, a short
-name such as `LayerNode` or a full path, as an input of `parent` at `slot`, or
-loose without a parent, and answers its id. `graph_connect` makes `child` an
-input of `parent`, at `slot` or at its first empty slot, replacing what a taken
-named slot holds. `graph_remove` removes `node`, leaving its inputs loose, or
-`link`. `graph_select` selects `node`, which becomes the front document's value
-`Node` for `inspect`, `set_property`, `list_push` and `list_remove`. An edit
-the tab refuses, such as a connection that would close a cycle, answers
-`refused` with the reason.
+act on what the front animation graph tab has in view, a pose graph or a state
+machine; on any other tab each answers `refused`, saying to open a graph. A
+node is named by the id `graph_inspect` shows, a link by the node it makes an
+input, a state by its name, and a transition by `from`, `to` and its `index`
+among those between that pair, 0 without one. `graph_inspect` reads what is in
+view: the breadcrumb, then for a pose graph one line per node,
+`id · type · parent#slot · subtitle`, with `result` or `loose` in place of
+`parent#slot` for the result node and for a node that is nobody's input, and
+for a state machine one line per state, `name · initial · graph address`, then
+one per transition, `from → to #index · trigger · blend`. `graph_add_node` adds
+a node of `type`, a short name such as `LayerNode` or a full path, as an input
+of `parent` at `slot`, or loose without a parent, and answers its id.
+`graph_add_state` adds a state `name` to the state machine in view, playing
+`graph`, an existing graph by address or id, or without one a new graph asset
+of that name created beside the graph that holds the machine. `graph_connect`
+makes `child` an input of `parent`, at `slot` or at its first empty slot,
+replacing what a taken named slot holds; in a state machine it takes `from` and
+`to`, which may be equal, and adds an `Instant` transition with no blend time.
+`graph_remove` removes `node`, leaving its inputs loose, or `link`, or `state`
+with its transitions, or a transition. `graph_select` selects `node`, `state`
+or a transition, which becomes the front document's value `Node`, `State` or
+`Transition` for `inspect`, `set_property`, `list_push` and `list_remove`.
+`graph_open` drills into `node`, a state machine into its states and a node
+that plays a graph into that graph, or into the graph of `state`, and
+`graph_up` goes back up one level; both answer `Showing <breadcrumb>.`. An
+edit the tab refuses, such as a connection that would close a cycle or opening
+a node whose graph is not set, answers `refused` with the reason and what to
+do.
 
 `save` writes `document`, or the active document without one, to its file as
 Ctrl+S does, and answers `Saved <address>.` once it is written. A document with

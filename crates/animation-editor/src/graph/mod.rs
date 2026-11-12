@@ -14,14 +14,19 @@ use concerto_foundation::assets::asset_server::AssetServer;
 pub use copy::{Connected, GraphCopy, GraphLink, GraphNodeId, HeldNode, HeldValue};
 pub use document::{
     AnimationGraphEditor, EditGraph, GraphChange, GraphDocument, GraphEdit, GraphEdited,
-    GraphSelection, graph_preview, node_types, read_graph,
+    GraphLevel, GraphSelection, HeldGraph, OpenTarget, ShownTransition, StateValue, TransitionRef,
+    TransitionValue, graph_preview, node_types, read_graph, shown_transitions,
 };
-pub use tools::{GraphAddNode, GraphConnect, GraphInspect, GraphRemove, GraphSelect};
+pub use tools::{
+    GraphAddNode, GraphAddState, GraphConnect, GraphInspect, GraphOpen, GraphRemove, GraphSelect,
+    GraphUp,
+};
 
 use document::{
-    apply_graph_edit, clear_status_on_edit, follow_node_edits, load_graph, restore_discarded_graph,
+    apply_graph_edit, clear_status_on_edit, finish_state_creation, follow_value_edits, load_graph,
+    restore_discarded_graph,
 };
-use panels::{build_graph_panels, sync_graph_panels};
+use panels::{build_graph_panels, name_new_states, sync_graph_panels};
 use save::save_graphs;
 
 /// Registers [`AnimationGraphEditor`] as a creatable asset editor, runs the graph tab's systems and adds its MCP tools.
@@ -39,10 +44,12 @@ impl Plugin for AnimationGraphEditorPlugin {
             .add_system(
                 Update,
                 (
-                    follow_node_edits,
+                    follow_value_edits,
+                    finish_state_creation,
                     save_graphs,
                     load_graph,
                     build_graph_panels,
+                    name_new_states,
                     sync_graph_panels,
                 )
                     .chain(),
