@@ -178,6 +178,11 @@ entity and lets the asset go, so it lives on only through the handles `place`
 stored. A load that fails lets it go too. Register the kind in the game's
 recipe, with its other assets, so the editor has it.
 
+The engine places two kinds itself. `ScenePlugin` registers `Scene`, whose
+root nodes become children of the entity, and `RenderPlugin` registers `Mesh`,
+which gives the entity a `MeshComponent` and no material, so it draws grey
+until it is given one.
+
 ## More
 
 [docs/asset-importing.md](../asset-importing.md) covers the registry, the
