@@ -1,10 +1,12 @@
+import json
 import math
+import os
 
 import bpy
 from mathutils import Vector
 
-LAMPS = [(2.75, 2.0), (2.75, 6.0), (8.25, 2.0), (8.25, 6.0), (13.0, 2.0), (13.0, 6.0), (17.0, 2.0), (17.0, 6.0),
-         (13.0, 9.75), (17.0, 9.75), (13.25, 13.75), (17.25, 13.75)]
+LAMPS = [tuple(p) for ps in json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lamps.json"))).values()
+         for p in ps]
 HELPERS = ("room", "nav", "acoustic", "anchor")
 
 
@@ -25,13 +27,15 @@ def render(path, eye, target, lens=20.0, width=1280, height=720):
     cam.rotation_euler = (Vector(target) - Vector(eye)).to_track_quat("-Z", "Y").to_euler()
     sc.collection.objects.link(cam)
     made.append(cam)
-    for x, y in LAMPS:
+    for x, y, z in LAMPS:
+        if (Vector((x, y, z)) - Vector(eye)).length > 16.0:
+            continue
         data = bpy.data.lights.new("preview_lamp", "POINT")
         data.energy = 300.0
         data.color = (1.0, 0.78, 0.5)
         data.use_shadow = False
         lamp = bpy.data.objects.new("preview_lamp", data)
-        lamp.location = (x, y, 2.3)
+        lamp.location = (x, y, z + 0.2)
         sc.collection.objects.link(lamp)
         made.append(lamp)
     moon = bpy.data.objects.new("preview_moon", bpy.data.lights.new("preview_moon", "SUN"))

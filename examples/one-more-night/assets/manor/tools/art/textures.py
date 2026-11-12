@@ -92,6 +92,28 @@ def make(tex_dir):
     path = want("paper_sage_color.png")
     if path:
         save(path, damask(512, (0.49, 0.55, 0.45), (0.435, 0.5, 0.405)))
+    papers = {
+        "oxblood": ((0.36, 0.13, 0.12), (0.30, 0.10, 0.095)),
+        "burgundy": ((0.33, 0.12, 0.16), (0.27, 0.095, 0.13)),
+        "green": ((0.17, 0.27, 0.2), (0.14, 0.225, 0.165)),
+        "rose": ((0.66, 0.5, 0.48), (0.6, 0.43, 0.42)),
+        "blue": ((0.47, 0.55, 0.62), (0.41, 0.49, 0.57)),
+        "yellow": ((0.72, 0.64, 0.42), (0.66, 0.58, 0.36)),
+        "lilac": ((0.58, 0.52, 0.62), (0.52, 0.46, 0.57)),
+        "peach": ((0.72, 0.56, 0.45), (0.66, 0.5, 0.39)),
+    }
+    for name, (ground, figure) in papers.items():
+        path = want(f"paper_{name}_color.png")
+        if path:
+            save(path, damask(512, ground, figure))
+    paints = {
+        "paint_cream": ((0.74, 0.69, 0.55), 0.3),
+        "paint_green": ((0.16, 0.25, 0.19), 0.3),
+    }
+    for name, (colour, contrast) in paints.items():
+        path = want(f"{name}_color.png")
+        if path:
+            save(path, tinted(src("plaster_color.jpg"), colour, contrast))
     path = want("marble_checker_color.png")
     if path:
         save(path, checker(src("marble_color.jpg"), (0.80, 0.78, 0.73), (0.06, 0.06, 0.065), (0.25, 0.24, 0.22)))

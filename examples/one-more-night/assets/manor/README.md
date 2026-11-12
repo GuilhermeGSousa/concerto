@@ -51,8 +51,8 @@ it and never makes it solid. An art object named `art.<greybox object>`, such
 as `art.furniture.hall.gong_01`, takes that object's place on screen: the game
 keeps the greybox object solid and stops drawing it, and hides both when a
 feature hides the object. A greybox object with no art is drawn as before, so
-the house is dressed one room at a time. Today that is the hall and the
-drawing room.
+a room can be dressed on its own. Every room with an entry in `STYLE` is
+dressed; the garden's own pieces and the feature objects are still greybox.
 
 `build_art.py` deletes and recreates every `generated_art` object. Run it
 after `build.py`, which rebuilds the boxes it reads:
@@ -61,7 +61,7 @@ after `build.py`, which rebuilds the boxes it reads:
 p = "<absolute path>/tools/art/build_art.py"
 g = {"__file__": p, "__name__": "build_art"}
 exec(compile(open(p).read(), p, "exec"), g)
-report = g["main"](("hall", "drawing"))
+report = g["main"]()
 ```
 
 It copies the faces of each wall, floor, ceiling and chimney breast of those
@@ -69,9 +69,12 @@ rooms and gives each face the material of the room it looks into, from
 `STYLE`; adds skirting, dado rail, cornice, panelling, door architraves,
 window glazing and curtains; replaces balustrades with turned balusters;
 gives door leaves their panels in place, one material each; and puts a
-library model over every furniture box, chosen by `FURNITURE`. `LAMPS` lists
-where the game's `Level::lamps()` puts its ceiling lights, so a chandelier
-hangs at each; change both together. `DRESS` holds the sconces and pictures.
+library model over every furniture box, chosen by `model_for`. `lamps.json`
+lists where the game's `Level::lamps()` puts its ceiling lights, so a fixture of
+the room's kind hangs at each; change both together. `DRESS` holds the sconces
+and pictures. `main` takes room ids to build only those, and `True` as its
+second argument to load the library's models again after `library.py` ran;
+`report["missing"]` names the boxes that found no model.
 
 A model is fitted once and then kept in `library/`:
 
@@ -95,7 +98,7 @@ changed through the editor on a scratch copy of the project, and copy
 | Source | What | Licence |
 |---|---|---|
 | Hyper3D Rodin Gen-2.5, text prompts | Every model in `library/` | Generated for this project |
-| Poly Haven: `herringbone_parquet`, `marble_01`, `dark_wood`, `painted_plaster_wall`, `wood_floor` | `textures/*.jpg` | CC0 |
+| Poly Haven, the assets named in `fetch_textures.py` | `textures/*.jpg` | CC0 |
 
 ## Layout items
 

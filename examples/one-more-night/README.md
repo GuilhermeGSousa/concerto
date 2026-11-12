@@ -18,7 +18,7 @@ standing, walking and sitting, and turn their heads to a player who is talking
 to them.
 
 `-- --manor` loads the manor's greybox, all five levels, and the art over it,
-which so far dresses the hall and the drawing room, with an open case
+which dresses every room, with an open case
 that solves nothing (`cases/manor_walk`): ten characters, one of each
 figurine, standing about the house to be met, and no props or facts. The Guest starts
 upstairs and the Staff in the servants' hall. Its walls, floors and furniture

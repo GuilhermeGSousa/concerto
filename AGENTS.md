@@ -80,7 +80,7 @@ Its manor graybox is in `examples/one-more-night/assets/manor/`: the
 Blender source, the scripts that generate and export it, and the export, with a
 `README.md` that says how to run them; `-- --manor` loads it. The art over the
 graybox, Hyper3D models and textured rooms in `manor_art.glb`, is built by
-`assets/manor/tools/art` and so far dresses the hall and the drawing room. Its
+`assets/manor/tools/art` and dresses every room. Its
 mystery is data: `examples/one-more-night/case` is `one-more-night-case`, an
 engine-free crate that loads a case directory of RON files, and
 `examples/one-more-night/docs/case-schema.md` is the schema; nothing in the
