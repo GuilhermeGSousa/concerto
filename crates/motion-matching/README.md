@@ -482,6 +482,17 @@ graph that holds the node.
 | `play_rate` | how fast the playhead advances, as a multiple of the database `rate` | 1 |
 | `play_rate_param` | the `Name` of a blackboard float param that multiplies `play_rate`; `None` (unset), a missing key or a value that isn't an `f32` leaves `play_rate` alone | `None` |
 
+`MotionMatchingNode::new(database)` takes the defaults, and every other field
+has a `with_<field>`:
+
+```rust
+graph.result_node().add_input(
+    MotionMatchingNode::new(database)
+        .with_blend_halflife(0.15)
+        .with_play_rate_param(name!("pace")),
+);
+```
+
 The node plays at `r = effective_play_rate(play_rate, play_rate_param,
 blackboard)` from `concerto_animation::node`: the product, or 0 when it is
 negative, NaN or infinite. With `dt` the frame's delta, the playhead and the

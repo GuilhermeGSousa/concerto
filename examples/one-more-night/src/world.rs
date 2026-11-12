@@ -11,6 +11,7 @@ use concerto::{
         schedule_groups::{FixedUpdate, Startup, Update},
     },
     asset_id,
+    color::Color,
     ecs::{
         CommandQueue, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With,
         Without,
@@ -61,7 +62,7 @@ use crate::book::Casebook;
 use crate::book_ui::{
     BookPanel, PANEL, ScreenPanel, book_panel_node, chip, show_book, show_screens,
 };
-use crate::case::{Id, NpcId, PlacementId, Role};
+use crate::case::{DoorId, Id, NpcId, PlacementId, Role, RoomId, Zone};
 use crate::casefile::CaseData;
 use crate::clock::{GameTime, Midnight, NightClock, NightPaused};
 use crate::controls::{
@@ -70,7 +71,7 @@ use crate::controls::{
 };
 use crate::house::{House, Interactable, ItemPlace, end_night};
 use crate::players::{PLAYER_COUNT, SeatEntity, Seated, SpawnPoint, body_layer};
-use crate::rules::name_of;
+use crate::rules::{Privacy, name_of};
 use crate::save::{SaveFile, save_dir};
 use crate::schedule::{NpcPose, WALK_SPEED, case_time, entries_of, line_at, pose_at, talks_at};
 use crate::session::{Effect, Mode, Press, Session};
@@ -79,13 +80,19 @@ use concerto::render::components::visibility::RenderLayers;
 
 const SEATS: usize = PLAYER_COUNT as usize;
 const REACH: f32 = 2.6;
+const EYE_DROP: f32 = 1.5;
 const AIM_RADIUS: f32 = 0.12;
 const EARSHOT: f32 = 6.0;
 const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
 const NPC_DOOR_REACH: f32 = 1.1;
-const GREYBOX_SUN: f32 = 1.4;
+const MOONLIGHT: f32 = 0.18;
+const MOON_COLOR: Color = Color::rgba(0.62, 0.72, 1.0, 1.0);
+const LAMP_GLOW: f32 = 5.0;
+const SERVICE_LAMP_GLOW: f32 = 3.6;
+const LAMP_COLOR: Color = Color::rgba(1.0, 0.74, 0.46, 1.0);
+const SERVICE_LAMP_COLOR: Color = Color::rgba(1.0, 0.88, 0.7, 1.0);
 const DEVICE_HALF_EXTENTS: Vec3 = Vec3::new(0.35, 0.5, 0.3);
 const PASSING_HASTE: f64 = 12.0;
 const HELD_SIZE: f32 = 0.15;
@@ -242,17 +249,15 @@ struct CharacterArt {
 }
 
 fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
-    match data
-        .catalog
-        .portraits
-        .name(data.case.characters.get(npc).portrait)
-    {
-        "portrait_01" => CharacterArt {
-            scene: asset_id!("content/characters/export/lady/scene.gasset"),
-            idle: asset_id!("content/characters/export/lady/animation_Idle_Loop.gasset"),
-            walk: asset_id!("content/characters/export/lady/animation_Walk_Loop.gasset"),
-            sit: asset_id!("content/characters/export/lady/animation_Sitting_Idle_Loop.gasset"),
-        },
+    figure_of(
+        data.catalog
+            .portraits
+            .name(data.case.characters.get(npc).portrait),
+    )
+}
+
+fn figure_of(portrait: &str) -> CharacterArt {
+    match portrait {
         "portrait_02" => CharacterArt {
             scene: asset_id!("content/characters/export/gentleman/scene.gasset"),
             idle: asset_id!("content/characters/export/gentleman/animation_Idle_Loop.gasset"),
@@ -261,11 +266,65 @@ fn character_art(data: &CaseData, npc: NpcId) -> CharacterArt {
                 "content/characters/export/gentleman/animation_Sitting_Idle_Loop.gasset"
             ),
         },
-        _ => CharacterArt {
+        "portrait_03" => CharacterArt {
             scene: asset_id!("content/characters/export/footman/scene.gasset"),
             idle: asset_id!("content/characters/export/footman/animation_Idle_Loop.gasset"),
             walk: asset_id!("content/characters/export/footman/animation_Walk_Loop.gasset"),
             sit: asset_id!("content/characters/export/footman/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_04" => CharacterArt {
+            scene: asset_id!("content/characters/export/colonel/scene.gasset"),
+            idle: asset_id!("content/characters/export/colonel/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/colonel/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/colonel/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_05" => CharacterArt {
+            scene: asset_id!("content/characters/export/debutante/scene.gasset"),
+            idle: asset_id!("content/characters/export/debutante/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/debutante/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/debutante/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        "portrait_06" => CharacterArt {
+            scene: asset_id!("content/characters/export/doctor/scene.gasset"),
+            idle: asset_id!("content/characters/export/doctor/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/doctor/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/doctor/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_07" => CharacterArt {
+            scene: asset_id!("content/characters/export/butler/scene.gasset"),
+            idle: asset_id!("content/characters/export/butler/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/butler/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/butler/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_08" => CharacterArt {
+            scene: asset_id!("content/characters/export/cook/scene.gasset"),
+            idle: asset_id!("content/characters/export/cook/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/cook/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/cook/animation_Sitting_Idle_Loop.gasset"),
+        },
+        "portrait_09" => CharacterArt {
+            scene: asset_id!("content/characters/export/housekeeper/scene.gasset"),
+            idle: asset_id!("content/characters/export/housekeeper/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/housekeeper/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/housekeeper/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        "portrait_10" => CharacterArt {
+            scene: asset_id!("content/characters/export/chauffeur/scene.gasset"),
+            idle: asset_id!("content/characters/export/chauffeur/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/chauffeur/animation_Walk_Loop.gasset"),
+            sit: asset_id!(
+                "content/characters/export/chauffeur/animation_Sitting_Idle_Loop.gasset"
+            ),
+        },
+        _ => CharacterArt {
+            scene: asset_id!("content/characters/export/lady/scene.gasset"),
+            idle: asset_id!("content/characters/export/lady/animation_Idle_Loop.gasset"),
+            walk: asset_id!("content/characters/export/lady/animation_Walk_Loop.gasset"),
+            sit: asset_id!("content/characters/export/lady/animation_Sitting_Idle_Loop.gasset"),
         },
     }
 }
@@ -308,14 +367,15 @@ fn character_graph(assets: &AssetServer, art: &CharacterArt) -> AnimationGraph {
         ..Default::default()
     };
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(look, |mut body| {
-        body.with_blend_space_2d_input(name!("gait"), |space| {
+    graph
+        .result_node()
+        .input(look)
+        .add_blend_space_2d_input_with(name!("gait"), |space| {
             space
                 .animation_clip_input(assets.load::<AnimationClip>(art.idle), GAIT_IDLE)
                 .animation_clip_input(assets.load::<AnimationClip>(art.walk), GAIT_WALK)
                 .animation_clip_input(assets.load::<AnimationClip>(art.sit), GAIT_SIT);
         });
-    });
     graph
 }
 
@@ -508,7 +568,7 @@ fn npc_pose(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<NpcP
     {
         let anchor = data.level.anchor(staging.anchor);
         return Some(NpcPose {
-            position: anchor.position.with_y(0.0),
+            position: data.level.footing(staging.anchor),
             yaw: anchor.yaw,
             entry: 0,
             walking: false,
@@ -516,6 +576,50 @@ fn npc_pose(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<NpcP
     }
     let entries = entries_of(&data.case, npc, data.case.phase_at(case_time(now)));
     pose_at(&entries, &data.level, now, WALK_SPEED)
+}
+
+fn npc_room(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<RoomId> {
+    if house.gathered
+        && let Some(staging) = data
+            .case
+            .finale
+            .staging
+            .iter()
+            .find(|staging| staging.npc == npc)
+    {
+        return Some(data.level.anchor(staging.anchor).room);
+    }
+    let entries = entries_of(&data.case, npc, data.case.phase_at(case_time(now)));
+    let pose = pose_at(&entries, &data.level, now, WALK_SPEED)?;
+    (!pose.walking).then(|| data.level.anchor(entries[pose.entry].anchor).room)
+}
+
+fn privacy_at(
+    data: &CaseData,
+    house: &House,
+    door: DoorId,
+    player: u8,
+    from: Option<RoomId>,
+    now: f64,
+) -> Privacy {
+    let sides = data.level.door(door);
+    let beyond: Vec<RoomId> = [sides.a, sides.b]
+        .into_iter()
+        .filter(|room| Some(*room) != from && data.level.room(*room).zone == Zone::Private)
+        .collect();
+    Privacy {
+        entering: !beyond.is_empty(),
+        own: data
+            .level
+            .home(player)
+            .is_some_and(|home| beyond.contains(&home)),
+        someone_in: data
+            .case
+            .characters
+            .ids()
+            .any(|npc| npc_room(data, house, npc, now).is_some_and(|room| beyond.contains(&room))),
+        rung: beyond.iter().any(|room| house.bells[room.index()]),
+    }
 }
 
 fn npc_is_busy(data: &CaseData, house: &House, npc: NpcId, now: f64) -> bool {
@@ -553,12 +657,33 @@ fn spawn_case(
     }
     if stage.named_nodes {
         cmd.spawn((
-            Light::directional_light().with_intensity(GREYBOX_SUN),
+            Light::directional_light()
+                .with_intensity(MOONLIGHT)
+                .with_color(MOON_COLOR),
             Transform::from_translation_rotation(
                 Vec3::ZERO,
                 Quat::from_rotation_y(0.6) * Quat::from_rotation_x(-0.9),
             ),
         ));
+        for lamp in data.level.lamps() {
+            let service = data.level.room(lamp.room).zone == Zone::Service;
+            let light = if service {
+                Light::point_light()
+                    .with_intensity(SERVICE_LAMP_GLOW)
+                    .with_color(SERVICE_LAMP_COLOR)
+            } else {
+                Light::point_light()
+                    .with_intensity(LAMP_GLOW)
+                    .with_color(LAMP_COLOR)
+            };
+            cmd.spawn((
+                Light {
+                    intensity: light.intensity * lamp.glow,
+                    ..light.with_range(lamp.range)
+                },
+                Transform::from_translation(lamp.position),
+            ));
+        }
     }
     for npc in data.case.characters.ids() {
         let Some(pose) = npc_pose(&data, &house, npc, now_seconds(&clock)) else {
@@ -711,6 +836,9 @@ fn adopt_named_nodes(
             "spawn" => {
                 let player = u32::from(rest == "staff");
                 cmd.insert(SpawnPoint { player }, entity);
+                if let Some(room) = data.level.room_at(transform.translation) {
+                    data.level.place_home(player as u8, room);
+                }
                 continue;
             }
             _ => None,
@@ -972,6 +1100,18 @@ fn play(
                     Interactable::Npc(npc) => npc_is_busy(&data, &house, npc, now),
                     _ => false,
                 };
+                let at_the_door = match target {
+                    Interactable::Door(door) => {
+                        let from = cameras
+                            .iter()
+                            .find(|(camera, _)| camera.index() == player)
+                            .and_then(|(_, eye)| {
+                                data.level.room_at(eye.translation - Vec3::Y * EYE_DROP)
+                            });
+                        privacy_at(&data, &house, door, player, from, now)
+                    }
+                    _ => Privacy::default(),
+                };
                 effects.extend(house.use_target(
                     &mut session,
                     &mut book,
@@ -980,6 +1120,7 @@ fn play(
                     target,
                     time,
                     busy,
+                    at_the_door,
                 ));
             } else if pad.is_just_pressed(Back)
                 && session.seats[seat].carried.is_some()
@@ -1728,6 +1869,7 @@ mod tests {
 
     use super::Sight;
     use crate::book::Casebook;
+    use crate::case::Id;
     use crate::clock::{GameTime, NightClock};
     use crate::players::SpawnPoint;
     use crate::session::{Mode, Session};
@@ -2056,6 +2198,8 @@ mod tests {
         );
     }
 
+    const EYE_HEIGHT: f32 = 1.62;
+
     struct Leg {
         x: f32,
         y: f32,
@@ -2093,6 +2237,29 @@ mod tests {
             let turn = yaw - walker.yaw();
             walker.look(turn, 0.0);
         }
+    }
+
+    fn aiming_at(app: &mut App, player: u8, point: Vec3) -> Option<super::Interactable> {
+        let world = app.main_mut().world_mut();
+        let mut walkers = world.query::<(&PlayerIndex, &mut FirstPersonWalker, &Transform), ()>();
+        for (index, mut walker, transform) in walkers.iter(world) {
+            if index.index() != player {
+                continue;
+            }
+            let to = point - (transform.translation + Vec3::Y * EYE_HEIGHT);
+            let yaw = (-to.x).atan2(-to.z);
+            let pitch = to.y.atan2(to.x.hypot(to.z));
+            let turn = yaw - walker.yaw();
+            let tilt = pitch - walker.pitch();
+            walker.look(turn, tilt);
+        }
+        frames(app, 3);
+        app.get_resource::<Sight>().unwrap().targets[player as usize]
+    }
+
+    fn uses(app: &mut App, player: u8) {
+        tap(app, player as usize, GamepadButton::West);
+        frames(app, 5);
     }
 
     fn walk_all(app: &mut App, walks: &[Walk]) -> [usize; 2] {
@@ -2158,7 +2325,24 @@ mod tests {
     }
 
     #[test]
-    fn the_manor_is_walked_by_its_stairs_doors_and_steps() {
+    fn every_portrait_a_case_can_name_has_its_own_figure_and_picture() {
+        let figures: Vec<_> = crate::casefile::PORTRAITS
+            .iter()
+            .map(|portrait| super::figure_of(portrait).scene)
+            .collect();
+        assert_eq!(figures.len(), 10);
+        for (index, figure) in figures.iter().enumerate() {
+            assert!(
+                !figures[..index].contains(figure),
+                "{} wears a figure of its own",
+                crate::casefile::PORTRAITS[index]
+            );
+        }
+        assert_eq!(crate::book_ui::PORTRAITS.len(), figures.len());
+    }
+
+    #[test]
+    fn the_manor_is_walked_and_its_doors_bells_beds_and_dumbwaiter_answer() {
         let Some(mut app) = concerto::headless(|app| {
             crate::manor(app);
             let content = concerto::content_registry!();
@@ -2196,10 +2380,74 @@ mod tests {
         };
         let aimed_at = |app: &mut App, x: f32, y: f32| {
             let at = feet(app, 0).unwrap();
-            head_for(app, 0, Vec3::new(x, at.y, -y));
-            frames(app, 3);
-            app.get_resource::<Sight>().unwrap().targets[0]
+            aiming_at(app, 0, Vec3::new(x, at.y + EYE_HEIGHT, -y))
         };
+        let house = |app: &App| app.get_resource::<crate::house::House>().unwrap().clone();
+        let room = |app: &App, name: &str| {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            data.catalog.rooms.id(name).unwrap()
+        };
+        let in_bed = |app: &App, player: usize| session(app).seats[player].in_bed;
+
+        {
+            let world = app.main_mut().world_mut();
+            let mut bodies = world.query::<(&super::NpcBody, &Transform), ()>();
+            let heights: Vec<f32> = bodies
+                .iter(world)
+                .map(|(_, transform)| transform.translation.y)
+                .collect();
+            assert_eq!(heights.len(), 10, "the house holds its ten characters");
+            assert_eq!(
+                heights
+                    .iter()
+                    .filter(|height| (**height - 3.8).abs() < 0.2)
+                    .count(),
+                1,
+                "the one who is upstairs stands on that floor"
+            );
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            let her_door = data.catalog.doors.id("d_g1").unwrap();
+            let knock = |player: u8, hour: f64| {
+                super::privacy_at(data, &house(&app), her_door, player, None, hour * 3600.0)
+            };
+            assert!(knock(0, 18.2).someone_in, "she is in until seven");
+            assert!(!knock(1, 20.0).someone_in, "and out in the gallery after");
+        }
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(20.1, 4.35, -13.5)),
+            Some(super::Interactable::Bed(0)),
+            "the Guest starts beside their bed"
+        );
+        uses(&mut app, 0);
+        assert!(in_bed(&app, 0));
+        uses(&mut app, 0);
+        assert!(!in_bed(&app, 0));
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(23.2, 13.8)],
+                ends_at_height: 3.8,
+                ends_in: "g5",
+            }],
+        );
+        let bedroom_bell = room(&app, "g5");
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(24.35, 5.4, -14.1)),
+            Some(super::Interactable::BellPull(bedroom_bell))
+        );
+        uses(&mut app, 0);
+        assert!(house(&app).bells[bedroom_bell.index()]);
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(37.14, 2.0, -6.2)),
+            Some(super::Interactable::BellBoard),
+            "the Staff starts by the bell board"
+        );
+        uses(&mut app, 1);
+        assert!(
+            !house(&app).bells[bedroom_bell.index()],
+            "the Staff reading the board drops its flags"
+        );
         let stands_open = |app: &App| {
             app.get_resource::<crate::house::House>()
                 .unwrap()
@@ -2239,8 +2487,67 @@ mod tests {
         let walks = [
             Walk {
                 player: 0,
+                legs: vec![leg(21.75, 9.0), leg(26.0, 9.1)],
+                ends_at_height: 3.8,
+                ends_in: "gallery",
+            },
+            Walk {
+                player: 1,
                 legs: vec![
-                    leg(21.75, 9.0),
+                    leg(37.9, 4.0),
+                    leg(36.0, 4.0),
+                    leg(35.5, 5.9),
+                    leg(31.2, 6.6),
+                ],
+                ends_at_height: 0.0,
+                ends_in: "kitchen",
+            },
+        ];
+        walk_to_the_end(&mut app, &walks);
+        let neighbour = {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            assert_eq!(
+                data.level.home(0),
+                data.catalog.rooms.id("g5"),
+                "the room the Guest starts in is their own"
+            );
+            data.catalog.doors.id("d_g2").unwrap()
+        };
+        assert_eq!(
+            aimed_at(&mut app, 26.0, 8.0),
+            Some(super::Interactable::Door(neighbour))
+        );
+        uses(&mut app, 0);
+        assert!(
+            !house(&app).stands_open(neighbour),
+            "an empty bedroom that is not the Guest's stays shut to them"
+        );
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(28.6, 9.0)],
+                ends_at_height: 3.8,
+                ends_in: "gallery",
+            }],
+        );
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(29.55, 4.7, -8.1)),
+            Some(super::Interactable::Lift(2))
+        );
+        uses(&mut app, 0);
+        assert_eq!(house(&app).lift_at, 2, "the gallery stop calls the car up");
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(30.1, 0.9, -7.55)),
+            Some(super::Interactable::Lift(0))
+        );
+        uses(&mut app, 1);
+        assert_eq!(house(&app).lift_at, 0, "and the kitchen stop calls it back");
+
+        let walks = [
+            Walk {
+                player: 0,
+                legs: vec![
                     leg(18.2, 9.0),
                     leg(18.2, 11.8),
                     leg(18.2, 15.0),
@@ -2254,8 +2561,8 @@ mod tests {
             Walk {
                 player: 1,
                 legs: vec![
-                    leg(39.5, 7.0),
-                    leg(39.5, 9.5),
+                    leg(33.5, 7.0),
+                    leg(33.5, 9.0),
                     leg(31.5, 9.5),
                     leg(31.5, 10.6),
                     leg(30.7, 10.6),
@@ -2273,6 +2580,52 @@ mod tests {
             },
         ];
         walk_to_the_end(&mut app, &walks);
+
+        let staff_room = {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            data.catalog.doors.id("d_staffroom").unwrap()
+        };
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 1,
+                legs: vec![leg(21.75, 9.0)],
+                ends_at_height: 7.2,
+                ends_in: "attic_corr",
+            }],
+        );
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(21.75, 8.3, -10.0)),
+            Some(super::Interactable::Door(staff_room))
+        );
+        uses(&mut app, 1);
+        walk_to_the_end(
+            &mut app,
+            &[Walk {
+                player: 1,
+                legs: vec![leg(21.75, 11.0), leg(22.0, 12.0)],
+                ends_at_height: 7.2,
+                ends_in: "attic_staff",
+            }],
+        );
+        assert_eq!(
+            aiming_at(&mut app, 1, Vec3::new(23.45, 7.7, -12.85)),
+            Some(super::Interactable::Bed(1)),
+            "the Staff's bed is under the attic roof"
+        );
+        uses(&mut app, 1);
+        assert!(in_bed(&app, 1));
+        uses(&mut app, 1);
+        assert!(!in_bed(&app, 1));
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 1,
+                legs: vec![leg(21.75, 11.0), leg(21.75, 9.0), leg(32.2, 9.0)],
+                ends_at_height: 7.2,
+                ends_in: "backstairs",
+            }],
+        );
 
         let garden_door = {
             let data = app.get_resource::<crate::casefile::CaseData>().unwrap();

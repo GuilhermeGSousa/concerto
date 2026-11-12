@@ -97,6 +97,61 @@ impl Default for MotionMatchingNode {
     }
 }
 
+impl MotionMatchingNode {
+    /// A node that plays `database` with the default search settings.
+    pub fn new(database: AssetHandle<MotionDatabase>) -> Self {
+        Self {
+            database,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_search_period(mut self, search_period: f32) -> Self {
+        self.search_period = search_period;
+        self
+    }
+
+    pub fn with_velocity_change_threshold(mut self, velocity_change_threshold: f32) -> Self {
+        self.velocity_change_threshold = velocity_change_threshold;
+        self
+    }
+
+    pub fn with_rotation_change_threshold(mut self, rotation_change_threshold: f32) -> Self {
+        self.rotation_change_threshold = rotation_change_threshold;
+        self
+    }
+
+    pub fn with_same_frame_tolerance(mut self, same_frame_tolerance: usize) -> Self {
+        self.same_frame_tolerance = same_frame_tolerance;
+        self
+    }
+
+    pub fn with_ignore_surrounding(mut self, ignore_surrounding: usize) -> Self {
+        self.ignore_surrounding = ignore_surrounding;
+        self
+    }
+
+    pub fn with_ignore_range_end(mut self, ignore_range_end: usize) -> Self {
+        self.ignore_range_end = ignore_range_end;
+        self
+    }
+
+    pub fn with_blend_halflife(mut self, blend_halflife: f32) -> Self {
+        self.blend_halflife = blend_halflife;
+        self
+    }
+
+    pub fn with_play_rate(mut self, play_rate: f32) -> Self {
+        self.play_rate = play_rate;
+        self
+    }
+
+    pub fn with_play_rate_param(mut self, play_rate_param: impl Into<Param<f32>>) -> Self {
+        self.play_rate_param = Some(play_rate_param.into());
+        self
+    }
+}
+
 impl AnimationNode for MotionMatchingNode {
     type State = MotionMatchingState;
     type CreateInput = ();
@@ -218,18 +273,16 @@ mod tests {
     #[test]
     fn a_graph_holding_the_node_round_trips_through_serialization() {
         let registry = registry();
-        let node = MotionMatchingNode {
-            search_period: 0.25,
-            velocity_change_threshold: 12.0,
-            rotation_change_threshold: 13.0,
-            same_frame_tolerance: 3,
-            ignore_surrounding: 7,
-            ignore_range_end: 9,
-            blend_halflife: 0.4,
-            play_rate: 1.5,
-            play_rate_param: Some(name!("speed").into()),
-            ..Default::default()
-        };
+        let node = MotionMatchingNode::default()
+            .with_search_period(0.25)
+            .with_velocity_change_threshold(12.0)
+            .with_rotation_change_threshold(13.0)
+            .with_same_frame_tolerance(3)
+            .with_ignore_surrounding(7)
+            .with_ignore_range_end(9)
+            .with_blend_halflife(0.4)
+            .with_play_rate(1.5)
+            .with_play_rate_param(name!("speed"));
         let graph = AnimationGraph::from_node(node);
 
         let bytes = bincode::serialize(&graph).unwrap();
@@ -255,12 +308,10 @@ mod tests {
     #[test]
     fn a_stored_node_without_a_play_rate_loads_at_the_defaults_with_no_warning() {
         let registry = registry();
-        let node = MotionMatchingNode {
-            search_period: 0.25,
-            play_rate: 1.5,
-            play_rate_param: Some(name!("speed").into()),
-            ..Default::default()
-        };
+        let node = MotionMatchingNode::default()
+            .with_search_period(0.25)
+            .with_play_rate(1.5)
+            .with_play_rate_param(name!("speed"));
         let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
             panic!("a motion matching node is stored as a struct");
         };

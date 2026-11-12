@@ -253,13 +253,7 @@ impl Stage {
         let blend = graph.result_node().index();
         let blend = graph.add_node(BlendNode {}, blend).index();
         for _ in 0..nodes {
-            graph.add_node(
-                MotionMatchingNode {
-                    database: database_handle.clone(),
-                    ..Default::default()
-                },
-                blend,
-            );
+            graph.add_node(MotionMatchingNode::new(database_handle.clone()), blend);
         }
         graph.make_live(&graph_registry, None).unwrap();
         let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());

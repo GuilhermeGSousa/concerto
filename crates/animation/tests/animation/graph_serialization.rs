@@ -147,15 +147,14 @@ fn mixed_graph() -> AnimationGraph {
     let mut graph = AnimationGraph::new();
     graph
         .result_node()
-        .with_input(Gain { amount: 2.5 }, |_| {})
-        .with_input(
+        .add_input(Gain { amount: 2.5 })
+        .add_input(
             AnimationClipNode::new(clip("outer_pose"))
                 .with_play_rate(1.5)
                 .with_play_rate_param(name!("draw_speed")),
-            |_| {},
         )
-        .with_input(state_machine(), |_| {})
-        .with_blend_space_2d_input(name!("movement"), |ctx| {
+        .add_input(state_machine())
+        .add_blend_space_2d_input_with(name!("movement"), |ctx| {
             ctx.animation_clip_input(clip("idle"), glam::Vec2::ZERO)
                 .animation_clip_input(clip("walk"), glam::Vec2::new(0.0, 1.0));
         });
@@ -293,14 +292,10 @@ fn the_ik_layer_and_aim_offset_nodes_keep_every_field_and_their_inputs_through_a
         .with_weight_param(name!("strength"));
     assert_ne!(layer, LayerNode::default());
     let mut layered = AnimationGraph::new();
-    layered.result_node().with_layer_input(
+    layered.result_node().add_layer_input(
         layer.clone(),
-        |mut base| {
-            base.with_input(AnimationClipNode::new(clip("locomotion")), |_| {});
-        },
-        |mut overlay| {
-            overlay.with_input(AnimationClipNode::new(clip("aim")), |_| {});
-        },
+        AnimationClipNode::new(clip("locomotion")),
+        AnimationClipNode::new(clip("aim")),
     );
     assert_eq!(layered.iter().count(), 4);
     restored(&mut layered, &layer);
@@ -344,9 +339,10 @@ fn an_additive_node_keeps_every_field_through_a_round_trip_and_its_clip_comes_ba
         .with_play_rate_param(name!("shiver_speed"));
     assert_ne!(node, AdditiveNode::default());
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(node.clone(), |mut base| {
-        base.with_input(AnimationClipNode::new(clip("idle")), |_| {});
-    });
+    graph
+        .result_node()
+        .input(node.clone())
+        .add_input(AnimationClipNode::new(clip("idle")));
     graph.make_live(&registry(false), None).unwrap();
 
     let mut restored = round_trip(&graph);

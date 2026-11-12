@@ -413,7 +413,7 @@ mod tests {
         let mut graph = AnimationGraph::from_node(AnimationClipNode::new(first));
         graph
             .result_node()
-            .with_input(AnimationClipNode::new(second), |_| {});
+            .add_input(AnimationClipNode::new(second));
         let handle = server.add(AnimationGraph::default());
         graphs.insert(handle.id(), made_live(graph));
 

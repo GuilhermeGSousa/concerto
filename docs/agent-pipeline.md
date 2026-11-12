@@ -78,6 +78,13 @@ when a `Cargo.toml` changed, and leave clippy, tests and the wasm build to CI.
 For rendering, UI and editor changes they list the visual checks left for you
 in the review comment.
 
+When the repository is out of Actions minutes, GitHub fails each CI job without
+starting it. Agents do not treat that as a failure and do not wait for it: they
+review and mark the PR ready as usual, and the review comment names the jobs
+that did not run and the done gate commands nobody has run on the head commit.
+Run those yourself, or re-run CI once there are minutes, before you merge. The
+runner on your machine runs the full done gate itself, so its PRs lose nothing.
+
 ## Runners
 
 **Cloud.** An hourly Claude Code scheduled task takes at most one new issue per

@@ -104,11 +104,7 @@ fn a_float_param_on_the_blackboard_drives_the_nodes_play_rate() {
     let world = app.main_mut().world_mut();
     let graph_handle = add_graph(
         world,
-        MotionMatchingNode {
-            database: database_handle,
-            play_rate_param: Some(name!("speed").into()),
-            ..Default::default()
-        },
+        MotionMatchingNode::new(database_handle).with_play_rate_param(name!("speed")),
     );
     let plain = spawn_player(
         world,
@@ -590,13 +586,7 @@ fn a_crossed_clip_event_is_heard_once_and_not_again_while_the_database_is_missin
         .insert(database.entries[0].clip.id(), walk);
     world.insert_resource(Heard::default());
     world.register_component::<Listener<AnimationSignal<AnimationEvent>>>();
-    let graph_handle = add_graph(
-        world,
-        MotionMatchingNode {
-            database: database_handle,
-            ..Default::default()
-        },
-    );
+    let graph_handle = add_graph(world, MotionMatchingNode::new(database_handle));
     let bones = (0..3)
         .map(|_| SceneEntityRef::Entity(world.spawn(Transform::IDENTITY)))
         .collect();
@@ -687,13 +677,7 @@ fn start_playing(
     database_handle: AssetHandle<MotionDatabase>,
     skeleton_handle: AssetHandle<Skeleton>,
 ) -> Vec<Entity> {
-    let graph_handle = add_graph(
-        world,
-        MotionMatchingNode {
-            database: database_handle,
-            ..Default::default()
-        },
-    );
+    let graph_handle = add_graph(world, MotionMatchingNode::new(database_handle));
     let entities = spawn_player(
         world,
         graph_handle,

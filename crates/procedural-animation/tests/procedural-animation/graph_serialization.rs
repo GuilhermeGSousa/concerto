@@ -209,15 +209,11 @@ fn a_graph_of_every_node_the_plugin_registers_keeps_every_field_through_a_round_
     let mut graph = AnimationGraph::new();
     graph
         .result_node()
-        .with_input(foot_placement(), |mut node| {
-            node.with_input(foot_lock(), |mut node| {
-                node.with_input(look_at(), |mut node| {
-                    node.with_input(aim(), |mut node| {
-                        node.with_input(procedural_motion(), |_| {});
-                    });
-                });
-            });
-        });
+        .input(foot_placement())
+        .input(foot_lock())
+        .input(look_at())
+        .input(aim())
+        .add_input(procedural_motion());
     graph.make_live(&registry, None).unwrap();
 
     let mut restored = round_trip(&graph);

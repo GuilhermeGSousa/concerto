@@ -8,6 +8,11 @@ use crate::case::{AnchorId, CaseError, Catalog, DoorId, DoorState, FeatureId, Id
 
 const STEP_UP: f32 = 0.6;
 const STOREY: f32 = 3.4;
+const LAMP_HEIGHT: f32 = 2.1;
+const LAMP_CLEARANCE: f32 = 0.9;
+const LAMP_SPACING: f32 = 6.5;
+const LAMP_RANGE: f32 = 7.0;
+const LAMP_STOREY: f32 = 3.6;
 
 #[derive(Deserialize)]
 #[serde(rename = "LevelManifest")]
@@ -54,10 +59,30 @@ enum RawDoorState {
     AlwaysOpen,
 }
 
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+enum RawStorey {
+    Cellar,
+    Ground,
+    First,
+    Attic,
+    Grounds,
+}
+
+impl RawStorey {
+    fn headroom(self) -> f32 {
+        match self {
+            RawStorey::Cellar | RawStorey::Attic => 2.4,
+            RawStorey::First => 3.0,
+            RawStorey::Ground | RawStorey::Grounds => 3.4,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename = "Room")]
 struct RawRoom {
     id: String,
+    level: RawStorey,
     zone: RawZone,
     bounds: Vec<RawSpan>,
 }
@@ -97,6 +122,10 @@ pub struct FloorRect {
 }
 
 impl FloorRect {
+    fn holds(&self, other: &FloorRect) -> bool {
+        self.min.cmple(other.min).all() && self.max.cmpge(other.max).all()
+    }
+
     pub fn contains(&self, position: Vec3) -> bool {
         position.x >= self.min.x
             && position.x <= self.max.x
@@ -114,6 +143,21 @@ pub struct Room {
     pub floor: f32,
     /// How high it reaches: a storey above its floor, or a step above its highest anchor when it runs through several storeys.
     pub top: f32,
+    /// Under a roof, so lit by lamps and not by the sky.
+    pub indoors: bool,
+    /// From its floor to its ceiling.
+    pub headroom: f32,
+}
+
+/// A ceiling light of a room.
+#[derive(Clone, Copy, Debug)]
+pub struct Lamp {
+    pub room: RoomId,
+    pub position: Vec3,
+    /// How far its light reaches.
+    pub range: f32,
+    /// How bright it is beside a lamp at full height: one hung lower under a low ceiling is dimmer, so the floor below is lit alike.
+    pub glow: f32,
 }
 
 /// A named place of the level: where a character stands or a prop sits.
@@ -152,6 +196,7 @@ pub struct Level {
     doors: Vec<LevelDoor>,
     features: Vec<FeatureNodes>,
     door_positions: HashMap<DoorId, Vec3>,
+    homes: HashMap<u8, RoomId>,
 }
 
 /// Turns a manifest point, z up, into the engine's, y up.
@@ -192,6 +237,8 @@ impl Level {
                         floor,
                         top: (floor + STOREY).max(highest + STEP_UP),
                         zone: room.zone.zone(),
+                        indoors: room.level != RawStorey::Grounds,
+                        headroom: room.level.headroom(),
                         bounds: room
                             .bounds
                             .iter()
@@ -241,6 +288,7 @@ impl Level {
                 })
                 .collect(),
             door_positions: HashMap::new(),
+            homes: HashMap::new(),
         })
     }
 
@@ -274,6 +322,48 @@ impl Level {
             .map(|(index, _)| RoomId::from_index(index))
     }
 
+    /// A ceiling lamp over every stretch of indoor floor, one storey after another in a room that runs through several.
+    pub fn lamps(&self) -> Vec<Lamp> {
+        let mut lamps = Vec::new();
+        for (index, room) in self.rooms.iter().enumerate() {
+            if !room.indoors {
+                continue;
+            }
+            let storeys = 1
+                + ((room.top - STOREY - room.floor) / LAMP_STOREY)
+                    .ceil()
+                    .max(0.0) as usize;
+            let height = LAMP_HEIGHT.min(room.headroom - LAMP_CLEARANCE);
+            for (at, rect) in room.bounds.iter().enumerate() {
+                let covered = room.bounds.iter().enumerate().any(|(other, bigger)| {
+                    other != at && bigger.holds(rect) && (bigger != rect || other < at)
+                });
+                if covered {
+                    continue;
+                }
+                let size = rect.max - rect.min;
+                let across = (size.x / LAMP_SPACING).ceil().max(1.0) as usize;
+                let along = (size.y / LAMP_SPACING).ceil().max(1.0) as usize;
+                for storey in 0..storeys {
+                    for column in 0..across {
+                        for row in 0..along {
+                            let x = rect.min.x + size.x * (column as f32 + 0.5) / across as f32;
+                            let z = rect.min.y + size.y * (row as f32 + 0.5) / along as f32;
+                            let y = room.floor + height + LAMP_STOREY * storey as f32;
+                            lamps.push(Lamp {
+                                room: RoomId::from_index(index),
+                                position: Vec3::new(x, y, z),
+                                range: LAMP_RANGE,
+                                glow: (height / LAMP_HEIGHT).powi(2),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        lamps
+    }
+
     /// The scene nodes to hide given which features are on: the `on` nodes of a feature that is off, and the `off` nodes of one that is on.
     pub fn hidden_nodes(&self, is_on: impl Fn(FeatureId) -> bool) -> Vec<&str> {
         self.features
@@ -293,6 +383,16 @@ impl Level {
     /// Records where the scene put `door`, which routes then pass through.
     pub fn place_door(&mut self, door: DoorId, position: Vec3) {
         self.door_positions.insert(door, position);
+    }
+
+    /// Records the room `player` starts the night in as their own.
+    pub fn place_home(&mut self, player: u8, room: RoomId) {
+        self.homes.insert(player, room);
+    }
+
+    /// The room that is `player`'s own, once the scene has placed their start.
+    pub fn home(&self, player: u8) -> Option<RoomId> {
+        self.homes.get(&player).copied()
     }
 
     pub fn door_position(&self, door: DoorId) -> Option<Vec3> {
@@ -341,17 +441,27 @@ impl Level {
         doors
     }
 
-    /// The points to walk from one anchor to another: both ends, and between them each door on the way that the scene has placed.
+    /// Where a character at `anchor` puts their feet: under it, on the floor of its room.
+    pub fn footing(&self, anchor: AnchorId) -> Vec3 {
+        let anchor = self.anchor(anchor);
+        anchor.position.with_y(self.room(anchor.room).floor)
+    }
+
+    /// The points to walk from one anchor to another, each on its floor: both ends, and between them each door on the way that the scene has placed, at the higher of the floors it joins.
     pub fn route(&self, from: AnchorId, to: AnchorId) -> Vec<Vec3> {
         let (start, end) = (self.anchor(from), self.anchor(to));
-        let mut points = vec![start.position.with_y(0.0)];
+        let mut points = vec![self.footing(from)];
         points.extend(
             self.doors_on_the_way(start.room, end.room)
                 .into_iter()
-                .filter_map(|door| self.door_position(door))
-                .map(|position| position.with_y(0.0)),
+                .filter_map(|door| {
+                    let sides = self.door(door);
+                    let floor = self.room(sides.a).floor.max(self.room(sides.b).floor);
+                    self.door_position(door)
+                        .map(|position| position.with_y(floor))
+                }),
         );
-        points.push(end.position.with_y(0.0));
+        points.push(self.footing(to));
         points
     }
 }
@@ -420,6 +530,42 @@ mod tests {
             level.room_at(Vec3::new(18.2, 3.0, -13.0)),
             Some(room("hall")),
             "the main stair climbs inside the hall"
+        );
+
+        let lamps = level.lamps();
+        assert!(
+            lamps.len() <= 100,
+            "{} lamps leave no room under the renderer's 128 lights",
+            lamps.len()
+        );
+        for anchor in &level.anchors {
+            let home = level.room(anchor.room);
+            let lit = lamps.iter().any(|lamp| {
+                lamp.room == anchor.room
+                    && lamp.position.y > anchor.position.y
+                    && lamp.position.distance(anchor.position) < lamp.range
+            });
+            assert_eq!(
+                lit, home.indoors,
+                "the anchor at {} has a lamp of its room over it only indoors",
+                anchor.position
+            );
+        }
+        let garden = Vec3::new(9.0, -0.6, -28.0);
+        assert!(
+            lamps
+                .iter()
+                .all(|lamp| lamp.position.distance(garden) > lamp.range),
+            "no lamp reaches the middle of the garden"
+        );
+
+        let anchor = |name: &str| data.catalog.anchors.id(name).unwrap();
+        let upstairs_walk = level.route(anchor("g1_p01_a"), anchor("gallery_p01_a"));
+        assert!(
+            upstairs_walk
+                .iter()
+                .all(|point| (point.y - bedroom.floor).abs() < 1e-4),
+            "a walk between two rooms upstairs stays on their floor"
         );
 
         let hidden = level.hidden_nodes(|_| false);

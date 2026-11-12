@@ -55,7 +55,7 @@ pub fn pose_at(entries: &[&ScheduleEntry], level: &Level, now: f64, speed: f32) 
     let entry = entries.get(current)?;
     let anchor = level.anchor(entry.anchor);
     let standing = NpcPose {
-        position: anchor.position.with_y(0.0),
+        position: level.footing(entry.anchor),
         yaw: entry
             .facing
             .map_or(anchor.yaw, crate::level::yaw_from_facing),

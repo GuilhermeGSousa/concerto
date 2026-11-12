@@ -175,14 +175,9 @@ impl BodyMasks {
 
 fn motion_matching_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(
-        MotionMatchingNode {
-            database,
-            play_rate_param: Some(pace().into()),
-            ..Default::default()
-        },
-        |_| {},
-    );
+    graph
+        .result_node()
+        .add_input(MotionMatchingNode::new(database).with_play_rate_param(pace()));
     graph
 }
 
@@ -293,65 +288,33 @@ struct BodyGraph {
 
 fn retargeted_graph(retarget: RetargetNode, clips: BodyClips, masks: BodyMasks) -> BodyGraph {
     let mut graph = AnimationGraph::new();
-    let mut recoil_node = None;
-    graph
+    let recoil_node = graph
         .result_node()
-        .with_input(foot_placement(), |mut placement| {
-            placement.with_input(foot_lock(), |mut lock| {
-                lock.with_input(off_hand(), |mut hand| {
-                    hand.with_input(unsteadiness(&masks), |mut motion| {
-                        motion.with_input(look(), |mut look| {
-                            look.with_input(recoil(clips.shoot.clone()), |mut recoil| {
-                                recoil_node = Some(recoil.index());
-                                recoil.with_input(aim(), |mut aim| {
-                                    aim.with_input(aim_offset(&clips), |mut offset| {
-                                        offset.with_layer_input(
-                                            LayerNode::new(masks.upper_body.clone())
-                                                .with_weight_param(pistol_weight()),
-                                            |mut base| {
-                                                base.with_input(
-                                                    AdditiveNode::new(clips.tired.clone())
-                                                        .with_weight_param(fatigue()),
-                                                    |mut tired| {
-                                                        tired.with_layer_input(
-                                                            LayerNode::new(masks.fingers.clone())
-                                                                .with_space(LayerSpace::Local),
-                                                            |mut body| {
-                                                                body.with_input(retarget, |_| {});
-                                                            },
-                                                            |mut fingers| {
-                                                                fingers.with_input(
-                                                                    AnimationClipNode::new(
-                                                                        clips.idle.clone(),
-                                                                    ),
-                                                                    |_| {},
-                                                                );
-                                                            },
-                                                        );
-                                                    },
-                                                );
-                                            },
-                                            |mut overlay| {
-                                                overlay.with_input(
-                                                    AnimationClipNode::new(
-                                                        clips.pistol_idle.clone(),
-                                                    ),
-                                                    |_| {},
-                                                );
-                                            },
-                                        );
-                                    });
-                                });
-                            });
-                        });
-                    });
-                });
-            });
-        });
-    BodyGraph {
-        graph,
-        recoil: recoil_node.expect("the graph has its recoil node"),
-    }
+        .input(foot_placement())
+        .input(foot_lock())
+        .input(off_hand())
+        .input(unsteadiness(&masks))
+        .input(look())
+        .input(recoil(clips.shoot.clone()));
+    let recoil = recoil_node.index();
+    recoil_node
+        .input(aim())
+        .input(aim_offset(&clips))
+        .add_layer_input_with(
+            LayerNode::new(masks.upper_body.clone()).with_weight_param(pistol_weight()),
+            |base| {
+                base.input(AdditiveNode::new(clips.tired.clone()).with_weight_param(fatigue()))
+                    .add_layer_input(
+                        LayerNode::new(masks.fingers.clone()).with_space(LayerSpace::Local),
+                        retarget,
+                        AnimationClipNode::new(clips.idle.clone()),
+                    );
+            },
+            |mut overlay| {
+                overlay.add_input(AnimationClipNode::new(clips.pistol_idle.clone()));
+            },
+        );
+    BodyGraph { graph, recoil }
 }
 
 /// UAL1's character: LAFAN1's motion matching retargeted onto its skeleton, its fingers, which LAFAN1's motion does not move, taken from UAL1's own idle, a tired overlay over both, the pistol layered over the upper body and aimed, the head turned to the aim point, the aim arm swaying, the off hand held on the gun, and the feet locked and placed last.

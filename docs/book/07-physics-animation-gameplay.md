@@ -273,7 +273,7 @@ fn setup_animations(
     let run = assets.load::<AnimationClip>(RUN);
 
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_blend_space_2d_input(name!("movement"), |space| {
+    graph.result_node().add_blend_space_2d_input_with(name!("movement"), |space| {
         space
             .animation_clip_input(idle, Vec2::ZERO)
             .animation_clip_input(walk, Vec2::new(0.0, 0.5))
@@ -324,18 +324,18 @@ A graph is a tree of nodes under a result node:
   delta covers. `AdditiveNode::new(clip)` starts at weight 1, looping from 0
   at rate 1, and every other field has a `with_<field>`:
   ```rust
-  graph.result_node().with_input(
-      AdditiveNode::new(cold).with_weight_param(name!("cold")),
-      |mut base| {
-          base.with_input(AnimationClipNode::new(walk), |_| {});
-      },
-  );
+  graph
+      .result_node()
+      .input(AdditiveNode::new(cold).with_weight_param(name!("cold")))
+      .add_input(AnimationClipNode::new(walk));
   ```
 - **Layer** (`LayerNode`) lays its second input, the overlay, over its first,
   the base, on the bones a `BoneMask` asset names. Build it with
-  `with_layer_input(node, base, overlay)`, which adds the base through the
-  first closure and then the overlay through the second, so the order can't
-  come out wrong; it panics unless each closure adds exactly one input. Layers
+  `add_layer_input(node, base, overlay)`, which takes the base node and then
+  the overlay node, so the order can't come out wrong. When either has inputs
+  of its own, `add_layer_input_with(node, base, overlay)` adds the base through
+  its first closure and the overlay through its second; it panics unless each
+  closure adds exactly one input. Layers
   stack by chaining: one layer can be the base of the next. With no overlay
   the node passes the base through, with no input at all it gives the rest
   pose, and inputs after the second are ignored with a warning. A `BoneMask` is made from the content browser's New menu,
@@ -373,14 +373,10 @@ A graph is a tree of nodes under a result node:
           .with_branch(BoneMaskBranch::new("Spine1").with_depth(2))
           .with_branch(BoneMaskBranch::new("Neck").with_weight(0.0)),
   );
-  graph.result_node().with_layer_input(
+  graph.result_node().add_layer_input(
       LayerNode::new(upper_body).with_weight_param(name!("aim_weight")),
-      |mut base| {
-          base.with_input(AnimationClipNode::new(run), |_| {});
-      },
-      |mut overlay| {
-          overlay.with_input(AnimationClipNode::new(aim), |_| {});
-      },
+      AnimationClipNode::new(run),
+      AnimationClipNode::new(aim),
   );
   ```
 - **2D blend space** places clips at points and blends by a `Vec2`
@@ -623,7 +619,7 @@ A node names the parameter it reads with a `Param<T>`
 (`concerto::animation::param`): a `Name` that carries the type of the value
 the node reads, so `weight_param` is an `Option<Param<f32>>` and a look-at's
 `target_param` a `Param<Vec3>`. Every `with_*_param` builder, the state
-machine's `on_bool` and `on_non_zero_vec`, and `with_blend_space_2d_input`
+machine's `on_bool` and `on_non_zero_vec`, and `add_blend_space_2d_input_with`
 take a `Name` or a `Param<T>`; a struct literal writes
 `name!("aim_weight").into()`. `AnimationBlackboard::read(&param)` returns the
 value as that type, and `None` when it is missing or holds another. A
@@ -717,9 +713,21 @@ weighted as the joints are. A node that builds its output without `copy_from`
 or `blend` must forward its inputs' events itself, with
 `AnimationFrame::push_event`, or they never reach the player.
 
-Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
-on the result node or on another node's context, or start a graph with
-`AnimationGraph::from_node`.
+Add a node with `add_input(Gain { amount: 2.0 })` on the result node or on
+another node's context, or start a graph with `AnimationGraph::from_node`.
+The context's methods mirror `EntityCommandQueue`'s: `add_input(node)` adds a
+node with no inputs and returns the same context, so siblings chain;
+`add_input_with(node, |node| { .. })` hands the new node's context to a
+closure, for a node with several inputs; and `input(node)` returns the new
+node's context, so a line of single inputs reads flat:
+
+```rust
+graph
+    .result_node()
+    .input(FootLockNode::new())
+    .input(Gain { amount: 2.0 })
+    .add_input(AnimationClipNode::new(walk));
+```
 
 A tool that edits a graph reads it and puts it together without the builder.
 `node_indices()` lists every node, `node(index)` gives its `AnimationNodeData`,
@@ -1193,7 +1201,7 @@ let ual_rig = assets.add(ual_rig);
 let mut graph = AnimationGraph::new();
 graph
     .result_node()
-    .with_input(RetargetNode::new(inner, lafan_rig, ual_rig), |_| {});
+    .add_input(RetargetNode::new(inner, lafan_rig, ual_rig));
 cmd.insert(AnimationHandleComponent::new(assets.add(graph)), entity);
 ```
 

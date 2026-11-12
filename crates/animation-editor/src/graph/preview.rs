@@ -384,7 +384,7 @@ mod tests {
         let mut graph = AnimationGraph::new();
         graph
             .result_node()
-            .with_blend_space_2d_input(name!("direction"), |space| {
+            .add_blend_space_2d_input_with(name!("direction"), |space| {
                 for sample in samples {
                     space.animation_clip_input(AssetHandle::weak(sample.clip), sample.at);
                 }

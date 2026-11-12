@@ -119,10 +119,9 @@ impl Stage {
         register_animation_types(&mut registry);
         registry.register::<FootLockNode>();
         let mut graph = AnimationGraph::new();
-        graph.result_node().with_input(
-            FootLockNode::new().with_leg(FootLockLeg::new("foot").with_toe("toe")),
-            |_| {},
-        );
+        graph
+            .result_node()
+            .add_input(FootLockNode::new().with_leg(FootLockLeg::new("foot").with_toe("toe")));
         graph.make_live(&registry, None).unwrap();
         let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
         world

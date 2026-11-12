@@ -12,7 +12,18 @@ pub const PROPS: [&str; 6] = [
     "prop_cup",
     "prop_cufflink",
 ];
-pub const PORTRAITS: [&str; 3] = ["portrait_01", "portrait_02", "portrait_03"];
+pub const PORTRAITS: [&str; 10] = [
+    "portrait_01",
+    "portrait_02",
+    "portrait_03",
+    "portrait_04",
+    "portrait_05",
+    "portrait_06",
+    "portrait_07",
+    "portrait_08",
+    "portrait_09",
+    "portrait_10",
+];
 pub const ACTIVITIES: [&str; 2] = ["sit", "stand"];
 
 /// The case being played, the ids it borrows, and the level as it ships.

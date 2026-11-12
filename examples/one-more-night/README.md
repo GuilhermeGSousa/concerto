@@ -17,13 +17,16 @@ are figurines built in `assets/characters`, whose
 standing, walking and sitting, and turn their heads to a player who is talking
 to them.
 
-`-- --manor` loads the manor's greybox, all five levels, with an empty case
-(`cases/manor_walk`): no characters or props, only the house. The Guest starts
+`-- --manor` loads the manor's greybox, all five levels, with an open case
+that solves nothing (`cases/manor_walk`): ten characters, one of each
+figurine, standing about the house to be met, and no props or facts. The Guest starts
 upstairs and the Staff in the servants' hall. Its walls, floors and furniture
 collide, its doors open, and its bells, bell board, beds and dumbwaiter stops
 are found by the names of the nodes in the export, with nothing placed by
 hand. A door leaf that stands open is walked through and does not block the
-way; aim at it to close it. It is lit flat, by one sun and no lamps.
+way; aim at it to close it. Every indoor room has ceiling lamps, placed from the
+room plan: warm in the guest rooms, paler in the service ones, hung lower under
+the cellar's and attic's low ceilings. Outdoors there is only moonlight.
 
 ## Playing
 
@@ -71,6 +74,10 @@ them swap.
 - **The Guest** talks to guests, and a private conversation changes subject
   while the Guest is in the room. **The Staff** talks to staff, opens the doors
   on the key ring, and hears through a door. Service doors refuse the Guest.
+- **Private rooms** follow who is in them. The Guest is let into someone's room
+  only while they are in; the Staff goes in only while it is empty, or when its
+  bell has rung. Your own room is always yours, and nobody is kept from
+  leaving. [docs/access-design.md](docs/access-design.md) has the whole rule.
 - **Props**: one item is carried at a time. The dumbwaiter has three stops;
   using a stop calls the car, and then sends or takes an item.
 - **Bells**: a bell pull raises its room's flag on the board in the corridor

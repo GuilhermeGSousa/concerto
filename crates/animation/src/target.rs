@@ -497,15 +497,15 @@ mod tests {
             let mut left_index = None;
             let mut right_index = None;
             let mut graph = AnimationGraph::new();
-            graph.result_node().with_input(BlendNode {}, |mut blend| {
-                blend
-                    .with_input(AnimationClipNode::new(left), |node| {
-                        left_index = Some(node.index())
-                    })
-                    .with_input(AnimationClipNode::new(right), |node| {
-                        right_index = Some(node.index())
-                    });
-            });
+            graph
+                .result_node()
+                .input(BlendNode {})
+                .add_input_with(AnimationClipNode::new(left), |node| {
+                    left_index = Some(node.index())
+                })
+                .add_input_with(AnimationClipNode::new(right), |node| {
+                    right_index = Some(node.index())
+                });
             let graph = self.graph(graph);
             let mut player = self.player(graph);
             let weight = |index: Option<AnimationNodeIndex>| index.expect("the input was added");
@@ -896,7 +896,7 @@ mod tests {
         let mut graph = AnimationGraph::new();
         graph
             .result_node()
-            .with_blend_space_2d_input(name!("at"), |space| {
+            .add_blend_space_2d_input_with(name!("at"), |space| {
                 space
                     .animation_clip_input(along_x, Vec2::ZERO)
                     .animation_clip_input(along_y, Vec2::X)
