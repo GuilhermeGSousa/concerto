@@ -74,11 +74,12 @@ pub struct SceneOpenFailed {
     pub message: String,
 }
 
-/// A Scene document saved its scene over `asset`, which it now shows.
+/// A document saved: `asset` is what it now shows, and `written` every file the save wrote.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct SceneSaved {
     pub document: Entity,
     pub asset: AssetEntry,
+    pub written: Vec<AssetEntry>,
 }
 
 /// A Scene document could not save; `message` is the status it shows.
@@ -269,7 +270,14 @@ fn save(world: &mut World, document: Entity) -> Result<(), String> {
     match save_document(world, document) {
         Ok(asset) => {
             set_status(world, document, format!("Saved {}", asset.address));
-            write(world, SceneSaved { document, asset });
+            write(
+                world,
+                SceneSaved {
+                    document,
+                    written: vec![asset.clone()],
+                    asset,
+                },
+            );
             Ok(())
         }
         Err(message) => {
@@ -922,7 +930,14 @@ mod tests {
         assert!(f.status(document).starts_with("Saved"));
         assert!(f.saved_scene_names().contains(&"renamed".to_string()));
         let asset = f.document(document).current.clone().unwrap();
-        assert_eq!(f.written::<SceneSaved>(), [SceneSaved { document, asset }]);
+        assert_eq!(
+            f.written::<SceneSaved>(),
+            [SceneSaved {
+                document,
+                written: vec![asset.clone()],
+                asset,
+            }]
+        );
         assert!(f.written::<SaveFailed>().is_empty());
     }
 

@@ -274,9 +274,11 @@ pub(crate) fn report_saves_as_written(
     mut written: EventWriter<AssetsWritten>,
 ) {
     for saved in saved.read() {
-        written.write(AssetsWritten {
-            ids: vec![saved.asset.id],
-        });
+        if !saved.written.is_empty() {
+            written.write(AssetsWritten {
+                ids: saved.written.iter().map(|asset| asset.id).collect(),
+            });
+        }
     }
 }
 
@@ -555,20 +557,21 @@ mod tests {
         w.get_resource::<ActiveEditor>().unwrap().0.unwrap()
     }
     #[test]
-    fn a_save_sends_the_saved_asset_as_written() {
+    fn a_save_sends_the_files_it_wrote_as_written() {
         use concerto_ecs::events::{event_channel::EventChannel, event_cursor::EventCursor};
         let mut w = World::new();
         w.insert_resource(EventChannel::<SceneSaved>::new());
         w.insert_resource(EventChannel::<AssetsWritten>::new());
         let mut system = report_saves_as_written.into_system();
         system.initialize(&mut w);
-        let saved = asset("a");
+        let saved = asset("b");
         let document = w.spawn((Unsaved,));
         w.get_resource_mut::<EventChannel<SceneSaved>>()
             .unwrap()
             .push_event(SceneSaved {
                 document,
-                asset: saved.clone(),
+                asset: asset("a"),
+                written: vec![saved.clone()],
             });
 
         system.run_and_apply((), &mut w);

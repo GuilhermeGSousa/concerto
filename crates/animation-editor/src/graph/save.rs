@@ -6,11 +6,10 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::{EditorDocument, SaveRequested, Unsaved},
-    project::{AssetsWritten, ProjectState},
+    project::ProjectState,
     scene::{SaveFailed, SceneSaved},
 };
 use concerto_foundation::assets::{
-    AssetId,
     content::save_content_asset_into,
     registry::{AssetEntry, AssetRegistry},
 };
@@ -19,8 +18,7 @@ use super::document::GraphDocument;
 
 struct Written {
     tab: AssetEntry,
-    addresses: Vec<String>,
-    nested: Vec<AssetId>,
+    files: Vec<AssetEntry>,
 }
 
 fn save_document(
@@ -32,8 +30,7 @@ fn save_document(
     let tab = document.current.clone().context("No graph is open")?;
     let mut written = Written {
         tab,
-        addresses: Vec::new(),
-        nested: Vec::new(),
+        files: Vec::new(),
     };
     for held in state.graphs_mut() {
         if !held.changed {
@@ -46,13 +43,11 @@ fn save_document(
             .cloned()
             .context("The saved graph was not registered")?;
         held.changed = false;
-        written.addresses.push(saved.address.clone());
+        written.files.push(saved.clone());
         if id == written.tab.id {
             document.title = saved.name().to_owned();
             document.current = Some(saved.clone());
             written.tab = saved.clone();
-        } else {
-            written.nested.push(id);
         }
         held.asset = saved;
     }
@@ -64,7 +59,6 @@ pub(crate) fn save_graphs(
     project: Res<ProjectState>,
     mut assets: ResMut<AssetRegistry>,
     mut saved: EventWriter<SceneSaved>,
-    mut nested: EventWriter<AssetsWritten>,
     mut failed: EventWriter<SaveFailed>,
     mut cmd: CommandQueue,
 ) {
@@ -79,15 +73,16 @@ pub(crate) fn save_graphs(
             .and_then(|root| save_document(&mut document, &mut state, root, &mut assets));
         match written {
             Ok(written) => {
-                document.status = format!("Saved {}", written.addresses.join(", "));
-                if !written.nested.is_empty() {
-                    nested.write(AssetsWritten {
-                        ids: written.nested,
-                    });
-                }
+                let addresses: Vec<&str> = written
+                    .files
+                    .iter()
+                    .map(|asset| asset.address.as_str())
+                    .collect();
+                document.status = format!("Saved {}", addresses.join(", "));
                 saved.write(SceneSaved {
                     document: entity,
                     asset: written.tab,
+                    written: written.files,
                 });
                 cmd.remove::<Unsaved>(entity);
             }

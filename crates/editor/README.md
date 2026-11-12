@@ -332,7 +332,9 @@ a node whose graph is not set, answers `refused` with the reason and what to
 do.
 
 `save` writes `document`, or the active document without one, to its file as
-Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
+Ctrl+S does, and answers `Saved <address>.` once it is written, naming every
+file the save wrote, `Saved <address>, <address>.`, when a tab such as an
+animation graph's writes several. A document with
 no unsaved changes answers `Nothing to save in document <id> <address>.`, which
 is not an error. A save that fails answers `save_failed` with the editor's
 message, as does a save while the game plays (`Stop to save`), and a scene still
@@ -806,8 +808,9 @@ scene's entry in the registry in memory and writes no registry file. A failed
 save reports why in Chatter and leaves the document dirty.
 
 Each save, whether asked for with `SaveRequested` or made by Play, ends in an
-event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
-the scene the document now shows, or `SaveFailed { document, message }`, where
+event in the editor's world: `SceneSaved { document, asset, written }`, where
+`asset` is the scene the document now shows and `written` every file the save
+wrote, the scene alone here, or `SaveFailed { document, message }`, where
 `message` is the status the tab shows, "Stop to save" included. Ctrl+S asks for
 a save only when the document has unsaved changes; otherwise it writes neither,
 even while it shows "Stop to save".
@@ -815,8 +818,10 @@ even while it shows "Stop to save".
 Every write of a content asset in the editor also ends in
 `AssetsWritten { ids }` in the editor's world, naming the assets written: a
 finished import sends every asset it wrote, unless its project was replaced
-while it ran; a save by any asset editor sends the saved asset, taken from its
-`SceneSaved`, so an asset editor's save reports it by writing `SceneSaved`; and
+while it ran; a save by any asset editor sends the files it wrote, the
+`written` of its `SceneSaved`, so an asset editor's save reports them by
+writing `SceneSaved`, and a tab that saves several files, or another file than
+the one it shows, lists exactly those; and
 a New in the Asset Browser sends the created asset. Code that keeps data
 derived from other assets reads it to know when to derive again.
 

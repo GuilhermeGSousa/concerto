@@ -381,6 +381,7 @@ struct Drill {
     root: Vec<u8>,
     idle: Vec<u8>,
     walk: Vec<u8>,
+    nested_saved: String,
     nested_edited: String,
     handed_over: Value,
     restored_root: String,
@@ -521,6 +522,13 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         let saved = ok(&client, "save", json!({})).await;
         let (root, idle, walk) = (read(GRAPH), read(IDLE), read(WALK));
         ok(&client, "graph_open", json!({ "state": "Run" })).await;
+        ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "AnimationClipNode" }),
+        )
+        .await;
+        let nested_saved = ok(&client, "save", json!({})).await;
         ok(&client, "graph_remove", json!({ "node": 1 })).await;
         let nested_edited = ok(&client, "graph_inspect", json!({})).await;
         ok(&client, "graph_up", json!({})).await;
@@ -555,6 +563,7 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
             root,
             idle,
             walk,
+            nested_saved,
             nested_edited,
             handed_over: serde_json::from_str(&handed_over).unwrap(),
             restored_root,
@@ -634,7 +643,8 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         drill.nested_added,
         "Added node 1, an AnimationClipNode, as input 0 of node 0."
     );
-    assert_eq!(drill.saved, format!("Saved {GRAPH}."));
+    assert_eq!(drill.saved, format!("Saved {GRAPH}, {WALK}."));
+    assert_eq!(drill.nested_saved, format!("Saved {WALK}."));
     let decoded = |file: &[u8]| decode_content_asset::<AnimationGraph>(file).unwrap().1;
     assert_eq!(
         described(&decoded(&drill.root)),
@@ -654,7 +664,9 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
     );
     assert_eq!(
         drill.nested_edited,
-        "Locomotion › States › Run (state)\n0 · ResultNode · result"
+        "Locomotion › States › Run (state)\n\
+         0 · ResultNode · result\n\
+         2 · AnimationClipNode · loose"
     );
     assert_eq!(
         drill.handed_over["value"]["initial"], true,
@@ -672,7 +684,8 @@ fn a_state_machine_is_drilled_into_edited_saved_with_its_states_graphs_and_resto
         drill.restored_nested,
         "Locomotion › States › Run (state)\n\
          0 · ResultNode · result\n\
-         1 · AnimationClipNode · 0#0"
+         1 · AnimationClipNode · 0#0\n\
+         2 · AnimationClipNode · loose"
     );
 }
 

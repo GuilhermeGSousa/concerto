@@ -59,6 +59,7 @@ fn save_and_report(
             document.status = format!("Saved {}", asset.address);
             saved.write(SceneSaved {
                 document: entity,
+                written: vec![asset.clone()],
                 asset,
             });
             cmd.remove::<Unsaved>(entity);

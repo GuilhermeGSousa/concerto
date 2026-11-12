@@ -579,7 +579,10 @@ changed, the result node first, then every node in id order, each connected to
 its inputs in slot order, and writes it over its file, keeping the asset's id.
 Loose nodes are saved; the runtime ignores what the result node does not reach.
 The status then reads `Saved <address>, <address>`, naming each file written,
-or `Save failed: …` with the tab left `Unsaved`.
+or `Save failed: …` with the tab left `Unsaved`. The save's `SceneSaved` lists
+the same files as `written`, so `AssetsWritten` and the `save` tool's reply
+name exactly what was written: a save after an edit to a nested graph alone
+answers `Saved content/Walk.gasset.` and does not report the tab's own graph.
 
 Discard drops every working copy and reads the tab's graph again, so the tab
 shows it as last saved, with nothing selected, and a nested graph is read from
