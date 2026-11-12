@@ -698,7 +698,10 @@ above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
 `animate_targets`, each declare the union of their walk's inputs over every
 registered node, and nothing else, so `animate_targets` never declares what only
 an update reads. A node whose input is missing, or whose type was registered
-without `register_animation_node`, is skipped in that walk with a warning. The
+without `register_animation_node`, is skipped in that walk with a warning. A
+node skipped in the create walk has no state: it is never updated, and in
+`evaluate` it gives its parent the rest pose at full weight, with one warning
+until the player's graph is initialized again. The
 clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
