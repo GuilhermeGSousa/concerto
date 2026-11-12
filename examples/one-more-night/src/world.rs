@@ -62,7 +62,7 @@ use crate::book::Casebook;
 use crate::book_ui::{
     BookPanel, PANEL, ScreenPanel, book_panel_node, chip, show_book, show_screens,
 };
-use crate::case::{Id, NpcId, PlacementId, Role, Zone};
+use crate::case::{DoorId, Id, NpcId, PlacementId, Role, RoomId, Zone};
 use crate::casefile::CaseData;
 use crate::clock::{GameTime, Midnight, NightClock, NightPaused};
 use crate::controls::{
@@ -71,7 +71,7 @@ use crate::controls::{
 };
 use crate::house::{House, Interactable, ItemPlace, end_night};
 use crate::players::{PLAYER_COUNT, SeatEntity, Seated, SpawnPoint, body_layer};
-use crate::rules::name_of;
+use crate::rules::{Privacy, name_of};
 use crate::save::{SaveFile, save_dir};
 use crate::schedule::{NpcPose, WALK_SPEED, case_time, entries_of, line_at, pose_at, talks_at};
 use crate::session::{Effect, Mode, Press, Session};
@@ -80,6 +80,7 @@ use concerto::render::components::visibility::RenderLayers;
 
 const SEATS: usize = PLAYER_COUNT as usize;
 const REACH: f32 = 2.6;
+const EYE_DROP: f32 = 1.5;
 const AIM_RADIUS: f32 = 0.12;
 const EARSHOT: f32 = 6.0;
 const DOOR_LISTEN_REACH: f32 = 1.6;
@@ -524,6 +525,50 @@ fn npc_pose(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<NpcP
     pose_at(&entries, &data.level, now, WALK_SPEED)
 }
 
+fn npc_room(data: &CaseData, house: &House, npc: NpcId, now: f64) -> Option<RoomId> {
+    if house.gathered
+        && let Some(staging) = data
+            .case
+            .finale
+            .staging
+            .iter()
+            .find(|staging| staging.npc == npc)
+    {
+        return Some(data.level.anchor(staging.anchor).room);
+    }
+    let entries = entries_of(&data.case, npc, data.case.phase_at(case_time(now)));
+    let pose = pose_at(&entries, &data.level, now, WALK_SPEED)?;
+    (!pose.walking).then(|| data.level.anchor(entries[pose.entry].anchor).room)
+}
+
+fn privacy_at(
+    data: &CaseData,
+    house: &House,
+    door: DoorId,
+    player: u8,
+    from: Option<RoomId>,
+    now: f64,
+) -> Privacy {
+    let sides = data.level.door(door);
+    let beyond: Vec<RoomId> = [sides.a, sides.b]
+        .into_iter()
+        .filter(|room| Some(*room) != from && data.level.room(*room).zone == Zone::Private)
+        .collect();
+    Privacy {
+        entering: !beyond.is_empty(),
+        own: data
+            .level
+            .home(player)
+            .is_some_and(|home| beyond.contains(&home)),
+        someone_in: data
+            .case
+            .characters
+            .ids()
+            .any(|npc| npc_room(data, house, npc, now).is_some_and(|room| beyond.contains(&room))),
+        rung: beyond.iter().any(|room| house.bells[room.index()]),
+    }
+}
+
 fn npc_is_busy(data: &CaseData, house: &House, npc: NpcId, now: f64) -> bool {
     let entries = entries_of(&data.case, npc, data.case.phase_at(case_time(now)));
     npc_pose(data, house, npc, now)
@@ -738,6 +783,9 @@ fn adopt_named_nodes(
             "spawn" => {
                 let player = u32::from(rest == "staff");
                 cmd.insert(SpawnPoint { player }, entity);
+                if let Some(room) = data.level.room_at(transform.translation) {
+                    data.level.place_home(player as u8, room);
+                }
                 continue;
             }
             _ => None,
@@ -999,6 +1047,18 @@ fn play(
                     Interactable::Npc(npc) => npc_is_busy(&data, &house, npc, now),
                     _ => false,
                 };
+                let at_the_door = match target {
+                    Interactable::Door(door) => {
+                        let from = cameras
+                            .iter()
+                            .find(|(camera, _)| camera.index() == player)
+                            .and_then(|(_, eye)| {
+                                data.level.room_at(eye.translation - Vec3::Y * EYE_DROP)
+                            });
+                        privacy_at(&data, &house, door, player, from, now)
+                    }
+                    _ => Privacy::default(),
+                };
                 effects.extend(house.use_target(
                     &mut session,
                     &mut book,
@@ -1007,6 +1067,7 @@ fn play(
                     target,
                     time,
                     busy,
+                    at_the_door,
                 ));
             } else if pad.is_just_pressed(Back)
                 && session.seats[seat].carried.is_some()
@@ -2332,7 +2393,7 @@ mod tests {
         let walks = [
             Walk {
                 player: 0,
-                legs: vec![leg(21.75, 9.0), leg(28.6, 9.0)],
+                legs: vec![leg(21.75, 9.0), leg(26.0, 9.1)],
                 ends_at_height: 3.8,
                 ends_in: "gallery",
             },
@@ -2349,6 +2410,33 @@ mod tests {
             },
         ];
         walk_to_the_end(&mut app, &walks);
+        let neighbour = {
+            let data = app.get_resource::<crate::casefile::CaseData>().unwrap();
+            assert_eq!(
+                data.level.home(0),
+                data.catalog.rooms.id("g5"),
+                "the room the Guest starts in is their own"
+            );
+            data.catalog.doors.id("d_g2").unwrap()
+        };
+        assert_eq!(
+            aimed_at(&mut app, 26.0, 8.0),
+            Some(super::Interactable::Door(neighbour))
+        );
+        uses(&mut app, 0);
+        assert!(
+            !house(&app).stands_open(neighbour),
+            "an empty bedroom that is not the Guest's stays shut to them"
+        );
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(28.6, 9.0)],
+                ends_at_height: 3.8,
+                ends_in: "gallery",
+            }],
+        );
         assert_eq!(
             aiming_at(&mut app, 0, Vec3::new(29.55, 4.7, -8.1)),
             Some(super::Interactable::Lift(2))

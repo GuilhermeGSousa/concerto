@@ -73,6 +73,10 @@ them swap.
 - **The Guest** talks to guests, and a private conversation changes subject
   while the Guest is in the room. **The Staff** talks to staff, opens the doors
   on the key ring, and hears through a door. Service doors refuse the Guest.
+- **Private rooms** follow who is in them. The Guest is let into someone's room
+  only while they are in; the Staff goes in only while it is empty, or when its
+  bell has rung. Your own room is always yours, and nobody is kept from
+  leaving. [docs/access-design.md](docs/access-design.md) has the whole rule.
 - **Props**: one item is carried at a time. The dumbwaiter has three stops;
   using a stop calls the car, and then sends or takes an item.
 - **Bells**: a bell pull raises its room's flag on the board in the corridor
