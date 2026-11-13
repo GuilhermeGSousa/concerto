@@ -30,8 +30,7 @@ use crate::{
     sanatorium::sanatorium,
 };
 
-pub(crate) const PLAYER_SCENE: AssetId =
-    asset_id!("content/character/export/character/scene.gasset");
+pub(crate) const UAL1_SCENE: AssetId = asset_id!("content/UAL1/scene.gasset");
 pub(crate) const UAL1_RIG: AssetId = asset_id!("content/UAL1/rig.gasset");
 pub(crate) const LAFAN1_RIG: AssetId = asset_id!("content/lafan1/model_skeleton/rig.gasset");
 
@@ -318,7 +317,7 @@ fn retargeted_graph(retarget: RetargetNode, clips: BodyClips, masks: BodyMasks) 
     BodyGraph { graph, recoil }
 }
 
-/// The sanatorium's traveller, skinned to UAL1's skeleton: LAFAN1's motion matching retargeted onto it, its fingers, which LAFAN1's motion does not move, taken from UAL1's own idle, a tired overlay over both, the pistol layered over the upper body and aimed, the head turned to the aim point, the aim arm swaying, the off hand held on the gun, and the feet locked and placed last.
+/// UAL1's character: LAFAN1's motion matching retargeted onto its skeleton, its fingers, which LAFAN1's motion does not move, taken from UAL1's own idle, a tired overlay over both, the pistol layered over the upper body and aimed, the head turned to the aim point, the aim arm swaying, the off hand held on the gun, and the feet locked and placed last.
 pub(crate) fn retargeted_character(asset_server: &AssetServer) -> CharacterAssets {
     let motion = asset_server.add(motion_matching_graph(asset_server.load(DATABASE)));
     let source = asset_server.load(LAFAN1_RIG);
@@ -329,7 +328,7 @@ pub(crate) fn retargeted_character(asset_server: &AssetServer) -> CharacterAsset
         BodyMasks::add(asset_server),
     );
     CharacterAssets {
-        scene: asset_server.load(PLAYER_SCENE),
+        scene: asset_server.load(UAL1_SCENE),
         graph: asset_server.add(body.graph),
         recoil: Some(body.recoil),
     }

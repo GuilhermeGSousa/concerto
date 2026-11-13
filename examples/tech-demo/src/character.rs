@@ -758,7 +758,7 @@ mod tests {
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
     use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
 
-    use crate::retarget::{LAFAN1_RIG, PISTOL_SHOOT, PLAYER_SCENE, RetargetedPlayer, UAL1_RIG};
+    use crate::retarget::{LAFAN1_RIG, PISTOL_SHOOT, RetargetedPlayer, UAL1_RIG, UAL1_SCENE};
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, NpcSpawner, PendingLink, Player, PlayerSpawner,
@@ -1172,7 +1172,7 @@ mod tests {
             .into_iter()
             .map(|(.., scene)| scene)
             .collect();
-        assert_eq!(scenes, vec![PLAYER_SCENE]);
+        assert_eq!(scenes, vec![UAL1_SCENE]);
         let handle = world
             .query::<&PendingLink, ()>()
             .iter(&mut world)

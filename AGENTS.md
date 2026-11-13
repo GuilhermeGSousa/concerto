@@ -93,8 +93,7 @@ opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved b
 motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
 method there; hold the right mouse button or the left trigger to aim, C or the
 east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
-level with the player swapped for the traveller, a Hyper3D character skinned to
-UAL1's skeleton (`examples/tech-demo/assets/character`), driven by LAFAN1 motion
+level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1. `--sanatorium
 --retarget` puts the same player in the sanatorium, and `--forest` wins over
 `--retarget`. That player's graph is the main character's: the fingers, which LAFAN1's
