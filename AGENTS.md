@@ -91,10 +91,11 @@ the root, is what goes on a web host such as itch.io. `-- --sanatorium` runs the
 level scene `content/sanatorium/level.gasset` that the editor opens: the graybox dressed by
 the art pass in `examples/tech-demo/assets/sanatorium/art` (Hyper3D props, Poly Haven
 surfaces, lamp lights and a moon), its collision spawned from the graybox's `COL` scene,
-with the character moved by root
-motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
+with the character placed on its
+capsule each frame (`Synchronization` at `data_factor` 0, as on the grid; M does not cycle the
 method there; hold the right mouse button or the left trigger to aim, C or the
-east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
+east face button to lower the camera, Q or the right bumper to swap shoulders). While the aim button is held, on every level, the
+character faces where the camera looks and strafes instead of turning. `-- --retarget` runs the grid
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1. `--sanatorium
 --retarget` puts the same player in the sanatorium. That player's graph is the main character's: the fingers, which LAFAN1's

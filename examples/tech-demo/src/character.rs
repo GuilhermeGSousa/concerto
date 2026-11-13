@@ -108,27 +108,29 @@ pub(crate) struct CharacterConfig {
 }
 
 impl CharacterConfig {
-    /// The grid's character, which follows its capsule by the default method.
+    /// The grid's character, placed on its capsule each frame.
     pub(crate) fn grid() -> Self {
         Self {
             radius: 0.3,
             height: 1.6,
             camera_distance: 2.2,
-            displacement: CharacterDisplacement::default(),
+            displacement: on_the_capsule(),
         }
     }
 
-    /// The sanatorium's character, moved by its root motion alone.
+    /// The sanatorium's character, placed on its capsule each frame.
     pub(crate) fn sanatorium() -> Self {
         Self {
             radius: 0.35,
             height: 1.8,
             camera_distance: 1.9,
-            displacement: CharacterDisplacement::Synchronization(Synchronization {
-                data_factor: 1.0,
-            }),
+            displacement: on_the_capsule(),
         }
     }
+}
+
+fn on_the_capsule() -> CharacterDisplacement {
+    CharacterDisplacement::Synchronization(Synchronization { data_factor: 0.0 })
 }
 
 #[derive(Component)]
@@ -805,7 +807,7 @@ mod tests {
             characters,
             vec![(
                 spawn_point,
-                CharacterDisplacement::default(),
+                CharacterDisplacement::Synchronization(Synchronization { data_factor: 0.0 }),
                 CHARACTER_SCENE
             )]
         );
@@ -891,7 +893,7 @@ mod tests {
         assert_eq!(
             methods,
             vec![CharacterDisplacement::Synchronization(Synchronization {
-                data_factor: 1.0
+                data_factor: 0.0
             })]
         );
     }
