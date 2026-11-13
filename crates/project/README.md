@@ -189,8 +189,8 @@ one.
 Does what a native `build` does with the same `<dir>`, `--cook` and
 `--release`, then runs the executable cargo reported and waits for it to exit.
 Everything after `--` is passed to the game, so
-`cargo concerto run examples/tech-demo --cook -- --forest` builds, cooks and
-stages the tech demo, then opens the forest. The game runs in the working
+`cargo concerto run examples/tech-demo --cook -- --sanatorium` builds, cooks and
+stages the tech demo, then opens the sanatorium. The game runs in the working
 directory the command was run from, and finds its content beside its executable
 as a plain run does. A game that exits with a failure fails the command.
 `--target`, `--public-url` and `--dist` are refused: `run` is native only.

@@ -3,7 +3,6 @@ use std::f32::consts::PI;
 
 use concerto::animation::graph::{AnimationGraph, AnimationNodeIndex};
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
-use concerto::color::Color;
 use concerto::director::VirtualCamera;
 use concerto::ecs::component::scene::SceneEntityRef;
 use concerto::ecs::entity::hierarchy::Children;
@@ -16,7 +15,7 @@ use concerto::gameplay::camera::{CameraBoom, CameraPivot, EntityFollow};
 use concerto::gameplay::third_person::{
     CameraFraming, CameraStance, ShoulderSide, ThirdPersonCamera,
 };
-use concerto::mesh::{MeshComponent, primitives::cuboid};
+use concerto::mesh::MeshComponent;
 use concerto::motion_matching::{
     Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp, DesiredMotion,
     MotionDatabase, MotionMatchingNode, Synchronization,
@@ -32,7 +31,6 @@ use concerto::physics::shape::MeshCollider;
 use concerto::procedural_animation::{
     FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, IgnoredBody,
 };
-use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::define_action;
 use concerto::window::input::actions::{ActionMap, Shortcut};
@@ -53,12 +51,6 @@ use crate::retarget::{RetargetedPlayer, retargeted_character};
 
 const CHARACTER_SCENE: AssetId = asset_id!("content/lafan1/model_skeleton/scene.gasset");
 pub(crate) const DATABASE: AssetId = asset_id!("content/lafan_database.gasset");
-
-const WALLS: [(Vec3, Vec3); 2] = [
-    (Vec3::new(0.0, 1.0, -18.0), Vec3::new(6.0, 2.0, 0.5)),
-    (Vec3::new(5.0, 1.0, -28.0), Vec3::new(0.5, 2.0, 8.0)),
-];
-const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 const CAMERA_HEIGHT: f32 = 1.4;
 const SHOULDER: f32 = 0.45;
@@ -116,8 +108,8 @@ pub(crate) struct CharacterConfig {
 }
 
 impl CharacterConfig {
-    /// The forest's character, which follows its capsule by the default method.
-    pub(crate) fn forest() -> Self {
+    /// The grid's character, which follows its capsule by the default method.
+    pub(crate) fn grid() -> Self {
         Self {
             radius: 0.3,
             height: 1.6,
@@ -385,23 +377,6 @@ fn character_graph(database: AssetHandle<MotionDatabase>) -> AnimationGraph {
         )
         .add_input(MotionMatchingNode::new(database));
     graph
-}
-
-/// Spawns the forest's two test walls as static colliders.
-pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {
-    for (centre, size) in WALLS {
-        cmd.spawn((
-            Transform::from_translation(centre),
-            Collider::cuboid(size.x * 0.5, size.y * 0.5, size.z * 0.5),
-            MeshComponent {
-                handle: asset_server.add(cuboid(size)),
-            },
-            MaterialComponent {
-                handle: asset_server
-                    .add(StandardMaterial::default().with_base_color_factor(WALL_COLOR)),
-            },
-        ));
-    }
 }
 
 /// Gives each pending character's own `AnimationPlayer`, found among its descendants, the character's graph once that graph is in the store, starts its foot placement and foot locking at weight 0, adds foot lock gizmos and footstep tracking when the capsule is the `Player`'s and the `Recoil` node when the graph has one, and links the character to its capsule and skeleton.
@@ -741,10 +716,7 @@ mod tests {
     };
     use concerto::reflect::{apply_value, to_value};
     use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
-    use concerto::scene::{
-        scene::{Scene, SceneNode},
-        spawner::SceneSpawnerComponent,
-    };
+    use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
     use concerto::window::input::actions::ActionMap;
     use concerto::window::input::{
         GamepadAxis, GamepadId, GamepadSettings, Input, KeyCode, MouseButton, PhysicalKey,
@@ -764,8 +736,8 @@ mod tests {
         CHARACTER_SCENE, CharacterConfig, DATABASE, NpcSpawner, PendingLink, Player, PlayerSpawner,
         RUN, WALK, bind_controls, character_graph, cycle_displacement, debug_keys, facing,
         feed_foot_placement, foot_lock_weight, foot_placement_ignore, foot_placement_weight,
-        movement, setup_character_animations, spawn_character, spawn_forest_walls, spawn_npc,
-        update_camera_stance, update_movement,
+        movement, setup_character_animations, spawn_character, spawn_npc, update_camera_stance,
+        update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -875,7 +847,7 @@ mod tests {
 
     #[test]
     fn every_level_follows_close_over_the_shoulder_on_a_boom_as_long_as_its_distance() {
-        for config in [CharacterConfig::forest(), CharacterConfig::sanatorium()] {
+        for config in [CharacterConfig::grid(), CharacterConfig::sanatorium()] {
             let distance = config.camera_distance;
             let (mut world, _) = world_with_spawner();
             world.insert_resource(config);
@@ -943,24 +915,6 @@ mod tests {
             .collect();
         assert_eq!(yaws.len(), 1);
         assert!((yaws[0] - std::f32::consts::PI).abs() < 1e-4);
-    }
-
-    #[test]
-    fn the_forest_walls_are_static_colliders() {
-        let (mut world, _) = world_with_spawner();
-        let mut system = spawn_forest_walls.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-
-        let walls: Vec<Vec3> = world
-            .query::<(&Transform, &Collider, &MeshComponent, &MaterialComponent), Without<RigidBody>>()
-            .iter(&mut world)
-            .map(|(transform, ..)| transform.translation)
-            .collect();
-        assert_eq!(
-            walls,
-            vec![Vec3::new(0.0, 1.0, -18.0), Vec3::new(5.0, 1.0, -28.0)]
-        );
     }
 
     #[test]
@@ -1440,47 +1394,6 @@ mod tests {
         assert_eq!(fed.ignored(), fed.body());
     }
 
-    fn holds<T>(node: &SceneNode) -> bool {
-        node.components
-            .iter()
-            .any(|component| component.type_name == std::any::type_name::<T>())
-    }
-
-    #[test]
-    fn the_forest_holds_a_root_spawner_and_a_ground_collider() {
-        let bytes = std::fs::read(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("content/forest/scene.gasset"),
-        )
-        .unwrap();
-        let (_, scene) = decode_content_asset::<Scene>(&bytes).unwrap();
-
-        let children: Vec<usize> = scene
-            .nodes
-            .iter()
-            .flat_map(|node| node.children.iter().copied())
-            .collect();
-        let spawners: Vec<bool> = scene
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(index, node)| holds::<PlayerSpawner>(node) && !children.contains(index))
-            .flat_map(|(_, node)| &node.components)
-            .filter(|component| component.type_name == std::any::type_name::<PlayerSpawner>())
-            .map(|component| {
-                let mut spawner = PlayerSpawner::default();
-                apply_value(&mut spawner, &component.value);
-                spawner.should_spawn
-            })
-            .collect();
-        assert_eq!(spawners, vec![true]);
-        assert!(
-            scene
-                .nodes
-                .iter()
-                .any(|node| node.name == "Plane" && holds::<MeshCollider>(node))
-        );
-    }
-
     fn committed_skeleton(path: &str) -> Skeleton {
         let bytes =
             std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
@@ -1600,7 +1513,7 @@ mod tests {
         stored::<AnimationClip>(&mut world, &mut server);
         stored::<BoneMask>(&mut world, &mut server);
         world.insert_resource(server);
-        world.insert_resource(CharacterConfig::forest());
+        world.insert_resource(CharacterConfig::grid());
         let spawn_point = Vec3::new(3.0, 1.5, -7.0);
         world.spawn((
             Transform::from_translation_rotation(spawn_point, Quat::IDENTITY),

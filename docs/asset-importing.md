@@ -81,7 +81,7 @@ instead of being ignored.
 opens the project, by its content address:
 
 ```toml
-default_scene = "content/forest/scene.gasset"
+default_scene = "content/sanatorium/level.gasset"
 ```
 
 When it is unset, or names an address that is missing or is not a Scene, the
@@ -644,7 +644,7 @@ A game declares the scene it starts in from its recipe, the
 
 ```rust
 app.register_plugin(DefaultPlugins)
-    .set_startup_scene(asset_id!("content/forest/scene.gasset"));
+    .set_startup_scene(asset_id!("content/sanatorium/level.gasset"));
 ```
 
 `ScenePlugin` (part of `DefaultPlugins`) spawns that scene from a `Startup`
@@ -770,8 +770,8 @@ after such a change.
 
 `cook` writes a `.concerto-cook` marker into `out` and refuses a non-empty
 directory without one, so `--cook` never empties a directory it didn't write.
-An `<out>` that starts with `-` is refused as a flag, so `--cook --forest` fails
-instead of cooking into `./--forest`.
+An `<out>` that starts with `-` is refused as a flag, so `--cook --sanatorium` fails
+instead of cooking into `./--sanatorium`.
 The cook needs no GPU: a plugin that needs the `Gpu` must reach it in `finish`,
 not in `build`.
 

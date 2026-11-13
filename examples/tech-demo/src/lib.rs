@@ -1,29 +1,3 @@
-use concerto::{
-    DefaultPlugins,
-    app::{
-        App,
-        schedule_groups::{Startup, Update},
-    },
-    asset_id,
-    ecs::IntoSystemConfig,
-    gameplay::third_person::update_third_person_cameras,
-    ui::frame_stats_overlay::FrameStatsOverlayPlugin,
-    window::input::actions::ActionMap,
-};
-use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
-use concerto_navigation_gizmos::NavigationGizmosPlugin;
-use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
-
-use crate::{
-    body::install_body,
-    character::{
-        CharacterConfig, PlayerSpawner, bind_controls, cycle_displacement, debug_keys,
-        feed_foot_placement, setup_character_animations, spawn_character, spawn_forest_walls,
-        update_camera_stance, update_movement,
-    },
-    ui::{spawn_grounded_overlay, update_grounded_overlay},
-};
-
 mod body;
 mod character;
 mod footsteps;
@@ -36,45 +10,12 @@ pub use grid::grid;
 pub use retarget::{retarget, retargeted_sanatorium};
 pub use sanatorium::sanatorium;
 
-/// Builds tech-demo: the forest, the character, and its overlay.
-pub fn game(app: &mut App) {
-    app.register_plugin(DefaultPlugins)
-        .register_plugin(MotionMatchingGizmosPlugin)
-        .register_plugin(ProceduralAnimationGizmosPlugin)
-        .register_plugin(NavigationGizmosPlugin)
-        .register_plugin(FrameStatsOverlayPlugin);
-    bind_controls(
-        app.get_resource_mut::<ActionMap>()
-            .expect("DefaultPlugins inserts the ActionMap"),
-    );
-
-    app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
-        .register_type::<PlayerSpawner>()
-        .insert_resource(CharacterConfig::forest());
-
-    app.add_system(Startup, spawn_forest_walls)
-        .add_system(Update, spawn_character)
-        .add_system(Startup, spawn_grounded_overlay)
-        .add_system(Update, setup_character_animations)
-        .add_system(Update, feed_foot_placement)
-        .add_system(Update, update_movement.after(update_camera_stance))
-        .add_system(
-            Update,
-            update_camera_stance.before(update_third_person_cameras),
-        )
-        .add_system(Update, debug_keys)
-        .add_system(Update, cycle_displacement)
-        .add_system(Update, update_grounded_overlay);
-    install_body(app);
-}
-
 #[cfg(test)]
 mod tests {
     use std::any::TypeId;
 
     use concerto::{
-        app::{App, StartupScene},
-        asset_id,
+        app::App,
         ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
         foundation::assets::asset_server::AssetServer,
         reflect::ReflectDefault,
@@ -83,18 +24,14 @@ mod tests {
 
     use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
 
-    use crate::{character::PlayerSpawner, game, retarget::RetargetedPlayer};
+    use crate::{character::PlayerSpawner, retarget::RetargetedPlayer};
 
     #[test]
-    fn the_recipe_declares_the_forest_and_registers_the_spawner_for_reflection() {
-        let Some(app) = concerto::headless(game) else {
+    fn the_sanatorium_registers_the_spawner_for_reflection() {
+        let Some(app) = concerto::headless(crate::sanatorium) else {
             return;
         };
 
-        assert_eq!(
-            app.get_resource::<StartupScene>(),
-            Some(&StartupScene(asset_id!("content/forest/scene.gasset")))
-        );
         let spawner = app
             .get_resource::<AppTypeRegistry>()
             .and_then(|registry| registry.read().get(TypeId::of::<PlayerSpawner>()))
@@ -122,11 +59,6 @@ mod tests {
     }
 
     #[test]
-    fn the_forest_builds_with_no_gpu_and_can_cook_the_motion_database() {
-        builds_with_no_gpu_and_can_cook_the_motion_database(game);
-    }
-
-    #[test]
     fn the_sanatorium_builds_with_no_gpu_and_can_cook_the_motion_database() {
         builds_with_no_gpu_and_can_cook_the_motion_database(crate::sanatorium);
     }
@@ -138,9 +70,8 @@ mod tests {
 
     #[test]
     fn only_the_retargeted_levels_play_the_retargeted_player() {
-        let recipes: [fn(&mut App); 5] = [
+        let recipes: [fn(&mut App); 4] = [
             crate::grid,
-            game,
             crate::sanatorium,
             crate::retarget,
             crate::retargeted_sanatorium,
@@ -153,12 +84,12 @@ mod tests {
                 app.get_resource::<RetargetedPlayer>().is_some()
             })
             .collect();
-        assert_eq!(retargeted, vec![false, false, false, true, true]);
+        assert_eq!(retargeted, vec![false, false, true, true]);
     }
 
     #[test]
     fn every_level_draws_the_foot_locks() {
-        let recipes: [fn(&mut App); 4] = [crate::grid, game, crate::sanatorium, crate::retarget];
+        let recipes: [fn(&mut App); 3] = [crate::grid, crate::sanatorium, crate::retarget];
         for recipe in recipes {
             let mut app = App::new();
             recipe(&mut app);
