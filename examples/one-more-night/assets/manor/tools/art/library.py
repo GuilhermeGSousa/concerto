@@ -51,6 +51,9 @@ MODELS = {
     "fireplace_plain": dict(size=(1.4, 0.34, 1.25), origin="wall", tex=512),
     "curtains": dict(size=(2.0, 0.3, 2.9), origin="wall", tex=1024, two_sided=True),
     "painting_landscape": dict(size=(1.2, 0.08, 0.9), origin="hang", tex=512),
+    "sundial": dict(size=(0.5, 0.5, 1.0), tex=512, thin=0.6),
+    "bells": dict(size=(0.5, 0.11, 0.5), origin="hang", tex=512, thin=0.4),
+    "phone": dict(size=(0.24, 0.2, 0.15), tex=512, thin=0.5),
     "rug_turkey": dict(size=(1.6, 2.4, 0.015), tilt=-90, tex=1024, two_sided=True),
 }
 

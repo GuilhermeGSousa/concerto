@@ -114,6 +114,15 @@ def make(tex_dir):
         path = want(f"{name}_color.png")
         if path:
             save(path, tinted(src("plaster_color.jpg"), colour, contrast))
+    path = want("hedge_color.png")
+    if path:
+        save(path, tinted(src("grass_color.jpg"), (0.055, 0.11, 0.05), 2.2))
+    path = want("velvet_red_color.png")
+    if path:
+        save(path, tinted(src("velvet_color.jpg"), (0.3, 0.055, 0.075), 1.0))
+    path = want("velvet_green_color.png")
+    if path:
+        save(path, tinted(src("velvet_color.jpg"), (0.045, 0.16, 0.085), 1.0))
     path = want("marble_checker_color.png")
     if path:
         save(path, checker(src("marble_color.jpg"), (0.80, 0.78, 0.73), (0.06, 0.06, 0.065), (0.25, 0.24, 0.22)))

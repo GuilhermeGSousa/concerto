@@ -17,6 +17,8 @@ SURFACES = {
     "leafy_grass": "grass",
     "long_white_tiles": "tile_white",
     "concrete_floor": "concrete",
+    "sandstone_blocks_05": "ashlar",
+    "velour_velvet": "velvet",
 }
 MAPS = {"Diffuse": "color", "nor_gl": "normal", "Rough": "rough"}
 AGENT = {"User-Agent": "manor-art-fetch/1.0"}

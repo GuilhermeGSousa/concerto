@@ -5,7 +5,7 @@ import sys
 
 import bmesh
 import bpy
-from mathutils import Vector, geometry
+from mathutils import Matrix, Vector, geometry
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -42,6 +42,12 @@ MATERIALS = {
     "glass": dict(flat=(0.012, 0.018, 0.035), rough=0.06, glow=(0.02, 0.035, 0.08), two_sided=True),
     "glazing": dict(flat=(0.03, 0.035, 0.045), rough=0.12, glow=(0.008, 0.014, 0.03)),
     "brass": dict(flat=(0.55, 0.42, 0.20), rough=0.35, metal=1.0),
+    "ashlar": dict(color="ashlar_color.jpg", normal="ashlar_normal.jpg", rough="ashlar_rough.jpg", tile=1.6),
+    "hedge": dict(color="hedge_color.png", normal="grass_normal.jpg", rough=0.95, tile=1.4),
+    "velvet": dict(color="velvet_red_color.png", normal="velvet_normal.jpg", rough=0.85, tile=0.5, two_sided=True),
+    "velvet_green": dict(color="velvet_green_color.png", normal="velvet_normal.jpg", rough=0.85, tile=0.5,
+                         two_sided=True),
+    "water": dict(flat=(0.012, 0.022, 0.02), rough=0.04),
 }
 for _paper in ("sage", "oxblood", "burgundy", "green", "rose", "blue", "yellow", "lilac", "peach"):
     MATERIALS[f"paper_{_paper}"] = dict(color=f"paper_{_paper}_color.png", rough=0.78, tile=0.42)
@@ -122,11 +128,18 @@ FURNITURE = {
     "gong": "gong", "phone_table": "sidetable", "desk": "desk", "writing_table": "writing_table",
     "dressing_table": "dressing_table", "cupboard": "cupboard", "wardrobe": "wardrobe", "sbed": "bed_iron",
     "trunk": "trunk", "crate": "crate", "planter": "planter", "tub": "bathtub", "billiard": "billiard_table",
-    "car": "car", "counter": "counter", "bench": "bench", "gbench": "garden_bench",
+    "car": "car", "counter": "counter", "bench": "bench", "gbench": "garden_bench", "sundial": "sundial",
 }
+GARDEN = {"gravel": "gravel", "pond": "ashlar", "pond_water": "water"}
+BOUNDARY = {"garden_wall": "brick", "hedge": "hedge", "parapet": "ashlar"}
+COPING = {"garden_wall": "flags", "parapet": "flags"}
+TASSEL = [(0.0, 0.0), (0.03, 0.0), (0.034, 0.1), (0.02, 0.125), (0.03, 0.15), (0.03, 0.18), (0.014, 0.2),
+          (0.008, 0.24), (0.0, 0.24)]
+HORN = [(0.036, 0.0), (0.036, 0.012), (0.015, 0.016), (0.015, 0.07), (0.022, 0.095), (0.048, 0.13), (0.042, 0.13),
+        (0.014, 0.088), (0.0, 0.088)]
 FIT_TOP = {"sidetable", "chest", "console", "coffee_table", "bookcase", "clock", "gong", "table_dining",
            "table_kitchen", "table_library", "desk", "writing_table", "cupboard", "wardrobe", "dresser",
-           "wine_rack", "storage_rack", "trunk", "crate", "counter", "billiard_table", "bathtub"}
+           "wine_rack", "storage_rack", "trunk", "crate", "counter", "billiard_table", "bathtub", "sundial"}
 
 
 def model_for(room, kind, size):
@@ -397,7 +410,7 @@ class Build:
                 return mat, ("wall", room, index)
         return "plain", None
 
-    def shell(self, ob):
+    def shell(self, ob, record=True):
         bm = bmesh.new()
         bm.from_mesh(ob.data)
         bm.transform(ob.matrix_world)
@@ -417,7 +430,7 @@ class Build:
                 loop[layer].uv = self.uv(mat, loop.vert.co, face.normal)
             if mat != "plain":
                 used = True
-            if info is None:
+            if info is None or not record:
                 continue
             xs = [v.co.x for v in face.verts]
             ys = [v.co.y for v in face.verts]
@@ -549,7 +562,7 @@ class Build:
         for ob in bpy.data.objects:
             if ob.get("gb_kind") != "door" or room.id not in (ob.get("a"), ob.get("b")):
                 continue
-            if abs(ob.location.z - room.z0) > 0.1:
+            if abs(ob.location.z - room.z0) > 0.1 or ob.get("kind") == "concealed":
                 continue
             x, y, z = ob.location
             w, h = ob["width"], ob["height"]
@@ -702,6 +715,8 @@ class Build:
             if not room.z0 - 0.3 < lo.z < room.z1:
                 continue
             kind = ob.get("kind") or ob.name.rsplit(".", 1)[-1]
+            if ob.name.startswith("garden."):
+                kind = "gbench" if ob.name.startswith("garden.bench") else ob.name.split(".")[1]
             if ob.name.startswith("furniture.bed."):
                 kind = "sbed" if room.id in SERVICE else "bed"
             boxes.append((ob, kind, lo, hi))
@@ -715,11 +730,19 @@ class Build:
                 self.place("rug_turkey", f"art.{ob.name}", centre + Vector((0, 0, 0.004)),
                            Vector((1, 0)) if long_x else Vector((0, -1)), size=(span[0], span[1], 0.012))
                 continue
+            if kind in GARDEN:
+                self.stair(ob, GARDEN[kind], lift=0.012 if kind == "gravel" else 0.0)
+                continue
+            if kind == "cold_frames":
+                self.cold_frames(ob.name, lo, hi)
+                continue
             model = model_for(room.id, kind, hi - lo)
             if model is None or not os.path.exists(os.path.join(LIB_DIR, f"{model}.glb")):
                 self.missing.add(f"{room.id}:{kind}")
                 continue
             face, against = self.facing(room, lo, hi, kind, tables)
+            if "facing" in ob and room.style.get("outdoor"):
+                face = turned(ob["facing"])
             me = self.library(model)
             mlo = Vector((min(v.co[i] for v in me.vertices) for i in range(3)))
             mhi = Vector((max(v.co[i] for v in me.vertices) for i in range(3)))
@@ -771,9 +794,10 @@ class Build:
                        Vector(item["at"]), FACES[item["face"]], size=item.get("size"))
 
     def fireplace(self, room):
-        breast = bpy.data.objects.get(f"fireplace.{room.id}")
+        prefix = "" if bpy.data.objects.get(f"fireplace.{room.id}") else "F06."
+        breast = bpy.data.objects.get(f"{prefix}fireplace.{room.id}")
         model = room.style["hearth"]
-        if breast is None or bpy.data.objects.get(f"firebox.{room.id}") is None or model is None:
+        if breast is None or bpy.data.objects.get(f"{prefix}firebox.{room.id}") is None or model is None:
             return
         if not os.path.exists(os.path.join(LIB_DIR, f"{model}.glb")):
             self.missing.add(f"{room.id}:{model}")
@@ -785,7 +809,9 @@ class Build:
             return
         x0, y0, x1, y1 = room.rect_at((lo + hi) / 2)
         gaps = {"W": lo.x - x0, "E": x1 - hi.x, "S": lo.y - y0, "N": y1 - hi.y}
-        face = -FACES[min(gaps, key=gaps.get)]
+        b_lo, b_hi = bounds_of(bpy.data.objects[f"{prefix}firebox.{room.id}"])
+        sides = "WE" if b_hi.x - b_lo.x < b_hi.y - b_lo.y else "SN"
+        face = -FACES[min(sides, key=gaps.get)]
         at = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, room.z0))
         if abs(face.x) > 0.5:
             at.x = hi.x if face.x > 0 else lo.x
@@ -794,7 +820,7 @@ class Build:
             at.y = hi.y if face.y > 0 else lo.y
             width = hi.x - lo.x
         height = 1.45 if model == "fireplace_marble" else 1.25
-        self.place(model, f"art.firebox.{room.id}", at, face, size=(min(width, 1.8), 0.42, height))
+        self.place(model, f"art.{prefix}firebox.{room.id}", at, face, size=(min(width, 1.8), 0.42, height))
 
     def balustrade(self, ob):
         bm = bmesh.new()
@@ -872,16 +898,253 @@ class Build:
         if quads:
             self.emit(f"art.{ob.name}", {"oak": quads})
 
-    def stair(self, ob, mat):
+    def stair(self, ob, mat, lift=0.0):
         bm = bmesh.new()
         bm.from_mesh(ob.data)
         bm.transform(ob.matrix_world)
+        bmesh.ops.translate(bm, verts=bm.verts[:], vec=(0, 0, lift))
         bm.normal_update()
         layer = bm.loops.layers.uv.verify()
         for face in bm.faces:
             for loop in face.loops:
                 loop[layer].uv = self.uv(mat, loop.vert.co, face.normal)
         self.finish(f"art.{ob.name}", bm, [mat])
+
+    def lathe(self, quads, origin, axis, profile, segments=10):
+        axis = Vector(axis).normalized()
+        side = axis.cross(Vector((0, 0, 1)) if abs(axis.z) < 0.9 else Vector((1, 0, 0))).normalized()
+        up = axis.cross(side)
+        spokes = [side * math.cos(math.tau * i / segments) + up * math.sin(math.tau * i / segments)
+                  for i in range(segments + 1)]
+        for (r0, t0), (r1, t1) in zip(profile, profile[1:]):
+            for a, b in zip(spokes, spokes[1:]):
+                points = [origin + axis * t0 + a * r0, origin + axis * t0 + b * r0,
+                          origin + axis * t1 + b * r1, origin + axis * t1 + a * r1]
+                if r0 < 1e-6:
+                    points = points[1:]
+                elif r1 < 1e-6:
+                    points = points[:3]
+                want = (a + b).normalized() * (t1 - t0) - axis * (r1 - r0)
+                if geometry.normal(points).dot(want) < 0:
+                    points.reverse()
+                quads.append(points)
+
+    def away(self, room, p):
+        x0, y0, x1, y1 = room.rect_at(p)
+        gaps = {"W": p.x - x0, "E": x1 - p.x, "S": p.y - y0, "N": y1 - p.y}
+        return -FACES[min(gaps, key=gaps.get)]
+
+    def cold_frames(self, name, lo, hi):
+        brick, glass, bars = [], [], []
+        low = lo.z + (hi.z - lo.z) * 0.45
+        wall = 0.1
+        self.box(brick, (lo.x, lo.y, lo.z), (hi.x, lo.y + wall, low))
+        self.box(brick, (lo.x, hi.y - wall, lo.z), (hi.x, hi.y, hi.z))
+        for x0, x1 in ((lo.x, lo.x + wall), (hi.x - wall, hi.x)):
+            self.box(brick, (x0, lo.y + wall, lo.z), (x1, hi.y - wall, low))
+            ref = Vector(((x0 + x1) / 2, (lo.y + hi.y) / 2, lo.z))
+            for x in (x0, x1):
+                brick.append(out([Vector((x, lo.y + wall, low)), Vector((x, hi.y - wall, low)),
+                                  Vector((x, hi.y - wall, hi.z))], ref))
+        slope = (hi.z - low) / (hi.y - lo.y)
+        lights = max(1, round((hi.x - lo.x) / 1.0))
+        width = (hi.x - lo.x) / lights
+
+        def rail(x0, x1, y0, y1, raise_by=0.0):
+            corners = [Vector((x, y, low + (y - lo.y) * slope + raise_by)) for x, y in
+                       ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+            top = [c + Vector((0, 0, 0.035)) for c in corners]
+            ref = sum(corners, Vector()) / 4 + Vector((0, 0, 0.0175))
+            bars.append(out(corners, ref))
+            bars.append(out(top, ref))
+            for i in range(4):
+                bars.append(out([corners[i], corners[(i + 1) % 4], top[(i + 1) % 4], top[i]], ref))
+
+        for i in range(lights):
+            x0, x1 = lo.x + i * width, lo.x + (i + 1) * width
+            glass.append([Vector((x0, lo.y, low + 0.02)), Vector((x1, lo.y, low + 0.02)),
+                          Vector((x1, hi.y, hi.z + 0.02)), Vector((x0, hi.y, hi.z + 0.02))])
+            rail(x0, x0 + 0.05, lo.y, hi.y)
+            rail(x1 - 0.05, x1, lo.y, hi.y)
+            rail(x0, x1, lo.y, lo.y + 0.05, 0.002)
+            rail(x0, x1, hi.y - 0.05, hi.y, 0.002)
+            for k in (1, 2):
+                x = x0 + width * k / 3
+                rail(x - 0.012, x + 0.012, lo.y, hi.y, 0.001)
+        self.emit(f"art.{name}", {"brick": brick, "glass": glass, "paint_white": bars})
+
+    def boundary(self, ob):
+        kind = ob.get("kind")
+        self.stair(ob, BOUNDARY.get(kind, "brick"))
+        if kind not in COPING:
+            return
+        quads = []
+        top = max((ob.matrix_world @ v.co).z for v in ob.data.vertices)
+        for poly in ob.data.polygons:
+            ps = [ob.matrix_world @ ob.data.vertices[i].co for i in poly.vertices]
+            if not all(abs(p.z - top) < 0.01 for p in ps):
+                continue
+            self.box(quads, (min(p.x for p in ps) - 0.04, min(p.y for p in ps) - 0.04, top),
+                     (max(p.x for p in ps) + 0.04, max(p.y for p in ps) + 0.04, top + 0.07))
+        self.emit(f"art.{ob.name}.coping", {COPING[kind]: quads})
+
+    def bell_pull(self, ob, lo, hi):
+        face = turned(ob.get("facing", 0))
+        mid = (lo + hi) / 2
+        wall = Vector((mid.x - face.x * 0.045, mid.y - face.y * 0.045))
+        along = Vector((-face.y, face.x))
+        band, brass = [], []
+        a = wall + face * 0.004 - along * 0.035
+        b = wall + face * 0.014 + along * 0.035
+        self.box(band, (min(a.x, b.x), min(a.y, b.y), lo.z + 0.2), (max(a.x, b.x), max(a.y, b.y), hi.z - 0.1))
+        a = wall - along * 0.05
+        b = wall + face * 0.022 + along * 0.05
+        self.box(brass, (min(a.x, b.x), min(a.y, b.y), hi.z - 0.1), (max(a.x, b.x), max(a.y, b.y), hi.z))
+        centre = wall + face * 0.036
+        self.lathe(brass, Vector((centre.x, centre.y, lo.z - 0.02)), (0, 0, 1), TASSEL)
+        self.emit(f"art.{ob.name}", {"velvet": band, "brass": brass})
+
+    def horn(self, ob, lo, hi):
+        cap = bpy.data.objects.get(ob.name.replace("mouthpiece", "cap"))
+        size = hi - lo
+        long = 0 if size.x > size.y else 1
+        mid = (lo + hi) / 2
+        toward = -1.0
+        if cap is not None:
+            c_lo, c_hi = bounds_of(cap)
+            toward = math.copysign(1.0, (c_lo[long] + c_hi[long]) / 2 - mid[long])
+        axis = Vector((toward, 0, 0)) if long == 0 else Vector((0, toward, 0))
+        origin = mid.copy()
+        origin[long] = hi[long] if toward < 0 else lo[long]
+        quads = []
+        self.lathe(quads, origin, axis, HORN, segments=12)
+        self.emit(f"art.{ob.name}", {"brass": quads})
+
+    def drapes(self, ob, lo, hi):
+        size = hi - lo
+        wide = 0 if size.x > size.y else 1
+        thin = 1 - wide
+        steps = max(8, round(size[wide] / 0.025))
+        mid = (lo[thin] + hi[thin]) / 2
+        quads = []
+        last = None
+        for i in range(steps + 1):
+            along = lo[wide] + size[wide] * i / steps
+            depth = mid + 0.02 * math.sin(math.tau * (along - lo[wide]) / 0.2)
+            low, high = Vector((0, 0, lo.z)), Vector((0, 0, hi.z))
+            low[wide] = high[wide] = along
+            low[thin] = high[thin] = depth
+            if last is not None:
+                quads.append([last[0], low, high, last[1]])
+            last = (low, high)
+        self.emit(f"art.{ob.name}", {"velvet_green": quads})
+
+    def sash(self, ob, lo, hi):
+        size = hi - lo
+        wide = 0 if size.x > size.y else 1
+        thin = 1 - wide
+        glass, wood = [], []
+
+        def piece(quads, a0, a1, z0, z1, grow):
+            b_lo, b_hi = lo.copy(), hi.copy()
+            b_lo[thin] -= grow
+            b_hi[thin] += grow
+            b_lo[wide], b_hi[wide] = lo[wide] + size[wide] * a0, lo[wide] + size[wide] * a1
+            b_lo.z, b_hi.z = lo.z + size.z * z0, lo.z + size.z * z1
+            self.box(quads, b_lo, b_hi)
+
+        piece(glass, 0.0, 1.0, 0.0, 1.0, 0.0)
+        for a0, a1, z0, z1 in ((0.0, 0.05, 0.0, 1.0), (0.95, 1.0, 0.0, 1.0), (0.0, 1.0, 0.0, 0.05),
+                               (0.0, 1.0, 0.96, 1.0), (0.0, 1.0, 0.485, 0.515), (0.49, 0.51, 0.0, 1.0)):
+            piece(wood, a0, a1, z0, z1, 0.02)
+        self.emit(f"art.{ob.name}", {"glass": glass, "paint_white": wood})
+
+    def cover(self, ob, model):
+        if "art_leaf_lo" not in ob:
+            cs = [Vector(c) for c in ob.bound_box]
+            ob["art_leaf_lo"] = [min(c[i] for c in cs) for i in range(3)]
+            ob["art_leaf_hi"] = [max(c[i] for c in cs) for i in range(3)]
+        l_lo, l_hi = Vector(ob["art_leaf_lo"]), Vector(ob["art_leaf_hi"])
+        cs = [ob.matrix_world @ Vector((x, y, z)) for x in (l_lo.x, l_hi.x) for y in (l_lo.y, l_hi.y)
+              for z in (l_lo.z, l_hi.z)]
+        lo = Vector((min(c[i] for c in cs) for i in range(3)))
+        hi = Vector((max(c[i] for c in cs) for i in range(3)))
+        size = hi - lo
+        room = self.room_at((lo + hi) / 2)
+        if room is None:
+            return
+        face = self.away(room, (lo + hi) / 2)
+        across, deep = (size.x, size.y) if abs(face.y) > 0.5 else (size.y, size.x)
+        src = self.library(model)
+        m_lo = Vector((min(v.co[i] for v in src.vertices) for i in range(3)))
+        m_hi = Vector((max(v.co[i] for v in src.vertices) for i in range(3)))
+        m_size = m_hi - m_lo
+        me = src.copy()
+        me.name = f"{ob.name}.art"
+        me.use_fake_user = False
+        at = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+        fit = (Matrix.Translation(at) @ Matrix.Rotation(math.atan2(face.x, -face.y), 4, "Z")
+               @ Matrix.Diagonal((across / m_size.x, deep / m_size.y, size.z / m_size.z, 1.0))
+               @ Matrix.Translation((-(m_lo.x + m_hi.x) / 2, -(m_lo.y + m_hi.y) / 2, -m_lo.z)))
+        me.transform(ob.matrix_world.inverted() @ fit)
+        ob.data = me
+
+    def details(self, ids):
+        for ob in list(bpy.data.objects):
+            kind = ob.get("gb_kind")
+            if ob.name.startswith("art.") or ob.type != "MESH" or kind not in ("device", "feature", "boundary"):
+                continue
+            lo, hi = bounds_of(ob)
+            if kind == "boundary":
+                if "garden" in ids:
+                    self.boundary(ob)
+                continue
+            if ob.get("room") not in ids:
+                continue
+            room = self.room_at((lo + hi) / 2)
+            name = ob.name
+            if name.startswith("bell."):
+                self.bell_pull(ob, lo, hi)
+            elif name == "bellboard":
+                face = turned(ob.get("facing", 0))
+                at = (lo + hi) / 2
+                if abs(face.x) > 0.5:
+                    at.x = lo.x if face.x > 0 else hi.x
+                    size = (hi.y - lo.y, hi.x - lo.x, hi.z - lo.z)
+                else:
+                    at.y = lo.y if face.y > 0 else hi.y
+                    size = (hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)
+                along = Vector((-face.y, face.x))
+                quads = []
+                for half, tall, deep in ((size[0] / 2, size[2] / 2, 0.02), (size[0] / 2 + 0.03, size[2] / 2 + 0.03, 0.012)):
+                    a = Vector((at.x, at.y)) - along * half
+                    b = Vector((at.x, at.y)) + along * half + face * deep
+                    self.box(quads, (min(a.x, b.x), min(a.y, b.y), at.z - tall), (max(a.x, b.x), max(a.y, b.y), at.z + tall))
+                self.emit(f"art.{name}", {"oak": quads})
+                for n, shift in enumerate((-0.29, 0.29)):
+                    spot = at + Vector((along.x * shift + face.x * 0.02, along.y * shift + face.y * 0.02, 0.0))
+                    self.place("bells", f"art.{name}.bells_{n + 1:02d}", spot, face)
+            elif name.startswith("phone.") and room is not None:
+                at = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+                self.place("phone", f"art.{name}", at, self.away(room, at))
+            elif name == "dumbwaiter.shaft":
+                self.stair(ob, "oak")
+            elif name == "dumbwaiter.car":
+                self.stair(ob, "boards")
+            elif name.startswith("F06."):
+                continue
+            elif name.startswith("F08.mouthpiece"):
+                self.horn(ob, lo, hi)
+            elif name == "F11.curtains":
+                self.drapes(ob, lo, hi)
+            elif name == "F11.sash":
+                self.sash(ob, lo, hi)
+            elif name == "F05.infill":
+                self.shell(ob, record=False)
+            elif name == "F05.cover":
+                self.cover(ob, "bookcase")
+            elif kind == "feature":
+                self.stair(ob, "brass")
 
     def glazed(self, ob):
         if "art_leaf_lo" not in ob:
@@ -963,6 +1226,11 @@ def forget_library():
         bpy.data.images.remove(img)
 
 
+def turned(degrees):
+    turn = math.radians(degrees)
+    return Vector((round(-math.sin(turn)), round(math.cos(turn))))
+
+
 def bounds_of(ob):
     cs = [ob.matrix_world @ Vector(c) for c in ob.bound_box]
     return (Vector((min(c[i] for c in cs) for i in range(3))), Vector((max(c[i] for c in cs) for i in range(3))))
@@ -990,7 +1258,7 @@ def main(rooms=None, refresh=False):
             build.stairs.append((lo.x, lo.y, hi.x, hi.y, lo.z, hi.z))
         if not names & ids:
             continue
-        if kind == "fireplace" and ob.name.startswith("fireplace."):
+        if ob.name.startswith(("fireplace.", "F06.fireplace.")):
             build.solids.append((lo.x, lo.y, hi.x, hi.y, lo.z, hi.z))
             structural.append(ob)
         elif kind in ("wall", "floor", "ceiling"):
@@ -1019,7 +1287,7 @@ def main(rooms=None, refresh=False):
         build.fixtures(room)
     for ob in list(bpy.data.objects):
         kind = ob.get("gb_kind")
-        if ob.name.startswith("art.") or ob.type != "MESH" or kind not in ("balustrade", "stair", "doorleaf"):
+        if ob.name.startswith("art.") or ob.type != "MESH" or kind not in ("balustrade", "stair", "landing", "doorleaf"):
             continue
         lo, hi = bounds_of(ob)
         room = build.room_at((lo + hi) / 2)
@@ -1027,7 +1295,7 @@ def main(rooms=None, refresh=False):
             continue
         if kind == "balustrade":
             build.balustrade(ob)
-        elif kind == "stair":
+        elif kind in ("stair", "landing"):
             build.stair(ob, room.style["stair"])
         else:
             door = bpy.data.objects.get(f"door.{ob.get('door')}")
@@ -1036,6 +1304,7 @@ def main(rooms=None, refresh=False):
             else:
                 service_door = door is not None and door.get("zone") == "service"
                 build.leaf(ob, "paint_green" if service_door else "oak")
+    build.details(ids)
     tris = 0
     for name in build.made:
         me = bpy.data.objects[name].data

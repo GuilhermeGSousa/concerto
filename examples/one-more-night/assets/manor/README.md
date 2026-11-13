@@ -52,7 +52,7 @@ as `art.furniture.hall.gong_01`, takes that object's place on screen: the game
 keeps the greybox object solid and stops drawing it, and hides both when a
 feature hides the object. A greybox object with no art is drawn as before, so
 a room can be dressed on its own. Every room with an entry in `STYLE` is
-dressed; the garden's own pieces and the feature objects are still greybox.
+dressed, and so is every solid box of the level: the game draws no greybox.
 
 `build_art.py` deletes and recreates every `generated_art` object. Run it
 after `build.py`, which rebuilds the boxes it reads:
@@ -75,6 +75,13 @@ the room's kind hangs at each; change both together. `DRESS` holds the sconces
 and pictures. `main` takes room ids to build only those, and `True` as its
 second argument to load the library's models again after `library.py` ran;
 `report["missing"]` names the boxes that found no model.
+
+`details` dresses what belongs to no room's furniture: the garden wall, hedge
+and terrace parapet, the bell pulls and the bell board, the telephones, the
+dumbwaiter, and each feature's objects. The study and bedroom 4 hearths of F06
+get a chimneypiece like any other. The bookcase over the jib door, `F05.cover`,
+swings with its leaf, so its mesh is replaced in place, as the door leaves are,
+and it stays in `manor_ground.glb`.
 
 A model is fitted once and then kept in `library/`:
 

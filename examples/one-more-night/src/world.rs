@@ -2494,6 +2494,25 @@ mod tests {
             }
             assert!(art_seen && box_seen, "the gong has its box and its art");
         }
+        {
+            let world = app.main_mut().world_mut();
+            let mut drawn = world.query::<(&super::Name, Option<&super::RenderLayers>), (
+                super::With<super::MeshComponent>,
+                super::With<super::MeshCollider>,
+            )>();
+            let grey: Vec<String> = drawn
+                .iter(world)
+                .filter(|(name, layers)| {
+                    let name = name.as_str();
+                    *layers != Some(&super::RenderLayers::NONE)
+                        && !name.starts_with("art.")
+                        && !name.starts_with("doorleaf.")
+                        && name != "F05.cover"
+                })
+                .map(|(name, _)| name.as_str().to_string())
+                .collect();
+            assert!(grey.is_empty(), "no greybox box is drawn: {grey:?}");
+        }
         assert_eq!(
             aiming_at(&mut app, 0, Vec3::new(20.1, 4.35, -13.5)),
             Some(super::Interactable::Bed(0)),
