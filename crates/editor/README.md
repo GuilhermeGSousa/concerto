@@ -873,8 +873,8 @@ Shift-F frames the scene.
 `AssetPlacementPlugin` (`placement.rs`) puts an asset in the open scene as an
 entity. What the entity is made of is the asset kind's `PlaceableAsset::place`,
 which the game's recipe registers with `register_placeable_asset`; the engine
-registers `Scene`, whose root nodes become children of the entity, and `Mesh`,
-which gives it a `MeshComponent`. The editor never names a kind: the plugin
+registers `Scene`, whose root nodes become children of the entity, and no
+other kind for now, so a `Mesh` cannot be placed. The editor never names a kind: the plugin
 copies the kinds' names out of the edit `App`'s `PlaceableAssets` into its
 `PlaceableKinds` resource each time a scene opens, so a panel or a tool can ask
 `PlaceableKinds::contains(kind)` or walk `PlaceableKinds::iter()` with no scene
@@ -894,7 +894,7 @@ A person places an asset by dragging its tile from the Asset Browser into the
 viewport, with the [drag and drop](#drag-and-drop) widget. The payload is
 `AssetDrag { id }`. The plugin gives a tile a `DragSource<AssetDrag>`, labelled
 with the asset's name, when the asset's kind is in `PlaceableKinds`, so a
-texture's tile does not drag and the tiles of a project opened before its scene
+mesh's or a texture's tile does not drag and the tiles of a project opened before its scene
 become draggable once the scene opens. It finds the tiles by `ContentAsset
 { id }`, the component the content browser puts on every item that shows an
 asset. While the front document's game is starting or playing no tile is a

@@ -389,14 +389,6 @@ mod tests {
         }
     }
 
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct Note;
-    impl Asset for Note {
-        fn name() -> &'static str {
-            "TestNote"
-        }
-    }
-
     #[derive(Component, PartialEq, Debug)]
     struct Lamp {
         size: u32,
@@ -417,7 +409,6 @@ mod tests {
         scene: AssetId,
         mesh: AssetId,
         prop: AssetId,
-        note: AssetId,
         broken: AssetId,
     }
 
@@ -459,8 +450,6 @@ mod tests {
             &mut registry,
         )
         .unwrap();
-        let note = save_content_asset_into(&Note, &dir, "content/props/note.gasset", &mut registry)
-            .unwrap();
         let broken = save_content_asset_into(
             &Prop { size: 4 },
             &dir,
@@ -476,7 +465,7 @@ mod tests {
             .register_plugin(AssetManagerPlugin)
             .register_plugin(TransformPlugin)
             .register_plugin(ScenePlugin)
-            .register_placeable_asset::<Mesh>()
+            .register_asset::<Mesh>()
             .register_placeable_asset::<Prop>();
         crate::tools::build_core(&mut app);
         app.insert_resource(ViewportPointer::default())
@@ -514,7 +503,6 @@ mod tests {
             scene,
             mesh,
             prop,
-            note,
             broken,
         }
     }
@@ -599,9 +587,9 @@ mod tests {
     }
 
     #[test]
-    fn placing_a_scene_a_mesh_and_a_game_kind_spawns_a_selected_entity_once_each_has_loaded() {
+    fn placing_a_scene_and_a_game_kind_spawns_a_selected_entity_once_each_has_loaded() {
         let mut f = fixture();
-        let (root, anchor, scene, mesh, prop) = (f.root, f.anchor, f.scene, f.mesh, f.prop);
+        let (root, anchor, scene, prop) = (f.root, f.anchor, f.scene, f.prop);
 
         let request = PlaceAsset {
             asset: scene,
@@ -641,36 +629,18 @@ mod tests {
         );
 
         let at = Vec3::new(12.0, 1.0, -3.0);
-        let crate_ = f
+        let lamp = f
             .place(PlaceAsset {
-                asset: mesh,
+                asset: prop,
                 parent: Some(anchor),
                 at: PlaceAt::Position(at),
             })
             .result
             .unwrap();
-        assert_eq!(f.name(crate_), "crate");
-        assert_eq!(f.parent(crate_), Some(anchor));
-        assert!(near(f.local(crate_), Vec3::new(3.0, 1.0, 2.0)));
-        assert!(near(f.world_position(crate_), at));
-        assert_eq!(
-            f.world()
-                .get_component_for_entity::<MeshComponent>(crate_)
-                .map(|component| component.handle.id()),
-            Some(mesh)
-        );
-        assert_eq!(f.selected(), Some(crate_));
-
-        let lamp = f
-            .place(PlaceAsset {
-                asset: prop,
-                parent: None,
-                at: PlaceAt::Position(Vec3::ZERO),
-            })
-            .result
-            .unwrap();
         assert_eq!(f.name(lamp), "lamp");
-        assert_eq!(f.parent(lamp), Some(root));
+        assert_eq!(f.parent(lamp), Some(anchor));
+        assert!(near(f.local(lamp), Vec3::new(3.0, 1.0, 2.0)));
+        assert!(near(f.world_position(lamp), at));
         assert_eq!(
             f.world().get_component_for_entity::<Lamp>(lamp),
             Some(&Lamp { size: 3 })
@@ -688,7 +658,7 @@ mod tests {
         assert_eq!(f.parent(hook), Some(anchor));
         assert!(near(f.local(hook), Vec3::ZERO));
         assert!(near(f.world_position(hook), Vec3::new(10.0, 0.0, 0.0)));
-        assert_eq!(f.heard::<SceneEdited>().len(), 4);
+        assert_eq!(f.heard::<SceneEdited>().len(), 3);
         assert!(f.heard::<SceneStatus>().is_empty());
     }
 
@@ -852,12 +822,12 @@ mod tests {
             Refusal {
                 what: "a kind that is not placeable",
                 request: PlaceAsset {
-                    asset: f.note,
+                    asset: f.mesh,
                     parent: None,
                     at,
                 },
                 then: wait,
-                says: "TestNote assets cannot be placed; placeable kinds: Scene, Mesh, TestProp",
+                says: "Mesh assets cannot be placed; placeable kinds: Scene, TestProp",
             },
             Refusal {
                 what: "a parent outside the scene",

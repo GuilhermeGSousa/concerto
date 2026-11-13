@@ -179,10 +179,10 @@ stored. A load that fails lets it go too, and `release` lets it go when the
 caller gives up on a load it asked for. Register the kind in the game's
 recipe, with its other assets, so the editor has it.
 
-The engine places two kinds itself. `ScenePlugin` registers `Scene`, whose
-root nodes become children of the entity, and `RenderPlugin` registers `Mesh`,
-which gives the entity a `MeshComponent` and no material, so it draws grey
-until it is given one.
+The engine places one kind itself: `ScenePlugin` registers `Scene`, whose
+root nodes become children of the entity. A `Mesh` is not placeable for now;
+it reaches a scene inside a `Scene` asset or through a `MeshComponent` added
+to an entity.
 
 ## More
 

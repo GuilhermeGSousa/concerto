@@ -265,8 +265,7 @@ mod tests {
     };
     use concerto_foundation::{
         assets::{
-            Asset, asset_server::AssetServer, content::save_content_asset_into,
-            registry::AssetRegistry,
+            asset_server::AssetServer, content::save_content_asset_into, registry::AssetRegistry,
         },
         transform::{GlobalTransform, Transform},
     };
@@ -305,19 +304,6 @@ mod tests {
         },
         viewport::ViewportRegion,
     };
-
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct Note;
-    impl Asset for Note {
-        fn name() -> &'static str {
-            "TestNote"
-        }
-    }
-
-    fn game(app: &mut App) {
-        scene_recipe(app);
-        app.register_placeable_asset::<Mesh>();
-    }
 
     struct Opened {
         root: Entity,
@@ -499,11 +485,9 @@ mod tests {
             &mut registry,
         )
         .unwrap();
-        let note = save_content_asset_into(&Note, dir, "content/props/note.gasset", &mut registry)
-            .unwrap();
 
         let mut opened = None;
-        let hosted = hosted_now(game, |app| opened = Some(open_a_scene(app)));
+        let hosted = hosted_now(scene_recipe, |app| opened = Some(open_a_scene(app)));
         let Opened { root, anchor } = opened.unwrap();
         hosted
             .world()
@@ -562,10 +546,9 @@ mod tests {
         ));
         let pair_tile = world.spawn(ContentAsset { id: pair });
         let mesh_tile = world.spawn(ContentAsset { id: mesh });
-        let note_tile = world.spawn(ContentAsset { id: note });
         app.update();
         app.update();
-        for tile in [pair_tile, mesh_tile, note_tile] {
+        for tile in [pair_tile, mesh_tile] {
             assert!(
                 dragged(&app, tile).is_none(),
                 "nothing is known to be placeable before a scene opens"
@@ -585,18 +568,18 @@ mod tests {
             vec![
                 place(json!({ "asset": "content/props/pair.gasset" })),
                 place(json!({
-                    "asset": mesh.simple_hex(),
+                    "asset": pair.simple_hex(),
                     "parent": anchor.to_id_string(),
                     "position": [12.0, 1.0, -3.0],
                 })),
                 place(json!({
-                    "asset": "content/props/crate.gasset",
+                    "asset": "content/props/pair.gasset",
                     "parent": anchor.to_id_string(),
                 })),
                 place(json!({ "asset": pair.simple_hex(), "position": [1.0, 0.0, 2.0] })),
                 place(json!({ "asset": "content/props/missing.gasset" })),
-                place(json!({ "asset": "content/props/note.gasset" })),
-                place(json!({ "asset": "content/props/crate.gasset", "parent": "9999v1" })),
+                place(json!({ "asset": "content/props/crate.gasset" })),
+                place(json!({ "asset": "content/props/pair.gasset", "parent": "9999v1" })),
                 Call {
                     tool: "list_assets",
                     arguments: json!({}),
@@ -609,14 +592,7 @@ mod tests {
         assert_eq!(
             listed,
             [
-                format!(
-                    "content/props/crate.gasset · Mesh · {} · placeable",
-                    mesh.simple_hex()
-                ),
-                format!(
-                    "content/props/note.gasset · TestNote · {}",
-                    note.simple_hex()
-                ),
+                format!("content/props/crate.gasset · Mesh · {}", mesh.simple_hex()),
                 format!(
                     "content/props/pair.gasset · Scene · {} · placeable",
                     pair.simple_hex()
@@ -654,10 +630,10 @@ mod tests {
                 .map(|children| children.iter().count()),
             Some(2)
         );
-        let crated = placed(&answers[1], "crate");
+        let crated = placed(&answers[1], "pair");
         assert_eq!(parent(crated), Some(anchor));
         assert!(near(at(crated), Vec3::new(12.0, 1.0, -3.0)));
-        let hung = placed(&answers[2], "crate");
+        let hung = placed(&answers[2], "pair");
         assert_eq!(parent(hung), Some(anchor));
         assert!(near(local(hung), Vec3::ZERO));
         assert!(near(at(hung), Vec3::new(10.0, 0.0, 0.0)));
@@ -675,7 +651,7 @@ mod tests {
         assert_eq!(unplaceable["code"], "refused");
         assert_eq!(
             unplaceable["message"],
-            "TestNote assets cannot be placed; placeable kinds: Scene, Mesh"
+            "Mesh assets cannot be placed; placeable kinds: Scene"
         );
         assert_eq!(error(&answers[6])["code"], "unknown_entity");
         assert_eq!(
@@ -685,14 +661,10 @@ mod tests {
             Some(3)
         );
 
-        let source = dragged(&app, mesh_tile).expect("a tile of a placeable asset can be dragged");
-        assert_eq!(source.payload, AssetDrag { id: mesh });
-        assert_eq!(source.label, "crate");
-        assert_eq!(
-            dragged(&app, pair_tile).map(|source| source.payload),
-            Some(AssetDrag { id: pair })
-        );
-        assert!(dragged(&app, note_tile).is_none());
+        let source = dragged(&app, pair_tile).expect("a tile of a placeable asset can be dragged");
+        assert_eq!(source.payload, AssetDrag { id: pair });
+        assert_eq!(source.label, "pair");
+        assert!(dragged(&app, mesh_tile).is_none());
 
         app.main_mut()
             .world_mut()
@@ -700,7 +672,7 @@ mod tests {
         app.update();
         app.update();
         assert!(
-            dragged(&app, mesh_tile).is_none(),
+            dragged(&app, pair_tile).is_none(),
             "no tile can be dragged while the game plays"
         );
         app.main_mut()
@@ -708,14 +680,14 @@ mod tests {
             .insert(PlayState::Editing, document);
         app.update();
         app.update();
-        assert!(dragged(&app, mesh_tile).is_some());
+        assert!(dragged(&app, pair_tile).is_some());
 
         trigger_on(app.main_mut().world_mut(), document, ShowAPicture);
         let pointer = Vec2::new(400.0, 300.0);
         app.main_mut().world_mut().trigger_on(
             region,
             Dropped {
-                payload: AssetDrag { id: mesh },
+                payload: AssetDrag { id: pair },
                 position: PICTURE_AT + pointer,
             },
         );
@@ -739,7 +711,7 @@ mod tests {
             world
                 .get_component_for_entity::<Name>(dropped)
                 .map(Name::as_str),
-            Some("crate")
+            Some("pair")
         );
         let landed = world
             .get_component_for_entity::<Transform>(dropped)

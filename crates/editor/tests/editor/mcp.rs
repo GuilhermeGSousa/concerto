@@ -1454,8 +1454,8 @@ fn list_assets_filters_and_pages_the_catalogue() {
     };
     let placeable = |line: String| format!("{line} · placeable");
     let level = placeable(entry("content/level.gasset", "Scene", level));
-    let rock = placeable(entry("content/meshes/rock.gasset", "Mesh", rock));
-    let tree = placeable(entry("content/meshes/tree.gasset", "Mesh", tree));
+    let rock = entry("content/meshes/rock.gasset", "Mesh", rock);
+    let tree = entry("content/meshes/tree.gasset", "Mesh", tree);
     let bark = entry("content/textures/bark.gasset", "Texture", bark);
     let (pages, malformed) = served.result;
     assert_eq!(

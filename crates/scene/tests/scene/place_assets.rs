@@ -12,8 +12,6 @@ use concerto_foundation::assets::{
     asset_server::AssetServer, content::save_content_asset_into, registry::AssetRegistry, AssetId,
 };
 use concerto_foundation::transform::Transform;
-use concerto_mesh::mesh::{Mesh, MeshComponent};
-use concerto_render::components::material::MaterialComponent;
 use concerto_scene::{
     plugin::ScenePlugin,
     scene::{Scene, SceneNode},
@@ -82,7 +80,7 @@ fn children_of(app: &App, parent: Entity) -> Vec<Placed> {
 }
 
 #[test]
-fn placing_a_scene_adds_its_roots_as_children_and_placing_a_mesh_adds_its_component() {
+fn placing_a_scene_adds_its_roots_as_children() {
     let root = std::env::temp_dir().join(format!("place-assets-{}", AssetId::new().simple_hex()));
     let mut registry = AssetRegistry::new();
     let scene = save_content_asset_into(
@@ -99,24 +97,13 @@ fn placing_a_scene_adds_its_roots_as_children_and_placing_a_mesh_adds_its_compon
         &mut registry,
     )
     .unwrap();
-    let mesh = save_content_asset_into(
-        &Mesh {
-            vertices: vec![],
-            indices: vec![],
-        },
-        &root,
-        "content/props/crate.gasset",
-        &mut registry,
-    )
-    .unwrap();
 
     let mut app = App::for_editing();
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TransformPlugin)
-        .register_plugin(ScenePlugin)
-        .register_placeable_asset::<Mesh>();
+        .register_plugin(ScenePlugin);
     app.get_resource::<AssetServer>()
         .unwrap()
         .publish_project_content(&root, registry)
@@ -157,20 +144,5 @@ fn placing_a_scene_adds_its_roots_as_children_and_placing_a_mesh_adds_its_compon
             .map(ChildOf::parent),
         Some(placed_scene)
     );
-
-    let placed_mesh = place(&mut app, "Mesh", mesh);
-    let world = app.main().world();
-    assert_eq!(
-        world
-            .get_component_for_entity::<MeshComponent>(placed_mesh)
-            .map(|component| component.handle.id()),
-        Some(mesh)
-    );
-    assert!(world
-        .get_component_for_entity::<MaterialComponent>(placed_mesh)
-        .is_none());
-    assert!(world
-        .get_component_for_entity::<Children>(placed_mesh)
-        .is_none());
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -1,8 +1,8 @@
 use concerto_ecs::{
     reflect::{ReflectComponent, ReflectSceneComponent},
-    CommandQueue, Component, Entity,
+    Component,
 };
-use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset, PlaceableAsset};
+use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Mat4, Vec2, Vec3};
 
@@ -49,12 +49,6 @@ impl Aabb {
 }
 
 impl LoadableAsset for Mesh {}
-
-impl PlaceableAsset for Mesh {
-    fn place(_asset: &Self, handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
-        cmd.insert(MeshComponent { handle }, entity);
-    }
-}
 
 impl Mesh {
     /// Computes this mesh's local-space bounds from its vertex positions.

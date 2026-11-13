@@ -104,7 +104,7 @@ impl Plugin for RenderPlugin {
         register_render_asset_budget(app);
         app.register_plugin(RenderAssetPlugin::<RenderMesh>::new())
             .register_plugin(RenderAssetPlugin::<RenderTexture>::new());
-        app.register_placeable_asset::<Mesh>()
+        app.register_asset::<Mesh>()
             .register_asset::<Texture>()
             .register_asset::<Skeleton>();
         app.register_type::<Light>()
