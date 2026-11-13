@@ -44,7 +44,7 @@ use concerto_motion_matching_gizmos::MotionMatchingGizmos;
 use concerto_procedural_animation_gizmos::FootLockGizmos;
 use glam::{EulerRot, Quat, Vec3};
 
-use crate::body::{Body, Recoil, bind_body_controls};
+use crate::body::{AimCamera, Body, Recoil, bind_body_controls};
 use crate::footsteps::FootContacts;
 use crate::grid::Patrol;
 use crate::retarget::{RetargetedPlayer, retargeted_character};
@@ -287,7 +287,6 @@ pub(crate) fn spawn_character(
             CharacterAssets::lafan1(&asset_server)
         };
         let capsule = spawn_capsule(placement, &config, character, &mut cmd);
-        cmd.insert((Player::default(), Body::default()), capsule);
 
         let (yaw, _, _) = spawn_point.rotation.to_euler(EulerRot::YXZ);
         let mut pivot = cmd.spawn((
@@ -299,20 +298,27 @@ pub(crate) fn spawn_character(
             },
         ));
         pivot.insert(grounded_camera(config.camera_distance));
-        pivot.add_child_with(
-            (
+        let pivot = pivot.entity();
+        let camera = cmd
+            .spawn((
                 VirtualCamera::new(0),
                 Transform::from_translation_rotation(
                     Vec3::NEG_Z * config.camera_distance,
                     Quat::from_rotation_y(PI),
                 ),
-            ),
-            |mut camera| {
-                camera.insert(CameraBoom {
-                    offset: Vec3::NEG_Z * config.camera_distance,
-                    ..Default::default()
-                });
+            ))
+            .entity();
+        cmd.insert(
+            CameraBoom {
+                offset: Vec3::NEG_Z * config.camera_distance,
+                ..Default::default()
             },
+            camera,
+        );
+        cmd.add_child(pivot, camera);
+        cmd.insert(
+            (Player::default(), Body::default(), AimCamera(camera)),
+            capsule,
         );
 
         spawner.should_spawn = false;
@@ -732,6 +738,7 @@ mod tests {
     use concerto::gameplay::camera::{CameraBoom, CameraPivot};
     use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
 
+    use crate::body::AimCamera;
     use crate::retarget::{LAFAN1_RIG, PISTOL_SHOOT, RetargetedPlayer, UAL1_RIG, UAL1_SCENE};
 
     use super::{
@@ -816,6 +823,17 @@ mod tests {
             .iter(&mut world)
             .count();
         assert_eq!(walls, 0);
+        let booms: Vec<Entity> = world
+            .query::<Entity, (With<VirtualCamera>, With<CameraBoom>)>()
+            .iter(&mut world)
+            .collect();
+        let aims: Vec<Entity> = world
+            .query::<&AimCamera, With<Player>>()
+            .iter(&mut world)
+            .map(|aim| aim.0)
+            .collect();
+        assert_eq!(aims, booms);
+        assert_eq!(aims.len(), 1);
     }
 
     #[test]
