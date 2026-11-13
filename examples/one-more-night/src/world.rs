@@ -697,7 +697,7 @@ fn spawn_case(
             cmd.spawn((
                 Light {
                     intensity: light.intensity * lamp.glow,
-                    ..light.with_range(lamp.range)
+                    ..light.with_range(lamp.range).with_shadows()
                 },
                 Transform::from_translation(lamp.position),
             ));

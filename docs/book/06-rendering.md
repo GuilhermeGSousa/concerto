@@ -125,8 +125,13 @@ cmd.spawn((
 `LightType` is `Point`, `Spot { cone_angle }` or `Directional`. A directional
 light shines along its transform's −Z. `shadowmaps_enabled` makes it cast
 shadows; it and `light_type` can be changed at any time and take effect on the
-next frame. Up to 128 spot and directional lights cast shadows at once. Point
-lights do not draw shadows yet.
+next frame. Up to 128 spot and directional lights cast shadows at once.
+
+A point light casts into a cube map that reaches as far as its `range`, or 20
+metres when the range is 0. Up to 42 point lights cast shadows at once, six
+layers each of the 256 texture array layers the renderer asks the GPU for; the
+others, the later ones in entity order, light without shadows. A browser
+without cube map arrays casts from one point light.
 
 ## Meshes and materials
 
@@ -192,8 +197,8 @@ let mesh = assets.add(capsule(0.3, 0.6, 8, 16));
 
 Entities that share a mesh and a material are drawn together, in one draw call
 per camera. Each camera draws only the meshes whose bounds, their `Aabb`, lie
-at least partly inside its view, and each shadow-casting spot or directional
-light draws into its shadow map only the meshes inside its own view. A mesh
+at least partly inside its view, and each shadow-casting light draws into its
+shadow map, or each face of its cube map, only the meshes inside that view. A mesh
 gets its `Aabb` from its vertices a frame or so after the mesh loads, and is
 drawn everywhere until then.
 

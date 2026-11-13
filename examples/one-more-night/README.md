@@ -27,7 +27,8 @@ and the dinner gong in the hall are found by the names of the nodes in the
 export, with nothing placed by hand. A door leaf that stands open is walked through and does not block the
 way; aim at it to close it. Every indoor room has ceiling lamps, placed from the
 room plan: warm in the guest rooms, paler in the service ones, hung lower under
-the cellar's and attic's low ceilings. Outdoors there is only moonlight.
+the cellar's and attic's low ceilings. Every lamp casts
+shadows. Outdoors there is only moonlight.
 
 ### The sealed case
 

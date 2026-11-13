@@ -125,6 +125,17 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+pub(crate) const POINT_SHADOW_NEAR: f32 = 0.1;
+const POINT_SHADOW_DEFAULT_FAR: f32 = 20.0;
+
+fn point_shadow_far(range: f32) -> f32 {
+    if range > POINT_SHADOW_NEAR {
+        range
+    } else {
+        POINT_SHADOW_DEFAULT_FAR
+    }
+}
+
 #[derive(Reflect, Default)]
 pub enum LightType {
     #[default]
@@ -191,6 +202,7 @@ pub struct RenderLight {
     pub(crate) cos_cone_angle: f32,
     pub(crate) shadow_layer: i32,
     pub(crate) range: f32,
+    pub(crate) shadow_far: f32,
 }
 
 impl RenderLight {
@@ -205,6 +217,10 @@ impl RenderLight {
             _ => 0.0,
         };
         self.range = light.range;
+        self.shadow_far = match light.light_type {
+            LightType::Point => point_shadow_far(light.range),
+            _ => 0.0,
+        };
         self
     }
 
@@ -218,6 +234,7 @@ impl RenderLight {
             cos_cone_angle: 0.0,
             shadow_layer: -1,
             range: 0.0,
+            shadow_far: 0.0,
         }
     }
 }
@@ -420,6 +437,7 @@ mod tests {
             cos_cone_angle: 13.0,
             shadow_layer: -2,
             range: 14.0,
+            shadow_far: 15.0,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]);
@@ -427,7 +445,7 @@ mod tests {
         expected.push(13.0f32.to_bits());
         expected.push((-2i32) as u32);
         expected.push(14.0f32.to_bits());
-        expected.push(0);
+        expected.push(15.0f32.to_bits());
 
         assert_eq!(uniform_words(&light), expected);
         assert_eq!(RenderLight::SHADER_SIZE.get(), 64);

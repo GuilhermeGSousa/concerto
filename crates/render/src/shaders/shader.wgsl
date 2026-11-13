@@ -13,6 +13,8 @@ const POINT_LIGHT = 0u;
 const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
+const POINT_SHADOW_NEAR = 0.1;
+
 const PI = 3.14159265359;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
@@ -38,6 +40,7 @@ struct Light {
     cos_cone_angle: f32,
     shadow_layer: i32,
     range: f32,
+    shadow_far: f32,
 };
 
 struct Lights {
@@ -283,17 +286,17 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
             attenuation *= smoothstep(light.cos_cone_angle, cone_edge_softness, angle_cos);
         }
 
-        // Point-light shadow maps aren't rendered or sampled yet — only
-        // spot/directional casters get a real shadow factor here.
+        let geometric_normal = normalize(in.world_normal);
+        var reach = 10.0;
+        if light_type != DIRECTIONAL_LIGHT {
+            reach = length(light_delta);
+        }
+        let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
+        let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
         var shadow = 1.0;
-        if light_type != POINT_LIGHT {
-            let geometric_normal = normalize(in.world_normal);
-            var reach = 10.0;
-            if light_type != DIRECTIONAL_LIGHT {
-                reach = length(light_delta);
-            }
-            let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
-            let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
+        if light_type == POINT_LIGHT {
+            shadow = point_shadow_visibility(light, in.world_position + offset);
+        } else {
             shadow = shadow_visibility(light.shadow_layer, in.world_position + offset);
         }
 
@@ -357,17 +360,67 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
         return 1.0; // Outside the light's shadow frustum: treat as unshadowed.
     }
 
-    // Hardware PCF: the comparison sampler returns a bilinear-filtered
-    // fraction of samples passing `depth_ref <= stored_depth`, giving
-    // softened edges for one tap. A wider multi-tap kernel would soften
-    // further but isn't implemented yet.
-    return textureSampleCompareLevel(
-        t_shadow_spot_directional,
-        sampler_shadow_spot_directional,
-        shadow_uv,
-        shadow_layer,
-        light_ndc.z,
+    let texel = 1.0 / vec2<f32>(textureDimensions(t_shadow_spot_directional));
+    var lit = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            lit += textureSampleCompareLevel(
+                t_shadow_spot_directional,
+                sampler_shadow_spot_directional,
+                shadow_uv + vec2<f32>(f32(x), f32(y)) * texel,
+                shadow_layer,
+                light_ndc.z,
+            );
+        }
+    }
+    return lit / 9.0;
+}
+
+fn point_shadow_visibility(light: Light, world_position: vec3<f32>) -> f32 {
+    if light.shadow_layer < 0 {
+        return 1.0;
+    }
+
+    let from_light = world_position - light.position;
+    let extent = abs(from_light);
+    let distance = max(extent.x, max(extent.y, extent.z));
+    if distance >= light.shadow_far || distance <= POINT_SHADOW_NEAR {
+        return 1.0;
+    }
+
+    let far = light.shadow_far;
+    let depth = far * (distance - POINT_SHADOW_NEAR) / ((far - POINT_SHADOW_NEAR) * distance);
+    let direction = from_light * vec3<f32>(1.0, 1.0, -1.0) / distance;
+    let reference = select(
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(1.0, 0.0, 0.0),
+        abs(direction.y) > abs(direction.x),
     );
+    let tangent = normalize(cross(direction, reference));
+    let bitangent = normalize(cross(direction, tangent));
+    let texel = 2.0 * length(direction) / f32(textureDimensions(t_shadow_point).x);
+    var lit = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            let tap = direction + (tangent * f32(x) + bitangent * f32(y)) * texel;
+            lit += sample_point_shadow(tap, light.shadow_layer, depth);
+        }
+    }
+    return lit / 9.0;
+}
+
+fn sample_point_shadow(direction: vec3<f32>, shadow_layer: i32, depth: f32) -> f32 {
+#ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
+    return textureSampleCompareLevel(t_shadow_point, sampler_shadow_point, direction, depth);
+#else
+    return textureSampleCompareLevel(
+        t_shadow_point,
+        sampler_shadow_point,
+        direction,
+        shadow_layer,
+        depth,
+    );
+#endif
 }
 
 // Trowbridge-Reitz GGX normal distribution
