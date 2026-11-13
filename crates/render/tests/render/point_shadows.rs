@@ -15,7 +15,7 @@ use concerto_render::{
     assets::{material::StandardMaterial, texture::Texture},
     components::{
         camera::{Camera, RenderCamera, RenderTarget},
-        light::{Light, PointShadowSettings},
+        light::Light,
         material::MaterialComponent,
         render_entity::RenderEntity,
     },
@@ -35,11 +35,7 @@ fn app(gpu: &Gpu) -> App {
     let mut app = App::new();
     app.insert_resource(gpu.clone())
         .insert_resource(DrawTarget::None)
-        .insert_resource(Window::new((64, 48), 1.0))
-        .insert_resource(PointShadowSettings {
-            max_casters: 1,
-            face_size: 256,
-        });
+        .insert_resource(Window::new((64, 48), 1.0));
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
@@ -112,7 +108,7 @@ struct Shade {
 }
 
 #[test]
-fn the_point_light_nearest_the_camera_shadows_the_floor_behind_each_box_and_nowhere_else() {
+fn a_point_light_on_a_later_cube_layer_shadows_the_floor_behind_each_box_and_nowhere_else() {
     let Some(gpu) = Gpu::request_for_test() else {
         return;
     };

@@ -19,11 +19,7 @@ use crate::{
     },
     capabilities::RenderCapabilities,
     components::{
-        camera::RenderCamera,
-        light::{
-            LightType, PointShadowSettings, RenderLight, RenderLights, RenderShadowsEnabled,
-            POINT_SHADOW_NEAR,
-        },
+        light::{LightType, RenderLight, RenderLights, RenderShadowsEnabled, POINT_SHADOW_NEAR},
         mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
         render_entity::MainEntity,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -43,7 +39,9 @@ use crate::{
 // tracks real demand via `reconcile_capacity`.
 pub(crate) const MAX_SHADOW_CASTERS: u32 = 128;
 
-pub(crate) const SHADOW_MAP_SIZE: u32 = 1024;
+const SHADOW_MAP_SIZE: u32 = 1024;
+
+const POINT_SHADOW_MAP_SIZE: u32 = 512;
 
 // Minimum consecutive frames a pool's usage must stay below its current
 // capacity before it actually shrinks. Growth is never delayed — an
@@ -61,6 +59,7 @@ const SHADOW_MAP_SHRINK_DELAY_FRAMES: u32 = 300;
 // twice.
 pub(crate) trait ShadowMapKind: 'static {
     const VIEWS_PER_CASTER: u32;
+    const FACE_SIZE: u32;
     const LABEL: &'static str;
 
     fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension;
@@ -70,6 +69,7 @@ pub(crate) struct SpotDirectionalShadowKind;
 
 impl ShadowMapKind for SpotDirectionalShadowKind {
     const VIEWS_PER_CASTER: u32 = 1;
+    const FACE_SIZE: u32 = SHADOW_MAP_SIZE;
     const LABEL: &'static str = "spot_directional_shadow_maps";
 
     fn array_view_dimension(_: &RenderCapabilities) -> wgpu::TextureViewDimension {
@@ -81,6 +81,7 @@ pub(crate) struct PointShadowKind;
 
 impl ShadowMapKind for PointShadowKind {
     const VIEWS_PER_CASTER: u32 = 6;
+    const FACE_SIZE: u32 = POINT_SHADOW_MAP_SIZE;
     const LABEL: &'static str = "point_shadow_maps";
 
     fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension {
@@ -99,7 +100,6 @@ pub(crate) struct ShadowMapPool<K: ShadowMapKind> {
     pub(crate) views: Vec<wgpu::TextureView>,
     pub(crate) slots: Vec<Entity>,
     capacity: u32,
-    face_size: u32,
     min_capacity: u32,
     max_capacity: u32,
     array_view_dimension: wgpu::TextureViewDimension,
@@ -116,11 +116,7 @@ impl<K: ShadowMapKind> Resource for ShadowMapPool<K> {
 }
 
 impl<K: ShadowMapKind> ShadowMapPool<K> {
-    pub(crate) fn new(
-        device: &wgpu::Device,
-        capabilities: &RenderCapabilities,
-        face_size: u32,
-    ) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {
         let array_view_dimension = K::array_view_dimension(capabilities);
         let is_array = matches!(
             array_view_dimension,
@@ -138,14 +134,13 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
             1
         };
 
-        let (texture, views) = Self::build_gpu_resources(device, min_capacity, face_size);
+        let (texture, views) = Self::build_gpu_resources(device, min_capacity);
 
         Self {
             texture,
             views,
             slots: Vec::new(),
             capacity: min_capacity,
-            face_size,
             min_capacity,
             max_capacity,
             array_view_dimension,
@@ -157,15 +152,14 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     fn build_gpu_resources(
         device: &wgpu::Device,
         capacity: u32,
-        face_size: u32,
     ) -> (wgpu::Texture, Vec<wgpu::TextureView>) {
         let view_count = capacity * K::VIEWS_PER_CASTER;
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(K::LABEL),
             size: wgpu::Extent3d {
-                width: face_size,
-                height: face_size,
+                width: K::FACE_SIZE,
+                height: K::FACE_SIZE,
                 depth_or_array_layers: view_count,
             },
             mip_level_count: 1,
@@ -209,14 +203,10 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     // Returns whether it actually resized this call, so callers can tell
     // whether anything referencing the old texture/views (namely
     // `RenderLighting`'s bind group) needs rebuilding too.
-    pub(crate) fn reconcile_capacity(&mut self, device: &wgpu::Device, face_size: u32) -> bool {
+    pub(crate) fn reconcile_capacity(&mut self, device: &wgpu::Device) -> bool {
         let needed = (self.slots.len() as u32).max(self.min_capacity);
 
-        if face_size != self.face_size {
-            self.face_size = face_size;
-            self.resize_to(device, needed.max(self.capacity));
-            true
-        } else if needed > self.capacity {
+        if needed > self.capacity {
             self.resize_to(device, needed);
             true
         } else if needed < self.capacity {
@@ -238,7 +228,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     }
 
     fn resize_to(&mut self, device: &wgpu::Device, capacity: u32) {
-        let (texture, views) = Self::build_gpu_resources(device, capacity, self.face_size);
+        let (texture, views) = Self::build_gpu_resources(device, capacity);
         self.texture = texture;
         self.views = views;
         self.capacity = capacity;
@@ -262,7 +252,6 @@ struct ShadowCandidate {
     entity: Entity,
     light_type: u32,
     enabled: bool,
-    camera_distance: f32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -276,28 +265,26 @@ fn assign_layers(
     spot_directional_limit: u32,
     point_limit: u32,
 ) -> AssignedLayers {
-    let by_entity = |entity: &Entity| (entity.index(), entity.generation());
+    let mut spot_directional = Vec::new();
+    let mut point = Vec::new();
+    for light in lights {
+        if !light.enabled {
+            continue;
+        }
+        if light.light_type == LightType::Point.index() {
+            point.push(light.entity);
+        } else {
+            spot_directional.push(light.entity);
+        }
+    }
 
-    let mut spot_directional: Vec<Entity> = lights
-        .iter()
-        .filter(|light| light.enabled && light.light_type != LightType::Point.index())
-        .map(|light| light.entity)
-        .collect();
-    spot_directional.sort_by_key(by_entity);
-    spot_directional.truncate(spot_directional_limit as usize);
-
-    let mut nearest: Vec<&ShadowCandidate> = lights
-        .iter()
-        .filter(|light| light.enabled && light.light_type == LightType::Point.index())
-        .collect();
-    nearest.sort_by(|a, b| {
-        a.camera_distance
-            .total_cmp(&b.camera_distance)
-            .then_with(|| by_entity(&a.entity).cmp(&by_entity(&b.entity)))
-    });
-    nearest.truncate(point_limit as usize);
-    let mut point: Vec<Entity> = nearest.iter().map(|light| light.entity).collect();
-    point.sort_by_key(by_entity);
+    for (casters, limit) in [
+        (&mut spot_directional, spot_directional_limit),
+        (&mut point, point_limit),
+    ] {
+        casters.sort_by_key(|entity| (entity.index(), entity.generation()));
+        casters.truncate(limit as usize);
+    }
 
     AssignedLayers {
         spot_directional,
@@ -314,32 +301,22 @@ fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
 
 pub(crate) fn assign_shadow_layers(
     lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
-    cameras: Query<&RenderCamera>,
-    settings: Res<PointShadowSettings>,
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
 ) {
-    let camera_positions: Vec<Vec3> = cameras
-        .iter()
-        .map(|camera| camera.camera_uniform.view_pos())
-        .collect();
     let candidates: Vec<ShadowCandidate> = lights
         .iter()
         .map(|(entity, light, enabled)| ShadowCandidate {
             entity,
             light_type: light.light_type,
             enabled: enabled.0,
-            camera_distance: camera_positions
-                .iter()
-                .map(|position| position.distance_squared(light.translation))
-                .fold(f32::INFINITY, f32::min),
         })
         .collect();
 
     let assigned = assign_layers(
         &candidates,
         spot_directional_shadow_maps.max_capacity,
-        settings.max_casters.min(point_shadow_maps.max_capacity),
+        point_shadow_maps.max_capacity,
     );
     spot_directional_shadow_maps.slots = assigned.spot_directional;
     point_shadow_maps.slots = assigned.point;
@@ -510,7 +487,6 @@ impl RenderLighting {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn resize_shadow_maps(
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
@@ -519,11 +495,9 @@ pub(crate) fn resize_shadow_maps(
     lighting_layout: Res<LightingLayout>,
     lights: Res<RenderLights>,
     shadow_view_projs: Res<RenderShadowViewProjs>,
-    settings: Res<PointShadowSettings>,
 ) {
-    let spot_directional_resized =
-        spot_directional_shadow_maps.reconcile_capacity(&device, SHADOW_MAP_SIZE);
-    let point_resized = point_shadow_maps.reconcile_capacity(&device, settings.face_size.max(1));
+    let spot_directional_resized = spot_directional_shadow_maps.reconcile_capacity(&device);
+    let point_resized = point_shadow_maps.reconcile_capacity(&device);
 
     if spot_directional_resized || point_resized {
         lighting.rebuild(
@@ -1137,14 +1111,6 @@ mod tests {
             entity,
             light_type,
             enabled,
-            camera_distance: f32::INFINITY,
-        }
-    }
-
-    fn point_at(entity: Entity, camera_distance: f32) -> ShadowCandidate {
-        ShadowCandidate {
-            camera_distance,
-            ..caster(entity, point(), true)
         }
     }
 
@@ -1173,7 +1139,7 @@ mod tests {
     }
 
     #[test]
-    fn shadowed_lights_take_layers_in_their_pool_up_to_its_limit_points_nearest_a_camera_first() {
+    fn shadowed_lights_take_layers_in_entity_order_in_their_pool_up_to_its_limit() {
         let mut world = World::new();
         let [a, b, c] = [world.spawn(()), world.spawn(()), world.spawn(())];
         let cases = [
@@ -1230,39 +1196,6 @@ mod tests {
                         caster(c, spot(), true),
                     ],
                     vec![a, b],
-                )
-            },
-            Assignment {
-                point_limit: 2,
-                points: vec![b, c],
-                ..assignment(
-                    "the point lights nearest a camera win",
-                    vec![point_at(a, 25.0), point_at(b, 1.0), point_at(c, 9.0)],
-                    vec![],
-                )
-            },
-            Assignment {
-                point_limit: 2,
-                points: vec![a, c],
-                ..assignment(
-                    "the winners keep entity order",
-                    vec![point_at(c, 1.0), point_at(b, 16.0), point_at(a, 4.0)],
-                    vec![],
-                )
-            },
-            Assignment {
-                point_limit: 1,
-                points: vec![b],
-                ..assignment(
-                    "a nearer point light without shadows does not count",
-                    vec![
-                        ShadowCandidate {
-                            enabled: false,
-                            ..point_at(a, 1.0)
-                        },
-                        point_at(b, 4.0),
-                    ],
-                    vec![],
                 )
             },
             assignment(

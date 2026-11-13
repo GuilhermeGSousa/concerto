@@ -6,7 +6,7 @@ use concerto_ecs::{
     entity::Entity,
     query::Query,
     reflect::{ReflectComponent, ReflectSceneComponent},
-    resource::{Res, ResMut, Resource},
+    resource::{Res, Resource},
     Changed,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -125,22 +125,6 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// How many point lights cast shadows at once, and the size of each face of their cube maps; the shadowed point lights nearest a camera cast.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PointShadowSettings {
-    pub max_casters: u32,
-    pub face_size: u32,
-}
-
-impl Default for PointShadowSettings {
-    fn default() -> Self {
-        Self {
-            max_casters: 4,
-            face_size: 512,
-        }
-    }
-}
-
 pub(crate) const POINT_SHADOW_NEAR: f32 = 0.1;
 const POINT_SHADOW_DEFAULT_FAR: f32 = 20.0;
 
@@ -149,19 +133,6 @@ fn point_shadow_far(range: f32) -> f32 {
         range
     } else {
         POINT_SHADOW_DEFAULT_FAR
-    }
-}
-
-pub(crate) fn extract_point_shadow_settings(
-    settings: Extracted<Option<Res<PointShadowSettings>>>,
-    mut render_settings: ResMut<PointShadowSettings>,
-) {
-    let settings = (*settings)
-        .as_ref()
-        .map(|settings| **settings)
-        .unwrap_or_default();
-    if *render_settings != settings {
-        *render_settings = settings;
     }
 }
 

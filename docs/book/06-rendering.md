@@ -128,19 +128,10 @@ shadows; it and `light_type` can be changed at any time and take effect on the
 next frame. Up to 128 spot and directional lights cast shadows at once.
 
 A point light casts into a cube map that reaches as far as its `range`, or 20
-metres when the range is 0. The `PointShadowSettings` resource caps how many
-cast at once, 4 by default, and sets the size of each cube face, 512 texels by
-default; the shadowed point lights nearest any camera cast and the others light
-without shadows. A browser without cube map arrays casts from one point light.
-
-```rust
-use concerto::render::components::light::PointShadowSettings;
-
-app.insert_resource(PointShadowSettings {
-    max_casters: 8,
-    face_size: 1024,
-});
-```
+metres when the range is 0. Up to 42 point lights cast shadows at once, six
+layers each of the 256 texture array layers the renderer asks the GPU for; the
+others, the later ones in entity order, light without shadows. A browser
+without cube map arrays casts from one point light.
 
 ## Meshes and materials
 
