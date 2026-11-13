@@ -360,17 +360,20 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
         return 1.0; // Outside the light's shadow frustum: treat as unshadowed.
     }
 
-    // Hardware PCF: the comparison sampler returns a bilinear-filtered
-    // fraction of samples passing `depth_ref <= stored_depth`, giving
-    // softened edges for one tap. A wider multi-tap kernel would soften
-    // further but isn't implemented yet.
-    return textureSampleCompareLevel(
-        t_shadow_spot_directional,
-        sampler_shadow_spot_directional,
-        shadow_uv,
-        shadow_layer,
-        light_ndc.z,
-    );
+    let texel = 1.0 / vec2<f32>(textureDimensions(t_shadow_spot_directional));
+    var lit = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            lit += textureSampleCompareLevel(
+                t_shadow_spot_directional,
+                sampler_shadow_spot_directional,
+                shadow_uv + vec2<f32>(f32(x), f32(y)) * texel,
+                shadow_layer,
+                light_ndc.z,
+            );
+        }
+    }
+    return lit / 9.0;
 }
 
 fn point_shadow_visibility(light: Light, world_position: vec3<f32>) -> f32 {
@@ -387,7 +390,26 @@ fn point_shadow_visibility(light: Light, world_position: vec3<f32>) -> f32 {
 
     let far = light.shadow_far;
     let depth = far * (distance - POINT_SHADOW_NEAR) / ((far - POINT_SHADOW_NEAR) * distance);
-    let direction = from_light * vec3<f32>(1.0, 1.0, -1.0);
+    let direction = from_light * vec3<f32>(1.0, 1.0, -1.0) / distance;
+    let reference = select(
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(1.0, 0.0, 0.0),
+        abs(direction.y) > abs(direction.x),
+    );
+    let tangent = normalize(cross(direction, reference));
+    let bitangent = normalize(cross(direction, tangent));
+    let texel = 2.0 * length(direction) / f32(textureDimensions(t_shadow_point).x);
+    var lit = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            let tap = direction + (tangent * f32(x) + bitangent * f32(y)) * texel;
+            lit += sample_point_shadow(tap, light.shadow_layer, depth);
+        }
+    }
+    return lit / 9.0;
+}
+
+fn sample_point_shadow(direction: vec3<f32>, shadow_layer: i32, depth: f32) -> f32 {
 #ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
     return textureSampleCompareLevel(t_shadow_point, sampler_shadow_point, direction, depth);
 #else
@@ -395,7 +417,7 @@ fn point_shadow_visibility(light: Light, world_position: vec3<f32>) -> f32 {
         t_shadow_point,
         sampler_shadow_point,
         direction,
-        light.shadow_layer,
+        shadow_layer,
         depth,
     );
 #endif
