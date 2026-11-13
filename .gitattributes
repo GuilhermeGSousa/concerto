@@ -12,3 +12,5 @@ examples/one-more-night/assets/art/export/*.glb filter=lfs diff=lfs merge=lfs -t
 examples/one-more-night/assets/characters/*.blend filter=lfs diff=lfs merge=lfs -text
 examples/one-more-night/assets/characters/export/*.glb filter=lfs diff=lfs merge=lfs -text
 examples/one-more-night/assets/manor/library/*.glb filter=lfs diff=lfs merge=lfs -text
+examples/tech-demo/assets/sanatorium/art/library/*.glb filter=lfs diff=lfs merge=lfs -text
+examples/tech-demo/assets/sanatorium/art/export/*.glb filter=lfs diff=lfs merge=lfs -text

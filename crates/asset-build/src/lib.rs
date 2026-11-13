@@ -63,6 +63,15 @@ pub fn write_registry_into(manifest: &Path, out_dir: &Path) -> anyhow::Result<()
         .with_context(|| format!("failed to write '{}'", path.display()))
 }
 
+/// The profile directory a build script's `out_dir` sits under, where Cargo puts the package's executable: the parent of the nearest `build` directory above it, in Cargo's flat and nested `build/` layouts alike.
+pub fn profile_dir(out_dir: &Path) -> Option<PathBuf> {
+    out_dir
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "build"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+}
+
 fn watched_paths(manifest: &Path, directory: PathBuf) -> Vec<PathBuf> {
     let config_root = ContentConfig::load_or_default(manifest)
         .map(|config| manifest.join(config.root))

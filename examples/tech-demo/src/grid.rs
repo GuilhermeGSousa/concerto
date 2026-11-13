@@ -108,7 +108,7 @@ pub fn grid(app: &mut App) {
             .expect("DefaultPlugins inserts the ActionMap"),
     );
 
-    app.insert_resource(CharacterConfig::forest());
+    app.insert_resource(CharacterConfig::grid());
 
     app.add_system(Startup, spawn_grid_level)
         .add_system(Update, spawn_character)
@@ -314,7 +314,7 @@ mod tests {
 
         assert_eq!(
             app.get_resource::<CharacterConfig>(),
-            Some(&CharacterConfig::forest())
+            Some(&CharacterConfig::grid())
         );
         let world = app.main_mut().world_mut();
         assert_eq!(world.query::<&WorldGrid, ()>().iter(world).count(), 1);

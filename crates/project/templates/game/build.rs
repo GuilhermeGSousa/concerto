@@ -14,10 +14,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
-    let output_path = out_dir
-        .ancestors()
-        .nth(3)
-        .unwrap()
+    let output_path = concerto_asset_build::profile_dir(&out_dir)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "OUT_DIR {} is not under a build directory",
+                out_dir.display()
+            )
+        })?
         .join(format!("{}-content", env::var("CARGO_PKG_NAME")?));
     std::fs::create_dir_all(&output_path)?;
 

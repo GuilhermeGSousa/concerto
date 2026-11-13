@@ -17,7 +17,7 @@ use concerto::{
     gameplay::third_person::update_third_person_cameras,
     mesh::MeshComponent,
     physics::{collider::Collider, shape::MeshCollider},
-    render::{MaterialComponent, components::light::Light},
+    render::MaterialComponent,
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
     window::input::{Input, KeyCode, PhysicalKey, actions::ActionMap},
@@ -25,7 +25,7 @@ use concerto::{
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 use concerto_procedural_animation_gizmos::ProceduralAnimationGizmosPlugin;
-use glam::{Quat, Vec3};
+use glam::Vec3;
 
 use crate::body::install_body;
 use crate::character::{
@@ -33,28 +33,13 @@ use crate::character::{
     setup_character_animations, spawn_character, update_camera_stance, update_movement,
 };
 
-const MARKERS: AssetId = asset_id!("content/sanatorium/MARKERS/scene.gasset");
-const AREAS: [AssetId; 10] = [
-    asset_id!("content/sanatorium/EXT_Funicular/scene.gasset"),
-    asset_id!("content/sanatorium/EXT_Approach/scene.gasset"),
-    asset_id!("content/sanatorium/EXT_Balconies/scene.gasset"),
-    asset_id!("content/sanatorium/INT_Lodge/scene.gasset"),
-    asset_id!("content/sanatorium/INT_WardCorridor/scene.gasset"),
-    asset_id!("content/sanatorium/INT_BrotherWing/scene.gasset"),
-    asset_id!("content/sanatorium/INT_DirectorWing/scene.gasset"),
-    asset_id!("content/sanatorium/INT_Boiler/scene.gasset"),
-    asset_id!("content/sanatorium/INT_Service/scene.gasset"),
-    asset_id!("content/sanatorium/COL/scene.gasset"),
-];
-
-const SUN_INTENSITY: f32 = 2.0;
-const SUN_YAW: f32 = 0.6;
-const SUN_PITCH: f32 = -0.7;
+const LEVEL: AssetId = asset_id!("content/sanatorium/level.gasset");
+const COLLISION: AssetId = asset_id!("content/sanatorium/COL/scene.gasset");
 
 const COLLISION_PREFIX: &str = "COL_";
 const PLAYER_START: &str = "PlayerStart";
 
-/// Builds the sanatorium graybox: every area, its collision, and the character at `PlayerStart`.
+/// Builds the sanatorium: its level scene, the collision under it, and the character at `PlayerStart`.
 pub fn sanatorium(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(MotionMatchingGizmosPlugin)
@@ -65,12 +50,12 @@ pub fn sanatorium(app: &mut App) {
             .expect("DefaultPlugins inserts the ActionMap"),
     );
 
-    app.set_startup_scene(MARKERS)
+    app.set_startup_scene(LEVEL)
         .register_type::<PlayerSpawner>()
         .insert_resource(CharacterConfig::sanatorium())
         .insert_resource(MarkerDebug::default());
 
-    app.add_system(Startup, spawn_areas)
+    app.add_system(Startup, spawn_collision)
         .add_system(
             Update,
             (collide_collision_meshes, place_player_start).chain(),
@@ -89,20 +74,11 @@ pub fn sanatorium(app: &mut App) {
     install_body(app);
 }
 
-fn spawn_areas(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {
+fn spawn_collision(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {
     cmd.spawn((
-        Light::directional_light().with_intensity(SUN_INTENSITY),
-        Transform::from_translation_rotation(
-            Vec3::ZERO,
-            Quat::from_rotation_y(SUN_YAW) * Quat::from_rotation_x(SUN_PITCH),
-        ),
+        SceneSpawnerComponent(asset_server.load::<Scene>(COLLISION)),
+        Transform::default(),
     ));
-    for area in AREAS {
-        cmd.spawn((
-            SceneSpawnerComponent(asset_server.load::<Scene>(area)),
-            Transform::default(),
-        ));
-    }
 }
 
 fn is_collision(name: &Name) -> bool {
@@ -243,7 +219,7 @@ mod tests {
     };
 
     use super::{
-        AREAS, DebugMarker, MARKERS, MarkerDebug, classify_markers, collide_collision_meshes,
+        COLLISION, DebugMarker, LEVEL, MarkerDebug, classify_markers, collide_collision_meshes,
         place_player_start, sanatorium, toggle_marker_debug,
     };
     use crate::character::{CharacterConfig, PlayerSpawner};
@@ -299,10 +275,10 @@ mod tests {
     }
 
     #[test]
-    fn player_start_waits_for_every_area_and_every_collision_mesh() {
+    fn player_start_waits_for_the_collision_scene_and_every_collision_mesh() {
         let mut world = World::new();
         let start = world.spawn(Name::new("PlayerStart"));
-        let area = world.spawn(SceneSpawnerComponent(AssetHandle::<Scene>::weak(AREAS[0])));
+        let area = world.spawn(SceneSpawnerComponent(AssetHandle::<Scene>::weak(COLLISION)));
 
         run(&mut world, place_player_start);
         assert!(!is_spawner(&world, start));
@@ -386,14 +362,14 @@ mod tests {
     }
 
     #[test]
-    fn the_recipe_starts_from_the_markers_with_the_sanatorium_character() {
+    fn the_recipe_starts_from_the_level_with_the_sanatorium_character() {
         let Some(app) = concerto::headless(sanatorium) else {
             return;
         };
 
         assert_eq!(
             app.get_resource::<StartupScene>(),
-            Some(&StartupScene(MARKERS))
+            Some(&StartupScene(LEVEL))
         );
         assert_eq!(
             app.get_resource::<CharacterConfig>(),
@@ -418,15 +394,28 @@ mod tests {
                 .filter(|node| !node.name.contains(".primitive"))
                 .all(|node| node.name.starts_with("COL_"))
         );
+    }
 
-        let markers = scene("content/sanatorium/MARKERS/scene.gasset");
-        assert_eq!(
-            markers
+    #[test]
+    fn the_level_holds_the_player_start_the_moon_the_dressed_props_and_their_lamps() {
+        let level = scene("content/sanatorium/level.gasset");
+        let named = |name: &str| level.nodes.iter().filter(|node| node.name == name).count();
+        assert_eq!(named("PlayerStart"), 1);
+        assert_eq!(named("Moon"), 1);
+        assert_eq!(named("INT_Lodge_Prop_PorterDesk_01"), 1);
+        assert!(
+            level
                 .nodes
                 .iter()
-                .filter(|node| node.name == "PlayerStart")
-                .count(),
-            1
+                .filter(|node| node.name.starts_with("Light_"))
+                .count()
+                >= 15
+        );
+        assert!(
+            level
+                .nodes
+                .iter()
+                .all(|node| !node.name.starts_with("COL_"))
         );
     }
 }

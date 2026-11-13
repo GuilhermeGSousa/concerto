@@ -27,7 +27,7 @@ editor with `--decorated` so the window manager frames it.
 | Binary | Wait before capturing (debug build) |
 |---|---|
 | `tech-demo` | about 25 s |
-| `tech-demo-editor` | about 30 s after the forest scene is opened |
+| `tech-demo-editor` | about 30 s after the sanatorium level is opened |
 
 ## Proving something moves
 
