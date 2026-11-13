@@ -387,7 +387,7 @@ pub(crate) fn write_visible_lights(
     let mut listed: Vec<RenderLight> = visible
         .entities
         .iter()
-        .filter_map(|&entity| lights.get_entity(entity).map(|light| *light))
+        .filter_map(|&entity| lights.get_entity(entity).copied())
         .collect();
 
     let overflowing = listed.len() > MAX_LIGHTS;
