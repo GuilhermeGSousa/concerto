@@ -664,11 +664,6 @@ mod tests {
         );
 
         let lamps = level.lamps();
-        assert!(
-            lamps.len() <= 100,
-            "{} lamps leave no room under the renderer's 128 lights",
-            lamps.len()
-        );
         for anchor in &level.anchors {
             let home = level.room(anchor.room);
             let lit = lamps.iter().any(|lamp| {

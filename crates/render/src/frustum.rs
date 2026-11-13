@@ -23,6 +23,13 @@ impl Frustum {
             normal.dot(positive) + plane.w >= 0.0
         })
     }
+
+    pub(crate) fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
+        self.planes.iter().all(|plane| {
+            let normal = plane.xyz();
+            normal.dot(center) + plane.w >= -radius * normal.length()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -61,7 +68,7 @@ mod tests {
     }
 
     #[test]
-    fn a_box_intersects_a_frustum_when_any_part_of_it_is_inside() {
+    fn a_box_or_sphere_intersects_a_frustum_when_any_part_of_it_is_inside() {
         let cases = [
             Case {
                 case: "in front of a perspective camera",
@@ -88,6 +95,12 @@ mod tests {
                 intersects: true,
             },
             Case {
+                case: "centred just past a side plane",
+                frustum: perspective(),
+                center: Vec3::new(11.2, 0.0, -10.0),
+                intersects: true,
+            },
+            Case {
                 case: "inside an orthographic extent",
                 frustum: orthographic(),
                 center: Vec3::new(3.0, -3.0, -20.0),
@@ -105,6 +118,12 @@ mod tests {
                 case.frustum.intersects_aabb(&cube(case.center, 1.0)),
                 case.intersects,
                 "{}",
+                case.case
+            );
+            assert_eq!(
+                case.frustum.intersects_sphere(case.center, 1.0),
+                case.intersects,
+                "a sphere {}",
                 case.case
             );
         }

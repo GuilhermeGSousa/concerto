@@ -19,7 +19,10 @@ use crate::{
     },
     capabilities::RenderCapabilities,
     components::{
-        light::{LightType, RenderLight, RenderLights, RenderShadowsEnabled, POINT_SHADOW_NEAR},
+        light::{
+            entity_order, LightType, RenderLight, RenderLights, RenderShadowsEnabled,
+            VisibleLights, POINT_SHADOW_NEAR,
+        },
         mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
         render_entity::MainEntity,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -282,7 +285,7 @@ fn assign_layers(
         (&mut spot_directional, spot_directional_limit),
         (&mut point, point_limit),
     ] {
-        casters.sort_by_key(|entity| (entity.index(), entity.generation()));
+        casters.sort_by_key(entity_order);
         casters.truncate(limit as usize);
     }
 
@@ -301,11 +304,13 @@ fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
 
 pub(crate) fn assign_shadow_layers(
     lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
+    visible: Res<VisibleLights>,
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
 ) {
     let candidates: Vec<ShadowCandidate> = lights
         .iter()
+        .filter(|(entity, _, _)| visible.contains(*entity))
         .map(|(entity, light, enabled)| ShadowCandidate {
             entity,
             light_type: light.light_type,
@@ -854,7 +859,8 @@ mod tests {
     use crate::{
         assets::{material::StandardMaterial, mesh::Mesh},
         components::{
-            light::{Light, RenderLightSlot},
+            camera::Camera,
+            light::Light,
             material::MaterialComponent,
             render_entity::{MainEntity, RenderEntity},
             visibility::NotShadowCaster,
@@ -909,6 +915,14 @@ mod tests {
     }
 
     fn app(gpu: &Gpu) -> App {
+        let mut app = app_without_camera(gpu);
+        app.main_mut()
+            .world_mut()
+            .spawn((Camera::default(), Transform::IDENTITY));
+        app
+    }
+
+    fn app_without_camera(gpu: &Gpu) -> App {
         let mut app = App::new();
         app.insert_resource(gpu.clone())
             .insert_resource(DrawTarget::None)
@@ -923,6 +937,21 @@ mod tests {
         app.main_mut().world_mut().register_component::<Transform>();
         app.finish_plugin_build();
         app
+    }
+
+    fn written(app: &App) -> Vec<RenderLight> {
+        app.render()
+            .get_resource::<RenderLights>()
+            .unwrap()
+            .written
+            .clone()
+    }
+
+    fn render_light(app: &App, main: Entity) -> RenderLight {
+        *app.render()
+            .world()
+            .get_component_for_entity::<RenderLight>(render_entity(app, main))
+            .unwrap()
     }
 
     fn spawn(app: &mut App, light: Light) -> Entity {
@@ -1079,17 +1108,76 @@ mod tests {
         app.update();
         assert_eq!([layer(&app, b), layer(&app, c)], [0, 1]);
 
-        let lights = app.render().get_resource::<RenderLights>().unwrap();
-        assert_eq!(lights.slots.len(), 2);
-        for main in [b, c] {
-            let render_entity = render_entity(&app, main);
-            let slot = **app
-                .render()
-                .world()
-                .get_component_for_entity::<RenderLightSlot>(render_entity)
-                .unwrap();
-            assert_eq!(lights.slots[slot as usize], render_entity);
-        }
+        assert!(written(&app) == [render_light(&app, b), render_light(&app, c)]);
+    }
+
+    fn spawn_at(app: &mut App, light: Light, translation: Vec3) -> Entity {
+        app.main_mut()
+            .world_mut()
+            .spawn((light, Transform::from_translation(translation)))
+    }
+
+    #[test]
+    fn only_lights_a_camera_sees_are_sent_and_cast_shadows() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = app_without_camera(&gpu);
+
+        let lamp = || Light::point_light().with_range(5.0).with_shadows();
+        let ahead = spawn_at(&mut app, lamp(), Vec3::new(0.0, 0.0, -20.0));
+        let behind = spawn_at(&mut app, lamp(), Vec3::new(0.0, 0.0, 20.0));
+        let faded = spawn_at(
+            &mut app,
+            lamp().with_fade_distance(10.0),
+            Vec3::new(3.0, 0.0, -20.0),
+        );
+        let sun = spawn(&mut app, Light::directional_light().with_shadows());
+
+        app.update();
+        assert_eq!(
+            [ahead, behind, faded, sun].map(|light| layer(&app, light)),
+            [-1; 4],
+            "with no camera"
+        );
+        assert!(written(&app).is_empty(), "with no camera");
+
+        let camera = app
+            .main_mut()
+            .world_mut()
+            .spawn((Camera::default(), Transform::IDENTITY));
+        app.update();
+        app.update();
+        assert_eq!(point_slots(&app), vec![ahead]);
+        assert_eq!(
+            [ahead, behind, faded, sun].map(|light| layer(&app, light)),
+            [0, -1, -1, 0]
+        );
+        assert!(written(&app) == [render_light(&app, ahead), render_light(&app, sun)]);
+
+        *app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<Transform>(camera)
+            .unwrap() = Transform::from_translation_rotation(
+            Vec3::ZERO,
+            glam::Quat::from_rotation_y(std::f32::consts::PI),
+        );
+        app.update();
+        app.update();
+        assert_eq!(point_slots(&app), vec![behind]);
+        assert_eq!(
+            [ahead, behind, faded, sun].map(|light| layer(&app, light)),
+            [-1, 0, -1, 0]
+        );
+        assert!(written(&app) == [render_light(&app, behind), render_light(&app, sun)]);
+
+        *app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<Transform>(camera)
+            .unwrap() = Transform::from_translation(Vec3::new(3.0, 0.0, -14.0));
+        app.update();
+        app.update();
+        assert_eq!(point_slots(&app), vec![ahead, faded]);
     }
 
     fn spot() -> u32 {
@@ -1362,6 +1450,9 @@ mod tests {
             .register_plugin(MaterialPlugin::<StandardMaterial>::default());
         app.main_mut().world_mut().register_component::<Transform>();
         spawn(&mut app, Light::directional_light().with_shadows());
+        app.main_mut()
+            .world_mut()
+            .spawn((Camera::default(), Transform::IDENTITY));
         app.finish_plugin_build();
         app
     }

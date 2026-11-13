@@ -118,6 +118,13 @@ fix the entry in the same commit as the change that made it false.
   mesh gets it only when `RenderPlugin` is built. An entity with none of these
   still needs it explicitly, for example one the editor creates. A scene that
   renders black is usually an entity that has none of them.
+- **A light no camera sees is not sent to the GPU.** A point or spot light is
+  culled by the sphere of its `range` against every camera's frustum, and by
+  its `fade_distance` from each camera. A `range` of 0 is unbounded, so that
+  light is never culled and always takes one of the 128 light slots and, when
+  it casts shadows, a shadow map. An `App` with no camera has no visible
+  light: a test that reads shadow layers or `RenderLights::written` spawns a
+  camera.
 - **`RenderPlugin::build` registers the mesh and skeleton requirement,** so
   register the plugin before anything spawns meshes, or the registration
   panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an
