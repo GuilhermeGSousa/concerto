@@ -28,7 +28,8 @@ export, with nothing placed by hand. A door leaf that stands open is walked thro
 way; aim at it to close it. Every indoor room has ceiling lamps, placed from the
 room plan: warm in the guest rooms, paler in the service ones, hung lower under
 the cellar's and attic's low ceilings. Every lamp casts
-shadows. Outdoors there is only moonlight.
+shadows, and fades out as a player's camera gets 25 metres from it, so only the
+lamps near a player are lit and shadowed. Outdoors there is only moonlight.
 
 ### The sealed case
 
