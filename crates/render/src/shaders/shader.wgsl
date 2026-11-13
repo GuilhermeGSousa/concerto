@@ -14,6 +14,7 @@ const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
 const POINT_SHADOW_NEAR = 0.1;
+const FADE_START = 0.8;
 
 const PI = 3.14159265359;
 // Roughness below this produces a near-singular specular lobe.
@@ -41,6 +42,7 @@ struct Light {
     shadow_layer: i32,
     range: f32,
     shadow_far: f32,
+    fade_distance: f32,
 };
 
 struct Lights {
@@ -277,6 +279,14 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
                 let ratio = light_distance_sq / (light.range * light.range);
                 let window = clamp(1.0 - ratio * ratio, 0.0, 1.0);
                 attenuation *= window * window;
+            }
+            if light.fade_distance > 0.0 {
+                let camera_distance = distance(camera.view_pos, light.position);
+                attenuation *= 1.0 - smoothstep(
+                    light.fade_distance * FADE_START,
+                    light.fade_distance,
+                    camera_distance,
+                );
             }
         }
         if light_type == SPOT_LIGHT {

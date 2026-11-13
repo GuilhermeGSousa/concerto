@@ -5,7 +5,7 @@ use concerto_ecs::SystemSet;
 /// [`LateRender`](concerto_app::schedule_groups::LateRender).
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum RenderSet {
-    /// Assigning shadow-map layers and uploading changed lights.
+    /// Culling lights, assigning shadow-map layers and uploading the visible lights.
     Lights,
     /// Culling and binning mesh instances into each view's draws.
     Queue,

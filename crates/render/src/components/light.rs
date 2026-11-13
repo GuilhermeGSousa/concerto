@@ -6,20 +6,25 @@ use concerto_ecs::{
     entity::Entity,
     query::Query,
     reflect::{ReflectComponent, ReflectSceneComponent},
-    resource::{Res, Resource},
-    Changed,
+    resource::{Res, ResMut, Resource},
+    system::input::SystemLocal,
+    world::{FromWorld, World},
 };
 use concerto_reflect::{Reflect, ReflectDefault};
-use derive_more::Deref;
 
 use concerto_foundation::transform::GlobalTransform;
-use encase::{ShaderSize, ShaderType, UniformBuffer};
+use encase::{ShaderType, UniformBuffer};
 use glam::Vec3;
 use wgpu::{util::DeviceExt, Buffer};
 
-use crate::{components::render_entity::RenderEntity, queue::RenderQueue};
+use crate::{
+    components::{camera::RenderCamera, render_entity::RenderEntity},
+    frustum::Frustum,
+    queue::RenderQueue,
+};
 
 const MAX_LIGHTS: usize = 128;
+const FADE_START: f32 = 0.8;
 
 #[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
@@ -30,6 +35,7 @@ pub struct Light {
     pub shadowmaps_enabled: bool,
     pub light_type: LightType,
     pub range: f32,
+    pub fade_distance: f32,
 }
 
 impl Default for Light {
@@ -46,6 +52,7 @@ impl Light {
             shadowmaps_enabled: false,
             light_type: LightType::Point,
             range: 0.0,
+            fade_distance: 0.0,
         }
     }
 
@@ -56,6 +63,7 @@ impl Light {
             shadowmaps_enabled: false,
             light_type: LightType::Spot { cone_angle },
             range: 0.0,
+            fade_distance: 0.0,
         }
     }
 
@@ -66,6 +74,7 @@ impl Light {
             shadowmaps_enabled: false,
             light_type: LightType::Directional,
             range: 0.0,
+            fade_distance: 0.0,
         }
     }
 
@@ -88,6 +97,30 @@ impl Light {
     pub fn with_shadows(mut self) -> Self {
         self.shadowmaps_enabled = true;
         self
+    }
+
+    /// Makes the light fade out as a camera moves away; see [`Light::fade_at`].
+    pub fn with_fade_distance(mut self, fade_distance: f32) -> Self {
+        self.fade_distance = fade_distance.max(0.0);
+        self
+    }
+
+    /// The share of this light a camera `camera_distance` away sees: all of it up to 80% of the fade distance, none past it.
+    pub fn fade_at(&self, camera_distance: f32) -> f32 {
+        if !self.fades() {
+            return 1.0;
+        }
+        1.0 - smoothstep(
+            self.fade_distance * FADE_START,
+            self.fade_distance,
+            camera_distance,
+        )
+    }
+
+    fn fades(&self) -> bool {
+        !matches!(self.light_type, LightType::Directional)
+            && self.fade_distance.is_finite()
+            && self.fade_distance > 0.0
     }
 
     /// How much of this light reaches `point`, as the standard material
@@ -162,35 +195,10 @@ pub(crate) struct LightsUniform {
     pub(crate) light_count: i32,
 }
 
-#[derive(Component, Clone, Copy, Deref)]
-pub struct RenderLightSlot(u32);
-
-impl RenderLightSlot {
-    pub(crate) fn update_slot(&mut self, new_slot: u32) {
-        self.0 = new_slot;
-    }
-}
-
-// Re-uploads `entity`'s `RenderLight` immediately. Needed anywhere a
-// `RenderLight` field is mutated through `RestrictedWorld` (component
-// lifecycle callbacks) rather than a `Query<&mut RenderLight>` — the former
-// bypasses `Mut`'s change-tick marking, so `update_changed_lights`'s
-// `Changed<RenderLight>` filter would never pick the write up otherwise.
-fn push_render_light_to_gpu(world: &concerto_ecs::world::RestrictedWorld<'_>, entity: Entity) {
-    if let (Some(render_light), Some(render_light_slot), Some(lights), Some(queue)) = (
-        world.get_component_for_entity::<RenderLight>(entity),
-        world.get_component_for_entity::<RenderLightSlot>(entity),
-        world.get_resource::<RenderLights>(),
-        world.get_resource::<RenderQueue>(),
-    ) {
-        lights.write_buffer(queue, render_light, *render_light_slot);
-    }
-}
-
 #[derive(Component)]
 pub(crate) struct RenderShadowsEnabled(pub(crate) bool);
 
-#[derive(ShaderType, Clone, Copy, PartialEq)]
+#[derive(Component, ShaderType, Clone, Copy, PartialEq)]
 pub struct RenderLight {
     pub(crate) translation: Vec3,
     pub(crate) intensity: f32,
@@ -203,6 +211,7 @@ pub struct RenderLight {
     pub(crate) shadow_layer: i32,
     pub(crate) range: f32,
     pub(crate) shadow_far: f32,
+    pub(crate) fade_distance: f32,
 }
 
 impl RenderLight {
@@ -221,6 +230,11 @@ impl RenderLight {
             LightType::Point => point_shadow_far(light.range),
             _ => 0.0,
         };
+        self.fade_distance = if light.fades() {
+            light.fade_distance
+        } else {
+            0.0
+        };
         self
     }
 
@@ -235,147 +249,159 @@ impl RenderLight {
             shadow_layer: -1,
             range: 0.0,
             shadow_far: 0.0,
+            fade_distance: 0.0,
         }
-    }
-}
-
-impl Component for RenderLight {
-    fn on_add() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            let slot = if let Some(lights) = world.get_resource_mut::<RenderLights>() {
-                match lights.push_light(context.entity) {
-                    Some(slot) => slot,
-                    None => {
-                        log::warn!(
-                            "light limit of {MAX_LIGHTS} reached; the light is not rendered"
-                        );
-                        return;
-                    }
-                }
-            } else {
-                return;
-            };
-
-            world.insert(slot, context.entity);
-
-            if let (Some(lights), Some(queue)) = (
-                world.get_resource::<RenderLights>(),
-                world.get_resource::<RenderQueue>(),
-            ) {
-                lights.write_count(queue);
-            }
-        })
-    }
-
-    fn on_remove() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            let Some(&slot) = world.get_component_for_entity::<RenderLightSlot>(context.entity)
-            else {
-                return;
-            };
-
-            let moved_entity = if let Some(lights) = world.get_resource_mut::<RenderLights>() {
-                lights.swap_remove_light(&slot)
-            } else {
-                return;
-            };
-
-            world.remove_component::<RenderLightSlot>(context.entity);
-
-            if let Some(moved_entity) = moved_entity {
-                if let Some(moved_slot) =
-                    world.get_component_for_entity_mut::<RenderLightSlot>(moved_entity)
-                {
-                    moved_slot.update_slot(*slot);
-                }
-
-                push_render_light_to_gpu(&world, moved_entity);
-            }
-
-            if let (Some(lights), Some(queue)) = (
-                world.get_resource::<RenderLights>(),
-                world.get_resource::<RenderQueue>(),
-            ) {
-                lights.write_count(queue);
-            }
-        })
     }
 }
 
 #[derive(Resource)]
 pub(crate) struct RenderLights {
     pub(crate) buffer: Buffer,
-    pub(crate) slots: Vec<Entity>,
+    pub(crate) written: Vec<RenderLight>,
 }
 
 impl RenderLights {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let lights = LightsUniform {
-            lights: [RenderLight::zeroed(); MAX_LIGHTS],
-            light_count: 0,
-        };
-
-        let mut buffer = UniformBuffer::new(Vec::new());
-        buffer.write(&lights).unwrap();
-
         let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("lights_buffer"),
-            contents: &buffer.into_inner(),
+            contents: &lights_uniform_bytes(&[]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         Self {
             buffer: lights_buffer,
-            slots: Vec::new(),
+            written: Vec::new(),
         }
     }
 
-    pub(crate) fn write_buffer(
-        &self,
-        queue: &wgpu::Queue,
-        light: &RenderLight,
-        offset: RenderLightSlot,
-    ) {
-        let slot_offset = light.size().get() * *offset as u64;
-
-        let mut buffer = UniformBuffer::new(Vec::new());
-        buffer.write(light).unwrap();
-        queue.write_buffer(&self.buffer, slot_offset, &buffer.into_inner());
-    }
-
-    pub(crate) fn write_count(&self, queue: &wgpu::Queue) {
-        let count_offset = RenderLight::SHADER_SIZE.get() * MAX_LIGHTS as u64;
-        let count = self.slots.len() as i32;
-
-        let mut buffer = UniformBuffer::new(Vec::new());
-        buffer.write(&count).unwrap();
-        queue.write_buffer(&self.buffer, count_offset, &buffer.into_inner());
-    }
-
-    pub(crate) fn push_light(&mut self, light: Entity) -> Option<RenderLightSlot> {
-        let slot = next_light_slot(self.slots.len())?;
-        self.slots.push(light);
-        Some(slot)
-    }
-
-    pub(crate) fn swap_remove_light(&mut self, slot: &RenderLightSlot) -> Option<Entity> {
-        let index = **slot as usize;
-        self.slots.swap_remove(index);
-        self.slots.get(index).copied()
+    fn write(&mut self, queue: &wgpu::Queue, lights: Vec<RenderLight>) {
+        queue.write_buffer(&self.buffer, 0, &lights_uniform_bytes(&lights));
+        self.written = lights;
     }
 }
 
-fn next_light_slot(len: usize) -> Option<RenderLightSlot> {
-    (len < MAX_LIGHTS).then_some(RenderLightSlot(len as u32))
+fn lights_uniform_bytes(listed: &[RenderLight]) -> Vec<u8> {
+    let mut lights = [RenderLight::zeroed(); MAX_LIGHTS];
+    lights[..listed.len()].copy_from_slice(listed);
+    let uniform = LightsUniform {
+        lights,
+        light_count: listed.len() as i32,
+    };
+
+    let mut buffer = UniformBuffer::new(Vec::new());
+    buffer.write(&uniform).unwrap();
+    buffer.into_inner()
 }
 
-pub(crate) fn update_changed_lights(
-    lights: Query<(&RenderLight, &RenderLightSlot), Changed<RenderLight>>,
-    lights_buffer: Res<RenderLights>,
-    queue: Res<RenderQueue>,
+#[derive(Resource, Default)]
+pub(crate) struct VisibleLights {
+    pub(crate) entities: Vec<Entity>,
+}
+
+impl VisibleLights {
+    pub(crate) fn contains(&self, entity: Entity) -> bool {
+        self.entities
+            .binary_search_by_key(&entity_order(&entity), entity_order)
+            .is_ok()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct EntityOrder {
+    index: u32,
+    generation: u32,
+}
+
+pub(crate) fn entity_order(entity: &Entity) -> EntityOrder {
+    EntityOrder {
+        index: entity.index(),
+        generation: entity.generation().get(),
+    }
+}
+
+struct LightView {
+    frustum: Frustum,
+    position: Vec3,
+}
+
+impl LightView {
+    fn sees(&self, light: &RenderLight) -> bool {
+        if light.light_type == LightType::Directional.index() {
+            return true;
+        }
+        if light.fade_distance > 0.0
+            && self.position.distance(light.translation) >= light.fade_distance
+        {
+            return false;
+        }
+        if light.range > 0.0 {
+            self.frustum
+                .intersects_sphere(light.translation, light.range)
+        } else {
+            true
+        }
+    }
+}
+
+pub(crate) fn cull_lights(
+    lights: Query<(Entity, &RenderLight)>,
+    cameras: Query<&RenderCamera>,
+    mut visible: ResMut<VisibleLights>,
 ) {
-    for (light, slot) in lights.iter() {
-        lights_buffer.write_buffer(&queue, light, *slot);
+    let views: Vec<LightView> = cameras
+        .iter()
+        .map(|camera| LightView {
+            frustum: Frustum::from_clip_from_world(camera.camera_uniform.view_proj()),
+            position: camera.camera_uniform.view_pos(),
+        })
+        .collect();
+
+    let mut entities: Vec<Entity> = lights
+        .iter()
+        .filter(|(_, light)| views.iter().any(|view| view.sees(light)))
+        .map(|(entity, _)| entity)
+        .collect();
+    entities.sort_by_key(entity_order);
+    if visible.entities != entities {
+        visible.entities = entities;
+    }
+}
+
+pub(crate) struct LightOverflow {
+    warned: bool,
+}
+
+impl FromWorld for LightOverflow {
+    fn from_world(_: &World) -> Self {
+        Self { warned: false }
+    }
+}
+
+pub(crate) fn write_visible_lights(
+    lights: Query<&RenderLight>,
+    visible: Res<VisibleLights>,
+    mut render_lights: ResMut<RenderLights>,
+    queue: Res<RenderQueue>,
+    mut overflow: SystemLocal<LightOverflow>,
+) {
+    let mut listed: Vec<RenderLight> = visible
+        .entities
+        .iter()
+        .filter_map(|&entity| lights.get_entity(entity).map(|light| *light))
+        .collect();
+
+    let overflowing = listed.len() > MAX_LIGHTS;
+    if overflowing && !overflow.warned {
+        log::warn!(
+            "{} lights are visible and the limit is {MAX_LIGHTS}; the later ones are not rendered",
+            listed.len()
+        );
+    }
+    overflow.warned = overflowing;
+    listed.truncate(MAX_LIGHTS);
+
+    if render_lights.written != listed {
+        render_lights.write(&queue, listed);
     }
 }
 
@@ -410,16 +436,8 @@ pub(crate) fn extract_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout_test::{float_words, uniform_words};
-    use concerto_app::extractor::extract;
-    use concerto_app::schedule_groups::Extract;
-    use concerto_ecs::{
-        system::{
-            executor::single_thread::SingleThreadedExecutor,
-            schedule::{ScheduleLabel, Schedules},
-        },
-        Query, ResMut, World,
-    };
+    use crate::layout_test::{float_words, uniform_words, words};
+    use encase::ShaderSize;
     use glam::{Mat4, Quat};
 
     fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
@@ -438,6 +456,7 @@ mod tests {
             shadow_layer: -2,
             range: 14.0,
             shadow_far: 15.0,
+            fade_distance: 16.0,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]);
@@ -446,84 +465,23 @@ mod tests {
         expected.push((-2i32) as u32);
         expected.push(14.0f32.to_bits());
         expected.push(15.0f32.to_bits());
+        expected.push(16.0f32.to_bits());
 
-        assert_eq!(uniform_words(&light), expected);
-        assert_eq!(RenderLight::SHADER_SIZE.get(), 64);
-        assert_eq!(light.size().get(), 64);
+        assert_eq!(uniform_words(&light)[..17], expected);
+        assert_eq!(RenderLight::SHADER_SIZE.get(), 80);
+        assert_eq!(light.size().get(), 80);
     }
 
     #[test]
     fn lights_uniform_puts_the_count_after_every_light() {
-        let lights = LightsUniform {
-            lights: [RenderLight::zeroed(); MAX_LIGHTS],
-            light_count: 3,
-        };
+        let listed = [RenderLight::zeroed(); 3];
 
-        let words = uniform_words(&lights);
+        let words = words(&lights_uniform_bytes(&listed));
 
-        assert_eq!(lights.size().get(), 8208);
-        assert_eq!(words.len(), 2052);
-        assert_eq!(words[2048], 3);
+        assert_eq!(words.len(), 2564);
+        assert_eq!(words[2560], 3);
         assert_eq!(words[13], (-1i32) as u32);
-        assert_eq!(words[16 * 127 + 13], (-1i32) as u32);
-    }
-
-    #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
-    struct CountChanged;
-
-    #[derive(Resource, Default)]
-    struct ChangedLights(usize);
-
-    fn count_changed(
-        lights: Query<Entity, Changed<RenderLight>>,
-        mut counted: ResMut<ChangedLights>,
-    ) {
-        counted.0 = lights.iter().count();
-    }
-
-    #[test]
-    fn extracting_a_still_light_does_not_mark_its_render_light_changed() {
-        let mut main = World::new();
-        let mut render = World::new();
-        render.insert_resource(ChangedLights::default());
-        let render_entity = render.spawn((RenderLight::zeroed(), RenderShadowsEnabled(false)));
-        let light = main.spawn((
-            Light::point_light(),
-            at(Vec3::ZERO, Quat::IDENTITY),
-            RenderEntity::new(render_entity),
-        ));
-
-        let mut schedules = Schedules::default();
-        schedules.add_system(Extract, extract_lights);
-        schedules.add_system(CountChanged, count_changed);
-        let compiled = schedules.compile::<SingleThreadedExecutor>(&mut render);
-        render.insert_resource(compiled);
-
-        let frame = |main: &mut World, render: &mut World| {
-            render.tick();
-            extract(main, render);
-            render.run_schedule(CountChanged);
-            render.get_resource::<ChangedLights>().unwrap().0
-        };
-
-        assert_eq!(frame(&mut main, &mut render), 1);
-        assert_eq!(frame(&mut main, &mut render), 0);
-
-        *main
-            .get_component_for_entity_mut::<GlobalTransform>(light)
-            .unwrap() = at(Vec3::X, Quat::IDENTITY);
-        assert_eq!(frame(&mut main, &mut render), 1);
-        assert_eq!(frame(&mut main, &mut render), 0);
-    }
-
-    #[test]
-    fn no_slot_is_handed_out_past_max_lights() {
-        assert_eq!(next_light_slot(0).map(|slot| *slot), Some(0));
-        assert_eq!(
-            next_light_slot(MAX_LIGHTS - 1).map(|slot| *slot),
-            Some(MAX_LIGHTS as u32 - 1)
-        );
-        assert!(next_light_slot(MAX_LIGHTS).is_none());
+        assert_eq!(words[20 * 127 + 13], (-1i32) as u32);
     }
 
     struct Reach {
@@ -591,6 +549,71 @@ mod tests {
                 "{}: {attenuation} outside {:?}",
                 case.case,
                 case.between
+            );
+        }
+    }
+
+    struct Fade {
+        case: &'static str,
+        light: Light,
+        camera_distance: f32,
+        fade: f32,
+    }
+
+    #[test]
+    fn a_light_fades_out_over_the_last_fifth_of_its_fade_distance() {
+        let fading = || Light::point_light().with_fade_distance(10.0);
+        let fade = |case, light, camera_distance, fade| Fade {
+            case,
+            light,
+            camera_distance,
+            fade,
+        };
+        let cases = [
+            fade("no fade distance", Light::point_light(), 1000.0, 1.0),
+            fade("near the light", fading(), 1.0, 1.0),
+            fade("where the fade starts", fading(), 8.0, 1.0),
+            fade("half way through the fade", fading(), 9.0, 0.5),
+            fade("at the fade distance", fading(), 10.0, 0.0),
+            fade("past the fade distance", fading(), 50.0, 0.0),
+            fade(
+                "a spot light fades too",
+                Light::spot_light(0.4).with_fade_distance(10.0),
+                9.0,
+                0.5,
+            ),
+            fade(
+                "a directional light never fades",
+                Light::directional_light().with_fade_distance(10.0),
+                50.0,
+                1.0,
+            ),
+            fade(
+                "a negative fade distance is no fade",
+                Light {
+                    fade_distance: -5.0,
+                    ..Light::point_light()
+                },
+                50.0,
+                1.0,
+            ),
+            fade(
+                "a fade distance that is not a number is no fade",
+                Light {
+                    fade_distance: f32::NAN,
+                    ..Light::point_light()
+                },
+                50.0,
+                1.0,
+            ),
+        ];
+        for case in &cases {
+            let fade = case.light.fade_at(case.camera_distance);
+            assert!(
+                (fade - case.fade).abs() < 1e-6,
+                "{}: {fade}, expected {}",
+                case.case,
+                case.fade
             );
         }
     }
