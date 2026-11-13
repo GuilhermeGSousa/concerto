@@ -13,6 +13,8 @@ const POINT_LIGHT = 0u;
 const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
+const POINT_SHADOW_NEAR = 0.1;
+
 const PI = 3.14159265359;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
@@ -38,6 +40,7 @@ struct Light {
     cos_cone_angle: f32,
     shadow_layer: i32,
     range: f32,
+    shadow_far: f32,
 };
 
 struct Lights {
@@ -283,17 +286,17 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
             attenuation *= smoothstep(light.cos_cone_angle, cone_edge_softness, angle_cos);
         }
 
-        // Point-light shadow maps aren't rendered or sampled yet — only
-        // spot/directional casters get a real shadow factor here.
+        let geometric_normal = normalize(in.world_normal);
+        var reach = 10.0;
+        if light_type != DIRECTIONAL_LIGHT {
+            reach = length(light_delta);
+        }
+        let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
+        let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
         var shadow = 1.0;
-        if light_type != POINT_LIGHT {
-            let geometric_normal = normalize(in.world_normal);
-            var reach = 10.0;
-            if light_type != DIRECTIONAL_LIGHT {
-                reach = length(light_delta);
-            }
-            let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
-            let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
+        if light_type == POINT_LIGHT {
+            shadow = point_shadow_visibility(light, in.world_position + offset);
+        } else {
             shadow = shadow_visibility(light.shadow_layer, in.world_position + offset);
         }
 
@@ -368,6 +371,34 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
         shadow_layer,
         light_ndc.z,
     );
+}
+
+fn point_shadow_visibility(light: Light, world_position: vec3<f32>) -> f32 {
+    if light.shadow_layer < 0 {
+        return 1.0;
+    }
+
+    let from_light = world_position - light.position;
+    let extent = abs(from_light);
+    let distance = max(extent.x, max(extent.y, extent.z));
+    if distance >= light.shadow_far || distance <= POINT_SHADOW_NEAR {
+        return 1.0;
+    }
+
+    let far = light.shadow_far;
+    let depth = far * (distance - POINT_SHADOW_NEAR) / ((far - POINT_SHADOW_NEAR) * distance);
+    let direction = from_light * vec3<f32>(1.0, 1.0, -1.0);
+#ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
+    return textureSampleCompareLevel(t_shadow_point, sampler_shadow_point, direction, depth);
+#else
+    return textureSampleCompareLevel(
+        t_shadow_point,
+        sampler_shadow_point,
+        direction,
+        light.shadow_layer,
+        depth,
+    );
+#endif
 }
 
 // Trowbridge-Reitz GGX normal distribution
