@@ -207,23 +207,21 @@ impl TaskPool {
         get_results: impl Future<Output = R>,
     ) -> R {
         let execute_forever = async {
-            loop {
-                let tick_forever = async {
+            let tick_forever = async {
+                loop {
+                    scope_ticker.tick().await;
+                }
+            };
+
+            if let Some(external_ticker) = &external_ticker {
+                let tick_external_forever = async {
                     loop {
-                        scope_ticker.tick().await;
+                        external_ticker.tick().await;
                     }
                 };
-
-                if let Some(external_ticker) = &external_ticker {
-                    let tick_external_forever = async {
-                        loop {
-                            external_ticker.tick().await;
-                        }
-                    };
-                    tick_forever.or(tick_external_forever).await;
-                } else {
-                    tick_forever.await;
-                }
+                tick_forever.or(tick_external_forever).await
+            } else {
+                tick_forever.await
             }
         };
         get_results.or(execute_forever).await
