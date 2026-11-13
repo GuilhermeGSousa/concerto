@@ -1370,14 +1370,10 @@ mod tests {
             }
         }
 
-        for face in 0..6 {
-            let CubeFace { forward, up } = CUBE_FACES[face];
-            let right = forward.cross(up);
-            let facing_the_light = [
-                light + forward * 3.0,
-                light + forward * 3.0 + right,
-                light + forward * 3.0 + up,
-            ];
+        for (face, cube_face) in CUBE_FACES.iter().enumerate() {
+            let ahead = light + cube_face.forward * 3.0;
+            let right = cube_face.forward.cross(cube_face.up);
+            let facing_the_light = [ahead, ahead + right, ahead + cube_face.up];
             let projected = facing_the_light.map(|point| {
                 let clip = point_face_view_proj(light, far, face) * point.extend(1.0);
                 clip.truncate().truncate() / clip.w
