@@ -514,11 +514,14 @@ addresses are resolved against:
 Every workspace example ships its content tree with a `build.rs` that copies
 `content/` into `<exe-dir>/<pkg-name>-content/`. The executable name matches
 the package name, so native root discovery selects it automatically and the
-content trees do not collide:
+content trees do not collide. `concerto_asset_build::profile_dir` finds
+`<exe-dir>` from `OUT_DIR`, in Cargo's flat `build/<pkg>-<hash>/out` layout and
+its nested `build/<pkg>/<hash>/out` one alike:
 
 ```rust
 // build.rs — copy to <exe-dir>/<pkg-name>-content/content/
-let output_path = out_dir.ancestors().nth(3).unwrap()
+let output_path = concerto_asset_build::profile_dir(&out_dir)
+    .ok_or_else(|| anyhow::anyhow!("OUT_DIR is not under a build directory"))?
     .join(format!("{}-content", env::var("CARGO_PKG_NAME")?));
 ```
 
