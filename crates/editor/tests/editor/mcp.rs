@@ -1418,7 +1418,11 @@ fn list_assets_filters_and_pages_the_catalogue() {
     let level = fixture.scene;
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
-        until(&client, "state", |state| state.starts_with("project")).await;
+        open(&client).await;
+        until(&client, "list_assets", |assets| {
+            assets.contains("placeable")
+        })
+        .await;
         let pages = vec![
             ok(&client, "list_assets").await,
             ok_with(&client, "list_assets", json!({ "limit": 2 })).await,
@@ -1448,7 +1452,8 @@ fn list_assets_filters_and_pages_the_catalogue() {
     let entry = |address: &str, kind: &str, id: AssetId| {
         format!("{address} · {kind} · {}", id.simple_hex())
     };
-    let level = entry("content/level.gasset", "Scene", level);
+    let placeable = |line: String| format!("{line} · placeable");
+    let level = placeable(entry("content/level.gasset", "Scene", level));
     let rock = entry("content/meshes/rock.gasset", "Mesh", rock);
     let tree = entry("content/meshes/tree.gasset", "Mesh", tree);
     let bark = entry("content/textures/bark.gasset", "Texture", bark);
@@ -1829,13 +1834,24 @@ fn scene_tree_shows_the_running_game_without_its_listeners() {
         let status = ok(&client, "status").await;
         let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
         let found = ok_with(&client, "find_entities", json!({ "name": "bulb" })).await;
+        let placed = error_with(
+            &client,
+            "place_asset",
+            json!({ "asset": "content/level.gasset" }),
+        )
+        .await;
         client.cancel().await.unwrap();
-        (tree, status, ids, found)
+        (tree, status, ids, found, placed)
     }) else {
         return;
     };
 
-    let (tree, status, ids, found) = served.result;
+    let (tree, status, ids, found, placed) = served.result;
+    assert_eq!(placed["code"], "refused");
+    assert_eq!(
+        placed["message"],
+        "stop the game and open a scene to place assets"
+    );
     assert!(status.contains(" · playing"), "{status}");
     let listeners: Vec<&str> = ids["listeners"]
         .as_array()

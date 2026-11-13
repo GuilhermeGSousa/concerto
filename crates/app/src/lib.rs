@@ -42,7 +42,7 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     derived::DerivedData,
     handle::{AssetLifetimeEvent, AssetLoaded},
-    Asset, AssetId, CreatableAsset, LoadableAsset,
+    Asset, AssetId, CreatableAsset, LoadableAsset, PlaceableAsset,
 };
 use concerto_reflect::{GetTypeRegistration, Reflect};
 
@@ -57,11 +57,13 @@ pub mod edit_time;
 pub mod extractor;
 pub mod inspected_asset;
 pub mod main_schedule;
+pub mod placeable_asset;
 pub mod plugins;
 pub mod schedule_groups;
 pub mod subapp;
 
 pub use inspected_asset::{DecodedAsset, InspectedAsset, InspectedAssets};
+pub use placeable_asset::{FillPlaced, PlaceableAssets, PlaceableKind};
 pub use plugins::Plugin;
 
 /// The scene a game starts in, declared with [`App::set_startup_scene`].
@@ -181,6 +183,13 @@ impl App {
         self.get_resource_mut::<InspectedAssets>()
             .expect("InspectedAssets was just inserted")
             .insert(InspectedAsset::of::<A>());
+        self
+    }
+
+    /// Registers `A` as an asset and records it in [`PlaceableAssets`] so the editor can place it in a scene.
+    pub fn register_placeable_asset<A: PlaceableAsset>(&mut self) -> &mut Self {
+        self.register_asset::<A>();
+        placeable_asset::register::<A>(self);
         self
     }
 

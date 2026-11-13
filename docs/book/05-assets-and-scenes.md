@@ -68,6 +68,8 @@ fn spawn_hero(mut cmd: CommandQueue, assets: Res<AssetServer>) {
 scene has loaded. Other handles go in their own components: a mesh in
 `MeshComponent`, a material in `MaterialComponent`, an animation graph in
 `AnimationHandleComponent`.
+A mesh with no material, or with a `MaterialComponent` whose handle
+is nil, draws plain grey.
 
 Assets made in code are added rather than loaded:
 
@@ -95,6 +97,11 @@ fn on_mesh_loaded(mut loaded: EventReader<AssetLoaded<Mesh>>) {
     }
 }
 ```
+
+A load that fails, because the id is not in the registry, the file is missing
+or corrupt, or `on_load` returns an error, sends `AssetLoadFailed` with the id
+that was asked for. The event is the same for every asset type, and the reason
+is in the log. An `assets.add` whose `on_load` fails only logs.
 
 ## Scenes
 
@@ -140,6 +147,42 @@ it with `Default::default()` and then sets the saved fields. So must anything th
 reflection has to build from nothing: a type held in an `Option` or a `Vec`,
 and the fields of an enum's variants. Asset handles are saved as their ids,
 and entity references as positions in the scene's tree.
+
+### Making an asset placeable
+
+An asset kind that can stand in a scene as an entity says how, by implementing
+`PlaceableAsset`. `place` is handed an entity that already exists, named,
+positioned and parented, and adds to it what shows or uses the asset:
+components on the entity, children under it.
+
+```rust
+use concerto::{
+    ecs::{CommandQueue, Entity},
+    foundation::assets::{handle::AssetHandle, PlaceableAsset},
+};
+
+impl PlaceableAsset for Prop {
+    fn place(asset: &Self, handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
+        cmd.insert(PropComponent { handle }, entity);
+    }
+}
+
+app.register_placeable_asset::<Prop>();
+```
+
+`register_placeable_asset` registers the asset as `register_asset` does and
+records the kind in the `PlaceableAssets` resource. A record is for code that
+knows the kind only by its name: `request_load` starts the load and keeps the
+asset alive, `is_loaded` says when it has landed, and `fill` runs `place` on an
+entity and lets the asset go, so it lives on only through the handles `place`
+stored. A load that fails lets it go too, and `release` lets it go when the
+caller gives up on a load it asked for. Register the kind in the game's
+recipe, with its other assets, so the editor has it.
+
+The engine places one kind itself: `ScenePlugin` registers `Scene`, whose
+root nodes become children of the entity. A `Mesh` is not placeable for now;
+it reaches a scene inside a `Scene` asset or through a `MeshComponent` added
+to an entity.
 
 ## More
 

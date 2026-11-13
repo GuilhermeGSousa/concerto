@@ -48,6 +48,12 @@ impl<A: Asset> AssetLoaded<A> {
     }
 }
 
+/// Sent when a load fails, with the id that was asked for; the reason is in the log.
+#[derive(Event, Clone)]
+pub struct AssetLoadFailed {
+    pub id: AssetId,
+}
+
 pub struct StrongAssetHandle {
     pub(crate) id: AssetId,
     pub(crate) lifetime_sender: Sender<AssetLifetimeEvent>,
