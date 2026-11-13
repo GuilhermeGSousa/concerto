@@ -19,7 +19,11 @@ use crate::{
     },
     capabilities::RenderCapabilities,
     components::{
-        light::{LightType, RenderLight, RenderLights, RenderShadowsEnabled},
+        camera::RenderCamera,
+        light::{
+            LightType, PointShadowSettings, RenderLight, RenderLights, RenderShadowsEnabled,
+            POINT_SHADOW_NEAR,
+        },
         mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
         render_entity::MainEntity,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -39,7 +43,7 @@ use crate::{
 // tracks real demand via `reconcile_capacity`.
 pub(crate) const MAX_SHADOW_CASTERS: u32 = 128;
 
-const SHADOW_MAP_SIZE: u32 = 1024;
+pub(crate) const SHADOW_MAP_SIZE: u32 = 1024;
 
 // Minimum consecutive frames a pool's usage must stay below its current
 // capacity before it actually shrinks. Growth is never delayed — an
@@ -95,6 +99,7 @@ pub(crate) struct ShadowMapPool<K: ShadowMapKind> {
     pub(crate) views: Vec<wgpu::TextureView>,
     pub(crate) slots: Vec<Entity>,
     capacity: u32,
+    face_size: u32,
     min_capacity: u32,
     max_capacity: u32,
     array_view_dimension: wgpu::TextureViewDimension,
@@ -111,7 +116,11 @@ impl<K: ShadowMapKind> Resource for ShadowMapPool<K> {
 }
 
 impl<K: ShadowMapKind> ShadowMapPool<K> {
-    pub(crate) fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        capabilities: &RenderCapabilities,
+        face_size: u32,
+    ) -> Self {
         let array_view_dimension = K::array_view_dimension(capabilities);
         let is_array = matches!(
             array_view_dimension,
@@ -129,13 +138,14 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
             1
         };
 
-        let (texture, views) = Self::build_gpu_resources(device, min_capacity);
+        let (texture, views) = Self::build_gpu_resources(device, min_capacity, face_size);
 
         Self {
             texture,
             views,
             slots: Vec::new(),
             capacity: min_capacity,
+            face_size,
             min_capacity,
             max_capacity,
             array_view_dimension,
@@ -147,14 +157,15 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     fn build_gpu_resources(
         device: &wgpu::Device,
         capacity: u32,
+        face_size: u32,
     ) -> (wgpu::Texture, Vec<wgpu::TextureView>) {
         let view_count = capacity * K::VIEWS_PER_CASTER;
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(K::LABEL),
             size: wgpu::Extent3d {
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
+                width: face_size,
+                height: face_size,
                 depth_or_array_layers: view_count,
             },
             mip_level_count: 1,
@@ -198,10 +209,14 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     // Returns whether it actually resized this call, so callers can tell
     // whether anything referencing the old texture/views (namely
     // `RenderLighting`'s bind group) needs rebuilding too.
-    pub(crate) fn reconcile_capacity(&mut self, device: &wgpu::Device) -> bool {
+    pub(crate) fn reconcile_capacity(&mut self, device: &wgpu::Device, face_size: u32) -> bool {
         let needed = (self.slots.len() as u32).max(self.min_capacity);
 
-        if needed > self.capacity {
+        if face_size != self.face_size {
+            self.face_size = face_size;
+            self.resize_to(device, needed.max(self.capacity));
+            true
+        } else if needed > self.capacity {
             self.resize_to(device, needed);
             true
         } else if needed < self.capacity {
@@ -223,7 +238,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     }
 
     fn resize_to(&mut self, device: &wgpu::Device, capacity: u32) {
-        let (texture, views) = Self::build_gpu_resources(device, capacity);
+        let (texture, views) = Self::build_gpu_resources(device, capacity, self.face_size);
         self.texture = texture;
         self.views = views;
         self.capacity = capacity;
@@ -242,33 +257,52 @@ fn pool_max_capacity(is_array: bool, views_per_caster: u32, max_texture_array_la
 pub(crate) type RenderSpotDirectionalShadowMaps = ShadowMapPool<SpotDirectionalShadowKind>;
 pub(crate) type RenderPointShadowMaps = ShadowMapPool<PointShadowKind>;
 
+#[derive(Clone, Copy)]
+struct ShadowCandidate {
+    entity: Entity,
+    light_type: u32,
+    enabled: bool,
+    camera_distance: f32,
+}
+
+#[derive(Debug, PartialEq)]
+struct AssignedLayers {
+    spot_directional: Vec<Entity>,
+    point: Vec<Entity>,
+}
+
 fn assign_layers(
-    lights: &[(Entity, u32, bool)],
+    lights: &[ShadowCandidate],
     spot_directional_limit: u32,
     point_limit: u32,
-) -> (Vec<Entity>, Vec<Entity>) {
-    let mut spot_directional = Vec::new();
-    let mut point = Vec::new();
-    for &(entity, light_type, enabled) in lights {
-        if !enabled {
-            continue;
-        }
-        if light_type == LightType::Point.index() {
-            point.push(entity);
-        } else {
-            spot_directional.push(entity);
-        }
-    }
+) -> AssignedLayers {
+    let by_entity = |entity: &Entity| (entity.index(), entity.generation());
 
-    for (casters, limit) in [
-        (&mut spot_directional, spot_directional_limit),
-        (&mut point, point_limit),
-    ] {
-        casters.sort_by_key(|entity| (entity.index(), entity.generation()));
-        casters.truncate(limit as usize);
-    }
+    let mut spot_directional: Vec<Entity> = lights
+        .iter()
+        .filter(|light| light.enabled && light.light_type != LightType::Point.index())
+        .map(|light| light.entity)
+        .collect();
+    spot_directional.sort_by_key(by_entity);
+    spot_directional.truncate(spot_directional_limit as usize);
 
-    (spot_directional, point)
+    let mut nearest: Vec<&ShadowCandidate> = lights
+        .iter()
+        .filter(|light| light.enabled && light.light_type == LightType::Point.index())
+        .collect();
+    nearest.sort_by(|a, b| {
+        a.camera_distance
+            .total_cmp(&b.camera_distance)
+            .then_with(|| by_entity(&a.entity).cmp(&by_entity(&b.entity)))
+    });
+    nearest.truncate(point_limit as usize);
+    let mut point: Vec<Entity> = nearest.iter().map(|light| light.entity).collect();
+    point.sort_by_key(by_entity);
+
+    AssignedLayers {
+        spot_directional,
+        point,
+    }
 }
 
 fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
@@ -280,21 +314,35 @@ fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
 
 pub(crate) fn assign_shadow_layers(
     lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
+    cameras: Query<&RenderCamera>,
+    settings: Res<PointShadowSettings>,
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
 ) {
-    let casters: Vec<(Entity, u32, bool)> = lights
+    let camera_positions: Vec<Vec3> = cameras
         .iter()
-        .map(|(entity, light, enabled)| (entity, light.light_type, enabled.0))
+        .map(|camera| camera.camera_uniform.view_pos())
+        .collect();
+    let candidates: Vec<ShadowCandidate> = lights
+        .iter()
+        .map(|(entity, light, enabled)| ShadowCandidate {
+            entity,
+            light_type: light.light_type,
+            enabled: enabled.0,
+            camera_distance: camera_positions
+                .iter()
+                .map(|position| position.distance_squared(light.translation))
+                .fold(f32::INFINITY, f32::min),
+        })
         .collect();
 
-    let (spot_directional, point) = assign_layers(
-        &casters,
+    let assigned = assign_layers(
+        &candidates,
         spot_directional_shadow_maps.max_capacity,
-        point_shadow_maps.max_capacity,
+        settings.max_casters.min(point_shadow_maps.max_capacity),
     );
-    spot_directional_shadow_maps.slots = spot_directional;
-    point_shadow_maps.slots = point;
+    spot_directional_shadow_maps.slots = assigned.spot_directional;
+    point_shadow_maps.slots = assigned.point;
 
     for (entity, mut light, _) in lights.iter() {
         let slots = if light.light_type == LightType::Point.index() {
@@ -462,6 +510,7 @@ impl RenderLighting {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resize_shadow_maps(
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
@@ -470,9 +519,11 @@ pub(crate) fn resize_shadow_maps(
     lighting_layout: Res<LightingLayout>,
     lights: Res<RenderLights>,
     shadow_view_projs: Res<RenderShadowViewProjs>,
+    settings: Res<PointShadowSettings>,
 ) {
-    let spot_directional_resized = spot_directional_shadow_maps.reconcile_capacity(&device);
-    let point_resized = point_shadow_maps.reconcile_capacity(&device);
+    let spot_directional_resized =
+        spot_directional_shadow_maps.reconcile_capacity(&device, SHADOW_MAP_SIZE);
+    let point_resized = point_shadow_maps.reconcile_capacity(&device, settings.face_size.max(1));
 
     if spot_directional_resized || point_resized {
         lighting.rebuild(
@@ -583,11 +634,119 @@ fn shadow_view_proj(light: &RenderLight) -> Mat4 {
     }
 }
 
+struct CubeFace {
+    forward: Vec3,
+    up: Vec3,
+}
+
+const CUBE_FACES: [CubeFace; 6] = [
+    CubeFace {
+        forward: Vec3::X,
+        up: Vec3::Y,
+    },
+    CubeFace {
+        forward: Vec3::NEG_X,
+        up: Vec3::Y,
+    },
+    CubeFace {
+        forward: Vec3::Y,
+        up: Vec3::Z,
+    },
+    CubeFace {
+        forward: Vec3::NEG_Y,
+        up: Vec3::NEG_Z,
+    },
+    CubeFace {
+        forward: Vec3::NEG_Z,
+        up: Vec3::Y,
+    },
+    CubeFace {
+        forward: Vec3::Z,
+        up: Vec3::Y,
+    },
+];
+
+fn point_face_view_proj(translation: Vec3, far: f32, face: usize) -> Mat4 {
+    let CubeFace { forward, up } = CUBE_FACES[face];
+    let view = glam::camera::rh::view::look_at_mat4(translation, translation + forward, up);
+    let proj = glam::camera::rh::proj::directx::perspective(
+        std::f32::consts::FRAC_PI_2,
+        1.0,
+        POINT_SHADOW_NEAR,
+        far,
+    );
+    proj * view
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ShadowPool {
+    SpotDirectional,
+    Point,
+}
+
+#[derive(Clone, Copy)]
+struct ShadowView {
+    light: Entity,
+    pool: ShadowPool,
+    layer: usize,
+}
+
+impl ShadowView {
+    fn clip_from_world(&self, light: &RenderLight) -> Mat4 {
+        match self.pool {
+            ShadowPool::SpotDirectional => shadow_view_proj(light),
+            ShadowPool::Point => point_face_view_proj(
+                light.translation,
+                light.shadow_far,
+                self.layer % PointShadowKind::VIEWS_PER_CASTER as usize,
+            ),
+        }
+    }
+
+    fn target<'a>(
+        &self,
+        spot_directional: &'a RenderSpotDirectionalShadowMaps,
+        point: &'a RenderPointShadowMaps,
+    ) -> Option<&'a TextureView> {
+        match self.pool {
+            ShadowPool::SpotDirectional => spot_directional.get_view(self.layer),
+            ShadowPool::Point => point.get_view(self.layer),
+        }
+    }
+}
+
+fn shadow_views(
+    spot_directional: &RenderSpotDirectionalShadowMaps,
+    point: &RenderPointShadowMaps,
+) -> Vec<ShadowView> {
+    let faces = PointShadowKind::VIEWS_PER_CASTER as usize;
+    let spot_directional_views =
+        spot_directional
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(layer, &light)| ShadowView {
+                light,
+                pool: ShadowPool::SpotDirectional,
+                layer,
+            });
+    let point_views = point.slots.iter().enumerate().flat_map(|(slot, &light)| {
+        (0..faces).map(move |face| ShadowView {
+            light,
+            pool: ShadowPool::Point,
+            layer: slot * faces + face,
+        })
+    });
+    spot_directional_views.chain(point_views).collect()
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct ShadowViewBatches(pub(crate) Vec<ViewBatches<AssetId>>);
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn queue_shadow_meshes(
     spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
+    point_shadow_maps: Res<RenderPointShadowMaps>,
     lights: Query<&RenderLight>,
     render_mesh_query: Query<(&MainEntity, Option<&RenderSkeletonComponent>)>,
     render_mesh_instances: Res<RenderMeshInstances>,
@@ -598,11 +757,11 @@ pub(crate) fn queue_shadow_meshes(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
-    let slots = &spot_directional_shadow_maps.slots;
+    let views = shadow_views(&spot_directional_shadow_maps, &point_shadow_maps);
     draw_stats
         .shadow_layers
-        .resize(slots.len(), ViewDrawStats::default());
-    for (layer, &entity) in slots.iter().enumerate() {
+        .resize(views.len(), ViewDrawStats::default());
+    for (layer, view) in views.iter().enumerate() {
         while shadow_view_batches.0.len() <= layer {
             shadow_view_batches
                 .0
@@ -610,12 +769,12 @@ pub(crate) fn queue_shadow_meshes(
         }
         let batches = &mut shadow_view_batches.0[layer];
 
-        let Some(light) = lights.get_entity(entity) else {
+        let Some(light) = lights.get_entity(view.light) else {
             batches.bins = ViewBins::default();
             continue;
         };
 
-        let frustum = Frustum::from_clip_from_world(shadow_view_proj(light));
+        let frustum = Frustum::from_clip_from_world(view.clip_from_world(light));
         let candidates = render_mesh_query
             .iter()
             .filter_map(|(main_entity, skeleton)| {
@@ -645,7 +804,7 @@ pub(crate) fn render_shadow_maps(
     pipeline: Res<ShadowPipeline>,
     mut device: ResMut<RenderDevice>,
     spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
-    _point_shadow_maps: Res<RenderPointShadowMaps>,
+    point_shadow_maps: Res<RenderPointShadowMaps>,
     mut caster_view_projs: ResMut<RenderShadowCasterViewProjs>,
     queue: Res<RenderQueue>,
     lights: Query<&RenderLight>,
@@ -653,12 +812,16 @@ pub(crate) fn render_shadow_maps(
     skins: Res<SkinUniforms>,
     shadow_view_batches: Res<ShadowViewBatches>,
 ) {
-    for (layer, &entity) in spot_directional_shadow_maps.slots.iter().enumerate() {
-        let Some(light) = lights.get_entity(entity) else {
+    for (layer, shadow_view) in shadow_views(&spot_directional_shadow_maps, &point_shadow_maps)
+        .iter()
+        .enumerate()
+    {
+        let Some(light) = lights.get_entity(shadow_view.light) else {
             continue;
         };
 
-        let Some(view) = spot_directional_shadow_maps.get_view(layer) else {
+        let Some(view) = shadow_view.target(&spot_directional_shadow_maps, &point_shadow_maps)
+        else {
             continue;
         };
 
@@ -669,7 +832,7 @@ pub(crate) fn render_shadow_maps(
             ));
         }
         let view_proj = &caster_view_projs.0[layer];
-        view_proj.write(&queue, shadow_view_proj(light));
+        view_proj.write(&queue, shadow_view.clip_from_world(light));
 
         let encoder = device.command_encoder();
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -740,6 +903,7 @@ mod tests {
     };
     use concerto_mesh::{primitives::cuboid, MeshComponent};
     use concerto_window::plugin::{Window, WindowPlugin};
+    use glam::Vec2;
 
     use crate::layout_test::{float_words, words};
 
@@ -968,31 +1132,36 @@ mod tests {
 
     const LIMIT: u32 = MAX_SHADOW_CASTERS;
 
-    #[derive(Clone, Copy)]
-    struct Caster {
-        entity: Entity,
-        light_type: u32,
-        shadows: bool,
-    }
-
-    fn caster(entity: Entity, light_type: u32, shadows: bool) -> Caster {
-        Caster {
+    fn caster(entity: Entity, light_type: u32, enabled: bool) -> ShadowCandidate {
+        ShadowCandidate {
             entity,
             light_type,
-            shadows,
+            enabled,
+            camera_distance: f32::INFINITY,
+        }
+    }
+
+    fn point_at(entity: Entity, camera_distance: f32) -> ShadowCandidate {
+        ShadowCandidate {
+            camera_distance,
+            ..caster(entity, point(), true)
         }
     }
 
     struct Assignment {
         case: &'static str,
-        lights: Vec<Caster>,
+        lights: Vec<ShadowCandidate>,
         spot_limit: u32,
         point_limit: u32,
         spots: Vec<Entity>,
         points: Vec<Entity>,
     }
 
-    fn assignment(case: &'static str, lights: Vec<Caster>, spots: Vec<Entity>) -> Assignment {
+    fn assignment(
+        case: &'static str,
+        lights: Vec<ShadowCandidate>,
+        spots: Vec<Entity>,
+    ) -> Assignment {
         Assignment {
             case,
             lights,
@@ -1004,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn shadowed_lights_take_layers_in_entity_order_in_their_pool_up_to_its_limit() {
+    fn shadowed_lights_take_layers_in_their_pool_up_to_its_limit_points_nearest_a_camera_first() {
         let mut world = World::new();
         let [a, b, c] = [world.spawn(()), world.spawn(()), world.spawn(())];
         let cases = [
@@ -1063,6 +1232,39 @@ mod tests {
                     vec![a, b],
                 )
             },
+            Assignment {
+                point_limit: 2,
+                points: vec![b, c],
+                ..assignment(
+                    "the point lights nearest a camera win",
+                    vec![point_at(a, 25.0), point_at(b, 1.0), point_at(c, 9.0)],
+                    vec![],
+                )
+            },
+            Assignment {
+                point_limit: 2,
+                points: vec![a, c],
+                ..assignment(
+                    "the winners keep entity order",
+                    vec![point_at(c, 1.0), point_at(b, 16.0), point_at(a, 4.0)],
+                    vec![],
+                )
+            },
+            Assignment {
+                point_limit: 1,
+                points: vec![b],
+                ..assignment(
+                    "a nearer point light without shadows does not count",
+                    vec![
+                        ShadowCandidate {
+                            enabled: false,
+                            ..point_at(a, 1.0)
+                        },
+                        point_at(b, 4.0),
+                    ],
+                    vec![],
+                )
+            },
             assignment(
                 "a shuffled order",
                 vec![
@@ -1083,20 +1285,105 @@ mod tests {
             ),
         ];
         for case in &cases {
-            let lights: Vec<_> = case
-                .lights
-                .iter()
-                .map(|light| (light.entity, light.light_type, light.shadows))
-                .collect();
-            let (spots, points) = assign_layers(&lights, case.spot_limit, case.point_limit);
-            assert_eq!(spots, case.spots, "{}", case.case);
-            assert_eq!(points, case.points, "{}", case.case);
+            let assigned = assign_layers(&case.lights, case.spot_limit, case.point_limit);
+            assert_eq!(assigned.spot_directional, case.spots, "{}", case.case);
+            assert_eq!(assigned.point, case.points, "{}", case.case);
             assert_eq!(
-                assign_layers(&lights, case.spot_limit, case.point_limit),
-                (spots, points),
+                assign_layers(&case.lights, case.spot_limit, case.point_limit),
+                assigned,
                 "{}: the same lights give the same layers",
                 case.case
             );
+        }
+    }
+
+    struct CubeTexel {
+        face: usize,
+        uv: Vec2,
+    }
+
+    fn cube_texel(direction: Vec3) -> CubeTexel {
+        let abs = direction.abs();
+        let (face, sc, tc, major) = if abs.x >= abs.y && abs.x >= abs.z {
+            if direction.x > 0.0 {
+                (0, -direction.z, -direction.y, abs.x)
+            } else {
+                (1, direction.z, -direction.y, abs.x)
+            }
+        } else if abs.y >= abs.z {
+            if direction.y > 0.0 {
+                (2, direction.x, direction.z, abs.y)
+            } else {
+                (3, direction.x, -direction.z, abs.y)
+            }
+        } else if direction.z > 0.0 {
+            (4, direction.x, -direction.y, abs.z)
+        } else {
+            (5, -direction.x, -direction.y, abs.z)
+        };
+        CubeTexel {
+            face,
+            uv: (Vec2::new(sc, tc) / major + Vec2::ONE) * 0.5,
+        }
+    }
+
+    fn shader_point_depth(distance: f32, far: f32) -> f32 {
+        far * (distance - POINT_SHADOW_NEAR) / ((far - POINT_SHADOW_NEAR) * distance)
+    }
+
+    #[test]
+    fn each_cube_face_renders_the_texels_the_shader_samples_without_mirroring() {
+        let light = Vec3::new(2.0, 3.0, -1.0);
+        let far = 12.0;
+        let axes = [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ];
+        let offsets = [Vec2::new(-0.6, 0.4), Vec2::new(0.5, -0.3), Vec2::ZERO];
+        for axis in axes {
+            let across = axis.any_orthonormal_vector();
+            let along = axis.cross(across);
+            for offset in offsets {
+                let direction = (axis + across * offset.x + along * offset.y) * 4.0;
+                let sampled = cube_texel(direction * Vec3::new(1.0, 1.0, -1.0));
+                let clip = point_face_view_proj(light, far, sampled.face)
+                    * (light + direction).extend(1.0);
+                let ndc = clip.truncate() / clip.w;
+                let uv = Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+                assert!(
+                    uv.abs_diff_eq(sampled.uv, 1e-5),
+                    "{direction}: face {} draws it at {uv}, the shader samples {}",
+                    sampled.face,
+                    sampled.uv
+                );
+                let distance = direction.abs().max_element();
+                assert!(
+                    (ndc.z - shader_point_depth(distance, far)).abs() < 1e-5,
+                    "{direction}: depth {} against {}",
+                    ndc.z,
+                    shader_point_depth(distance, far)
+                );
+            }
+        }
+
+        for face in 0..6 {
+            let CubeFace { forward, up } = CUBE_FACES[face];
+            let right = forward.cross(up);
+            let facing_the_light = [
+                light + forward * 3.0,
+                light + forward * 3.0 + right,
+                light + forward * 3.0 + up,
+            ];
+            let projected = facing_the_light.map(|point| {
+                let clip = point_face_view_proj(light, far, face) * point.extend(1.0);
+                clip.truncate().truncate() / clip.w
+            });
+            let area = (projected[1] - projected[0]).perp_dot(projected[2] - projected[0]);
+            assert!(area > 0.0, "face {face} mirrors its triangles");
         }
     }
 
