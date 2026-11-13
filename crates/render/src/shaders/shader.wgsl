@@ -357,17 +357,20 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
         return 1.0; // Outside the light's shadow frustum: treat as unshadowed.
     }
 
-    // Hardware PCF: the comparison sampler returns a bilinear-filtered
-    // fraction of samples passing `depth_ref <= stored_depth`, giving
-    // softened edges for one tap. A wider multi-tap kernel would soften
-    // further but isn't implemented yet.
-    return textureSampleCompareLevel(
-        t_shadow_spot_directional,
-        sampler_shadow_spot_directional,
-        shadow_uv,
-        shadow_layer,
-        light_ndc.z,
-    );
+    let texel = 1.0 / vec2<f32>(textureDimensions(t_shadow_spot_directional));
+    var lit = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            lit += textureSampleCompareLevel(
+                t_shadow_spot_directional,
+                sampler_shadow_spot_directional,
+                shadow_uv + vec2<f32>(f32(x), f32(y)) * texel,
+                shadow_layer,
+                light_ndc.z,
+            );
+        }
+    }
+    return lit / 9.0;
 }
 
 // Trowbridge-Reitz GGX normal distribution
