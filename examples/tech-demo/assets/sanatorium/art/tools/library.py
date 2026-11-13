@@ -37,7 +37,7 @@ MODELS = {
     "secretary_desk": dict(size=(1.6, 0.75, 1.1), tex=1024),
     "signpost": dict(height=2.56, tex=512),
     "sled": dict(size=(0.63, 2.4, 0.48), tex=512),
-    "spruce": dict(height=11.0, tex=1024, thin=0.6, two_sided=True),
+    "spruce": dict(height=11.0, tex=1024, two_sided=True),
     "suitcase": dict(size=(0.68, 0.22, 0.5), tex=512),
     "tiled_stove": dict(height=2.0, tex=1024, glow=2.0),
     "trunk": dict(size=(1.0, 0.6, 0.6), tex=512),
@@ -46,13 +46,65 @@ MODELS = {
     "wayside_shrine": dict(height=2.5, tex=1024),
     "wheelchair": dict(size=(0.6, 0.9, 1.02), tex=1024),
     "workbench": dict(size=(2.0, 0.8, 1.1), tex=1024),
+    "door_leaf": dict(source="door_room", cut=((0, 0.06, 0.94), (2, 0.0, 0.96)),
+                      size=(1.0, 0.06, 2.1), origin="wall", tex=1024),
+    "door_oak_leaf": dict(source="door_entrance", cut=((0, 0.06, 0.5), (2, 0.0, 0.95)),
+                          size=(1.0, 0.07, 2.1), origin="wall", tex=1024),
 }
+
+
+BUDGET = 8000
+TRIANGLES = {
+    "spruce": 4000,
+    "cure_chair": 3000,
+    "filing_cabinet": 1500,
+    "radiator": 1500,
+    "door_leaf": 800,
+    "door_oak_leaf": 800,
+    "patient_lying": 3000,
+    "wheelchair": 6000,
+    "boiler": 15000,
+    "crutch": 1200,
+    "lamp_post": 2500,
+    "bed": 5000,
+    "bed_stripped": 5000,
+    "funicular_car": 20000,
+}
+
+
+def triangles(me):
+    return sum(len(p.vertices) - 2 for p in me.polygons)
 
 
 def bounds(me):
     lo = Vector((min(v.co[i] for v in me.vertices) for i in range(3)))
     hi = Vector((max(v.co[i] for v in me.vertices) for i in range(3)))
     return lo, hi
+
+
+def cut(ob, planes):
+    import bmesh
+    me = ob.data
+    for axis, low, high in planes:
+        lo, hi = bounds(me)
+        span = hi[axis] - lo[axis]
+        for at, keep_above in ((lo[axis] + low * span, True), (lo[axis] + high * span, False)):
+            if (keep_above and low <= 0.0) or (not keep_above and high >= 1.0):
+                continue
+            bm = bmesh.new()
+            bm.from_mesh(me)
+            normal = Vector((0.0, 0.0, 0.0))
+            normal[axis] = 1.0 if keep_above else -1.0
+            point = Vector((0.0, 0.0, 0.0))
+            point[axis] = at
+            geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
+            result = bmesh.ops.bisect_plane(bm, geom=geom, plane_co=point, plane_no=normal, clear_inner=True)
+            edges = [e for e in result["geom_cut"] if isinstance(e, bmesh.types.BMEdge)]
+            if edges:
+                bmesh.ops.holes_fill(bm, edges=edges, sides=0)
+            bm.to_mesh(me)
+            bm.free()
+    me.update()
 
 
 def scale_for(spec, size):
@@ -108,7 +160,8 @@ def main(raw_dir, out_dir, only):
     os.makedirs(out_dir, exist_ok=True)
     done = []
     for name, spec in MODELS.items():
-        src = os.path.join(raw_dir, name, f"{name}.glb")
+        source = spec.get("source", name)
+        src = os.path.join(raw_dir, source, f"{source}.glb")
         if not os.path.exists(src) or (only and name not in only):
             continue
         bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -124,9 +177,12 @@ def main(raw_dir, out_dir, only):
             bpy.ops.object.join()
         ob = bpy.context.view_layer.objects.active
         ob.name = ob.data.name = f"san.{name}"
-        if spec.get("thin"):
+        if spec.get("cut"):
+            cut(ob, spec["cut"])
+        budget = TRIANGLES.get(name, BUDGET)
+        if triangles(ob.data) > budget:
             thin = ob.modifiers.new("thin", "DECIMATE")
-            thin.ratio = spec["thin"]
+            thin.ratio = budget / triangles(ob.data)
             bpy.ops.object.modifier_apply(modifier=thin.name)
         fit(ob, spec)
         dress(ob, name, spec, raw_dir)
