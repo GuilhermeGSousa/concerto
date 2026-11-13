@@ -7,13 +7,17 @@ use crate::{
     components::{
         camera::{extract_cameras, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
-        light::{extract_lights, update_changed_lights, Light, RenderLights},
+        light::{
+            extract_lights, extract_point_shadow_settings, update_changed_lights, Light,
+            PointShadowSettings, RenderLights,
+        },
         material::MaterialComponent,
         mesh::{extract_meshes, RenderMeshInstances},
         render_entity::{extract, SyncWithRenderWorld},
         shadows::{
             assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
             RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
+            SHADOW_MAP_SIZE,
         },
         skeleton::{extract_skeletons, SkinUniforms},
         visibility::{NoFrustumCulling, NotShadowCaster, RenderLayers},
@@ -102,6 +106,9 @@ impl Plugin for RenderPlugin {
             .is_some();
 
         register_render_asset_budget(app);
+        if app.get_resource::<PointShadowSettings>().is_none() {
+            app.insert_resource(PointShadowSettings::default());
+        }
         app.register_plugin(RenderAssetPlugin::<RenderMesh>::new())
             .register_plugin(RenderAssetPlugin::<RenderTexture>::new());
         app.register_asset::<Mesh>()
@@ -130,6 +137,7 @@ impl Plugin for RenderPlugin {
         app.add_render_system(Extract, extract_cameras)
             .add_render_system(Extract, extract_meshes)
             .add_render_system(Extract, extract_lights)
+            .add_render_system(Extract, extract_point_shadow_settings)
             .add_render_system(Extract, extract_skeletons);
 
         if has_window {
@@ -235,9 +243,17 @@ impl Plugin for RenderPlugin {
         let lighting_layout = LightingLayout::new(&device, &capabilities);
 
         let render_lights = RenderLights::new(&device);
+        let point_shadow_settings = app
+            .get_resource::<PointShadowSettings>()
+            .copied()
+            .unwrap_or_default();
         let render_spot_directional_shadow_maps =
-            RenderSpotDirectionalShadowMaps::new(&device, &capabilities);
-        let render_point_shadow_maps = RenderPointShadowMaps::new(&device, &capabilities);
+            RenderSpotDirectionalShadowMaps::new(&device, &capabilities, SHADOW_MAP_SIZE);
+        let render_point_shadow_maps = RenderPointShadowMaps::new(
+            &device,
+            &capabilities,
+            point_shadow_settings.face_size.max(1),
+        );
         let render_shadow_view_projs = RenderShadowViewProjs::new(&device);
         let render_lighting = RenderLighting::new(
             &device,
@@ -272,6 +288,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_lights)
             .insert_resource(render_spot_directional_shadow_maps)
             .insert_resource(render_point_shadow_maps)
+            .insert_resource(point_shadow_settings)
             .insert_resource(render_shadow_view_projs)
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
