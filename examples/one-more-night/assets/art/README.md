@@ -43,5 +43,6 @@ keeps the asset ids, so the game's `asset_id!` paths stay valid.
 ## Not here yet
 
 Shared textures (each exported file carries its own copies, so small kit
-pieces use a wood with no relief maps), the characters (still the UAL1 placeholder),
-portraits, and anything for the manor.
+pieces use a wood with no relief maps), the characters (still the UAL1 placeholder)
+and portraits. The manor has its own art, in `assets/manor`, in a different
+look: period furniture and photographic materials.

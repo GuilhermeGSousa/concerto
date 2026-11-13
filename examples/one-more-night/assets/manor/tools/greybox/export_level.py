@@ -681,7 +681,10 @@ def export_glbs(sc, out_dir):
     for ob in (nav.objects if nav else []):
         lvl = "grounds" if ob.get("room") in grounds_rooms else ob.get("level", "ground")
         sets[lvl].append(ob)
-    every = {ob for obs in sets.values() for ob in obs}
+    art = bpy.data.collections.get("Art")
+    if art and art.objects:
+        sets["art"] = list(art.objects)
+    every ={ob for obs in sets.values() for ob in obs}
     saved, muted = {}, []
     lc_nav = vl.layer_collection.children.get("Nav")
     nav_hidden = lc_nav.hide_viewport if lc_nav else None

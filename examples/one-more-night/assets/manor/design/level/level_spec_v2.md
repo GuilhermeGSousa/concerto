@@ -287,6 +287,7 @@ The greybox lives in one `manor.blend`. A headless Python script exports glTF pl
 | Acoustic link end | `acoustic.F0N.src` and `acoustic.F0N.dst` | `radius` (source end) |
 | Telephone | `phone.hall`, `phone.study` |  |
 | Spawns and beds | `spawn.guest`, `spawn.staff`, `bed.guest`, `bed.staff` |  |
+| Art | `art.<name>` in the `Art` collection: drawn, never solid. `art.<object name>` replaces that object's picture and leaves it solid, and is hidden when a feature hides the object |  |
 
 **Export:** `blender -b manor.blend -P tools/export_level.py -- out/` writes one `.glb` per level plus the manifest. The script works out each anchor's room from the volume it sits in, generates the `listen` anchors at doors, builds the anchor graph (links between anchors that can see each other inside a room, joined room to room through doors), and computes walking times.
 
