@@ -744,13 +744,17 @@ A derived type whose assets all derive, such as `MotionDatabase`, keeps the
 default.
 
 `DerivedInputs::read` reads each input's file from the content root as a load
-does. An input whose kind is a registered derived type is asked
+does, and keeps each file it reads for its own lifetime, so a host file is read
+once for every input embedded in it. An input whose kind is a registered derived type is asked
 `file_is_derived`, and refused when it answers true, with an error naming the
 input's id, its address and its kind and saying it is itself derived. A plain
 asset of a derived type is accepted, and a file of a kind that isn't derived is
 never looked at. `read_more` reads further ids into the same inputs under the
-same rules, skipping ids already read. `bytes(id)` gives the whole file and
-`decode::<T>(id)` decodes it, migrating as a load does but without `on_load`.
+same rules, skipping ids already read. `bytes(id)` gives the whole file of a
+loose input, and for an embedded one its standalone record: the bytes a loose
+file of it would have. `decode::<T>(id)` decodes either, migrating as a load
+does but without `on_load`. A key over `bytes(id)` is therefore the same for an
+asset embedded in a host file and for the same asset written as a loose file.
 
 A type is registered with `app.register_derived_asset::<A>()`, which also
 registers it as an asset. A load of it runs `on_load`. An asset that doesn't
@@ -815,8 +819,10 @@ after `--`.
    load does, and
    writes `<out>/<address>`: the original header and payload bytes, unchanged,
    plus the section. A cached blob that `apply_derived` refuses is derived
-   again, never cooked. The first failure stops the cook and fails the command,
-   naming the asset.
+   again, never cooked. An embedded asset that doesn't derive is skipped too;
+   one that derives fails the cook, with an error giving its `<address>#<name>`
+   and saying embedded assets cannot be cooked yet. No importer writes one. The
+   first failure stops the cook and fails the command, naming the asset.
 4. The cooked files are *staged*: each is copied over the file at the same
    path in what the build ships, `<exe dir>/<exe stem>-content/` natively,
    or `<dist>/` after `trunk build` for the web. A cooked file whose path the
@@ -870,6 +876,16 @@ It fails when there is no file at the address or the file holds another kind,
 keeps the header's id and provenance, writes the references and
 `kind_version` of `value`, and upserts the entry in `registry` with the same
 provenance. The next re-import of the source then overwrites the saved edit.
+
+Both refuse an address whose file holds embedded assets, and leave the file as
+it was. Such a file belongs to an import, which writes it whole; nothing
+rewrites one asset inside it. The error gives the address and the two ways on:
+save under a new name, or set `file = true` for the output in the source's
+`.import.toml` and import again, which makes that output a loose file.
+
+`read_asset_record(project_root, &entry)` reads one asset out of the tree
+whatever way it is stored: the standalone record of a registry entry, loose,
+host or embedded.
 
 ## Writing a new importer
 

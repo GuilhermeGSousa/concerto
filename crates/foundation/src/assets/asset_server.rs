@@ -35,7 +35,8 @@ use super::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
-    derived::{cook_hook, CookHook, CookReport},
+    content::asset_record,
+    derived::{cook_hook, record_is_derived, CookHook, CookReport},
     utils::try_read_relative,
 };
 
@@ -320,6 +321,16 @@ impl AssetServer {
     ) -> anyhow::Result<bool> {
         let file = pollster::block_on(try_read_relative(root, &entry.address))?
             .with_context(|| format!("no content asset at '{}'", entry.address))?;
+        if let Some(name) = entry.embedded_as.as_deref() {
+            let record = asset_record(&file, Some(name))?;
+            if record_is_derived(&entry.kind, &record)? {
+                anyhow::bail!(
+                    "{} is embedded in an import's file; embedded assets cannot be cooked yet",
+                    entry.location()
+                );
+            }
+            return Ok(false);
+        }
         let Some(cooked) = pollster::block_on(hook(entry.id, file, self.clone()))? else {
             return Ok(false);
         };

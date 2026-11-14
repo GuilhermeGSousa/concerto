@@ -4,7 +4,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::RwLock,
+    sync::{Arc, RwLock},
 };
 
 use anyhow::Context;
@@ -17,10 +17,10 @@ use super::{
 use super::{
     asset_server::AssetServer,
     content::{
-        decode_content_asset, decode_content_payload, read_content_asset_parts, ContentAssetHeader,
-        DerivedSection,
+        asset_record, decode_content_asset, decode_content_payload, read_content_asset_parts,
+        ContentAssetHeader, DerivedSection,
     },
-    registry::AssetRegistry,
+    registry::{AssetEntry, AssetRegistry},
     utils::try_read_relative,
     Asset, AssetId, ContentAssetRoot, LoadableAsset,
 };
@@ -73,14 +73,19 @@ pub(crate) fn note_derived_kind<A: DerivedData>() {
         .insert(A::name(), A::file_is_derived);
 }
 
-fn file_is_derived_check(kind: &str) -> Option<FileIsDerived> {
-    DERIVED_KINDS.read().unwrap().get(kind).copied()
+pub(crate) fn record_is_derived(kind: &str, record: &[u8]) -> anyhow::Result<bool> {
+    let Some(check) = DERIVED_KINDS.read().unwrap().get(kind).copied() else {
+        return Ok(false);
+    };
+    let parts = read_content_asset_parts(record)?;
+    check(&parts.header, parts.payload)
 }
 
-/// The files a derivation reads, each read whole from the content root and keyed by id.
+/// The assets a derivation reads, keyed by id, with each file read once from the content root and kept.
 #[derive(Debug, Default)]
 pub struct DerivedInputs {
-    files: HashMap<AssetId, Vec<u8>>,
+    files: HashMap<String, Arc<Vec<u8>>>,
+    records: HashMap<AssetId, Arc<Vec<u8>>>,
 }
 
 impl DerivedInputs {
@@ -103,18 +108,21 @@ impl DerivedInputs {
         ids: &[AssetId],
     ) -> anyhow::Result<()> {
         for &id in ids {
-            if self.files.contains_key(&id) {
+            if self.records.contains_key(&id) {
                 continue;
             }
-            let bytes = read_input(root, registry, id).await?;
-            self.files.insert(id, bytes);
+            let entry = registry
+                .get(id)
+                .with_context(|| format!("derived input {id:?} is not in the content registry"))?;
+            let record = self.read_input(root, entry).await?;
+            self.records.insert(id, record);
         }
         Ok(())
     }
 
-    /// The whole file of input `id`.
+    /// The whole file of a loose input `id`, or the bytes a loose file of an embedded one would have.
     pub fn bytes(&self, id: AssetId) -> Option<&[u8]> {
-        self.files.get(&id).map(Vec::as_slice)
+        self.records.get(&id).map(|record| record.as_slice())
     }
 
     /// Decodes input `id` as a `T`, checking its kind and migrating it as a load does, without `on_load`.
@@ -126,39 +134,47 @@ impl DerivedInputs {
             .with_context(|| format!("malformed derived input {id:?}"))?;
         Ok(value)
     }
-}
 
-async fn read_input(
-    root: &ContentAssetRoot,
-    registry: &AssetRegistry,
-    id: AssetId,
-) -> anyhow::Result<Vec<u8>> {
-    let entry = registry
-        .get(id)
-        .with_context(|| format!("derived input {id:?} is not in the content registry"))?;
-    let bytes = try_read_relative(root, &entry.address)
-        .await?
-        .with_context(|| {
-            format!(
-                "derived input {id:?} has no content asset at '{}'",
-                entry.address
-            )
-        })?;
-    if let Some(check) = file_is_derived_check(&entry.kind) {
-        let derives = read_content_asset_parts(&bytes)
-            .and_then(|parts| check(&parts.header, parts.payload))
-            .with_context(|| {
-                format!("failed to read derived input {id:?} at '{}'", entry.address)
-            })?;
+    async fn read_input(
+        &mut self,
+        root: &ContentAssetRoot,
+        entry: &AssetEntry,
+    ) -> anyhow::Result<Arc<Vec<u8>>> {
+        let id = entry.id;
+        let file = match self.files.get(&entry.address) {
+            Some(file) => Arc::clone(file),
+            None => {
+                let bytes = try_read_relative(root, &entry.address)
+                    .await?
+                    .with_context(|| {
+                        format!(
+                            "derived input {id:?} has no content asset at '{}'",
+                            entry.address
+                        )
+                    })?;
+                let file = Arc::new(bytes);
+                self.files.insert(entry.address.clone(), Arc::clone(&file));
+                file
+            }
+        };
+        let location = entry.location();
+        let record =
+            match entry.embedded_as.as_deref() {
+                None => file,
+                Some(name) => Arc::new(asset_record(&file, Some(name)).with_context(|| {
+                    format!("failed to read derived input {id:?} at '{location}'")
+                })?),
+            };
+        let derives = record_is_derived(&entry.kind, &record)
+            .with_context(|| format!("failed to read derived input {id:?} at '{location}'"))?;
         if derives {
             anyhow::bail!(
-                "derived input {id:?} at '{}' is a {} that is itself derived: derived assets can't derive from derived assets",
-                entry.address,
+                "derived input {id:?} at '{location}' is a {} that is itself derived: derived assets can't derive from derived assets",
                 entry.kind
             );
         }
+        Ok(record)
     }
-    Ok(bytes)
 }
 
 /// Where derived blobs are kept, one file per type, version and key; or nowhere.

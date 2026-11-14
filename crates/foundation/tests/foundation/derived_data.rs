@@ -10,12 +10,13 @@ use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
     content::{
-        read_content_asset, read_content_asset_parts, save_content_asset_into,
-        write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection,
+        read_asset_record, read_content_asset, read_content_asset_parts, save_content_asset_into,
+        write_content_asset_with_embedded, write_cooked_content_asset, ContentAssetHeader,
+        CookedSection, DerivedSection, EmbeddedPayload, ImportProvenance,
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
-    registry::AssetRegistry,
+    registry::{AssetEntry, AssetRegistry},
     Asset, AssetId, ContentAssetRoot, LoadableAsset,
 };
 use serde::{Deserialize, Serialize};
@@ -354,6 +355,49 @@ impl Project {
         .unwrap()
     }
 
+    fn embed<A: Asset>(&mut self, name: &str, embedded_as: &str, value: &A) -> AssetId {
+        let address = format!("content/{name}.gasset");
+        let header = |kind: &str, kind_version: u32, sub_asset: &str| ContentAssetHeader {
+            asset_id: AssetId::new(),
+            references: Vec::new(),
+            kind: kind.to_string(),
+            kind_version,
+            provenance: Some(ImportProvenance {
+                source: format!("assets/{name}.glb"),
+                sub_asset: sub_asset.to_string(),
+            }),
+            derived: None,
+            embedded: Vec::new(),
+        };
+        let host = header(Leaf::name(), Leaf::FORMAT_VERSION, "scene");
+        let embedded = header(A::name(), A::FORMAT_VERSION, embedded_as);
+        let file = write_content_asset_with_embedded(
+            &host,
+            &bincode::serialize(&Leaf { value: 0 }).unwrap(),
+            &[EmbeddedPayload {
+                header: embedded.clone(),
+                payload: &bincode::serialize(value).unwrap(),
+                derived_blob: None,
+            }],
+        )
+        .unwrap();
+        std::fs::write(self.root.join(&address), file).unwrap();
+        let id = embedded.asset_id;
+        let mut register = |header: ContentAssetHeader, embedded_as: Option<&str>| {
+            self.registry.insert(AssetEntry {
+                id: header.asset_id,
+                address: address.clone(),
+                kind: header.kind,
+                kind_version: Some(header.kind_version),
+                provenance: header.provenance,
+                embedded_as: embedded_as.map(str::to_string),
+            });
+        };
+        register(host, None);
+        register(embedded, Some(embedded_as));
+        id
+    }
+
     fn cook(&self, name: &str, derived_version: u32, blob: &[u8]) {
         let path = self.root.join(format!("content/{name}.gasset"));
         let bytes = std::fs::read(&path).unwrap();
@@ -660,6 +704,34 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
     assert_eq!(
         std::fs::read(entry_path(&cache, 1, changed)).unwrap(),
         13u64.to_le_bytes()
+    );
+
+    let embedded = project.embed("host", "leaf/0", &Leaf { value: 4 });
+    let over = project.sum::<1>("over", tag, a, embedded);
+    let embedded_key = key_of(&project, &sum_value::<1>(tag, a, embedded));
+    assert_eq!(
+        Runtime::<1>::new(&project, DerivedDataCache::at(&cache)).load(over),
+        Some(7),
+        "an input embedded in a host file is read from it"
+    );
+    assert!(entry_path(&cache, 1, embedded_key).is_file());
+
+    let entry = project.registry.get(embedded).unwrap().clone();
+    let loose = "content/loose.gasset";
+    std::fs::write(
+        project.root.join(loose),
+        read_asset_record(&project.root, &entry).unwrap(),
+    )
+    .unwrap();
+    project.registry.insert(AssetEntry {
+        address: loose.to_string(),
+        embedded_as: None,
+        ..entry
+    });
+    assert_eq!(
+        key_of(&project, &sum_value::<1>(tag, a, embedded)),
+        embedded_key,
+        "the key is the same for an input embedded and written as a loose file"
     );
 }
 
@@ -1042,6 +1114,27 @@ fn a_failing_derive_stops_the_cook_naming_its_address() {
     );
     assert!(cache_files(&out).is_empty());
     assert_eq!(derives(after), 0);
+
+    let tag = "cook-embedded";
+    let mut project = Project::new(tag);
+    let a = project.leaf("a", 3);
+    project.embed("host", "sum/0", &sum_value::<1>(tag, a, a));
+    let out = project.root.join("cooked");
+
+    let error = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .expect_err("an embedded asset that derives fails the cook");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(
+            "content/host.gasset#sum/0 is embedded in an import's file; embedded assets cannot be cooked yet"
+        ),
+        "got: {message}"
+    );
+    assert!(cache_files(&out).is_empty());
+    assert_eq!(derives(tag), 0);
 }
 
 #[test]

@@ -83,6 +83,15 @@ pub fn check_encoding<A: Asset>(value: &A, dir: &Path) {
     }
 }
 
+/// The standalone record of `entry`, read from `<project_root>/<entry.address>`.
+pub fn read_asset_record(project_root: &Path, entry: &AssetEntry) -> anyhow::Result<Vec<u8>> {
+    let path = project_root.join(&entry.address);
+    let file = std::fs::read(&path)
+        .with_context(|| format!("failed to read content asset '{}'", path.display()))?;
+    asset_record(&file, entry.embedded_as.as_deref())
+        .with_context(|| format!("malformed content asset '{}'", entry.location()))
+}
+
 /// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
@@ -91,7 +100,14 @@ pub fn save_content_asset_into<A: Asset>(
     registry: &mut AssetRegistry,
 ) -> anyhow::Result<AssetId> {
     let path = project_root.join(address);
-    let asset_id = mint_or_reuse_id(&path)?;
+    let asset_id = match path.exists() {
+        true => {
+            let existing = read_content_asset_header(&path)?;
+            refuse_a_host(&existing, address)?;
+            existing.asset_id
+        }
+        false => AssetId::new(),
+    };
     let header = ContentAssetHeader {
         asset_id,
         references: value.referenced_sub_assets(),
@@ -133,6 +149,7 @@ pub fn resave_content_asset<A: Asset>(
     let path = project_root.join(address);
     let existing = read_content_asset_header(&path)
         .with_context(|| format!("no content asset to resave at '{address}'"))?;
+    refuse_a_host(&existing, address)?;
     if existing.kind != A::name() {
         anyhow::bail!(
             "'{address}' holds a {} but a {} was resaved",
@@ -163,6 +180,16 @@ pub fn resave_content_asset<A: Asset>(
         provenance: header.provenance,
     });
     Ok(header.asset_id)
+}
+
+fn refuse_a_host(existing: &ContentAssetHeader, address: &str) -> anyhow::Result<()> {
+    if existing.embedded.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "'{address}' belongs to an import: its file holds {} embedded assets and is written whole by the import; save under a new name, or set `file = true` for the output in the source's `.import.toml` and import again",
+        existing.embedded.len()
+    )
 }
 
 /// The id to write at `path`: the one already in the file's header if a

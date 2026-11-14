@@ -2,7 +2,8 @@
 //! its id on first save and reusing it on re-save.
 use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, resave_content_asset, save_content_asset_into,
-    write_content_asset, ContentAssetHeader, ImportProvenance,
+    write_content_asset, write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload,
+    ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId};
@@ -106,19 +107,23 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     std::fs::remove_dir_all(&project_root).ok();
 }
 
-fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHeader {
-    let header = ContentAssetHeader {
+fn imported_widget_header(sub_asset: &str) -> ContentAssetHeader {
+    ContentAssetHeader {
         asset_id: AssetId::new(),
         references: Vec::new(),
         kind: "Widget".to_string(),
         kind_version: Widget::FORMAT_VERSION,
         provenance: Some(ImportProvenance {
             source: "assets/wheel.glb".to_string(),
-            sub_asset: "widget/0".to_string(),
+            sub_asset: sub_asset.to_string(),
         }),
         derived: None,
         embedded: Vec::new(),
-    };
+    }
+}
+
+fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHeader {
+    let header = imported_widget_header("widget/0");
     let payload = bincode::serialize(&Widget { spokes }).unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, write_content_asset(&header, &payload).unwrap()).unwrap();
@@ -186,6 +191,45 @@ fn a_resave_refuses_a_missing_file_or_another_kind_and_changes_nothing() {
             .map(|entry| entry.kind.as_str()),
         Some("Axle")
     );
+
+    std::fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn a_file_with_embedded_assets_is_not_overwritten() {
+    let project_root =
+        std::env::temp_dir().join(format!("save-content-host-{}", std::process::id()));
+    let address = "content/wheel/scene.gasset";
+    let payload = bincode::serialize(&Widget { spokes: 32 }).unwrap();
+    let host = write_content_asset_with_embedded(
+        &imported_widget_header("scene"),
+        &payload,
+        &[EmbeddedPayload {
+            header: imported_widget_header("widget/0"),
+            payload: &payload,
+            derived_blob: None,
+        }],
+    )
+    .unwrap();
+    let path = project_root.join(address);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, &host).unwrap();
+    let mut registry = AssetRegistry::new();
+    let widget = Widget { spokes: 6 };
+
+    let refusals = [
+        save_content_asset_into(&widget, &project_root, address, &mut registry),
+        resave_content_asset(&widget, &project_root, address, &mut registry),
+    ];
+
+    for refusal in refusals {
+        let message = format!("{:#}", refusal.expect_err("the file belongs to an import"));
+        for expected in [address, "belongs to an import", "new name", "file = true"] {
+            assert!(message.contains(expected), "got: {message}");
+        }
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), host);
+    assert!(registry.id_for_address(address).is_none());
 
     std::fs::remove_dir_all(&project_root).ok();
 }
