@@ -10,7 +10,6 @@ use concerto_ecs::{
     system::input::{ComponentMetadata, StaticSystemInput, SystemInputData},
 };
 use concerto_foundation::assets::{
-    AssetId,
     asset_server::AssetServer,
     registry::{AssetEntry, AssetRegistry},
 };
@@ -29,7 +28,7 @@ use serde_json::{Map, Value};
 
 use super::{
     BusyInputs,
-    act::describe_pose,
+    act::{describe_pose, find_asset},
     is_busy,
     layout::{LayoutInputs, layout_line, viewport_line},
     value::value_names,
@@ -332,19 +331,17 @@ fn counted(count: usize) -> String {
 }
 
 fn import_face<'a>(registry: &'a AssetRegistry, asset: &str) -> Result<&'a AssetEntry, ToolError> {
-    registry
-        .id_for_address(asset)
-        .or_else(|| AssetId::from_simple_hex(asset).ok())
-        .and_then(|id| registry.get(id))
-        .filter(|entry| is_import_face(entry))
-        .ok_or_else(|| {
-            ToolError::new(
-                "not_an_import",
-                format!(
-                    "`{asset}` is not an import's scene; give the address or id of a line list_assets marks `· import of`."
-                ),
-            )
-        })
+    let entry = find_asset(registry, asset)?;
+    if is_import_face(entry) {
+        Ok(entry)
+    } else {
+        Err(ToolError::new(
+            "not_an_import",
+            format!(
+                "`{asset}` is not an import's scene; give the address or id of a line list_assets marks `· import of`."
+            ),
+        ))
+    }
 }
 
 fn filtered<'a>(

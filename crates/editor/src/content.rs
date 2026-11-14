@@ -2360,6 +2360,26 @@ mod tests {
                 "material/0",
             ),
             imported(
+                "content/hero/scene.gasset",
+                "Scene",
+                "assets/hero.glb",
+                "scene",
+            ),
+            imported(
+                "content/hero/mesh_0.gasset",
+                "Mesh",
+                "assets/hero.glb",
+                "mesh/0",
+            ),
+            entry("content/hero/rig.gasset", "RetargetRig"),
+            imported(
+                "content/town/scene.gasset",
+                "Scene",
+                "assets/town.glb",
+                "scene",
+            ),
+            entry("content/town/signs/inn.gasset", "Texture"),
+            imported(
                 "content/moves/run/animation.gasset",
                 "AnimationClip",
                 "assets/moves/run.bvh",
@@ -2383,7 +2403,9 @@ mod tests {
         let barrel = f.asset_item("content/props/barrel.gasset");
         let props = f.item(&folder("props"));
 
-        assert_eq!(f.labels_under(view), ["moves", "props"]);
+        assert_eq!(f.labels_under(view), ["hero", "moves", "props", "town"]);
+        assert_eq!(f.labels_under(f.item(&folder("hero"))), ["hero", "rig"]);
+        assert_eq!(f.labels_under(f.item(&folder("town"))), ["signs", "town"]);
         assert_eq!(f.labels_under(props), ["barrel", "crate"]);
         assert!(!f.state().items.contains_key(&folder("props/crate")));
         assert_eq!(

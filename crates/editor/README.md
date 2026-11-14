@@ -575,7 +575,10 @@ selected, opened and dragged into the viewport as one, and a part is still an
 asset row. When the face is the only row of its folder, the folder is left out
 and the face takes its place in the folder above, so `props/crate/scene` shows
 as `crate` under `props`. An import with no scene, a texture or the
-animations of older BVH imports, is not folded. `ImportFolds`, in
+animations of older BVH imports, is not folded. Neither is one whose scene was
+saved in the editor: a save writes the scene without its provenance, as an
+authored asset, so it shows under its file name beside the import's other
+assets from then on. `ImportFolds`, in
 `import_fold`, is the grouping, by `AssetEntry::provenance`; `list_assets`
 reads the same one. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an

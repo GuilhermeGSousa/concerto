@@ -311,7 +311,10 @@ fn answer_project_opens(
     }
 }
 
-fn find_asset<'a>(registry: &'a AssetRegistry, asset: &str) -> Result<&'a AssetEntry, ToolError> {
+pub(super) fn find_asset<'a>(
+    registry: &'a AssetRegistry,
+    asset: &str,
+) -> Result<&'a AssetEntry, ToolError> {
     registry
         .id_for_address(asset)
         .or_else(|| AssetId::from_simple_hex(asset).ok())
