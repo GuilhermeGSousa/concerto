@@ -677,6 +677,13 @@ Loads return immediately with a handle; the bytes load on a background task
 pool. A registry miss on `load` fails the load and logs the id — it
 does not fall back to anything.
 
+An embedded asset loads by its id like any other: the server reads the file at
+its entry's address and decodes the asset's record from it. A file is read once
+for the loads pending on it: the first reads it, the others wait for those
+bytes, and the bytes are dropped when the last of them is delivered, fails or
+is cancelled. A file that cannot be read fails every load waiting on it, and
+the logged error names the asset as `file#name`.
+
 `AssetServer::is_loading` reports whether an asset requested with `load` or
 `add` has yet to reach the world. A load counts until the frame that inserts
 its asset, or handles its failure; cancelled loads do not count.

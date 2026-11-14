@@ -2,8 +2,10 @@ use anyhow::Context;
 use cfg_if::cfg_if;
 
 use super::{
-    content::{decode_content_payload, read_content_asset_parts},
+    content::{asset_record, decode_content_payload, read_content_asset_parts},
     derived::CookedBlob,
+    file_reads::SharedRead,
+    registry::AssetEntry,
     Asset, ContentAssetRoot,
 };
 
@@ -27,20 +29,36 @@ pub(crate) async fn load_content_asset_parts<A: Asset>(
     let raw = try_read_relative(root, address)
         .await?
         .with_context(|| format!("no content asset at '{address}'"))?;
+    decode_content_parts(&raw).with_context(|| format!("malformed content asset '{address}'"))
+}
 
-    let decoded = read_content_asset_parts(&raw).and_then(|parts| {
-        let asset = decode_content_payload::<A>(&parts.header, parts.payload)?;
-        let cooked = parts
-            .header
-            .derived
-            .zip(parts.derived_blob)
-            .map(|(section, blob)| CookedBlob {
-                section,
-                blob: blob.to_vec(),
-            });
-        Ok(LoadedContent { asset, cooked })
-    });
-    decoded.with_context(|| format!("malformed content asset '{address}'"))
+pub(crate) async fn load_entry_parts<A: Asset>(
+    root: &ContentAssetRoot,
+    entry: &AssetEntry,
+    read: &SharedRead,
+) -> anyhow::Result<LoadedContent<A>> {
+    let file = read.bytes(root, &entry.address).await?;
+    let decoded = match entry.embedded_as.as_deref() {
+        None => decode_content_parts(&file),
+        Some(name) => {
+            asset_record(&file, Some(name)).and_then(|record| decode_content_parts(&record))
+        }
+    };
+    decoded.with_context(|| format!("malformed content asset '{}'", entry.location()))
+}
+
+fn decode_content_parts<A: Asset>(raw: &[u8]) -> anyhow::Result<LoadedContent<A>> {
+    let parts = read_content_asset_parts(raw)?;
+    let asset = decode_content_payload::<A>(&parts.header, parts.payload)?;
+    let cooked = parts
+        .header
+        .derived
+        .zip(parts.derived_blob)
+        .map(|(section, blob)| CookedBlob {
+            section,
+            blob: blob.to_vec(),
+        });
+    Ok(LoadedContent { asset, cooked })
 }
 
 /// Reads `<root>/<relative>`, returning `Ok(None)` when it simply is not

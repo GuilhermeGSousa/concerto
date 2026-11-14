@@ -28,6 +28,7 @@ use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
     derived::{derived_hook, note_derived_kind, DerivedData, DerivedDataCache, DerivedHook},
+    file_reads::{FileReads, PendingRead, SharedRead},
     handle::{AssetHandle, AssetLifetimeEvent, AssetLoadFailed},
     registry::{AssetEntry, AssetRegistry},
     Asset, AssetId, ContentAssetRoot,
@@ -102,12 +103,25 @@ pub(crate) struct AssetInfo {
 
 struct PendingLoad {
     _task: Task<()>,
+    _read: Option<PendingRead>,
     cancelled: Arc<AtomicBool>,
+}
+
+struct LoadSource {
+    root: ContentAssetRoot,
+    entry: AssetEntry,
+    read: Arc<SharedRead>,
+}
+
+struct ResolvedLoad {
+    source: LoadSource,
+    pending: PendingRead,
 }
 
 pub(crate) struct AssetServerData {
     pending_tasks: RwLock<HashMap<AssetId, PendingLoad>>,
     loaded_assets: RwLock<HashSet<AssetId>>,
+    file_reads: Arc<FileReads>,
     handle_provider: AssetHandleProvider,
     asset_load_event_sender: Sender<AssetLoadEvent>,
     asset_load_event_receiver: Receiver<AssetLoadEvent>,
@@ -141,6 +155,7 @@ impl AssetServer {
         let server_data = AssetServerData {
             pending_tasks: RwLock::new(HashMap::new()),
             loaded_assets: RwLock::new(HashSet::new()),
+            file_reads: Arc::default(),
             handle_provider: AssetHandleProvider::new(),
             asset_load_event_sender,
             asset_load_event_receiver,
@@ -195,6 +210,7 @@ impl AssetServer {
             content.registry = Arc::new(registry);
         };
         pending.clear();
+        self.data.file_reads.clear();
     }
 
     /// Replaces the registry subsequent loads resolve through, keeping the root and pending loads.
@@ -369,11 +385,16 @@ impl AssetServer {
         let mut pending = self.data.pending_tasks.write().unwrap();
         if !pending.contains_key(&id) && !self.data.loaded_assets.read().unwrap().contains(&id) {
             let cancelled = Arc::new(AtomicBool::new(false));
-            let task = self.request_load::<A>(id, Arc::clone(&cancelled));
+            let (source, read) = self
+                .resolve_load(id)
+                .map(|resolved| (resolved.source, resolved.pending))
+                .unzip();
+            let task = self.request_load::<A>(id, source, Arc::clone(&cancelled));
             pending.insert(
                 id,
                 PendingLoad {
                     _task: task,
+                    _read: read,
                     cancelled,
                 },
             );
@@ -394,15 +415,26 @@ impl AssetServer {
         (content.root.clone(), Arc::clone(&content.registry))
     }
 
-    fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, AssetEntry)> {
+    fn resolve_load(&self, id: AssetId) -> Option<ResolvedLoad> {
         let content = self.data.content.read().unwrap();
         let entry = content.registry.get(id)?.clone();
-        Some((content.root.clone(), entry))
+        let pending = self.data.file_reads.begin(&entry.address);
+        Some(ResolvedLoad {
+            source: LoadSource {
+                root: content.root.clone(),
+                entry,
+                read: pending.shared(),
+            },
+            pending,
+        })
     }
 
-    /// Resolves the UUID through the registry before reading the cooked asset.
-    /// A registry miss fails the load without attempting file I/O.
-    fn request_load<A: LoadableAsset>(&self, id: AssetId, cancelled: Arc<AtomicBool>) -> Task<()> {
+    fn request_load<A: LoadableAsset>(
+        &self,
+        id: AssetId,
+        source: Option<LoadSource>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Task<()> {
         let data = Arc::clone(&self.data);
         let deliver = move |event| {
             let _pending = data.pending_tasks.read().unwrap();
@@ -416,16 +448,13 @@ impl AssetServer {
         // held across .await (tasks can migrate between worker threads).
         // Load costs show up on the named "asset-load-N" threads instead.
         LoadTaskPool::get_or_init(|| TaskPool::with_name("asset-load")).spawn(async move {
-            let (content_root, entry) = match server.resolve_asset(id) {
-                Some(resolved) => resolved,
-                None => {
-                    log::error!(
-                        "no content asset registered for AssetId {id:?} (type {})",
-                        std::any::type_name::<A>()
-                    );
-                    deliver(AssetLoadEvent::LoadFailed { id });
-                    return;
-                }
+            let Some(LoadSource { root, entry, read }) = source else {
+                log::error!(
+                    "no content asset registered for AssetId {id:?} (type {})",
+                    std::any::type_name::<A>()
+                );
+                deliver(AssetLoadEvent::LoadFailed { id });
+                return;
             };
             if !entry.is::<A>() {
                 log::error!(
@@ -437,7 +466,7 @@ impl AssetServer {
                 deliver(AssetLoadEvent::LoadFailed { id });
                 return;
             }
-            let address = entry.address;
+            let address = entry.location();
             let hook = server
                 .data
                 .derived_hooks
@@ -446,10 +475,9 @@ impl AssetServer {
                 .get(&TypeId::of::<A>())
                 .copied();
             let asset = async {
-                let loaded =
-                    crate::assets::utils::load_content_asset_parts::<A>(&content_root, &address)
-                        .await
-                        .with_context(|| format!("failed to read {} asset", A::name()))?;
+                let loaded = crate::assets::utils::load_entry_parts::<A>(&root, &entry, &read)
+                    .await
+                    .with_context(|| format!("failed to read {} asset", A::name()))?;
                 let mut asset = loaded.asset;
                 let context = AssetLoadContext::new(server.clone(), id);
                 asset.on_load(&context)?;

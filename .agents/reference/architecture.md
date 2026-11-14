@@ -125,7 +125,9 @@ time. The running game never reads them.
 - `AssetRegistry` is the one catalogue of content on disk: id, address, kind.
   It is a resource; `registry.of_type::<T>()` lists assets without loading
   them. `AssetServer` resolves loads against a snapshot of it, refreshed by
-  `sync_asset_registry` in `First` when the resource changes. The editor builds
+  `sync_asset_registry` in `First` when the resource changes. It reads a file
+  once for the loads pending on it, so a scene's embedded meshes and materials
+  share one read of the scene's file. The editor builds
   it by scanning headers once, when a project opens. An import inserts its
   entries, a New in the Asset Browser inserts the created asset's, and a scene
   save upserts the scene's, all in memory, with no rescan.
