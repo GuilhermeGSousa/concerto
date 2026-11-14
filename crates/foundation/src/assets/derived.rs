@@ -120,7 +120,7 @@ impl DerivedInputs {
         Ok(())
     }
 
-    /// The whole file of a loose input `id`, or the bytes a loose file of an embedded one would have.
+    /// The whole file of a loose input `id`, or the bytes a loose file of a host or an embedded one would have.
     pub fn bytes(&self, id: AssetId) -> Option<&[u8]> {
         self.records.get(&id).map(|record| record.as_slice())
     }
@@ -158,13 +158,17 @@ impl DerivedInputs {
             }
         };
         let location = entry.location();
-        let record =
-            match entry.embedded_as.as_deref() {
-                None => file,
-                Some(name) => Arc::new(asset_record(&file, Some(name)).with_context(|| {
+        let hosts = entry.embedded_as.is_none()
+            && read_content_asset_parts(&file).is_ok_and(|parts| !parts.header.embedded.is_empty());
+        let record = if entry.embedded_as.is_none() && !hosts {
+            file
+        } else {
+            Arc::new(
+                asset_record(&file, entry.embedded_as.as_deref()).with_context(|| {
                     format!("failed to read derived input {id:?} at '{location}'")
-                })?),
-            };
+                })?,
+            )
+        };
         let derives = record_is_derived(&entry.kind, &record)
             .with_context(|| format!("failed to read derived input {id:?} at '{location}'"))?;
         if derives {

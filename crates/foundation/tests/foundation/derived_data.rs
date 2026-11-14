@@ -733,6 +733,32 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
         embedded_key,
         "the key is the same for an input embedded and written as a loose file"
     );
+
+    let host_path = project.root.join("content/host.gasset");
+    let host = project
+        .registry
+        .id_for_address("content/host.gasset")
+        .unwrap();
+    let host_key = key_of(&project, &sum_value::<1>(tag, a, host));
+    let file = std::fs::read(&host_path).unwrap();
+    let parts = read_content_asset_parts(&file).unwrap();
+    let rewritten = write_content_asset_with_embedded(
+        &parts.header.record_header(None).unwrap(),
+        parts.payload,
+        &[EmbeddedPayload {
+            header: parts.header.record_header(Some("leaf/0")).unwrap(),
+            payload: &bincode::serialize(&Leaf { value: 9 }).unwrap(),
+            derived_blob: None,
+        }],
+    )
+    .unwrap();
+    assert_ne!(rewritten, file);
+    std::fs::write(&host_path, rewritten).unwrap();
+    assert_eq!(
+        key_of(&project, &sum_value::<1>(tag, a, host)),
+        host_key,
+        "the key over a host is unchanged when one of its embedded assets changes"
+    );
 }
 
 struct Uncached {
