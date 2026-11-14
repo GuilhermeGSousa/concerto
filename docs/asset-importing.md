@@ -7,23 +7,28 @@ the Unreal/Godot model: a source artist file is an input to a build step,
 not something the shipped game reads.
 
 ```
-assets/hero.glb   ──(import)──▶   content/hero/mesh_0.gasset
-                                  content/hero/material_0.gasset
-                                  content/hero/skeleton_0.gasset
-                                  content/hero/scene.gasset
+assets/hero.glb   ──(import)──▶   content/hero/scene.gasset
+                                    the scene, with the meshes, materials
+                                    and skeletons embedded in it
+                                  content/hero/texture_0.gasset
+                                  content/hero/animation_Idle_Loop.gasset
 assets/hero.glb.import.toml       (persistent source/output identities)
 ```
 
 - **Source files** live wherever you like (`examples/*/assets/` by
   convention). They are never read by the running game.
-- **Content assets** (`*.gasset`) are the game-ready form: one file per
-  sub-asset, each carrying a small header plus a `bincode` payload. They
+- **Content assets** (`*.gasset`) are the game-ready form, each a small
+  header plus a `bincode` payload. A source's scene is one file that also
+  holds its meshes, materials and skeletons, each still an asset with its own
+  UUID; textures, animation clips and everything else are a file each. They
   are committed to version control alongside the code.
 - **Source metadata** (`<source>.import.toml`) is committed beside each
   imported source. It records which UUID belongs to each sub-asset.
-- **Addresses** are plain paths (`content/hero/mesh_0.gasset`). Code uses
-  `asset_id!("content/hero/mesh_0.gasset")` to resolve a UUID during compilation;
-  the runtime uses UUIDs to locate files through the registry.
+- **Addresses** are plain paths (`content/hero/scene.gasset`), and an
+  embedded asset is named by its file's address, `#`, and its name inside the
+  file (`content/hero/scene.gasset#mesh/0`). Code uses
+  `asset_id!("content/hero/scene.gasset#mesh/0")` to resolve a UUID during
+  compilation; the runtime uses UUIDs to locate assets through the registry.
 - **The registry** maps each UUID to its address and kind. It is never
   committed and never a file at runtime: each game's `build.rs` builds it from
   the content tree and the executable embeds it, and the editor builds it by
@@ -568,7 +573,7 @@ TOML to `$OUT_DIR/concerto_registry.toml` and embeds it (see
 ```toml
 [assets]
 9f3c…e21a = { address = "content/UAL1/scene.gasset", kind = "Scene" }
-b75e…8457 = { address = "content/UAL1/mesh_0.gasset", kind = "Mesh" }
+b75e…8457 = { address = "content/UAL1/animation_Idle_Loop.gasset", kind = "AnimationClip" }
 41d0…77c2 = { address = "content/hero/scene.gasset", kind = "Mesh", embedded_as = "mesh/0" }
 ```
 
@@ -1010,8 +1015,8 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
 ## Current limitations
 
 - **glTF `extras` are not read.** The Blender add-on that wrote game components
-  into `extras` is deprecated. Add game components to the imported scene in the
-  editor and save it under a new name.
+  into `extras` is deprecated. An import's scene is read-only, so place it in a
+  scene of your own in the editor and add game components there.
 - **A scene saved over an import's scene stops the import.** When the file that
   holds the sidecar's `scene` id has no provenance, because the editor saved it
   with `save_content_asset_into`, it cannot hold the import's meshes, materials

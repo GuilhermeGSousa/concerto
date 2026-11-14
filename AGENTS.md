@@ -121,7 +121,11 @@ additive clips, set in `assets/UAL1.glb.import.toml`. Its two rigs are content a
 the editor's rig tab edits. The sanatorium's Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
 editor's Import…, over a scratch copy of the project; there is no import
-command line. An example may have an `editor/` crate, named `<game>-editor`,
+command line. Both games' imports keep a source's meshes, materials and
+skeletons inside its `scene.gasset`, each named like
+`content/UAL1/scene.gasset#skeleton/0`, with textures and clips as files
+beside it; such a scene is read-only. `pack-imports`, in the commands above,
+converts a project that still has a file per mesh. An example may have an `editor/` crate, named `<game>-editor`,
 that runs the editor over the game's library; an editor exists only for a game
 that has one. Today those are `tech-demo` and `one-more-night`. Build
 `tech-demo-editor` before an MCP client starts it through `.mcp.json`: that
@@ -324,7 +328,7 @@ editor's MCP tools.
   light, mesh, material and UI layout components require it; a new extracted
   component declares `#[require(SyncWithRenderWorld)]`.
 - `content/` trees and `<source>.import.toml` files are committed. Never run a
-  flow that saves or imports against `examples/*`; copy the project's `content/`
+  flow that saves, imports or converts against `examples/*`; copy the project's `content/`
   somewhere disposable first.
 - `examples/tech-demo/assets/lafan1` is Ubisoft's LAFAN1 data under CC BY-NC-ND
   4.0, not the engine's licence. Keep its files byte-identical to the release,
