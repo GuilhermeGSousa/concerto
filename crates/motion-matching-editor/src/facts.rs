@@ -8,7 +8,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_content_asset},
+    content::{decode_content_asset, read_asset_record, read_content_asset},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mesh::Skeleton;
@@ -32,7 +32,7 @@ pub(crate) struct ShownSkeleton {
 }
 
 pub(crate) fn read_bytes<A: Asset>(root: &Path, asset: &AssetEntry) -> anyhow::Result<Vec<u8>> {
-    let bytes = std::fs::read(root.join(&asset.address))?;
+    let bytes = read_asset_record(root, asset)?;
     let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
         header.asset_id == asset.id && header.kind == A::name(),

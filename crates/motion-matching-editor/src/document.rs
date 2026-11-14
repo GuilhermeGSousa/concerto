@@ -19,7 +19,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_content_asset},
+    content::{decode_content_asset, read_asset_record, read_content_asset},
     handle::AssetHandle,
     registry::AssetEntry,
 };
@@ -267,7 +267,7 @@ pub(crate) fn publish_values(
 
 /// Reads the definition `asset` names under `root`, checking its id and its kind.
 pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<MotionDatabase> {
-    let bytes = std::fs::read(root.join(&asset.address))?;
+    let bytes = read_asset_record(root, asset)?;
     let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
         header.asset_id == asset.id && header.kind == MotionDatabase::name(),

@@ -22,6 +22,9 @@ pub struct SourceMetadata {
 #[serde(deny_unknown_fields)]
 pub struct OutputMetadata {
     pub asset_id: AssetId,
+    /// Whether the output is written as its own file instead of inside its import's scene file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file: bool,
 }
 
 pub fn sidecar_path(source: &Path) -> PathBuf {

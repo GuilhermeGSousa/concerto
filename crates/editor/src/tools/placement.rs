@@ -226,7 +226,7 @@ fn resolve(world: &mut World, request: &PlaceAsset) -> anyhow::Result<Placement>
     Ok(Placement {
         request: request.clone(),
         kind,
-        name: shown_name(&entry).to_owned(),
+        name: shown_name(&entry).into_owned(),
         parent,
         position,
     })

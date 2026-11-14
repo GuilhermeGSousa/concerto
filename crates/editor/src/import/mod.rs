@@ -2,13 +2,16 @@
 
 pub mod dialog;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::thread::JoinHandle;
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{Event, IntoSystemConfig, ResMut, Resource, events::event_writer::EventWriter};
-use concerto_foundation::assets::registry::AssetRegistry;
+use concerto_foundation::assets::{
+    AssetId,
+    registry::{AssetEntry, AssetRegistry},
+};
 use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
 
@@ -423,6 +426,21 @@ fn finish_import(
 }
 
 fn apply_to_registry(registry: &mut AssetRegistry, imported: &ImportedSource) {
+    let source_of = |entry: &AssetEntry| {
+        entry
+            .provenance
+            .as_ref()
+            .map(|provenance| provenance.source.clone())
+    };
+    let sources: HashSet<String> = imported.assets.iter().filter_map(source_of).collect();
+    let stale: Vec<AssetId> = registry
+        .iter()
+        .filter(|entry| source_of(entry).is_some_and(|source| sources.contains(&source)))
+        .map(|entry| entry.id)
+        .collect();
+    for id in stale {
+        registry.remove(id);
+    }
     for entry in &imported.assets {
         registry.insert(entry.clone());
     }
@@ -709,29 +727,55 @@ mod tests {
     }
 
     #[test]
-    fn importing_a_source_that_drops_an_output_removes_it_from_the_registry() {
-        use concerto_foundation::assets::AssetId;
-        use concerto_foundation::assets::registry::AssetEntry;
-        let entry = |address: &str| AssetEntry {
+    fn an_imports_entries_replace_the_registrys_entries_for_its_source() {
+        use concerto_foundation::assets::content::ImportProvenance;
+        let entry = |address: &str, source: Option<&str>| AssetEntry {
+            embedded_in: None,
             id: AssetId::new(),
             address: address.into(),
             kind: "Scene".into(),
             kind_version: None,
-            provenance: None,
+            provenance: source.map(|source| ImportProvenance {
+                source: source.into(),
+                sub_asset: address.into(),
+            }),
         };
-        let kept = entry("content/a/scene.gasset");
-        let dropped = entry("content/a/old.gasset");
+        let kept = entry("content/a/scene.gasset", Some("assets/a.glb"));
+        let dropped = entry("content/a/old.gasset", None);
+        let stale = entry("content/a/stale.gasset", Some("assets/a.glb"));
+        let loose = entry("content/a/mesh_0.gasset", Some("assets/a.glb"));
+        let other = entry("content/b/scene.gasset", Some("assets/b.glb"));
+        let authored = entry("content/level.gasset", None);
         let mut registry = AssetRegistry::new();
-        registry.insert(kept.clone());
-        registry.insert(dropped.clone());
+        for entry in [&kept, &dropped, &stale, &loose, &other, &authored] {
+            registry.insert(entry.clone());
+        }
+        let embedded = AssetEntry {
+            embedded_in: Some(concerto_foundation::assets::registry::EmbeddedIn {
+                host: kept.id,
+                name: "mesh/0".into(),
+            }),
+            address: kept.address.clone(),
+            ..loose.clone()
+        };
         let imported = ImportedSource {
-            assets: vec![kept.clone()],
+            assets: vec![kept.clone(), embedded.clone()],
             siblings: Vec::new(),
             removed: vec![dropped.id],
         };
         apply_to_registry(&mut registry, &imported);
-        assert_eq!(registry.get(kept.id), Some(&kept));
-        assert_eq!(registry.get(dropped.id), None);
+        let mut left: Vec<String> = registry.iter().map(AssetEntry::location).collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "content/a/scene.gasset",
+                "content/a/scene.gasset#mesh/0",
+                "content/b/scene.gasset",
+                "content/level.gasset",
+            ]
+        );
+        assert_eq!(registry.get(loose.id), Some(&embedded));
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub struct OpenProject {
 /// Opens an asset of the project in its editor and waits until it has loaded; a scene replaces the one shown.
 #[derive(Deserialize, JsonSchema)]
 pub struct OpenAsset {
-    /// The asset's address, such as content/level.gasset, or its id, as list_assets shows them.
+    /// The asset's address, such as content/level.gasset or content/hero/scene.gasset#mesh/0 for one stored in an import's file, or its id, as list_assets shows them.
     pub asset: String,
     /// What to do with unsaved changes the call would lose; without it such a call fails with unsaved_changes.
     pub unsaved: Option<UnsavedChoice>,
@@ -316,7 +316,7 @@ pub(super) fn find_asset<'a>(
     asset: &str,
 ) -> Result<&'a AssetEntry, ToolError> {
     registry
-        .id_for_address(asset)
+        .id_for_location(asset)
         .or_else(|| AssetId::from_simple_hex(asset).ok())
         .and_then(|id| registry.get(id))
         .ok_or_else(|| {
@@ -618,7 +618,7 @@ fn answer_imports(
                 for asset in &imported.assets {
                     answer.push_str(&format!(
                         "\n{} · {} · {}",
-                        asset.address,
+                        asset.location(),
                         asset.kind,
                         asset.id.simple_hex()
                     ));

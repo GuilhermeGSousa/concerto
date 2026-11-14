@@ -37,7 +37,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::decode_content_asset,
+    content::{decode_content_asset, read_asset_record},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_scene::scene::Scene;
@@ -223,7 +223,7 @@ pub(crate) fn sync_clip_preview(
 
 /// Reads the clip `asset` names under `root`, checking its id and its kind.
 pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
-    let bytes = std::fs::read(root.join(&asset.address))?;
+    let bytes = read_asset_record(root, asset)?;
     let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
     anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
     Ok(clip)

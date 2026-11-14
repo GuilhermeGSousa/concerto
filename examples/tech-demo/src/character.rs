@@ -696,7 +696,7 @@ mod tests {
             Asset, AssetId,
             asset_server::{AssetServer, handle_asset_load_events},
             asset_store::AssetStore,
-            content::decode_content_asset,
+            content::{asset_record, decode_content_asset},
             handle::AssetHandle,
         },
         transform::Transform,
@@ -1415,13 +1415,15 @@ mod tests {
     }
 
     fn committed_skeleton(path: &str) -> Skeleton {
-        let bytes =
+        let file =
             std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
-        decode_content_asset::<Skeleton>(&bytes).unwrap().1
+        let record = asset_record(&file, Some("skeleton/0")).unwrap();
+        decode_content_asset::<Skeleton>(&record).unwrap().1
     }
 
-    const UAL1_SKELETON: AssetId = asset_id!("content/UAL1/skeleton_0.gasset");
-    const LAFAN1_SKELETON: AssetId = asset_id!("content/lafan1/model_skeleton/skeleton_0.gasset");
+    const UAL1_SKELETON: AssetId = asset_id!("content/UAL1/scene.gasset#skeleton/0");
+    const LAFAN1_SKELETON: AssetId =
+        asset_id!("content/lafan1/model_skeleton/scene.gasset#skeleton/0");
 
     fn committed_rig(path: &str) -> RetargetRig {
         let bytes =
@@ -1431,8 +1433,8 @@ mod tests {
 
     #[test]
     fn the_committed_lafan1_and_ual1_rigs_resolve_against_their_committed_skeletons_and_retarget() {
-        let lafan1 = committed_skeleton("content/lafan1/model_skeleton/skeleton_0.gasset");
-        let ual1 = committed_skeleton("content/UAL1/skeleton_0.gasset");
+        let lafan1 = committed_skeleton("content/lafan1/model_skeleton/scene.gasset");
+        let ual1 = committed_skeleton("content/UAL1/scene.gasset");
         let lafan1_rig = committed_rig("content/lafan1/model_skeleton/rig.gasset");
         let ual1_rig = committed_rig("content/UAL1/rig.gasset");
         assert_eq!(lafan1_rig.skeleton.id(), LAFAN1_SKELETON);

@@ -217,6 +217,7 @@ mod tests {
         let root = temp_root();
         for supplied in [false, true] {
             let entry = AssetEntry {
+                embedded_in: None,
                 id: AssetId::new(),
                 address: "content/hero.gasset".into(),
                 kind: "Mesh".into(),
@@ -392,6 +393,7 @@ mod tests {
     #[test]
     fn an_app_without_an_asset_server_gets_the_registry_resource() {
         let entry = AssetEntry {
+            embedded_in: None,
             id: AssetId::new(),
             address: "content/hero.gasset".into(),
             kind: "Mesh".into(),

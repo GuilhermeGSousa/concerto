@@ -34,7 +34,7 @@ pub(crate) fn save_document(
         .get(id)
         .cloned()
         .context("The saved definition was not registered")?;
-    document.title = saved.name().to_owned();
+    document.title = saved.name().into_owned();
     document.current = Some(saved.clone());
     state.loaded = Some(definition);
     state.derive_wanted = true;

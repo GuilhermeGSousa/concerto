@@ -39,6 +39,7 @@ use concerto_ui::{
     tree::{UITree, UITreeElement},
 };
 use concerto_window::input::MouseButton;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use taffy::FlexDirection;
@@ -668,7 +669,7 @@ fn taken_names(folder: &str, project_root: &Path, registry: &AssetRegistry) -> H
     let listed = registry
         .iter()
         .filter(|asset| asset.folder().eq_ignore_ascii_case(folder))
-        .map(|asset| file_key(asset.name()));
+        .map(|asset| file_key(&asset.name()));
     on_disk.chain(listed).collect()
 }
 
@@ -937,7 +938,7 @@ struct Folder<'a> {
 struct Listed<'a> {
     key: ContentKey,
     parent: Option<ContentKey>,
-    name: &'a str,
+    name: Cow<'a, str>,
     icon: char,
 }
 
@@ -1027,7 +1028,7 @@ fn list_folder<'a>(
         listed.push(Listed {
             key: ContentKey::Folder(child_path.clone()),
             parent: parent.clone(),
-            name,
+            name: Cow::Borrowed(name),
             icon: glyph::FOLDER,
         });
         list_folder(child, Some(&child_path), pending, folds, icons, listed);
@@ -1065,7 +1066,7 @@ fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: E
                 .with_flex_grow(1.0)
                 .with_flex_shrink(1.0)
                 .with_padding(UIRect::axes(0.0, 8.0)),
-            theme.text(entry.name).single_line(),
+            theme.text(&*entry.name).single_line(),
         ))
         .entity();
     let item = cmd
@@ -1146,7 +1147,7 @@ fn pending_listing(
     Listed {
         key: pending.key(),
         parent: (!inside.is_empty()).then(|| ContentKey::Folder(inside.to_string())),
-        name: "",
+        name: Cow::Borrowed(""),
         icon: icons.glyph(pending.kind),
     }
 }
@@ -1529,6 +1530,7 @@ mod tests {
 
     fn entry(address: &str, kind: &str) -> AssetEntry {
         AssetEntry {
+            embedded_in: None,
             id: AssetId::new(),
             address: address.into(),
             kind: kind.into(),

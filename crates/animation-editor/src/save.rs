@@ -206,12 +206,14 @@ mod tests {
             kind_version: AnimationClip::FORMAT_VERSION,
             provenance: provenance.clone(),
             derived: None,
+            embedded: Vec::new(),
         };
         let path = f.project_root.join(address);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let payload = bincode::serialize(clip).unwrap();
         std::fs::write(&path, write_content_asset(&header, &payload).unwrap()).unwrap();
         let entry = AssetEntry {
+            embedded_in: None,
             id: header.asset_id,
             address: address.to_owned(),
             kind: header.kind,

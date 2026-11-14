@@ -160,7 +160,7 @@ fn place_dropped_asset(
 /// Places an asset in the open scene as a new entity named as list_assets and the Asset Browser show the asset, its file's name or for an import's scene its source's, selects it, and answers `placed <name> as entity <id>`.
 #[derive(Deserialize, JsonSchema)]
 pub struct PlaceAssetArgs {
-    /// The asset, by id or by content address such as content/props/crate.gasset, one list_assets marks placeable.
+    /// The asset, by id or by content address such as content/props/crate.gasset or content/props/crate/scene.gasset#mesh/0, one list_assets marks placeable.
     pub asset: String,
     /// The parent, such as 42v3, as scene_tree shows it; the scene root without one.
     pub parent: Option<String>,
@@ -187,7 +187,7 @@ fn place_asset(
     };
     for (arguments, reply) in calls.read() {
         let Some(asset) = registry
-            .id_for_address(&arguments.asset)
+            .id_for_location(&arguments.asset)
             .or_else(|| AssetId::from_simple_hex(&arguments.asset).ok())
         else {
             reply.err(ToolError::new(

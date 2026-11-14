@@ -1921,6 +1921,7 @@ mod tests {
             kind_version,
             provenance: None,
             derived: None,
+            embedded: Vec::new(),
         }
     }
 

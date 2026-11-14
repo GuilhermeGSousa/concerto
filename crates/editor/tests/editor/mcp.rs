@@ -641,11 +641,7 @@ fn note_prompt(closing: Option<Res<Closing>>, guard: Res<UnsavedGuard>, log: Res
 }
 
 fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u8]) {
-    let provenance = ImportProvenance {
-        source: "fixture.glb".into(),
-        sub_asset: address.into(),
-    };
-    write_imported(root, address, id, kind, provenance, payload);
+    write_imported(root, address, id, kind, None, payload);
 }
 
 fn write_imported(
@@ -653,7 +649,7 @@ fn write_imported(
     address: &str,
     id: AssetId,
     kind: &str,
-    provenance: ImportProvenance,
+    provenance: Option<ImportProvenance>,
     payload: &[u8],
 ) {
     let header = ContentAssetHeader {
@@ -661,8 +657,9 @@ fn write_imported(
         references: vec![],
         kind: kind.into(),
         kind_version: 1,
-        provenance: Some(provenance),
+        provenance,
         derived: None,
+        embedded: Vec::new(),
     };
     let path = root.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -755,7 +752,14 @@ impl Fixture {
             source: source.into(),
             sub_asset: sub_asset.into(),
         };
-        write_imported(self.directory.path(), address, id, kind, provenance, &[]);
+        write_imported(
+            self.directory.path(),
+            address,
+            id,
+            kind,
+            Some(provenance),
+            &[],
+        );
         id
     }
 
@@ -2188,8 +2192,9 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
     let assets: Vec<&str> = lines.collect();
     assert!(!assets.is_empty(), "{imported}");
     for asset in assets {
-        let address = asset.split(" · ").next().unwrap();
-        assert!(root.join(address).is_file(), "{asset}");
+        let location = asset.split(" · ").next().unwrap();
+        let file = location.split('#').next().unwrap();
+        assert!(root.join(file).is_file(), "{asset}");
         assert!(listed.contains(asset), "{asset} is not in {listed}");
     }
     let codes: Vec<&str> = errors
@@ -3702,6 +3707,147 @@ fn set_property_writes_a_whole_enum_at_a_path_its_rows_sit_under() {
         "Set Gait.pace failed: pace: no variant 'Sprint'; the variants are Still, Walk, Run"
     );
     assert_eq!(inspected(&after, "Gait")["value"], run["value"]);
+}
+
+const TRIANGLE: &str = r#"{
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [{ "nodes": [0] }],
+  "nodes": [{ "name": "Triangle", "mesh": 0 }],
+  "meshes": [{
+    "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }]
+  }],
+  "materials": [{
+    "name": "Red",
+    "pbrMetallicRoughness": { "baseColorFactor": [1.0, 0.0, 0.0, 1.0] }
+  }],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1.0, 1.0, 0.0], "min": [0.0, 0.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6 }
+  ],
+  "buffers": [{
+    "byteLength": 42,
+    "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAABAAIA"
+  }]
+}"#;
+
+struct ImportedScene {
+    parts: String,
+    part: Value,
+    placed: String,
+    saved: String,
+    refused: Value,
+    guarded: Value,
+    untouched: bool,
+    reopened: String,
+}
+
+#[test]
+fn an_imports_scene_is_read_only_and_is_placed_in_an_authored_scene() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    let sources = tempfile::tempdir().unwrap();
+    let source = sources.path().join("triangle.gltf");
+    std::fs::write(&source, TRIANGLE).unwrap();
+    let source = source.display().to_string();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        let face = "content/props/triangle/scene.gasset";
+        let hall = json!({ "asset": "content/Hall.gasset" });
+        open(&client).await;
+        ok_with(
+            &client,
+            "import_source",
+            json!({ "source": source, "destination": "assets/props/triangle.gltf" }),
+        )
+        .await;
+        let import = std::fs::read(root.join(face)).unwrap();
+        let parts = ok_with(&client, "list_assets", json!({ "parts_of": face })).await;
+        let mesh = parts
+            .lines()
+            .find(|line| line.contains(" · Mesh · "))
+            .and_then(|line| line.split(" · ").next())
+            .unwrap_or_else(|| panic!("no mesh in {parts}"))
+            .to_owned();
+        ok_with(
+            &client,
+            "create_asset",
+            json!({ "kind": "Scene", "name": "Hall" }),
+        )
+        .await;
+        ok_with(&client, "open_asset", hall.clone()).await;
+        let part = error_with(&client, "place_asset", json!({ "asset": mesh })).await;
+        let placed = ok_with(&client, "place_asset", json!({ "asset": face })).await;
+        until(&client, "status", |status| status.contains("unsaved")).await;
+        let saved = ok(&client, "save").await;
+        ok_with(&client, "open_asset", json!({ "asset": face })).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        ok_with(
+            &client,
+            "set_property",
+            json!({ "entity": scene_id(&ids, "Triangle"), "component": "Transform", "path": "translation", "value": [1.0, 2.0, 3.0] }),
+        )
+        .await;
+        until(&client, "status", |status| status.contains("unsaved")).await;
+        let refused = error(&client, "save").await;
+        let mut guarded = hall.clone();
+        guarded["unsaved"] = "save".into();
+        let guarded = error_with(&client, "open_asset", guarded).await;
+        let untouched = std::fs::read(root.join(face)).unwrap() == import;
+        let mut discarding = hall;
+        discarding["unsaved"] = "discard".into();
+        ok_with(&client, "open_asset", discarding).await;
+        let reopened = until(&client, "scene_tree", |tree| tree.contains("MeshComponent")).await;
+        client.cancel().await.unwrap();
+        ImportedScene {
+            parts,
+            part,
+            placed,
+            saved,
+            refused,
+            guarded,
+            untouched,
+            reopened,
+        }
+    }) else {
+        return;
+    };
+
+    let ImportedScene {
+        parts,
+        part,
+        placed,
+        saved,
+        refused,
+        guarded,
+        untouched,
+        reopened,
+    } = served.result;
+    assert!(
+        parts.contains("content/props/triangle/scene.gasset#mesh/0 · Mesh · "),
+        "{parts}"
+    );
+    assert_eq!(part["code"], "refused", "{part}");
+    assert!(
+        part["message"].as_str().unwrap().starts_with("Mesh "),
+        "{part}"
+    );
+    assert!(placed.starts_with("placed triangle as entity "), "{placed}");
+    assert_eq!(saved, "Saved content/Hall.gasset.");
+    let message = "This scene belongs to assets/props/triangle.gltf and is read-only. To build on it, place it in a scene of your own.";
+    assert_eq!(refused["code"], "save_failed");
+    assert_eq!(refused["message"], message);
+    assert_eq!(guarded["code"], "save_failed");
+    assert!(
+        guarded["message"].as_str().unwrap().contains(message),
+        "{guarded}"
+    );
+    assert!(untouched);
+    assert!(reopened.contains(" triangle "), "{reopened}");
 }
 
 struct Saves {

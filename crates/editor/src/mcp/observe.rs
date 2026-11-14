@@ -52,7 +52,7 @@ use crate::{
 #[derive(Deserialize, JsonSchema)]
 pub struct Status {}
 
-/// The open project's assets as `address · kind · id` lines, filtered and paged; a line marked `· placeable` is an asset place_asset can put in the scene, known once a scene has opened. An import shows as its scene alone, marked `· import of <source> with <n> parts`; its parts are listed only when kind or query asks for them, or with parts_of.
+/// The open project's assets as `address · kind · id` lines, filtered and paged; a line marked `· placeable` is an asset place_asset can put in the scene, known once a scene has opened. An import shows as its scene alone, marked `· import of <source> with <n> parts`; its parts are listed only when kind or query asks for them, or with parts_of, and a part stored in the scene's file shows `address#name` for its address.
 #[derive(Deserialize, JsonSchema)]
 pub struct ListAssets {
     /// Text to find in an asset's name, address or kind, ignoring case; in an import's part, in its file name or kind.
@@ -436,7 +436,7 @@ fn list(
         };
         lines.push(format!(
             "{} · {} · {}{mark}{}",
-            asset.address,
+            asset.location(),
             asset.kind,
             asset.id.simple_hex(),
             fold_mark(&folds, asset)

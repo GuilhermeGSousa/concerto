@@ -537,6 +537,7 @@ fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
         kind_version: 1,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     let bytes = write_content_asset(&header, &payload).unwrap();
 
@@ -562,6 +563,7 @@ fn a_version_2_clip_migrates_to_a_clip_that_is_not_additive() {
         kind_version: 2,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     let bytes = write_content_asset(&header, &payload).unwrap();
 
@@ -776,6 +778,7 @@ fn a_version_1_retarget_rig_migrates_to_a_rig_with_no_goals() {
         kind_version: 1,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     let bytes = write_content_asset(&header, &payload).unwrap();
 

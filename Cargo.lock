@@ -1189,16 +1189,19 @@ dependencies = [
 name = "concerto-benches"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "concerto",
  "concerto-app",
  "concerto-color",
  "concerto-ecs",
+ "concerto-foundation",
  "concerto-render",
  "concerto-scene",
  "concerto-ui",
  "concerto-window",
  "concerto-world-grid",
  "criterion",
+ "serde",
 ]
 
 [[package]]

@@ -51,30 +51,71 @@ fn read_asset_id(literal: &syn::LitStr) -> Result<AssetIdLookup, String> {
         return Err("asset_id! expects a path relative to the calling package".into());
     }
     let path = Path::new(&manifest).join(relative);
-    let canonical = match path.canonicalize() {
-        Ok(canonical) => canonical,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(AssetIdLookup::Missing(format!(
-                "asset_id!: no asset at '{}'; using a nil id",
-                path.display()
-            )));
+    let mut found = existing_file(&path)?.map(|canonical| AssetFile {
+        path: path.clone(),
+        canonical,
+        embedded_as: None,
+    });
+    for (at, _) in value.match_indices('#') {
+        if found.is_some() {
+            break;
         }
-        Err(error) => {
-            return Err(format!(
-                "asset_id!: cannot open '{}': {error}",
-                path.display()
-            ))
-        }
+        let file = Path::new(&manifest).join(&value[..at]);
+        found = existing_file(&file)?
+            .filter(|canonical| canonical.is_file())
+            .map(|canonical| AssetFile {
+                path: file,
+                canonical,
+                embedded_as: Some(&value[at + 1..]),
+            });
+    }
+    let Some(file) = found else {
+        return Ok(AssetIdLookup::Missing(format!(
+            "asset_id!: no asset at '{}'; using a nil id",
+            path.display()
+        )));
     };
-    if !canonical.starts_with(Path::new(&tracking_root)) {
+    if !file.canonical.starts_with(Path::new(&tracking_root)) {
         return Err(format!(
             "asset_id!: '{}' is outside the directory registered by asset_build::track_assets",
-            path.display()
+            file.path.display()
         ));
     }
-    concerto_asset_format::read_content_asset_header(&canonical)
-        .map(|header| AssetIdLookup::Found(header.asset_id.to_bytes()))
-        .map_err(|error| format!("asset_id!: {error:#}"))
+    let header = concerto_asset_format::read_content_asset_header(&file.canonical)
+        .map_err(|error| format!("asset_id!: {error:#}"))?;
+    let Some(name) = file.embedded_as else {
+        return Ok(AssetIdLookup::Found(header.asset_id.to_bytes()));
+    };
+    match header.embedded.iter().find(|asset| asset.name() == name) {
+        Some(asset) => Ok(AssetIdLookup::Found(asset.asset_id.to_bytes())),
+        None => Err(format!(
+            "asset_id!: '{}' holds no embedded asset named '{name}'; it holds [{}]",
+            file.path.display(),
+            header
+                .embedded
+                .iter()
+                .map(|asset| asset.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+struct AssetFile<'a> {
+    path: std::path::PathBuf,
+    canonical: std::path::PathBuf,
+    embedded_as: Option<&'a str>,
+}
+
+fn existing_file(path: &std::path::Path) -> Result<Option<std::path::PathBuf>, String> {
+    match path.canonicalize() {
+        Ok(canonical) => Ok(Some(canonical)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "asset_id!: cannot open '{}': {error}",
+            path.display()
+        )),
+    }
 }
 
 #[proc_macro_derive(Asset, attributes(asset))]
