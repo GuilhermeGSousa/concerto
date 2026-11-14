@@ -12,16 +12,16 @@ use concerto_import::config::content_address;
 use concerto_import::metadata::SourceMetadata;
 use concerto_scene::scene::Scene;
 
-struct Project(PathBuf);
+pub(crate) struct Project(pub(crate) PathBuf);
 
 impl Project {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let root = std::env::temp_dir().join(format!("import-identity-{:?}", AssetId::new()));
         std::fs::create_dir_all(&root).unwrap();
         Self(root)
     }
 
-    fn path(&self, relative: &str) -> PathBuf {
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.0.join(relative)
     }
 
@@ -36,14 +36,14 @@ impl Project {
         source
     }
 
-    fn import(&self, source: &Path) -> Vec<AssetEntry> {
+    pub(crate) fn import(&self, source: &Path) -> Vec<AssetEntry> {
         concerto_import::import_source(source, &self.0, &Default::default())
             .expect("import succeeds")
     }
 
     /// Compare the complete project so failures cannot hide a modified sidecar,
     /// registry, partially rewritten output, or abandoned staging file.
-    fn snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
+    pub(crate) fn snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
         fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -92,17 +92,17 @@ fn sub_asset_of(entry: &AssetEntry) -> &str {
         .sub_asset
 }
 
-fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
+pub(crate) fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
     let mut entries: Vec<_> = registry.iter().cloned().collect();
     entries.sort_by_key(|entry| entry.location());
     entries
 }
 
-fn loose_address(source: &str, entry: &AssetEntry) -> String {
+pub(crate) fn loose_address(source: &str, entry: &AssetEntry) -> String {
     content_address(&Default::default(), Path::new(source), sub_asset_of(entry))
 }
 
-fn unpack_into_the_old_layout(project: &Project, source: &str, assets: &[AssetEntry]) {
+pub(crate) fn unpack_into_the_old_layout(project: &Project, source: &str, assets: &[AssetEntry]) {
     for entry in assets.iter().filter(|a| a.embedded_as.is_some()) {
         std::fs::write(
             project.path(&loose_address(source, entry)),

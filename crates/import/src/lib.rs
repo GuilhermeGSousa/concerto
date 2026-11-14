@@ -16,6 +16,9 @@ use concerto_foundation::assets::AssetId;
 
 pub mod config;
 pub mod metadata;
+mod pack;
+
+pub use pack::{pack_imports, PackReport, PackedSource};
 
 use config::{content_address, ContentConfig};
 use metadata::{sidecar_path, OutputMetadata, SourceMetadata};

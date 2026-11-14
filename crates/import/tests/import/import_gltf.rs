@@ -183,7 +183,7 @@ fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
 
 const PIXEL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-fn write_hero(source: &Path, meshes: usize) {
+pub(crate) fn write_hero(source: &Path, meshes: usize) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gltf/tests/fixtures/skinned.gltf");
     let mut gltf: serde_json::Value =
         serde_json::from_slice(&std::fs::read(fixture).unwrap()).unwrap();
@@ -216,7 +216,7 @@ fn write_hero(source: &Path, meshes: usize) {
     std::fs::write(source, serde_json::to_vec(&gltf).unwrap()).unwrap();
 }
 
-fn content_files(project_root: &Path) -> Vec<String> {
+pub(crate) fn content_files(project_root: &Path) -> Vec<String> {
     let mut pending = vec![project_root.join("content")];
     let mut files = Vec::new();
     while let Some(dir) = pending.pop() {
@@ -270,13 +270,13 @@ fn set_file(source: &Path, output: &str, file: bool) {
     std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
 }
 
-struct Runtime {
+pub(crate) struct Runtime {
     server: AssetServer,
     world: World,
 }
 
 impl Runtime {
-    fn new(project_root: &Path) -> Self {
+    pub(crate) fn new(project_root: &Path) -> Self {
         let server =
             AssetServer::with_content_root(ContentAssetRoot::Directory(project_root.to_path_buf()));
         server.publish_registry(
@@ -316,7 +316,7 @@ impl Runtime {
         false
     }
 
-    fn loads(&mut self, entry: &AssetEntry) -> bool {
+    pub(crate) fn loads(&mut self, entry: &AssetEntry) -> bool {
         match entry.kind.as_str() {
             "Scene" => self.loads_as::<Scene>(entry.id),
             "Mesh" => self.loads_as::<Mesh>(entry.id),

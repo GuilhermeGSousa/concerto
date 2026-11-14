@@ -136,6 +136,32 @@ The import returns an `AssetEntry` for every asset, embedded ones with
 `embedded_as`, and the editor's registry follows an output that changed between
 loose and embedded from those entries.
 
+### Converting a project without importing
+
+`pack-imports` does that conversion for a whole project at once, without
+reading a source or decoding a payload:
+
+```sh
+cargo run -p concerto-import --bin pack-imports -- <project directory>
+```
+
+It follows the project's `.import.toml` sidecars. For each source whose `scene`
+output is a file the import owns, it writes that file at version 7 with the
+source's loose meshes, materials and skeletons embedded, then deletes those
+loose files and any folder left empty. An output with `file = true`, an output
+saved from the editor, and every texture and clip stay loose and untouched.
+Ids, kinds, kind versions, references, provenance and payload bytes are
+carried over exactly, and sidecars are not changed.
+
+It prints `<source>: embedded <n>` for each source it handled, and
+`<source>: skipped, <reason>` for each it left alone: a source with no scene
+output, one whose scene was saved from the editor or is missing, and content
+whose source has no sidecar, which importing the source again converts. It
+scans the whole tree first and stops before writing anything when a header is
+unreadable, two assets share an id or a sidecar disagrees with the content.
+Each scene file is replaced through a temporary file before its loose files
+are deleted. A second run embeds nothing and changes no file.
+
 ### Animation clip names
 
 A clip's sub-asset name is `animation/<name>`, where `<name>` comes from the

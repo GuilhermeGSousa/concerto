@@ -62,6 +62,7 @@ cargo concerto editor <dir> --update [--engine <path>]
 cargo concerto build <dir> [--cook] [--release] [--target wasm32-unknown-unknown]
 cargo concerto run <dir> [--cook] [--release] [-- <game args>]
 cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
+cargo run -p concerto-import --bin pack-imports -- <scratch copy of a project>
 ```
 
 Examples are `tech-demo`, `ui-showcase` and `one-more-night`.
