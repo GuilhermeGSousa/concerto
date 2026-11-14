@@ -593,7 +593,6 @@ impl Importer for GltfImporter {
                         shadowmaps_enabled: false,
                         light_type,
                         range: light.range().unwrap_or(0.0),
-                        fade_distance: 0.0,
                     },
                 )?;
             }

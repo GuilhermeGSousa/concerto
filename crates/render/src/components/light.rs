@@ -24,7 +24,6 @@ use crate::{
 };
 
 const MAX_LIGHTS: usize = 128;
-const FADE_START: f32 = 0.8;
 
 #[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
@@ -35,7 +34,6 @@ pub struct Light {
     pub shadowmaps_enabled: bool,
     pub light_type: LightType,
     pub range: f32,
-    pub fade_distance: f32,
 }
 
 impl Default for Light {
@@ -52,7 +50,6 @@ impl Light {
             shadowmaps_enabled: false,
             light_type: LightType::Point,
             range: 0.0,
-            fade_distance: 0.0,
         }
     }
 
@@ -63,7 +60,6 @@ impl Light {
             shadowmaps_enabled: false,
             light_type: LightType::Spot { cone_angle },
             range: 0.0,
-            fade_distance: 0.0,
         }
     }
 
@@ -74,7 +70,6 @@ impl Light {
             shadowmaps_enabled: false,
             light_type: LightType::Directional,
             range: 0.0,
-            fade_distance: 0.0,
         }
     }
 
@@ -97,30 +92,6 @@ impl Light {
     pub fn with_shadows(mut self) -> Self {
         self.shadowmaps_enabled = true;
         self
-    }
-
-    /// Makes the light fade out as a camera moves away; see [`Light::fade_at`].
-    pub fn with_fade_distance(mut self, fade_distance: f32) -> Self {
-        self.fade_distance = fade_distance.max(0.0);
-        self
-    }
-
-    /// The share of this light a camera `camera_distance` away sees: all of it up to 80% of the fade distance, none past it.
-    pub fn fade_at(&self, camera_distance: f32) -> f32 {
-        if !self.fades() {
-            return 1.0;
-        }
-        1.0 - smoothstep(
-            self.fade_distance * FADE_START,
-            self.fade_distance,
-            camera_distance,
-        )
-    }
-
-    fn fades(&self) -> bool {
-        !matches!(self.light_type, LightType::Directional)
-            && self.fade_distance.is_finite()
-            && self.fade_distance > 0.0
     }
 
     /// How much of this light reaches `point`, as the standard material
@@ -211,7 +182,6 @@ pub struct RenderLight {
     pub(crate) shadow_layer: i32,
     pub(crate) range: f32,
     pub(crate) shadow_far: f32,
-    pub(crate) fade_distance: f32,
 }
 
 impl RenderLight {
@@ -230,11 +200,6 @@ impl RenderLight {
             LightType::Point => point_shadow_far(light.range),
             _ => 0.0,
         };
-        self.fade_distance = if light.fades() {
-            light.fade_distance
-        } else {
-            0.0
-        };
         self
     }
 
@@ -249,7 +214,6 @@ impl RenderLight {
             shadow_layer: -1,
             range: 0.0,
             shadow_far: 0.0,
-            fade_distance: 0.0,
         }
     }
 }
@@ -319,28 +283,10 @@ pub(crate) fn entity_order(entity: &Entity) -> EntityOrder {
     }
 }
 
-struct LightView {
-    frustum: Frustum,
-    position: Vec3,
-}
-
-impl LightView {
-    fn sees(&self, light: &RenderLight) -> bool {
-        if light.light_type == LightType::Directional.index() {
-            return true;
-        }
-        if light.fade_distance > 0.0
-            && self.position.distance(light.translation) >= light.fade_distance
-        {
-            return false;
-        }
-        if light.range > 0.0 {
-            self.frustum
-                .intersects_sphere(light.translation, light.range)
-        } else {
-            true
-        }
-    }
+fn sees(frustum: &Frustum, light: &RenderLight) -> bool {
+    light.light_type == LightType::Directional.index()
+        || light.range <= 0.0
+        || frustum.intersects_sphere(light.translation, light.range)
 }
 
 pub(crate) fn cull_lights(
@@ -348,17 +294,14 @@ pub(crate) fn cull_lights(
     cameras: Query<&RenderCamera>,
     mut visible: ResMut<VisibleLights>,
 ) {
-    let views: Vec<LightView> = cameras
+    let views: Vec<Frustum> = cameras
         .iter()
-        .map(|camera| LightView {
-            frustum: Frustum::from_clip_from_world(camera.camera_uniform.view_proj()),
-            position: camera.camera_uniform.view_pos(),
-        })
+        .map(|camera| Frustum::from_clip_from_world(camera.camera_uniform.view_proj()))
         .collect();
 
     let mut entities: Vec<Entity> = lights
         .iter()
-        .filter(|(_, light)| views.iter().any(|view| view.sees(light)))
+        .filter(|(_, light)| views.iter().any(|view| sees(view, light)))
         .map(|(entity, _)| entity)
         .collect();
     entities.sort_by_key(entity_order);
@@ -456,7 +399,6 @@ mod tests {
             shadow_layer: -2,
             range: 14.0,
             shadow_far: 15.0,
-            fade_distance: 16.0,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]);
@@ -465,11 +407,10 @@ mod tests {
         expected.push((-2i32) as u32);
         expected.push(14.0f32.to_bits());
         expected.push(15.0f32.to_bits());
-        expected.push(16.0f32.to_bits());
 
-        assert_eq!(uniform_words(&light)[..17], expected);
-        assert_eq!(RenderLight::SHADER_SIZE.get(), 80);
-        assert_eq!(light.size().get(), 80);
+        assert_eq!(uniform_words(&light)[..16], expected);
+        assert_eq!(RenderLight::SHADER_SIZE.get(), 64);
+        assert_eq!(light.size().get(), 64);
     }
 
     #[test]
@@ -478,10 +419,10 @@ mod tests {
 
         let words = words(&lights_uniform_bytes(&listed));
 
-        assert_eq!(words.len(), 2564);
-        assert_eq!(words[2560], 3);
+        assert_eq!(words.len(), 2052);
+        assert_eq!(words[2048], 3);
         assert_eq!(words[13], (-1i32) as u32);
-        assert_eq!(words[20 * 127 + 13], (-1i32) as u32);
+        assert_eq!(words[16 * 127 + 13], (-1i32) as u32);
     }
 
     struct Reach {
@@ -549,71 +490,6 @@ mod tests {
                 "{}: {attenuation} outside {:?}",
                 case.case,
                 case.between
-            );
-        }
-    }
-
-    struct Fade {
-        case: &'static str,
-        light: Light,
-        camera_distance: f32,
-        fade: f32,
-    }
-
-    #[test]
-    fn a_light_fades_out_over_the_last_fifth_of_its_fade_distance() {
-        let fading = || Light::point_light().with_fade_distance(10.0);
-        let fade = |case, light, camera_distance, fade| Fade {
-            case,
-            light,
-            camera_distance,
-            fade,
-        };
-        let cases = [
-            fade("no fade distance", Light::point_light(), 1000.0, 1.0),
-            fade("near the light", fading(), 1.0, 1.0),
-            fade("where the fade starts", fading(), 8.0, 1.0),
-            fade("half way through the fade", fading(), 9.0, 0.5),
-            fade("at the fade distance", fading(), 10.0, 0.0),
-            fade("past the fade distance", fading(), 50.0, 0.0),
-            fade(
-                "a spot light fades too",
-                Light::spot_light(0.4).with_fade_distance(10.0),
-                9.0,
-                0.5,
-            ),
-            fade(
-                "a directional light never fades",
-                Light::directional_light().with_fade_distance(10.0),
-                50.0,
-                1.0,
-            ),
-            fade(
-                "a negative fade distance is no fade",
-                Light {
-                    fade_distance: -5.0,
-                    ..Light::point_light()
-                },
-                50.0,
-                1.0,
-            ),
-            fade(
-                "a fade distance that is not a number is no fade",
-                Light {
-                    fade_distance: f32::NAN,
-                    ..Light::point_light()
-                },
-                50.0,
-                1.0,
-            ),
-        ];
-        for case in &cases {
-            let fade = case.light.fade_at(case.camera_distance);
-            assert!(
-                (fade - case.fade).abs() < 1e-6,
-                "{}: {fade}, expected {}",
-                case.case,
-                case.fade
             );
         }
     }

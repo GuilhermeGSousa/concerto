@@ -1127,17 +1127,12 @@ mod tests {
         let lamp = || Light::point_light().with_range(5.0).with_shadows();
         let ahead = spawn_at(&mut app, lamp(), Vec3::new(0.0, 0.0, -20.0));
         let behind = spawn_at(&mut app, lamp(), Vec3::new(0.0, 0.0, 20.0));
-        let faded = spawn_at(
-            &mut app,
-            lamp().with_fade_distance(10.0),
-            Vec3::new(3.0, 0.0, -20.0),
-        );
         let sun = spawn(&mut app, Light::directional_light().with_shadows());
 
         app.update();
         assert_eq!(
-            [ahead, behind, faded, sun].map(|light| layer(&app, light)),
-            [-1; 4],
+            [ahead, behind, sun].map(|light| layer(&app, light)),
+            [-1; 3],
             "with no camera"
         );
         assert!(written(&app).is_empty(), "with no camera");
@@ -1150,8 +1145,8 @@ mod tests {
         app.update();
         assert_eq!(point_slots(&app), vec![ahead]);
         assert_eq!(
-            [ahead, behind, faded, sun].map(|light| layer(&app, light)),
-            [0, -1, -1, 0]
+            [ahead, behind, sun].map(|light| layer(&app, light)),
+            [0, -1, 0]
         );
         assert!(written(&app) == [render_light(&app, ahead), render_light(&app, sun)]);
 
@@ -1166,18 +1161,10 @@ mod tests {
         app.update();
         assert_eq!(point_slots(&app), vec![behind]);
         assert_eq!(
-            [ahead, behind, faded, sun].map(|light| layer(&app, light)),
-            [-1, 0, -1, 0]
+            [ahead, behind, sun].map(|light| layer(&app, light)),
+            [-1, 0, 0]
         );
         assert!(written(&app) == [render_light(&app, behind), render_light(&app, sun)]);
-
-        *app.main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<Transform>(camera)
-            .unwrap() = Transform::from_translation(Vec3::new(3.0, 0.0, -14.0));
-        app.update();
-        app.update();
-        assert_eq!(point_slots(&app), vec![ahead, faded]);
     }
 
     fn spot() -> u32 {
