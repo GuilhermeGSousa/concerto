@@ -3,7 +3,7 @@ use concerto_foundation::assets::content::{
     write_content_asset, write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload,
     ImportProvenance,
 };
-use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::{Asset, AssetId};
 use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ fn entry(id: AssetId, address: &str, kind: &str) -> AssetEntry {
         kind: kind.into(),
         kind_version: None,
         provenance: None,
-        embedded_as: None,
+        embedded_in: None,
     }
 }
 
@@ -171,7 +171,15 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
     assert_eq!(registry.id_for_location(scene), Some(host));
     let held = registry.get(mesh).expect("the mesh is listed");
     assert_eq!(held.address, scene);
-    assert_eq!(held.embedded_as.as_deref(), Some("mesh/0"));
+    assert_eq!(
+        held.embedded_in,
+        Some(EmbeddedIn {
+            host,
+            name: "mesh/0".into()
+        })
+    );
+    assert_eq!(held.file(), host, "an embedded asset's file is its host's");
+    assert_eq!(registry.get(host).expect("host").file(), host);
     assert_eq!(held.location(), "content/hero/scene.gasset#mesh/0");
     assert_eq!(
         held.name(),
@@ -179,7 +187,7 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
         "an embedded asset is named as its loose file was"
     );
     assert_eq!(registry.get(host).expect("host").location(), scene);
-    let in_file: Vec<_> = registry.in_file(scene).map(|entry| entry.id).collect();
+    let in_file: Vec<_> = registry.in_file(host).map(|entry| entry.id).collect();
     assert_eq!(in_file, [host, material, mesh], "the host comes first");
 
     let text = registry.to_toml();
@@ -195,7 +203,10 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
 
     let replacement = AssetId::new();
     registry.insert(AssetEntry {
-        embedded_as: Some("mesh/0".into()),
+        embedded_in: Some(EmbeddedIn {
+            host,
+            name: "mesh/0".into(),
+        }),
         ..entry(replacement, scene, "Mesh")
     });
     assert_eq!(registry.get(mesh), None, "one asset per location");
@@ -205,6 +216,16 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
     );
     assert_eq!(registry.id_for_address(scene), Some(host));
     assert_eq!(registry.iter().count(), 4);
+
+    let hostless = AssetRegistry::parse(&format!(
+        "[assets]\n{} = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n",
+        mesh.simple_hex()
+    ))
+    .expect_err("an embedded line needs the line of its host");
+    assert!(
+        format!("{hostless:#}").contains("content/a.gasset"),
+        "got: {hostless:#}"
+    );
 
     let before = AssetRegistry::parse(&format!(
         "[assets]\n{} = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n",

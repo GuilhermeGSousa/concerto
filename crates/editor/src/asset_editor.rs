@@ -521,7 +521,7 @@ mod tests {
     impl AssetEditor for OtherFake {}
     fn asset(path: &str) -> AssetEntry {
         AssetEntry {
-            embedded_as: None,
+            embedded_in: None,
             id: AssetId::from_path(path),
             address: path.into(),
             kind: "TestAsset".into(),

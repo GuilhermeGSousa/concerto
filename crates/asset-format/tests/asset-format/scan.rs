@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use concerto_asset_format::{
-    asset_location, parse_registry, scan_content, write_content_asset,
-    write_content_asset_with_embedded, write_registry, AssetId, ContentAssetHeader, ContentConfig,
-    EmbeddedPayload, ImportProvenance, ScannedEntry,
+    parse_registry, scan_content, write_content_asset, write_content_asset_with_embedded,
+    write_registry, AssetId, ContentAssetHeader, ContentConfig, EmbeddedIn, EmbeddedPayload,
+    ImportProvenance, ScannedEntry,
 };
 
 fn temp_root(tag: &str) -> PathBuf {
@@ -66,7 +66,7 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
                 kind: "AnimationClip".into(),
                 kind_version: Some(1),
                 provenance: None,
-                embedded_as: None,
+                embedded_in: None,
             },
             ScannedEntry {
                 id: body,
@@ -74,7 +74,7 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
                 kind: "Mesh".into(),
                 kind_version: Some(1),
                 provenance,
-                embedded_as: None,
+                embedded_in: None,
             },
         ]
     );
@@ -84,6 +84,7 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
 
 #[test]
 fn the_registry_text_round_trips_without_the_kind_version() {
+    let host = AssetId::new();
     let entries = vec![
         ScannedEntry {
             id: AssetId::new(),
@@ -91,15 +92,15 @@ fn the_registry_text_round_trips_without_the_kind_version() {
             kind: "Mesh".into(),
             kind_version: None,
             provenance: None,
-            embedded_as: None,
+            embedded_in: None,
         },
         ScannedEntry {
-            id: AssetId::new(),
+            id: host,
             address: "content/quoted \"b\".gasset".into(),
             kind: "Scene".into(),
             kind_version: Some(3),
             provenance: None,
-            embedded_as: None,
+            embedded_in: None,
         },
         ScannedEntry {
             id: AssetId::new(),
@@ -107,7 +108,10 @@ fn the_registry_text_round_trips_without_the_kind_version() {
             kind: "Mesh".into(),
             kind_version: None,
             provenance: None,
-            embedded_as: Some("mesh/\"0\"".into()),
+            embedded_in: Some(EmbeddedIn {
+                host,
+                name: "mesh/\"0\"".into(),
+            }),
         },
         ScannedEntry {
             id: AssetId::new(),
@@ -115,7 +119,10 @@ fn the_registry_text_round_trips_without_the_kind_version() {
             kind: "Mesh".into(),
             kind_version: None,
             provenance: None,
-            embedded_as: Some("mesh/1".into()),
+            embedded_in: Some(EmbeddedIn {
+                host,
+                name: "mesh/1".into(),
+            }),
         },
     ];
 
@@ -142,7 +149,7 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
                 source: "assets/b.glb".into(),
                 sub_asset: "b".into(),
             }),
-            embedded_as: None,
+            embedded_in: None,
         },
         ScannedEntry {
             id: ids[0],
@@ -150,7 +157,7 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
             kind: "Mesh".into(),
             kind_version: None,
             provenance: None,
-            embedded_as: None,
+            embedded_in: None,
         },
     ];
 
@@ -189,7 +196,8 @@ fn parsing_refuses_the_legacy_address_only_form_and_two_ids_at_one_address() {
         },
         RegistryRefusal {
             text: format!(
-                "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n",
+                "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Scene\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n",
+                AssetId::new().simple_hex(),
                 AssetId::new().simple_hex(),
                 AssetId::new().simple_hex(),
             ),
@@ -537,10 +545,7 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
                 assert_eq!(
                     entries
                         .iter()
-                        .map(|entry| {
-                            asset_location(&entry.address, entry.embedded_as.as_deref())
-                                .replace(&root_text, "<root>")
-                        })
+                        .map(|entry| entry.location().replace(&root_text, "<root>"))
                         .collect::<Vec<_>>(),
                     addresses,
                     "{}",

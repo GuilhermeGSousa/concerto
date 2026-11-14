@@ -325,8 +325,8 @@ impl AssetServer {
     ) -> anyhow::Result<bool> {
         let file = pollster::block_on(try_read_relative(root, &entry.address))?
             .with_context(|| format!("no content asset at '{}'", entry.address))?;
-        if let Some(name) = entry.embedded_as.as_deref() {
-            let record = asset_record(&file, Some(name))?;
+        if let Some(embedded) = &entry.embedded_in {
+            let record = asset_record(&file, Some(&embedded.name))?;
             if record_is_derived(&entry.kind, &record)? {
                 anyhow::bail!(
                     "{} is embedded in an import's file; embedded assets cannot be cooked yet",
@@ -433,7 +433,7 @@ impl AssetServer {
     fn resolve_load(&self, id: AssetId) -> Option<ResolvedLoad> {
         let content = self.data.content.read().unwrap();
         let entry = content.registry.get(id)?.clone();
-        let pending = self.data.file_reads.begin(&entry.address);
+        let pending = self.data.file_reads.begin(entry.file());
         Some(ResolvedLoad {
             source: LoadSource {
                 root: content.root.clone(),
@@ -710,7 +710,7 @@ mod tests {
 
     fn scene_entry(id: AssetId) -> AssetEntry {
         AssetEntry {
-            embedded_as: None,
+            embedded_in: None,
             id,
             address: "content/hero/scene.gasset".into(),
             kind: "Scene".into(),

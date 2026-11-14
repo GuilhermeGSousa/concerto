@@ -16,7 +16,7 @@ use concerto_foundation::assets::{
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
-    registry::{AssetEntry, AssetRegistry},
+    registry::{AssetEntry, AssetRegistry, EmbeddedIn},
     Asset, AssetId, ContentAssetRoot, LoadableAsset,
 };
 use serde::{Deserialize, Serialize};
@@ -383,18 +383,22 @@ impl Project {
         .unwrap();
         std::fs::write(self.root.join(&address), file).unwrap();
         let id = embedded.asset_id;
-        let mut register = |header: ContentAssetHeader, embedded_as: Option<&str>| {
+        let embedded_in = EmbeddedIn {
+            host: host.asset_id,
+            name: embedded_as.to_string(),
+        };
+        let mut register = |header: ContentAssetHeader, embedded_in: Option<EmbeddedIn>| {
             self.registry.insert(AssetEntry {
                 id: header.asset_id,
                 address: address.clone(),
                 kind: header.kind,
                 kind_version: Some(header.kind_version),
                 provenance: header.provenance,
-                embedded_as: embedded_as.map(str::to_string),
+                embedded_in,
             });
         };
         register(host, None);
-        register(embedded, Some(embedded_as));
+        register(embedded, Some(embedded_in));
         id
     }
 
@@ -725,7 +729,7 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
     .unwrap();
     project.registry.insert(AssetEntry {
         address: loose.to_string(),
-        embedded_as: None,
+        embedded_in: None,
         ..entry
     });
     assert_eq!(

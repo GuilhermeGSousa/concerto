@@ -1530,7 +1530,7 @@ mod tests {
 
     fn entry(address: &str, kind: &str) -> AssetEntry {
         AssetEntry {
-            embedded_as: None,
+            embedded_in: None,
             id: AssetId::new(),
             address: address.into(),
             kind: kind.into(),

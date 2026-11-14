@@ -11,7 +11,7 @@ use concerto_foundation::assets::content::{
     read_content_asset_header, write_content_asset, write_content_asset_with_embedded,
     ContentAssetHeader, EmbeddedPayload, ImportProvenance,
 };
-use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
 
 pub mod config;
@@ -52,7 +52,7 @@ pub fn supported_extension(extension: &str) -> bool {
 /// What [`import_source_into`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedSource {
-    /// Every content asset written, with its import provenance; one stored in the scene file has `embedded_as`.
+    /// Every content asset written, with its import provenance; one stored in the scene file has `embedded_in`.
     pub assets: Vec<AssetEntry>,
     /// Project-relative paths of the files copied along with the source.
     pub siblings: Vec<String>,
@@ -76,6 +76,11 @@ struct HostOutput<'a> {
     payload: &'a [u8],
 }
 
+struct HostFile {
+    id: AssetId,
+    address: String,
+}
+
 struct Pruned {
     key: String,
     id: AssetId,
@@ -91,7 +96,7 @@ fn loose_address(
 ) -> String {
     registry
         .get(id)
-        .filter(|entry| entry.embedded_as.is_none())
+        .filter(|entry| entry.embedded_in.is_none())
         .map(|entry| entry.address.clone())
         .unwrap_or_else(|| content_address(config, relative_source, name))
 }
@@ -229,17 +234,17 @@ fn import_with(
     // Fail on malformed headers and duplicate IDs before touching any output.
     let mut registry =
         AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
-    let mut files: HashMap<String, ContentAssetHeader> = HashMap::new();
+    let mut files: HashMap<AssetId, ContentAssetHeader> = HashMap::new();
     let mut headers = HashMap::new();
     for entry in registry.iter() {
-        let file = match files.entry(entry.address.clone()) {
+        let file = match files.entry(entry.file()) {
             Entry::Occupied(file) => file.into_mut(),
             Entry::Vacant(file) => file.insert(read_content_asset_header(
                 &project_root.join(&entry.address),
             )?),
         };
         let header = file
-            .record_header(entry.embedded_as.as_deref())
+            .record_header(entry.embedded_in.as_ref().map(|held| held.name.as_str()))
             .with_context(|| format!("'{}' is not in its file's directory", entry.location()))?;
         headers.insert(entry.id, header);
     }
@@ -322,7 +327,7 @@ fn import_with(
     let mut destinations = HashSet::new();
     let mut written = Vec::with_capacity(outputs.sub_assets.len());
     let mut plan = Vec::with_capacity(outputs.sub_assets.len());
-    let host_address = match outputs.sub_assets.iter().find(|s| s.name == HOST) {
+    let host_file = match outputs.sub_assets.iter().find(|s| s.name == HOST) {
         Some(host) => {
             let address = loose_address(&registry, config, relative_source, host.asset_id, HOST);
             if headers
@@ -335,7 +340,10 @@ fn import_with(
                     content_address(config, relative_source, HOST)
                 );
             }
-            Some(address)
+            Some(HostFile {
+                id: host.asset_id,
+                address,
+            })
         }
         None => None,
     };
@@ -372,11 +380,11 @@ fn import_with(
             .outputs
             .get(&sub_asset.name)
             .is_some_and(|output| output.file);
-        let embedded_in = host_address.as_ref().filter(|_| {
+        let embedded_in = host_file.as_ref().filter(|_| {
             sub_asset.name != HOST && embeds_by_default(sub_asset.type_name) && !keeps_file
         });
         let address = match embedded_in {
-            Some(host_address) => host_address.clone(),
+            Some(host_file) => host_file.address.clone(),
             None => {
                 let address = loose_address(
                     &registry,
@@ -418,7 +426,7 @@ fn import_with(
         if embedded_in.is_some() {
             if let Some(loose) = registry
                 .get(sub_asset.asset_id)
-                .filter(|entry| entry.embedded_as.is_none())
+                .filter(|entry| entry.embedded_in.is_none())
             {
                 superseded.push(project_root.join(&loose.address));
             }
@@ -439,7 +447,10 @@ fn import_with(
             });
         }
         let entry = AssetEntry {
-            embedded_as: embedded_in.map(|_| sub_asset.name.clone()),
+            embedded_in: embedded_in.map(|host_file| EmbeddedIn {
+                host: host_file.id,
+                name: sub_asset.name.clone(),
+            }),
             id: sub_asset.asset_id,
             address,
             kind: header.kind,
@@ -509,17 +520,17 @@ fn import_with(
         };
         metadata.outputs.remove(&key);
         let file = entry
-            .embedded_as
+            .embedded_in
             .is_none()
             .then(|| project_root.join(&entry.address));
         deletions.push(Pruned { key, id, file });
         removed.push(id);
     }
-    if let Some(host_address) = &host_address {
+    if let Some(host_file) = &host_file {
         let kept: HashSet<AssetId> = embedded.iter().map(|o| o.header.asset_id).collect();
         let strays: Vec<AssetId> = registry
-            .in_file(host_address)
-            .filter(|entry| entry.embedded_as.is_some() && !kept.contains(&entry.id))
+            .in_file(host_file.id)
+            .filter(|entry| entry.embedded_in.is_some() && !kept.contains(&entry.id))
             .map(|entry| entry.id)
             .collect();
         for id in strays {

@@ -38,11 +38,10 @@ pub(crate) async fn load_entry_parts<A: Asset>(
     read: &SharedRead,
 ) -> anyhow::Result<LoadedContent<A>> {
     let file = read.bytes(root, &entry.address).await?;
-    let decoded = match entry.embedded_as.as_deref() {
+    let decoded = match &entry.embedded_in {
         None => decode_content_parts(&file),
-        Some(name) => {
-            asset_record(&file, Some(name)).and_then(|record| decode_content_parts(&record))
-        }
+        Some(embedded) => asset_record(&file, Some(&embedded.name))
+            .and_then(|record| decode_content_parts(&record)),
     };
     decoded.with_context(|| format!("malformed content asset '{}'", entry.location()))
 }

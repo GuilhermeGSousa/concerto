@@ -127,7 +127,7 @@ fn plan(
             host.address
         )));
     };
-    if host.embedded_as.is_some() || metadata::provenance_path(&provenance.source, root) != source {
+    if host.embedded_in.is_some() || metadata::provenance_path(&provenance.source, root) != source {
         return Ok(Plan::Skip(format!(
             "its scene id belongs to '{}', which another source owns",
             host.location()
@@ -151,7 +151,7 @@ fn plan(
         let Some(provenance) = &entry.provenance else {
             continue;
         };
-        if entry.embedded_as.is_some() || !embeds_by_default(&entry.kind) {
+        if entry.embedded_in.is_some() || !embeds_by_default(&entry.kind) {
             continue;
         }
         if provenance.sub_asset != *key {
@@ -161,10 +161,11 @@ fn plan(
                 entry.address
             );
         }
-        if registry
-            .in_file(&host.address)
-            .any(|held| held.embedded_as.as_deref() == Some(key))
-        {
+        if registry.in_file(host.id).any(|held| {
+            held.embedded_in
+                .as_ref()
+                .is_some_and(|held| held.name == *key)
+        }) {
             bail!(
                 "'{}' already holds an asset named '{key}', and '{}' is another; delete one and run again",
                 host.address,

@@ -55,7 +55,7 @@ fn clip_only_source(project: &Project, clip: &AssetEntry) -> AssetEntry {
         kind: header.kind,
         kind_version: Some(header.kind_version),
         provenance: Some(provenance),
-        embedded_as: None,
+        embedded_in: None,
     }
 }
 
@@ -71,14 +71,14 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
     let walk = clip_only_source(&project, clip);
     let embedded: Vec<&AssetEntry> = imported
         .iter()
-        .filter(|a| a.embedded_as.is_some())
+        .filter(|a| a.embedded_in.is_some())
         .collect();
     let moved = project.path("content/hero/parts/mesh_1.gasset");
     std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
     std::fs::rename(project.path("content/hero/mesh_1.gasset"), &moved).unwrap();
     let old = project.snapshot();
     let old_record = |entry: &AssetEntry| {
-        let address = match entry.embedded_as.as_deref() {
+        let address = match entry.embedded_in.as_ref().map(|held| held.name.as_str()) {
             Some("mesh/1") => "content/hero/parts/mesh_1.gasset".to_string(),
             _ => loose_address(HERO, entry),
         };

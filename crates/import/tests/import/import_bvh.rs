@@ -85,7 +85,7 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
     let skeleton = first
         .assets
         .iter()
-        .find(|asset| asset.embedded_as.is_some())
+        .find(|asset| asset.embedded_in.is_some())
         .unwrap();
     let clip = "content/walk/animation_walk.gasset";
     let skeleton_before = read_asset_record(project.path(), skeleton).unwrap();

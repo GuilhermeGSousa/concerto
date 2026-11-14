@@ -84,7 +84,7 @@ pub(crate) fn record_is_derived(kind: &str, record: &[u8]) -> anyhow::Result<boo
 /// The assets a derivation reads, keyed by id, with each file read once from the content root and kept.
 #[derive(Debug, Default)]
 pub struct DerivedInputs {
-    files: HashMap<String, Arc<Vec<u8>>>,
+    files: HashMap<AssetId, Arc<Vec<u8>>>,
     records: HashMap<AssetId, Arc<Vec<u8>>>,
 }
 
@@ -141,7 +141,7 @@ impl DerivedInputs {
         entry: &AssetEntry,
     ) -> anyhow::Result<Arc<Vec<u8>>> {
         let id = entry.id;
-        let file = match self.files.get(&entry.address) {
+        let file = match self.files.get(&entry.file()) {
             Some(file) => Arc::clone(file),
             None => {
                 let bytes = try_read_relative(root, &entry.address)
@@ -153,22 +153,22 @@ impl DerivedInputs {
                         )
                     })?;
                 let file = Arc::new(bytes);
-                self.files.insert(entry.address.clone(), Arc::clone(&file));
+                self.files.insert(entry.file(), Arc::clone(&file));
                 file
             }
         };
         let location = entry.location();
-        let hosts = entry.embedded_as.is_none()
+        let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
+        let hosts = name.is_none()
             && read_content_asset_parts(&file).is_ok_and(|parts| !parts.header.embedded.is_empty());
-        let record = if entry.embedded_as.is_none() && !hosts {
-            file
-        } else {
-            Arc::new(
-                asset_record(&file, entry.embedded_as.as_deref()).with_context(|| {
+        let record =
+            if name.is_none() && !hosts {
+                file
+            } else {
+                Arc::new(asset_record(&file, name).with_context(|| {
                     format!("failed to read derived input {id:?} at '{location}'")
-                })?,
-            )
-        };
+                })?)
+            };
         let derives = record_is_derived(&entry.kind, &record)
             .with_context(|| format!("failed to read derived input {id:?} at '{location}'"))?;
         if derives {

@@ -138,7 +138,7 @@ before embedded assets, keeps every id, writes them into the scene file and
 deletes the loose files. A scene file that has moved keeps its address.
 
 The import returns an `AssetEntry` for every asset, embedded ones with
-`embedded_as`, and the editor's registry follows an output that changed between
+`embedded_in`, and the editor's registry follows an output that changed between
 loose and embedded from those entries.
 
 ### Converting a project without importing
@@ -583,12 +583,16 @@ has its own entry, all at the file's address, and an embedded one also has
 location is the address, `#`, and that name:
 `content/hero/scene.gasset#mesh/0`. A line without `embedded_as` is a host or a
 loose asset, so registry text written before embedded assets existed still
-parses.
+parses. A line with `embedded_as` needs the line of its host, the one at the
+same address without it; registry text that has none fails to parse.
 
 `AssetRegistry` (`concerto_foundation::assets::registry`) is the registry in
 memory, and a resource in every `App` that has `AssetManagerPlugin`. Each
-`AssetEntry` has the id, the address, the kind, `embedded_as`, and, when the
-registry was built by scanning headers, the import provenance. List assets by type without loading
+`AssetEntry` has the id, the address, the kind, `embedded_in` (for an embedded
+asset, the id of its host and its name in the host's file), and, when the
+registry was built by scanning headers, the import provenance. `file()` is the
+id of the asset whose file holds the entry: the host of an embedded asset, the
+asset itself otherwise. A file is identified by that id, not by its address. List assets by type without loading
 them, as with Unreal's `GetAssetsByClass`:
 
 ```rust
@@ -602,11 +606,11 @@ fn list_meshes(registry: Res<AssetRegistry>) {
 Entries come in folder, then name order. `get(id)` looks up one entry.
 `id_for_address(address)` gives the host or loose asset of a file,
 `id_for_location(location)` any asset by the text `AssetEntry::location` gives
-(`content/hero/scene.gasset#mesh/0`), and `in_file(address)` every entry of a
-file, host first. `name()` is the file name without its extension, and for an
+(`content/hero/scene.gasset#mesh/0`), and `in_file(host)` every entry of the
+file of the host or loose asset with that id, host first. `name()` is the file name without its extension, and for an
 embedded asset the name its own file would have (`mesh_0` for `mesh/0`). Two
 entries never share an id or a location; inserting one replaces whichever held
-either. React to catalogue changes with `registry.is_changed()`.
+its id, its address when neither is embedded, or its name in the same host. React to catalogue changes with `registry.is_changed()`.
 
 A scene's serialized `MeshComponent` carries a bare `AssetId` (no path); when
 the spawner upgrades that `Weak` handle to `Strong`, `AssetServer` resolves the

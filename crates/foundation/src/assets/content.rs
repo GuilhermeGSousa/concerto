@@ -88,7 +88,8 @@ pub fn read_asset_record(project_root: &Path, entry: &AssetEntry) -> anyhow::Res
     let path = project_root.join(&entry.address);
     let file = std::fs::read(&path)
         .with_context(|| format!("failed to read content asset '{}'", path.display()))?;
-    asset_record(&file, entry.embedded_as.as_deref())
+    let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
+    asset_record(&file, name)
         .with_context(|| format!("malformed content asset '{}'", entry.location()))
 }
 
@@ -129,7 +130,7 @@ pub fn save_content_asset_into<A: Asset>(
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 
     registry.insert(AssetEntry {
-        embedded_as: None,
+        embedded_in: None,
         id: asset_id,
         address: address.to_owned(),
         kind,
@@ -172,7 +173,7 @@ pub fn resave_content_asset<A: Asset>(
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 
     registry.insert(AssetEntry {
-        embedded_as: None,
+        embedded_in: None,
         id: header.asset_id,
         address: address.to_owned(),
         kind: header.kind,

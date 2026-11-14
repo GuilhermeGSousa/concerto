@@ -281,7 +281,7 @@ pub fn forwarding<E: Event + Clone + 'static>() -> BoxedSystem {
 
 pub fn scene_entry(name: &str) -> AssetEntry {
     AssetEntry {
-        embedded_as: None,
+        embedded_in: None,
         id: AssetId::new(),
         address: format!("{name}.gasset"),
         kind: Scene::name().into(),
@@ -498,7 +498,7 @@ impl SceneFixture {
 
     pub fn request_kind(&mut self, kind: &str) -> Entity {
         let asset = AssetEntry {
-            embedded_as: None,
+            embedded_in: None,
             id: AssetId::new(),
             address: format!("{kind}.gasset"),
             kind: kind.into(),

@@ -130,7 +130,9 @@ time. The running game never reads them.
   that root's `derived-cache/`. A `.gasset` moved or added in a file explorer
   or by git is picked up at the next build.
 - `AssetRegistry` is the one catalogue of content on disk: id, address, kind,
-  and for an embedded asset its name inside the file.
+  and for an embedded asset the id of its host and its name inside the host's
+  file. A file is identified by the id of its host (a loose asset is its own),
+  never by its address: `AssetEntry::file()` gives it.
   It is a resource; `registry.of_type::<T>()` lists assets without loading
   them. `AssetServer` resolves loads against a snapshot of it, refreshed by
   `sync_asset_registry` in `First` when the resource changes. It reads a file

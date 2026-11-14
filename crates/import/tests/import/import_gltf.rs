@@ -54,7 +54,7 @@ fn an_imported_gltf_writes_content_assets_that_load_back_and_reference_each_othe
     assert!(project_root.join("content/triangle/scene.gasset").exists());
     let mesh_entry = written
         .iter()
-        .find(|a| a.embedded_as.as_deref() == Some("mesh/0"))
+        .find(|a| a.embedded_in.as_ref().map(|held| held.name.as_str()) == Some("mesh/0"))
         .unwrap();
 
     let raw = std::fs::read(project_root.join("content/triangle/scene.gasset")).unwrap();
@@ -160,7 +160,7 @@ fn an_imports_returned_entries_bring_a_scanned_registry_up_to_date() {
         assert_eq!(
             read_content_asset_header(&project_root.join(&entry.address))
                 .unwrap()
-                .record_header(entry.embedded_as.as_deref())
+                .record_header(entry.embedded_in.as_ref().map(|held| held.name.as_str()))
                 .unwrap()
                 .provenance
                 .as_ref(),

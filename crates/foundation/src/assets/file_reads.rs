@@ -5,7 +5,7 @@ use std::{
 
 use async_lock::OnceCell;
 
-use super::{utils::try_read_relative, ContentAssetRoot};
+use super::{utils::try_read_relative, AssetId, ContentAssetRoot};
 
 #[derive(Default)]
 pub(crate) struct SharedRead {
@@ -41,21 +41,21 @@ struct FileRead {
 
 #[derive(Default)]
 pub(crate) struct FileReads {
-    files: Mutex<HashMap<String, FileRead>>,
+    files: Mutex<HashMap<AssetId, FileRead>>,
 }
 
 impl FileReads {
-    pub(crate) fn begin(self: &Arc<Self>, address: &str) -> PendingRead {
+    pub(crate) fn begin(self: &Arc<Self>, file: AssetId) -> PendingRead {
         let mut files = self.files.lock().unwrap();
-        let file = files.entry(address.to_owned()).or_insert_with(|| FileRead {
+        let held = files.entry(file).or_insert_with(|| FileRead {
             pending: 0,
             read: Arc::default(),
         });
-        file.pending += 1;
+        held.pending += 1;
         PendingRead {
             reads: Arc::clone(self),
-            address: address.to_owned(),
-            read: Arc::clone(&file.read),
+            file,
+            read: Arc::clone(&held.read),
         }
     }
 
@@ -66,7 +66,7 @@ impl FileReads {
 
 pub(crate) struct PendingRead {
     reads: Arc<FileReads>,
-    address: String,
+    file: AssetId,
     read: Arc<SharedRead>,
 }
 
@@ -79,7 +79,7 @@ impl PendingRead {
 impl Drop for PendingRead {
     fn drop(&mut self) {
         let mut files = self.reads.files.lock().unwrap();
-        let Some(file) = files.get_mut(&self.address) else {
+        let Some(file) = files.get_mut(&self.file) else {
             return;
         };
         if !Arc::ptr_eq(&file.read, &self.read) {
@@ -87,7 +87,7 @@ impl Drop for PendingRead {
         }
         file.pending -= 1;
         if file.pending == 0 {
-            files.remove(&self.address);
+            files.remove(&self.file);
         }
     }
 }

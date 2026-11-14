@@ -213,7 +213,7 @@ mod tests {
         let payload = bincode::serialize(clip).unwrap();
         std::fs::write(&path, write_content_asset(&header, &payload).unwrap()).unwrap();
         let entry = AssetEntry {
-            embedded_as: None,
+            embedded_in: None,
             id: header.asset_id,
             address: address.to_owned(),
             kind: header.kind,

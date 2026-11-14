@@ -730,7 +730,7 @@ mod tests {
     fn an_imports_entries_replace_the_registrys_entries_for_its_source() {
         use concerto_foundation::assets::content::ImportProvenance;
         let entry = |address: &str, source: Option<&str>| AssetEntry {
-            embedded_as: None,
+            embedded_in: None,
             id: AssetId::new(),
             address: address.into(),
             kind: "Scene".into(),
@@ -751,7 +751,10 @@ mod tests {
             registry.insert(entry.clone());
         }
         let embedded = AssetEntry {
-            embedded_as: Some("mesh/0".into()),
+            embedded_in: Some(concerto_foundation::assets::registry::EmbeddedIn {
+                host: kept.id,
+                name: "mesh/0".into(),
+            }),
             address: kept.address.clone(),
             ..loose.clone()
         };

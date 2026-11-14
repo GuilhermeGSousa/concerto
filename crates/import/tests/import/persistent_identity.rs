@@ -103,7 +103,7 @@ pub(crate) fn loose_address(source: &str, entry: &AssetEntry) -> String {
 }
 
 pub(crate) fn unpack_into_the_old_layout(project: &Project, source: &str, assets: &[AssetEntry]) {
-    for entry in assets.iter().filter(|a| a.embedded_as.is_some()) {
+    for entry in assets.iter().filter(|a| a.embedded_in.is_some()) {
         std::fs::write(
             project.path(&loose_address(source, entry)),
             read_asset_record(&project.0, entry).unwrap(),
@@ -139,7 +139,7 @@ fn a_reimport_from_the_old_layout_keeps_every_id() {
     let loose = project.path(&loose_address("assets/triangle.gltf", mesh));
     let scanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
     assert!(loose.is_file());
-    assert!(scanned.iter().all(|entry| entry.embedded_as.is_none()));
+    assert!(scanned.iter().all(|entry| entry.embedded_in.is_none()));
 
     let second = project.import(&source);
 

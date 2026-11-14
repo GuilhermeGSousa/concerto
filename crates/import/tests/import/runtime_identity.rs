@@ -78,7 +78,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
     assert_eq!(
         read_content_asset_header(&project.0.join(address))
             .unwrap()
-            .record_header(mesh.embedded_as.as_deref())
+            .record_header(mesh.embedded_in.as_ref().map(|held| held.name.as_str()))
             .unwrap()
             .asset_id,
         id

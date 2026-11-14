@@ -43,7 +43,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     let mut registry = AssetRegistry::new();
     let existing = AssetId::new();
     registry.insert(AssetEntry {
-        embedded_as: None,
+        embedded_in: None,
         id: existing,
         address: "content/other.gasset".into(),
         kind: "Widget".into(),

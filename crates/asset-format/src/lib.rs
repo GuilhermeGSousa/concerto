@@ -591,6 +591,13 @@ pub fn read_content_asset_header(path: &Path) -> anyhow::Result<ContentAssetHead
     Ok(header)
 }
 
+/// Where an embedded asset is stored: the asset whose file holds it, and its name there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddedIn {
+    pub host: AssetId,
+    pub name: String,
+}
+
 /// One content asset: what a scan reads from its header, or a registry line holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedEntry {
@@ -602,8 +609,16 @@ pub struct ScannedEntry {
     pub kind_version: Option<u32>,
     /// Where an imported asset came from; `None` for an authored asset and for a registry line.
     pub provenance: Option<ImportProvenance>,
-    /// The asset's name inside the file at `address`; `None` for the host or a loose asset.
-    pub embedded_as: Option<String>,
+    /// The host whose file at `address` holds the asset, and its name there; `None` for the host or a loose asset.
+    pub embedded_in: Option<EmbeddedIn>,
+}
+
+impl ScannedEntry {
+    /// `address`, or `address#name` for an embedded asset.
+    pub fn location(&self) -> String {
+        let name = self.embedded_in.as_ref().map(|held| held.name.as_str());
+        asset_location(&self.address, name)
+    }
 }
 
 /// An asset's written location: `address`, or `address#name` for an embedded asset.
@@ -710,20 +725,24 @@ pub fn scan_content(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<
             .to_string_lossy()
             .replace('\\', "/");
 
+        let host_id = header.asset_id;
         let host = ScannedEntry {
-            id: header.asset_id,
+            id: host_id,
             address: address.clone(),
             kind: header.kind,
             kind_version: Some(header.kind_version),
             provenance: header.provenance,
-            embedded_as: None,
+            embedded_in: None,
         };
         let embedded = header.embedded.into_iter().map(|asset| ScannedEntry {
             id: asset.asset_id,
             address: address.clone(),
             kind: asset.kind,
             kind_version: Some(asset.kind_version),
-            embedded_as: Some(asset.provenance.sub_asset.clone()),
+            embedded_in: Some(EmbeddedIn {
+                host: host_id,
+                name: asset.provenance.sub_asset.clone(),
+            }),
             provenance: Some(asset.provenance),
         });
         for entry in std::iter::once(host).chain(embedded) {
@@ -731,8 +750,8 @@ pub fn scan_content(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<
                 let previous: &ScannedEntry = &entries[previous];
                 bail!(
                     "content tree is malformed: '{}' and '{}' both carry asset id {}",
-                    asset_location(&previous.address, previous.embedded_as.as_deref()),
-                    asset_location(&entry.address, entry.embedded_as.as_deref()),
+                    previous.location(),
+                    entry.location(),
                     entry.id.simple_hex()
                 );
             }
@@ -771,8 +790,8 @@ pub fn write_registry(entries: &[ScannedEntry]) -> String {
     ordered.sort_by_key(|entry| entry.id);
     let mut text = String::from("[assets]\n");
     for entry in ordered {
-        let embedded_as = entry.embedded_as.as_ref().map_or(String::new(), |name| {
-            format!(", embedded_as = {}", toml::Value::String(name.clone()))
+        let embedded_as = entry.embedded_in.as_ref().map_or(String::new(), |held| {
+            format!(", embedded_as = {}", toml::Value::String(held.name.clone()))
         });
         text.push_str(&format!(
             "{} = {{ address = {}, kind = {}{embedded_as} }}\n",
@@ -784,11 +803,24 @@ pub fn write_registry(entries: &[ScannedEntry]) -> String {
     text
 }
 
+struct ParsedRecord {
+    id: AssetId,
+    record: RegistryRecord,
+}
+
+fn two_ids_at(location: &str, first: AssetId, second: AssetId) -> anyhow::Error {
+    anyhow::anyhow!(
+        "asset registry maps two ids ({} and {}) to the same address '{location}'",
+        first.simple_hex(),
+        second.simple_hex(),
+    )
+}
+
 /// Reads registry text written by [`write_registry`], ordered by id.
 pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
     let file: RegistryFile = toml::from_str(text).context("failed to parse asset registry")?;
-    let mut entries = Vec::with_capacity(file.assets.len());
-    let mut id_by_location: HashMap<String, AssetId> = HashMap::new();
+    let mut records = Vec::with_capacity(file.assets.len());
+    let mut id_by_address: HashMap<String, AssetId> = HashMap::new();
     for (hex, record) in file.assets {
         let id = AssetId::from_simple_hex(&hex)
             .map_err(|err| anyhow::anyhow!("invalid asset id '{hex}' in registry: {err}"))?;
@@ -798,21 +830,51 @@ pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
                 "asset registry predates asset kinds ('{address}' has none); rebuild the game so its build script writes a new one"
             ),
         };
-        let location = asset_location(&record.address, record.embedded_as.as_deref());
-        if let Some(existing) = id_by_location.insert(location.clone(), id) {
-            bail!(
-                "asset registry maps two ids ({} and {}) to the same address '{location}'",
-                existing.simple_hex(),
-                id.simple_hex(),
-            );
+        if record.embedded_as.is_none() {
+            if let Some(existing) = id_by_address.insert(record.address.clone(), id) {
+                return Err(two_ids_at(&record.address, existing, id));
+            }
         }
+        records.push(ParsedRecord { id, record });
+    }
+    let mut entries: Vec<ScannedEntry> = Vec::with_capacity(records.len());
+    let mut embedded_by_host: HashMap<AssetId, Vec<usize>> = HashMap::new();
+    for ParsedRecord { id, record } in records {
+        let embedded_in = match record.embedded_as {
+            Some(name) => {
+                let Some(&host) = id_by_address.get(&record.address) else {
+                    bail!(
+                        "asset registry places {} in '{}' as '{name}', but lists no asset at that address to hold it",
+                        id.simple_hex(),
+                        record.address
+                    );
+                };
+                let held = embedded_by_host.entry(host).or_default();
+                let named = |at: &&usize| {
+                    entries[**at]
+                        .embedded_in
+                        .as_ref()
+                        .is_some_and(|held| held.name == name)
+                };
+                if let Some(&existing) = held.iter().find(named) {
+                    return Err(two_ids_at(
+                        &asset_location(&record.address, Some(&name)),
+                        entries[existing].id,
+                        id,
+                    ));
+                }
+                held.push(entries.len());
+                Some(EmbeddedIn { host, name })
+            }
+            None => None,
+        };
         entries.push(ScannedEntry {
             id,
             address: record.address,
             kind: record.kind,
             kind_version: None,
             provenance: None,
-            embedded_as: record.embedded_as,
+            embedded_in,
         });
     }
     Ok(entries)
