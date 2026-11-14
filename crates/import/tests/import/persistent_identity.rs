@@ -301,6 +301,7 @@ fn write_scene_header(path: &Path, id: AssetId, source: &str) {
             sub_asset: "scene".into(),
         }),
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::write(
         path,

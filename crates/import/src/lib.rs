@@ -318,6 +318,7 @@ fn import_with(
                 sub_asset: sub_asset.name.clone(),
             }),
             derived: None,
+            embedded: Vec::new(),
         };
         plan.push((
             project_root.join(&address),

@@ -663,6 +663,7 @@ fn write_imported(
         kind_version: 1,
         provenance: Some(provenance),
         derived: None,
+        embedded: Vec::new(),
     };
     let path = root.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

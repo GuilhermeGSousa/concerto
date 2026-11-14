@@ -12,6 +12,7 @@ fn write_asset(path: &Path, id: AssetId, kind: &str) {
         kind_version: 1,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();

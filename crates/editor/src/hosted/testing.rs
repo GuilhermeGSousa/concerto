@@ -316,6 +316,7 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
         kind_version: Scene::FORMAT_VERSION,
         provenance: asset.provenance.clone(),
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::write(
         root.join(&asset.address),

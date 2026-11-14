@@ -27,6 +27,7 @@ fn write_pebble(dir: &std::path::Path, address: &str) {
         kind_version: Pebble::FORMAT_VERSION,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     let payload = bincode::serialize(&Pebble { weight: 7 }).unwrap();
     let path = dir.join(address);

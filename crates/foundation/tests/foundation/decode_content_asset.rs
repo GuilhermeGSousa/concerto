@@ -55,6 +55,7 @@ fn content_asset(kind: &str, kind_version: u32, payload: &[u8]) -> Vec<u8> {
         kind_version,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     write_content_asset(&header, payload).unwrap()
 }

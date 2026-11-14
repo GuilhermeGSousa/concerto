@@ -206,6 +206,7 @@ mod tests {
             kind_version: AnimationClip::FORMAT_VERSION,
             provenance: provenance.clone(),
             derived: None,
+            embedded: Vec::new(),
         };
         let path = f.project_root.join(address);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

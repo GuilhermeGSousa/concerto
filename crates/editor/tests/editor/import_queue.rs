@@ -369,6 +369,7 @@ fn authored_asset(root: &Path, name: &str) -> AssetId {
         kind_version: 1,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::create_dir_all(root.join("content")).expect("content");
     std::fs::write(

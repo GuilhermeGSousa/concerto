@@ -24,6 +24,7 @@ fn write_asset(project: &Path, id: AssetId) {
         kind_version: 1,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     // This recognizable large payload must never be embedded by the macro.
     let payload = b"ASSET_PAYLOAD_SHOULD_NOT_APPEAR_IN_THE_EXECUTABLE".repeat(100_000);
@@ -165,6 +166,7 @@ fn write_asset_at(project: &Path, address: &str, id: AssetId) {
         kind_version: 1,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     let path = project.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

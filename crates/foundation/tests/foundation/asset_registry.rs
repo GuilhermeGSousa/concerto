@@ -54,6 +54,7 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id_and_follows_a_moved_f
             kind_version: 1,
             provenance: provenance.clone(),
             derived: None,
+            embedded: Vec::new(),
         };
         std::fs::create_dir_all(dir.join("content/hero")).unwrap();
         std::fs::write(

@@ -40,6 +40,7 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
         kind_version: sub_asset.kind_version,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::create_dir_all(temp_dir.join("content/swatch")).unwrap();
     std::fs::write(

@@ -116,6 +116,7 @@ fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHea
             sub_asset: "widget/0".to_string(),
         }),
         derived: None,
+        embedded: Vec::new(),
     };
     let payload = bincode::serialize(&Widget { spokes }).unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

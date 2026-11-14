@@ -398,6 +398,7 @@ mod tests {
                     sub_asset: name.into(),
                 }),
                 derived: None,
+                embedded: Vec::new(),
             };
             std::fs::write(
                 root.join(format!("content/{name}.gasset")),
@@ -417,6 +418,7 @@ mod tests {
             kind_version: 1,
             provenance: None,
             derived: None,
+            embedded: Vec::new(),
         };
         std::fs::write(
             root.join(address),

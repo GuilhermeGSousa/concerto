@@ -11,9 +11,11 @@ use super::registry::{AssetEntry, AssetRegistry};
 use super::{Asset, AssetId};
 
 pub use concerto_asset_format::{
-    read_content_asset, read_content_asset_header, read_content_asset_parts, write_content_asset,
+    asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
+    sub_asset_file_stem, write_content_asset, write_content_asset_with_embedded,
     write_cooked_content_asset, ContentAssetHeader, ContentAssetParts, CookedSection,
-    DerivedSection, ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
+    DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, CONTENT_ASSET_MAGIC,
+    CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
@@ -97,6 +99,7 @@ pub fn save_content_asset_into<A: Asset>(
         kind_version: A::FORMAT_VERSION,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     let kind = header.kind.clone();
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;
@@ -143,6 +146,7 @@ pub fn resave_content_asset<A: Asset>(
         kind_version: A::FORMAT_VERSION,
         provenance: existing.provenance,
         derived: None,
+        embedded: Vec::new(),
     };
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;
     let bytes = write_content_asset(&header, &payload)?;
