@@ -46,6 +46,7 @@ use taffy::FlexDirection;
 use crate::asset_editor::{AssetEditorRegistry, MAX_NEW_NUMBER, new_asset_name, valid_asset_name};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{AssetIcons, draw_row_icon, glyph, row_icon};
+use crate::import_fold::{ImportFolds, is_import_face, shown_name};
 use crate::project::{AssetsWritten, EditorCommand, EditorCommands, ProjectOpened, ProjectState};
 use crate::tree_items::{OrderItems, despawn_outermost, order_items};
 use concerto_foundation::assets::{
@@ -232,18 +233,17 @@ fn install_listeners(world: &mut World) {
     world.add_listener(create_asset);
 }
 
-fn visible_assets<'a>(registry: &'a AssetRegistry, state: &ContentState) -> Vec<&'a AssetEntry> {
+fn visible_assets<'a>(
+    registry: &'a AssetRegistry,
+    folds: &ImportFolds,
+    state: &ContentState,
+) -> Vec<&'a AssetEntry> {
     let kind = KINDS[state.kind].1;
     let query = state.filter.to_lowercase();
     registry
         .iter()
         .filter(|asset| kind.is_none_or(|is_kind| is_kind(asset)))
-        .filter(|asset| {
-            query.is_empty()
-                || asset.name().to_lowercase().contains(&query)
-                || asset.address.to_lowercase().contains(&query)
-                || asset.kind.to_lowercase().contains(&query)
-        })
+        .filter(|asset| folds.matches(asset, &query))
         .collect()
 }
 
@@ -948,11 +948,43 @@ fn inside_root<'a>(folder: &'a str, content_root: &str) -> &'a str {
     }
 }
 
-fn folder_tree<'a>(assets: impl Iterator<Item = &'a AssetEntry>, content_root: &str) -> Folder<'a> {
+fn folder_above(folder: &str) -> Option<&str> {
+    folder.rsplit_once('/').map(|(above, _)| above)
+}
+
+fn folder_tree<'a>(
+    registry: &'a AssetRegistry,
+    folds: &ImportFolds<'a>,
+    content_root: &str,
+) -> Folder<'a> {
+    let rows: Vec<&AssetEntry> = registry
+        .iter()
+        .filter(|asset| folds.face_of(asset).is_none())
+        .collect();
+    let mut held: HashMap<&str, usize> = HashMap::new();
+    let mut above: HashSet<&str> = HashSet::new();
+    for asset in &rows {
+        *held.entry(asset.folder()).or_default() += 1;
+        let mut folder = asset.folder();
+        while let Some(parent) = folder_above(folder) {
+            above.insert(parent);
+            folder = parent;
+        }
+    }
     let mut root = Folder::default();
-    for asset in assets {
+    for asset in rows {
+        let own = asset.folder();
+        let alone = is_import_face(asset)
+            && held[own] == 1
+            && !above.contains(own)
+            && !inside_root(own, content_root).is_empty();
+        let shown_in = if alone {
+            folder_above(own).unwrap_or("")
+        } else {
+            own
+        };
         let mut folder = &mut root;
-        for part in inside_root(asset.folder(), content_root)
+        for part in inside_root(shown_in, content_root)
             .split('/')
             .filter(|part| !part.is_empty())
         {
@@ -966,10 +998,23 @@ fn folder_tree<'a>(assets: impl Iterator<Item = &'a AssetEntry>, content_root: &
     root
 }
 
+fn by_shown_name(assets: &mut [&AssetEntry]) {
+    assets.sort_by(|a, b| {
+        let (a_name, b_name) = (shown_name(a), shown_name(b));
+        (a_name.to_lowercase(), a_name, &a.kind, &a.address).cmp(&(
+            b_name.to_lowercase(),
+            b_name,
+            &b.kind,
+            &b.address,
+        ))
+    });
+}
+
 fn list_folder<'a>(
     folder: &Folder<'a>,
     path: Option<&str>,
     pending: Option<&Listed<'a>>,
+    folds: &ImportFolds<'a>,
     icons: &AssetIcons,
     listed: &mut Vec<Listed<'a>>,
 ) {
@@ -985,27 +1030,30 @@ fn list_folder<'a>(
             name,
             icon: glyph::FOLDER,
         });
-        list_folder(child, Some(&child_path), pending, icons, listed);
+        list_folder(child, Some(&child_path), pending, folds, icons, listed);
     }
     if let Some(pending) = pending.filter(|pending| pending.parent == parent) {
         listed.push(pending.clone());
     }
     let mut assets = folder.assets.clone();
-    assets.sort_by(|a, b| {
-        (a.name().to_lowercase(), a.name(), &a.kind, &a.address).cmp(&(
-            b.name().to_lowercase(),
-            b.name(),
-            &b.kind,
-            &b.address,
-        ))
-    });
+    by_shown_name(&mut assets);
     for asset in assets {
         listed.push(Listed {
             key: ContentKey::Asset(asset.id),
             parent: parent.clone(),
-            name: asset.name(),
+            name: shown_name(asset),
             icon: icons.glyph(&asset.kind),
         });
+        let mut parts = folds.parts_of(asset.id).to_vec();
+        by_shown_name(&mut parts);
+        for part in parts {
+            listed.push(Listed {
+                key: ContentKey::Asset(part.id),
+                parent: Some(ContentKey::Asset(asset.id)),
+                name: part.name(),
+                icon: icons.glyph(&part.kind),
+            });
+        }
     }
 }
 
@@ -1132,7 +1180,8 @@ fn reconcile_content_tree(
     if tree.filtering != filtering {
         tree.filtering = filtering;
     }
-    let matching: HashSet<AssetId> = visible_assets(&registry, &state)
+    let folds = ImportFolds::new(&registry);
+    let matching: HashSet<AssetId> = visible_assets(&registry, &folds, &state)
         .iter()
         .map(|asset| asset.id)
         .collect();
@@ -1143,9 +1192,10 @@ fn reconcile_content_tree(
             .as_ref()
             .map(|pending| pending_listing(pending, &project.content_root, &icons));
         list_folder(
-            &folder_tree(registry.iter(), &project.content_root),
+            &folder_tree(&registry, &folds, &project.content_root),
             None,
             pending.as_ref(),
+            &folds,
             &icons,
             &mut listed,
         );
@@ -1332,7 +1382,10 @@ mod tests {
         query::filter::{Changed, With},
         system::BoxedSystem,
     };
-    use concerto_foundation::assets::{Asset, content::read_content_asset};
+    use concerto_foundation::assets::{
+        Asset,
+        content::{ImportProvenance, read_content_asset},
+    };
     use concerto_render::assets::material::StandardMaterial;
     use concerto_ui::{
         focus::{FocusedWidget, UIFocusLost},
@@ -2271,6 +2324,116 @@ mod tests {
         f.world.trigger_on(item, UIItemActivated);
 
         assert_eq!(f.opened(), [level]);
+    }
+
+    fn imported(address: &str, kind: &str, source: &str, sub_asset: &str) -> AssetEntry {
+        AssetEntry {
+            provenance: Some(ImportProvenance {
+                source: source.into(),
+                sub_asset: sub_asset.into(),
+            }),
+            ..entry(address, kind)
+        }
+    }
+
+    #[test]
+    fn an_import_with_a_scene_folds_under_it_and_one_without_stays_flat() {
+        let mut f = fixture(&[("content/props/barrel.gasset", "Mesh")]);
+        let registry = f.world.get_resource_mut::<AssetRegistry>().unwrap();
+        for asset in [
+            imported(
+                "content/props/crate/scene.gasset",
+                "Scene",
+                "assets/props/crate.glb",
+                "scene",
+            ),
+            imported(
+                "content/props/crate/mesh_0.gasset",
+                "Mesh",
+                "assets/props/crate.glb",
+                "mesh/0",
+            ),
+            imported(
+                "content/props/crate/material_0.gasset",
+                "StandardMaterial",
+                "assets/props/crate.glb",
+                "material/0",
+            ),
+            imported(
+                "content/hero/scene.gasset",
+                "Scene",
+                "assets/hero.glb",
+                "scene",
+            ),
+            imported(
+                "content/hero/mesh_0.gasset",
+                "Mesh",
+                "assets/hero.glb",
+                "mesh/0",
+            ),
+            entry("content/hero/rig.gasset", "RetargetRig"),
+            imported(
+                "content/town/scene.gasset",
+                "Scene",
+                "assets/town.glb",
+                "scene",
+            ),
+            entry("content/town/signs/inn.gasset", "Texture"),
+            imported(
+                "content/moves/run/animation.gasset",
+                "AnimationClip",
+                "assets/moves/run.bvh",
+                "animation/run",
+            ),
+            imported(
+                "content/moves/run/skeleton.gasset",
+                "Skeleton",
+                "assets/moves/run.bvh",
+                "skeleton/0",
+            ),
+        ] {
+            registry.insert(asset);
+        }
+        f.refresh();
+        let view = f.view();
+        let scene = f.asset("content/props/crate/scene.gasset");
+        let face = f.asset_item("content/props/crate/scene.gasset");
+        let mesh = f.asset_item("content/props/crate/mesh_0.gasset");
+        let material = f.asset_item("content/props/crate/material_0.gasset");
+        let barrel = f.asset_item("content/props/barrel.gasset");
+        let props = f.item(&folder("props"));
+
+        assert_eq!(f.labels_under(view), ["hero", "moves", "props", "town"]);
+        assert_eq!(f.labels_under(f.item(&folder("hero"))), ["hero", "rig"]);
+        assert_eq!(f.labels_under(f.item(&folder("town"))), ["signs", "town"]);
+        assert_eq!(f.labels_under(props), ["barrel", "crate"]);
+        assert!(!f.state().items.contains_key(&folder("props/crate")));
+        assert_eq!(
+            f.world.get_component_for_entity::<ContentAsset>(face),
+            Some(&ContentAsset { id: scene })
+        );
+        assert_eq!(f.labels_under(face), ["material_0", "mesh_0"]);
+        assert!(!f.expanded(face));
+        let run = f.item(&folder("moves/run"));
+        assert_eq!(f.labels_under(run), ["animation", "skeleton"]);
+
+        f.world.trigger_on(face, UIItemActivated);
+        assert_eq!(f.opened(), [scene]);
+
+        f.search("crate");
+        assert!(f.shown(face));
+        assert!(!f.shown(mesh) && !f.shown(material) && !f.shown(barrel));
+
+        f.search("mesh_0");
+        assert!(f.hidden(face) && f.shown(face));
+        assert!(f.shown(mesh));
+        assert!(!f.shown(material) && !f.shown(barrel));
+
+        f.search("");
+        let mesh_chip = f.chip(2);
+        f.click(mesh_chip);
+        assert!(f.shown(barrel) && f.shown(face) && f.shown(mesh));
+        assert!(!f.shown(material));
     }
 
     fn parent(world: &World, entity: Entity) -> Entity {

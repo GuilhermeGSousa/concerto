@@ -28,7 +28,7 @@ use serde_json::{Map, Value};
 
 use super::{
     BusyInputs,
-    act::describe_pose,
+    act::{describe_pose, find_asset},
     is_busy,
     layout::{LayoutInputs, layout_line, viewport_line},
     value::value_names,
@@ -36,6 +36,7 @@ use super::{
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState},
+    import_fold::{ImportFolds, is_import_face},
     inspector::{
         InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
         listed_paths, shown_paths,
@@ -51,15 +52,17 @@ use crate::{
 #[derive(Deserialize, JsonSchema)]
 pub struct Status {}
 
-/// The open project's assets as `address · kind · id` lines, filtered and paged; a line ending in `· placeable` is an asset place_asset can put in the scene, known once a scene has opened.
+/// The open project's assets as `address · kind · id` lines, filtered and paged; a line marked `· placeable` is an asset place_asset can put in the scene, known once a scene has opened. An import shows as its scene alone, marked `· import of <source> with <n> parts`; its parts are listed only when kind or query asks for them, or with parts_of.
 #[derive(Deserialize, JsonSchema)]
 pub struct ListAssets {
-    /// Text to find in an asset's name, address or kind, ignoring case.
+    /// Text to find in an asset's name, address or kind, ignoring case; in an import's part, in its file name or kind.
     pub query: Option<String>,
     /// The exact kind to keep, such as Scene, Mesh or Texture.
     pub kind: Option<String>,
     /// The project-relative folder to keep, such as content/meshes, with its subfolders.
     pub folder: Option<String>,
+    /// An import's scene, by address or id, as a line marked `· import of` shows it, to list that import's parts instead.
+    pub parts_of: Option<String>,
     /// How many assets to show.
     #[serde(default = "fifty")]
     pub limit: usize,
@@ -311,7 +314,10 @@ fn list_assets(
 ) {
     for (arguments, reply) in calls.read() {
         if state.project.is_some() {
-            reply.ok(list(&registry, placeable.as_deref(), &arguments));
+            match list(&registry, placeable.as_deref(), &arguments) {
+                Ok(listing) => reply.ok(listing),
+                Err(error) => reply.err(error),
+            }
         }
     }
 }
@@ -324,12 +330,43 @@ fn counted(count: usize) -> String {
     }
 }
 
-fn filtered<'a>(registry: &'a AssetRegistry, arguments: &ListAssets) -> Vec<&'a AssetEntry> {
+fn import_face<'a>(registry: &'a AssetRegistry, asset: &str) -> Result<&'a AssetEntry, ToolError> {
+    let entry = find_asset(registry, asset)?;
+    if is_import_face(entry) {
+        Ok(entry)
+    } else {
+        Err(ToolError::new(
+            "not_an_import",
+            format!(
+                "`{asset}` is not an import's scene; give the address or id of a line list_assets marks `· import of`."
+            ),
+        ))
+    }
+}
+
+fn filtered<'a>(
+    registry: &'a AssetRegistry,
+    folds: &ImportFolds<'a>,
+    arguments: &ListAssets,
+) -> Result<Vec<&'a AssetEntry>, ToolError> {
     let query = arguments.query.as_deref().unwrap_or("").to_lowercase();
     let folder = arguments.folder.as_deref();
     let kind = arguments.kind.as_deref();
-    registry
+    let parts_of = arguments
+        .parts_of
+        .as_deref()
+        .map(|asset| import_face(registry, asset))
+        .transpose()?;
+    let unfolded = kind.is_some() || !query.is_empty();
+    Ok(registry
         .iter()
+        .filter(|asset| {
+            let face = folds.face_of(asset).map(|face| face.id);
+            match parts_of {
+                Some(wanted) => face == Some(wanted.id),
+                None => unfolded || face.is_none(),
+            }
+        })
         .filter(|asset| {
             folder.is_none_or(|folder| {
                 folder.is_empty()
@@ -341,26 +378,39 @@ fn filtered<'a>(registry: &'a AssetRegistry, arguments: &ListAssets) -> Vec<&'a 
             })
         })
         .filter(|asset| kind.is_none_or(|kind| asset.kind == kind))
-        .filter(|asset| {
-            query.is_empty()
-                || asset.name().to_lowercase().contains(&query)
-                || asset.address.to_lowercase().contains(&query)
-                || asset.kind.to_lowercase().contains(&query)
-        })
-        .collect()
+        .filter(|asset| folds.matches(asset, &query))
+        .collect())
+}
+
+fn fold_mark(folds: &ImportFolds, asset: &AssetEntry) -> String {
+    if let Some(face) = folds.face_of(asset) {
+        return format!(" · part of {}", face.address);
+    }
+    match &asset.provenance {
+        Some(provenance) if is_import_face(asset) => {
+            let counted = match folds.parts_of(asset.id).len() {
+                0 => "no parts".to_owned(),
+                1 => "1 part".to_owned(),
+                parts => format!("{parts} parts"),
+            };
+            format!(" · import of {} with {counted}", provenance.source)
+        }
+        _ => String::new(),
+    }
 }
 
 fn list(
     registry: &AssetRegistry,
     placeable: Option<&PlaceableKinds>,
     arguments: &ListAssets,
-) -> String {
-    let matches = filtered(registry, arguments);
+) -> Result<String, ToolError> {
+    let folds = ImportFolds::new(registry);
+    let matches = filtered(registry, &folds, arguments)?;
     if matches.is_empty() {
-        return format!(
+        return Ok(format!(
             "No assets match. The project has {}.",
             counted(registry.iter().count())
-        );
+        ));
     }
     let found = if matches.len() == 1 {
         "1 asset matches".to_owned()
@@ -371,7 +421,7 @@ fn list(
     let offset = arguments.offset;
     let shown: Vec<_> = matches.iter().skip(offset).take(limit).collect();
     if shown.is_empty() {
-        return format!("{found}; offset {offset} is past the last.");
+        return Ok(format!("{found}; offset {offset} is past the last."));
     }
     let mut lines = vec![format!(
         "{found}; showing {}–{}:",
@@ -385,10 +435,11 @@ fn list(
             ""
         };
         lines.push(format!(
-            "{} · {} · {}{mark}",
+            "{} · {} · {}{mark}{}",
             asset.address,
             asset.kind,
-            asset.id.simple_hex()
+            asset.id.simple_hex(),
+            fold_mark(&folds, asset)
         ));
     }
     let next = offset + shown.len();
@@ -399,7 +450,7 @@ fn list(
             continuation(arguments, next, limit)
         ));
     }
-    lines.join("\n")
+    Ok(lines.join("\n"))
 }
 
 fn continuation(arguments: &ListAssets, offset: usize, limit: usize) -> Value {
@@ -412,6 +463,9 @@ fn continuation(arguments: &ListAssets, offset: usize, limit: usize) -> Value {
     }
     call.insert("limit".into(), limit.into());
     call.insert("offset".into(), offset.into());
+    if let Some(parts_of) = &arguments.parts_of {
+        call.insert("parts_of".into(), parts_of.clone().into());
+    }
     if let Some(query) = &arguments.query {
         call.insert("query".into(), query.clone().into());
     }
