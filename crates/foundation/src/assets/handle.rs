@@ -241,7 +241,7 @@ impl ReflectAssetHandle {
         (self.id)(value)
     }
 
-    /// Writes into `value` a handle to `id` loaded through `server`.
+    /// Writes into `value` a handle to `id` loaded through `server`, or a weak one when `server` only names the asset's kind.
     pub fn set(
         &self,
         value: &mut dyn Reflect,
@@ -265,6 +265,10 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectAssetHandle {
                 let handle = (value as &mut dyn std::any::Any)
                     .downcast_mut::<AssetHandle<A>>()
                     .ok_or(SetHandleError::NotThisHandle)?;
+                if server.names_asset::<A>() {
+                    *handle = AssetHandle::weak(id);
+                    return Ok(());
+                }
                 if !server.is_registered::<A>() {
                     return Err(SetHandleError::AssetNotRegistered);
                 }

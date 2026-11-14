@@ -391,9 +391,15 @@ struct ExtensionInstalled {
     after_the_editor: bool,
 }
 
+struct ExtensionTool {
+    listed: bool,
+    state: String,
+}
+
 fn extension(app: &mut App) {
     let after_the_editor = app.get_resource::<AssetEditorRegistry>().is_some();
-    app.insert_resource(ExtensionInstalled { after_the_editor });
+    app.insert_resource(ExtensionInstalled { after_the_editor })
+        .add_tool::<ExtensionState, _>(McpTool::read_only("extension_state"), extension_state);
 }
 
 fn extension_state(
@@ -882,10 +888,6 @@ where
                 .add_tool::<LayoutReading, _>(
                     McpTool::new("layout_reading").needs(Needs::Playing),
                     layout_reading,
-                )
-                .add_tool::<ExtensionState, _>(
-                    McpTool::read_only("extension_state"),
-                    extension_state,
                 )
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
@@ -1421,18 +1423,27 @@ fn status_and_list_assets_without_a_project() {
 }
 
 #[test]
-fn a_plugin_given_to_the_editor_is_installed_after_it() {
+fn a_plugin_given_to_the_editor_is_installed_after_it_and_adds_its_tools_under_mcp() {
+    extension(&mut App::new());
+
     let fixture = Fixture::new();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, |client| async move {
+        let listed = client
+            .list_all_tools()
+            .await
+            .unwrap()
+            .iter()
+            .any(|tool| tool.name == "extension_state");
         let state = ok(&client, "extension_state").await;
         client.cancel().await.unwrap();
-        state
+        ExtensionTool { listed, state }
     }) else {
         return;
     };
 
-    assert_eq!(served.result, "after the editor");
+    assert!(served.result.listed);
+    assert_eq!(served.result.state, "after the editor");
 }
 
 #[test]

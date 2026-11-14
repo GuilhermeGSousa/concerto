@@ -1100,7 +1100,8 @@ mod tests {
         };
         let inputs = |index: AnimationNodeIndex| {
             graph
-                .get_node_inputs(index)
+                .inputs(index)
+                .into_iter()
                 .map(|input| nodes[input.index()].type_name())
                 .collect::<Vec<_>>()
         };
@@ -1158,12 +1159,7 @@ mod tests {
         let graph = graphs.get(&handle).unwrap();
         let nodes: Vec<_> = graph.nodes().collect();
         let type_of = |index: AnimationNodeIndex| nodes[index.index()].type_name();
-        let inputs = |index: AnimationNodeIndex| {
-            graph
-                .get_node_inputs(index)
-                .map(AnimationNodeIndex::from)
-                .collect::<Vec<AnimationNodeIndex>>()
-        };
+        let inputs = |index: AnimationNodeIndex| graph.inputs(index);
         let only = |type_name: &str| {
             let found: Vec<AnimationNodeIndex> = graph
                 .iter()

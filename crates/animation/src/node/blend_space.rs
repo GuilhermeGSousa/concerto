@@ -2,7 +2,6 @@ use concerto_foundation::{
     assets::handle::AssetHandle,
     geometry::delauney::{TriangulatedPoint2D, Triangulation2D},
 };
-use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::Vec2;
 use log::warn;
@@ -11,15 +10,16 @@ use crate::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
-    node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
+    node::{AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode},
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 
 /// Which blackboard `Vec2` param drives a blend space. Read with
-/// `blackboard.get_vec2(param).unwrap_or(Vec2::ZERO)`.
+/// `blackboard.read(&param).copied().unwrap_or(Vec2::ZERO)`.
 #[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct BlendInput {
-    pub param: Name,
+    pub param: Param<Vec2>,
 }
 
 /// A 2D blend space definition: the sample points and which blackboard `Vec2`
@@ -65,6 +65,10 @@ impl AnimationNode for BlendSpace2DNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Variable
+    }
+
     fn create_state(
         &self,
         _: &(),
@@ -82,7 +86,8 @@ impl AnimationNode for BlendSpace2DNode {
     ) {
         let sample = context
             .blackboard()
-            .get_vec2(self.input.param)
+            .read(&self.input.param)
+            .copied()
             .unwrap_or(Vec2::ZERO);
         state.current_triangulated_point = Some(state.triangulation.locate_or_nearest(sample));
     }
@@ -129,6 +134,16 @@ impl AnimationNode for BlendSpace2DNode {
 
     fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
         state.current_triangulated_point = None;
+    }
+
+    fn input_added(&mut self, index: usize) {
+        self.points.insert(index.min(self.points.len()), Vec2::ZERO);
+    }
+
+    fn input_removed(&mut self, index: usize) {
+        if index < self.points.len() {
+            self.points.remove(index);
+        }
     }
 }
 
@@ -207,7 +222,9 @@ mod tests {
     fn each_corner_event_carries_its_barycentric_weight() {
         let space = BlendSpace2DNode::new(
             vec![Vec2::ZERO, Vec2::X, Vec2::Y],
-            BlendInput { param: name!("at") },
+            BlendInput {
+                param: name!("at").into(),
+            },
         );
         let walks = Walks::new(AssetStore::new(), AssetStore::new());
         let mut blackboard = AnimationBlackboard::default();
@@ -242,5 +259,23 @@ mod tests {
                 event.weight
             );
         }
+    }
+
+    #[test]
+    fn the_blend_space_keeps_a_point_per_input_as_inputs_come_and_go() {
+        let mut space = BlendSpace2DNode::new(
+            vec![Vec2::X, Vec2::Y],
+            BlendInput {
+                param: name!("at").into(),
+            },
+        );
+
+        space.input_added(1);
+        space.input_added(3);
+        assert_eq!(space.points(), [Vec2::X, Vec2::ZERO, Vec2::Y, Vec2::ZERO]);
+
+        space.input_removed(0);
+        space.input_removed(2);
+        assert_eq!(space.points(), [Vec2::ZERO, Vec2::Y]);
     }
 }

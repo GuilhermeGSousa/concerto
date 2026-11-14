@@ -2,17 +2,18 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint, parent},
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
 use concerto_ecs::Res;
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
-use concerto_name::Name;
+use concerto_name::name;
 use concerto_physics::{body::BodyId, physics_state::PhysicsState, query::QueryFilter};
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Affine3A, Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -25,7 +26,7 @@ const MIN_WEIGHT: f32 = 1.0e-4;
 
 /// Puts each leg's foot on the ground under it and lowers the pelvis for the lowest; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct FootPlacementNode {
     pub pelvis: JointName,
     pub legs: Vec<FootPlacementLeg>,
@@ -38,9 +39,9 @@ pub struct FootPlacementNode {
     pub rotation_halflife: f32,
     pub softness: f32,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
     pub weight_halflife: f32,
-    pub ignore_param: Option<Name>,
+    pub ignore_param: Option<Param<IgnoredBody>>,
 }
 
 impl Default for FootPlacementNode {
@@ -134,8 +135,8 @@ impl FootPlacementNode {
     }
 
     /// Sets the float param the weight is multiplied by.
-    pub fn with_weight_param(mut self, weight_param: Name) -> Self {
-        self.weight_param = Some(weight_param);
+    pub fn with_weight_param(mut self, weight_param: impl Into<Param<f32>>) -> Self {
+        self.weight_param = Some(weight_param.into());
         self
     }
 
@@ -146,8 +147,8 @@ impl FootPlacementNode {
     }
 
     /// Sets the param holding the [`IgnoredBody`] the rays skip.
-    pub fn with_ignore_param(mut self, ignore_param: Name) -> Self {
-        self.ignore_param = Some(ignore_param);
+    pub fn with_ignore_param(mut self, ignore_param: impl Into<Param<IgnoredBody>>) -> Self {
+        self.ignore_param = Some(ignore_param.into());
         self
     }
 }
@@ -290,7 +291,7 @@ impl FootPlacementNode {
     fn weight_target(&self, blackboard: &AnimationBlackboard) -> f32 {
         let scale = self
             .weight_param
-            .and_then(|param| blackboard.get_float(param))
+            .and_then(|param| blackboard.read(&param).copied())
             .unwrap_or(1.0);
         let weight = self.weight * scale;
         if weight.is_nan() {
@@ -318,7 +319,7 @@ impl FootPlacementNode {
     ) -> Option<Vec<PlacedLeg>> {
         let ignored = self
             .ignore_param
-            .and_then(|param| blackboard.get::<IgnoredBody>(param))
+            .and_then(|param| blackboard.read(&param))
             .and_then(|ignored| ignored.body);
         let caster = Caster {
             physics,
@@ -466,6 +467,10 @@ impl AnimationNode for FootPlacementNode {
     type UpdateInput = ();
     type EvaluateInput = Option<Res<'static, PhysicsState>>;
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> FootPlacementState {
         FootPlacementState::new(self)
     }
@@ -603,7 +608,7 @@ impl AnimationNode for FootPlacementNode {
 mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
-        node::{AnimationNode, ReflectAnimationNode},
+        node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion},
     };
@@ -660,6 +665,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

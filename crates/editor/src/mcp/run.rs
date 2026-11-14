@@ -127,7 +127,12 @@ fn answer_saves(
     for event in saved.read() {
         for (entity, pending, saving) in waiting.iter() {
             if saving.0 == event.document {
-                pending.reply.ok(format!("Saved {}.", event.asset.address));
+                let written: Vec<&str> = event
+                    .written
+                    .iter()
+                    .map(|asset| asset.address.as_str())
+                    .collect();
+                pending.reply.ok(format!("Saved {}.", written.join(", ")));
                 cmd.despawn(entity);
             }
         }

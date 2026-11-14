@@ -7,6 +7,7 @@ mod edit_app_picture;
 mod example;
 mod extension_api;
 mod fonts;
+mod graph_canvas;
 mod import_dialog;
 mod import_picker;
 mod import_queue;

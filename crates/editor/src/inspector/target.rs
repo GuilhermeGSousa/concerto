@@ -19,6 +19,14 @@ pub trait PropertyTarget: Send + Sync + 'static {
     fn read(&self, world: &World, read: &mut dyn FnMut(&dyn Reflect)) -> bool;
     /// Calls `edit` with the value; false when it's gone.
     fn edit(&self, world: &mut World, edit: &mut dyn FnMut(&mut dyn Reflect)) -> bool;
+    /// Calls `edit` with the value as [`edit`](Self::edit) does, and says why when the value refuses what `edit` made of it; `Ok(false)` when it's gone.
+    fn try_edit(
+        &self,
+        world: &mut World,
+        edit: &mut dyn FnMut(&mut dyn Reflect),
+    ) -> Result<bool, String> {
+        Ok(self.edit(world, edit))
+    }
     /// The registry this value's types are in.
     fn types(&self, world: &World) -> Option<AppTypeRegistry>;
     /// The document that holds this value, if a document does.

@@ -277,6 +277,7 @@ pub(crate) fn save_inspected_assets(
                 document.status = format!("Saved {}", asset.address);
                 saved.write(SceneSaved {
                     document: entity,
+                    written: vec![asset.clone()],
                     asset,
                 });
                 cmd.remove::<Unsaved>(entity);
@@ -987,6 +988,7 @@ pub(crate) mod tests {
             [SceneSaved {
                 document,
                 asset: asset.clone(),
+                written: vec![asset.clone()],
             }]
         );
         assert!(f.written::<SaveFailed>().is_empty());

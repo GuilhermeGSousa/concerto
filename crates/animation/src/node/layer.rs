@@ -1,8 +1,8 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
-use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_name::name;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Quat;
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -11,18 +11,21 @@ use uuid::Uuid;
 use crate::{
     evaluation::AnimationGraphContext,
     mask::{BoneMask, MaskResolution, resolve_mask},
-    node::{AnimationNode, ReflectAnimationNode, effective_weight, model_space::parent},
+    node::{
+        AnimationNode, InputSlots, ReflectAnimationNode, effective_weight, model_space::parent,
+    },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose},
 };
 
 /// Lays its second input over its first on the bones of a mask, by the mask's weights times the layer weight.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct LayerNode {
     pub mask: AssetHandle<BoneMask>,
     pub space: LayerSpace,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
 }
 
 /// Where a layer blends rotations.
@@ -66,8 +69,8 @@ impl LayerNode {
     }
 
     /// Multiplies the layer weight by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_weight_param(mut self, param: Name) -> Self {
-        self.weight_param = Some(param);
+    pub fn with_weight_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.weight_param = Some(param.into());
         self
     }
 }
@@ -89,6 +92,10 @@ impl AnimationNode for LayerNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("base"), name!("overlay")])
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> LayerState {
         LayerState::default()

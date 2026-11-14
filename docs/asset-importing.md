@@ -622,7 +622,9 @@ the file.
 
 The editor scans the content tree once, when a project opens. After that, an
 import inserts the entries it returns, a New in the Asset Browser inserts the
-created asset's entry, and a scene save upserts the scene's entry, all in
+created asset's entry (New lists the kinds with a creatable editor: `Scene`,
+and with the animation editors `RetargetRig`, `AnimationGraph` and
+`MotionDatabase`), and a scene save upserts the scene's entry, all in
 memory, with no rescan and no file written beyond the asset itself. Content that git or
 a file explorer changes while the editor is open shows after the project is
 reopened. An import still scans the tree itself before writing, to find
@@ -786,6 +788,18 @@ internally from the registry when reading asset bytes.
 
 Configure the root before content loading starts; changing projects requires a
 separate server. Procedural assets can still be inserted with `AssetServer::add`.
+`AssetServer::insert_loaded(id, asset)` puts a built asset under an id of the
+caller's choosing instead of a fresh one: it runs `on_load`, drops a load of
+that id still pending, and from then on `load(id)` returns the inserted asset
+and reads no file. Inserting again under the same id replaces it. An editor
+uses it to have a preview play a working copy in place of the saved file.
+`AssetServer::reload(id)` reads the file again, whether the asset is loaded or
+was inserted, and replaces it once the read lands, which is how that preview
+goes back to the saved file.
+`AssetServer::name_asset::<A>()` is for a server that edits references to a
+kind it must not load, as the editor's does for `AnimationGraph`: a handle to
+`A` set through it is weak, naming its asset and loading nothing, and
+`names_asset::<A>()` says whether that is so.
 
 ### The startup scene
 

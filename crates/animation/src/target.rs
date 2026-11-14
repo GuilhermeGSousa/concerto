@@ -168,8 +168,9 @@ mod tests {
         event::{AnimationEvent, AnimationSignal},
         graph::{AnimationGraph, AnimationNodeIndex},
         node::{
-            AnimationClipNode, AnimationNode, BlendNode, IkGoal, IkTarget, ReflectAnimationNode,
-            TwoBoneIkNode, register_node_inputs, state_machine::AnimationStateMachine,
+            AnimationClipNode, AnimationNode, BlendNode, IkGoal, IkTarget, InputSlots,
+            ReflectAnimationNode, TwoBoneIkNode, register_node_inputs,
+            state_machine::AnimationStateMachine,
         },
         player::{AnimationHandleComponent, AnimationPlayer},
         plugin::register_animation_types,
@@ -683,6 +684,10 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
 
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
+
         fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
             None
         }
@@ -1187,7 +1192,7 @@ mod tests {
             made_live(AnimationGraph::from_node(TwoBoneIkNode {
                 tip: "hand".into(),
                 target: IkGoal::Param {
-                    param: name!("hand_target"),
+                    param: name!("hand_target").into(),
                 },
                 ..TwoBoneIkNode::default()
             })),

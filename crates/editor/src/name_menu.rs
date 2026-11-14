@@ -12,6 +12,8 @@ use concerto_ui::{
     transform::UIValue,
 };
 
+use glam::Vec2;
+
 use crate::asset_editor::ActiveEditor;
 
 const MENU_WIDTH: f32 = 220.0;
@@ -42,13 +44,44 @@ pub fn open_name_menu(
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
+    if let Some((_, mut panel)) = menus.iter().next()
+        && panel.open
+        && panel.owner == Some(button)
+    {
+        panel.open = false;
+        return;
+    }
+    fill_menu(menu_panel(button), names, current, pick, menus, theme, cmd);
+}
+
+/// Opens the name menu at `position`, a point in the window, listing `names`; a press outside it closes it.
+pub fn open_name_menu_at(
+    position: Vec2,
+    names: &[impl AsRef<str>],
+    pick: impl Fn(&str) -> Listener<UIClick>,
+    menus: &Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
+    let panel = UIAnchoredPanel::new(UIAnchorTarget::from_point(position))
+        .with_side(UIAnchorSide::Below)
+        .with_align(UIAnchorAlign::Start)
+        .with_open(true);
+    fill_menu(panel, names, None, pick, menus, theme, cmd);
+}
+
+fn fill_menu(
+    placed: UIAnchoredPanel,
+    names: &[impl AsRef<str>],
+    current: Option<&str>,
+    pick: impl Fn(&str) -> Listener<UIClick>,
+    menus: &Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
     let mut menu = match menus.iter().next() {
         Some((entity, mut panel)) => {
-            if panel.open && panel.owner == Some(button) {
-                panel.open = false;
-                return;
-            }
-            **panel = menu_panel(button);
+            **panel = placed;
             cmd.entity(entity).despawn_children()
         }
         None => cmd.spawn((
@@ -56,7 +89,7 @@ pub fn open_name_menu(
                 .popup()
                 .width(UIValue::Px(MENU_WIDTH))
                 .padding(theme.spacing_xs),
-            menu_panel(button),
+            placed,
             NameMenu,
         )),
     };

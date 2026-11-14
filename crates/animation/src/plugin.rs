@@ -3,6 +3,7 @@ use concerto_ecs::{IntoSystemConfig, World, reflect::AppTypeRegistry};
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::{GetTypeRegistration, TypeRegistry};
+use glam::{Vec2, Vec3};
 
 use crate::{
     clip::AnimationClip,
@@ -10,10 +11,11 @@ use crate::{
     graph::AnimationGraph,
     mask::BoneMask,
     node::{
-        AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, LayerNode,
-        PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
+        AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, IkTarget,
+        LayerNode, PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
         register_node_inputs, state_machine::AnimationStateMachine,
     },
+    param::Param,
     retarget::{RetargetNode, RetargetRig},
     target::{
         animate_targets, initialize_animation_players, initialize_skeletons,
@@ -40,6 +42,12 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<AssetHandle<BoneMask>>();
     registry.register::<AssetHandle<RetargetRig>>();
     registry.register::<AssetHandle<Skeleton>>();
+    registry.register::<Param<bool>>();
+    registry.register::<Param<f32>>();
+    registry.register::<Param<Vec2>>();
+    registry.register::<Param<Vec3>>();
+    registry.register::<Param<IkTarget>>();
+    registry.register::<IkTarget>();
 }
 
 /// Registers the inputs of the built-in animation nodes with the graph walks of `world`.
@@ -135,7 +143,7 @@ mod tests {
     use crate::{
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
-        node::{AnimationNode, CreateNodeInputs, ReflectAnimationNode},
+        node::{AnimationNode, CreateNodeInputs, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
         target::{animate_targets, initialize_animation_players, update_animation_players},
@@ -150,6 +158,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> bool {
             false
@@ -259,6 +271,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Speed>;
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

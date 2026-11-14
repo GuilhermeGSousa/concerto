@@ -167,6 +167,7 @@ fn load_record<A: LoadableAsset>(load: RecordLoad<'_>) -> RecordFuture<'_> {
 struct LoadRequest {
     entry: AssetEntry,
     load: RecordLoader,
+    cancelled: Arc<AtomicBool>,
 }
 
 struct FileLoad {
@@ -178,7 +179,7 @@ struct FileLoad {
 #[derive(Default)]
 struct PendingLoads {
     files: HashMap<AssetId, FileLoad>,
-    assets: HashSet<AssetId>,
+    assets: HashMap<AssetId, Arc<AtomicBool>>,
 }
 
 impl PendingLoads {
@@ -186,8 +187,17 @@ impl PendingLoads {
         for load in self.files.values() {
             load.cancelled.store(true, Ordering::SeqCst);
         }
+        for cancelled in self.assets.values() {
+            cancelled.store(true, Ordering::SeqCst);
+        }
         self.files.clear();
         self.assets.clear();
+    }
+
+    fn cancel_asset(&mut self, id: AssetId) {
+        if let Some(cancelled) = self.assets.remove(&id) {
+            cancelled.store(true, Ordering::SeqCst);
+        }
     }
 }
 
@@ -204,6 +214,7 @@ pub(crate) struct AssetServerData {
     #[cfg(not(target_arch = "wasm32"))]
     cook_hooks: RwLock<HashMap<&'static str, CookHook>>,
     derived_cache: RwLock<DerivedDataCache>,
+    named: RwLock<HashSet<TypeId>>,
 }
 
 struct ContentState {
@@ -240,6 +251,7 @@ impl AssetServer {
             #[cfg(not(target_arch = "wasm32"))]
             cook_hooks: RwLock::new(HashMap::new()),
             derived_cache: RwLock::new(DerivedDataCache::none()),
+            named: RwLock::new(HashSet::new()),
         };
 
         Self {
@@ -301,7 +313,7 @@ impl AssetServer {
 
     /// Whether the asset `id` is in the world or on its way there; false for an id never loaded or added, and once its load fails or is cancelled or it unloads.
     pub fn is_loading_or_loaded(&self, id: AssetId) -> bool {
-        self.data.pending.read().unwrap().assets.contains(&id)
+        self.data.pending.read().unwrap().assets.contains_key(&id)
             || self.data.loaded_assets.read().unwrap().contains(&id)
     }
 
@@ -312,7 +324,7 @@ impl AssetServer {
             .data
             .asset_load_event_receiver
             .try_iter()
-            .filter(|event| !pending.assets.contains(&event.id()))
+            .filter(|event| !pending.assets.contains_key(&event.id()))
             .collect();
         for event in kept {
             let _ = self.data.asset_load_event_sender.send(event);
@@ -434,6 +446,16 @@ impl AssetServer {
         self.data.handle_provider.is_registered::<A>()
     }
 
+    /// Lets a handle to `A` be set through this server as a weak one that names its asset and loads nothing, for an editor that edits references to a kind it does not load.
+    pub fn name_asset<A: Asset>(&self) {
+        self.data.named.write().unwrap().insert(TypeId::of::<A>());
+    }
+
+    /// Whether handles to `A` set through this server only name their asset.
+    pub fn names_asset<A: Asset>(&self) -> bool {
+        self.data.named.read().unwrap().contains(&TypeId::of::<A>())
+    }
+
     /// Adds a built asset, running its `on_load` inline before it reaches the world; a failing `on_load` is logged and the returned handle never resolves.
     pub fn add<A: LoadableAsset>(&self, mut asset: A) -> AssetHandle<A> {
         let id = AssetId::new();
@@ -458,16 +480,60 @@ impl AssetServer {
         handle
     }
 
+    /// Puts a built asset in its store under `id`, running its `on_load` inline and dropping a pending load of that id, so `load(id)` returns it and reads no file; inserting again replaces it, and a failing `on_load` is logged and leaves what was there.
+    pub fn insert_loaded<A: LoadableAsset>(&self, id: AssetId, mut asset: A) -> AssetHandle<A> {
+        let handle = self.data.handle_provider.request_handle(id);
+        let was_loaded = {
+            self.data.pending.write().unwrap().cancel_asset(id);
+            !self.data.loaded_assets.write().unwrap().insert(id)
+        };
+        let context = AssetLoadContext::new(self.clone(), id);
+        if let Err(error) = asset.on_load(&context) {
+            log::error!(
+                "Failed to insert asset (type {}): {:#}",
+                std::any::type_name::<A>(),
+                error
+            );
+            if !was_loaded {
+                self.data.loaded_assets.write().unwrap().remove(&id);
+            }
+            return handle;
+        }
+        let _ = self
+            .data
+            .asset_load_event_sender
+            .send(AssetLoadEvent::Loaded {
+                asset: LoadedAsset::new(id, asset),
+            });
+        handle
+    }
+
     /// Loads a stored asset using its persistent UUID, obtained from `asset_id!`
     /// or a serialized asset reference. Repeated requests share handles and loads,
     /// and the assets requested from one file share one read of it.
     pub fn load<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
         let handle = self.data.handle_provider.request_handle(id);
         let mut pending = self.data.pending.write().unwrap();
-        if pending.assets.contains(&id) || self.data.loaded_assets.read().unwrap().contains(&id) {
+        if pending.assets.contains_key(&id) || self.data.loaded_assets.read().unwrap().contains(&id)
+        {
             return handle;
         }
-        pending.assets.insert(id);
+        self.start_load::<A>(id, &mut pending);
+        handle
+    }
+
+    /// Reads the asset `id` from its file again, though it is loaded or was inserted, and replaces it once the read lands; a read that fails leaves what was there.
+    pub fn reload<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
+        let handle = self.data.handle_provider.request_handle(id);
+        let mut pending = self.data.pending.write().unwrap();
+        pending.cancel_asset(id);
+        self.start_load::<A>(id, &mut pending);
+        handle
+    }
+
+    fn start_load<A: LoadableAsset + 'static>(&self, id: AssetId, pending: &mut PendingLoads) {
+        let request_cancelled = Arc::new(AtomicBool::new(false));
+        pending.assets.insert(id, Arc::clone(&request_cancelled));
         let (root, registry) = self.content_source();
         let Some(entry) = registry.get(id).cloned() else {
             log::error!(
@@ -475,7 +541,7 @@ impl AssetServer {
                 std::any::type_name::<A>()
             );
             self.fail(id);
-            return handle;
+            return;
         };
         if !entry.is::<A>() {
             log::error!(
@@ -485,13 +551,14 @@ impl AssetServer {
                 A::name()
             );
             self.fail(id);
-            return handle;
+            return;
         }
         let file = entry.file();
         let address = entry.address.clone();
         let request = LoadRequest {
             entry,
             load: load_record::<A>,
+            cancelled: request_cancelled,
         };
         match pending.files.get_mut(&file) {
             Some(load) => load.requests.push(request),
@@ -508,7 +575,6 @@ impl AssetServer {
                 );
             }
         }
-        handle
     }
 
     fn fail(&self, id: AssetId) {
@@ -543,6 +609,9 @@ impl AssetServer {
             return None;
         }
         requests.retain(|request| {
+            if request.cancelled.load(Ordering::SeqCst) {
+                return false;
+            }
             let id = request.entry.id;
             let wanted = self.data.handle_provider.has_live_handle(&id);
             if !wanted {
@@ -553,9 +622,9 @@ impl AssetServer {
         Some(requests)
     }
 
-    fn deliver(&self, cancelled: &AtomicBool, event: AssetLoadEvent) {
+    fn deliver(&self, cancelled: &AtomicBool, request: &AtomicBool, event: AssetLoadEvent) {
         let _pending = self.data.pending.read().unwrap();
-        if !cancelled.load(Ordering::SeqCst) {
+        if !cancelled.load(Ordering::SeqCst) && !request.load(Ordering::SeqCst) {
             let _ = self.data.asset_load_event_sender.send(event);
         }
     }
@@ -587,7 +656,12 @@ impl AssetServer {
                 .map(|asset| (asset.asset_id, asset))
                 .collect();
             while let Some(requests) = server.take_requests(file, &cancelled) {
-                for LoadRequest { entry, load } in requests {
+                for LoadRequest {
+                    entry,
+                    load,
+                    cancelled: request_cancelled,
+                } in requests
+                {
                     if cancelled.load(Ordering::SeqCst) {
                         return;
                     }
@@ -631,7 +705,7 @@ impl AssetServer {
                             AssetLoadEvent::LoadFailed { id }
                         }
                     };
-                    server.deliver(&cancelled, event);
+                    server.deliver(&cancelled, &request_cancelled, event);
                 }
             }
         })
@@ -984,6 +1058,13 @@ mod tests {
         assert!(matches!(value, AssetHandle::Strong(..)));
         assert_eq!(value.id(), id);
 
+        let naming = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        naming.name_asset::<FixtureAsset>();
+        let mut named = AssetHandle::<FixtureAsset>::default();
+        handle.set(&mut named, &naming, id).unwrap();
+        assert_eq!(named, AssetHandle::weak(id));
+        assert!(!naming.is_loading_or_loaded(id));
+
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1066,6 +1147,32 @@ mod tests {
             .unwrap();
         assert_eq!(store.into_iter().count(), 1);
         assert_eq!(fixture.value(&first), Some(42));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_inserted_asset_stands_in_for_its_file_and_a_second_insert_replaces_it() {
+        let dir = temp_root("insert-loaded");
+        let saved = saved_fixture(&dir, 1);
+        let id = saved.id;
+        let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
+        let pending = fixture.server.load::<FixtureAsset>(id);
+
+        let inserted = fixture.server.insert_loaded(id, FixtureAsset::new(2));
+        let loaded = fixture.server.load::<FixtureAsset>(id);
+
+        assert_eq!(inserted.id(), id);
+        handle_asset_load_events(&mut fixture.world);
+        assert!(!fixture.server.is_loading());
+        assert_eq!(fixture.value(&loaded), Some(2));
+        assert_eq!(fixture.value(&pending), Some(2));
+
+        fixture.server.insert_loaded(id, FixtureAsset::new(3));
+        fixture.server.insert_loaded(id, FixtureAsset::new(REFUSED));
+        handle_asset_load_events(&mut fixture.world);
+
+        assert_eq!(fixture.value(&loaded), Some(3));
+        assert!(fixture.server.is_loading_or_loaded(id));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

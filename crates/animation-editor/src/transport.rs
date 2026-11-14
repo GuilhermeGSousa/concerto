@@ -25,12 +25,12 @@ use concerto_window::input::MouseButton;
 
 use crate::preview::{ClipPreviewProgress, SeekClip, SetClipTransport};
 
-struct Speed {
-    rate: f32,
-    label: &'static str,
+pub(crate) struct Speed {
+    pub(crate) rate: f32,
+    pub(crate) label: &'static str,
 }
 
-const SPEEDS: [Speed; 4] = [
+pub(crate) const SPEEDS: [Speed; 4] = [
     Speed {
         rate: 0.25,
         label: "0.25×",

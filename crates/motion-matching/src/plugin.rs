@@ -1,4 +1,4 @@
-use concerto_animation::{animate_targets, plugin::AnimationAppExt};
+use concerto_animation::{animate_targets, param::Param, plugin::AnimationAppExt};
 use concerto_app::{
     plugins::Plugin,
     schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate},
@@ -39,6 +39,7 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<CharacterDisplacement>()
             .register_type::<CharacterLink>()
             .register_type::<AssetHandle<MotionDatabase>>()
+            .register_type::<Param<f32>>()
             .register_type::<MotionMatchingTrajectory>()
             .register_animation_node::<MotionMatchingNode>()
             .add_system(FixedUpdate, drive_body)

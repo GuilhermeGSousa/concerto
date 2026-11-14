@@ -1,3 +1,5 @@
+mod graph;
+
 use std::{
     any::{Any, TypeId},
     sync::Arc,
@@ -816,6 +818,7 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
         [SceneSaved {
             document,
             asset: asset.clone(),
+            written: vec![asset.clone()],
         }]
     );
     assert!(f.written::<SaveFailed>().is_empty());

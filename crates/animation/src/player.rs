@@ -19,7 +19,7 @@ use glam::{Affine3A, Vec2, Vec3};
 use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, RootBone},
-    graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex},
+    graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
     pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
@@ -92,6 +92,11 @@ impl AnimationPlayer {
         self.blackboard.set(key, value);
     }
 
+    /// Sets a parameter to a value whose type is known only at run time, as an editor's preview does.
+    pub fn set_boxed_param(&mut self, key: Name, value: Box<dyn Reflect>) {
+        self.blackboard.set_boxed(key, value);
+    }
+
     pub fn set_bool_param(&mut self, key: Name, value: bool) {
         self.set_param(key, value);
     }
@@ -135,6 +140,15 @@ impl AnimationPlayer {
         f: impl FnMut(&N, &N::State, &AnimationBlackboard),
     ) {
         self.graph_state.for_each_state(graphs, &self.blackboard, f);
+    }
+
+    /// Calls `f` with each playing node of the player's graph, inner graphs included: its path from the root graph, its weight and what it reports.
+    pub fn for_each_node(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        f: impl FnMut(&NodeVisit<'_>),
+    ) {
+        self.graph_state.for_each_node(graphs, f);
     }
 
     /// Calls `f` with each live node of type `N` in the player's graph, inner graphs included, its mutable state and the blackboard.
@@ -325,8 +339,8 @@ mod tests {
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
         node::{
-            AnimationClipNode, AnimationNode, BlendNode, ReflectAnimationNode, ResultNode,
-            register_node_inputs,
+            AnimationClipNode, AnimationNode, BlendNode, InputSlots, ReflectAnimationNode,
+            ResultNode, register_node_inputs,
         },
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
@@ -342,6 +356,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0

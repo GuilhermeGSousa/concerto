@@ -15,7 +15,10 @@ plugins = [{ package = "concerto-motion-matching-editor", install = "concerto_mo
 it. Its `JointName` fields are edited by `concerto-editor`'s `JointNameEditor`,
 which the inspector registers by default. It also registers `AnimationClip` as a
 derived asset in the editor's `App`, so a derive refuses an entry naming an
-additive clip even before any game `App` has added `AnimationPlugin`.
+additive clip even before any game `App` has added `AnimationPlugin`. And it
+names `MotionDatabase` in the editor's `AssetServer` with `name_asset`, so the
+`database` of a `MotionMatchingNode` can be picked in an animation graph's tab,
+and set with `set_property`, while the editor never loads a database.
 
 Listing this crate doesn't bring the clip tab. A definition's preview still plays
 clips, through `concerto-animation-editor`'s `clip_preview`, but a game that wants

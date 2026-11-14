@@ -4,6 +4,8 @@ use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::Vec2;
 
+use crate::param::Param;
+
 #[derive(Default)]
 pub struct AnimationBlackboard {
     values: HashMap<Name, Box<dyn Reflect>>,
@@ -15,9 +17,19 @@ impl AnimationBlackboard {
         self.values.insert(key, Box::new(value));
     }
 
+    /// Stores a value built elsewhere under `key`, as [`set`](Self::set) does.
+    pub fn set_boxed(&mut self, key: Name, value: Box<dyn Reflect>) {
+        self.values.insert(key, value);
+    }
+
     /// The value under `key` as `T`, or `None` if it is missing or of another type.
     pub fn get<T: Reflect>(&self, key: Name) -> Option<&T> {
         self.values.get(&key)?.downcast_ref::<T>()
+    }
+
+    /// The value `param` names, or `None` if it is missing or of another type.
+    pub fn read<T: Reflect>(&self, param: &Param<T>) -> Option<&T> {
+        self.get::<T>(param.0)
     }
 
     pub fn get_bool(&self, key: Name) -> Option<bool> {

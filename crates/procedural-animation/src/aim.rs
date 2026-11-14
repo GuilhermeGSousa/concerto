@@ -3,15 +3,16 @@ use concerto_animation::{
     evaluation::AnimationGraphContext,
     look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint},
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
 use concerto_foundation::math::{Spring, SpringValue};
 use concerto_mesh::{JointName, Skeleton};
-use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_name::name;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -23,17 +24,17 @@ const SNAP_WEIGHT: f32 = 1.0e-4;
 
 /// Turns a chain of bones so a muzzle's barrel points at a world-space point; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct AimNode {
     pub chain: Vec<AimBone>,
     pub muzzle: Muzzle,
     pub up: Vec3,
-    pub target_param: Name,
+    pub target_param: Param<Vec3>,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
     pub weight_halflife: f32,
     pub reacquire_halflife: f32,
-    pub reacquire_param: Option<Name>,
+    pub reacquire_param: Option<Param<f32>>,
 }
 
 impl Default for AimNode {
@@ -42,7 +43,7 @@ impl Default for AimNode {
             chain: Vec::new(),
             muzzle: Muzzle::default(),
             up: Vec3::Y,
-            target_param: Name::default(),
+            target_param: Param::default(),
             weight: 1.0,
             weight_param: None,
             weight_halflife: 0.2,
@@ -92,9 +93,9 @@ impl Default for Muzzle {
 
 impl AimNode {
     /// A node with the default settings and no chain, pointing `muzzle` at the world `Vec3` under `target_param`.
-    pub fn new(target_param: Name, muzzle: Muzzle) -> Self {
+    pub fn new(target_param: impl Into<Param<Vec3>>, muzzle: Muzzle) -> Self {
         Self {
-            target_param,
+            target_param: target_param.into(),
             muzzle,
             ..Self::default()
         }
@@ -119,8 +120,8 @@ impl AimNode {
     }
 
     /// Multiplies the weight by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_weight_param(mut self, param: Name) -> Self {
-        self.weight_param = Some(param);
+    pub fn with_weight_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.weight_param = Some(param.into());
         self
     }
 
@@ -137,8 +138,8 @@ impl AimNode {
     }
 
     /// Multiplies the re-acquire halflife by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_reacquire_param(mut self, param: Name) -> Self {
-        self.reacquire_param = Some(param);
+    pub fn with_reacquire_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.reacquire_param = Some(param.into());
         self
     }
 }
@@ -237,10 +238,10 @@ fn ease<T: SpringValue>(spring: &mut Spring<T>, goal: T, halflife: f32, delta_ti
     }
 }
 
-fn scaled(value: f32, param: Option<Name>, blackboard: &AnimationBlackboard) -> f32 {
+fn scaled(value: f32, param: Option<Param<f32>>, blackboard: &AnimationBlackboard) -> f32 {
     value
         * param
-            .and_then(|param| blackboard.get_float(param))
+            .and_then(|param| blackboard.read(&param).copied())
             .unwrap_or(1.0)
 }
 
@@ -353,7 +354,7 @@ impl AimNode {
     }
 
     fn target(&self, context: &AnimationGraphContext<'_>) -> Option<Vec3> {
-        let target = *context.blackboard().get::<Vec3>(self.target_param)?;
+        let target = *context.blackboard().read(&self.target_param)?;
         let world_to_model = WorldToModel::new(context.model_to_world().unwrap_or_default());
         if !world_to_model.is_finite() {
             return None;
@@ -415,6 +416,10 @@ impl AnimationNode for AimNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimState {
         AimState {
             elapsed: 0.0,
@@ -455,7 +460,7 @@ impl AnimationNode for AimNode {
                 if !state.warned {
                     warn!(
                         "aim toward `{}` skipped: {reason}",
-                        self.target_param.as_str()
+                        self.target_param.0.as_str()
                     );
                     state.warned = true;
                 }
@@ -523,7 +528,7 @@ mod tests {
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
         look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
-        node::{AnimationNode, ReflectAnimationNode},
+        node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
     };
@@ -609,6 +614,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

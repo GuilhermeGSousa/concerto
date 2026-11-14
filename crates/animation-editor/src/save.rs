@@ -126,6 +126,7 @@ pub(crate) fn save_clip(
                 show_saved_clip(entity, &state, &transport, &mut previews);
                 saved.write(SceneSaved {
                     document: entity,
+                    written: vec![asset.clone()],
                     asset,
                 });
                 cmd.remove::<Unsaved>(entity);
@@ -276,6 +277,7 @@ mod tests {
             [SceneSaved {
                 document,
                 asset: walk.clone(),
+                written: vec![walk.clone()],
             }]
         );
         assert!(f.written::<SaveFailed>().is_empty());

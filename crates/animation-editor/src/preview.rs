@@ -69,8 +69,9 @@ impl Default for ClipPosing {
     }
 }
 
+/// The entity a preview's scene is spawned under, which root motion moves.
 #[derive(Component)]
-struct ClipPreviewRoot;
+pub(crate) struct ClipPreviewRoot;
 
 /// Replaces the clip the preview plays and goes back to its start.
 pub struct ShowClip(pub Arc<AnimationClip>);
@@ -234,7 +235,7 @@ fn pose_clip(
     }
 }
 
-fn first_rooted<'a>(
+pub(crate) fn first_rooted<'a>(
     skeletons: impl Iterator<Item = (Entity, &'a SkeletonComponent)>,
 ) -> Option<&'a SkeletonComponent> {
     skeletons
@@ -455,31 +456,36 @@ pub fn clip_playback(app: &mut App) {
         .add_listener(seek_clip.at_preview_time());
 }
 
-/// Adds a clip preview to `app`: it poses every rooted skeleton from the clip [`ShowClip`] gives it.
-pub fn clip_preview(app: &mut App) {
+/// Adds the stage a preview plays on to `app`: the scene [`ShowClipScene`] gives it, the bones [`SetSkeletonGizmo`] draws, and the orbit camera following the first rooted skeleton.
+pub fn preview_stage(app: &mut App) {
     if app.is_plugin_added::<RenderPlugin>() && !app.is_plugin_added::<DebugGizmosPlugin>() {
         app.register_plugin(DebugGizmosPlugin);
     }
-    clip_playback(app);
     app.insert_resource(ClipPosing::default())
-        .register_event::<ClipPreviewBones>()
         .add_system(Update, gizmo_new_skeletons.at_preview_time())
-        .add_system(
-            LateUpdate,
-            pose_clip
-                .before(propagate_global_transforms)
-                .at_preview_time(),
-        )
         .add_system(
             LateUpdate,
             follow_root
                 .after(propagate_global_transforms)
                 .at_preview_time(),
         )
-        .add_system(LateUpdate, report_bones.after(pose_clip).at_preview_time())
         .add_listener(show_clip_scene.at_preview_time())
-        .add_listener(set_root_motion.at_preview_time())
         .add_listener(set_skeleton_gizmo.at_preview_time());
+}
+
+/// Adds a clip preview to `app`: [`preview_stage`], and every rooted skeleton posed from the clip [`ShowClip`] gives it.
+pub fn clip_preview(app: &mut App) {
+    clip_playback(app);
+    preview_stage(app);
+    app.register_event::<ClipPreviewBones>()
+        .add_system(
+            LateUpdate,
+            pose_clip
+                .before(propagate_global_transforms)
+                .at_preview_time(),
+        )
+        .add_system(LateUpdate, report_bones.after(pose_clip).at_preview_time())
+        .add_listener(set_root_motion.at_preview_time());
 }
 
 #[cfg(test)]

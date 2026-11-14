@@ -6,7 +6,7 @@ use crate::{
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
     pose::{AnimationFrame, FramePool, Pose},
-    transition::{AnimationTransitionBlender, blend_stack::BlendStack},
+    transition::{AnimationTransitionBlender, BlendInFlight, blend_stack::BlendStack},
 };
 
 pub(crate) struct InertializationBlender {
@@ -18,6 +18,8 @@ pub(crate) struct InertializationBlender {
     last_output: Option<Pose>,
     previous_output: Option<Pose>,
     last_delta_time: f32,
+    source: Option<GraphId>,
+    elapsed: f32,
 }
 
 impl InertializationBlender {
@@ -31,6 +33,8 @@ impl InertializationBlender {
             last_output: None,
             previous_output: None,
             last_delta_time: 0.0,
+            source: None,
+            elapsed: 0.0,
         }
     }
 
@@ -72,6 +76,29 @@ impl InertializationBlender {
 impl AnimationTransitionBlender for InertializationBlender {
     fn current(&self) -> GraphId {
         self.stack.current()
+    }
+
+    fn in_flight(&self) -> Option<BlendInFlight> {
+        let from = self.source?;
+        let halflife = match self.pending_halflife {
+            Some(halflife) => halflife,
+            None => {
+                self.inertializer
+                    .as_ref()
+                    .filter(|inertializer| !inertializer.is_settled())?;
+                self.halflife
+            }
+        };
+        let progress = if halflife > 0.0 {
+            1.0 - 0.5_f32.powf(self.elapsed / halflife)
+        } else {
+            1.0
+        };
+        Some(BlendInFlight {
+            from,
+            to: self.stack.current(),
+            progress,
+        })
     }
 
     fn sample(
@@ -136,6 +163,7 @@ impl AnimationTransitionBlender for InertializationBlender {
         context: &AnimationGraphContext<'_>,
     ) {
         self.delta_time += delta_time;
+        self.elapsed += delta_time;
         self.stack.update(delta_time, graph_states, graphs, context);
     }
 
@@ -150,6 +178,8 @@ impl AnimationTransitionBlender for InertializationBlender {
             return;
         }
 
+        self.source = Some(self.stack.current());
+        self.elapsed = 0.0;
         self.stack.transition(next_graph, graph_states, 1.0, graphs);
         self.stack.collapse();
         self.pending_halflife = Some(blend_time);

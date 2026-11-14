@@ -2,15 +2,16 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, RootBone},
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, model_joint},
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
-use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_name::name;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -22,7 +23,7 @@ const RELEASED: f32 = 1.0e-3;
 
 /// Holds each planted foot where it was planted, horizontally, and eases back to the animated foot when the plant ends; passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct FootLockNode {
     pub legs: Vec<FootLockLeg>,
     pub plant_speed: f32,
@@ -31,7 +32,7 @@ pub struct FootLockNode {
     pub release_halflife: f32,
     pub softness: f32,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
     pub weight_halflife: f32,
 }
 
@@ -100,8 +101,8 @@ impl FootLockNode {
     }
 
     /// Sets the float param the weight is multiplied by.
-    pub fn with_weight_param(mut self, weight_param: Name) -> Self {
-        self.weight_param = Some(weight_param);
+    pub fn with_weight_param(mut self, weight_param: impl Into<Param<f32>>) -> Self {
+        self.weight_param = Some(weight_param.into());
         self
     }
 
@@ -228,7 +229,7 @@ impl FootLockNode {
     fn weight_target(&self, blackboard: &AnimationBlackboard) -> f32 {
         let scale = self
             .weight_param
-            .and_then(|param| blackboard.get_float(param))
+            .and_then(|param| blackboard.read(&param).copied())
             .unwrap_or(1.0);
         let weight = self.weight * scale;
         if weight.is_nan() {
@@ -366,6 +367,10 @@ impl AnimationNode for FootLockNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> FootLockState {
         FootLockState::new(self)
     }
@@ -489,7 +494,7 @@ impl AnimationNode for FootLockNode {
 mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
-        node::{AnimationNode, ReflectAnimationNode},
+        node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion},
         root::AnimationRootBone,
@@ -578,6 +583,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

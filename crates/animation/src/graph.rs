@@ -1,16 +1,18 @@
 use std::{borrow::Cow, collections::HashMap, fmt, ops::Deref};
 
 use concerto_foundation::assets::{
-    Asset, LoadableAsset,
+    Asset, CreatableAsset, LoadableAsset,
     asset_server::{AssetLoadContext, AssetServer},
     asset_store::AssetStore,
     handle::{AssetHandle, LiveLeaves},
 };
 use concerto_name::Name;
 use concerto_reflect::{EncodeError, ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use glam::Vec2;
 use log::warn;
 use petgraph::{
-    Direction::Outgoing,
+    Direction::{Incoming, Outgoing},
+    algo::has_path_connecting,
     graph::{DiGraph, Neighbors, NodeIndex},
     visit::{Dfs, DfsPostOrder, Walker},
 };
@@ -20,9 +22,10 @@ use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
-        AnimationNode, ErasedAnimationNode, LayerNode, PlaceholderNode, ReflectAnimationNode,
-        ResultNode, blend_space::BlendSpace2DBuilderContext,
+        AnimationNode, ErasedAnimationNode, LayerNode, NodeReport, PlaceholderNode,
+        ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
     },
+    param::Param,
     player::ActiveNodeState,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
@@ -48,10 +51,19 @@ pub enum AnimationNodeData {
 }
 
 impl AnimationNodeData {
-    pub(crate) fn of<T: AnimationNode>(node: &T) -> Self {
+    /// The stored data of a typed node.
+    pub fn of<T: AnimationNode>(node: &T) -> Self {
         Self::Stored {
             type_name: std::any::type_name::<T>().to_owned(),
             value: to_value(node).expect("an animation node encodes through reflection"),
+        }
+    }
+
+    /// The data of a node that is already built, which plays without [`AnimationGraph::make_live`].
+    pub fn from_live(node: Box<dyn ErasedAnimationNode>) -> Self {
+        Self::Live {
+            type_name: node.as_reflect().type_name().to_owned(),
+            node,
         }
     }
 
@@ -80,6 +92,14 @@ impl AnimationNodeData {
             Self::Stored { .. } => None,
             Self::Live { node, .. } => Some(node.as_ref()),
             Self::Placeholder { .. } => Some(&PLACEHOLDER),
+        }
+    }
+
+    /// The live node to edit in place; none for a stored node or a placeholder.
+    pub fn live_mut(&mut self) -> Option<&mut dyn ErasedAnimationNode> {
+        match self {
+            Self::Live { node, .. } => Some(node.as_mut()),
+            Self::Stored { .. } | Self::Placeholder { .. } => None,
         }
     }
 }
@@ -140,7 +160,7 @@ impl PartialEq for AnimationNodeData {
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimationNodeIndex(NodeIndex);
 
 impl Deref for AnimationNodeIndex {
@@ -156,6 +176,36 @@ impl From<NodeIndex> for AnimationNodeIndex {
         AnimationNodeIndex(value)
     }
 }
+
+/// Why [`AnimationGraph::connect`] refused a connection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectError {
+    NotANode { index: AnimationNodeIndex },
+    ChildIsResult,
+    ChildHasParent { child: AnimationNodeIndex },
+    Cycle,
+}
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnectError::NotANode { index } => {
+                write!(f, "{} is not a node of the graph", index.index())
+            }
+            ConnectError::ChildIsResult => {
+                write!(f, "the result node cannot be an input of another node")
+            }
+            ConnectError::ChildHasParent { child } => write!(
+                f,
+                "node {} is already an input of another node",
+                child.index()
+            ),
+            ConnectError::Cycle => write!(f, "the connection would close a cycle"),
+        }
+    }
+}
+
+impl std::error::Error for ConnectError {}
 
 #[derive(Asset, serde::Serialize, serde::Deserialize)]
 pub struct AnimationGraph {
@@ -173,6 +223,12 @@ impl LoadableAsset for AnimationGraph {
             warn!("animation graph {:?}: {warning}", context.asset_id());
         }
         Ok(())
+    }
+}
+
+impl CreatableAsset for AnimationGraph {
+    fn new_asset() -> Self {
+        Self::new()
     }
 }
 
@@ -322,8 +378,72 @@ impl AnimationGraph {
             .and_then(AnimationNodeData::live)
     }
 
-    pub fn get_node_inputs(&self, node_index: AnimationNodeIndex) -> Neighbors<'_, (), u32> {
+    pub(crate) fn get_node_inputs(&self, node_index: AnimationNodeIndex) -> Neighbors<'_, (), u32> {
         self.nodes.neighbors_directed(*node_index, Outgoing)
+    }
+
+    /// Every node's index, in node order, whether or not the result node reaches it.
+    pub fn node_indices(&self) -> impl Iterator<Item = AnimationNodeIndex> + '_ {
+        self.nodes.node_indices().map(AnimationNodeIndex::from)
+    }
+
+    /// The node at `index`.
+    pub fn node(&self, index: AnimationNodeIndex) -> Option<&AnimationNodeData> {
+        self.nodes.node_weight(*index)
+    }
+
+    /// The node at `index`, to edit in place.
+    pub fn node_mut(&mut self, index: AnimationNodeIndex) -> Option<&mut AnimationNodeData> {
+        self.nodes.node_weight_mut(*index)
+    }
+
+    /// The index of the result node.
+    pub fn result_index(&self) -> AnimationNodeIndex {
+        self.result_node
+    }
+
+    /// The inputs of the node at `index` in slot order, the order they were added and the order the node evaluates them in.
+    pub fn inputs(&self, index: AnimationNodeIndex) -> Vec<AnimationNodeIndex> {
+        let mut inputs: Vec<AnimationNodeIndex> = self
+            .get_node_inputs(index)
+            .map(AnimationNodeIndex::from)
+            .collect();
+        inputs.reverse();
+        inputs
+    }
+
+    /// Adds a node that is no node's input yet.
+    pub fn insert_node(&mut self, data: AnimationNodeData) -> AnimationNodeIndex {
+        self.nodes.add_node(data).into()
+    }
+
+    /// Appends `child` as the next input of `parent`.
+    pub fn connect(
+        &mut self,
+        parent: AnimationNodeIndex,
+        child: AnimationNodeIndex,
+    ) -> Result<(), ConnectError> {
+        for index in [parent, child] {
+            if self.nodes.node_weight(*index).is_none() {
+                return Err(ConnectError::NotANode { index });
+            }
+        }
+        if child == self.result_node {
+            return Err(ConnectError::ChildIsResult);
+        }
+        if self
+            .nodes
+            .neighbors_directed(*child, Incoming)
+            .next()
+            .is_some()
+        {
+            return Err(ConnectError::ChildHasParent { child });
+        }
+        if has_path_connecting(&self.nodes, *child, *parent, None) {
+            return Err(ConnectError::Cycle);
+        }
+        self.nodes.add_edge(*parent, *child, ());
+        Ok(())
     }
 }
 
@@ -366,7 +486,7 @@ impl<'a> AnimationNodeContext<'a> {
     /// Adds a 2D blend space driven by `param` as an input, its points and their inputs added through `f`.
     pub fn add_blend_space_2d_input_with(
         &mut self,
-        param: Name,
+        param: impl Into<Param<Vec2>>,
         f: impl FnOnce(&mut BlendSpace2DBuilderContext<'_>),
     ) -> &mut Self {
         let mut builder_context = BlendSpace2DBuilderContext {
@@ -374,7 +494,9 @@ impl<'a> AnimationNodeContext<'a> {
             output_node_index: self.node_index,
             points: Vec::new(),
             nodes: Vec::new(),
-            input: crate::node::blend_space::BlendInput { param },
+            input: crate::node::blend_space::BlendInput {
+                param: param.into(),
+            },
         };
 
         f(&mut builder_context);
@@ -434,11 +556,26 @@ impl<'a> AnimationNodeContext<'a> {
     }
 }
 
+/// One step of the path to a playing node from a player's graph: a node of the graph the step is in and, when the next step is in a state's graph, that state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodePathStep {
+    pub node: AnimationNodeIndex,
+    pub state: Option<Name>,
+}
+
+/// One playing node as [`AnimationGraphState::for_each_node`] visits it; the last step of `path` is the node itself.
+pub struct NodeVisit<'a> {
+    pub path: &'a [NodePathStep],
+    pub weight: f32,
+    pub report: NodeReport,
+}
+
 /// The per-player state of one graph: its handle and its nodes' states.
 #[derive(Default)]
 pub struct AnimationGraphState {
     graph_handle: Option<AssetHandle<AnimationGraph>>,
     graph_state: HashMap<AnimationNodeIndex, ActiveNodeState>,
+    warned_stateless: bool,
 }
 
 impl AnimationGraphState {
@@ -498,7 +635,7 @@ impl AnimationGraphState {
             let Some(live) = graph.live_node(*node_index) else {
                 continue;
             };
-            live.inner_states(&node_state.node_state, &mut |inner| {
+            live.inner_states(&node_state.node_state, &mut |_, inner| {
                 inner.visit_states(graphs, blackboard, f)
             });
             let Some(node) = live.as_reflect().downcast_ref::<N>() else {
@@ -508,6 +645,45 @@ impl AnimationGraphState {
                 continue;
             };
             f(node, state, blackboard);
+        }
+    }
+
+    /// Calls `f` with each playing node in node order, the nodes of the graphs it plays inside itself after it: its path from this graph, its weight and what it reports.
+    pub fn for_each_node(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        mut f: impl FnMut(&NodeVisit<'_>),
+    ) {
+        self.visit_nodes(graphs, &mut Vec::new(), &mut f);
+    }
+
+    fn visit_nodes(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        path: &mut Vec<NodePathStep>,
+        f: &mut dyn FnMut(&NodeVisit<'_>),
+    ) {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return;
+        };
+        for node in graph.node_indices() {
+            let (Some(live), Some(active)) = (graph.live_node(node), self.graph_state.get(&node))
+            else {
+                continue;
+            };
+            path.push(NodePathStep { node, state: None });
+            f(&NodeVisit {
+                path,
+                weight: active.weight,
+                report: live.report(&active.node_state),
+            });
+            live.inner_states(&active.node_state, &mut |state, inner| {
+                if let Some(step) = path.last_mut() {
+                    step.state = state;
+                }
+                inner.visit_nodes(graphs, path, f);
+            });
+            path.pop();
         }
     }
 
@@ -560,6 +736,7 @@ impl AnimationGraphState {
         creation_context: &AnimationGraphContext,
     ) {
         self.graph_state.clear();
+        self.warned_stateless = false;
         let Some(graph) = graphs.get(&animation_graph) else {
             self.graph_handle = None;
             return;
@@ -602,7 +779,7 @@ impl AnimationGraphState {
                 return Some(node.type_name());
             };
             let mut found = None;
-            live.inner_states(&node_state.node_state, &mut |inner| {
+            live.inner_states(&node_state.node_state, &mut |_, inner| {
                 if found.is_none() {
                     found = inner.stateless_node(graphs);
                 }
@@ -660,43 +837,50 @@ impl AnimationGraphState {
 
         let mut graph_evaluator = AnimationGraphEvaluator::new();
 
+        let mut stateless = false;
+
         for node_index in graph.iter_post_order() {
-            let Some(node) = graph.live_node(node_index) else {
-                continue;
-            };
-
-            let Some(node_state) = self.get_active_node_state_mut(&node_index) else {
-                warn!(
-                    "No node state found for node, make sure the animation player has been correctly initialized"
-                );
-                continue;
-            };
-
             let input_count = graph.get_node_inputs(node_index).count();
-
-            let stack_start = graph_evaluator.stack_len() - input_count;
-
+            let stack_start = graph_evaluator.stack_len().saturating_sub(input_count);
             let mut node_output = pool.acquire();
+            let mut weight = 1.0;
 
-            node.evaluate(
-                &mut node_state.node_state,
-                context,
-                bone_ids,
-                graph_evaluator.view_stack(stack_start),
-                pool,
-                &mut node_output,
-            );
+            if let Some(node) = graph.live_node(node_index) {
+                if let Some(node_state) = self.get_active_node_state_mut(&node_index) {
+                    node.evaluate(
+                        &mut node_state.node_state,
+                        context,
+                        bone_ids,
+                        graph_evaluator.view_stack(stack_start),
+                        pool,
+                        &mut node_output,
+                    );
+                    weight = node_state.weight;
+                } else {
+                    stateless = true;
+                    if !self.warned_stateless {
+                        warn!(
+                            "No node state found for node {} ({}), which plays the rest pose; make sure the animation player has been correctly initialized",
+                            node_index.index(),
+                            graph
+                                .node(node_index)
+                                .map_or("unknown", AnimationNodeData::type_name)
+                        );
+                    }
+                }
+            }
 
-            // Consume inputs and add them back to the free list
             for evaluated in graph_evaluator.evaluation_stack.drain(stack_start..) {
                 pool.release(evaluated.frame);
             }
 
             graph_evaluator.push_evaluation(EvaluatedFrame {
                 frame: node_output,
-                weight: node_state.weight,
+                weight,
             });
         }
+
+        self.warned_stateless |= stateless;
 
         let mut result = graph_evaluator
             .pop_evaluation()
@@ -776,18 +960,25 @@ impl AnimationGraphStates {
 
 #[cfg(test)]
 mod tests {
+    use concerto_ecs::resource::{Res, Resource};
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_mesh::Skeleton;
-    use glam::Mat4;
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use glam::{Mat4, Vec3};
     use uuid::Uuid;
 
     use super::{AnimationGraph, AnimationGraphState};
     use crate::{
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        evaluation::AnimationGraphContext,
         mask::{BoneMask, BoneMaskBranch},
-        node::{AnimationClipNode, BlendNode, LayerNode, LayerSpace},
-        pose::{FramePool, JointPose},
+        node::{
+            AnimationClipNode, AnimationNode, BlendNode, InputSlots, LayerNode, LayerSpace,
+            ReflectAnimationNode,
+        },
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
         testing::{Walks, made_live},
     };
 
@@ -913,6 +1104,137 @@ mod tests {
 
         assert_base_then_overlay(&layered.evaluate(built));
         assert_base_then_overlay(&layered.evaluate(loaded));
+    }
+
+    const REST_X: f32 = 3.0;
+
+    #[derive(Resource)]
+    struct NeverRegistered;
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct NeverCreated {}
+
+    impl AnimationNode for NeverCreated {
+        type State = ();
+        type CreateInput = Res<'static, NeverRegistered>;
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
+
+        fn create_state(&self, _: &Res<NeverRegistered>, _context: &AnimationGraphContext<'_>) {}
+
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut (),
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+        }
+
+        fn reset(&self, _: &mut ()) {}
+    }
+
+    fn live_with_never_created(mut graph: AnimationGraph) -> AnimationGraph {
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<NeverCreated>();
+        graph.make_live(&registry, None).unwrap();
+        graph
+    }
+
+    impl Layered {
+        fn hip_over_rest(
+            &mut self,
+            initialized_on: AnimationGraph,
+            swapped_for: Option<AnimationGraph>,
+        ) -> f32 {
+            let id = AssetId::from_path("stateless_graph");
+            self.walks
+                .graphs_mut()
+                .insert(id, live_with_never_created(initialized_on));
+            let blackboard = AnimationBlackboard::default();
+            let skeleton = skeleton();
+            let mut state = AnimationGraphState::default();
+            self.walks.create(&blackboard, |context| {
+                state.initialize(AssetHandle::weak(id), self.walks.graphs(), context)
+            });
+            if let Some(graph) = swapped_for {
+                self.walks
+                    .graphs_mut()
+                    .insert(id, live_with_never_created(graph));
+            }
+            let walks = &self.walks;
+            let rest = vec![
+                JointPose {
+                    translation: Vec3::X * REST_X,
+                    ..JointPose::IDENTITY
+                };
+                2
+            ];
+            let mut pool = FramePool::new(skeleton.bone_count());
+            pool.set_rest(&rest);
+            let mut output = pool.acquire();
+            let mut hip = 0.0;
+            for _ in 0..2 {
+                let evaluated =
+                    walks.evaluate_with(&blackboard, None, Some(&skeleton), |context| {
+                        state.evaluate(
+                            walks.graphs(),
+                            context,
+                            &skeleton.bone_ids,
+                            &mut pool,
+                            &mut output,
+                        )
+                    });
+                assert!(evaluated, "the graph evaluated");
+                hip = output.joints()[0].translation.x;
+            }
+            hip
+        }
+    }
+
+    #[test]
+    fn a_node_with_no_state_gives_its_parent_the_rest_pose() {
+        let mut layered = Layered::new();
+        let mut never_created = AnimationGraph::new();
+        never_created
+            .result_node()
+            .add_input_with(BlendNode {}, |mut blend| {
+                blend
+                    .add_input(AnimationClipNode::new(layered.base.clone()))
+                    .add_input(NeverCreated {});
+            });
+        let one_clip = AnimationGraph::from_node(AnimationClipNode::new(layered.base.clone()));
+        let mut two_clips = AnimationGraph::new();
+        two_clips
+            .result_node()
+            .add_input_with(BlendNode {}, |mut blend| {
+                blend
+                    .add_input(AnimationClipNode::new(layered.base.clone()))
+                    .add_input(AnimationClipNode::new(layered.overlay.clone()));
+            });
+
+        let beside_a_clip = layered.hip_over_rest(never_created, None);
+        let after_a_swap = layered.hip_over_rest(one_clip, Some(two_clips));
+
+        assert!(
+            (beside_a_clip - (BASE_X + REST_X) / 2.0).abs() < 1e-6,
+            "the blend mixes the clip with the rest pose of the node that has no state, got {beside_a_clip}"
+        );
+        assert!(
+            (after_a_swap - REST_X).abs() < 1e-6,
+            "a graph swapped under the states of a smaller one gives the rest pose, got {after_a_swap}"
+        );
     }
 
     struct Misbuilt {

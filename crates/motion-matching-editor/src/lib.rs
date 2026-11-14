@@ -16,7 +16,7 @@ use concerto_app::{
 use concerto_ecs::IntoSystemConfig;
 use concerto_editor::asset_editor::AssetEditorAppExt;
 use concerto_editor::fonts::{AssetIconsAppExt, glyph};
-use concerto_foundation::assets::Asset;
+use concerto_foundation::assets::{Asset, asset_server::AssetServer};
 use concerto_motion_matching::MotionDatabase;
 
 pub use derive::{BakedStats, ChannelStats, EntryStats};
@@ -42,6 +42,11 @@ use save::save_definitions;
 /// Adds the motion database editor to the editor's `App`.
 pub fn install(app: &mut App) {
     app.register_derived_asset::<AnimationClip>();
+    if let Some(server) = app.get_resource::<AssetServer>()
+        && !server.is_registered::<MotionDatabase>()
+    {
+        server.name_asset::<MotionDatabase>();
+    }
     app.register_asset_icon(MotionDatabase::name(), glyph::DATABASE);
     app.register_creatable_asset_editor::<MotionDatabase, MotionDatabaseEditor>()
         .expect("the editor's App holds the asset-editor registry")

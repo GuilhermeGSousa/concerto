@@ -1,7 +1,8 @@
 use concerto_animation::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
-    node::{effective_play_rate, AnimationNode, ReflectAnimationNode},
+    node::{effective_play_rate, AnimationNode, InputSlots, ReflectAnimationNode},
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -65,7 +66,7 @@ fn sources<'a>(
 
 /// Plays a motion database, jumping to the frame whose features best match the character's predicted trajectory.
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct MotionMatchingNode {
     pub database: AssetHandle<MotionDatabase>,
     pub search_period: f32,
@@ -76,7 +77,7 @@ pub struct MotionMatchingNode {
     pub ignore_range_end: usize,
     pub blend_halflife: f32,
     pub play_rate: f32,
-    pub play_rate_param: Option<Name>,
+    pub play_rate_param: Option<Param<f32>>,
 }
 
 impl Default for MotionMatchingNode {
@@ -145,8 +146,8 @@ impl MotionMatchingNode {
         self
     }
 
-    pub fn with_play_rate_param(mut self, play_rate_param: Name) -> Self {
-        self.play_rate_param = Some(play_rate_param);
+    pub fn with_play_rate_param(mut self, play_rate_param: impl Into<Param<f32>>) -> Self {
+        self.play_rate_param = Some(play_rate_param.into());
         self
     }
 }
@@ -160,6 +161,10 @@ impl AnimationNode for MotionMatchingNode {
         Res<'static, AssetStore<AnimationClip>>,
     );
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> MotionMatchingState {
         MotionMatchingState::new(self.search_period)
@@ -294,7 +299,10 @@ mod tests {
         assert_eq!(restored.ignore_range_end, 9);
         assert_eq!(restored.blend_halflife, 0.4);
         assert_eq!(restored.play_rate, 1.5);
-        assert_eq!(restored.play_rate_param, Some(name!("speed")));
+        assert_eq!(
+            restored.play_rate_param,
+            Some(name!("speed")).map(Into::into)
+        );
     }
 
     #[test]

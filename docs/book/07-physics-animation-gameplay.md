@@ -392,7 +392,14 @@ A graph is a tree of nodes under a result node:
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
   default, fades the old state out over `blend_time` seconds, and
   `Inertialization` plays only the new state and decays the pose difference
-  to the old one with `blend_time` as the halflife.
+  to the old one with `blend_time` as the halflife. A built machine is read
+  with `states()`, `initial_state()` and `transitions(from)`, and edited by
+  state name with `add_state`, `remove_state`, `rename_state`,
+  `set_state_graph`, `set_initial`, `add_transition`, `remove_transition` and
+  `set_transition`; a transition is named by its source state and its index
+  among that state's transitions, and each edit returns a
+  `StateMachineEditError` for an unknown state, a duplicate name or an index
+  out of range. Removing a state removes every transition to or from it.
 - **Two-bone IK** (`TwoBoneIkNode`) bends a limb so its tip reaches a goal.
   The `tip` bone names the chain: its parent is the elbow or knee and its
   grandparent the shoulder or hip, all under bone 0. The `target` is an
@@ -521,7 +528,7 @@ A graph is a tree of nodes under a result node:
   `ProceduralMotionChannel::breathing`, `sway` and `tremor` start from
   numbers that suit those uses. Each channel's phase and noise come from the
   node's `seed` mixed with the seed the game set on the blackboard under
-  `seed_param`, a `u64` or an int param, 0 when there is none: players with
+  `seed_param`, a `u64` param, 0 when there is none: players with
   the same seeds move in step, so set each character's from something stable
   across runs, such as its spawn index. Resetting the node keeps its
   phases, so re-entering a state does not replay the same stretch of motion.
@@ -612,6 +619,21 @@ literal or `Name::new(text)` otherwise, that compares as one integer. They live
 on a blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
 takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key is
 missing or holds another type; the typed methods are wrappers over those two.
+A node names the parameter it reads with a `Param<T>`
+(`concerto::animation::param`): a `Name` that carries the type of the value
+the node reads, so `weight_param` is an `Option<Param<f32>>` and a look-at's
+`target_param` a `Param<Vec3>`. Every `with_*_param` builder, the state
+machine's `on_bool` and `on_non_zero_vec`, and `add_blend_space_2d_input_with`
+take a `Name` or a `Param<T>`; a struct literal writes
+`name!("aim_weight").into()`. `AnimationBlackboard::read(&param)` returns the
+value as that type, and `None` when it is missing or holds another. A
+`Param<T>` is stored as its `Name`, and a plugin registers each `Param<T>` its
+nodes hold with the type registry, as it registers their asset handles. `T` is
+`Default`: the registration carries `ReflectParam`, which gives an editor the
+parameter's name, the value's type and its name, and a `Default` value of that
+type to edit, and the graph tab lists a parameter only through it.
+`AnimationPlayer::set_boxed_param(key, value)` sets a parameter to such a
+`Box<dyn Reflect>`.
 A node can read its playback rate from a float parameter: the rate is the
 node's own rate times the parameter, and no parameter (`None`, the default), or
 one that is missing or holds another type, leaves the node's rate alone. A product that is negative or not
@@ -642,7 +664,7 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
-    // create_state, update, evaluate, reset; is_finished defaults to true
+    // input_slots, create_state, update, evaluate, reset; is_finished defaults to true
 }
 ```
 
@@ -652,8 +674,20 @@ player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
 receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
 a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
-through `inner_graphs` and their states through `inner_states`, and, under
-`cfg(test)` or the `test-support` feature, mutably through `inner_states_mut`.
+through `inner_graphs` and their states through `inner_states`, each with the
+state that plays it when the node is a state machine, and, under `cfg(test)` or
+the `test-support` feature, mutably through `inner_states_mut`. `report` says
+what the node shows an editor of its state as it plays, a `NodeReport`; it is
+empty unless the node overrides it, as a clip does with its time and the state
+machine with its current state and transition.
+
+`input_slots` says which inputs the node takes, in the order `evaluate`
+receives them in `evaluated_inputs`: `InputSlots::None` for a node that reads
+none, as a clip does; `InputSlots::Fixed` with a name for each, as a layer's
+`base` and `overlay`; or `InputSlots::Variable` for any number, as a blend
+takes. A node that keeps data for each input, as the blend space keeps a point,
+also implements `input_added(index)` and `input_removed(index)`, which an
+editor calls when it gives the node an input or takes one away.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and
@@ -664,7 +698,10 @@ above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
 `animate_targets`, each declare the union of their walk's inputs over every
 registered node, and nothing else, so `animate_targets` never declares what only
 an update reads. A node whose input is missing, or whose type was registered
-without `register_animation_node`, is skipped in that walk with a warning. The
+without `register_animation_node`, is skipped in that walk with a warning. A
+node skipped in the create walk has no state: it is never updated, and in
+`evaluate` it gives its parent the rest pose at full weight, with one warning
+until the player's graph is initialized again. The
 clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
@@ -695,6 +732,18 @@ graph
     .input(Gain { amount: 2.0 })
     .add_input(AnimationClipNode::new(walk));
 ```
+
+A tool that edits a graph reads it and puts it together without the builder.
+`node_indices()` lists every node, `node(index)` gives its `AnimationNodeData`,
+`result_index()` names the result node, and `inputs(index)` gives a node's
+inputs in slot order, the order they were added and the order `evaluate`
+receives them in. `insert_node(data)` adds a node with no parent, from
+`AnimationNodeData::of(&node)` or `AnimationNodeData::from_live(boxed)`, and
+`connect(parent, child)` appends `child` as `parent`'s next input. It answers
+a `ConnectError` and changes nothing when `child` already has a parent, is the
+result node, would close a cycle, or either index is not a node of the graph.
+`node_mut(index)` and `AnimationNodeData::live_mut()` reach a live node to edit
+it through `as_reflect_mut`.
 
 A graph holds each node as an `AnimationNodeData`, written to a `.gasset` file
 as its registry `type_name` plus its reflected value. A node added in code or
@@ -736,6 +785,26 @@ set a node up; it exists only under `cfg(test)` or the crate's `test-support`
 feature, which a dependent crate enables in its dev-dependencies. A player whose
 graph is not loaded or not yet initialized visits nothing. Order the system after
 `animate_targets` to read what the last evaluation left in the state.
+
+`for_each_node` visits every playing node whatever its type, in node order,
+with the nodes of the graphs a node plays inside itself right after it. Each
+`NodeVisit` holds the node's `weight`, its `report` (`clip_time` for a clip
+node; for a state machine, `state_machine` with the `current` state and the
+`transition` in flight as `from`, `to` and a `progress` from 0 to 1, which
+under the inertialization blender is the share of the offset decayed so far)
+and its `path` from the player's graph: one `NodePathStep` per graph on the
+way, each the `node` index in that graph and, when the next step is inside a
+state machine's state, that `state`. The last step is the node itself. An
+editor shows a playing graph from it; `AnimationGraphState::for_each_node` is
+the same walk from a graph state.
+
+```rust
+player.for_each_node(&graphs, |visit| {
+    if let Some(machine) = &visit.report.state_machine {
+        log::info!("{:?} is in {:?}", visit.path, machine.current);
+    }
+});
+```
 
 ### Root motion
 

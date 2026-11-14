@@ -1,13 +1,14 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
-use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_name::name;
+use concerto_reflect::{Reflect, ReflectDefault};
 use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, RootBone},
+    param::Param,
     pose::{
         AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion, twist_about,
     },
@@ -25,8 +26,9 @@ pub mod two_bone_ik;
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
-    AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, NodeState,
-    PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,
+    AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, InputSlots,
+    NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode, StateMachineReport,
+    TransitionReport, UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
@@ -34,10 +36,10 @@ pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkSta
 /// The rate a node plays at: `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None` or holds no `f32`; never negative.
 pub fn effective_play_rate(
     play_rate: f32,
-    param: Option<Name>,
+    param: Option<Param<f32>>,
     blackboard: &AnimationBlackboard,
 ) -> f32 {
-    let scale = param.and_then(|param| blackboard.get_float(param));
+    let scale = param.and_then(|param| blackboard.read(&param).copied());
     let rate = play_rate * scale.unwrap_or(1.0);
     if rate.is_finite() && rate > 0.0 {
         rate
@@ -47,8 +49,12 @@ pub fn effective_play_rate(
 }
 
 /// The weight a node applies: `weight` times the `f32` under `param`, or `weight` alone when `param` is `None` or holds no `f32`; clamped to [0, 1], and 0 when NaN.
-pub fn effective_weight(weight: f32, param: Option<Name>, blackboard: &AnimationBlackboard) -> f32 {
-    let scale = param.and_then(|param| blackboard.get_float(param));
+pub fn effective_weight(
+    weight: f32,
+    param: Option<Param<f32>>,
+    blackboard: &AnimationBlackboard,
+) -> f32 {
+    let scale = param.and_then(|param| blackboard.read(&param).copied());
     let weight = weight * scale.unwrap_or(1.0);
     if weight.is_nan() {
         0.0
@@ -86,6 +92,10 @@ impl AnimationNode for ResultNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -111,6 +121,10 @@ impl AnimationNode for BlendNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Variable
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
@@ -301,6 +315,10 @@ impl AnimationNode for AnimationClipNode {
     type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AnimationClipNodeState {
         AnimationClipNodeState::new().with_start_time(self.start_time)
     }
@@ -384,6 +402,13 @@ impl AnimationNode for AnimationClipNode {
         ));
     }
 
+    fn report(&self, state: &AnimationClipNodeState) -> NodeReport {
+        NodeReport {
+            clip_time: Some(state.current_time()),
+            state_machine: None,
+        }
+    }
+
     fn reset(&self, state: &mut AnimationClipNodeState) {
         state.clock.reset();
     }
@@ -437,13 +462,13 @@ fn sample_root(channels: &[AnimationChannel], rest: &JointPose, time: f32) -> Jo
 }
 
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct AnimationClipNode {
     clip: AssetHandle<AnimationClip>,
     play_mode: AnimationPlayMode,
     start_time: f32,
     play_rate: f32,
-    play_rate_param: Option<Name>,
+    play_rate_param: Option<Param<f32>>,
 }
 
 impl Default for AnimationClipNode {
@@ -485,8 +510,8 @@ impl AnimationClipNode {
     }
 
     /// Multiplies the play rate by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_play_rate_param(mut self, param: Name) -> Self {
-        self.play_rate_param = Some(param);
+    pub fn with_play_rate_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.play_rate_param = Some(param.into());
         self
     }
 }
@@ -1285,7 +1310,7 @@ mod tests {
 
         for case in cases {
             assert_eq!(
-                effective_play_rate(case.rate, case.param, &blackboard),
+                effective_play_rate(case.rate, case.param.map(Into::into), &blackboard),
                 case.effective,
                 "{}",
                 case.name
@@ -1325,7 +1350,7 @@ mod tests {
 
         for case in cases {
             assert_eq!(
-                effective_weight(case.rate, case.param, &blackboard),
+                effective_weight(case.rate, case.param.map(Into::into), &blackboard),
                 case.effective,
                 "{}",
                 case.name

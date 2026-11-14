@@ -5,6 +5,7 @@ use concerto_ecs::{
     system::input::{ReadOnlySystemInput, SystemInputData, register_input},
 };
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
+use concerto_name::{Name, name};
 use concerto_reflect::{
     EncodeError, FromType, Reflect, ReflectedValue, TypeData, ValueWarning, apply_value_with,
     to_value,
@@ -62,11 +63,30 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         true
     }
 
+    /// The inputs this node takes, in the order `evaluate` receives them.
+    fn input_slots(&self) -> InputSlots;
+
+    /// Called when an editor gives the node an input at `index`.
+    fn input_added(&mut self, _index: usize) {}
+
+    /// Called when an editor takes the node's input at `index` away.
+    fn input_removed(&mut self, _index: usize) {}
+
     /// Visits the graph assets this node plays inside itself.
     fn inner_graphs(&self, _visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {}
 
-    /// Visits the graph states this node's state holds for the graphs it plays inside itself.
-    fn inner_states(&self, _state: &Self::State, _visit: &mut dyn FnMut(&AnimationGraphState)) {}
+    /// Visits the graph states this node's state holds for the graphs it plays inside itself, each with the state that plays it when the node is a state machine.
+    fn inner_states(
+        &self,
+        _state: &Self::State,
+        _visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    ) {
+    }
+
+    /// What the node shows an editor of its state as it plays; nothing unless the node says otherwise.
+    fn report(&self, _state: &Self::State) -> NodeReport {
+        NodeReport::default()
+    }
 
     /// Visits, mutably, the graph states this node's state holds for the graphs it plays inside itself.
     #[cfg(any(test, feature = "test-support"))]
@@ -77,6 +97,41 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         _visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
     }
+}
+
+/// What a playing node shows an editor beyond its weight.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NodeReport {
+    /// The time a clip node plays at, in seconds.
+    pub clip_time: Option<f32>,
+    /// A state machine's current state and transition.
+    pub state_machine: Option<StateMachineReport>,
+}
+
+/// The state a playing state machine is in and the transition it is blending through.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StateMachineReport {
+    pub current: Option<Name>,
+    pub transition: Option<TransitionReport>,
+}
+
+/// A transition in flight; `progress` runs from 0 to 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransitionReport {
+    pub from: Name,
+    pub to: Name,
+    pub progress: f32,
+}
+
+/// The inputs a kind of node takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputSlots {
+    /// No inputs: a clip, motion matching, a state machine.
+    None,
+    /// A fixed set, each named: a layer's `base` and `overlay`.
+    Fixed(Vec<Name>),
+    /// Any number, unnamed: a blend.
+    Variable,
 }
 
 /// The graph walk that creates node states; its input set holds every registered node's `CreateInput`.
@@ -121,7 +176,19 @@ pub trait ErasedAnimationNode: Send + Sync {
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
 
-    fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState));
+    fn input_slots(&self) -> InputSlots;
+
+    fn input_added(&mut self, index: usize);
+
+    fn input_removed(&mut self, index: usize);
+
+    fn inner_states(
+        &self,
+        state: &NodeState,
+        visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    );
+
+    fn report(&self, state: &NodeState) -> NodeReport;
 
     #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
@@ -198,10 +265,34 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         AnimationNode::inner_graphs(self, visit);
     }
 
-    fn inner_states(&self, state: &NodeState, visit: &mut dyn FnMut(&AnimationGraphState)) {
+    fn input_slots(&self) -> InputSlots {
+        AnimationNode::input_slots(self)
+    }
+
+    fn input_added(&mut self, index: usize) {
+        AnimationNode::input_added(self, index);
+    }
+
+    fn input_removed(&mut self, index: usize) {
+        AnimationNode::input_removed(self, index);
+    }
+
+    fn inner_states(
+        &self,
+        state: &NodeState,
+        visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    ) {
         if let Some(state) = state.downcast_ref::<T::State>() {
             AnimationNode::inner_states(self, state, visit);
         }
+    }
+
+    fn report(&self, state: &NodeState) -> NodeReport {
+        state
+            .downcast_ref::<T::State>()
+            .map_or_else(NodeReport::default, |state| {
+                AnimationNode::report(self, state)
+            })
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -280,6 +371,10 @@ impl AnimationNode for PlaceholderNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -332,6 +427,10 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Step>;
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> GainState {
             GainState::default()

@@ -5,7 +5,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool},
-    transition::AnimationTransitionBlender,
+    transition::{AnimationTransitionBlender, BlendInFlight},
 };
 
 /// One active graph in the cross-fade. The stack is ordered oldest → newest; only the newest
@@ -47,6 +47,17 @@ impl AnimationTransitionBlender for BlendStack {
             .last()
             .expect("blend stack always retains the current graph")
             .graph_id
+    }
+
+    fn in_flight(&self) -> Option<BlendInFlight> {
+        let [.., from, to] = &self.entries[..] else {
+            return None;
+        };
+        Some(BlendInFlight {
+            from: from.graph_id,
+            to: to.graph_id,
+            progress: to.weight,
+        })
     }
 
     fn sample(

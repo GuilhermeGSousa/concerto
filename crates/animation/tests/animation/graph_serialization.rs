@@ -7,15 +7,18 @@ use concerto_animation::clip::{
 };
 use concerto_animation::evaluation::AnimationGraphContext;
 use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
-use concerto_animation::graph::AnimationGraph;
+use concerto_animation::graph::{
+    AnimationGraph, AnimationNodeData, AnimationNodeIndex, ConnectError,
+};
 use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
     AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, AnimationNode, AnimationPlayMode,
-    ErasedAnimationNode, IkGoal, LayerNode, LayerSpace, ReflectAnimationNode, TipRotation,
-    TwoBoneIkNode,
+    BlendNode, ErasedAnimationNode, IkGoal, InputSlots, LayerNode, LayerSpace,
+    ReflectAnimationNode, TipRotation, TwoBoneIkNode,
 };
+use concerto_animation::param::Param;
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use concerto_animation::retarget::{
@@ -33,6 +36,7 @@ use concerto_foundation::assets::content::{
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use proptest::prelude::*;
 use uuid::Uuid;
 
 #[derive(Default, Reflect)]
@@ -46,6 +50,10 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
@@ -185,7 +193,7 @@ fn a_mixed_graph_loaded_from_its_bytes_matches_the_one_built_in_code_node_for_no
         AssetId::from_path("outer_pose")
     );
     let blend_space = live_node::<BlendSpace2DNode>(&restored).expect("blend space survived");
-    assert_eq!(blend_space.input().param, name!("movement"));
+    assert_eq!(blend_space.input().param, name!("movement").into());
     assert_eq!(
         blend_space.points(),
         &[glam::Vec2::ZERO, glam::Vec2::new(0.0, 1.0)]
@@ -194,11 +202,11 @@ fn a_mixed_graph_loaded_from_its_bytes_matches_the_one_built_in_code_node_for_no
     let triggers: Vec<&AnimationFSMTrigger> = machine.triggers().collect();
     assert!(triggers.iter().any(|trigger| matches!(
         trigger,
-        AnimationFSMTrigger::BoolEquals { param, value: true } if *param == name!("go")
+        AnimationFSMTrigger::BoolEquals { param, value: true } if *param == name!("go").into()
     )));
     assert!(triggers.iter().any(|trigger| matches!(
         trigger,
-        AnimationFSMTrigger::Vec2NonZero { param } if *param == name!("move")
+        AnimationFSMTrigger::Vec2NonZero { param } if *param == name!("move").into()
     )));
     assert!(
         triggers
@@ -268,12 +276,12 @@ fn the_ik_layer_and_aim_offset_nodes_keep_every_field_and_their_inputs_through_a
             rotation: glam::Quat::from_rotation_y(0.4),
         },
         pole: Some(IkGoal::Param {
-            param: name!("elbow_pole"),
+            param: name!("elbow_pole").into(),
         }),
         tip_rotation: TipRotation::FromTarget,
         softness: 0.03,
         weight: 0.75,
-        weight_param: Some(name!("grip_weight")),
+        weight_param: Some(name!("grip_weight").into()),
     };
     assert_ne!(ik, TwoBoneIkNode::default());
     restored(&mut AnimationGraph::from_node(ik.clone()), &ik);
@@ -445,30 +453,41 @@ struct StoredRate {
     name: &'static str,
     play_rate_param: Option<ReflectedValue>,
     warnings: usize,
+    loaded: AnimationClipNode,
 }
 
 #[test]
-fn a_stored_clip_node_whose_play_rate_param_is_missing_or_a_string_loads_with_no_param() {
+fn a_stored_play_rate_param_loads_from_a_name_and_as_no_param_when_missing_or_a_string() {
     let registry = registry(false);
-    let node = AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let node = || AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let draw_speed = to_value(&Some(name!("draw_speed"))).unwrap();
     let cases = [
         StoredRate {
             name: "missing",
             play_rate_param: None,
             warnings: 0,
+            loaded: node(),
         },
         StoredRate {
             name: "a string",
             play_rate_param: Some(to_value(&String::from("draw_speed")).unwrap()),
             warnings: 1,
+            loaded: node(),
+        },
+        StoredRate {
+            name: "a name",
+            play_rate_param: Some(draw_speed.clone()),
+            warnings: 0,
+            loaded: node().with_play_rate_param(Param::<f32>::from(name!("draw_speed"))),
         },
     ];
 
     for case in cases {
-        let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+        let ReflectedValue::Struct(mut fields) = to_value(&node()).unwrap() else {
             panic!("a clip node is stored as a struct");
         };
         fields.retain(|(name, _)| name != "play_rate_param");
+        let stored_name = case.play_rate_param.as_ref() == Some(&draw_speed);
         if let Some(value) = case.play_rate_param {
             fields.push(("play_rate_param".to_owned(), value));
         }
@@ -485,13 +504,23 @@ fn a_stored_clip_node_whose_play_rate_param_is_missing_or_a_string_loads_with_no
         for warning in &loaded.warnings {
             assert_eq!(warning.reason, "stored data is a different kind of value");
         }
+        let expected = if stored_name {
+            draw_speed.clone()
+        } else {
+            to_value(&None::<Name>).unwrap()
+        };
         assert_eq!(
             play_rate_param_of(&loaded.built),
-            &to_value(&None::<Name>).unwrap(),
+            &expected,
             "{}",
             case.name
         );
-        assert_eq!(loaded.built, to_value(&node).unwrap(), "{}", case.name);
+        assert_eq!(
+            loaded.built,
+            to_value(&case.loaded).unwrap(),
+            "{}",
+            case.name
+        );
     }
 }
 
@@ -786,4 +815,174 @@ fn a_version_1_retarget_rig_migrates_to_a_rig_with_no_goals() {
 
     assert_eq!(rig, version_1_rig());
     assert!(rig.goals.is_empty());
+}
+
+struct Refusal {
+    parent: AnimationNodeIndex,
+    child: AnimationNodeIndex,
+    error: ConnectError,
+}
+
+#[test]
+fn connect_refuses_what_would_stop_the_graph_being_a_tree_under_its_result() {
+    let mut larger = AnimationGraph::new();
+    for _ in 0..4 {
+        larger.insert_node(AnimationNodeData::of(&BlendNode {}));
+    }
+    let outside = larger.node_indices().last().unwrap();
+
+    let mut graph = AnimationGraph::new();
+    let result = graph.result_index();
+    let blend = graph.insert_node(AnimationNodeData::of(&BlendNode {}));
+    let gain = graph.insert_node(AnimationNodeData::from_live(Box::new(Gain { amount: 1.0 })));
+    let loose = graph.insert_node(AnimationNodeData::of(&BlendNode {}));
+    graph.connect(result, blend).unwrap();
+    graph.connect(blend, gain).unwrap();
+
+    let cases = [
+        Refusal {
+            parent: loose,
+            child: gain,
+            error: ConnectError::ChildHasParent { child: gain },
+        },
+        Refusal {
+            parent: loose,
+            child: result,
+            error: ConnectError::ChildIsResult,
+        },
+        Refusal {
+            parent: gain,
+            child: blend,
+            error: ConnectError::ChildHasParent { child: blend },
+        },
+        Refusal {
+            parent: loose,
+            child: loose,
+            error: ConnectError::Cycle,
+        },
+        Refusal {
+            parent: outside,
+            child: loose,
+            error: ConnectError::NotANode { index: outside },
+        },
+        Refusal {
+            parent: loose,
+            child: outside,
+            error: ConnectError::NotANode { index: outside },
+        },
+    ];
+
+    for case in cases {
+        assert_eq!(graph.connect(case.parent, case.child), Err(case.error));
+    }
+    graph.connect(gain, loose).unwrap();
+    assert_eq!(
+        graph.connect(loose, blend),
+        Err(ConnectError::ChildHasParent { child: blend })
+    );
+    let mut unrooted = AnimationGraph::new();
+    let upper = unrooted.insert_node(AnimationNodeData::of(&BlendNode {}));
+    let lower = unrooted.insert_node(AnimationNodeData::of(&BlendNode {}));
+    unrooted.connect(upper, lower).unwrap();
+    assert_eq!(unrooted.connect(lower, upper), Err(ConnectError::Cycle));
+
+    assert_eq!(graph.inputs(result), vec![blend]);
+    assert_eq!(graph.inputs(blend), vec![gain]);
+    assert_eq!(graph.inputs(gain), vec![loose]);
+    assert!(graph.inputs(loose).is_empty());
+}
+
+#[derive(Clone, Debug)]
+struct ForestNode {
+    gain: bool,
+    parent: Option<prop::sample::Index>,
+}
+
+#[derive(Clone, Debug)]
+struct ForestLink {
+    parent: usize,
+    child: usize,
+}
+
+#[derive(Clone, Debug)]
+struct Forest {
+    nodes: Vec<ForestNode>,
+    links: Vec<ForestLink>,
+}
+
+#[derive(Debug, PartialEq)]
+struct ReadNode {
+    type_name: String,
+    inputs: Vec<usize>,
+}
+
+fn forest() -> impl Strategy<Value = Forest> {
+    let node = (
+        any::<bool>(),
+        prop::option::of(any::<prop::sample::Index>()),
+    )
+        .prop_map(|(gain, parent)| ForestNode { gain, parent });
+    prop::collection::vec(node, 0..16).prop_flat_map(|nodes| {
+        let links: Vec<ForestLink> = nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(position, node)| {
+                Some(ForestLink {
+                    parent: node.parent?.index(position + 1),
+                    child: position + 1,
+                })
+            })
+            .collect();
+        Just(links).prop_shuffle().prop_map(move |links| Forest {
+            nodes: nodes.clone(),
+            links,
+        })
+    })
+}
+
+fn read(graph: &AnimationGraph) -> Vec<ReadNode> {
+    graph
+        .node_indices()
+        .map(|index| ReadNode {
+            type_name: graph.node(index).unwrap().type_name().to_owned(),
+            inputs: graph
+                .inputs(index)
+                .into_iter()
+                .map(|input| input.index())
+                .collect(),
+        })
+        .collect()
+}
+
+proptest! {
+    #[test]
+    fn a_graph_built_from_any_forest_saves_and_loads_as_that_forest_with_every_input_in_its_slot(
+        forest in forest(),
+    ) {
+        let mut graph = AnimationGraph::new();
+        let mut indices = vec![graph.result_index()];
+        let mut expected = vec![ReadNode {
+            type_name: graph.node(graph.result_index()).unwrap().type_name().to_owned(),
+            inputs: Vec::new(),
+        }];
+        for node in &forest.nodes {
+            let data = if node.gain {
+                AnimationNodeData::of(&Gain { amount: 0.5 })
+            } else {
+                AnimationNodeData::of(&BlendNode {})
+            };
+            expected.push(ReadNode {
+                type_name: data.type_name().to_owned(),
+                inputs: Vec::new(),
+            });
+            indices.push(graph.insert_node(data));
+        }
+        for link in &forest.links {
+            graph.connect(indices[link.parent], indices[link.child]).unwrap();
+            expected[link.parent].inputs.push(indices[link.child].index());
+        }
+
+        prop_assert_eq!(&read(&graph), &expected);
+        prop_assert_eq!(&read(&round_trip(&graph)), &expected);
+    }
 }

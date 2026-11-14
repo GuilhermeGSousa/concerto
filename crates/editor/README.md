@@ -33,8 +33,29 @@ editor <dir> --update` regenerates `editor/` to call
 `concerto_editor::run_with(recipe, project_root, plugins)`, as the project
 tool's [README](../project/README.md#editor-plugins) describes. `run_with` is
 `run` with `plugins` added to the editor's `App` in order, after `EditorPlugin`
-and everything else the editor registers, and before the MCP plugins under
-`--mcp`. `run` is `run_with` with an empty list.
+and everything else the editor registers. Under `--mcp` they come after
+`McpPlugin` and before the editor's own tools. `run` is `run_with` with an
+empty list.
+
+An extension brings its MCP tools with it: its plugin depends on
+`concerto-mcp` and calls `add_tool` like the editor does, with no check for
+`--mcp`.
+
+```rust
+pub fn install(app: &mut App) {
+    app.add_tool::<GraphNodes, _>(
+        McpTool::read_only("graph_nodes").needs(Needs::Project),
+        graph_nodes,
+    );
+}
+```
+
+`add_tool` does nothing in an `App` without `McpPlugin`, so the tool and its
+system exist only when the editor serves an agent. `describe_need` still
+panics without `McpPlugin`; it is the editor's to call. A tool's name is its
+own: an extension tool named as an editor tool, or as another extension's, is
+refused when the `App` is built under `--mcp`, with the panic
+``MCP tool `<name>` is added twice``, so the editor never starts with it.
 
 An extension crate's tests can use the `testing` feature, which exposes
 `hosted::testing` and its `SceneFixture` and `forwarding`, the system that
@@ -70,13 +91,18 @@ names another size. `--decorated` is ignored there, and `--mcp-size` without
 `--mcp` is a bad argument. Without a GPU adapter it exits with status 1 and a
 message naming lavapipe.
 
+The tools below are the editor's. An extension crate adds its own with
+`add_tool` from its plugin, as [Extension crates](#extension-crates) shows, and
+they are listed and called like these.
+
 Frames run on demand, only while a call needs one or the editor is busy: a
 project or scene opening, the assets of the edited scene or the preview in
 front still loading, a game starting or playing, a save under way, a document
 holding `BackgroundWork`, or text in the panels changed in the last frame and
 may not be drawn yet. A timeline's
-readout does not count, so a clip that is playing does not keep the editor busy
-and advances only while frames run. An idle editor runs none, so once
+readout and the badges and subtitles of a graph canvas do not count, so a clip
+or a graph that is playing does not keep the editor busy and advances only
+while frames run. An idle editor runs none, so once
 `status` reports `busy: no` the viewport shows the scene with everything it
 loads and the panels show what they hold. The tools that look answer between frames, without running one; the
 tools that act run in frames, one at a time, and a second one waits until the
@@ -281,8 +307,56 @@ in the registry its target names. `list_push` and `list_remove` answer the new
 length. An edit reports `Hosted<PropertyCommitted>`, as one from the inspector
 does, and what it means to the document is up to its asset editor.
 
+The graph tools come with
+[`concerto-animation-editor`](../animation-editor/README.md#the-graph-tab) and
+act on what the front animation graph tab has in view, a pose graph or a state
+machine; on any other tab each answers `refused`, saying to open a graph. A
+node is named by the id `graph_inspect` shows, a link by the node it makes an
+input, a state by its name, and a transition by `from`, `to` and its `index`
+among those between that pair, 0 without one. `graph_inspect` reads what is in
+view: the breadcrumb, then for a pose graph one line per node,
+`id · type · parent#slot · subtitle`, with `result` or `loose` in place of
+`parent#slot` for the result node and for a node that is nobody's input, and
+for a state machine one line per state, `name · initial · graph address`, then
+one per transition, `from → to #index · trigger · blend`; when the graph names
+parameters, a `parameters:` line follows and one line per parameter,
+`name · type · value`, and once the preview has reported what it plays, a
+`live:` line and under it the weight of each playing node, the time of a clip
+node, and the current state and transition of a state machine. `graph_add_node` adds
+a node of `type`, a short name such as `LayerNode` or a full path, as an input
+of `parent` at `slot`, or loose without a parent, and answers its id.
+`graph_add_state` adds a state `name` to the state machine in view, playing
+`graph`, an existing graph by address or id, or without one a new graph asset
+of that name created beside the graph that holds the machine. `graph_connect`
+makes `child` an input of `parent`, at `slot` or at its first empty slot,
+replacing what a taken named slot holds; in a state machine it takes `from` and
+`to`, which may be equal, and adds an `Instant` transition with no blend time.
+`graph_remove` removes `node`, leaving its inputs loose, or `link`, or `state`
+with its transitions, or a transition. `graph_select` selects `node`, `state`
+or a transition, which becomes the front document's value `Node`, `State` or
+`Transition` for `inspect`, `set_property`, `list_push` and `list_remove`.
+`graph_open` drills into `node`, a state machine into its states and a node
+that plays a graph into that graph, or into the graph of `state`, and
+`graph_up` goes back up one level; both answer `Showing <breadcrumb>.`.
+`graph_set_param` sets the parameter `name` on the preview's players to
+`value`, JSON of the parameter's type, runs frames until the preview next
+reports what it plays, and answers `Set moving to true.` with that `live:`
+block under it; while the preview is paused, or no player plays the graph, it
+answers at once and says so. A
+name the graph does not read answers `refused` listing the parameters with
+their types, and a name the graph reads as several types needs `type`. The
+tab's preview is the value `Preview`, whose `scene`, `skeleton`, `playing`,
+`speed` and `from`, the node to preview from, `set_property` writes, and its
+parameters are the value `Parameters`, one field per parameter; neither is
+saved. An
+edit the tab refuses, such as a connection that would close a cycle or opening
+a node whose graph is not set, answers `refused` with the reason and what to
+do.
+
 `save` writes `document`, or the active document without one, to its file as
-Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
+Ctrl+S does, and answers `Saved <address>.` once it is written, naming every
+file the save wrote, `Saved <address>, <address>.`, when a tab such as an
+animation graph's writes several. A document with
 no unsaved changes answers `Nothing to save in document <id> <address>.`, which
 is not an error. A save that fails answers `save_failed` with the editor's
 message, as does a save while the game plays (`Stop to save`), and a scene still
@@ -786,8 +860,9 @@ id: a re-import's new mesh and material data reaches the scene, while nodes
 the source adds, removes or moves do not (#783).
 
 Each save, whether asked for with `SaveRequested` or made by Play, ends in an
-event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
-the scene the document now shows, or `SaveFailed { document, message }`, where
+event in the editor's world: `SceneSaved { document, asset, written }`, where
+`asset` is the scene the document now shows and `written` every file the save
+wrote, the scene alone here, or `SaveFailed { document, message }`, where
 `message` is the status the tab shows, "Stop to save" included. Ctrl+S asks for
 a save only when the document has unsaved changes; otherwise it writes neither,
 even while it shows "Stop to save".
@@ -795,8 +870,10 @@ even while it shows "Stop to save".
 Every write of a content asset in the editor also ends in
 `AssetsWritten { ids }` in the editor's world, naming the assets written: a
 finished import sends every asset it wrote, unless its project was replaced
-while it ran; a save by any asset editor sends the saved asset, taken from its
-`SceneSaved`, so an asset editor's save reports it by writing `SceneSaved`; and
+while it ran; a save by any asset editor sends the files it wrote, the
+`written` of its `SceneSaved`, so an asset editor's save reports them by
+writing `SceneSaved`, and a tab that saves several files, or another file than
+the one it shows, lists exactly those; and
 a New in the Asset Browser sends the created asset. Code that keeps data
 derived from other assets reads it to know when to derive again.
 
@@ -1034,7 +1111,10 @@ While that document is the active one, the panel shows one card per target,
 titled by its name, with no name field, add-component row or ⋯ menu, since those
 belong to entity cards. `read` or `edit` returning `None` means the value is
 gone: its card has no rows and an edit is refused with
-`EditError::MissingTarget`. The workspace shows the inspector with the document's
+`EditError::MissingTarget`. A target that checks an edit before it keeps it
+implements `PropertyTarget::try_edit` as well, which answers the reason for a
+refusal; the reason is the edit's `PropertyRefusal`, the document's status and
+`set_property`'s reply. The workspace shows the inspector with the document's
 `inspector` host above it, and the host neither grows nor shrinks while
 `InspectedValues` is there, so the two do not split the card in half and what
 the host holds is not clipped. `InspectedValues` is replaced, never removed,
@@ -1051,7 +1131,8 @@ has one, because a game's types are registered there, and otherwise in the
 editor's `App`. `HostedApp::type_registry` gives the preview's. Register the
 value's type with `register_type` in the `App`s it is read through: what the
 registry does not hold reads "Unsupported type", and MCP refuses to write JSON
-into a value whose root type is missing.
+into a value whose root type is missing. A struct with no fields is not
+unsupported: it has no rows, so its card is its title alone.
 
 A value has no change detection and is not polled. It is read when an edit lands,
 when `ActiveEditor`, `InspectedValues`, `ShownValue` or the editor registrations
@@ -1068,7 +1149,11 @@ with `EditError::MissingAssets`. That is a limit on handles: the editor's server
 knows only what its own `App` registered, which is `RenderPlugin`'s `Mesh`,
 `Texture` and `Skeleton` and whatever an extension adds with `register_asset`.
 So a value holding another handle type cannot take a picker edit, even when its
-types come from a preview that knows the asset. A commit queued before the
+types come from a preview that knows the asset. An extension that edits
+references to a kind the editor must not load calls
+`AssetServer::name_asset::<A>()` instead: a handle to `A` is then written weak,
+naming the asset and loading nothing, as the graph tab does for
+`AnimationGraph`. A commit queued before the
 editor registrations changed is refused and reported, where a component's is
 only logged. The outcome is one `Hosted<PropertyCommitted>`, naming the value's
 document and not the active one,
@@ -1183,7 +1268,8 @@ The row names the asset the handle holds, "None" for an empty handle or
 project's assets of that kind. Picking one writes a handle loaded through the
 scene's `AssetServer`, so the viewport shows the new asset at once. The edit is
 refused if the id is not an asset of that kind, or if the scene `App` never
-registered the asset type with `register_asset`. `AssetPickerPlugin` keeps the
+registered the asset type with `register_asset` nor named it with
+`AssetServer::name_asset`. `AssetPickerPlugin` keeps the
 row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
 handle's id, so MCP's `set_property` on a handle field picks that asset through
 the same checks.
@@ -1209,9 +1295,10 @@ The generic tab of an [inspected asset](#inspected-assets) fills its
 `DocumentBones`. An editor of its own fills it however it reads the skeleton,
 as the motion database editor does.
 
-The menu is `name_menu`'s `NameMenu`, opened with `open_name_menu` and closed
-with `close_menu`; `close_name_menu` closes it when another tab comes to the
-front. An extension crate opens it for names of its own, as the motion database
+The menu is `name_menu`'s `NameMenu`, opened under a button with
+`open_name_menu`, or at a point in the window with `open_name_menu_at`, as a
+right-click menu is, and closed with `close_menu`; `close_name_menu` closes it
+when another tab comes to the front. An extension crate opens it for names of its own, as the motion database
 editor's channel-type picker does.
 
 ### Entity references
@@ -1516,17 +1603,21 @@ preview's events: call `forward_hosted_event::<E>()` before the editor `App`
 finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
 which preview wrote it.
 
-### The clip and rig editors
+### The clip, rig and graph editors
 
-The editors of an `AnimationClip` and of a `RetargetRig` are in the crate
+The editors of an `AnimationClip`, of a `RetargetRig` and of an
+`AnimationGraph` are in the crate
 [`concerto-animation-editor`](../animation-editor/README.md), which a game lists
 in its `Cargo.toml`. The clip tab plays a clip on its skeleton. The rig tab
 inspects a rig beside a second rig and a clip, with both characters side by
 side in its preview. Both play through the crate's transport widget, a play,
 step, loop and speed row and a timeline over the document's `ClipTransport`,
-public for any tab whose preview plays a clip. In a game that doesn't list the
-crate a clip has no editor, so opening one opens no tab, and a rig opens in the
-generic inspector.
+public for any tab whose preview plays a clip. The graph tab shows a graph's
+nodes on a [graph canvas](#the-graph-canvas), where they are added, wired,
+inspected and saved, and plays the graph in view on a character in its preview,
+at the parameters set in the tab. In a game that doesn't list the crate a clip or a graph
+has no editor, so opening one opens no tab, and a rig opens in the generic
+inspector.
 
 ### The timeline
 
@@ -1579,6 +1670,110 @@ what they decide: a `Timeline` nobody writes to does not move, and a marker
 nobody moves stays where it was. `frame_at`,
 `time_of_frame` and `frame_count` are the widget's conversions. Ticks keep at
 least 64 px between labels. There is no zoom.
+
+### The graph canvas
+
+`concerto_editor::graph_canvas::GraphCanvas` is a component on a UI node, which
+`GraphCanvasPlugin` turns into a canvas of boxes joined by links. The node's
+owner sizes it and writes its `nodes`, `links`, `mode` and `selection`; the
+widget never writes them. Every gesture is a signal sent to the `GraphCanvas`
+entity, and a canvas nobody answers changes nothing.
+
+- A `CanvasNode::new(id, title)` is a box, 224 px wide, with its title on the
+  first row. `with_subtitle` adds a muted second row, `with_input(label)` adds
+  one input pin with its label, `with_output()` gives it an output pin,
+  `with_badge` puts a short readout at the right of the title row, and
+  `with_emphasis` outlines it: `CanvasEmphasis::Active` in the theme's `active`
+  colour, which is not the accent a selection is drawn in, `Warning` in the
+  warning colour. The `id` is a `CanvasNodeId`, a
+  `u32` the owner chooses; links, the selection and the signals name a node by
+  it. An owner may rewrite a badge and a subtitle on every frame: they change
+  in place, and under `--mcp` a change of either does not keep the editor
+  busy.
+- A `CanvasLink::new(from, to)` runs out of `from` and into `to`. `with_slot`
+  names the input pin of `to` it ends on, `with_label` writes a label beside
+  it, and `with_emphasis` colours it as it does a node. A link
+  whose `from` or `to` is no node's id is not drawn. A link is named by its
+  index in `links`.
+- `mode` is a `CanvasMode`. In `Flow` a node shows its pins, an input per row
+  down its left side and the output at the right of its title row, and a link
+  runs from an output pin to the input pin of its slot. In `Diagram` no pin is
+  drawn, `inputs` and `output` are ignored, and a link is an arrow from box to
+  box.
+- `selection` is an `Option<CanvasTarget>`, `Node(id)` or `Link(index)`, drawn
+  in the accent colour.
+
+`GraphCanvas::new(mode)`, `with_node` and `with_link` build one. An owner
+compares what it wants with what is shown and writes only when they differ.
+
+- Pressing a node or a link sends `CanvasSelected { target: Some(..) }`; a
+  click on empty space sends `target: None`. Pressing a pin selects nothing.
+- A double click on a node, or Enter with a node selected, sends
+  `CanvasActivated { node }`.
+- In `Flow`, a drag from an output pin that ends on an input pin of another
+  node sends `CanvasConnected { from, to, slot: Some(slot) }`. In `Diagram`, a
+  drag from one box that ends on another sends it with `slot: None`. A line
+  follows the pointer during the drag. A drag that ends on empty space sends
+  `CanvasLinkDropped { from, at }`, `at` being the pointer's position in the
+  window, and one that ends anywhere else, its own node included, sends
+  nothing.
+- Delete with something selected sends `CanvasDeleted { target }`.
+- A right click sends `CanvasMenuRequested { at, on }`: `at` is the pointer's
+  position in the window, and `on` is a `CanvasPart`, one of `Node(id)`,
+  `Input { node, slot }`, `Output(id)`, `Link(index)` or `Empty`.
+
+A pin is hit within 7 px of its centre and a link within 4 px of its line; a
+pin wins over the node it sits on, and a node over a link behind it. Delete and
+Enter are the actions `DeleteCanvasSelection` and `ActivateCanvasSelection`,
+bound in `CanvasContext`, which is pushed after `EditorContextSet` while the
+pointer is over a canvas or one has keyboard focus, and not while the
+unsaved-changes prompt or the import dialog is open. They go to the canvas
+under the pointer, or else the focused one.
+
+The widget owns the view. A drag with the middle button pans it, without
+limit, and sending `FrameCanvasNode { node }` to the canvas scrolls that node
+into view, 24 px inside the edge, once the canvas has been laid out. There is
+no zoom.
+
+Where things sit is `graph_canvas::layout::layout(nodes, links, mode)`, a pure
+function that returns a `CanvasLayout`: a `NodeBox` per node with its
+rectangle and pin centres, a `LinkRoute` per link, and the content's size.
+`CanvasLayout::part_at(point)` is the hit test.
+
+- `Flow`: a node that is no link's `from` is a root, and each root is a tree
+  growing leftward from it: a node's inputs are one column to its left,
+  stacked top to bottom by `slot`, each with its own subtree, and the node is
+  centred on them. Roots stack top to bottom in node order, with the deepest
+  tree's leaves in the first column. A node a link would place twice, as a
+  loop does, stays where it was first placed.
+- `Diagram`: a node's column is its distance from the first node along links,
+  in the direction they point. Nodes stack in node order within a column, and
+  those no path reaches share a last column.
+
+A link between neighbouring columns is three thin boxes: out of its start, up
+or down, and into its end. In
+`Diagram` it ends in an arrowhead, the `caret-right` or `caret-left` glyph. A
+link to a later column leaves the right side of its box a third of the way
+down and enters the left side at the same height; a link to an earlier column
+leaves the left side two thirds of the way down and enters the right side
+there. A link within a column, or from a node to itself, leaves the right side
+at the upper height and comes back into the right side at the lower one. Two
+links between the same pair in opposite directions so differ in height at
+both ends and in where they turn. Columns of a diagram are 200 px apart, which
+leaves room for the labels: a link to a later column has its label over its
+last run, before the arrowhead, a link to an earlier column under its last
+run, after the arrowhead, and a link within a column beside its vertical run.
+Labels of links that end at the same place stack, in link order, away from the
+line. A link that spans more than one column goes round the boxes between: it
+turns 60 px out of its start, runs along a lane under the lowest box of the
+columns it passes, and comes up to its end, five boxes in all.
+`LinkRoute::detour` is that turn and lane, and `segments()` answers three runs
+or five.
+
+The boxes are rebuilt only when the layout could change: the mode, a node's
+id, title, pins or having a subtitle, or a link's ends, slot or label. A
+changed selection, emphasis, badge or subtitle text is written to the nodes
+that are there.
 
 ### Drag and drop
 

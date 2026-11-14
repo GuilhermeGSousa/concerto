@@ -8,6 +8,7 @@ pub mod dock;
 pub mod drag_drop;
 pub mod entity_picker;
 pub mod fonts;
+pub mod graph_canvas;
 pub mod guard;
 pub mod hierarchy;
 pub mod hosted;
@@ -91,6 +92,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(inspected_asset::InspectedAssetPlugin);
         app.register_plugin(placement::AssetPlacementPlugin);
         app.register_plugin(timeline::TimelinePlugin);
+        app.register_plugin(graph_canvas::GraphCanvasPlugin);
         app.register_plugin(drag_drop::DragDropPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,

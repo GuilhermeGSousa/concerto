@@ -7,8 +7,8 @@ use concerto_foundation::{
     math::{Spring, SpringValue},
 };
 use concerto_mesh::{JointName, Skeleton};
-use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_name::name;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Vec2, Vec3};
 use log::warn;
 use uuid::Uuid;
@@ -19,10 +19,11 @@ use crate::{
     evaluation::AnimationGraphContext,
     look_at::{LookFrame, yaw_pitch_to},
     node::{
-        AnimationNode, ReflectAnimationNode,
+        AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint},
         pass_through,
     },
+    param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, apply_additive},
 };
 
@@ -32,15 +33,15 @@ const SNAP_WEIGHT: f32 = 1.0e-4;
 
 /// Layers additive aim clips, chosen by the target's yaw and pitch from a chosen bone, over its first input.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 pub struct AimOffsetNode {
     pub points: Vec<AimPoint>,
     pub frame_bone: JointName,
     pub forward: Vec3,
     pub up: Vec3,
-    pub target_param: Name,
+    pub target_param: Param<Vec3>,
     pub weight: f32,
-    pub weight_param: Option<Name>,
+    pub weight_param: Option<Param<f32>>,
     pub weight_halflife: f32,
     pub angle_halflife: f32,
 }
@@ -52,7 +53,7 @@ impl Default for AimOffsetNode {
             frame_bone: JointName::default(),
             forward: Vec3::Z,
             up: Vec3::Y,
-            target_param: Name::default(),
+            target_param: Param::default(),
             weight: 1.0,
             weight_param: None,
             weight_halflife: 0.2,
@@ -78,9 +79,9 @@ impl AimPoint {
 
 impl AimOffsetNode {
     /// A node with the default settings and no points, aiming at the world `Vec3` under `target_param` as seen from `frame_bone`.
-    pub fn new(target_param: Name, frame_bone: impl Into<JointName>) -> Self {
+    pub fn new(target_param: impl Into<Param<Vec3>>, frame_bone: impl Into<JointName>) -> Self {
         Self {
-            target_param,
+            target_param: target_param.into(),
             frame_bone: frame_bone.into(),
             ..Self::default()
         }
@@ -111,8 +112,8 @@ impl AimOffsetNode {
     }
 
     /// Multiplies the weight by the `f32` blackboard param named `param`, when it holds one.
-    pub fn with_weight_param(mut self, param: Name) -> Self {
-        self.weight_param = Some(param);
+    pub fn with_weight_param(mut self, param: impl Into<Param<f32>>) -> Self {
+        self.weight_param = Some(param.into());
         self
     }
 
@@ -138,7 +139,7 @@ impl AimOffsetNode {
     fn effective_weight(&self, blackboard: &AnimationBlackboard) -> f32 {
         let scale = self
             .weight_param
-            .and_then(|param| blackboard.get_float(param))
+            .and_then(|param| blackboard.read(&param).copied())
             .unwrap_or(1.0);
         let weight = self.weight * scale;
         if weight.is_nan() {
@@ -164,7 +165,7 @@ impl AimOffsetNode {
     }
 
     fn target(&self, context: &AnimationGraphContext<'_>) -> Option<Vec3> {
-        let target = *context.blackboard().get::<Vec3>(self.target_param)?;
+        let target = *context.blackboard().read(&self.target_param)?;
         let world_to_model = WorldToModel::new(context.model_to_world().unwrap_or_default());
         if !world_to_model.is_finite() {
             return None;
@@ -204,7 +205,7 @@ impl AimOffsetNode {
         if let Some(point) = plain {
             warn!(
                 "aim offset toward `{}` plays clip {:?} as no change: it is not additive",
-                self.target_param.as_str(),
+                self.target_param.0.as_str(),
                 point.clip.id()
             );
             state.warned_clip = true;
@@ -337,6 +338,10 @@ impl AnimationNode for AimOffsetNode {
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimOffsetState {
         AimOffsetState {
             elapsed: 0.0,
@@ -382,7 +387,7 @@ impl AnimationNode for AimOffsetNode {
                 if !state.warned {
                     warn!(
                         "aim offset toward `{}` skipped: {reason}",
-                        self.target_param.as_str()
+                        self.target_param.0.as_str()
                     );
                     state.warned = true;
                 }

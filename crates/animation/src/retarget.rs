@@ -20,7 +20,7 @@ use crate::{
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState},
     ik::{TwoBoneChain, solve_two_bone},
-    node::{AnimationNode, ReflectAnimationNode},
+    node::{AnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, twist_about},
 };
 
@@ -1257,6 +1257,10 @@ impl AnimationNode for RetargetNode {
         Res<'static, AssetStore<Skeleton>>,
     );
 
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
+
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> RetargetNodeState {
         RetargetNodeState {
             stage: Stage::Pending,
@@ -1354,9 +1358,13 @@ impl AnimationNode for RetargetNode {
         visit(&self.graph);
     }
 
-    fn inner_states(&self, state: &RetargetNodeState, visit: &mut dyn FnMut(&AnimationGraphState)) {
+    fn inner_states(
+        &self,
+        state: &RetargetNodeState,
+        visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
+    ) {
         if let Some(inner) = state.inner() {
-            visit(inner);
+            visit(None, inner);
         }
     }
 
@@ -1520,7 +1528,7 @@ mod tests {
         graph::AnimationGraph,
         ik::{TwoBoneChain, solve_two_bone},
         node::{
-            AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs,
+            AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs, InputSlots,
             ReflectAnimationNode, state_machine::AnimationStateMachine,
         },
         player::AnimationPlayer,
@@ -4283,6 +4291,10 @@ mod tests {
         type CreateInput = Res<'static, CreateOnly>;
         type UpdateInput = ();
         type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
 
         fn create_state(&self, _: &Res<CreateOnly>, _context: &AnimationGraphContext<'_>) {}
 

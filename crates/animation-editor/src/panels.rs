@@ -53,15 +53,16 @@ pub(crate) const NO_VALUE: &str = "None";
 /// The widgets of a clip's tab that follow its document, kept on the document.
 #[derive(Component)]
 pub(crate) struct ClipPanels {
-    left: LeftPanel,
+    left: StageControls,
     inspector: InspectorPanel,
     timeline: Entity,
 }
 
-struct LeftPanel {
-    scene: Entity,
-    skeleton: Entity,
-    scene_error: Entity,
+/// The scene picker's label, the Skeleton checkbox and the scene's error line, which every tab with a preview stage has.
+pub(crate) struct StageControls {
+    pub(crate) scene: Entity,
+    pub(crate) skeleton: Entity,
+    pub(crate) scene_error: Entity,
 }
 
 struct InspectorPanel {
@@ -207,7 +208,7 @@ pub(crate) fn error_line(theme: &UITheme) -> Label {
     theme.label("").color(theme.error).hidden().fixed()
 }
 
-fn check_row(
+pub(crate) fn check_row(
     parent: &mut EntityCommandQueue,
     label: &str,
     change: Listener<UICheckboxChanged>,
@@ -241,18 +242,32 @@ pub(crate) fn fact(parent: &mut EntityCommandQueue, label: &str, theme: &UITheme
     row.spawn_child(theme.label("").no_wrap()).entity()
 }
 
-fn build_left(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) -> LeftPanel {
-    let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm));
-    panel.add_child(title(theme, "Preview"));
+pub(crate) fn stage_controls(
+    panel: &mut EntityCommandQueue,
+    pick_scene: Listener<UIClick>,
+    toggle_skeleton: Listener<UICheckboxChanged>,
+    theme: &UITheme,
+) -> StageControls {
     let mut row = panel.spawn_child(theme.row().fixed());
-    let mut button = row.spawn_child(picker_button(theme).on_click(toggle_scene_picker(document)));
+    let mut button = row.spawn_child(picker_button(theme).on_click(pick_scene));
     let scene = button.spawn_child(picker_label(theme)).entity();
     button.add_child(picker_caret(theme));
-    LeftPanel {
+    StageControls {
         scene,
-        skeleton: check_row(&mut panel, "Skeleton", toggle_skeleton(document), theme),
+        skeleton: check_row(panel, "Skeleton", toggle_skeleton, theme),
         scene_error: panel.spawn_child(error_line(theme)).entity(),
     }
+}
+
+fn build_left(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) -> StageControls {
+    let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm));
+    panel.add_child(title(theme, "Preview"));
+    stage_controls(
+        &mut panel,
+        toggle_scene_picker(document),
+        toggle_skeleton(document),
+        theme,
+    )
 }
 
 fn build_inspector(

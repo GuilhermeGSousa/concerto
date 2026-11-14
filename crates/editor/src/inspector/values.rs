@@ -131,12 +131,13 @@ fn current_value_editor(
     current_editor(registry, types.as_deref(), changed, row).map(|editor| editor.adapter)
 }
 
-fn write_value(world: &mut World, commit: &PropertyCommit) -> Result<(), EditError> {
-    let editor = current_value_editor(world, &commit.row)?;
+fn write_value(world: &mut World, commit: &PropertyCommit) -> Result<(), String> {
+    let editor = current_value_editor(world, &commit.row).map_err(|error| error.to_string())?;
     let address = &commit.row.address;
-    with_edit_context(world, |world, context| {
+    let mut refused = None;
+    let written = with_edit_context(world, |world, context| {
         let mut result = Err(EditError::NotFound);
-        let found = address.target.edit(world, &mut |value| {
+        let found = address.target.try_edit(world, &mut |value| {
             result = apply_at(
                 value,
                 &address.path,
@@ -145,12 +146,19 @@ fn write_value(world: &mut World, commit: &PropertyCommit) -> Result<(), EditErr
                 context,
             );
         });
-        if found {
-            result
-        } else {
-            Err(EditError::MissingTarget)
+        match found {
+            Ok(true) => result,
+            Ok(false) => Err(EditError::MissingTarget),
+            Err(reason) => {
+                refused = Some(reason);
+                Err(EditError::Rejected)
+            }
         }
-    })
+    });
+    match refused {
+        Some(reason) => Err(reason),
+        None => written.map_err(|error| error.to_string()),
+    }
 }
 
 /// Tells the value's document what an edit did, and reads the values again.
