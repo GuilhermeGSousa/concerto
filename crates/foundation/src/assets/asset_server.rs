@@ -581,10 +581,10 @@ impl AssetServer {
                 ContentFile::parse(bytes)
                     .map_err(|error| format!("malformed content asset '{address}': {error:#}"))
             });
-            let embedded: HashMap<&str, &EmbeddedAsset> = content
+            let embedded: HashMap<AssetId, &EmbeddedAsset> = content
                 .iter()
                 .flat_map(|content| &content.header().embedded)
-                .map(|asset| (asset.name(), asset))
+                .map(|asset| (asset.asset_id, asset))
                 .collect();
             while let Some(requests) = server.take_requests(file, &cancelled) {
                 for LoadRequest { entry, load } in requests {
@@ -600,9 +600,12 @@ impl AssetServer {
                         let record = match &entry.embedded_in {
                             None => content.host(),
                             Some(held) => embedded
-                                .get(held.name.as_str())
+                                .get(&id)
                                 .with_context(|| {
-                                    format!("it holds no embedded asset named '{}'", held.name)
+                                    format!(
+                                        "it holds no embedded asset '{}' with this id",
+                                        held.name
+                                    )
                                 })
                                 .and_then(|asset| content.embedded(asset)),
                         }
