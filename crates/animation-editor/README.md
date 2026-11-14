@@ -478,11 +478,12 @@ project has that asset. Its pins come from `input_slots()`: none, one per named
 slot, or for a node that takes any number of inputs one per input and an empty
 one after them. Every node but the result node has an output pin. When a graph
 comes into view the canvas scrolls its result node into view, and when a state
-machine does, its first state.
+machine does, its first state. A machine with no states is framed when it gets
+its first.
 
 - Pressing a node or a link selects it; a click on empty space clears the
-  selection. A node or a state that becomes the selection, by a press or
-  `graph_select`, is scrolled into view.
+  selection. A node or a state that becomes the selection, by a press,
+  `graph_select` or being added, is scrolled into view.
 - Dragging from a node's output pin to an input pin connects them.
 - Delete removes the selected node or link.
 - A right click on empty space lists the node types that can be added: every
@@ -539,7 +540,8 @@ tools trigger the same one. `edit` is a `GraphEdit`:
 
 - `AddNode { type_name, parent, slot }` adds a node of a type named by its
   short name or its full path, at its `Default` value, loose or connected as
-  `Connect` connects. A connection that is refused adds no node.
+  `Connect` connects, and selects it. A connection that is refused adds no
+  node.
 - `Connect { child, parent, slot }` makes `child` an input of `parent`. On a
   node with named slots, a `slot` that is taken replaces the input there, which
   becomes loose, and any other `slot`, or none, puts the child in the first
@@ -551,8 +553,8 @@ tools trigger the same one. `edit` is a `GraphEdit`:
 - `RemoveNode(id)` removes a node and leaves its inputs loose; the result node
   is refused. `RemoveLink { child }` takes `child` out of its parent's inputs.
   Either way the later inputs of that parent move up a slot.
-- `AddParent { type_name, child }` adds a node and makes `child` its first
-  input, as dropping a link on empty space does.
+- `AddParent { type_name, child }` adds a node, makes `child` its first
+  input, as dropping a link on empty space does, and selects the new node.
 - `AddState { name, graph }` adds a state playing `graph`, or with none a graph
   asset it creates as New state does. `AddTransition { from, to }` adds an
   `Instant` transition with no blend time and selects it. `RemoveState(name)`
@@ -603,7 +605,7 @@ transitions between that pair, 0 without one.
 | Tool | Does |
 | --- | --- |
 | `graph_inspect` | Read-only. The breadcrumb, then for a pose graph one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none. For a state machine, one line per state, `name · initial · graph address`, with `initial` only on the initial state and `no graph` or `missing graph` in place of an address, then one per transition, `from → to #index · trigger · blend`, such as `Idle → Run #0 · Instant · 0.25s`. When the graph names parameters, the line `parameters:` and one line per parameter follow, `name · type · value`, such as `moving · bool · false`, the type by the last segment of its name and the value as JSON, with ` · read as several types` after a name the graph reads as more than one. Once the preview has reported what it plays, the line `live:` follows: for a pose graph one line per playing node, `id · weight 1.00`, then ` · time 0.42s` on a clip node and ` · in Walk` on a state machine, with ` · Idle → Walk 0.25`, the transition and its progress, while one blends; for a state machine in view, that last part alone, `in Walk`. There is no `live:` block before a state has arrived or while no player plays the graph |
-| `graph_add_node` | `type`, by short name or full path, and optionally `parent` and `slot`. Answers `Added node 4, a LayerNode, as input 0 of node 0.`, or `…, loose.` With `child` in place of `parent` and `slot` it sends `AddParent`, as dropping that node's link on empty space does, and answers `Added node 5, a LayerNode, with node 3 as input 0.`; a type that takes no inputs answers `refused` and adds nothing, and `child` with `parent` or `slot` answers `invalid_arguments` |
+| `graph_add_node` | `type`, by short name or full path, and optionally `parent` and `slot`. Answers `Added node 4, a LayerNode, as input 0 of node 0.`, or `…, loose.` The new node is selected, so it is the value `Node`. With `child` in place of `parent` and `slot` it sends `AddParent`, as dropping that node's link on empty space does, and answers `Added node 5, a LayerNode, with node 3 as input 0.`; a type that takes no inputs answers `refused` and adds nothing, and `child` with `parent` or `slot` answers `invalid_arguments` |
 | `graph_add_state` | `name`, and optionally `graph`, an existing `AnimationGraph` by address or id; without one a graph asset of that name is created beside the graph that holds the machine. Answers `Added state Idle, the initial state, playing content/Idle.gasset.` |
 | `graph_connect` | In a pose graph `child`, `parent` and optionally `slot`; answers `Node 4 is input 0 of node 2; node 3, which was there, is loose.` In a state machine `from` and `to`, equal for a transition to itself; answers `Added transition Idle → Walk #0.` and selects it |
 | `graph_remove` | One of `node`, `link` (the node the link makes an input), `state`, or a transition by `from`, `to` and `index`; several or none answers `invalid_arguments` |

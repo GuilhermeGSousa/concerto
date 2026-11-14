@@ -767,13 +767,11 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
         .spawn_child(theme.label("").small().muted().no_wrap().fixed().hidden())
         .entity();
     let reset = row
-        .spawn_child(
-            theme
-                .button("Whole graph")
-                .ghost()
-                .padding(UIRect::axes(theme.spacing_xs, theme.spacing_md))
-                .on_click(write_preview(document, "from", json!("None"))),
-        )
+        .spawn_child(theme.button("Whole graph").ghost().on_click(write_preview(
+            document,
+            "from",
+            json!("None"),
+        )))
         .entity();
     let canvas = panel
         .spawn_child((
@@ -1015,13 +1013,13 @@ pub(crate) fn sync_graph_panels(
             panels.params = params;
         }
         if panels.framed != state.levels() {
-            panels.framed = state.levels().to_vec();
             let first = match (state.machine(), state.graph()) {
                 (Some(machine), _) => machine.states().next().map(|_| state_id(0)),
                 (None, Some(copy)) => Some(canvas_id(copy.result())),
                 (None, None) => None,
             };
             if let Some(node) = first {
+                panels.framed = state.levels().to_vec();
                 cmd.entity(panels.canvas).trigger(FrameCanvasNode { node });
             }
         }

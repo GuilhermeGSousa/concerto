@@ -185,6 +185,7 @@ struct Walk {
     created: String,
     added: Vec<String>,
     connected: Vec<String>,
+    after_adding: String,
     refused: Value,
     values: String,
     inspected: String,
@@ -241,6 +242,7 @@ fn a_graph_is_created_wired_edited_saved_and_restored_by_a_discard_over_mcp() {
             )
             .await,
         ];
+        let after_adding = ok(&client, "status", json!({})).await;
         let connected = vec![
             ok(&client, "graph_connect", json!({ "child": 1, "parent": 2 })).await,
             ok(
@@ -298,6 +300,7 @@ fn a_graph_is_created_wired_edited_saved_and_restored_by_a_discard_over_mcp() {
             added,
             connected,
             refused,
+            after_adding,
             values,
             inspected,
             saved,
@@ -344,6 +347,11 @@ fn a_graph_is_created_wired_edited_saved_and_restored_by_a_discard_over_mcp() {
             .contains("2 input slots"),
         "{}",
         walk.refused
+    );
+    assert!(
+        walk.after_adding.contains("values: Node"),
+        "{}",
+        walk.after_adding
     );
     assert!(walk.values.contains("values: Node"), "{}", walk.values);
     assert_eq!(

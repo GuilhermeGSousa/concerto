@@ -1014,6 +1014,11 @@ fn apply(
                 held.changed = true;
             }
             state.keep_selection();
+            if let (GraphEdit::AddNode { .. } | GraphEdit::AddParent { .. }, Some(node)) =
+                (edit, change.node)
+            {
+                state.selection = Some(GraphSelection::Node(node));
+            }
             Ok(change)
         }
     }
