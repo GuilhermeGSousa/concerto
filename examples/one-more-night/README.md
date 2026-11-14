@@ -17,16 +17,39 @@ are figurines built in `assets/characters`, whose
 standing, walking and sitting, and turn their heads to a player who is talking
 to them.
 
-`-- --manor` loads the manor's greybox, all five levels, with an open case
+`-- --manor` loads the manor's greybox, all five levels, and the art over it,
+which dresses every room, with an open case
 that solves nothing (`cases/manor_walk`): ten characters, one of each
 figurine, standing about the house to be met, and no props or facts. The Guest starts
 upstairs and the Staff in the servants' hall. Its walls, floors and furniture
-collide, its doors open, and its bells, bell board, beds and dumbwaiter stops
-are found by the names of the nodes in the export, with nothing placed by
-hand. A door leaf that stands open is walked through and does not block the
+collide, its doors open, and its bells, bell board, beds, dumbwaiter stops
+and the dinner gong in the hall are found by the names of the nodes in the
+export, with nothing placed by hand. A door leaf that stands open is walked through and does not block the
 way; aim at it to close it. Every indoor room has ceiling lamps, placed from the
 room plan: warm in the guest rooms, paler in the service ones, hung lower under
-the cellar's and attic's low ceilings. Outdoors there is only moonlight.
+the cellar's and attic's low ceilings. Every lamp casts
+shadows, and fades out as a player's camera gets 25 metres from it, so only the
+lamps near a player are lit and shadowed. Outdoors there is only moonlight.
+
+### The sealed case
+
+The real case is never in the repository and never on disk in the clear. It is
+one file, `sealed/case.sealed`: the case's files compressed with zstd and
+encrypted with ChaCha20-Poly1305 under the key in `sealed/case.key`. Git
+ignores both. `-- --manor` plays it when both are there, opening it in memory
+only, and saves to `saves/manor`; without them it plays the open walk. If the
+bundle does not open or load, the game says so in one line that tells nothing
+of what is inside, and plays the open walk.
+
+```sh
+cargo run -p one-more-night --bin seal-case -- <case directory>
+```
+
+`seal-case` checks that the case loads over the manor and writes the bundle,
+making a key if there is none. It prints PASS, or FAIL with the file and the
+id that did not load, and nothing else about the case. `ONE_MORE_NIGHT_CASE` and `ONE_MORE_NIGHT_KEY` name other paths for the
+two files. This keeps the case from being read by accident; it does not stop
+someone who sets out to open it with the key.
 
 ## Playing
 
@@ -107,8 +130,12 @@ Built in by the `debug` feature: `cargo run -p one-more-night --features debug`.
 | F9 | Confirms the next open deduction |
 | F10 | Brings the first inspectable prop up for the first player |
 
+With a sealed case loaded, F7, F9 and F10 do nothing but say so: they would
+give the case away.
+
 With the `debug` feature, setting `ONE_MORE_NIGHT_NO_CARD` starts the night
-without its card, for looking at a level without a pad in hand.
+without its card, for looking at a level without a pad in hand, and
+`ONE_MORE_NIGHT_START=19:50` starts the first night at that time.
 
 ## Code
 
@@ -122,6 +149,7 @@ without its card, for looking at a level without a pad in hand.
 | `book_ui` | The casebook drawn as tabs, lists and the timeline grid, and every other screen and HUD line |
 | `house` | Doors, items, bells, the dumbwaiter, beds and the gong; ending a night |
 | `save` | The save file and its backups |
+| `seal` | The sealed case bundle: sealing it and opening it in memory |
 | `world` | The systems that run all of it: fixtures, characters, props, targeting, the HUD and the loop |
 | `players`, `controls`, `clock` | Split-screen seats, the actions, the night clock |
 

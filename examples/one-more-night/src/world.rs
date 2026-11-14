@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use concerto::{
     animation::{
@@ -87,10 +87,12 @@ const DOOR_LISTEN_REACH: f32 = 1.6;
 const NPC_CATCH_UP: f32 = 3.2;
 const NPC_SNAP: f32 = 5.0;
 const NPC_DOOR_REACH: f32 = 1.1;
+const NPC_DOOR_STOREY: f32 = 1.5;
 const MOONLIGHT: f32 = 0.18;
 const MOON_COLOR: Color = Color::rgba(0.62, 0.72, 1.0, 1.0);
 const LAMP_GLOW: f32 = 5.0;
 const SERVICE_LAMP_GLOW: f32 = 3.6;
+const LAMP_FADE_DISTANCE: f32 = 25.0;
 const LAMP_COLOR: Color = Color::rgba(1.0, 0.74, 0.46, 1.0);
 const SERVICE_LAMP_COLOR: Color = Color::rgba(1.0, 0.88, 0.7, 1.0);
 const DEVICE_HALF_EXTENTS: Vec3 = Vec3::new(0.35, 0.5, 0.3);
@@ -461,16 +463,22 @@ impl Stage {
         }
     }
 
-    /// The manor's greybox with an empty case, its doors and devices read from node names.
+    /// The manor's greybox with its open case that solves nothing.
     pub fn manor_walk() -> Self {
+        Self::manor(CaseData::manor_walk())
+    }
+
+    /// The manor's greybox under `data`, its doors and devices read from node names.
+    pub fn manor(data: CaseData) -> Self {
         Self {
-            data: CaseData::manor_walk(),
+            data,
             scenes: vec![
                 asset_id!("content/manor/export/manor_ground/scene.gasset"),
                 asset_id!("content/manor/export/manor_first/scene.gasset"),
                 asset_id!("content/manor/export/manor_attic/scene.gasset"),
                 asset_id!("content/manor/export/manor_cellar/scene.gasset"),
                 asset_id!("content/manor/export/manor_grounds/scene.gasset"),
+                asset_id!("content/manor/export/manor_art/scene.gasset"),
             ],
             named_nodes: true,
         }
@@ -504,6 +512,17 @@ pub fn install_stage(app: &mut App, saves: Option<PathBuf>, stage: Stage) {
         for seat in &mut session.seats {
             seat.mode = Mode::Walking;
         }
+    }
+    #[cfg(feature = "debug")]
+    if let Some(start) = std::env::var("ONE_MORE_NIGHT_START")
+        .ok()
+        .and_then(|start| {
+            let (hour, minute) = start.split_once(':')?;
+            Some(GameTime::hm(hour.parse().ok()?, minute.parse().ok()?))
+        })
+        && let Some(clock) = app.get_resource_mut::<NightClock>()
+    {
+        clock.jump_to(start);
     }
     bind_controls(
         app.get_resource_mut::<ActionMap>()
@@ -679,7 +698,10 @@ fn spawn_case(
             cmd.spawn((
                 Light {
                     intensity: light.intensity * lamp.glow,
-                    ..light.with_range(lamp.range)
+                    ..light
+                        .with_range(lamp.range)
+                        .with_fade_distance(LAMP_FADE_DISTANCE)
+                        .with_shadows()
                 },
                 Transform::from_translation(lamp.position),
             ));
@@ -746,41 +768,59 @@ fn spawn_case(
 }
 
 fn adopt_named_nodes(
-    scenes: Query<(Entity, &Children), (With<LevelScene>, Without<Adopted>)>,
+    scenes: Query<(Entity, Option<&Children>), (With<LevelScene>, Without<Adopted>)>,
     children: Query<&Children>,
     nodes: Query<(&Name, &Transform, Option<&MeshComponent>)>,
     stage: Res<StageArt>,
     mut data: ResMut<CaseData>,
     mut cmd: CommandQueue,
 ) {
-    if !stage.named_nodes {
+    if !stage.named_nodes || scenes.iter().any(|(_, roots)| roots.is_none()) {
         return;
     }
     let mut below = Vec::new();
     for (scene, roots) in scenes.iter() {
         cmd.insert(Adopted, scene);
-        below.extend(roots.iter().copied());
+        below.extend(roots.into_iter().flatten().copied());
+    }
+    let mut covered = HashSet::new();
+    let mut unread = below.clone();
+    while let Some(entity) = unread.pop() {
+        if let Some(parts) = children.get_entity(entity) {
+            unread.extend(parts.iter().copied());
+        }
+        if let Some((name, _, _)) = nodes.get_entity(entity)
+            && let Some(under) = name.as_str().strip_prefix("art.")
+        {
+            covered.insert(under.to_string());
+        }
     }
     while let Some(entity) = below.pop() {
-        if let Some(parts) = children.get_entity(entity) {
+        let node = nodes.get_entity(entity);
+        let art = node.is_some_and(|(name, _, _)| name.as_str().starts_with("art."));
+        if !art && let Some(parts) = children.get_entity(entity) {
             below.extend(parts.iter().copied());
         }
-        let Some((name, transform, mesh)) = nodes.get_entity(entity) else {
+        let Some((name, transform, mesh)) = node else {
             continue;
         };
         let name = name.as_str();
         let (kind, rest) = name.split_once('.').unwrap_or((name, ""));
         let features = &data.case.features;
-        let hidden = data
-            .level
-            .hidden_nodes(|feature| features.is_on(feature))
-            .contains(&name);
+        let hidden_nodes = data.level.hidden_nodes(|feature| features.is_on(feature));
+        let hidden = hidden_nodes.contains(&name) || (art && hidden_nodes.contains(&rest));
         let helper = matches!(kind, "room" | "nav" | "acoustic") || hidden;
         if helper {
             if mesh.is_some() {
                 cmd.remove::<MeshComponent>(entity);
             }
             continue;
+        }
+        if art {
+            continue;
+        }
+        if mesh.is_some() && covered.contains(name) {
+            cmd.insert(RenderLayers::NONE, entity);
         }
         let solid = |cmd: &mut CommandQueue| {
             if mesh.is_some() {
@@ -833,6 +873,7 @@ fn adopt_named_nodes(
                 "staff" => Some(Interactable::Bed(1)),
                 _ => None,
             },
+            "furniture" if rest == "hall.gong_01" => Some(Interactable::Gong),
             "spawn" => {
                 let player = u32::from(rest == "staff");
                 cmd.insert(SpawnPoint { player }, entity);
@@ -1496,7 +1537,7 @@ fn move_npcs(
             continue;
         };
         let at = physics.body_transform(*body).translation;
-        let step = (pose.position - at).with_y(0.0);
+        let step = pose.position - at;
         let velocity = if step.length() > NPC_SNAP {
             step / dt
         } else {
@@ -1530,7 +1571,8 @@ fn hold_doors_for_npcs(
     for door in data.level.doors() {
         let held = data.level.door_position(door).is_some_and(|position| {
             npcs.iter().any(|npc| {
-                npc.translation.with_y(0.0).distance(position.with_y(0.0)) <= NPC_DOOR_REACH
+                npc.translation.distance(position.with_y(npc.translation.y)) <= NPC_DOOR_REACH
+                    && (npc.translation.y - position.y).abs() < NPC_DOOR_STOREY
             })
         });
         if house.held_open[door.index()] != held {
@@ -1810,6 +1852,9 @@ fn debug_keys(
             readout(clock.now())
         ));
     }
+    if pressed(KeyCode::F8) {
+        sight.night_over = true;
+    }
     if pressed(KeyCode::F6) {
         pause.0 = !pause.0;
         session.notice(if pause.0 {
@@ -1817,6 +1862,13 @@ fn debug_keys(
         } else {
             "Debug: the clock runs"
         });
+    }
+    let reveals = [KeyCode::F7, KeyCode::F9, KeyCode::F10];
+    if data.sealed {
+        if reveals.into_iter().any(pressed) {
+            session.notice("Debug: not with a sealed case");
+        }
+        return;
     }
     if pressed(KeyCode::F7)
         && let Some(fact) = data.case.facts.ids().find(|fact| !book.knows(*fact))
@@ -1834,9 +1886,6 @@ fn debug_keys(
         })
     {
         session.examine(player, placement, &mut book, &data);
-    }
-    if pressed(KeyCode::F8) {
-        sight.night_over = true;
     }
     if pressed(KeyCode::F9)
         && let Some(deduction) = book
@@ -2344,7 +2393,7 @@ mod tests {
     #[test]
     fn the_manor_is_walked_and_its_doors_bells_beds_and_dumbwaiter_answer() {
         let Some(mut app) = concerto::headless(|app| {
-            crate::manor(app);
+            crate::manor_walk(app);
             let content = concerto::content_registry!();
             app.get_resource::<AssetServer>()
                 .unwrap()
@@ -2410,8 +2459,63 @@ mod tests {
             let knock = |player: u8, hour: f64| {
                 super::privacy_at(data, &house(&app), her_door, player, None, hour * 3600.0)
             };
+            let lady = data.case.characters.id("npc_01").unwrap();
+            let on_the_stair = (0..90).any(|step| {
+                let now = 19.5 * 3600.0 + f64::from(step) * 20.0;
+                super::npc_pose(data, &house(&app), lady, now)
+                    .is_some_and(|pose| pose.walking && (0.5..3.3).contains(&pose.position.y))
+            });
+            assert!(on_the_stair, "she comes down the main stair to dinner");
             assert!(knock(0, 18.2).someone_in, "she is in until seven");
             assert!(!knock(1, 20.0).someone_in, "and out in the gallery after");
+        }
+        {
+            let world = app.main_mut().world_mut();
+            let mut named = world.query::<(
+                &super::Name,
+                Option<&super::Collider>,
+                Option<&super::MeshCollider>,
+                Option<&super::RenderLayers>,
+            ), ()>();
+            let mut art_seen = false;
+            let mut box_seen = false;
+            for (name, collider, mesh_collider, layers) in named.iter(world) {
+                match name.as_str() {
+                    "art.furniture.hall.gong_01" => {
+                        art_seen = true;
+                        assert!(
+                            collider.is_none() && mesh_collider.is_none(),
+                            "art is drawn and never solid"
+                        );
+                    }
+                    "furniture.hall.gong_01" => {
+                        box_seen = true;
+                        assert!(collider.is_some(), "the box under the art stays solid");
+                        assert_eq!(layers, Some(&super::RenderLayers::NONE), "and is not drawn");
+                    }
+                    _ => {}
+                }
+            }
+            assert!(art_seen && box_seen, "the gong has its box and its art");
+        }
+        {
+            let world = app.main_mut().world_mut();
+            let mut drawn = world.query::<(&super::Name, Option<&super::RenderLayers>), (
+                super::With<super::MeshComponent>,
+                super::With<super::MeshCollider>,
+            )>();
+            let grey: Vec<String> = drawn
+                .iter(world)
+                .filter(|(name, layers)| {
+                    let name = name.as_str();
+                    *layers != Some(&super::RenderLayers::NONE)
+                        && !name.starts_with("art.")
+                        && !name.starts_with("doorleaf.")
+                        && name != "F05.cover"
+                })
+                .map(|(name, _)| name.as_str().to_string())
+                .collect();
+            assert!(grey.is_empty(), "no greybox box is drawn: {grey:?}");
         }
         assert_eq!(
             aiming_at(&mut app, 0, Vec3::new(20.1, 4.35, -13.5)),
@@ -2580,6 +2684,21 @@ mod tests {
             },
         ];
         walk_to_the_end(&mut app, &walks);
+
+        walk_all(
+            &mut app,
+            &[Walk {
+                player: 0,
+                legs: vec![leg(17.2, 6.5)],
+                ends_at_height: 0.0,
+                ends_in: "hall",
+            }],
+        );
+        assert_eq!(
+            aiming_at(&mut app, 0, Vec3::new(18.68, 0.7, -6.5)),
+            Some(super::Interactable::Gong),
+            "the dinner gong stands in the hall"
+        );
 
         let staff_room = {
             let data = app.get_resource::<crate::casefile::CaseData>().unwrap();

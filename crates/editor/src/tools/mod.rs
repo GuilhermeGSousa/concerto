@@ -4,6 +4,7 @@ pub mod edits;
 pub mod entity_ops;
 pub mod gizmo;
 pub mod picking;
+pub mod placement;
 pub mod scene;
 pub mod selection;
 
@@ -50,6 +51,7 @@ pub(crate) fn build_core(app: &mut App) {
     selection::build(app);
     entity_ops::build(app);
     edits::build(app);
+    placement::build(app);
 }
 
 pub(crate) fn build_viewport(app: &mut App) {

@@ -1,4 +1,7 @@
-use concerto_foundation::assets::{Asset, AssetId, CreatableAsset, LoadableAsset};
+use concerto_ecs::{CommandQueue, Entity};
+use concerto_foundation::assets::{
+    handle::AssetHandle, Asset, AssetId, CreatableAsset, LoadableAsset, PlaceableAsset,
+};
 use concerto_reflect::{Reflect, ReflectedValue};
 use serde::{Deserialize, Serialize};
 
@@ -67,3 +70,9 @@ impl CreatableAsset for Scene {
 }
 
 impl LoadableAsset for Scene {}
+
+impl PlaceableAsset for Scene {
+    fn place(asset: &Self, _handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
+        crate::spawner::spawn_scene(cmd, asset, entity);
+    }
+}

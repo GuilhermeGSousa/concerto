@@ -15,7 +15,7 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.register_asset::<Scene>();
+        app.register_placeable_asset::<Scene>();
 
         app.add_system(Update, spawn_scene_components.at_edit_time());
     }

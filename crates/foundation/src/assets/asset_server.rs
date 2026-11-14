@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::Context;
 use concerto_ecs::{
+    events::event_channel::EventChannel,
     query::change_detection::DetectChanges,
     reflect::AppTypeRegistry,
     resource::{Res, Resource},
@@ -27,7 +28,7 @@ use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
     derived::{derived_hook, note_derived_kind, DerivedData, DerivedDataCache, DerivedHook},
-    handle::{AssetHandle, AssetLifetimeEvent},
+    handle::{AssetHandle, AssetLifetimeEvent, AssetLoadFailed},
     registry::{AssetEntry, AssetRegistry},
     Asset, AssetId, ContentAssetRoot,
 };
@@ -593,6 +594,9 @@ pub fn handle_asset_load_events(world: &mut world::World) {
             AssetLoadEvent::LoadFailed { id } => {
                 server.data.pending_tasks.write().unwrap().remove(&id);
                 server.data.loaded_assets.write().unwrap().remove(&id);
+                if let Some(failed) = world.get_resource_mut::<EventChannel<AssetLoadFailed>>() {
+                    failed.push_event(AssetLoadFailed { id });
+                }
             }
         });
     world.insert_resource(server);
@@ -678,7 +682,10 @@ mod tests {
         content::save_content_asset_into,
         registry::{AssetEntry, AssetRegistry},
     };
-    use concerto_ecs::{component::Component, reflect::ReflectSceneComponent, world::World};
+    use concerto_ecs::{
+        component::Component, events::event_cursor::EventCursor, reflect::ReflectSceneComponent,
+        world::World,
+    };
     use concerto_reflect::ReflectDefault;
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
@@ -1079,6 +1086,7 @@ mod tests {
         loading: [bool; 3],
         loading_or_loaded: [bool; 3],
         value: Option<u32>,
+        failed: bool,
     }
 
     #[test]
@@ -1093,6 +1101,7 @@ mod tests {
                 loading: [true, true, false],
                 loading_or_loaded: [true, true, true],
                 value: Some(6),
+                failed: false,
             },
             Life {
                 name: "a load of an unregistered id",
@@ -1101,6 +1110,7 @@ mod tests {
                 loading: [true, true, false],
                 loading_or_loaded: [true, true, false],
                 value: None,
+                failed: true,
             },
             Life {
                 name: "a load of an id the registry says is another kind",
@@ -1118,6 +1128,7 @@ mod tests {
                 loading: [true, true, false],
                 loading_or_loaded: [true, true, false],
                 value: None,
+                failed: true,
             },
             Life {
                 name: "an added asset",
@@ -1126,6 +1137,7 @@ mod tests {
                 loading: [true, true, false],
                 loading_or_loaded: [true, true, true],
                 value: Some(5),
+                failed: false,
             },
             Life {
                 name: "an added asset whose on_load fails",
@@ -1134,10 +1146,14 @@ mod tests {
                 loading: [false, false, false],
                 loading_or_loaded: [false, false, false],
                 value: None,
+                failed: false,
             },
         ];
         for case in cases {
             let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry.clone());
+            fixture
+                .world
+                .insert_resource(EventChannel::<AssetLoadFailed>::new());
             assert!(!fixture.server.is_loading(), "{}", case.name);
             let handle = (case.request)(&fixture.server, saved.id);
             let mut loading = Vec::new();
@@ -1156,6 +1172,19 @@ mod tests {
             assert_eq!(loading, case.loading, "{}", case.name);
             assert_eq!(loading_or_loaded, case.loading_or_loaded, "{}", case.name);
             assert_eq!(fixture.value(&handle), case.value, "{}", case.name);
+            let failed: Vec<AssetId> = fixture
+                .world
+                .get_resource::<EventChannel<AssetLoadFailed>>()
+                .unwrap()
+                .read_from(&mut EventCursor::default())
+                .map(|event| event.id)
+                .collect();
+            let expected = if case.failed {
+                vec![handle.id()]
+            } else {
+                vec![]
+            };
+            assert_eq!(failed, expected, "{}", case.name);
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

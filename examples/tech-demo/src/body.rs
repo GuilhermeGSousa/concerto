@@ -5,7 +5,7 @@ use concerto::app::{
     schedule_groups::{Startup, Update},
 };
 use concerto::director::VirtualCamera;
-use concerto::ecs::{Component, Query, Res, With};
+use concerto::ecs::{Component, Entity, Query, Res, With};
 use concerto::foundation::assets::asset_store::AssetStore;
 use concerto::foundation::time::Time;
 use concerto::foundation::transform::GlobalTransform;
@@ -205,25 +205,28 @@ fn set_float(player: &mut AnimationPlayer, param: Name, value: f32) {
     }
 }
 
-/// Writes each body's state to its skeleton's graph params: the pistol and aim weights, the stats, and the point thirty metres along the camera's view as the aim target.
+/// The virtual camera a player aims along: its own over-the-shoulder camera, named when the player spawns.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AimCamera(pub(crate) Entity);
+
+/// Writes each body's state to its skeleton's graph params: the pistol and aim weights, the stats, and the point thirty metres along its own camera's view as the aim target.
 pub(crate) fn feed_body(
     links: Query<&CharacterLink>,
-    bodies: Query<&Body>,
+    bodies: Query<(&Body, Option<&AimCamera>)>,
     cameras: Query<&GlobalTransform, With<VirtualCamera>>,
     players: Query<&mut AnimationPlayer>,
 ) {
-    let target = cameras
-        .iter()
-        .next()
-        .map(|camera| camera.translation() + camera.rotation() * Vec3::NEG_Z * AIM_DISTANCE);
     for link in links.iter() {
         let (Some(capsule), Some(skeleton)) = (link.capsule.entity(), link.skeleton.entity())
         else {
             continue;
         };
-        let Some(body) = bodies.get_entity(capsule) else {
+        let Some((body, aim)) = bodies.get_entity(capsule) else {
             continue;
         };
+        let target = aim
+            .and_then(|aim| cameras.get_entity(aim.0))
+            .map(|camera| camera.translation() + camera.rotation() * Vec3::NEG_Z * AIM_DISTANCE);
         let Some(mut player) = players.get_entity(skeleton) else {
             continue;
         };
@@ -260,7 +263,7 @@ mod tests {
     use std::time::Duration;
 
     use concerto::animation::player::AnimationPlayer;
-    use concerto::director::VirtualCamera;
+    use concerto::director::{MainCamera, VirtualCamera};
     use concerto::ecs::component::scene::SceneEntityRef;
     use concerto::ecs::{IntoSystem, System, World};
     use concerto::foundation::time::Time;
@@ -269,9 +272,10 @@ mod tests {
     use concerto::name::name;
     use concerto::window::input::actions::ActionMap;
     use concerto::window::input::{Input, KeyCode, MouseButton, PhysicalKey};
-    use glam::{Mat4, Vec3};
+    use glam::{Mat4, Quat, Vec3};
+    use std::f32::consts::FRAC_PI_2;
 
-    use super::{Body, Stat, feed_body, update_pistol};
+    use super::{AimCamera, Body, Stat, feed_body, update_pistol};
     use crate::character::bind_controls;
 
     fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
@@ -323,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn the_body_is_fed_to_its_skeleton_with_the_aim_target_along_the_camera_view() {
+    fn the_body_is_fed_to_its_skeleton_with_the_aim_target_along_its_own_camera_view() {
         let mut world = World::new();
         let capsule = world.spawn(Body {
             armed: true,
@@ -335,6 +339,14 @@ mod tests {
             look: 0.75,
             pace: 1.25,
         });
+        let own = world.spawn((
+            VirtualCamera::new(0),
+            GlobalTransform::new(Mat4::from_rotation_translation(
+                Quat::from_rotation_y(FRAC_PI_2),
+                Vec3::new(1.0, 2.0, 3.0),
+            )),
+        ));
+        world.insert(AimCamera(own), capsule);
         let skeleton = world.spawn(AnimationPlayer::new(1));
         world.spawn((
             Transform::default(),
@@ -344,8 +356,12 @@ mod tests {
             },
         ));
         world.spawn((
-            VirtualCamera::new(0),
-            GlobalTransform::new(Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0))),
+            VirtualCamera::new(i32::MIN),
+            GlobalTransform::new(Mat4::IDENTITY),
+        ));
+        world.spawn((
+            MainCamera,
+            GlobalTransform::new(Mat4::from_translation(Vec3::new(9.0, 9.0, 9.0))),
         ));
 
         run(&mut world, feed_body);
@@ -361,9 +377,10 @@ mod tests {
         assert_eq!(float(name!("tremor")), Some(3.0));
         assert_eq!(float(name!("look_weight")), Some(0.75));
         assert_eq!(float(name!("pace")), Some(1.25));
-        assert_eq!(
-            player.get_param::<Vec3>(name!("aim_target")),
-            Some(&Vec3::new(1.0, 2.0, -27.0))
+        let target = player.get_param::<Vec3>(name!("aim_target")).copied();
+        assert!(
+            target.is_some_and(|target| target.abs_diff_eq(Vec3::new(-29.0, 2.0, 3.0), 1e-4)),
+            "{target:?}"
         );
     }
 

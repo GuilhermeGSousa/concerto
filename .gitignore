@@ -48,3 +48,7 @@ saves/
 
 # Blender backups
 *.blend1
+
+# One More Night: the sealed case and its key never go into the repository
+sealed/
+*.sealed

@@ -1,6 +1,6 @@
 fn main() {
     concerto_editor::run_with(
-        tech_demo::game,
+        tech_demo::sanatorium,
         concat!(env!("CARGO_MANIFEST_DIR"), "/.."),
         &[
             concerto_animation_editor::install,

@@ -7,7 +7,9 @@ use crate::{
     components::{
         camera::{extract_cameras, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
-        light::{extract_lights, update_changed_lights, Light, RenderLights},
+        light::{
+            cull_lights, extract_lights, write_visible_lights, Light, RenderLights, VisibleLights,
+        },
         material::MaterialComponent,
         mesh::{extract_meshes, RenderMeshInstances},
         render_entity::{extract, SyncWithRenderWorld},
@@ -22,7 +24,7 @@ use crate::{
     draw_target::DrawTarget,
     gpu::Gpu,
     layouts::{CameraLayout, LightingLayout, SkeletonLayout},
-    material_plugin::clear_cameras,
+    material_plugin::{assign_fallback_material, clear_cameras},
     queue::RenderQueue,
     render_asset::{
         register_render_asset_budget,
@@ -151,12 +153,12 @@ impl Plugin for RenderPlugin {
         )
         .add_render_system(Render, clear_cameras)
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
-        .add_render_system(Render, assign_shadow_layers.in_set(RenderSet::Lights))
+        .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
         .add_render_system(
             Render,
-            update_changed_lights
-                .in_set(RenderSet::Lights)
-                .after(assign_shadow_layers),
+            (cull_lights, assign_shadow_layers, write_visible_lights)
+                .chain()
+                .in_set(RenderSet::Lights),
         )
         .add_render_system(
             Render,
@@ -269,6 +271,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(skeleton_layout)
             .insert_resource(lighting_layout)
             .insert_resource(render_lights)
+            .insert_resource(VisibleLights::default())
             .insert_resource(render_spot_directional_shadow_maps)
             .insert_resource(render_point_shadow_maps)
             .insert_resource(render_shadow_view_projs)

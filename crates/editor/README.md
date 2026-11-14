@@ -124,7 +124,9 @@ lets take the space that is left. The `viewport:` line is the picture's size
 in physical pixels; under `--mcp` the scale is 1, so the two agree. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
-call that shows the rest. `scene_tree` shows the edited scene, or while a game
+call that shows the rest. A line that ends `· placeable` is an asset
+`place_asset` takes; the marks appear once a scene has opened, since the
+placeable kinds are the recipe's. `scene_tree` shows the edited scene, or while a game
 plays its top-level entities as the hierarchy does, one `id name [components]`
 line per entity, indented, from `root` if given, `depth` levels deep (3) and at
 most `limit` entities (200); a cut subtree or a cut list ends with the call that
@@ -218,6 +220,14 @@ reports the outcome; an edit the tools refuse answers `refused` with their
 status text, the same text the scene's status line shows. `create_entity` adds
 an entity named Entity as the last child of `parent`, or of the scene's top
 level without one, and answers `Created <id> Entity in <parent>.`.
+`place_asset` adds an entity that uses `asset`, an address or an id from
+`list_assets`, named after the asset's file, as a child of `parent` or of the
+scene root, at `position`, `[x, y, z]` in world space, or at the parent's
+origin without one, and selects it. It answers `placed <name> as entity <id>`
+once the asset has loaded and the entity exists. An address that names nothing
+answers `unknown_asset`; an id the project does not have, a kind that cannot
+be placed, which names the kinds that can, a load that fails and a game that
+is playing answer `refused` (see [Placing assets](#placing-assets)).
 `delete_entity` deletes `entity` and its descendants and answers what is
 selected afterwards. `duplicate_entity` copies `entity` beside it and answers
 the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
@@ -870,8 +880,11 @@ scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
 edit signal: `EntityEdited { edit, result }`, whose result is the entity a
 create or duplicate made; `PropertyCommitted { address, result }`, whose refusal
 is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
-`Refused` for any other reason; and
-`ComponentEdited { edit, result }`. A refused edit's result is the text its
+`Refused` for any other reason;
+`ComponentEdited { edit, result }`; and `AssetPlaced { request, result }`, which
+carries the `PlaceAsset` it answers, so whoever triggered one knows its outcome
+from another placement of the same asset, and whose
+result is the entity that `PlaceAsset` made. A refused edit's result is the text its
 `SceneStatus` carries, so a refused property or component edit also shows in
 Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
 the shape `inspect` reports, into the field at `path` of a component, or into
@@ -882,7 +895,17 @@ references are live entity ids such as `42v3`, asset handles are asset ids and
 load through the edit `App`'s `AssetServer` as a spawned scene's do, and colors
 are their linear `[r, g, b, a]`. It refuses the scene root, an unknown path, a
 value that does not decode, and an entity or component that is not there, and
-a refused set leaves the component as it was. An outcome written by a signal reaches the editor a frame later, as
+a refused set leaves the component as it was.
+`PlaceAsset { asset, parent, at }` adds an entity that uses an asset whose kind
+the recipe registered with `register_placeable_asset`: named after the asset's
+file, under `parent` or the scene root, at `PlaceAt::Position`, a point in
+world space, at `PlaceAt::Origin`, the parent's origin, or at `PlaceAt::Pointer`, a point of the viewport in logical
+pixels, which lands on the scene mesh under it, else on the y = 0 plane within
+200 m, else 10 m along the ray. The entity is spawned and selected once the
+asset has loaded, so its `AssetPlaced` can come frames later; a load that
+fails or is cancelled ends it with an error and spawns nothing. It is refused
+without an open scene, which is the case while the game plays, and
+`PlaceAt::Pointer` is refused without the viewport's camera. An outcome written by a signal reaches the editor a frame later, as
 any forwarded event does. An edit of a document's value does not pass through a
 hosted `App`: its `Hosted<PropertyCommitted>` is written straight into the
 editor's world, naming the value's document, with no frame's lag.
@@ -921,6 +944,50 @@ Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the
 wheel dollies or adjusts flight speed while looking. F frames the selection;
 Shift-F frames the scene.
+
+## Placing assets
+
+`AssetPlacementPlugin` (`placement.rs`) puts an asset in the open scene as an
+entity. What the entity is made of is the asset kind's `PlaceableAsset::place`,
+which the game's recipe registers with `register_placeable_asset`; the engine
+registers `Scene`, whose root nodes become children of the entity, and no
+other kind for now, so a `Mesh` cannot be placed. The editor never names a kind: the plugin
+copies the kinds' names out of the edit `App`'s `PlaceableAssets` into its
+`PlaceableKinds` resource each time a scene opens, so a panel or a tool can ask
+`PlaceableKinds::contains(kind)` or walk `PlaceableKinds::iter()` with no scene
+as the edit target. Before any scene has opened it is empty.
+
+Placing is the `PlaceAsset` signal of the scene tools, described under
+[Saving](#saving) with the other edit signals, and its outcome is
+`Hosted<AssetPlaced>`. The `place_asset` tool triggers it with
+`PlaceAt::Position`, or with `PlaceAt::Origin`, the parent's origin, when the
+call gives no position, and answers when the `AssetPlaced` that carries the
+request it triggered arrives; another placement of the same asset ending in the
+meantime does not answer the call. The plugin adds
+the tool in its `finish`, when the `App` has `McpPlugin`, so the editor without
+`--mcp` has the resource and no tool.
+
+A person places an asset by dragging its tile from the Asset Browser into the
+viewport, with the [drag and drop](#drag-and-drop) widget. The payload is
+`AssetDrag { id }`. The plugin gives a tile a `DragSource<AssetDrag>`, labelled
+with the asset's name, when the asset's kind is in `PlaceableKinds`, so a
+mesh's or a texture's tile does not drag and the tiles of a project opened before its scene
+become draggable once the scene opens. It finds the tiles by `ContentAsset
+{ id }`, the component the content browser puts on every item that shows an
+asset. While the front document's game is starting or playing no tile is a
+drag source. Every `ViewportRegion` is a `DropTarget<AssetDrag>`: a drop
+triggers `PlaceAsset` under the scene root with `PlaceAt::Pointer`, the drop
+position less the region's laid-out top-left corner, both in logical pixels.
+The entity lands where `PlaceAt::Pointer` says, is selected, and a refusal
+shows in Chatter as any refused edit does. With no scene as the edit target the
+drop does nothing. The drop and `place_asset` trigger the same signal, so an
+agent places by `position` what a person places by pointer.
+
+The press of a drag starts in the browser and never reaches the edit `App`,
+which sees only the cursor moving over the picture and the release. The gizmo
+starts a drag only on a press and picking selects only on a release that
+follows a press on the picture, so the drop moves and selects nothing but the
+entity it places; a gizmo handle may highlight under the dragged label.
 
 ## Custom property editors
 
@@ -1664,3 +1731,35 @@ The boxes are rebuilt only when the layout could change: the mode, a node's
 id, title, pins or having a subtitle, or a link's ends, slot or label. A
 changed selection, emphasis, badge or subtitle text is written to the nodes
 that are there.
+
+### Drag and drop
+
+`concerto_editor::drag_drop` carries a value from one UI node to another under
+the left button. `DragDropPlugin` draws the label and cancels a drag; a payload
+type `P`, any `Clone + Send + Sync + 'static` value, is registered once with
+`app.add_drag_payload::<P>()` (`DragDropAppExt`), and a second call for the
+same `P` does nothing.
+
+- `DragSource<P> { payload, label }`, built with `DragSource::new(payload,
+  label)`, on an `Interactable` node makes it draggable. It can be inserted or
+  removed at any time: the widget puts its own `UIDrag` and `UIPointerUp`
+  listeners on the node when the component appears, with the payload and label
+  as they were then, and takes them off when it goes. The node keeps its click
+  and double-click listeners, but a `UIDrag` or `UIPointerUp` listener of its
+  own would be replaced.
+- `DropTarget<P>`, built with `DropTarget::new()`, marks a node that takes a
+  `P`. The drop goes to the nearest target among the hovered node and its
+  ancestors, so the target or a node inside it must be `Interactable`.
+- `Dropped<P> { payload, position }` is sent to that target when the button is
+  released over it, with the pointer position in logical pixels from the
+  window's top-left corner. Put the listener on the target.
+
+A press becomes a drag once the pointer is `DRAG_THRESHOLD`, 4 px, from where
+it went down, the distance at which the UI stops treating the release as a
+click, so a press that does not move still clicks. From then the label follows
+the cursor on a layer above everything else, outlined in the accent colour
+over a target and muted anywhere else. It is not `Interactable`, so it never
+becomes the hovered node. Releasing anywhere but over a target sends nothing.
+Esc cancels the drag, and it stays cancelled until the button is released. A
+drag also ends when its source is despawned or loses its `DragSource<P>`, or
+when the press is taken from the source some other way.

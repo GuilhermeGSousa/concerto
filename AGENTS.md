@@ -45,7 +45,6 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 ```sh
 cargo build --workspace
 cargo run -p tech-demo
-cargo run -p tech-demo -- --forest
 cargo run -p tech-demo -- --sanatorium
 cargo run -p tech-demo -- --retarget
 cargo run -p tech-demo -- --sanatorium --retarget
@@ -78,23 +77,28 @@ characters in `assets/characters`, is built by Blender scripts kept beside it.
 The game writes `saves/` under its working directory.
 Its manor graybox is in `examples/one-more-night/assets/manor/`: the
 Blender source, the scripts that generate and export it, and the export, with a
-`README.md` that says how to run them; the game does not load it yet. Its
+`README.md` that says how to run them; `-- --manor` loads it. The art over the
+graybox, Hyper3D models and textured rooms in `manor_art.glb`, is built by
+`assets/manor/tools/art` and dresses every room. Its
 mystery is data: `examples/one-more-night/case` is `one-more-night-case`, an
 engine-free crate that loads a case directory of RON files, and
 `examples/one-more-night/docs/case-schema.md` is the schema; nothing in the
 game reads a case yet. `tech-demo` starts on the grid level: the character with every gizmo layer on a floor under the world grid,
 four boxes, and an NPC patrolling a square of nav points that routes around the
-boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no forest or
+boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no
 sanatorium content; the cooked release build above, zipped with `index.html` at
-the root, is what goes on a web host such as itch.io. `-- --forest` runs the forest, whose scene the editor
-opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved by root
-motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
+the root, is what goes on a web host such as itch.io. `-- --sanatorium` runs the sanatorium, the
+level scene `content/sanatorium/level.gasset` that the editor opens: the graybox dressed by
+the art pass in `examples/tech-demo/assets/sanatorium/art` (Hyper3D props, Poly Haven
+surfaces, lamp lights and a moon), its collision spawned from the graybox's `COL` scene,
+with the character placed on its
+capsule each frame (`Synchronization` at `data_factor` 0, as on the grid; M does not cycle the
 method there; hold the right mouse button or the left trigger to aim, C or the
-east face button to lower the camera, Q or the right bumper to swap shoulders). `-- --retarget` runs the grid
+east face button to lower the camera, Q or the right bumper to swap shoulders). While the aim button is held, on every level, the
+character faces where the camera looks and strafes instead of turning. `-- --retarget` runs the grid
 level with the player swapped for the UAL1 character, driven by LAFAN1 motion
 matching through a retarget node; the NPC stays LAFAN1. `--sanatorium
---retarget` puts the same player in the sanatorium, and `--forest` wins over
-`--retarget`. That player's graph is the main character's: the fingers, which LAFAN1's
+--retarget` puts the same player in the sanatorium. That player's graph is the main character's: the fingers, which LAFAN1's
 motion does not move, taken from UAL1's `Idle_Loop`, a tired overlay
 (`Idle_Tired_Loop`, additive) over the retargeted locomotion, UAL1's pistol
 clips layered on the upper body, an aim offset and an aim that point the gun at

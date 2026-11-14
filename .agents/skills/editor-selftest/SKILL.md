@@ -87,7 +87,7 @@ shows up.
   `--project <scratch>/td`: `--project` takes the directory that contains
   `content/`, and given the `content` directory itself the editor opens an
   empty project without an error. Without `content.toml` the editor opens the
-  project's first scene instead of its `default_scene`, the forest.
+  project's first scene instead of its `default_scene`, the sanatorium level.
 - **Expect the owner's pointer.** Real pointer input reaches the window, and a
   stray click changes the selection. Have the selftest re-trigger `Select` for
   the entity it wants whenever `Selection` differs, send `CursorMoved` on every

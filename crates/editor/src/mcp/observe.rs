@@ -40,6 +40,7 @@ use crate::{
         InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
         listed_paths, shown_paths,
     },
+    placement::PlaceableKinds,
     project::ProjectState,
     tools::{
         camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
@@ -50,7 +51,7 @@ use crate::{
 #[derive(Deserialize, JsonSchema)]
 pub struct Status {}
 
-/// The open project's assets as `address · kind · id` lines, filtered and paged.
+/// The open project's assets as `address · kind · id` lines, filtered and paged; a line ending in `· placeable` is an asset place_asset can put in the scene, known once a scene has opened.
 #[derive(Deserialize, JsonSchema)]
 pub struct ListAssets {
     /// Text to find in an asset's name, address or kind, ignoring case.
@@ -306,10 +307,11 @@ fn list_assets(
     mut calls: ToolCalls<ListAssets>,
     state: Res<ProjectState>,
     registry: Res<AssetRegistry>,
+    placeable: Option<Res<PlaceableKinds>>,
 ) {
     for (arguments, reply) in calls.read() {
         if state.project.is_some() {
-            reply.ok(list(&registry, &arguments));
+            reply.ok(list(&registry, placeable.as_deref(), &arguments));
         }
     }
 }
@@ -348,7 +350,11 @@ fn filtered<'a>(registry: &'a AssetRegistry, arguments: &ListAssets) -> Vec<&'a 
         .collect()
 }
 
-fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
+fn list(
+    registry: &AssetRegistry,
+    placeable: Option<&PlaceableKinds>,
+    arguments: &ListAssets,
+) -> String {
     let matches = filtered(registry, arguments);
     if matches.is_empty() {
         return format!(
@@ -373,8 +379,13 @@ fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
         offset + shown.len()
     )];
     for asset in &shown {
+        let mark = if placeable.is_some_and(|kinds| kinds.contains(&asset.kind)) {
+            " · placeable"
+        } else {
+            ""
+        };
         lines.push(format!(
-            "{} · {} · {}",
+            "{} · {} · {}{mark}",
             asset.address,
             asset.kind,
             asset.id.simple_hex()
@@ -486,7 +497,7 @@ fn children_of(children: &Query<&Children>, entity: Entity) -> Vec<Entity> {
         .unwrap_or_default()
 }
 
-pub(super) type SceneEntities =
+pub(crate) type SceneEntities =
     Query<'static, 'static, (Entity, Option<&'static ChildOf>, Option<&'static SceneRoot>)>;
 
 fn outside_open_scene(entity: Entity, entities: &SystemInputData<SceneEntities>) -> bool {
@@ -499,7 +510,7 @@ fn outside_open_scene(entity: Entity, entities: &SystemInputData<SceneEntities>)
         .is_err()
 }
 
-pub(super) fn resolve(
+pub(crate) fn resolve(
     id: &str,
     entities: &SystemInputData<SceneEntities>,
 ) -> Result<Entity, ToolError> {

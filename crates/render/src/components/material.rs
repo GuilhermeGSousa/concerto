@@ -43,3 +43,7 @@ impl<M: Material + 'static> RenderMaterialComponent<M> {
         }
     }
 }
+
+/// On a render-world entity: a `MaterialPlugin` gave it a material of its own.
+#[derive(Component)]
+pub(crate) struct HasMaterial;

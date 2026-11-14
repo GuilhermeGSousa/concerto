@@ -118,16 +118,32 @@ fix the entry in the same commit as the change that made it false.
   mesh gets it only when `RenderPlugin` is built. An entity with none of these
   still needs it explicitly, for example one the editor creates. A scene that
   renders black is usually an entity that has none of them.
+- **A light no camera sees is not sent to the GPU.** A point or spot light is
+  culled by the sphere of its `range` against every camera's frustum, and by
+  its `fade_distance` from each camera. A `range` of 0 is unbounded, so that
+  light is never culled and always takes one of the 128 light slots and, when
+  it casts shadows, a shadow map. An `App` with no camera has no visible
+  light: a test that reads shadow layers or `RenderLights::written` spawns a
+  camera.
 - **`RenderPlugin::build` registers the mesh and skeleton requirement,** so
   register the plugin before anything spawns meshes, or the registration
   panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an
   editor-created `Name` + `Transform` entity requires nothing.
-- **Extract only inserts and updates, except for meshes.** Removing
-  `MeshComponent` from a living entity drops it from `RenderMeshInstances` and
-  frees its instance slot, through `RemovedComponents<MeshComponent>`. Removing
-  `Light`, `Camera`, a material, or a skeleton still leaves its render-world
+- **Extract only inserts and updates, except for meshes and materials.**
+  Removing `MeshComponent` from a living entity drops it from
+  `RenderMeshInstances` and frees its instance slot, through
+  `RemovedComponents<MeshComponent>`. Removing a `MaterialComponent<M>`, or
+  setting its handle to nil, takes its render-world copy away, and the mesh
+  draws with the renderer's grey fallback material from the next frame.
+  Removing `Light`, `Camera`, or a skeleton still leaves its render-world
   copy in place, so a removed light keeps shining. Those mirrors go away only
   when the main entity is despawned. Do not fix this in passing.
+- **A mesh with no material draws grey; it is not hidden.**
+  `assign_fallback_material` gives every render-world mesh entity that no
+  `MaterialPlugin<M>` marked with `HasMaterial` a
+  `RenderMaterialComponent<StandardMaterial>` naming a material that exists
+  only in the render world. It needs `MaterialPlugin<StandardMaterial>`;
+  without it such a mesh is still not drawn.
 - **Skinned meshes use an identity instance matrix, and are neither batched
   nor culled.** The bone palette carries the world transform, and the shader
   applies it to the position. Giving a skinned mesh entity a real world
@@ -328,6 +344,13 @@ fix the entry in the same commit as the change that made it false.
   so nothing from the viewport half runs in a game. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
+- **A placeable asset kind is registered in the game's recipe, not in the
+  editor `App`.** `PlaceAsset` runs in the edit `App` and reads its
+  `PlaceableAssets`, which `app.register_placeable_asset::<A>()` fills there.
+  The same call on the editor `App` places nothing and marks nothing: the
+  editor's `PlaceableKinds` is a copy of the names taken from the edit `App`
+  each time a scene opens, and it is empty until one has. An editor extension
+  that brings a placeable kind must have the recipe register it.
 - **`EditWorld<T>` and `EditWorldSignals` skip their system** while no document
   has `EditTarget`: no scene is open in the front tab, the front tab's `App` is
   a preview, or its game is starting. Whatever such a system drew stays on screen unless an

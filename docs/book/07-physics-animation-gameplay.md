@@ -51,6 +51,10 @@ entity rebuilds its body from the new shape, which is how editing a
 `BoxCollider` in the inspector or over MCP takes effect. A `BoxCollider` on an
 entity that also has a `MeshCollider` wins over the mesh.
 
+A `MeshComponent` with no material is drawn plain grey, so a `MeshCollider`
+entity like the floor above is visible. Give it a material to choose how it
+looks.
+
 ### Sensors
 
 A `Sensor` next to a `Collider` makes it a trigger volume. A sensor detects the

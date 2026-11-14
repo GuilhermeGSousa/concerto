@@ -5,27 +5,28 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, Render},
 };
-use concerto_color::LinearRgba;
+use concerto_color::{Color, LinearRgba};
 use concerto_ecs::{
     command::CommandQueue,
+    component::removed::RemovedComponents,
     entity::EntityHashMap,
     query::Query,
     resource::{Res, ResMut, Resource},
     system::input::{SystemInputData, SystemLocal},
     world::{FromWorld, World},
-    Entity, IntoSystemConfig,
+    Entity, IntoSystemConfig, Without,
 };
 use concerto_foundation::assets::AssetId;
 
 use crate::{
-    assets::material::ShaderRef,
+    assets::material::{AsBindGroup, ShaderRef, StandardMaterial},
     batching::{
         clear_draw_stats, BatchedInstanceBuffers, BinCandidate, RenderDrawStats, ViewBatches,
     },
     capabilities::RenderCapabilities,
     components::{
         camera::RenderCamera,
-        material::{MaterialComponent, RenderMaterialComponent},
+        material::{HasMaterial, MaterialComponent, RenderMaterialComponent},
         mesh::RenderMeshInstances,
         render_entity::{MainEntity, RenderEntity},
         shadows::RenderLighting,
@@ -178,29 +179,123 @@ impl<M: 'static> Resource for MaterialViewBatches<M> {
 
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
+pub(crate) const FALLBACK_MATERIAL: AssetId = AssetId::from_bytes([
+    0x5f, 0x0a, 0x3c, 0x91, 0x7b, 0x2e, 0x4d, 0x18, 0x9c, 0x44, 0xe1, 0x6a, 0x02, 0xd7, 0xb3, 0x8f,
+]);
+
+fn clear_material<M: Material>(
+    render_entity: Entity,
+    render_materials: &Query<(&RenderMaterialComponent<M>, Option<&HasMaterial>)>,
+    cmd: &mut CommandQueue,
+) {
+    if render_materials
+        .get_entity(render_entity)
+        .is_some_and(|(existing, _)| existing.material_asset_id != FALLBACK_MATERIAL)
+    {
+        cmd.remove::<RenderMaterialComponent<M>>(render_entity);
+        cmd.remove::<HasMaterial>(render_entity);
+    }
+}
+
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
 // mirror. Upserts like the other extract systems: a mirror that already names
 // the same material asset is left alone, and one naming a different asset is
 // replaced, so swapping the handle on a live entity takes effect next frame.
+// A nil handle or a removed component takes the mirror away.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
-    render_materials: Query<&RenderMaterialComponent<M>>,
+    mut removed_materials: Extracted<RemovedComponents<MaterialComponent<M>>>,
+    render_entities: Extracted<Query<&RenderEntity>>,
+    render_materials: Query<(&RenderMaterialComponent<M>, Option<&HasMaterial>)>,
+    standard_materials: Query<&RenderMaterialComponent<StandardMaterial>>,
     mut cmd: CommandQueue,
 ) {
     for (material, render_entity) in materials.iter() {
         let render_entity = **render_entity;
+        let id = material.handle.id();
+
+        if id.is_nil() {
+            clear_material(render_entity, &render_materials, &mut cmd);
+            continue;
+        }
 
         if render_materials
             .get_entity(render_entity)
-            .is_some_and(|existing| existing.material_asset_id == material.handle.id())
+            .is_some_and(|(existing, assigned)| {
+                existing.material_asset_id == id && assigned.is_some()
+            })
         {
             continue;
         }
 
+        if standard_materials
+            .get_entity(render_entity)
+            .is_some_and(|standard| standard.material_asset_id == FALLBACK_MATERIAL)
+        {
+            cmd.remove::<RenderMaterialComponent<StandardMaterial>>(render_entity);
+        }
         cmd.insert(
-            RenderMaterialComponent::<M>::new(material.handle.id()),
+            (RenderMaterialComponent::<M>::new(id), HasMaterial),
             render_entity,
         );
+    }
+
+    for entity in removed_materials.read() {
+        if materials.contains_entity(entity) {
+            continue;
+        }
+        if let Some(render_entity) = render_entities.get_entity(entity) {
+            clear_material(**render_entity, &render_materials, &mut cmd);
+        }
+    }
+}
+
+pub(crate) fn assign_fallback_material(
+    unassigned: Query<
+        (Entity, &MainEntity),
+        (
+            Without<HasMaterial>,
+            Without<RenderMaterialComponent<StandardMaterial>>,
+        ),
+    >,
+    render_mesh_instances: Res<RenderMeshInstances>,
+    render_materials: Option<ResMut<RenderAssets<RenderMaterial<StandardMaterial>>>>,
+    pipeline: Option<Res<MaterialPipeline<StandardMaterial>>>,
+    device: Res<RenderDevice>,
+    render_textures: Res<RenderAssets<RenderTexture>>,
+    dummy_texture: Res<DummyRenderTexture>,
+    mut cmd: CommandQueue,
+) {
+    let (Some(mut render_materials), Some(pipeline)) = (render_materials, pipeline) else {
+        return;
+    };
+    if !render_materials.contains(&FALLBACK_MATERIAL) {
+        let grey =
+            StandardMaterial::default().with_base_color_factor(Color::rgba(0.5, 0.5, 0.5, 1.0));
+        let Ok(bind_group) = grey.create_bind_group(
+            &device,
+            &render_textures,
+            &dummy_texture,
+            &pipeline.bind_group_layout,
+        ) else {
+            return;
+        };
+        render_materials.insert(
+            FALLBACK_MATERIAL,
+            RenderMaterial {
+                bind_group,
+                _marker: PhantomData,
+            },
+        );
+    }
+
+    for (render_entity, main_entity) in unassigned.iter() {
+        if render_mesh_instances.contains_key(main_entity) {
+            cmd.insert(
+                RenderMaterialComponent::<StandardMaterial>::new(FALLBACK_MATERIAL),
+                render_entity,
+            );
+        }
     }
 }
 
@@ -566,6 +661,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
 
         app.register_asset::<M>();
         app.register_type::<MaterialComponent<M>>();
+        app.track_removals::<MaterialComponent<M>>();
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
         app.add_render_system(Extract, extract_materials::<M>)
@@ -699,7 +795,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
 mod tests {
     use super::*;
     use crate::{
-        assets::{material::StandardMaterial, mesh::Mesh},
+        assets::mesh::Mesh,
         batching::ViewDrawStats,
         components::{camera::Camera, visibility::NoFrustumCulling},
         draw_target::DrawTarget,
@@ -878,6 +974,84 @@ mod tests {
         let stats = app.render().get_resource::<RenderDrawStats>().unwrap();
         assert_eq!(stats.cameras.len(), 1);
         *stats.cameras.values().next().unwrap()
+    }
+
+    #[test]
+    fn a_mesh_draws_with_the_fallback_material_while_it_has_none_of_its_own() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mut app = scene(&gpu);
+        let cube = mesh(&app);
+        let entity = app.main_mut().world_mut().spawn((
+            MeshComponent {
+                handle: cube.clone(),
+            },
+            Transform::from_translation(Vec3::new(0.0, 0.0, -5.0)),
+        ));
+
+        settle(&mut app, &[&cube], &[]);
+
+        assert_eq!(drawn_with(&mut app), [FALLBACK_MATERIAL]);
+        assert_eq!(
+            camera_stats(&app),
+            ViewDrawStats {
+                draws: 1,
+                culled: 0
+            }
+        );
+
+        let white = material(&app);
+        app.main_mut().world_mut().insert(
+            MaterialComponent::<StandardMaterial> {
+                handle: white.clone(),
+            },
+            entity,
+        );
+        settle(&mut app, &[&cube], &[&white]);
+
+        assert_eq!(drawn_with(&mut app), [white.id()]);
+        assert_eq!(
+            camera_stats(&app),
+            ViewDrawStats {
+                draws: 1,
+                culled: 0
+            }
+        );
+
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<MaterialComponent<StandardMaterial>>(entity)
+            .unwrap()
+            .handle = AssetHandle::default();
+        app.update();
+        app.update();
+
+        assert_eq!(
+            drawn_with(&mut app),
+            [FALLBACK_MATERIAL],
+            "a nil handle is no material"
+        );
+
+        app.main_mut().world_mut().insert(
+            MaterialComponent::<StandardMaterial> {
+                handle: white.clone(),
+            },
+            entity,
+        );
+        app.update();
+        app.update();
+        app.main_mut()
+            .world_mut()
+            .remove_component::<MaterialComponent<StandardMaterial>>(entity);
+        app.update();
+        app.update();
+
+        assert_eq!(
+            drawn_with(&mut app),
+            [FALLBACK_MATERIAL],
+            "a removed material brings the fallback back"
+        );
     }
 
     #[test]

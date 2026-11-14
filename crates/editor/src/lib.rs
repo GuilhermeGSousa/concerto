@@ -5,6 +5,7 @@ pub mod asset_picker;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
+pub mod drag_drop;
 pub mod entity_picker;
 pub mod fonts;
 pub mod graph_canvas;
@@ -17,6 +18,7 @@ pub mod inspector;
 pub mod joint_picker;
 pub mod mcp;
 pub mod name_menu;
+pub mod placement;
 pub mod preview;
 pub mod project;
 mod run;
@@ -87,8 +89,10 @@ impl Plugin for EditorPlugin {
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
         app.register_plugin(inspected_asset::InspectedAssetPlugin);
+        app.register_plugin(placement::AssetPlacementPlugin);
         app.register_plugin(timeline::TimelinePlugin);
         app.register_plugin(graph_canvas::GraphCanvasPlugin);
+        app.register_plugin(drag_drop::DragDropPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::create_editor_hosts,

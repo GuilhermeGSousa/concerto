@@ -1,7 +1,7 @@
-# The manor greybox
+# The manor
 
-The Blender source of the One More Night manor, the scripts that generate it,
-and its export. Paths below are relative to this folder.
+The Blender source of the One More Night manor, the scripts that generate its
+greybox and the art over it, and its export. Paths below are relative to this folder.
 
 | Path | What it is |
 |---|---|
@@ -14,7 +14,14 @@ and its export. Paths below are relative to this folder.
 | `tools/greybox/layout.py` | Furniture and anchors, one list of items per room. |
 | `tools/greybox/views.py` | Viewport presets for review screenshots. |
 | `tools/greybox/export_level.py` | Writes `export/`, runs the lint and estimates the walk budget. |
-| `export/` | One `.glb` per level, `level_manifest.ron`, `travel_full.csv`, `level_lint.txt`. |
+| `tools/art/build_art.py` | Rebuilds the art over the greybox: every object in the `Art` collection. |
+| `tools/art/library.py` | Fits a downloaded model to its size and writes it to `library/`. |
+| `tools/art/textures.py` | Makes the tinted and patterned textures in `textures/` from the fetched ones. |
+| `tools/art/fetch_textures.py` | Downloads the surface textures into `textures/`. |
+| `tools/art/preview.py` | Renders a lamplit view of the dressed rooms. |
+| `library/` | One fitted `.glb` per furniture or fixture model. |
+| `textures/` | The surface textures, fetched and made. |
+| `export/` | One `.glb` per level and `manor_art.glb`, `level_manifest.ron`, `travel_full.csv`, `level_lint.txt`. |
 
 ## Rebuild
 
@@ -34,6 +41,71 @@ report = g["main"]()
 `report["ok"]` is false, and `report["errors"]` names the objects, when a door
 has no wall, furniture collides, or a room misses its anchor minimum. Save the
 file afterwards.
+
+## Art
+
+The greybox is the collision and the art is the picture. Every art object is
+named `art.<something>`, lives in the `Art` collection, carries
+`generated_art = True` and exports to `export/manor_art.glb`. The game draws
+it and never makes it solid. An art object named `art.<greybox object>`, such
+as `art.furniture.hall.gong_01`, takes that object's place on screen: the game
+keeps the greybox object solid and stops drawing it, and hides both when a
+feature hides the object. A greybox object with no art is drawn as before, so
+a room can be dressed on its own. Every room with an entry in `STYLE` is
+dressed, and so is every solid box of the level: the game draws no greybox.
+
+`build_art.py` deletes and recreates every `generated_art` object. Run it
+after `build.py`, which rebuilds the boxes it reads:
+
+```python
+p = "<absolute path>/tools/art/build_art.py"
+g = {"__file__": p, "__name__": "build_art"}
+exec(compile(open(p).read(), p, "exec"), g)
+report = g["main"]()
+```
+
+It copies the faces of each wall, floor, ceiling and chimney breast of those
+rooms and gives each face the material of the room it looks into, from
+`STYLE`; adds skirting, dado rail, cornice, panelling, door architraves,
+window glazing and curtains; replaces balustrades with turned balusters;
+gives door leaves their panels in place, one material each; and puts a
+library model over every furniture box, chosen by `model_for`. `lamps.json`
+lists where the game's `Level::lamps()` puts its ceiling lights, so a fixture of
+the room's kind hangs at each; change both together. `DRESS` holds the sconces
+and pictures. `main` takes room ids to build only those, and `True` as its
+second argument to load the library's models again after `library.py` ran;
+`report["missing"]` names the boxes that found no model.
+
+`details` dresses what belongs to no room's furniture: the garden wall, hedge
+and terrace parapet, the bell pulls and the bell board, the telephones, the
+dumbwaiter, and each feature's objects. The study and bedroom 4 hearths of F06
+get a chimneypiece like any other. The bookcase over the jib door, `F05.cover`,
+swings with its leaf, so its mesh is replaced in place, as the door leaves are,
+and it stays in `manor_ground.glb`.
+
+A model is fitted once and then kept in `library/`:
+
+```sh
+blender -b -P "$PWD/tools/art/library.py" -- <downloads> "$PWD/library" [name ...]
+```
+
+`<downloads>` holds `<name>/<name>.glb` as Hyper3D's Rodin returned it, and
+`<name>/<name>_emissive.png` for a model that glows. `MODELS` gives each
+model its size in metres, the turn that brings its front to -Y, where its
+origin sits, and the size of its textures.
+
+`python3 tools/art/fetch_textures.py "$PWD/textures"` downloads the surface
+textures at 1K; `build_art.py` makes the tinted and patterned ones beside
+them when they are missing.
+
+After a rebuild, export, import `export/manor_art.glb` and any level file that
+changed through the editor on a scratch copy of the project, and copy
+`content/manor/export/` back with the `.import.toml` files.
+
+| Source | What | Licence |
+|---|---|---|
+| Hyper3D Rodin Gen-2.5, text prompts | Every model in `library/` | Generated for this project |
+| Poly Haven, the assets named in `fetch_textures.py` | `textures/*.jpg` | CC0 |
 
 ## Layout items
 
@@ -87,6 +159,13 @@ code is 1 when the lint fails.
 In `level_manifest.ron`, coordinates are metres with +X east, +Y north and +Z
 up, and `facing` is degrees counter-clockwise from north. `travel` holds one
 representative anchor per room; every anchor pair is in `travel_full.csv`.
+`ways` and `paths` are the walk graph the times were measured on: every
+standing anchor, door threshold, stair end and landing, and a grid of free
+floor, joined where one can be walked to from the other. The game routes its
+characters over it.
+
+`-- <out> --manifest-only` rewrites the manifest, the lint and the travel table
+and leaves the `.glb` files alone.
 The `.glb` files are Y up, with each object's custom properties as glTF
 extras.
 
