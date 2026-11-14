@@ -481,7 +481,8 @@ comes into view the canvas scrolls its result node into view, and when a state
 machine does, its first state.
 
 - Pressing a node or a link selects it; a click on empty space clears the
-  selection.
+  selection. A node or a state that becomes the selection, by a press or
+  `graph_select`, is scrolled into view.
 - Dragging from a node's output pin to an input pin connects them.
 - Delete removes the selected node or link.
 - A right click on empty space lists the node types that can be added: every

@@ -84,7 +84,10 @@ impl<T: Reflect + Default> PropertyEditor<Param<T>> for ParamNameEditor<T> {
                 .shrink(1.0)
                 .width(UIValue::Px(0.0))
                 .min_width(UIValue::Px(0.0))
-                .padding(UIRect::axes(theme.spacing_xs, theme.spacing_xs))
+                .padding(UIRect::axes(
+                    ((theme.control_height - theme.line_height(theme.font_size_sm)) / 2.0).max(0.0),
+                    theme.spacing_xs,
+                ))
                 .clipped(),
             ParamNameField {
                 row: entity,

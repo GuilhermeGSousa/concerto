@@ -71,6 +71,7 @@ pub(crate) struct GraphPanels {
     crumbs: Vec<String>,
     params: Vec<ParamRow>,
     framed: Vec<GraphLevel>,
+    selected: Option<GraphSelection>,
 }
 
 struct LeftPanel {
@@ -766,11 +767,13 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
         .spawn_child(theme.label("").small().muted().no_wrap().fixed().hidden())
         .entity();
     let reset = row
-        .spawn_child(theme.button("Whole graph").ghost().on_click(write_preview(
-            document,
-            "from",
-            json!("None"),
-        )))
+        .spawn_child(
+            theme
+                .button("Whole graph")
+                .ghost()
+                .padding(UIRect::axes(theme.spacing_xs, theme.spacing_md))
+                .on_click(write_preview(document, "from", json!("None"))),
+        )
         .entity();
     let canvas = panel
         .spawn_child((
@@ -819,6 +822,7 @@ pub(crate) fn build_graph_panels(
                 crumbs: Vec::new(),
                 params: Vec::new(),
                 framed: Vec::new(),
+                selected: None,
             },
             document,
         );
@@ -1018,6 +1022,20 @@ pub(crate) fn sync_graph_panels(
                 (None, None) => None,
             };
             if let Some(node) = first {
+                cmd.entity(panels.canvas).trigger(FrameCanvasNode { node });
+            }
+        }
+        if panels.selected != state.selection {
+            panels.selected = state.selection;
+            let node = match (state.machine(), state.selection) {
+                (Some(machine), Some(GraphSelection::State(name))) => machine
+                    .states()
+                    .position(|state| state.name == name)
+                    .map(state_id),
+                (None, Some(GraphSelection::Node(id))) => Some(canvas_id(id)),
+                _ => None,
+            };
+            if let Some(node) = node {
                 cmd.entity(panels.canvas).trigger(FrameCanvasNode { node });
             }
         }
