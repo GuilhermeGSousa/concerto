@@ -191,13 +191,3 @@ fn refuse_a_host(existing: &ContentAssetHeader, address: &str) -> anyhow::Result
         existing.embedded.len()
     )
 }
-
-/// The id to write at `path`: the one already in the file's header if a
-/// content asset is there, otherwise a freshly minted one. Identity is
-/// assigned once and then belongs to the asset, not to its location.
-pub fn mint_or_reuse_id(path: &Path) -> anyhow::Result<AssetId> {
-    if path.exists() {
-        return Ok(read_content_asset_header(path)?.asset_id);
-    }
-    Ok(AssetId::new())
-}

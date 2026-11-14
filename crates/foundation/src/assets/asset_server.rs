@@ -302,7 +302,11 @@ impl AssetServer {
         for entry in entries {
             let hook = hooks[entry.kind.as_str()];
             let written = self.cook_entry(&root, entry, hook, out).with_context(|| {
-                format!("failed to cook the {} at '{}'", entry.kind, entry.address)
+                format!(
+                    "failed to cook the {} at '{}'",
+                    entry.kind,
+                    entry.location()
+                )
             })?;
             if written {
                 report.cooked.push(entry.address.clone());
@@ -470,7 +474,7 @@ impl AssetServer {
             if !entry.is::<A>() {
                 log::error!(
                     "content asset '{}' holds a {} but a {} was requested",
-                    entry.address,
+                    entry.location(),
                     entry.kind,
                     A::name()
                 );

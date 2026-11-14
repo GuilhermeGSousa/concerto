@@ -780,8 +780,10 @@ nothing and fails with `This scene belongs to <source> and is read-only. To
 build on it, place it in a scene of your own.` That is an ordinary failed save,
 so the unsaved-changes prompt's Save, `unsaved: "save"` over MCP, and Play,
 which saves first, are refused with the same text. To build on an import, make
-a scene with New and place the import's scene in it; that scene refers to the
-import by id, so re-importing the source reaches it.
+a scene with New and place the import's scene in it. Placing copies the
+import's nodes into that scene, and they refer to its meshes and materials by
+id: a re-import's new mesh and material data reaches the scene, while nodes
+the source adds, removes or moves do not (#783).
 
 Each save, whether asked for with `SaveRequested` or made by Play, ends in an
 event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
