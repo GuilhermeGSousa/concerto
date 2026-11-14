@@ -253,6 +253,18 @@ fn embedded_assets_load_by_id() {
         "a cancelled burst loads when it is requested again"
     );
 
+    let mut runtime = Runtime::new(&dir, registry.clone());
+    let first = runtime.server.load::<Pebble>(pebble);
+    runtime.settle();
+    let later = runtime.server.load::<Boulder>(boulder);
+    runtime.settle();
+    assert_eq!(runtime.value(&first), Some(Pebble { weight: 3 }));
+    assert_eq!(
+        runtime.value(&later),
+        Some(Boulder { weight: 900 }),
+        "an asset requested after its file finished loading loads the file again"
+    );
+
     std::fs::write(dir.join(address), &host[..host.len() - 1]).unwrap();
     let mut runtime = Runtime::new(&dir, registry);
     let truncated = runtime.server.load::<Pebble>(pebble);

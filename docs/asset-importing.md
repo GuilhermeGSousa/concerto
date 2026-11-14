@@ -760,12 +760,17 @@ Loads return immediately with a handle; the bytes load on a background task
 pool. A registry miss on `load` fails the load and logs the id — it
 does not fall back to anything.
 
-An embedded asset loads by its id like any other: the server reads the file at
-its entry's address and decodes the asset's record from it. A file is read once
-for the loads pending on it: the first reads it, the others wait for those
-bytes, and the bytes are dropped when the last of them is delivered, fails or
-is cancelled. A file that cannot be read fails every load waiting on it, and
-the logged error names the asset as `file#name`.
+An embedded asset loads by its id like any other, and the file is the unit of
+loading. The first `load` of an asset whose file is not being loaded starts one
+task for that file; a `load` of another asset of the file while the task runs
+only adds its request to it. The task reads the file once, parses its header
+once, and decodes each requested asset from its slice of those bytes, one after
+another, skipping a request whose last handle was dropped before the task
+reached it. When no request is left the task ends and the bytes are dropped; a
+later `load` of an asset of the file starts a new task and reads it again. A
+file that cannot be read or parsed fails every asset requested from it, each
+logged error naming its asset as `file#name`, and an asset that fails to decode
+fails alone.
 
 `AssetServer::is_loading` reports whether an asset requested with `load` or
 `add` has yet to reach the world. A load counts until the frame that inserts

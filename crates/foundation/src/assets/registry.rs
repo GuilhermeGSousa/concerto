@@ -226,7 +226,7 @@ impl AssetRegistry {
 
     /// Adds `entry`, replacing any entry with the same id, at the same address, or of the same name in the same host.
     pub fn insert(&mut self, entry: AssetEntry) {
-        self.remove(entry.id);
+        self.detach(entry.id);
         let held = match &entry.embedded_in {
             Some(embedded) => self.embedded_named(embedded.host, &embedded.name),
             None => self.id_for_address(&entry.address),
@@ -251,7 +251,17 @@ impl AssetRegistry {
         self.entries.insert(entry.id, entry);
     }
 
+    /// Removes the entry of `id`, and with a host every entry embedded in its file.
     pub fn remove(&mut self, id: AssetId) -> Option<AssetEntry> {
+        let entry = self.detach(id)?;
+        for embedded in self.embedded_by_host.remove(&id).unwrap_or_default() {
+            self.entries.remove(&embedded);
+            self.order.retain(|other| *other != embedded);
+        }
+        Some(entry)
+    }
+
+    fn detach(&mut self, id: AssetId) -> Option<AssetEntry> {
         let entry = self.entries.remove(&id)?;
         match &entry.embedded_in {
             Some(embedded) => {

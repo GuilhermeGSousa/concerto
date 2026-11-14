@@ -168,6 +168,16 @@ pub struct DerivedSection {
     pub len: u64,
 }
 
+impl DerivedSection {
+    fn cooked(self, blob: &[u8]) -> CookedSection<'_> {
+        CookedSection {
+            derived_version: self.derived_version,
+            key: self.key,
+            blob,
+        }
+    }
+}
+
 /// The derived blob and its description, for [`write_cooked_content_asset`].
 #[derive(Debug, Clone, Copy)]
 pub struct CookedSection<'a> {
@@ -447,59 +457,122 @@ pub fn read_content_asset(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &
 
 /// Reads a content asset's header, its payload and the derived blob trailing it, if any; of a host, the host's own.
 pub fn read_content_asset_parts(bytes: &[u8]) -> anyhow::Result<ContentAssetParts<'_>> {
-    let file = split_content_asset(bytes)?;
-    let body = file.body;
-    let blob_len = file.header.derived.map_or(0, |section| section.len);
-    let host_end = file
-        .header
-        .embedded
-        .first()
-        .map_or(body.len(), |first| first.offset as usize);
-    let payload_end = usize::try_from(blob_len)
-        .ok()
-        .and_then(|len| host_end.checked_sub(len))
-        .with_context(|| {
-            format!(
-                "content asset truncated: derived section claims {blob_len} bytes, only {} follow the header",
-                body.len()
-            )
-        })?;
+    let file = ContentFile::parse(bytes)?;
+    let host = file.host()?;
+    let payload = &file.body[..host.payload.len()];
+    let derived_blob = host
+        .cooked
+        .map(|cooked| &file.body[payload.len()..payload.len() + cooked.blob.len()]);
     Ok(ContentAssetParts {
-        derived_blob: file.header.derived.map(|_| &body[payload_end..host_end]),
-        payload: &body[..payload_end],
+        derived_blob,
+        payload,
         header: file.header,
     })
 }
 
-struct SplitContentAsset<'a> {
+/// One asset of a content file, borrowed from it: its type tag, its payload and its derived blob.
+#[derive(Debug, Clone, Copy)]
+pub struct AssetRecord<'a> {
+    /// The `Asset::name()` of the type the payload holds.
+    pub kind: &'a str,
+    /// The `Asset::FORMAT_VERSION` the payload was written with.
+    pub kind_version: u32,
+    /// The payload, without the derived blob.
+    pub payload: &'a [u8],
+    /// The cooked derived data trailing the payload, if any.
+    pub cooked: Option<CookedSection<'a>>,
+}
+
+/// A content file with its header parsed once; the host's record and each embedded asset's are slices of it.
+#[derive(Debug)]
+pub struct ContentFile<'a> {
     header: ContentAssetHeader,
     body: &'a [u8],
 }
 
-fn split_content_asset(bytes: &[u8]) -> anyhow::Result<SplitContentAsset<'_>> {
-    if bytes.len() < 8 || bytes[..4] != CONTENT_ASSET_MAGIC {
-        bail!("not a content asset: missing the GRDY magic prefix");
+impl<'a> ContentFile<'a> {
+    /// Parses the header of `bytes` and checks its directory against the bytes that follow.
+    pub fn parse(bytes: &'a [u8]) -> anyhow::Result<Self> {
+        if bytes.len() < 8 || bytes[..4] != CONTENT_ASSET_MAGIC {
+            bail!("not a content asset: missing the GRDY magic prefix");
+        }
+
+        let header_len = u32::from_le_bytes(
+            bytes[4..8]
+                .try_into()
+                .expect("slice of exactly 4 bytes is always a [u8; 4]"),
+        ) as usize;
+        let header_end = 8usize
+            .checked_add(header_len)
+            .context("content asset header length overflows")?;
+        if bytes.len() < header_end {
+            bail!(
+                "content asset truncated: header claims {header_len} bytes, only {} available",
+                bytes.len() - 8
+            );
+        }
+
+        let header = decode_header(&bytes[8..header_end])?;
+        let body = &bytes[header_end..];
+        check_directory(&header, Some(body.len() as u64))?;
+        Ok(Self { header, body })
     }
 
-    let header_len = u32::from_le_bytes(
-        bytes[4..8]
-            .try_into()
-            .expect("slice of exactly 4 bytes is always a [u8; 4]"),
-    ) as usize;
-    let header_end = 8usize
-        .checked_add(header_len)
-        .context("content asset header length overflows")?;
-    if bytes.len() < header_end {
-        bail!(
-            "content asset truncated: header claims {header_len} bytes, only {} available",
-            bytes.len() - 8
-        );
+    /// The file's header, with its directory of embedded assets.
+    pub fn header(&self) -> &ContentAssetHeader {
+        &self.header
     }
 
-    let header = decode_header(&bytes[8..header_end])?;
-    let body = &bytes[header_end..];
-    check_directory(&header, Some(body.len() as u64))?;
-    Ok(SplitContentAsset { header, body })
+    /// The record of the host, or of the one asset of a loose file.
+    pub fn host(&self) -> anyhow::Result<AssetRecord<'_>> {
+        let body = self.body;
+        let header = &self.header;
+        let blob_len = header.derived.map_or(0, |section| section.len);
+        let host_end = header
+            .embedded
+            .first()
+            .map_or(body.len(), |first| first.offset as usize);
+        let payload_end = usize::try_from(blob_len)
+            .ok()
+            .and_then(|len| host_end.checked_sub(len))
+            .with_context(|| {
+                format!(
+                    "content asset truncated: derived section claims {blob_len} bytes, only {} follow the header",
+                    body.len()
+                )
+            })?;
+        Ok(AssetRecord {
+            kind: &header.kind,
+            kind_version: header.kind_version,
+            payload: &body[..payload_end],
+            cooked: header
+                .derived
+                .map(|section| section.cooked(&body[payload_end..host_end])),
+        })
+    }
+
+    /// The record of `asset`, an entry of this file's directory.
+    pub fn embedded<'file>(
+        &'file self,
+        asset: &'file EmbeddedAsset,
+    ) -> anyhow::Result<AssetRecord<'file>> {
+        let start = asset.offset as usize;
+        let payload_end = start + asset.len as usize;
+        let blob_end = payload_end + asset.derived.map_or(0, |section| section.len as usize);
+        let bytes = self.body.get(start..blob_end).with_context(|| {
+            format!(
+                "embedded asset '{}' is not in this file's directory",
+                asset.name()
+            )
+        })?;
+        let (payload, blob) = bytes.split_at(asset.len as usize);
+        Ok(AssetRecord {
+            kind: &asset.kind,
+            kind_version: asset.kind_version,
+            payload,
+            cooked: asset.derived.map(|section| section.cooked(blob)),
+        })
+    }
 }
 
 /// The bytes a loose version-7 file of the host (`None`) or of the named embedded asset would have.
@@ -512,7 +585,7 @@ pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Ve
         };
         return frame_content_asset(&header, &[parts.payload, parts.derived_blob.unwrap_or(&[])]);
     };
-    let file = split_content_asset(file)?;
+    let file = ContentFile::parse(file)?;
     let Some(asset) = file
         .header
         .embedded
@@ -530,14 +603,12 @@ pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Ve
             held.join(", ")
         );
     };
-    let start = asset.offset as usize;
-    let payload_end = start + asset.len as usize;
-    let blob_end = payload_end + asset.derived.map_or(0, |section| section.len as usize);
+    let record = file.embedded(asset)?;
     frame_content_asset(
         &asset.record_header(),
         &[
-            &file.body[start..payload_end],
-            &file.body[payload_end..blob_end],
+            record.payload,
+            record.cooked.map_or(&[], |cooked| cooked.blob),
         ],
     )
 }

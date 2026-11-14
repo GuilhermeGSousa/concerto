@@ -17,7 +17,6 @@ glam = { workspace = true, features = ["serde"] }
 cfg-if = "1"
 crossbeam-channel = "0.5.0"
 anyhow = "1.0.97"
-async-lock = "3"
 log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

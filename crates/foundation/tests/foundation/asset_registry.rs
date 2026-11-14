@@ -217,6 +217,13 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
     assert_eq!(registry.id_for_address(scene), Some(host));
     assert_eq!(registry.iter().count(), 4);
 
+    assert_eq!(registry.remove(host).map(|entry| entry.id), Some(host));
+    assert_eq!(
+        registry.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        [loose],
+        "removing a host removes what its file embeds"
+    );
+
     let hostless = AssetRegistry::parse(&format!(
         "[assets]\n{} = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n",
         mesh.simple_hex()

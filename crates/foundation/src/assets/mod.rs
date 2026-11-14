@@ -30,7 +30,6 @@ pub mod asset_server;
 pub mod asset_store;
 pub mod content;
 pub mod derived;
-mod file_reads;
 pub mod handle;
 pub mod registry;
 pub mod utils;

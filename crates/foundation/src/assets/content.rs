@@ -13,30 +13,29 @@ use super::{Asset, AssetId};
 pub use concerto_asset_format::{
     asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
     sub_asset_file_stem, write_content_asset, write_content_asset_with_embedded,
-    write_cooked_content_asset, ContentAssetHeader, ContentAssetParts, CookedSection,
-    DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, CONTENT_ASSET_MAGIC,
-    CONTENT_FORMAT_VERSION,
+    write_cooked_content_asset, AssetRecord, ContentAssetHeader, ContentAssetParts, ContentFile,
+    CookedSection, DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance,
+    CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
 pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
     let (header, payload) = read_content_asset(bytes)?;
-    let value = decode_content_payload::<A>(&header, payload)?;
+    let value = decode_content_payload::<A>(&header.kind, header.kind_version, payload)?;
     Ok((header, value))
 }
 
 pub(crate) fn decode_content_payload<A: Asset>(
-    header: &ContentAssetHeader,
+    kind: &str,
+    version: u32,
     payload: &[u8],
 ) -> anyhow::Result<A> {
-    if header.kind != A::name() {
+    if kind != A::name() {
         anyhow::bail!(
-            "content asset holds a {} but a {} was requested",
-            header.kind,
+            "content asset holds a {kind} but a {} was requested",
             A::name()
         );
     }
-    let version = header.kind_version;
     let current = A::FORMAT_VERSION;
     let value = match version.cmp(&current) {
         std::cmp::Ordering::Equal => bincode::deserialize(payload)

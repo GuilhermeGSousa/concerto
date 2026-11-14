@@ -37,7 +37,10 @@ pub trait DerivedData: LoadableAsset {
 
     /// Whether the content asset with this header and payload derives; decodes it and asks [`is_derived`](Self::is_derived) unless overridden.
     fn file_is_derived(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<bool> {
-        Ok(decode_content_payload::<Self>(header, payload)?.is_derived())
+        Ok(
+            decode_content_payload::<Self>(&header.kind, header.kind_version, payload)?
+                .is_derived(),
+        )
     }
 
     /// The content assets the blob is built from.
@@ -382,7 +385,11 @@ pub(crate) fn cook_hook<A: DerivedData>(
         if !A::file_is_derived(&parts.header, parts.payload)? {
             return Ok(None);
         }
-        let mut asset = decode_content_payload::<A>(&parts.header, parts.payload)?;
+        let mut asset = decode_content_payload::<A>(
+            &parts.header.kind,
+            parts.header.kind_version,
+            parts.payload,
+        )?;
         asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
         let derived = derive_and_apply(&mut asset, &server).await?;
         write_cooked_content_asset(
