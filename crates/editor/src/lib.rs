@@ -13,6 +13,7 @@ pub mod guard;
 pub mod hierarchy;
 pub mod hosted;
 pub mod import;
+pub mod import_fold;
 pub mod inspected_asset;
 pub mod inspector;
 pub mod joint_picker;

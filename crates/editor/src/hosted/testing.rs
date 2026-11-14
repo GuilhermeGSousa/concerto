@@ -281,14 +281,12 @@ pub fn forwarding<E: Event + Clone + 'static>() -> BoxedSystem {
 
 pub fn scene_entry(name: &str) -> AssetEntry {
     AssetEntry {
+        embedded_in: None,
         id: AssetId::new(),
         address: format!("{name}.gasset"),
         kind: Scene::name().into(),
         kind_version: None,
-        provenance: Some(ImportProvenance {
-            source: "fixture".into(),
-            sub_asset: name.into(),
-        }),
+        provenance: None,
     }
 }
 
@@ -316,6 +314,7 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
         kind_version: Scene::FORMAT_VERSION,
         provenance: asset.provenance.clone(),
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::write(
         root.join(&asset.address),
@@ -499,6 +498,7 @@ impl SceneFixture {
 
     pub fn request_kind(&mut self, kind: &str) -> Entity {
         let asset = AssetEntry {
+            embedded_in: None,
             id: AssetId::new(),
             address: format!("{kind}.gasset"),
             kind: kind.into(),

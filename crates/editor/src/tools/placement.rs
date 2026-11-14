@@ -25,6 +25,7 @@ use concerto_mesh::{Aabb, Mesh, MeshComponent, Ray};
 use concerto_render::components::{camera::Camera, render_entity::SyncWithRenderWorld};
 use glam::{Mat4, Vec2, Vec3};
 
+use crate::import_fold::shown_name;
 use crate::tools::{
     camera::{EditorCamera, ViewportPointer},
     entity_ops::new_parent,
@@ -225,7 +226,7 @@ fn resolve(world: &mut World, request: &PlaceAsset) -> anyhow::Result<Placement>
     Ok(Placement {
         request: request.clone(),
         kind,
-        name: entry.name().to_owned(),
+        name: shown_name(&entry).into_owned(),
         parent,
         position,
     })

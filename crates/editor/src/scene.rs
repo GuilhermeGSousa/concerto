@@ -300,6 +300,16 @@ fn save_document(world: &mut World, document: Entity) -> Result<AssetEntry, Stri
     if game_is_on(world, document) {
         return Err(STOP_TO_SAVE.into());
     }
+    if let Some(source) = world
+        .get_component_for_entity::<EditorDocument>(document)
+        .and_then(|document| document.current.as_ref())
+        .and_then(|asset| asset.provenance.as_ref())
+        .map(|provenance| provenance.source.as_str())
+    {
+        return Err(format!(
+            "This scene belongs to {source} and is read-only. To build on it, place it in a scene of your own."
+        ));
+    }
     let hosted = world
         .get_component_for_entity_mut::<HostedApp>(document)
         .ok_or("Save failed: No scene is open")?;
@@ -338,7 +348,7 @@ fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Re
         .cloned()
         .context("The saved scene was not registered")?;
     if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
-        document.title = saved.name().to_owned();
+        document.title = saved.name().into_owned();
         document.current = Some(saved.clone());
     }
     Ok(saved)
@@ -1565,7 +1575,7 @@ mod tests {
     }
 
     #[test]
-    fn saving_an_imported_scene_overwrites_it_in_place() {
+    fn saving_a_scene_overwrites_it_in_place() {
         let mut f = SceneFixture::new();
         let document = f.open();
         f.rename(document, "first", "renamed");
@@ -2080,6 +2090,36 @@ mod tests {
 
         assert!(f.saved_scene_names().contains(&"renamed".to_string()));
         assert_eq!(f.play_state(document), Some(PlayState::Starting));
+    }
+
+    #[test]
+    fn an_imports_scene_refuses_save_and_play_and_writes_nothing() {
+        use concerto_foundation::assets::content::ImportProvenance;
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        let before = saved_bytes(&f);
+        f.world
+            .get_component_for_entity_mut::<EditorDocument>(document)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .provenance = Some(ImportProvenance {
+            source: "assets/props/hero.glb".into(),
+            sub_asset: "scene".into(),
+        });
+        f.rename(document, "first", "renamed");
+        let message = "This scene belongs to assets/props/hero.glb and is read-only. To build on it, place it in a scene of your own.";
+
+        save(&mut f, document);
+        assert_eq!(f.status(document), message);
+        assert_eq!(f.written::<SaveFailed>(), [save_failed(&f, document)]);
+
+        play(&mut f, document);
+        assert_eq!(f.written::<PlayFailed>(), [play_failed(document, message)]);
+        assert_eq!(f.play_state(document), Some(PlayState::Editing));
+        assert!(f.unsaved(document));
+        assert_eq!(saved_bytes(&f), before);
     }
 
     #[test]

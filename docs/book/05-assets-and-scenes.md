@@ -8,9 +8,9 @@ The running game never opens a `.glb`, `.obj` or `.png`. Source files are
 
 ```
 assets/hero.glb  ──import──▶  content/hero/scene.gasset
-                              content/hero/mesh_0.gasset
-                              content/hero/material_0.gasset
-                              content/hero/skeleton_0.gasset
+                                the scene, with the meshes, materials
+                                and skeletons embedded in it
+                              content/hero/texture_0.gasset
                               content/hero/animation_Idle_Loop.gasset
 assets/hero.glb.import.toml
 ```
@@ -23,6 +23,15 @@ texture. A skeleton asset holds bone names, parent indices (parents first), inve
 `<source>.import.toml`: the import file pins each sub-asset's id, so importing
 again after the artist changes the source keeps every reference intact.
 
+A source that yields a scene writes one `scene.gasset`, and its meshes,
+materials and skeletons are stored inside that file. Each is still an asset
+with its own id, named by the file, `#`, and its name in the source:
+`content/hero/scene.gasset#mesh/0`. Textures, animations and the outputs of a
+source with no scene are a file each. The scene file belongs to the import and
+is read-only; to build on it, place it in a scene of your own. A project
+imported before this, with a file per mesh, is converted by
+`cargo run -p concerto-import --bin pack-imports -- <project directory>`.
+
 ## Naming an asset in code
 
 Code names an asset by its id, which `asset_id!` reads from the file's header
@@ -32,10 +41,11 @@ while compiling:
 use concerto::{asset_id, foundation::assets::AssetId};
 
 const HERO: AssetId = asset_id!("content/hero/scene.gasset");
+const HERO_SKELETON: AssetId = asset_id!("content/hero/scene.gasset#skeleton/0");
 ```
 
-A missing file gives a nil id and a warning at that line; a broken file is a
-compile error there. The path is relative
+A missing file gives a nil id and a warning at that line; a broken file, or a
+name after `#` that the file does not hold, is a compile error there. The path is relative
 to the package. For the macro to see content changes, the game's `build.rs`
 calls `concerto_asset_build::track_assets("content")`; projects made by
 `cargo concerto new` already do.

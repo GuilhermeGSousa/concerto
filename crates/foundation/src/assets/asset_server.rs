@@ -1,7 +1,9 @@
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
+    future::Future,
     path::Path,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock, Weak,
@@ -27,15 +29,19 @@ use crate::{
 use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
-    derived::{derived_hook, note_derived_kind, DerivedData, DerivedDataCache, DerivedHook},
+    content::{decode_content_payload, AssetRecord, ContentFile, DerivedSection, EmbeddedAsset},
+    derived::{
+        derived_hook, note_derived_kind, CookedBlob, DerivedData, DerivedDataCache, DerivedHook,
+    },
     handle::{AssetHandle, AssetLifetimeEvent, AssetLoadFailed},
     registry::{AssetEntry, AssetRegistry},
+    utils::try_read_relative,
     Asset, AssetId, ContentAssetRoot,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
-    derived::{cook_hook, CookHook, CookReport},
-    utils::try_read_relative,
+    content::asset_record,
+    derived::{cook_hook, record_is_derived, CookHook, CookReport},
 };
 
 struct LoadedAsset {
@@ -100,13 +106,103 @@ pub(crate) struct AssetInfo {
     handle: Weak<StrongAssetHandle>,
 }
 
-struct PendingLoad {
-    _task: Task<()>,
+struct RecordLoad<'a> {
+    id: AssetId,
+    location: &'a str,
+    record: AssetRecord<'a>,
+    server: AssetServer,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type RecordFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<LoadedAsset>> + Send + 'a>>;
+#[cfg(target_arch = "wasm32")]
+type RecordFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<LoadedAsset>> + 'a>>;
+
+type RecordLoader = for<'a> fn(RecordLoad<'a>) -> RecordFuture<'a>;
+
+fn load_record<A: LoadableAsset>(load: RecordLoad<'_>) -> RecordFuture<'_> {
+    Box::pin(async move {
+        let RecordLoad {
+            id,
+            location,
+            record,
+            server,
+        } = load;
+        let mut asset =
+            decode_content_payload::<A>(record.kind, record.kind_version, record.payload)
+                .with_context(|| format!("failed to read {} asset", A::name()))?;
+        asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
+        let hook = server
+            .data
+            .derived_hooks
+            .read()
+            .unwrap()
+            .get(&TypeId::of::<A>())
+            .copied();
+        match hook {
+            Some(hook) => {
+                let cooked = record.cooked.map(|cooked| CookedBlob {
+                    section: DerivedSection {
+                        derived_version: cooked.derived_version,
+                        key: cooked.key,
+                        len: cooked.blob.len() as u64,
+                    },
+                    blob: cooked.blob.to_vec(),
+                });
+                asset = *hook(Box::new(asset), cooked, server)
+                    .await?
+                    .downcast::<A>()
+                    .map_err(|_| anyhow::anyhow!("the derived hook returned another type"))?;
+            }
+            None if record.cooked.is_some() => log::warn!(
+                "ignoring the derived section of '{location}': {} is not a derived asset",
+                A::name()
+            ),
+            None => {}
+        }
+        Ok(LoadedAsset::new(id, asset))
+    })
+}
+
+struct LoadRequest {
+    entry: AssetEntry,
+    load: RecordLoader,
     cancelled: Arc<AtomicBool>,
 }
 
+struct FileLoad {
+    _task: Task<()>,
+    cancelled: Arc<AtomicBool>,
+    requests: Vec<LoadRequest>,
+}
+
+#[derive(Default)]
+struct PendingLoads {
+    files: HashMap<AssetId, FileLoad>,
+    assets: HashMap<AssetId, Arc<AtomicBool>>,
+}
+
+impl PendingLoads {
+    fn cancel(&mut self) {
+        for load in self.files.values() {
+            load.cancelled.store(true, Ordering::SeqCst);
+        }
+        for cancelled in self.assets.values() {
+            cancelled.store(true, Ordering::SeqCst);
+        }
+        self.files.clear();
+        self.assets.clear();
+    }
+
+    fn cancel_asset(&mut self, id: AssetId) {
+        if let Some(cancelled) = self.assets.remove(&id) {
+            cancelled.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 pub(crate) struct AssetServerData {
-    pending_tasks: RwLock<HashMap<AssetId, PendingLoad>>,
+    pending: RwLock<PendingLoads>,
     loaded_assets: RwLock<HashSet<AssetId>>,
     handle_provider: AssetHandleProvider,
     asset_load_event_sender: Sender<AssetLoadEvent>,
@@ -140,7 +236,7 @@ impl AssetServer {
     pub fn with_content_root(root: ContentAssetRoot) -> Self {
         let (asset_load_event_sender, asset_load_event_receiver) = crossbeam_channel::unbounded();
         let server_data = AssetServerData {
-            pending_tasks: RwLock::new(HashMap::new()),
+            pending: RwLock::default(),
             loaded_assets: RwLock::new(HashSet::new()),
             handle_provider: AssetHandleProvider::new(),
             asset_load_event_sender,
@@ -190,13 +286,13 @@ impl AssetServer {
         // `load` takes these locks in the same order. Holding the pending lock
         // closes the gap where a request could otherwise attach to the old
         // snapshot while it is being replaced.
-        let mut pending = self.data.pending_tasks.write().unwrap();
+        let mut pending = self.data.pending.write().unwrap();
         {
             let mut content = self.data.content.write().unwrap();
             content.root = root;
             content.registry = Arc::new(registry);
         };
-        pending.clear();
+        pending.cancel();
     }
 
     /// Replaces the registry subsequent loads resolve through, keeping the root and pending loads.
@@ -211,32 +307,29 @@ impl AssetServer {
 
     /// Whether an asset requested with `load` or `add` has yet to reach the world; a failed load counts until its failure is handled.
     pub fn is_loading(&self) -> bool {
-        !self.data.pending_tasks.read().unwrap().is_empty()
+        !self.data.pending.read().unwrap().assets.is_empty()
             || !self.data.asset_load_event_receiver.is_empty()
     }
 
     /// Whether the asset `id` is in the world or on its way there; false for an id never loaded or added, and once its load fails or is cancelled or it unloads.
     pub fn is_loading_or_loaded(&self, id: AssetId) -> bool {
-        self.data.pending_tasks.read().unwrap().contains_key(&id)
+        self.data.pending.read().unwrap().assets.contains_key(&id)
             || self.data.loaded_assets.read().unwrap().contains(&id)
     }
 
     /// Cancels the loads pending at the call; none of them delivers its asset afterwards.
     pub fn cancel_pending(&self) {
-        let mut pending = self.data.pending_tasks.write().unwrap();
-        for load in pending.values() {
-            load.cancelled.store(true, Ordering::SeqCst);
-        }
+        let mut pending = self.data.pending.write().unwrap();
         let kept: Vec<_> = self
             .data
             .asset_load_event_receiver
             .try_iter()
-            .filter(|event| !pending.contains_key(&event.id()))
+            .filter(|event| !pending.assets.contains_key(&event.id()))
             .collect();
         for event in kept {
             let _ = self.data.asset_load_event_sender.send(event);
         }
-        pending.clear();
+        pending.cancel();
     }
 
     pub fn register_asset<A: Asset>(&mut self, asset: &AssetStore<A>) {
@@ -287,7 +380,11 @@ impl AssetServer {
         for entry in entries {
             let hook = hooks[entry.kind.as_str()];
             let written = self.cook_entry(&root, entry, hook, out).with_context(|| {
-                format!("failed to cook the {} at '{}'", entry.kind, entry.address)
+                format!(
+                    "failed to cook the {} at '{}'",
+                    entry.kind,
+                    entry.location()
+                )
             })?;
             if written {
                 report.cooked.push(entry.address.clone());
@@ -306,6 +403,16 @@ impl AssetServer {
     ) -> anyhow::Result<bool> {
         let file = pollster::block_on(try_read_relative(root, &entry.address))?
             .with_context(|| format!("no content asset at '{}'", entry.address))?;
+        if let Some(embedded) = &entry.embedded_in {
+            let record = asset_record(&file, Some(&embedded.name))?;
+            if record_is_derived(&entry.kind, &record)? {
+                anyhow::bail!(
+                    "{} is embedded in an import's file; embedded assets cannot be cooked yet",
+                    entry.location()
+                );
+            }
+            return Ok(false);
+        }
         let Some(cooked) = pollster::block_on(hook(entry.id, file, self.clone()))? else {
             return Ok(false);
         };
@@ -377,10 +484,7 @@ impl AssetServer {
     pub fn insert_loaded<A: LoadableAsset>(&self, id: AssetId, mut asset: A) -> AssetHandle<A> {
         let handle = self.data.handle_provider.request_handle(id);
         let was_loaded = {
-            let mut pending = self.data.pending_tasks.write().unwrap();
-            if let Some(load) = pending.remove(&id) {
-                load.cancelled.store(true, Ordering::SeqCst);
-            }
+            self.data.pending.write().unwrap().cancel_asset(id);
             !self.data.loaded_assets.write().unwrap().insert(id)
         };
         let context = AssetLoadContext::new(self.clone(), id);
@@ -405,41 +509,79 @@ impl AssetServer {
     }
 
     /// Loads a stored asset using its persistent UUID, obtained from `asset_id!`
-    /// or a serialized asset reference. Repeated requests share handles and loads.
+    /// or a serialized asset reference. Repeated requests share handles and loads,
+    /// and the assets requested from one file share one read of it.
     pub fn load<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
-        // Hold this lock through task insertion so concurrent requests cannot
-        // spawn duplicate loads for the same persistent UUID.
-        let mut pending = self.data.pending_tasks.write().unwrap();
-        if !pending.contains_key(&id) && !self.data.loaded_assets.read().unwrap().contains(&id) {
-            self.start_load::<A>(id, &mut pending);
+        let handle = self.data.handle_provider.request_handle(id);
+        let mut pending = self.data.pending.write().unwrap();
+        if pending.assets.contains_key(&id) || self.data.loaded_assets.read().unwrap().contains(&id)
+        {
+            return handle;
         }
-        self.data.handle_provider.request_handle(id)
+        self.start_load::<A>(id, &mut pending);
+        handle
     }
 
     /// Reads the asset `id` from its file again, though it is loaded or was inserted, and replaces it once the read lands; a read that fails leaves what was there.
     pub fn reload<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
-        let mut pending = self.data.pending_tasks.write().unwrap();
-        if let Some(load) = pending.remove(&id) {
-            load.cancelled.store(true, Ordering::SeqCst);
-        }
+        let handle = self.data.handle_provider.request_handle(id);
+        let mut pending = self.data.pending.write().unwrap();
+        pending.cancel_asset(id);
         self.start_load::<A>(id, &mut pending);
-        self.data.handle_provider.request_handle(id)
+        handle
     }
 
-    fn start_load<A: LoadableAsset + 'static>(
-        &self,
-        id: AssetId,
-        pending: &mut HashMap<AssetId, PendingLoad>,
-    ) {
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let task = self.request_load::<A>(id, Arc::clone(&cancelled));
-        pending.insert(
-            id,
-            PendingLoad {
-                _task: task,
-                cancelled,
-            },
-        );
+    fn start_load<A: LoadableAsset + 'static>(&self, id: AssetId, pending: &mut PendingLoads) {
+        let request_cancelled = Arc::new(AtomicBool::new(false));
+        pending.assets.insert(id, Arc::clone(&request_cancelled));
+        let (root, registry) = self.content_source();
+        let Some(entry) = registry.get(id).cloned() else {
+            log::error!(
+                "no content asset registered for AssetId {id:?} (type {})",
+                std::any::type_name::<A>()
+            );
+            self.fail(id);
+            return;
+        };
+        if !entry.is::<A>() {
+            log::error!(
+                "content asset '{}' holds a {} but a {} was requested",
+                entry.location(),
+                entry.kind,
+                A::name()
+            );
+            self.fail(id);
+            return;
+        }
+        let file = entry.file();
+        let address = entry.address.clone();
+        let request = LoadRequest {
+            entry,
+            load: load_record::<A>,
+            cancelled: request_cancelled,
+        };
+        match pending.files.get_mut(&file) {
+            Some(load) => load.requests.push(request),
+            None => {
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let task = self.load_file(file, root, address, Arc::clone(&cancelled));
+                pending.files.insert(
+                    file,
+                    FileLoad {
+                        _task: task,
+                        cancelled,
+                        requests: vec![request],
+                    },
+                );
+            }
+        }
+    }
+
+    fn fail(&self, id: AssetId) {
+        let _ = self
+            .data
+            .asset_load_event_sender
+            .send(AssetLoadEvent::LoadFailed { id });
     }
 
     pub(crate) fn process_handle_drop(&mut self, id: &AssetId) -> bool {
@@ -455,97 +597,115 @@ impl AssetServer {
         (content.root.clone(), Arc::clone(&content.registry))
     }
 
-    fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, AssetEntry)> {
-        let content = self.data.content.read().unwrap();
-        let entry = content.registry.get(id)?.clone();
-        Some((content.root.clone(), entry))
+    fn take_requests(&self, file: AssetId, cancelled: &AtomicBool) -> Option<Vec<LoadRequest>> {
+        let mut pending = self.data.pending.write().unwrap();
+        if cancelled.load(Ordering::SeqCst) {
+            return None;
+        }
+        let PendingLoads { files, assets } = &mut *pending;
+        let mut requests = std::mem::take(&mut files.get_mut(&file)?.requests);
+        if requests.is_empty() {
+            files.remove(&file);
+            return None;
+        }
+        requests.retain(|request| {
+            if request.cancelled.load(Ordering::SeqCst) {
+                return false;
+            }
+            let id = request.entry.id;
+            let wanted = self.data.handle_provider.has_live_handle(&id);
+            if !wanted {
+                assets.remove(&id);
+            }
+            wanted
+        });
+        Some(requests)
     }
 
-    /// Resolves the UUID through the registry before reading the cooked asset.
-    /// A registry miss fails the load without attempting file I/O.
-    fn request_load<A: LoadableAsset>(&self, id: AssetId, cancelled: Arc<AtomicBool>) -> Task<()> {
-        let data = Arc::clone(&self.data);
-        let deliver = move |event| {
-            let _pending = data.pending_tasks.read().unwrap();
-            if !cancelled.load(Ordering::SeqCst) {
-                let _ = data.asset_load_event_sender.send(event);
-            }
-        };
+    fn deliver(&self, cancelled: &AtomicBool, request: &AtomicBool, event: AssetLoadEvent) {
+        let _pending = self.data.pending.read().unwrap();
+        if !cancelled.load(Ordering::SeqCst) && !request.load(Ordering::SeqCst) {
+            let _ = self.data.asset_load_event_sender.send(event);
+        }
+    }
 
+    fn load_file(
+        &self,
+        file: AssetId,
+        root: ContentAssetRoot,
+        address: String,
+        cancelled: Arc<AtomicBool>,
+    ) -> Task<()> {
         let server = self.clone();
         // No profiling scope around the async body: a scope guard must not be
         // held across .await (tasks can migrate between worker threads).
         // Load costs show up on the named "asset-load-N" threads instead.
         LoadTaskPool::get_or_init(|| TaskPool::with_name("asset-load")).spawn(async move {
-            let (content_root, entry) = match server.resolve_asset(id) {
-                Some(resolved) => resolved,
-                None => {
-                    log::error!(
-                        "no content asset registered for AssetId {id:?} (type {})",
-                        std::any::type_name::<A>()
-                    );
-                    deliver(AssetLoadEvent::LoadFailed { id });
-                    return;
-                }
+            let bytes = match try_read_relative(&root, &address).await {
+                Ok(Some(bytes)) => Ok(bytes),
+                Ok(None) => Err(format!("no content asset at '{address}'")),
+                Err(error) => Err(format!("{error:#}")),
             };
-            if !entry.is::<A>() {
-                log::error!(
-                    "content asset '{}' holds a {} but a {} was requested",
-                    entry.address,
-                    entry.kind,
-                    A::name()
-                );
-                deliver(AssetLoadEvent::LoadFailed { id });
-                return;
-            }
-            let address = entry.address;
-            let hook = server
-                .data
-                .derived_hooks
-                .read()
-                .unwrap()
-                .get(&TypeId::of::<A>())
-                .copied();
-            let asset = async {
-                let loaded =
-                    crate::assets::utils::load_content_asset_parts::<A>(&content_root, &address)
-                        .await
-                        .with_context(|| format!("failed to read {} asset", A::name()))?;
-                let mut asset = loaded.asset;
-                let context = AssetLoadContext::new(server.clone(), id);
-                asset.on_load(&context)?;
-                match hook {
-                    Some(hook) => {
-                        asset = *hook(Box::new(asset), loaded.cooked, server)
-                            .await?
-                            .downcast::<A>()
-                            .map_err(|_| {
-                                anyhow::anyhow!("the derived hook returned another type")
-                            })?;
+            let content = bytes.as_ref().map_err(String::clone).and_then(|bytes| {
+                ContentFile::parse(bytes)
+                    .map_err(|error| format!("malformed content asset '{address}': {error:#}"))
+            });
+            let embedded: HashMap<AssetId, &EmbeddedAsset> = content
+                .iter()
+                .flat_map(|content| &content.header().embedded)
+                .map(|asset| (asset.asset_id, asset))
+                .collect();
+            while let Some(requests) = server.take_requests(file, &cancelled) {
+                for LoadRequest {
+                    entry,
+                    load,
+                    cancelled: request_cancelled,
+                } in requests
+                {
+                    if cancelled.load(Ordering::SeqCst) {
+                        return;
                     }
-                    None if loaded.cooked.is_some() => log::warn!(
-                        "ignoring the derived section of '{address}': {} is not a derived asset",
-                        A::name()
-                    ),
-                    None => {}
-                }
-                anyhow::Ok(asset)
-            }
-            .await;
-            match asset {
-                Ok(asset) => {
-                    deliver(AssetLoadEvent::Loaded {
-                        asset: LoadedAsset::new(id, asset),
-                    });
-                }
-                Err(error) => {
-                    log::error!(
-                        "Failed to load asset '{}' (type {}): {:#}",
-                        address,
-                        std::any::type_name::<A>(),
-                        error
-                    );
-                    deliver(AssetLoadEvent::LoadFailed { id });
+                    let id = entry.id;
+                    let location = entry.location();
+                    let loaded = async {
+                        let content = content
+                            .as_ref()
+                            .map_err(|message| anyhow::anyhow!("{message}"))?;
+                        let record = match &entry.embedded_in {
+                            None => content.host(),
+                            Some(held) => embedded
+                                .get(&id)
+                                .with_context(|| {
+                                    format!(
+                                        "it holds no embedded asset '{}' with this id",
+                                        held.name
+                                    )
+                                })
+                                .and_then(|asset| content.embedded(asset)),
+                        }
+                        .with_context(|| format!("malformed content asset '{location}'"))?;
+                        load(RecordLoad {
+                            id,
+                            location: &location,
+                            record,
+                            server: server.clone(),
+                        })
+                        .await
+                    }
+                    .await;
+                    let event = match loaded {
+                        Ok(asset) => AssetLoadEvent::Loaded { asset },
+                        Err(error) => {
+                            log::error!(
+                                "Failed to load asset '{}' (type {}): {:#}",
+                                location,
+                                entry.kind,
+                                error
+                            );
+                            AssetLoadEvent::LoadFailed { id }
+                        }
+                    };
+                    server.deliver(&cancelled, &request_cancelled, event);
                 }
             }
         })
@@ -579,20 +739,21 @@ pub fn handle_asset_load_events(world: &mut world::World) {
             } => {
                 server
                     .data
-                    .pending_tasks
-                    .write()
-                    .unwrap()
-                    .remove(&loaded_asset.id);
-                server
-                    .data
                     .loaded_assets
                     .write()
                     .unwrap()
                     .insert(loaded_asset.id);
+                server
+                    .data
+                    .pending
+                    .write()
+                    .unwrap()
+                    .assets
+                    .remove(&loaded_asset.id);
                 loaded_asset.value.insert(loaded_asset.id, world);
             }
             AssetLoadEvent::LoadFailed { id } => {
-                server.data.pending_tasks.write().unwrap().remove(&id);
+                server.data.pending.write().unwrap().assets.remove(&id);
                 server.data.loaded_assets.write().unwrap().remove(&id);
                 if let Some(failed) = world.get_resource_mut::<EventChannel<AssetLoadFailed>>() {
                     failed.push_event(AssetLoadFailed { id });
@@ -728,24 +889,13 @@ mod tests {
 
     fn scene_entry(id: AssetId) -> AssetEntry {
         AssetEntry {
+            embedded_in: None,
             id,
             address: "content/hero/scene.gasset".into(),
             kind: "Scene".into(),
             kind_version: None,
             provenance: None,
         }
-    }
-
-    fn drive_pending_load(server: &AssetServer, id: AssetId) {
-        let task = server
-            .data
-            .pending_tasks
-            .write()
-            .unwrap()
-            .remove(&id)
-            .expect("load spawns a task for an id that isn't loaded yet")
-            ._task;
-        pollster::block_on(task);
     }
 
     struct Fixture {
@@ -821,7 +971,7 @@ mod tests {
         let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
 
         let handle = fixture.server.load::<FixtureAsset>(saved.id);
-        drive_pending_load(&fixture.server, saved.id);
+        wait_for_the_load(&fixture.server);
         handle_asset_load_events(&mut fixture.world);
 
         assert_eq!(fixture.value(&handle), Some(7));
@@ -986,8 +1136,7 @@ mod tests {
             },
             AssetHandle::Weak(..) => panic!("load returns strong handles"),
         }
-        assert_eq!(fixture.server.data.pending_tasks.read().unwrap().len(), 1);
-        drive_pending_load(&fixture.server, id);
+        wait_for_the_load(&fixture.server);
         handle_asset_load_events(&mut fixture.world);
         let third = fixture.server.load::<FixtureAsset>(id);
         assert_eq!(third.id(), id);
@@ -1034,14 +1183,14 @@ mod tests {
         let serialized = {
             let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry.clone());
             let handle = fixture.server.load::<FixtureAsset>(saved.id);
-            drive_pending_load(&fixture.server, handle.id());
+            wait_for_the_load(&fixture.server);
             handle_asset_load_events(&mut fixture.world);
             bincode::serialize(&handle).unwrap()
         };
         let weak: AssetHandle<FixtureAsset> = bincode::deserialize(&serialized).unwrap();
         let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
         let handle = fixture.server.load::<FixtureAsset>(weak.id());
-        drive_pending_load(&fixture.server, handle.id());
+        wait_for_the_load(&fixture.server);
         handle_asset_load_events(&mut fixture.world);
         assert_eq!(fixture.value(&handle), Some(99));
         std::fs::remove_dir_all(dir).unwrap();
@@ -1310,7 +1459,7 @@ mod tests {
             let mut fixture = Fixture::new::<ProbeAsset>(&dir, saved.registry.clone());
             (case.share)(&fixture.server);
             let handle = fixture.server.load::<ProbeAsset>(saved.id);
-            drive_pending_load(&fixture.server, saved.id);
+            wait_for_the_load(&fixture.server);
             handle_asset_load_events(&mut fixture.world);
             let store = fixture
                 .world
@@ -1365,7 +1514,7 @@ mod tests {
         let mut fixture = Fixture::new::<GatedAsset>(&dir, saved.registry);
         let handle = fixture.server.load::<GatedAsset>(saved.id);
         let running =
-            Arc::clone(&fixture.server.data.pending_tasks.read().unwrap()[&saved.id].cancelled);
+            Arc::clone(&fixture.server.data.pending.read().unwrap().files[&saved.id].cancelled);
         gate(&ENTERED)
             .receiver
             .recv_timeout(std::time::Duration::from_secs(10))
@@ -1400,7 +1549,7 @@ mod tests {
         fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
             let server = context.asset_server();
             let _own = server.load::<SelfLoadingAsset>(context.asset_id());
-            self.spawned_a_load = !server.data.pending_tasks.read().unwrap().is_empty();
+            self.spawned_a_load = !server.data.pending.read().unwrap().files.is_empty();
             Ok(())
         }
     }

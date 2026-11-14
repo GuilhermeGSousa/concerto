@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::assets::content::{decode_content_asset, resave_content_asset};
+use concerto_foundation::assets::content::{
+    decode_content_asset, read_asset_record, resave_content_asset,
+};
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_import::config::ContentConfig;
 use concerto_import::import_source_into;
@@ -57,16 +59,22 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
     let project = tempfile::tempdir().unwrap();
     let first = import(&source(scratch.path()), project.path()).expect("import succeeds");
 
-    for name in ["skeleton_0", "animation_walk", "scene"] {
-        let address = format!("content/walk/{name}.gasset");
-        assert!(
-            first.assets.iter().any(|asset| asset.address == address),
-            "expected {address} among {:?}",
-            first.assets
-        );
-        assert!(project.path().join(&address).exists(), "{address} on disk");
-    }
-    assert_eq!(first.assets.len(), 3);
+    let mut locations: Vec<String> = first.assets.iter().map(|asset| asset.location()).collect();
+    locations.sort();
+    assert_eq!(
+        locations,
+        [
+            "content/walk/animation_walk.gasset",
+            "content/walk/scene.gasset",
+            "content/walk/scene.gasset#skeleton/0",
+        ]
+    );
+    let mut files: Vec<_> = std::fs::read_dir(project.path().join("content/walk"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    files.sort();
+    assert_eq!(files, ["animation_walk.gasset", "scene.gasset"]);
     let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
     let mut metadata = SourceMetadata::load(&sidecar).expect("sidecar written");
     assert_eq!(metadata.importer, "bvh");
@@ -74,9 +82,13 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
         assert!(metadata.outputs.contains_key(key), "{key} in sidecar");
     }
 
-    let skeleton = "content/walk/skeleton_0.gasset";
+    let skeleton = first
+        .assets
+        .iter()
+        .find(|asset| asset.embedded_in.is_some())
+        .unwrap();
     let clip = "content/walk/animation_walk.gasset";
-    let skeleton_before = read(project.path(), skeleton);
+    let skeleton_before = read_asset_record(project.path(), skeleton).unwrap();
     let clip_before = read(project.path(), clip);
     metadata
         .settings
@@ -84,13 +96,16 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
     std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
 
     let second = import(&source(scratch.path()), project.path()).expect("re-import");
-    assert_ne!(read(project.path(), skeleton), skeleton_before);
+    assert_ne!(
+        read_asset_record(project.path(), skeleton).unwrap(),
+        skeleton_before
+    );
     assert_ne!(read(project.path(), clip), clip_before);
     let ids = |imported: &concerto_import::ImportedSource| {
         imported
             .assets
             .iter()
-            .map(|asset| (asset.address.clone(), asset.id))
+            .map(|asset| (asset.location(), asset.id))
             .collect::<BTreeMap<_, _>>()
     };
     assert_eq!(

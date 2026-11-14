@@ -102,6 +102,7 @@ struct Copy {
     destination: &'static str,
     siblings: &'static [&'static str],
     files: &'static [&'static str],
+    content: &'static str,
     sub_asset: &'static str,
 }
 
@@ -117,6 +118,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
                 "assets/models/tri.gltf.import.toml",
                 "assets/models/triangle_ext.bin",
             ],
+            content: "content/models/tri/scene.gasset",
             sub_asset: "mesh/0",
         },
         Copy {
@@ -128,6 +130,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
                 "assets/square.obj",
                 "assets/square.obj.import.toml",
             ],
+            content: "content/square/scene.gasset",
             sub_asset: "material/square",
         },
         Copy {
@@ -139,6 +142,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
                 "assets/models/tri.gltf.import.toml",
                 "assets/triangle_ext.bin",
             ],
+            content: "content/models/tri/scene.gasset",
             sub_asset: "mesh/0",
         },
         Copy {
@@ -146,6 +150,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
             destination: "tri.gltf",
             siblings: &["triangle_ext.bin"],
             files: &["tri.gltf", "tri.gltf.import.toml", "triangle_ext.bin"],
+            content: "content/tri/scene.gasset",
             sub_asset: "mesh/0",
         },
         Copy {
@@ -157,6 +162,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
                 "assets/triangle_ext.gltf",
                 "assets/triangle_ext.gltf.import.toml",
             ],
+            content: "content/triangle_ext/scene.gasset",
             sub_asset: "mesh/0",
         },
     ];
@@ -183,8 +189,14 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
             case.destination,
             imported.assets
         );
+        assert_eq!(
+            files_under(&project.path().join("content")),
+            [case.content.trim_start_matches("content/")],
+            "{}",
+            case.destination
+        );
         for asset in &imported.assets {
-            assert!(project.path().join(&asset.address).is_file());
+            assert_eq!(asset.address, case.content, "{}", case.destination);
         }
     }
 }

@@ -61,8 +61,11 @@ it to an AI agent (below).
   renames (F2) and deletes entities; the viewport selects by clicking and
   moves with the gizmo; the inspector, titled **Looking Glass**, adds and
   edits components.
-- **Save** with Ctrl+S. The saved scene belongs to the editor from then on:
-  re-importing its source leaves it alone.
+- **Save** with Ctrl+S. A scene an import made belongs to its source and is
+  read-only: a save of it is refused. To build on it, make a scene of your own
+  and place the import's scene in it. That copies its nodes, which keep
+  pointing at the import's meshes and materials, so a re-import updates how
+  they look but not which nodes your scene has.
 - **Play** with the button on the Scene tab, or Ctrl+P. The game is built from
   your recipe and starts in the open scene. Stop returns to the scene exactly
   as it was; changes made while playing are not kept.

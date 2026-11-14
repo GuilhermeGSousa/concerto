@@ -287,7 +287,7 @@ fn sync_tabs(
                 document
                     .current
                     .as_ref()
-                    .map(|asset| asset.name().to_owned())
+                    .map(|asset| asset.name().into_owned())
             })
             .unwrap_or_else(|| {
                 if document.status.is_empty() {

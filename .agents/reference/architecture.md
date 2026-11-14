@@ -109,12 +109,19 @@ reads whether the last frame prepared or deferred any render asset under the
 Source files (`.glb`, `.gltf`, `.obj`, `.bvh`, images) are imported once, ahead of
 time. The running game never reads them.
 
-- The editor's Import… writes one `.gasset` per sub-asset under
-  `content/<stem>/` and writes `<source>.import.toml` beside the source to pin
-  each sub-asset's UUID. It returns an `AssetEntry` for each output, and the
+- The editor's Import… writes a source's outputs under `content/<stem>/`: a
+  `scene.gasset` that holds the scene with its meshes, materials and skeletons
+  embedded, each an asset with its own UUID, and one `.gasset` for each
+  texture, clip and other output. A source with no scene writes one file per
+  output. It writes `<source>.import.toml` beside the source to pin each
+  sub-asset's UUID. Only an import, or `pack-imports`, which converts a
+  project's older one-file-per-output imports in place, writes a file with
+  embedded assets; a save over one is refused, so an import's scene is
+  read-only. It returns an `AssetEntry` for each output, and the
   editor adds them to its registry. There is no import command line.
-- Code names an asset with `asset_id!("content/hero/mesh_0.gasset")`, resolved
-  at compile time. The runtime finds files by UUID through the registry.
+- Code names an asset with `asset_id!("content/hero/scene.gasset")`, or an
+  embedded one with `asset_id!("content/hero/scene.gasset#mesh/0")`, resolved
+  at compile time. The runtime finds assets by UUID through the registry.
 - No registry file exists, committed or at runtime. A game's `build.rs` calls
   `concerto_asset_build::track_assets`, which scans `content/` and writes the
   registry to `OUT_DIR` and records the package directory as
@@ -122,10 +129,17 @@ time. The running game never reads them.
   `concerto::run` installs the registry and, natively, keeps derived data under
   that root's `derived-cache/`. A `.gasset` moved or added in a file explorer
   or by git is picked up at the next build.
-- `AssetRegistry` is the one catalogue of content on disk: id, address, kind.
+- `AssetRegistry` is the one catalogue of content on disk: id, address, kind,
+  and for an embedded asset the id of its host and its name inside the host's
+  file. A file is identified by the id of its host (a loose asset is its own),
+  never by its address: `AssetEntry::file()` gives it.
   It is a resource; `registry.of_type::<T>()` lists assets without loading
   them. `AssetServer` resolves loads against a snapshot of it, refreshed by
-  `sync_asset_registry` in `First` when the resource changes. The editor builds
+  `sync_asset_registry` in `First` when the resource changes. It loads by
+  file: one task per file reads it once and decodes the assets requested from
+  it, so a scene's embedded meshes and materials come from one read of the
+  scene's file, and the task ends when no request is left. Removing a host
+  from the registry removes the entries embedded in its file. The editor builds
   it by scanning headers once, when a project opens. An import inserts its
   entries, a New in the Asset Browser inserts the created asset's, and a scene
   save upserts the scene's, all in memory, with no rescan.

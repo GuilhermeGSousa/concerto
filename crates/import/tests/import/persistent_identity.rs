@@ -3,23 +3,25 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, save_content_asset_into, write_content_asset,
-    ContentAssetHeader, ImportProvenance,
+    asset_record, read_asset_record, read_content_asset, read_content_asset_header,
+    save_content_asset_into, write_content_asset, ContentAssetHeader, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
+use concerto_import::config::content_address;
+use concerto_import::metadata::SourceMetadata;
 use concerto_scene::scene::Scene;
 
-struct Project(PathBuf);
+pub(crate) struct Project(pub(crate) PathBuf);
 
 impl Project {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let root = std::env::temp_dir().join(format!("import-identity-{:?}", AssetId::new()));
         std::fs::create_dir_all(&root).unwrap();
         Self(root)
     }
 
-    fn path(&self, relative: &str) -> PathBuf {
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.0.join(relative)
     }
 
@@ -34,14 +36,14 @@ impl Project {
         source
     }
 
-    fn import(&self, source: &Path) -> Vec<AssetEntry> {
+    pub(crate) fn import(&self, source: &Path) -> Vec<AssetEntry> {
         concerto_import::import_source(source, &self.0, &Default::default())
             .expect("import succeeds")
     }
 
     /// Compare the complete project so failures cannot hide a modified sidecar,
     /// registry, partially rewritten output, or abandoned staging file.
-    fn snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
+    pub(crate) fn snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
         fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -90,10 +92,65 @@ fn sub_asset_of(entry: &AssetEntry) -> &str {
         .sub_asset
 }
 
-fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
+pub(crate) fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
     let mut entries: Vec<_> = registry.iter().cloned().collect();
-    entries.sort_by(|a, b| a.address.cmp(&b.address));
+    entries.sort_by_key(|entry| entry.location());
     entries
+}
+
+pub(crate) fn loose_address(source: &str, entry: &AssetEntry) -> String {
+    content_address(&Default::default(), Path::new(source), sub_asset_of(entry))
+}
+
+pub(crate) fn unpack_into_the_old_layout(project: &Project, source: &str, assets: &[AssetEntry]) {
+    for entry in assets.iter().filter(|a| a.embedded_in.is_some()) {
+        std::fs::write(
+            project.path(&loose_address(source, entry)),
+            read_asset_record(&project.0, entry).unwrap(),
+        )
+        .unwrap();
+    }
+    let host = project.path(output(assets, "scene"));
+    let file = std::fs::read(&host).unwrap();
+    std::fs::write(&host, asset_record(&file, None).unwrap()).unwrap();
+}
+
+fn save_from_the_editor(path: &Path) {
+    let file = std::fs::read(path).unwrap();
+    let (mut header, payload) = read_content_asset(&file).unwrap();
+    header.provenance = None;
+    header.embedded.clear();
+    std::fs::write(path, write_content_asset(&header, payload).unwrap()).unwrap();
+}
+
+fn set_file(source: &Path, output: &str) {
+    let mut metadata = SourceMetadata::load(&sidecar(source)).unwrap();
+    metadata.outputs.get_mut(output).unwrap().file = true;
+    std::fs::write(sidecar(source), toml::to_string_pretty(&metadata).unwrap()).unwrap();
+}
+
+#[test]
+fn a_reimport_from_the_old_layout_keeps_every_id() {
+    let project = Project::new();
+    let source = project.source("assets/triangle.gltf");
+    let first = project.import(&source);
+    unpack_into_the_old_layout(&project, "assets/triangle.gltf", &first);
+    let mesh = first.iter().find(|a| sub_asset_of(a) == "mesh/0").unwrap();
+    let loose = project.path(&loose_address("assets/triangle.gltf", mesh));
+    let scanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
+    assert!(loose.is_file());
+    assert!(scanned.iter().all(|entry| entry.embedded_in.is_none()));
+
+    let second = project.import(&source);
+
+    assert_eq!(second, first);
+    assert!(!loose.exists(), "the loose mesh is now in the scene file");
+    let rescanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
+    assert_eq!(sorted(&rescanned), {
+        let mut entries = first.clone();
+        entries.sort_by_key(|entry| entry.location());
+        entries
+    });
 }
 
 fn rename_node(source: &Path, name: &str) {
@@ -142,56 +199,42 @@ fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
     let project = Project::new();
     let source = project.source("assets/triangle.gltf");
     let first = project.import(&source);
-    let scene_address = output(&first, "scene").to_owned();
-    let scene_path = project.path(&scene_address);
-    let raw = std::fs::read(&scene_path).unwrap();
-    let (imported, payload) = read_content_asset(&raw).unwrap();
-    let mut scene: Scene = bincode::deserialize(payload).unwrap();
-    scene.nodes[0].name = "Edited in the editor".into();
-    save_content_asset_into(
-        &scene,
-        &project.0,
-        &scene_address,
-        &mut AssetRegistry::new(),
-    )
-    .unwrap();
-    let saved = std::fs::read(&scene_path).unwrap();
-    let other = first
-        .iter()
-        .find(|asset| sub_asset_of(asset) != "scene")
-        .unwrap();
-    let other_path = project.path(&other.address);
-    let fresh = std::fs::read(&other_path).unwrap();
-    let (header, _) = read_content_asset(&fresh).unwrap();
-    std::fs::write(&other_path, write_content_asset(&header, b"stale").unwrap()).unwrap();
+    unpack_into_the_old_layout(&project, "assets/triangle.gltf", &first);
+    let mesh = first.iter().find(|a| sub_asset_of(a) == "mesh/0").unwrap();
+    let mesh_address = loose_address("assets/triangle.gltf", mesh);
+    let mesh_path = project.path(&mesh_address);
+    save_from_the_editor(&mesh_path);
+    let saved = std::fs::read(&mesh_path).unwrap();
+    let scene_path = project.path(output(&first, "scene"));
     rename_node(&source, "Changed in the source");
     let mut registry = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
 
     let second = project.import(&source);
 
-    assert_eq!(std::fs::read(&scene_path).unwrap(), saved);
-    assert_eq!(std::fs::read(&other_path).unwrap(), fresh);
+    assert_eq!(std::fs::read(&mesh_path).unwrap(), saved);
     assert_eq!(second.len(), first.len() - 1);
-    assert!(second.iter().all(|asset| asset.id != imported.asset_id));
-    assert!(second.iter().all(|asset| sub_asset_of(asset) != "scene"));
+    assert!(second.iter().all(|asset| asset.id != mesh.id));
+    assert!(second.iter().all(|asset| sub_asset_of(asset) != "mesh/0"));
+    let raw = std::fs::read(&scene_path).unwrap();
+    let (header, payload) = read_content_asset(&raw).unwrap();
+    assert!(header
+        .embedded
+        .iter()
+        .all(|asset| asset.asset_id != mesh.id));
+    assert_eq!(
+        bincode::deserialize::<Scene>(payload).unwrap().nodes[0].name,
+        "Changed in the source"
+    );
     for entry in &second {
         registry.insert(entry.clone());
     }
     let rescanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
     assert_eq!(sorted(&registry), sorted(&rescanned));
-    assert_eq!(
-        rescanned
-            .get(imported.asset_id)
-            .map(|entry| (entry.address.as_str(), entry.provenance.is_none())),
-        Some((scene_address.as_str(), true))
-    );
-    let metadata: toml::Value =
-        toml::from_str(&std::fs::read_to_string(sidecar(&source)).unwrap()).unwrap();
-    assert_eq!(
-        AssetId::from_simple_hex(metadata["outputs"]["scene"]["asset_id"].as_str().unwrap())
-            .unwrap(),
-        imported.asset_id
-    );
+    let kept = rescanned.get(mesh.id).unwrap();
+    assert_eq!(kept.location(), mesh_address);
+    assert!(kept.provenance.is_none());
+    let metadata = SourceMetadata::load(&sidecar(&source)).unwrap();
+    assert_eq!(metadata.outputs["mesh/0"].asset_id, mesh.id);
 }
 
 #[test]
@@ -199,17 +242,7 @@ fn moving_a_source_with_its_sidecar_preserves_existing_outputs() {
     let project = Project::new();
     let source = project.source("assets/characters/hero.gltf");
     let first = project.import(&source);
-    let ids: Vec<_> = first
-        .iter()
-        .map(|a| {
-            (
-                a.address.clone(),
-                read_content_asset_header(&project.path(&a.address))
-                    .unwrap()
-                    .asset_id,
-            )
-        })
-        .collect();
+    let ids: BTreeMap<String, AssetId> = first.iter().map(|a| (a.location(), a.id)).collect();
     let metadata = std::fs::read(sidecar(&source)).unwrap();
     let moved = project.path("assets/enemies/renamed.gltf");
     std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
@@ -231,13 +264,9 @@ fn moving_a_source_with_its_sidecar_preserves_existing_outputs() {
         "output addresses and importer keys survive source moves"
     );
     assert_eq!(std::fs::read(sidecar(&moved)).unwrap(), metadata);
-    for (address, id) in ids {
-        assert_eq!(
-            read_content_asset_header(&project.path(&address))
-                .unwrap()
-                .asset_id,
-            id
-        );
+    let rescanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
+    for (location, id) in ids {
+        assert_eq!(rescanned.id_for_location(&location), Some(id), "{location}");
     }
     let raw = std::fs::read(project.path(output(&second, "scene"))).unwrap();
     let (header, payload) = read_content_asset(&raw).unwrap();
@@ -271,14 +300,7 @@ fn same_stem_sources_in_different_directories_have_independent_outputs() {
             .find(|a| sub_asset_of(a) == sub_asset_of(asset))
             .unwrap();
         assert!(counterpart.address.starts_with("content/enemies/hero/"));
-        assert_ne!(
-            read_content_asset_header(&project.path(&asset.address))
-                .unwrap()
-                .asset_id,
-            read_content_asset_header(&project.path(&counterpart.address))
-                .unwrap()
-                .asset_id,
-        );
+        assert_ne!(asset.id, counterpart.id);
     }
     assert_eq!(
         AssetRegistry::from_content_tree(&project.0, "content", "gasset")
@@ -301,6 +323,7 @@ fn write_scene_header(path: &Path, id: AssetId, source: &str) {
             sub_asset: "scene".into(),
         }),
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::write(
         path,
@@ -349,6 +372,30 @@ fn invalid_setting(project: &Project) -> PathBuf {
     source
 }
 
+fn saved_scene_holding_the_scene_id(project: &Project) -> PathBuf {
+    let source = project.source("assets/triangle.gltf");
+    let first = project.import(&source);
+    save_from_the_editor(&project.path(output(&first, "scene")));
+    source
+}
+
+fn file_at_an_address_another_asset_owns(project: &Project) -> PathBuf {
+    let source = project.source("assets/triangle.gltf");
+    project.import(&source);
+    save_content_asset_into(
+        &Scene {
+            nodes: Vec::new(),
+            referenced_assets: Vec::new(),
+        },
+        &project.0,
+        "content/triangle/mesh_0.gasset",
+        &mut AssetRegistry::new(),
+    )
+    .unwrap();
+    set_file(&source, "mesh/0");
+    source
+}
+
 struct Refusal {
     case: &'static str,
     setup: fn(&Project) -> PathBuf,
@@ -377,6 +424,16 @@ fn an_import_that_would_lose_an_identity_or_break_a_setting_writes_nothing() {
             case: "an invalid setting in the sidecar",
             setup: invalid_setting,
             message: "scale",
+        },
+        Refusal {
+            case: "a saved scene holding the scene id",
+            setup: saved_scene_holding_the_scene_id,
+            message: "[outputs.scene]",
+        },
+        Refusal {
+            case: "file = true whose loose address another asset owns",
+            setup: file_at_an_address_another_asset_owns,
+            message: "content/triangle/mesh_0.gasset' is owned by another asset",
         },
     ];
     for case in &cases {

@@ -11,7 +11,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     AssetId,
-    content::decode_content_asset,
+    content::{decode_content_asset, read_asset_record},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mesh::{ReflectSkeletonSource, Skeleton};
@@ -159,8 +159,8 @@ fn read_inspected(
     asset: &AssetEntry,
     record: &InspectedAsset,
 ) -> anyhow::Result<ReadAsset> {
-    let bytes = std::fs::read(root.join(&asset.address))
-        .with_context(|| format!("Cannot read {}", asset.address))?;
+    let bytes = read_asset_record(root, asset)
+        .with_context(|| format!("Cannot read {}", asset.location()))?;
     let decoded = (record.decode)(&bytes)?;
     anyhow::ensure!(
         decoded.id == asset.id,
@@ -248,9 +248,9 @@ fn save_document(
         .get(id)
         .cloned()
         .context("The saved asset was not registered")?;
-    state.loaded = std::fs::read(root.join(&saved.address))
-        .with_context(|| format!("Cannot read {} back", saved.address))?;
-    document.title = saved.name().to_owned();
+    state.loaded = read_asset_record(root, &saved)
+        .with_context(|| format!("Cannot read {} back", saved.location()))?;
+    document.title = saved.name().into_owned();
     document.current = Some(saved.clone());
     Ok(saved)
 }
@@ -339,8 +339,8 @@ fn read_bones(root: &Path, id: AssetId, assets: &AssetRegistry) -> anyhow::Resul
     let asset = assets
         .get(id)
         .context("The skeleton is not in the project")?;
-    let bytes = std::fs::read(root.join(&asset.address))
-        .with_context(|| format!("Cannot read {}", asset.address))?;
+    let bytes = read_asset_record(root, asset)
+        .with_context(|| format!("Cannot read {}", asset.location()))?;
     let (header, skeleton) = decode_content_asset::<Skeleton>(&bytes)?;
     anyhow::ensure!(
         header.asset_id == id,

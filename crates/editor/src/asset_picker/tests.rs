@@ -34,6 +34,7 @@ struct Picking {
 
 fn mesh_entry(path: &str) -> AssetEntry {
     AssetEntry {
+        embedded_in: None,
         id: AssetId::new(),
         address: format!("content/{path}.gasset"),
         kind: Mesh::name().into(),

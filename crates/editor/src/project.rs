@@ -398,6 +398,7 @@ mod tests {
                     sub_asset: name.into(),
                 }),
                 derived: None,
+                embedded: Vec::new(),
             };
             std::fs::write(
                 root.join(format!("content/{name}.gasset")),
@@ -417,6 +418,7 @@ mod tests {
             kind_version: 1,
             provenance: None,
             derived: None,
+            embedded: Vec::new(),
         };
         std::fs::write(
             root.join(address),
@@ -604,6 +606,7 @@ mod tests {
             .get_resource_mut::<AssetRegistry>()
             .unwrap()
             .insert(AssetEntry {
+                embedded_in: None,
                 id: AssetId::new(),
                 address: "content/a.gasset".into(),
                 kind: Scene::name().into(),
@@ -819,6 +822,7 @@ mod tests {
 
     fn versioned(kind: &str, kind_version: Option<u32>) -> AssetEntry {
         AssetEntry {
+            embedded_in: None,
             id: AssetId::new(),
             address: format!("content/{:?}.gasset", AssetId::new()),
             kind: kind.into(),

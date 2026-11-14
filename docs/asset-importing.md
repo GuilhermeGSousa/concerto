@@ -7,23 +7,28 @@ the Unreal/Godot model: a source artist file is an input to a build step,
 not something the shipped game reads.
 
 ```
-assets/hero.glb   ──(import)──▶   content/hero/mesh_0.gasset
-                                  content/hero/material_0.gasset
-                                  content/hero/skeleton_0.gasset
-                                  content/hero/scene.gasset
+assets/hero.glb   ──(import)──▶   content/hero/scene.gasset
+                                    the scene, with the meshes, materials
+                                    and skeletons embedded in it
+                                  content/hero/texture_0.gasset
+                                  content/hero/animation_Idle_Loop.gasset
 assets/hero.glb.import.toml       (persistent source/output identities)
 ```
 
 - **Source files** live wherever you like (`examples/*/assets/` by
   convention). They are never read by the running game.
-- **Content assets** (`*.gasset`) are the game-ready form: one file per
-  sub-asset, each carrying a small header plus a `bincode` payload. They
+- **Content assets** (`*.gasset`) are the game-ready form, each a small
+  header plus a `bincode` payload. A source's scene is one file that also
+  holds its meshes, materials and skeletons, each still an asset with its own
+  UUID; textures, animation clips and everything else are a file each. They
   are committed to version control alongside the code.
 - **Source metadata** (`<source>.import.toml`) is committed beside each
   imported source. It records which UUID belongs to each sub-asset.
-- **Addresses** are plain paths (`content/hero/mesh_0.gasset`). Code uses
-  `asset_id!("content/hero/mesh_0.gasset")` to resolve a UUID during compilation;
-  the runtime uses UUIDs to locate files through the registry.
+- **Addresses** are plain paths (`content/hero/scene.gasset`), and an
+  embedded asset is named by its file's address, `#`, and its name inside the
+  file (`content/hero/scene.gasset#mesh/0`). Code uses
+  `asset_id!("content/hero/scene.gasset#mesh/0")` to resolve a UUID during
+  compilation; the runtime uses UUIDs to locate assets through the registry.
 - **The registry** maps each UUID to its address and kind. It is never
   committed and never a file at runtime: each game's `build.rs` builds it from
   the content tree and the executable embeds it, and the editor builds it by
@@ -106,6 +111,62 @@ For a new sub-asset, the import chooses an initial address:
 - A file name over 200 bytes is cut on a character boundary and ends in `_` plus
   8 hex digits of a hash of the full sub-asset name, so long names stay distinct.
 
+A source that emits a `scene` writes one host file for it, and its meshes,
+materials and skeletons are embedded in that file instead of getting files of
+their own. `concerto_import::embeds_by_default(kind)` is the rule: `Mesh`,
+`StandardMaterial` and `Skeleton` embed. Textures, animation clips and every
+other kind are loose files beside the scene, and so is every output of a source
+that emits no scene, such as an image. An embedded asset keeps its own id and is
+named `<scene address>#<sub-asset name>`:
+
+```
+assets/hero.glb  ──▶  content/hero/scene.gasset            the scene, the host
+                      content/hero/scene.gasset#mesh/0      embedded in it
+                      content/hero/scene.gasset#material/0
+                      content/hero/scene.gasset#skeleton/0
+                      content/hero/texture_0.gasset         loose
+                      content/hero/animation_Idle.gasset    loose
+```
+
+A BVH import is `scene.gasset`, holding the scene and `skeleton/0`, plus the
+clip; an OBJ import is `scene.gasset` alone.
+
+An import builds the host file whole and replaces the old one through a
+temporary file. Nothing else writes into a host. A re-import of a source whose
+meshes, materials and skeletons are still loose files, as every import was
+before embedded assets, keeps every id, writes them into the scene file and
+deletes the loose files. A scene file that has moved keeps its address.
+
+The import returns an `AssetEntry` for every asset, embedded ones with
+`embedded_in`, and the editor's registry follows an output that changed between
+loose and embedded from those entries.
+
+### Converting a project without importing
+
+`pack-imports` does that conversion for a whole project at once, without
+reading a source or decoding a payload:
+
+```sh
+cargo run -p concerto-import --bin pack-imports -- <project directory>
+```
+
+It follows the project's `.import.toml` sidecars. For each source whose `scene`
+output is a file the import owns, it writes that file at version 7 with the
+source's loose meshes, materials and skeletons embedded, then deletes those
+loose files and any folder left empty. An output with `file = true`, an output
+saved from the editor, and every texture and clip stay loose and untouched.
+Ids, kinds, kind versions, references, provenance and payload bytes are
+carried over exactly, and sidecars are not changed.
+
+It prints `<source>: embedded <n>` for each source it handled, and
+`<source>: skipped, <reason>` for each it left alone: a source with no scene
+output, one whose scene was saved from the editor or is missing, and content
+whose source has no sidecar, which importing the source again converts. It
+scans the whole tree first and stops before writing anything when a header is
+unreadable, two assets share an id or a sidecar disagrees with the content.
+Each scene file is replaced through a temporary file before its loose files
+are deleted. A second run embeds nothing and changes no file.
+
 ### Animation clip names
 
 A clip's sub-asset name is `animation/<name>`, where `<name>` comes from the
@@ -154,6 +215,24 @@ asset_id = "d6e76e64-a888-49cd-bc16-61f0566f36ab"
 [outputs.scene]
 asset_id = "abfdaec1-d105-4c4c-b37c-138a1231e4ac"
 ```
+
+An output's table takes `file = true` to keep that output out of the scene file:
+
+```toml
+[outputs."material/steel"]
+asset_id = "d6e76e64-a888-49cd-bc16-61f0566f36ab"
+file = true
+```
+
+The next import writes the output as a loose file at its usual address
+(`content/hero/material_steel.gasset`) with the same id, and leaves it out of
+the scene file. Removing the key and importing again embeds it and deletes the
+loose file. If another asset already sits at the loose address, the import
+fails before writing anything. `file = true` on an output that is loose anyway,
+or on `scene`, changes nothing, and `file = false` reads as the key being
+absent and is not written back. Like `[settings]`, it is edited by hand: import
+once, edit, import again. This is how one imported material or mesh becomes a
+file the editor can save on its own.
 
 An optional `[settings]` table holds importer-specific settings. The importer
 that owns the source reads it on every import; a sidecar without one uses the
@@ -307,11 +386,13 @@ u32   header length, little-endian
       bincode(u32 format version, ContentAssetHeader)
       payload — the asset's own bincode encoding, verbatim
       derived blob — `derived.len` bytes, only when the header has a `derived` section
+      embedded asset 0 — its payload, then its derived blob if it has one
+      embedded asset 1 — …
 ```
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-The format version is `CONTENT_FORMAT_VERSION`, currently `6`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, and version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file. The payload is everything between the header and that blob; `read_content_asset` returns it without the blob, and `read_content_asset_parts` returns both. `write_content_asset` writes no section and refuses a header that has one; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`. Committed content never has a section. A version-4 file reads as kind version 1 and a version-5 file reads with no section; neither needs a re-import, and each moves to version 6 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `7`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, and version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file. The payload is everything between the header and that blob; `read_content_asset` returns it without the blob, and `read_content_asset_parts` returns both. `write_content_asset` writes no section and refuses a header that has one; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`. Committed content never has a section. A version-4 file reads as kind version 1 and a version-5 file reads with no section; a version-6 file reads with no embedded assets. None needs a re-import, and each moves to version 7 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
@@ -324,8 +405,37 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `6`; it changes only w
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, kept when `resave_content_asset` writes over it; `None` for editor-authored assets and for an imported asset saved with `save_content_asset_into` |
 | `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
+| `embedded`       | the directory of the assets stored in this file after the host's payload and blob, one `EmbeddedAsset` each, in file order; empty for a loose file, and for a file older than version 7 |
+
 The header can be read without touching the payload, which is what lets a
 future tool index a whole content tree cheaply.
+
+Version 7 lets one file hold several assets. The asset the file is for is the
+**host**; the others are **embedded** in it, and an asset alone in its file is
+**loose**. An `EmbeddedAsset` holds what a loose file's header would hold for
+that asset (`asset_id`, `references`, `kind`, `kind_version`, `provenance`,
+`derived`) and the byte range of its payload: `offset`, counted from the end
+of the header, and `len`. Its derived blob, of `derived.len` bytes, follows its
+payload. Its `provenance` is not optional, because `provenance.sub_asset` is
+its name inside the file (`mesh/0`), which `EmbeddedAsset::name()` returns.
+Embedded assets are stored in directory order, so the host's payload ends
+where the first one starts, less the host's blob. An embedded asset lists no
+embedded assets of its own.
+
+`write_content_asset_with_embedded` writes a host from its header, with an
+empty directory, its payload and one `EmbeddedPayload` per embedded asset, and
+fills the directory. It refuses a host header with a derived section, and an
+embedded asset that has no provenance, lists embedded assets, has a blob its
+header does not describe, or repeats an id or a name. `write_content_asset`
+and `write_cooked_content_asset` refuse a header that lists embedded assets.
+`read_content_asset` and `read_content_asset_parts` of a host return the
+host's payload and blob, with the directory in the header. `asset_record`
+returns one asset of a file as a standalone record, the bytes a loose
+version-7 file of it would have: the host for `None`, an embedded asset by
+name. `ContentAssetHeader::record_header` gives that record's header without
+reading a payload. Every reader rejects a directory whose ranges overlap, are
+out of order or run past the file, or that repeats an id or a name, with an
+error that names the asset.
 
 ## Changing an asset type's encoding
 
@@ -447,10 +557,11 @@ such a file still fails when it is loaded.
 
 `CONTENT_FORMAT_VERSION` is a different number. It changes only when the
 framing or `ContentAssetHeader` changes, never for a payload, and a new header
-version keeps the previous ones readable where it can, as version 6 reads
-versions 4 and 5. The version-6 framing is pinned by
-`crates/foundation/tests/encoding/content_asset.v6.bin`, rewritten under
-`CONCERTO_BLESS_ENCODING=1`.
+version keeps the previous ones readable where it can, as version 7 reads
+versions 4, 5 and 6. The version-7 framing is pinned by
+`crates/foundation/tests/encoding/content_asset.v7.bin`, rewritten under
+`CONCERTO_BLESS_ENCODING=1`; `content_asset.v6.bin` stays as it was written,
+with a test that reads it.
 
 ## The asset registry
 
@@ -462,13 +573,26 @@ TOML to `$OUT_DIR/concerto_registry.toml` and embeds it (see
 ```toml
 [assets]
 9f3c…e21a = { address = "content/UAL1/scene.gasset", kind = "Scene" }
-b75e…8457 = { address = "content/UAL1/mesh_0.gasset", kind = "Mesh" }
+b75e…8457 = { address = "content/UAL1/animation_Idle_Loop.gasset", kind = "AnimationClip" }
+41d0…77c2 = { address = "content/hero/scene.gasset", kind = "Mesh", embedded_as = "mesh/0" }
 ```
+
+A file can hold several assets: its host, and the assets embedded in it. Each
+has its own entry, all at the file's address, and an embedded one also has
+`embedded_as`, its name inside the file. Written out, an embedded asset's
+location is the address, `#`, and that name:
+`content/hero/scene.gasset#mesh/0`. A line without `embedded_as` is a host or a
+loose asset, so registry text written before embedded assets existed still
+parses. A line with `embedded_as` needs the line of its host, the one at the
+same address without it; registry text that has none fails to parse.
 
 `AssetRegistry` (`concerto_foundation::assets::registry`) is the registry in
 memory, and a resource in every `App` that has `AssetManagerPlugin`. Each
-`AssetEntry` has the id, the address, the kind, and, when the registry was built
-by scanning headers, the import provenance. List assets by type without loading
+`AssetEntry` has the id, the address, the kind, `embedded_in` (for an embedded
+asset, the id of its host and its name in the host's file), and, when the
+registry was built by scanning headers, the import provenance. `file()` is the
+id of the asset whose file holds the entry: the host of an embedded asset, the
+asset itself otherwise. A file is identified by that id, not by its address. List assets by type without loading
 them, as with Unreal's `GetAssetsByClass`:
 
 ```rust
@@ -479,8 +603,14 @@ fn list_meshes(registry: Res<AssetRegistry>) {
 }
 ```
 
-Entries come in folder, then name order. `get(id)` and `id_for_address(address)`
-look up one entry. React to catalogue changes with `registry.is_changed()`.
+Entries come in folder, then name order. `get(id)` looks up one entry.
+`id_for_address(address)` gives the host or loose asset of a file,
+`id_for_location(location)` any asset by the text `AssetEntry::location` gives
+(`content/hero/scene.gasset#mesh/0`), and `in_file(host)` every entry of the
+file of the host or loose asset with that id, host first. `name()` is the file name without its extension, and for an
+embedded asset the name its own file would have (`mesh_0` for `mesh/0`). Two
+entries never share an id or a location; inserting one replaces whichever held
+its id, its address when neither is embedded, or its name in the same host. React to catalogue changes with `registry.is_changed()`.
 
 A scene's serialized `MeshComponent` carries a bare `AssetId` (no path); when
 the spawner upgrades that `Weak` handle to `Strong`, `AssetServer` resolves the
@@ -552,7 +682,11 @@ not embed the file payload, import source assets, read the registry, or perform
 a runtime path lookup. A missing file expands to `AssetId::nil()` with a
 deprecation warning at the macro invocation, which a crate that denies warnings
 sees as an error. Malformed headers and unsupported file versions are compile
-errors there. It is also available as
+errors there. An embedded asset is named by its location,
+`asset_id!("content/hero/scene.gasset#skeleton/0")`: when the whole text is not
+a file, the macro splits it at the first `#` that leaves a file before it and
+looks the rest up among that file's embedded assets. A name the file does not
+hold is a compile error that lists the names it does hold. It is also available as
 `concerto_foundation::asset_id!` and `concerto_foundation::assets::asset_id!`.
 
 Register the package's content directory for stable Rust build tracking, and
@@ -587,8 +721,9 @@ leave stale UUIDs in the executable. Existing examples include this setup.
 
 `track_assets` also scans the `content` tree and reads `content.toml`, failing
 the build when the file is invalid or sets a root other than `content`, and writes
-the registry to `$OUT_DIR/concerto_registry.toml`. Two files with one id, or an
-unreadable header, print the paths as a Cargo warning and fail the build.
+the registry to `$OUT_DIR/concerto_registry.toml`, with one line for each asset
+of a file, embedded ones included. Two assets with one id, or an unreadable
+header, print their locations as a Cargo warning and fail the build.
 It also records the package directory as `CONCERTO_PROJECT_ROOT`.
 `concerto::content_registry!()` embeds the file and that directory; it needs a
 `build.rs` that calls `track_assets`. `concerto::run` installs both, and a
@@ -626,6 +761,18 @@ let mesh: AssetHandle<Mesh> = asset_server.load::<Mesh>(id);
 Loads return immediately with a handle; the bytes load on a background task
 pool. A registry miss on `load` fails the load and logs the id — it
 does not fall back to anything.
+
+An embedded asset loads by its id like any other, and the file is the unit of
+loading. The first `load` of an asset whose file is not being loaded starts one
+task for that file; a `load` of another asset of the file while the task runs
+only adds its request to it. The task reads the file once, parses its header
+once, and decodes each requested asset from its slice of those bytes, one after
+another, skipping a request whose last handle was dropped before the task
+reached it. When no request is left the task ends and the bytes are dropped; a
+later `load` of an asset of the file starts a new task and reads it again. A
+file that cannot be read or parsed fails every asset requested from it, each
+logged error naming its asset as `file#name`, and an asset that fails to decode
+fails alone.
 
 `AssetServer::is_loading` reports whether an asset requested with `load` or
 `add` has yet to reach the world. A load counts until the frame that inserts
@@ -699,13 +846,18 @@ A derived type whose assets all derive, such as `MotionDatabase`, keeps the
 default.
 
 `DerivedInputs::read` reads each input's file from the content root as a load
-does. An input whose kind is a registered derived type is asked
+does, and keeps each file it reads for its own lifetime, so a host file is read
+once for every input embedded in it. An input whose kind is a registered derived type is asked
 `file_is_derived`, and refused when it answers true, with an error naming the
 input's id, its address and its kind and saying it is itself derived. A plain
 asset of a derived type is accepted, and a file of a kind that isn't derived is
 never looked at. `read_more` reads further ids into the same inputs under the
-same rules, skipping ids already read. `bytes(id)` gives the whole file and
-`decode::<T>(id)` decodes it, migrating as a load does but without `on_load`.
+same rules, skipping ids already read. `bytes(id)` gives the whole file of a
+loose input, and for a host or an embedded one its standalone record: the bytes
+a loose file of it would have, so a key over a host does not change when an
+asset embedded in it does. `decode::<T>(id)` decodes either, migrating as a load
+does but without `on_load`. A key over `bytes(id)` is therefore the same for an
+asset embedded in a host file and for the same asset written as a loose file.
 
 A type is registered with `app.register_derived_asset::<A>()`, which also
 registers it as an asset. A load of it runs `on_load`. An asset that doesn't
@@ -770,8 +922,10 @@ after `--`.
    load does, and
    writes `<out>/<address>`: the original header and payload bytes, unchanged,
    plus the section. A cached blob that `apply_derived` refuses is derived
-   again, never cooked. The first failure stops the cook and fails the command,
-   naming the asset.
+   again, never cooked. An embedded asset that doesn't derive is skipped too;
+   one that derives fails the cook, with an error giving its `<address>#<name>`
+   and saying embedded assets cannot be cooked yet. No importer writes one. The
+   first failure stops the cook and fails the command, naming the asset.
 4. The cooked files are *staged*: each is copied over the file at the same
    path in what the build ships, `<exe dir>/<exe stem>-content/` natively,
    or `<dist>/` after `trunk build` for the web. A cooked file whose path the
@@ -826,6 +980,17 @@ keeps the header's id and provenance, writes the references and
 `kind_version` of `value`, and upserts the entry in `registry` with the same
 provenance. The next re-import of the source then overwrites the saved edit.
 
+Both refuse an address whose file holds embedded assets, and leave the file as
+it was. Such a file belongs to an import, which writes it whole; nothing
+rewrites one asset inside it. The error gives the address, says the file is
+read-only, and names the way on: set `file = true` for an output in the
+source's `.import.toml` and import again, which makes that output a file of
+its own.
+
+`read_asset_record(project_root, &entry)` reads one asset out of the tree
+whatever way it is stored: the standalone record of a registry entry, loose,
+host or embedded.
+
 ## Writing a new importer
 
 An importer lives in whatever crate owns the asset types it produces and
@@ -873,8 +1038,15 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
 ## Current limitations
 
 - **glTF `extras` are not read.** The Blender add-on that wrote game components
-  into `extras` is deprecated. Add game components to the imported scene in the
-  editor and save it; a saved scene is left alone by later re-imports.
+  into `extras` is deprecated. An import's scene is read-only, so place it in a
+  scene of your own in the editor and add game components there.
+- **A scene saved over an import's scene stops the import.** When the file that
+  holds the sidecar's `scene` id has no provenance, because the editor saved it
+  with `save_content_asset_into`, it cannot hold the import's meshes, materials
+  and skeletons, and the import fails before writing anything, naming the file.
+  Delete the `[outputs.scene]` table from the sidecar, move the file if it sits
+  at the import's own `scene.gasset` address, and import again: the import
+  writes a fresh scene under a new id and the saved scene keeps its id.
 - **No incremental import.** Re-import regenerates the source's outputs
   while preserving their identities. `track_dependency` records the files a
   source refers to, which an import from outside the project copies beside it
@@ -891,10 +1063,12 @@ when they can be read;
   mean. Matching across such changes is deferred.
 - **Pruning skips editor-saved outputs.** Re-import deletes the `.gasset` and
   the metadata key of every output the importer stopped emitting, and removes
-  it from the editor's registry. An output saved from the editor with
+  it from the editor's registry. An embedded output is pruned by leaving it out
+  of the rewritten scene file. An output saved from the editor with
   `save_content_asset_into` (its header has no provenance) is kept with its
-  key; one saved with `resave_content_asset` keeps its provenance and is
-  pruned like any other output. Pruning an output that another asset
+  key, and one that would embed stays a loose file, untouched; one saved with
+  `resave_content_asset` keeps its provenance and is pruned like any other
+  output. Pruning an output that another asset
   still references logs a warning naming the output and the referrer.
 - **A renamed output keeps its id only with a hint.** An importer that renames a
   sub-asset calls `ctx.renamed_from(new_name, old_name)` before it first calls

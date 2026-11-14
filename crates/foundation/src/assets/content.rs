@@ -11,30 +11,31 @@ use super::registry::{AssetEntry, AssetRegistry};
 use super::{Asset, AssetId};
 
 pub use concerto_asset_format::{
-    read_content_asset, read_content_asset_header, read_content_asset_parts, write_content_asset,
-    write_cooked_content_asset, ContentAssetHeader, ContentAssetParts, CookedSection,
-    DerivedSection, ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
+    asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
+    sub_asset_file_stem, write_content_asset, write_content_asset_with_embedded,
+    write_cooked_content_asset, AssetRecord, ContentAssetHeader, ContentAssetParts, ContentFile,
+    CookedSection, DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance,
+    CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
 pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
     let (header, payload) = read_content_asset(bytes)?;
-    let value = decode_content_payload::<A>(&header, payload)?;
+    let value = decode_content_payload::<A>(&header.kind, header.kind_version, payload)?;
     Ok((header, value))
 }
 
 pub(crate) fn decode_content_payload<A: Asset>(
-    header: &ContentAssetHeader,
+    kind: &str,
+    version: u32,
     payload: &[u8],
 ) -> anyhow::Result<A> {
-    if header.kind != A::name() {
+    if kind != A::name() {
         anyhow::bail!(
-            "content asset holds a {} but a {} was requested",
-            header.kind,
+            "content asset holds a {kind} but a {} was requested",
             A::name()
         );
     }
-    let version = header.kind_version;
     let current = A::FORMAT_VERSION;
     let value = match version.cmp(&current) {
         std::cmp::Ordering::Equal => bincode::deserialize(payload)
@@ -81,6 +82,16 @@ pub fn check_encoding<A: Asset>(value: &A, dir: &Path) {
     }
 }
 
+/// The standalone record of `entry`, read from `<project_root>/<entry.address>`.
+pub fn read_asset_record(project_root: &Path, entry: &AssetEntry) -> anyhow::Result<Vec<u8>> {
+    let path = project_root.join(&entry.address);
+    let file = std::fs::read(&path)
+        .with_context(|| format!("failed to read content asset '{}'", path.display()))?;
+    let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
+    asset_record(&file, name)
+        .with_context(|| format!("malformed content asset '{}'", entry.location()))
+}
+
 /// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
@@ -89,7 +100,14 @@ pub fn save_content_asset_into<A: Asset>(
     registry: &mut AssetRegistry,
 ) -> anyhow::Result<AssetId> {
     let path = project_root.join(address);
-    let asset_id = mint_or_reuse_id(&path)?;
+    let asset_id = match path.exists() {
+        true => {
+            let existing = read_content_asset_header(&path)?;
+            refuse_a_host(&existing, address)?;
+            existing.asset_id
+        }
+        false => AssetId::new(),
+    };
     let header = ContentAssetHeader {
         asset_id,
         references: value.referenced_sub_assets(),
@@ -97,6 +115,7 @@ pub fn save_content_asset_into<A: Asset>(
         kind_version: A::FORMAT_VERSION,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     let kind = header.kind.clone();
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;
@@ -110,6 +129,7 @@ pub fn save_content_asset_into<A: Asset>(
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 
     registry.insert(AssetEntry {
+        embedded_in: None,
         id: asset_id,
         address: address.to_owned(),
         kind,
@@ -129,6 +149,7 @@ pub fn resave_content_asset<A: Asset>(
     let path = project_root.join(address);
     let existing = read_content_asset_header(&path)
         .with_context(|| format!("no content asset to resave at '{address}'"))?;
+    refuse_a_host(&existing, address)?;
     if existing.kind != A::name() {
         anyhow::bail!(
             "'{address}' holds a {} but a {} was resaved",
@@ -143,6 +164,7 @@ pub fn resave_content_asset<A: Asset>(
         kind_version: A::FORMAT_VERSION,
         provenance: existing.provenance,
         derived: None,
+        embedded: Vec::new(),
     };
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;
     let bytes = write_content_asset(&header, &payload)?;
@@ -150,6 +172,7 @@ pub fn resave_content_asset<A: Asset>(
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 
     registry.insert(AssetEntry {
+        embedded_in: None,
         id: header.asset_id,
         address: address.to_owned(),
         kind: header.kind,
@@ -159,12 +182,12 @@ pub fn resave_content_asset<A: Asset>(
     Ok(header.asset_id)
 }
 
-/// The id to write at `path`: the one already in the file's header if a
-/// content asset is there, otherwise a freshly minted one. Identity is
-/// assigned once and then belongs to the asset, not to its location.
-pub fn mint_or_reuse_id(path: &Path) -> anyhow::Result<AssetId> {
-    if path.exists() {
-        return Ok(read_content_asset_header(path)?.asset_id);
+fn refuse_a_host(existing: &ContentAssetHeader, address: &str) -> anyhow::Result<()> {
+    if existing.embedded.is_empty() {
+        return Ok(());
     }
-    Ok(AssetId::new())
+    anyhow::bail!(
+        "'{address}' belongs to an import: its file holds {} embedded assets, is written whole by the import and is read-only; set `file = true` for an output in the source's `.import.toml` and import again to make that output a file of its own",
+        existing.embedded.len()
+    )
 }

@@ -23,6 +23,7 @@ use crate::{
     content::ContentAsset,
     drag_drop::{DragDropAppExt, DragSource, DropTarget, Dropped},
     hosted::{EditTarget, EditWorld, EditWorldSignals, HostRole, Hosted, HostedApp, PlayState},
+    import_fold::shown_name,
     inspector::refused,
     mcp::{SceneEntities, resolve},
     scene::SceneOpened,
@@ -115,7 +116,7 @@ fn offer_placeable_tiles(
         let wanted = registry
             .get(asset.id)
             .filter(|entry| !playing && kinds.contains(&entry.kind))
-            .map(|entry| DragSource::new(AssetDrag { id: entry.id }, entry.name()));
+            .map(|entry| DragSource::new(AssetDrag { id: entry.id }, shown_name(entry)));
         match (source, wanted) {
             (None, Some(wanted)) => cmd.insert(wanted, tile),
             (Some(source), wanted)
@@ -156,10 +157,10 @@ fn place_dropped_asset(
     });
 }
 
-/// Places an asset in the open scene as a new entity named after the asset's file, selects it, and answers `placed <name> as entity <id>`.
+/// Places an asset in the open scene as a new entity named as list_assets and the Asset Browser show the asset, its file's name or for an import's scene its source's, selects it, and answers `placed <name> as entity <id>`.
 #[derive(Deserialize, JsonSchema)]
 pub struct PlaceAssetArgs {
-    /// The asset, by id or by content address such as content/props/crate.gasset, one list_assets marks placeable.
+    /// The asset, by id or by content address such as content/props/crate.gasset or content/props/crate/scene.gasset#mesh/0, one list_assets marks placeable.
     pub asset: String,
     /// The parent, such as 42v3, as scene_tree shows it; the scene root without one.
     pub parent: Option<String>,
@@ -186,7 +187,7 @@ fn place_asset(
     };
     for (arguments, reply) in calls.read() {
         let Some(asset) = registry
-            .id_for_address(&arguments.asset)
+            .id_for_location(&arguments.asset)
             .or_else(|| AssetId::from_simple_hex(&arguments.asset).ok())
         else {
             reply.err(ToolError::new(
@@ -265,7 +266,9 @@ mod tests {
     };
     use concerto_foundation::{
         assets::{
-            asset_server::AssetServer, content::save_content_asset_into, registry::AssetRegistry,
+            asset_server::AssetServer,
+            content::{ImportProvenance, save_content_asset_into},
+            registry::AssetRegistry,
         },
         transform::{GlobalTransform, Transform},
     };
@@ -471,10 +474,16 @@ mod tests {
                 referenced_assets: vec![],
             },
             dir,
-            "content/props/pair.gasset",
+            "content/props/pair/scene.gasset",
             &mut registry,
         )
         .unwrap();
+        let mut face = registry.get(pair).unwrap().clone();
+        face.provenance = Some(ImportProvenance {
+            source: "assets/props/pair.glb".into(),
+            sub_asset: "scene".into(),
+        });
+        registry.insert(face);
         let mesh = save_content_asset_into(
             &Mesh {
                 vertices: vec![],
@@ -566,20 +575,20 @@ mod tests {
         let answers = serve(
             &mut app,
             vec![
-                place(json!({ "asset": "content/props/pair.gasset" })),
+                place(json!({ "asset": "content/props/pair/scene.gasset" })),
                 place(json!({
                     "asset": pair.simple_hex(),
                     "parent": anchor.to_id_string(),
                     "position": [12.0, 1.0, -3.0],
                 })),
                 place(json!({
-                    "asset": "content/props/pair.gasset",
+                    "asset": "content/props/pair/scene.gasset",
                     "parent": anchor.to_id_string(),
                 })),
                 place(json!({ "asset": pair.simple_hex(), "position": [1.0, 0.0, 2.0] })),
                 place(json!({ "asset": "content/props/missing.gasset" })),
                 place(json!({ "asset": "content/props/crate.gasset" })),
-                place(json!({ "asset": "content/props/pair.gasset", "parent": "9999v1" })),
+                place(json!({ "asset": "content/props/pair/scene.gasset", "parent": "9999v1" })),
                 Call {
                     tool: "list_assets",
                     arguments: json!({}),
@@ -594,7 +603,7 @@ mod tests {
             [
                 format!("content/props/crate.gasset · Mesh · {}", mesh.simple_hex()),
                 format!(
-                    "content/props/pair.gasset · Scene · {} · placeable",
+                    "content/props/pair/scene.gasset · Scene · {} · placeable · import of assets/props/pair.glb with no parts",
                     pair.simple_hex()
                 ),
             ]

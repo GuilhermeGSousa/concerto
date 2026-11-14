@@ -12,6 +12,7 @@ pub use concerto_foundation_macros::asset_id_bytes as __asset_id_bytes;
 /// directory with `concerto_asset_build::track_assets` in that package's build script.
 /// Only the header is read; the expansion is a constant UUID, not asset bytes.
 /// A missing file expands to `AssetId::nil()` with a warning.
+/// `"content/hero/scene.gasset#mesh/0"` names an asset embedded in a file.
 ///
 /// ```ignore
 /// const HERO: AssetId = asset_id!("content/hero/scene.gasset");

@@ -124,9 +124,17 @@ lets take the space that is left. The `viewport:` line is the picture's size
 in physical pixels; under `--mcp` the scale is 1, so the two agree. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
-call that shows the rest. A line that ends `· placeable` is an asset
+call that shows the rest. A line marked `· placeable` is an asset
 `place_asset` takes; the marks appear once a scene has opened, since the
-placeable kinds are the recipe's. `scene_tree` shows the edited scene, or while a game
+placeable kinds are the recipe's. An import is folded as the Asset Browser
+folds it: its scene's line ends `· import of <source> with <n> parts`, and the
+parts are left out. A part is listed, its line ending `· part of <the scene's
+address>`, when `kind` or `query` asks for it, `query` matching a part by its
+own file name and kind alone, or when `parts_of` names the import's scene by
+address or id, which lists that import's parts and nothing else. A part stored
+inside the import's scene file shows `<file>#<name>` where a loose asset shows
+its address, such as `content/props/crate/scene.gasset#mesh/0`; `open_asset`
+and `place_asset` take that text as they take an address. `scene_tree` shows the edited scene, or while a game
 plays its top-level entities as the hierarchy does, one `id name [components]`
 line per entity, indented, from `root` if given, `depth` levels deep (3) and at
 most `limit` entities (200); a cut subtree or a cut list ends with the call that
@@ -221,7 +229,8 @@ status text, the same text the scene's status line shows. `create_entity` adds
 an entity named Entity as the last child of `parent`, or of the scene's top
 level without one, and answers `Created <id> Entity in <parent>.`.
 `place_asset` adds an entity that uses `asset`, an address or an id from
-`list_assets`, named after the asset's file, as a child of `parent` or of the
+`list_assets`, named as the Asset Browser shows the asset, its file's name or
+for an import's scene the source's, as a child of `parent` or of the
 scene root, at `position`, `[x, y, z]` in world space, or at the parent's
 origin without one, and selects it. It answers `placed <name> as entity <id>`
 once the asset has loaded and the entity exists. An address that names nothing
@@ -351,7 +360,11 @@ animation graph's writes several. A document with
 no unsaved changes answers `Nothing to save in document <id> <address>.`, which
 is not an error. A save that fails answers `save_failed` with the editor's
 message, as does a save while the game plays (`Stop to save`), and a scene still
-loading answers `busy`. `play` starts the active scene's game in the viewport,
+loading answers `busy`. An import's scene is read-only: `save` on it answers
+`save_failed` with `This scene belongs to <source> and is read-only. To build
+on it, place it in a scene of your own.`, and so does a save asked for by
+`unsaved: "save"`. `create_asset` makes that scene and `place_asset` puts the
+import's scene in it. `play` starts the active scene's game in the viewport,
 as the play button does, and answers once the game has built, plays, has
 spawned every scene it loaded, and has no asset loads in flight: `Playing
 <address> in document <id>; it loaded in <seconds> s.` The time runs from
@@ -635,7 +648,20 @@ assets directly inside it are the top-level rows, a folder shows the `folder`
 glyph, `folder-open` while expanded, and holds its subfolders and assets, and
 an asset shows its kind's glyph from `AssetIcons` and its name.
 A folder appears once it holds an asset at any depth; empty directories are not
-shown. In each folder, subfolders come first, then assets, each alphabetically
+shown. An import that made a scene is folded into one row: the scene, the
+import's face, named after the source file (`crate` for `crate.glb`), with
+every other asset of that source as a row under it, collapsed, whatever kind
+it is and wherever its file is. The face is the scene asset itself, so it is
+selected, opened and dragged into the viewport as one, and a part is still an
+asset row. When the face is the only row of its folder, the folder is left out
+and the face takes its place in the folder above, so `props/crate/scene` shows
+as `crate` under `props`. An import with no scene, a texture or the
+animations of older BVH imports, is not folded. An import's meshes, materials
+and skeletons are stored inside its scene file; each is still a registry entry
+and a row under the face, named as its own file would be. An import's scene is
+never saved over, so an import stays folded. `ImportFolds`, in
+`import_fold`, is the grouping, by `AssetEntry::provenance`; `list_assets`
+reads the same one. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an
 import, a New or a save, the tree keeps the rows of folders and assets that still exist, so
 expansion and scroll survive. Clicking a row selects it, folder or asset, but
@@ -645,7 +671,9 @@ project is opening is ignored and the highlight returns to the selected asset. T
 field and the kind chips (`Scene`, `Mesh`, `Texture`, `StandardMaterial`)
 hide every asset that does not match and show the
 folders leading to each match, open; clearing them restores the expansion as it
-was. The footer counts the matching assets. The navigation keys are the UI
+was. A face matches the search by its shown name, a part by its own file name
+and kind and not by the folder it is in, so searching for an import finds one
+row; a matching part shows under its face. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
 
 **New** beside Import… lists one row, `New <kind>`, per creatable asset kind
@@ -717,7 +745,8 @@ revealed.
 image sources; several files can be picked at once. A dialog then lists each
 file with the project-relative destination it will be copied to, which you can
 edit before confirming. Enter confirms and Escape cancels. Files are imported
-one at a time. Each import's assets are added to the registry in memory as it
+one at a time. Each import's assets replace the registry's entries for that
+source in memory as it
 finishes, without a rescan and without closing open tabs. No registry file is
 written.
 
@@ -814,11 +843,21 @@ buttons and sticks, and about any that went away while it was hidden.
 ## Saving
 
 An edited document is dirty until it is saved, and its tab shows a dot. Ctrl+S
-saves the active document over the scene it was opened from, imported or not.
-A saved scene belongs to the editor from then on: re-importing its source
-leaves it alone and re-imports the source's other outputs. A save updates the
+saves the active document over the scene it was opened from. A save updates the
 scene's entry in the registry in memory and writes no registry file. A failed
 save reports why in Chatter and leaves the document dirty.
+
+An import's scene, one whose registry entry has provenance, is read-only: its
+file is written whole by the import and holds the import's meshes, materials
+and skeletons. It opens and can be changed in memory, but a save of it writes
+nothing and fails with `This scene belongs to <source> and is read-only. To
+build on it, place it in a scene of your own.` That is an ordinary failed save,
+so the unsaved-changes prompt's Save, `unsaved: "save"` over MCP, and Play,
+which saves first, are refused with the same text. To build on an import, make
+a scene with New and place the import's scene in it. Placing copies the
+import's nodes into that scene, and they refer to its meshes and materials by
+id: a re-import's new mesh and material data reaches the scene, while nodes
+the source adds, removes or moves do not (#783).
 
 Each save, whether asked for with `SaveRequested` or made by Play, ends in an
 event in the editor's world: `SceneSaved { document, asset, written }`, where
@@ -897,8 +936,8 @@ are their linear `[r, g, b, a]`. It refuses the scene root, an unknown path, a
 value that does not decode, and an entity or component that is not there, and
 a refused set leaves the component as it was.
 `PlaceAsset { asset, parent, at }` adds an entity that uses an asset whose kind
-the recipe registered with `register_placeable_asset`: named after the asset's
-file, under `parent` or the scene root, at `PlaceAt::Position`, a point in
+the recipe registered with `register_placeable_asset`: named as the Asset
+Browser shows the asset, under `parent` or the scene root, at `PlaceAt::Position`, a point in
 world space, at `PlaceAt::Origin`, the parent's origin, or at `PlaceAt::Pointer`, a point of the viewport in logical
 pixels, which lands on the scene mesh under it, else on the y = 0 plane within
 200 m, else 10 m along the ray. The entity is spawned and selected once the
@@ -970,7 +1009,7 @@ the tool in its `finish`, when the `App` has `McpPlugin`, so the editor without
 A person places an asset by dragging its tile from the Asset Browser into the
 viewport, with the [drag and drop](#drag-and-drop) widget. The payload is
 `AssetDrag { id }`. The plugin gives a tile a `DragSource<AssetDrag>`, labelled
-with the asset's name, when the asset's kind is in `PlaceableKinds`, so a
+with the name the tile shows, when the asset's kind is in `PlaceableKinds`, so a
 mesh's or a texture's tile does not drag and the tiles of a project opened before its scene
 become draggable once the scene opens. It finds the tiles by `ContentAsset
 { id }`, the component the content browser puts on every item that shows an
