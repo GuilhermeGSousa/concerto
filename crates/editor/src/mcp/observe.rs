@@ -391,9 +391,12 @@ fn fold_mark(folds: &ImportFolds, asset: &AssetEntry) -> String {
     }
     match &asset.provenance {
         Some(provenance) if is_import_face(asset) => {
-            let parts = folds.parts_of(asset.id).len();
-            let counted = if parts == 1 { "part" } else { "parts" };
-            format!(" · import of {} with {parts} {counted}", provenance.source)
+            let counted = match folds.parts_of(asset.id).len() {
+                0 => "no parts".to_owned(),
+                1 => "1 part".to_owned(),
+                parts => format!("{parts} parts"),
+            };
+            format!(" · import of {} with {counted}", provenance.source)
         }
         _ => String::new(),
     }
