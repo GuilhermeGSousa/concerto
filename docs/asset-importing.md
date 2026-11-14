@@ -106,6 +106,36 @@ For a new sub-asset, the import chooses an initial address:
 - A file name over 200 bytes is cut on a character boundary and ends in `_` plus
   8 hex digits of a hash of the full sub-asset name, so long names stay distinct.
 
+A source that emits a `scene` writes one host file for it, and its meshes,
+materials and skeletons are embedded in that file instead of getting files of
+their own. `concerto_import::embeds_by_default(kind)` is the rule: `Mesh`,
+`StandardMaterial` and `Skeleton` embed. Textures, animation clips and every
+other kind are loose files beside the scene, and so is every output of a source
+that emits no scene, such as an image. An embedded asset keeps its own id and is
+named `<scene address>#<sub-asset name>`:
+
+```
+assets/hero.glb  ──▶  content/hero/scene.gasset            the scene, the host
+                      content/hero/scene.gasset#mesh/0      embedded in it
+                      content/hero/scene.gasset#material/0
+                      content/hero/scene.gasset#skeleton/0
+                      content/hero/texture_0.gasset         loose
+                      content/hero/animation_Idle.gasset    loose
+```
+
+A BVH import is `scene.gasset`, holding the scene and `skeleton/0`, plus the
+clip; an OBJ import is `scene.gasset` alone.
+
+An import builds the host file whole and replaces the old one through a
+temporary file. Nothing else writes into a host. A re-import of a source whose
+meshes, materials and skeletons are still loose files, as every import was
+before embedded assets, keeps every id, writes them into the scene file and
+deletes the loose files. A scene file that has moved keeps its address.
+
+The import returns an `AssetEntry` for every asset, embedded ones with
+`embedded_as`, and the editor's registry follows an output that changed between
+loose and embedded from those entries.
+
 ### Animation clip names
 
 A clip's sub-asset name is `animation/<name>`, where `<name>` comes from the
@@ -154,6 +184,24 @@ asset_id = "d6e76e64-a888-49cd-bc16-61f0566f36ab"
 [outputs.scene]
 asset_id = "abfdaec1-d105-4c4c-b37c-138a1231e4ac"
 ```
+
+An output's table takes `file = true` to keep that output out of the scene file:
+
+```toml
+[outputs."material/steel"]
+asset_id = "d6e76e64-a888-49cd-bc16-61f0566f36ab"
+file = true
+```
+
+The next import writes the output as a loose file at its usual address
+(`content/hero/material_steel.gasset`) with the same id, and leaves it out of
+the scene file. Removing the key and importing again embeds it and deletes the
+loose file. If another asset already sits at the loose address, the import
+fails before writing anything. `file = true` on an output that is loose anyway,
+or on `scene`, changes nothing, and `file = false` reads as the key being
+absent and is not written back. Like `[settings]`, it is edited by hand: import
+once, edit, import again. This is how one imported material or mesh becomes a
+file the editor can save on its own.
 
 An optional `[settings]` table holds importer-specific settings. The importer
 that owns the source reads it on every import; a sidecar without one uses the
@@ -751,8 +799,9 @@ input's id, its address and its kind and saying it is itself derived. A plain
 asset of a derived type is accepted, and a file of a kind that isn't derived is
 never looked at. `read_more` reads further ids into the same inputs under the
 same rules, skipping ids already read. `bytes(id)` gives the whole file of a
-loose input, and for an embedded one its standalone record: the bytes a loose
-file of it would have. `decode::<T>(id)` decodes either, migrating as a load
+loose input, and for a host or an embedded one its standalone record: the bytes
+a loose file of it would have, so a key over a host does not change when an
+asset embedded in it does. `decode::<T>(id)` decodes either, migrating as a load
 does but without `on_load`. A key over `bytes(id)` is therefore the same for an
 asset embedded in a host file and for the same asset written as a loose file.
 
@@ -935,7 +984,14 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
 
 - **glTF `extras` are not read.** The Blender add-on that wrote game components
   into `extras` is deprecated. Add game components to the imported scene in the
-  editor and save it; a saved scene is left alone by later re-imports.
+  editor and save it under a new name.
+- **A scene saved over an import's scene stops the import.** When the file that
+  holds the sidecar's `scene` id has no provenance, because the editor saved it
+  with `save_content_asset_into`, it cannot hold the import's meshes, materials
+  and skeletons, and the import fails before writing anything, naming the file.
+  Delete the `[outputs.scene]` table from the sidecar, move the file if it sits
+  at the import's own `scene.gasset` address, and import again: the import
+  writes a fresh scene under a new id and the saved scene keeps its id.
 - **No incremental import.** Re-import regenerates the source's outputs
   while preserving their identities. `track_dependency` records the files a
   source refers to, which an import from outside the project copies beside it
@@ -952,10 +1008,12 @@ when they can be read;
   mean. Matching across such changes is deferred.
 - **Pruning skips editor-saved outputs.** Re-import deletes the `.gasset` and
   the metadata key of every output the importer stopped emitting, and removes
-  it from the editor's registry. An output saved from the editor with
+  it from the editor's registry. An embedded output is pruned by leaving it out
+  of the rewritten scene file. An output saved from the editor with
   `save_content_asset_into` (its header has no provenance) is kept with its
-  key; one saved with `resave_content_asset` keeps its provenance and is
-  pruned like any other output. Pruning an output that another asset
+  key, and one that would embed stays a loose file, untouched; one saved with
+  `resave_content_asset` keeps its provenance and is pruned like any other
+  output. Pruning an output that another asset
   still references logs a warning naming the output and the referrer.
 - **A renamed output keeps its id only with a hint.** An importer that renames a
   sub-asset calls `ctx.renamed_from(new_name, old_name)` before it first calls

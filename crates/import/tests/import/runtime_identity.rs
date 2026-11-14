@@ -69,15 +69,21 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
     .unwrap();
     let imported =
         concerto_import::import_source(&source, &project.0, &Default::default()).unwrap();
-    let address = &imported
+    let mesh = imported
         .iter()
         .find(|a| a.provenance.as_ref().unwrap().sub_asset == "mesh/0")
-        .unwrap()
-        .address;
-    let id = read_content_asset_header(&project.0.join(address))
-        .unwrap()
-        .asset_id;
-    assert_ne!(id, AssetId::from_path(address));
+        .unwrap();
+    let address = &mesh.address;
+    let id = mesh.id;
+    assert_eq!(
+        read_content_asset_header(&project.0.join(address))
+            .unwrap()
+            .record_header(mesh.embedded_as.as_deref())
+            .unwrap()
+            .asset_id,
+        id
+    );
+    assert_ne!(id, AssetId::from_path(&mesh.location()));
 
     let serialized = {
         let Runtime { server, mut world } = runtime(&project);
@@ -87,7 +93,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
         bincode::serialize(&handle).unwrap()
     };
 
-    let moved_address = "content/relocated_mesh.gasset";
+    let moved_address = "content/relocated_scene.gasset";
     std::fs::rename(project.0.join(address), project.0.join(moved_address)).unwrap();
     concerto_import::import_source(&source, &project.0, &Default::default()).unwrap();
     assert!(!project.0.join(address).exists());

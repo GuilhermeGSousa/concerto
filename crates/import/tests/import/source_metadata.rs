@@ -30,4 +30,17 @@ fn a_sidecar_round_trips_its_settings_and_refuses_an_unknown_importer() {
     assert!(!toml::to_string_pretty(&bare).unwrap().contains("settings"));
 
     assert!(SourceMetadata::load(&sidecar(&HEADER.replace("bvh", "fbx"))).is_err());
+
+    let id = "00000000-0000-0000-0000-000000000002";
+    let outputs = SourceMetadata::load(&sidecar(&format!(
+        "{HEADER}\n[outputs.\"material/steel\"]\nasset_id = \"{id}\"\nfile = true\n\n[outputs.\"mesh/0\"]\nasset_id = \"00000000-0000-0000-0000-000000000003\"\nfile = false\n"
+    )))
+    .unwrap();
+    assert!(outputs.outputs["material/steel"].file);
+    assert!(!outputs.outputs["mesh/0"].file);
+    let written = toml::to_string_pretty(&outputs).unwrap();
+    assert_eq!(written.matches("file = true").count(), 1, "{written}");
+    assert!(!written.contains("file = false"), "{written}");
+    let again = SourceMetadata::load(&sidecar(&written)).unwrap();
+    assert!(again.outputs["material/steel"].file);
 }
