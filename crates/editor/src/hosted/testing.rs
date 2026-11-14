@@ -286,10 +286,7 @@ pub fn scene_entry(name: &str) -> AssetEntry {
         address: format!("{name}.gasset"),
         kind: Scene::name().into(),
         kind_version: None,
-        provenance: Some(ImportProvenance {
-            source: "fixture".into(),
-            sub_asset: name.into(),
-        }),
+        provenance: None,
     }
 }
 

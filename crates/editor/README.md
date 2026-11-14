@@ -105,7 +105,10 @@ folds it: its scene's line ends `· import of <source> with <n> parts`, and the
 parts are left out. A part is listed, its line ending `· part of <the scene's
 address>`, when `kind` or `query` asks for it, `query` matching a part by its
 own file name and kind alone, or when `parts_of` names the import's scene by
-address or id, which lists that import's parts and nothing else. `scene_tree` shows the edited scene, or while a game
+address or id, which lists that import's parts and nothing else. A part stored
+inside the import's scene file shows `<file>#<name>` where a loose asset shows
+its address, such as `content/props/crate/scene.gasset#mesh/0`; `open_asset`
+and `place_asset` take that text as they take an address. `scene_tree` shows the edited scene, or while a game
 plays its top-level entities as the hierarchy does, one `id name [components]`
 line per entity, indented, from `root` if given, `depth` levels deep (3) and at
 most `limit` entities (200); a cut subtree or a cut list ends with the call that
@@ -283,7 +286,11 @@ Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
 no unsaved changes answers `Nothing to save in document <id> <address>.`, which
 is not an error. A save that fails answers `save_failed` with the editor's
 message, as does a save while the game plays (`Stop to save`), and a scene still
-loading answers `busy`. `play` starts the active scene's game in the viewport,
+loading answers `busy`. An import's scene is read-only: `save` on it answers
+`save_failed` with `This scene belongs to <source> and is read-only. To build
+on it, place it in a scene of your own.`, and so does a save asked for by
+`unsaved: "save"`. `create_asset` makes that scene and `place_asset` puts the
+import's scene in it. `play` starts the active scene's game in the viewport,
 as the play button does, and answers once the game has built, plays, has
 spawned every scene it loaded, and has no asset loads in flight: `Playing
 <address> in document <id>; it loaded in <seconds> s.` The time runs from
@@ -575,10 +582,10 @@ selected, opened and dragged into the viewport as one, and a part is still an
 asset row. When the face is the only row of its folder, the folder is left out
 and the face takes its place in the folder above, so `props/crate/scene` shows
 as `crate` under `props`. An import with no scene, a texture or the
-animations of older BVH imports, is not folded. Neither is one whose scene was
-saved in the editor: a save writes the scene without its provenance, as an
-authored asset, so it shows under its file name beside the import's other
-assets from then on. `ImportFolds`, in
+animations of older BVH imports, is not folded. An import's meshes, materials
+and skeletons are stored inside its scene file; each is still a registry entry
+and a row under the face, named as its own file would be. An import's scene is
+never saved over, so an import stays folded. `ImportFolds`, in
 `import_fold`, is the grouping, by `AssetEntry::provenance`; `list_assets`
 reads the same one. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an
@@ -664,7 +671,8 @@ revealed.
 image sources; several files can be picked at once. A dialog then lists each
 file with the project-relative destination it will be copied to, which you can
 edit before confirming. Enter confirms and Escape cancels. Files are imported
-one at a time. Each import's assets are added to the registry in memory as it
+one at a time. Each import's assets replace the registry's entries for that
+source in memory as it
 finishes, without a rescan and without closing open tabs. No registry file is
 written.
 
@@ -761,11 +769,19 @@ buttons and sticks, and about any that went away while it was hidden.
 ## Saving
 
 An edited document is dirty until it is saved, and its tab shows a dot. Ctrl+S
-saves the active document over the scene it was opened from, imported or not.
-A saved scene belongs to the editor from then on: re-importing its source
-leaves it alone and re-imports the source's other outputs. A save updates the
+saves the active document over the scene it was opened from. A save updates the
 scene's entry in the registry in memory and writes no registry file. A failed
 save reports why in Chatter and leaves the document dirty.
+
+An import's scene, one whose registry entry has provenance, is read-only: its
+file is written whole by the import and holds the import's meshes, materials
+and skeletons. It opens and can be changed in memory, but a save of it writes
+nothing and fails with `This scene belongs to <source> and is read-only. To
+build on it, place it in a scene of your own.` That is an ordinary failed save,
+so the unsaved-changes prompt's Save, `unsaved: "save"` over MCP, and Play,
+which saves first, are refused with the same text. To build on an import, make
+a scene with New and place the import's scene in it; that scene refers to the
+import by id, so re-importing the source reaches it.
 
 Each save, whether asked for with `SaveRequested` or made by Play, ends in an
 event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
