@@ -160,6 +160,27 @@ fn a_canvas_lays_out_trees_leftward_and_diagrams_in_layers() {
     assert_ne!(down.start.y, up.end.y);
     assert_ne!(down.end.y, up.start.y);
     assert_ne!(down.bend, up.bend);
+
+    let spanning = layout(
+        &[node(1), node(2), node(3)],
+        &[link(1, 2), link(2, 3), link(3, 1)],
+        CanvasMode::Diagram,
+    );
+    let between = spanning.node(CanvasNodeId(2)).unwrap().rect;
+    let round = spanning.links[2];
+    assert_eq!(spanning.links[0].detour, None);
+    assert!(
+        round
+            .detour
+            .is_some_and(|detour| detour.lane > between.max().y)
+    );
+    assert!(
+        round
+            .segments()
+            .iter()
+            .all(|run| !run.bounds(1.0).intersection(between).has_area())
+    );
+    assert!(spanning.size.y > round.detour.unwrap().lane);
 }
 
 fn overlapping(placed: &CanvasLayout) -> Option<String> {

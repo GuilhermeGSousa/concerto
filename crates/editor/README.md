@@ -1092,7 +1092,8 @@ has one, because a game's types are registered there, and otherwise in the
 editor's `App`. `HostedApp::type_registry` gives the preview's. Register the
 value's type with `register_type` in the `App`s it is read through: what the
 registry does not hold reads "Unsupported type", and MCP refuses to write JSON
-into a value whose root type is missing.
+into a value whose root type is missing. A struct with no fields is not
+unsupported: it has no rows, so its card is its title alone.
 
 A value has no change detection and is not polled. It is read when an edit lands,
 when `ActiveEditor`, `InspectedValues`, `ShownValue` or the editor registrations
@@ -1710,7 +1711,8 @@ rectangle and pin centres, a `LinkRoute` per link, and the content's size.
   in the direction they point. Nodes stack in node order within a column, and
   those no path reaches share a last column.
 
-A link is three thin boxes: out of its start, up or down, and into its end. In
+A link between neighbouring columns is three thin boxes: out of its start, up
+or down, and into its end. In
 `Diagram` it ends in an arrowhead, the `caret-right` or `caret-left` glyph. A
 link to a later column leaves the right side of its box a third of the way
 down and enters the left side at the same height; a link to an earlier column
@@ -1723,9 +1725,11 @@ leaves room for the labels: a link to a later column has its label over its
 last run, before the arrowhead, a link to an earlier column under its last
 run, after the arrowhead, and a link within a column beside its vertical run.
 Labels of links that end at the same place stack, in link order, away from the
-line. Nodes are drawn over links, so a link that spans several columns passes
-behind the boxes between, where it lies on the links of the columns it
-crosses.
+line. A link that spans more than one column goes round the boxes between: it
+turns 60 px out of its start, runs along a lane under the lowest box of the
+columns it passes, and comes up to its end, five boxes in all.
+`LinkRoute::detour` is that turn and lane, and `segments()` answers three runs
+or five.
 
 The boxes are rebuilt only when the layout could change: the mode, a node's
 id, title, pins or having a subtitle, or a link's ends, slot or label. A

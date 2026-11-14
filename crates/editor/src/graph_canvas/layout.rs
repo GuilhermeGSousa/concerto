@@ -32,6 +32,9 @@ const FORWARD_BEND: f32 = 110.0;
 const BACKWARD_BEND: f32 = 110.0;
 const LOOP_BEND: f32 = 40.0;
 const LOOP_OFFSET: f32 = 8.0;
+const DETOUR_TURN: f32 = 60.0;
+const FORWARD_LANE: f32 = 12.0;
+const BACKWARD_LANE: f32 = 20.0;
 
 /// Which way a link's arrowhead points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +72,16 @@ impl Segment {
     }
 }
 
-/// A link's path: out of `start`, along to `bend`, up or down, and along to `end`.
+/// The way a link takes round the boxes between its ends: up or down at `turn`, then along `lane`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Detour {
+    /// The x of the vertical run that leaves the start's height.
+    pub turn: f32,
+    /// The y of the horizontal run that passes the boxes between.
+    pub lane: f32,
+}
+
+/// A link's path: out of `start`, along to `bend`, up or down, and along to `end`; with a `detour`, round the boxes between first.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LinkRoute {
     /// The link's index in the canvas's `links`.
@@ -79,6 +91,8 @@ pub struct LinkRoute {
     pub bend: f32,
     pub end: Vec2,
     pub arrow: Option<ArrowDirection>,
+    /// Set on a diagram link that spans more than one column.
+    pub detour: Option<Detour>,
 }
 
 impl LinkRoute {
@@ -90,27 +104,29 @@ impl LinkRoute {
             bend: (start.x + end.x) / 2.0,
             end,
             arrow: None,
+            detour: None,
         }
     }
 
-    /// The three runs, in order: horizontal, vertical, horizontal.
-    pub fn segments(&self) -> [Segment; 3] {
-        let first = Vec2::new(self.bend, self.start.y);
-        let second = Vec2::new(self.bend, self.end.y);
-        [
-            Segment {
-                from: self.start,
-                to: first,
-            },
-            Segment {
-                from: first,
-                to: second,
-            },
-            Segment {
-                from: second,
-                to: self.end,
-            },
-        ]
+    /// The runs, in order, horizontal and vertical by turns: three, or five with a `detour`.
+    pub fn segments(&self) -> Vec<Segment> {
+        let mut corners = vec![self.start];
+        match self.detour {
+            Some(detour) => corners.extend([
+                Vec2::new(detour.turn, self.start.y),
+                Vec2::new(detour.turn, detour.lane),
+                Vec2::new(self.bend, detour.lane),
+            ]),
+            None => corners.push(Vec2::new(self.bend, self.start.y)),
+        }
+        corners.extend([Vec2::new(self.bend, self.end.y), self.end]);
+        corners
+            .windows(2)
+            .map(|run| Segment {
+                from: run[0],
+                to: run[1],
+            })
+            .collect()
     }
 }
 
@@ -371,12 +387,24 @@ fn flow_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
         bend,
         end,
         arrow: None,
+        detour: None,
     }
+}
+
+fn lane_under(boxes: &[NodeBox], from: UIBox, to: UIBox) -> Option<f32> {
+    let left = from.min.x.min(to.min.x);
+    let right = from.min.x.max(to.min.x);
+    boxes
+        .iter()
+        .filter(|node| node.rect.min.x > left && node.rect.min.x < right)
+        .map(|node| node.rect.max().y)
+        .reduce(f32::max)
 }
 
 fn diagram_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
     let from = boxes[edge.from].rect;
     let to = boxes[edge.to].rect;
+    let lane = lane_under(boxes, from, to);
     let upper = |rect: UIBox| rect.min.y + rect.size.y / 3.0;
     let lower = |rect: UIBox| rect.min.y + rect.size.y * 2.0 / 3.0;
     if to.min.x > from.min.x {
@@ -386,6 +414,10 @@ fn diagram_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
             bend: to.min.x - FORWARD_BEND,
             end: Vec2::new(to.min.x, upper(to)),
             arrow: Some(ArrowDirection::Right),
+            detour: lane.map(|lane| Detour {
+                turn: from.max().x + DETOUR_TURN,
+                lane: lane + FORWARD_LANE,
+            }),
         }
     } else if to.min.x < from.min.x {
         LinkRoute {
@@ -394,6 +426,10 @@ fn diagram_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
             bend: to.max().x + BACKWARD_BEND,
             end: Vec2::new(to.max().x, lower(to)),
             arrow: Some(ArrowDirection::Left),
+            detour: lane.map(|lane| Detour {
+                turn: from.min.x - DETOUR_TURN,
+                lane: lane + BACKWARD_LANE,
+            }),
         }
     } else {
         let offset = if to.min.y < from.min.y {
@@ -407,6 +443,7 @@ fn diagram_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
             bend: from.max().x + LOOP_BEND + offset,
             end: Vec2::new(to.max().x, lower(to)),
             arrow: Some(ArrowDirection::Left),
+            detour: None,
         }
     }
 }
@@ -420,7 +457,7 @@ pub fn layout(nodes: &[CanvasNode], links: &[CanvasLink], mode: CanvasMode) -> C
         CanvasMode::Diagram => place_diagram(nodes, &edges, &heights),
     };
     let boxes = boxes(nodes, &placements, &heights, mode);
-    let links = edges
+    let links: Vec<LinkRoute> = edges
         .iter()
         .map(|edge| match mode {
             CanvasMode::Flow => flow_route(edge, &boxes),
@@ -430,6 +467,11 @@ pub fn layout(nodes: &[CanvasNode], links: &[CanvasLink], mode: CanvasMode) -> C
     let extent = boxes
         .iter()
         .fold(Vec2::ZERO, |extent, node| extent.max(node.rect.max()));
+    let lowest = links
+        .iter()
+        .filter_map(|route| route.detour)
+        .fold(extent.y, |lowest, detour| lowest.max(detour.lane));
+    let extent = Vec2::new(extent.x, lowest);
     CanvasLayout {
         nodes: boxes,
         links,

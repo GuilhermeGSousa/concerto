@@ -26,7 +26,7 @@ use concerto_ecs::{
 use concerto_foundation::assets::handle::ReflectAssetHandle;
 use concerto_reflect::{
     PathSegment, PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo,
-    ReflectList, ReflectOption, TypeRegistry,
+    ReflectList, ReflectOption, ReflectRef, TypeRegistry,
 };
 use concerto_ui::{node::UINode, theme::UITheme};
 
@@ -284,7 +284,9 @@ impl Collect<'_> {
         }
         let count = self.properties.len();
         value.visit(self);
-        if count == self.properties.len() {
+        let empty =
+            matches!(value.reflect_ref(), ReflectRef::Struct(fields) if fields.field_len() == 0);
+        if count == self.properties.len() && !empty {
             self.properties
                 .push(self.property(type_id, PropertyKind::Unsupported));
         }

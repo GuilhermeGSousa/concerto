@@ -330,7 +330,7 @@ struct BuiltNode {
 
 struct BuiltLink {
     link: usize,
-    segments: [Entity; 3],
+    segments: Vec<Entity>,
     arrow: Option<Entity>,
 }
 
@@ -786,11 +786,15 @@ fn build_link(
     theme: &UITheme,
 ) -> BuiltLink {
     let color = link_color(link, selected, theme);
-    let segments = route.segments().map(|segment| {
-        items
-            .spawn_child((at_box(segment.bounds(LINK_WIDTH)), UIMaterial::flat(color)))
-            .entity()
-    });
+    let segments = route
+        .segments()
+        .into_iter()
+        .map(|segment| {
+            items
+                .spawn_child((at_box(segment.bounds(LINK_WIDTH)), UIMaterial::flat(color)))
+                .entity()
+        })
+        .collect();
     let arrow = route.arrow.map(|direction| {
         let glyph = match direction {
             ArrowDirection::Left => glyph::CARET_LEFT,
@@ -876,7 +880,7 @@ fn repaint(
         };
         let selected = canvas.selection == Some(CanvasTarget::Link(shown.link));
         let color = link_color(link, selected, theme);
-        for segment in shown.segments {
+        for &segment in &shown.segments {
             if let Some(mut material) = materials.get_entity(segment)
                 && material.color != color.to_linear()
             {
