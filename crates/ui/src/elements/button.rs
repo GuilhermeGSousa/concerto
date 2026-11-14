@@ -48,7 +48,10 @@ impl UITheme {
                 .solid()
                 .bordered()
                 .height(UIValue::Px(self.control_height))
-                .padding(UIRect::axes(self.spacing_sm, self.spacing_md)),
+                .padding(UIRect::axes(
+                    ((self.control_height - self.line_height(self.font_size_md)) / 2.0).max(0.0),
+                    self.spacing_md,
+                )),
             text: UIText {
                 wrap: false,
                 ellipsis: true,
