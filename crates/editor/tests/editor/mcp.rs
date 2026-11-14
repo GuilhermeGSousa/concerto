@@ -641,15 +641,27 @@ fn note_prompt(closing: Option<Res<Closing>>, guard: Res<UnsavedGuard>, log: Res
 }
 
 fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u8]) {
+    let provenance = ImportProvenance {
+        source: "fixture.glb".into(),
+        sub_asset: address.into(),
+    };
+    write_imported(root, address, id, kind, provenance, payload);
+}
+
+fn write_imported(
+    root: &Path,
+    address: &str,
+    id: AssetId,
+    kind: &str,
+    provenance: ImportProvenance,
+    payload: &[u8],
+) {
     let header = ContentAssetHeader {
         asset_id: id,
         references: vec![],
         kind: kind.into(),
         kind_version: 1,
-        provenance: Some(ImportProvenance {
-            source: "fixture.glb".into(),
-            sub_asset: address.into(),
-        }),
+        provenance: Some(provenance),
         derived: None,
     };
     let path = root.join(address);
@@ -734,6 +746,16 @@ impl Fixture {
     fn add(&self, address: &str, kind: &str) -> AssetId {
         let id = AssetId::new();
         write_asset(self.directory.path(), address, id, kind, &[]);
+        id
+    }
+
+    fn add_part(&self, address: &str, kind: &str, source: &str, sub_asset: &str) -> AssetId {
+        let id = AssetId::new();
+        let provenance = ImportProvenance {
+            source: source.into(),
+            sub_asset: sub_asset.into(),
+        };
+        write_imported(self.directory.path(), address, id, kind, provenance, &[]);
         id
     }
 
@@ -1486,6 +1508,88 @@ fn list_assets_filters_and_pages_the_catalogue() {
     assert_eq!(malformed["code"], "invalid_arguments");
 }
 
+#[test]
+fn list_assets_folds_an_import_under_its_scene() {
+    let fixture = Fixture::new();
+    let source = "assets/props/crate.glb";
+    let scene = fixture.add_part("content/props/crate/scene.gasset", "Scene", source, "scene");
+    let mesh = fixture.add_part(
+        "content/props/crate/mesh_0.gasset",
+        "Mesh",
+        source,
+        "mesh/0",
+    );
+    let material = fixture.add_part(
+        "content/props/crate/material_0.gasset",
+        "StandardMaterial",
+        source,
+        "material/0",
+    );
+    let level = fixture.scene;
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        until(&client, "list_assets", |assets| {
+            assets.contains("placeable")
+        })
+        .await;
+        let pages = vec![
+            ok(&client, "list_assets").await,
+            ok_with(&client, "list_assets", json!({ "kind": "Mesh" })).await,
+            ok_with(
+                &client,
+                "list_assets",
+                json!({ "parts_of": "content/props/crate/scene.gasset" }),
+            )
+            .await,
+            ok_with(&client, "list_assets", json!({ "query": "crate" })).await,
+        ];
+        let not_an_import = error_with(
+            &client,
+            "list_assets",
+            json!({ "parts_of": "content/level.gasset" }),
+        )
+        .await;
+        client.cancel().await.unwrap();
+        (pages, not_an_import)
+    }) else {
+        return;
+    };
+
+    let level = format!(
+        "content/level.gasset · Scene · {} · placeable",
+        level.simple_hex()
+    );
+    let face = format!(
+        "content/props/crate/scene.gasset · Scene · {} · placeable · import of assets/props/crate.glb with 2 parts",
+        scene.simple_hex()
+    );
+    let part = |address: &str, kind: &str, id: AssetId| {
+        format!(
+            "{address} · {kind} · {} · part of content/props/crate/scene.gasset",
+            id.simple_hex()
+        )
+    };
+    let mesh = part("content/props/crate/mesh_0.gasset", "Mesh", mesh);
+    let material = part(
+        "content/props/crate/material_0.gasset",
+        "StandardMaterial",
+        material,
+    );
+    let (pages, not_an_import) = served.result;
+    assert_eq!(
+        pages[0],
+        format!("2 assets match; showing 1–2:\n{level}\n{face}")
+    );
+    assert_eq!(pages[1], format!("1 asset matches; showing 1–1:\n{mesh}"));
+    assert_eq!(
+        pages[2],
+        format!("2 assets match; showing 1–2:\n{material}\n{mesh}")
+    );
+    assert_eq!(pages[3], format!("1 asset matches; showing 1–1:\n{face}"));
+    assert_eq!(not_an_import["code"], "not_an_import");
+}
+
 fn without_components(text: &str) -> String {
     text.lines()
         .map(|line| match line.rfind(" [") {
@@ -2042,7 +2146,14 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             json!({ "source": square, "destination": "assets/props/square.obj" }),
         )
         .await;
-        let listed = ok_with(&client, "list_assets", json!({ "query": "square" })).await;
+        let face = ok_with(&client, "list_assets", json!({ "query": "square" })).await;
+        let parts = ok_with(
+            &client,
+            "list_assets",
+            json!({ "parts_of": "content/props/square/scene.gasset" }),
+        )
+        .await;
+        let listed = format!("{face}\n{parts}");
         let errors = vec![
             error_with(
                 &client,

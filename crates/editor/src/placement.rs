@@ -23,6 +23,7 @@ use crate::{
     content::ContentAsset,
     drag_drop::{DragDropAppExt, DragSource, DropTarget, Dropped},
     hosted::{EditTarget, EditWorld, EditWorldSignals, HostRole, Hosted, HostedApp, PlayState},
+    import_fold::shown_name,
     inspector::refused,
     mcp::{SceneEntities, resolve},
     scene::SceneOpened,
@@ -115,7 +116,7 @@ fn offer_placeable_tiles(
         let wanted = registry
             .get(asset.id)
             .filter(|entry| !playing && kinds.contains(&entry.kind))
-            .map(|entry| DragSource::new(AssetDrag { id: entry.id }, entry.name()));
+            .map(|entry| DragSource::new(AssetDrag { id: entry.id }, shown_name(entry)));
         match (source, wanted) {
             (None, Some(wanted)) => cmd.insert(wanted, tile),
             (Some(source), wanted)
