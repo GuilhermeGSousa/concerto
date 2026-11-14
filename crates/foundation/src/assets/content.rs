@@ -187,7 +187,7 @@ fn refuse_a_host(existing: &ContentAssetHeader, address: &str) -> anyhow::Result
         return Ok(());
     }
     anyhow::bail!(
-        "'{address}' belongs to an import: its file holds {} embedded assets and is written whole by the import; save under a new name, or set `file = true` for the output in the source's `.import.toml` and import again",
+        "'{address}' belongs to an import: its file holds {} embedded assets, is written whole by the import and is read-only; set `file = true` for an output in the source's `.import.toml` and import again to make that output a file of its own",
         existing.embedded.len()
     )
 }

@@ -224,7 +224,7 @@ fn a_file_with_embedded_assets_is_not_overwritten() {
 
     for refusal in refusals {
         let message = format!("{:#}", refusal.expect_err("the file belongs to an import"));
-        for expected in [address, "belongs to an import", "new name", "file = true"] {
+        for expected in [address, "belongs to an import", "read-only", "file = true"] {
             assert!(message.contains(expected), "got: {message}");
         }
     }

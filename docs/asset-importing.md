@@ -954,9 +954,10 @@ provenance. The next re-import of the source then overwrites the saved edit.
 
 Both refuse an address whose file holds embedded assets, and leave the file as
 it was. Such a file belongs to an import, which writes it whole; nothing
-rewrites one asset inside it. The error gives the address and the two ways on:
-save under a new name, or set `file = true` for the output in the source's
-`.import.toml` and import again, which makes that output a loose file.
+rewrites one asset inside it. The error gives the address, says the file is
+read-only, and names the way on: set `file = true` for an output in the
+source's `.import.toml` and import again, which makes that output a file of
+its own.
 
 `read_asset_record(project_root, &entry)` reads one asset out of the tree
 whatever way it is stored: the standalone record of a registry entry, loose,
