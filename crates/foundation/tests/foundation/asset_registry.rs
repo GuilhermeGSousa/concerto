@@ -1,6 +1,7 @@
 //! `AssetRegistry` get/insert/remove/iter and scanning.
 use concerto_foundation::assets::content::{
-    write_content_asset, ContentAssetHeader, ImportProvenance,
+    write_content_asset, write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload,
+    ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId};
@@ -14,6 +15,7 @@ fn entry(id: AssetId, address: &str, kind: &str) -> AssetEntry {
         kind: kind.into(),
         kind_version: None,
         provenance: None,
+        embedded_as: None,
     }
 }
 
@@ -101,6 +103,120 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id_and_follows_a_moved_f
     std::fs::remove_dir_all(&dir).ok();
 }
 
+fn header(id: AssetId, kind: &str, sub_asset: &str) -> ContentAssetHeader {
+    ContentAssetHeader {
+        asset_id: id,
+        references: Vec::new(),
+        kind: kind.to_string(),
+        kind_version: 1,
+        provenance: Some(ImportProvenance {
+            source: "assets/hero.glb".into(),
+            sub_asset: sub_asset.into(),
+        }),
+        derived: None,
+        embedded: Vec::new(),
+    }
+}
+
+fn as_registry_text_holds(entry: &AssetEntry) -> AssetEntry {
+    AssetEntry {
+        kind_version: None,
+        provenance: None,
+        ..entry.clone()
+    }
+}
+
+#[test]
+fn a_host_and_its_embedded_assets_are_listed_and_found() {
+    let dir = temp_root("embedded");
+    let [loose, host, mesh, material] = [(); 4].map(|_| AssetId::new());
+    let scene = "content/hero/scene.gasset";
+    std::fs::create_dir_all(dir.join("content/hero")).unwrap();
+    std::fs::write(
+        dir.join("content/hero/crate.gasset"),
+        write_content_asset(&header(loose, "Mesh", "mesh/crate"), b"loose").unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(scene),
+        write_content_asset_with_embedded(
+            &header(host, "Scene", "scene"),
+            b"scene",
+            &[
+                EmbeddedPayload {
+                    header: header(mesh, "Mesh", "mesh/0"),
+                    payload: b"mesh",
+                    derived_blob: None,
+                },
+                EmbeddedPayload {
+                    header: header(material, "StandardMaterial", "material/steel"),
+                    payload: b"material",
+                    derived_blob: None,
+                },
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut registry = AssetRegistry::from_content_tree(&dir, "content", "gasset").expect("scan");
+    std::fs::remove_dir_all(&dir).ok();
+
+    assert_eq!(registry.iter().count(), 4);
+    assert_eq!(registry.id_for_address(scene), Some(host));
+    assert_eq!(
+        registry.id_for_location("content/hero/scene.gasset#mesh/0"),
+        Some(mesh)
+    );
+    assert_eq!(registry.id_for_location(scene), Some(host));
+    let held = registry.get(mesh).expect("the mesh is listed");
+    assert_eq!(held.address, scene);
+    assert_eq!(held.embedded_as.as_deref(), Some("mesh/0"));
+    assert_eq!(held.location(), "content/hero/scene.gasset#mesh/0");
+    assert_eq!(
+        held.name(),
+        "mesh_0",
+        "an embedded asset is named as its loose file was"
+    );
+    assert_eq!(registry.get(host).expect("host").location(), scene);
+    let in_file: Vec<_> = registry.in_file(scene).map(|entry| entry.id).collect();
+    assert_eq!(in_file, [host, material, mesh], "the host comes first");
+
+    let text = registry.to_toml();
+    let parsed = AssetRegistry::parse(&text).expect("the registry text parses");
+    assert_eq!(
+        parsed.iter().cloned().collect::<Vec<_>>(),
+        registry
+            .iter()
+            .map(as_registry_text_holds)
+            .collect::<Vec<_>>(),
+        "got: {text}"
+    );
+
+    let replacement = AssetId::new();
+    registry.insert(AssetEntry {
+        embedded_as: Some("mesh/0".into()),
+        ..entry(replacement, scene, "Mesh")
+    });
+    assert_eq!(registry.get(mesh), None, "one asset per location");
+    assert_eq!(
+        registry.id_for_location("content/hero/scene.gasset#mesh/0"),
+        Some(replacement)
+    );
+    assert_eq!(registry.id_for_address(scene), Some(host));
+    assert_eq!(registry.iter().count(), 4);
+
+    let before = AssetRegistry::parse(&format!(
+        "[assets]\n{} = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n",
+        loose.simple_hex()
+    ))
+    .expect("text written before embedded assets parses");
+    assert_eq!(
+        before.get(loose),
+        Some(&entry(loose, "content/a.gasset", "Mesh"))
+    );
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Mesh;
 
@@ -183,7 +299,7 @@ proptest! {
             model.sort_by(|a, b| {
                 a.folder()
                     .cmp(b.folder())
-                    .then(a.name().cmp(b.name()))
+                    .then(a.name().cmp(&b.name()))
                     .then(a.kind.cmp(&b.kind))
                     .then(a.address.cmp(&b.address))
             });

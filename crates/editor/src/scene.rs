@@ -330,7 +330,7 @@ fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Re
         .cloned()
         .context("The saved scene was not registered")?;
     if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
-        document.title = saved.name().to_owned();
+        document.title = saved.name().into_owned();
         document.current = Some(saved.clone());
     }
     Ok(saved)

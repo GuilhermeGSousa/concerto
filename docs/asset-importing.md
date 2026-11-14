@@ -495,12 +495,21 @@ TOML to `$OUT_DIR/concerto_registry.toml` and embeds it (see
 [assets]
 9f3c…e21a = { address = "content/UAL1/scene.gasset", kind = "Scene" }
 b75e…8457 = { address = "content/UAL1/mesh_0.gasset", kind = "Mesh" }
+41d0…77c2 = { address = "content/hero/scene.gasset", kind = "Mesh", embedded_as = "mesh/0" }
 ```
+
+A file can hold several assets: its host, and the assets embedded in it. Each
+has its own entry, all at the file's address, and an embedded one also has
+`embedded_as`, its name inside the file. Written out, an embedded asset's
+location is the address, `#`, and that name:
+`content/hero/scene.gasset#mesh/0`. A line without `embedded_as` is a host or a
+loose asset, so registry text written before embedded assets existed still
+parses.
 
 `AssetRegistry` (`concerto_foundation::assets::registry`) is the registry in
 memory, and a resource in every `App` that has `AssetManagerPlugin`. Each
-`AssetEntry` has the id, the address, the kind, and, when the registry was built
-by scanning headers, the import provenance. List assets by type without loading
+`AssetEntry` has the id, the address, the kind, `embedded_as`, and, when the
+registry was built by scanning headers, the import provenance. List assets by type without loading
 them, as with Unreal's `GetAssetsByClass`:
 
 ```rust
@@ -511,8 +520,14 @@ fn list_meshes(registry: Res<AssetRegistry>) {
 }
 ```
 
-Entries come in folder, then name order. `get(id)` and `id_for_address(address)`
-look up one entry. React to catalogue changes with `registry.is_changed()`.
+Entries come in folder, then name order. `get(id)` looks up one entry.
+`id_for_address(address)` gives the host or loose asset of a file,
+`id_for_location(location)` any asset by the text `AssetEntry::location` gives
+(`content/hero/scene.gasset#mesh/0`), and `in_file(address)` every entry of a
+file, host first. `name()` is the file name without its extension, and for an
+embedded asset the name its own file would have (`mesh_0` for `mesh/0`). Two
+entries never share an id or a location; inserting one replaces whichever held
+either. React to catalogue changes with `registry.is_changed()`.
 
 A scene's serialized `MeshComponent` carries a bare `AssetId` (no path); when
 the spawner upgrades that `Weak` handle to `Strong`, `AssetServer` resolves the
@@ -582,7 +597,11 @@ not embed the file payload, import source assets, read the registry, or perform
 a runtime path lookup. A missing file expands to `AssetId::nil()` with a
 deprecation warning at the macro invocation, which a crate that denies warnings
 sees as an error. Malformed headers and unsupported file versions are compile
-errors there. It is also available as
+errors there. An embedded asset is named by its location,
+`asset_id!("content/hero/scene.gasset#skeleton/0")`: when the whole text is not
+a file, the macro splits it at the first `#` that leaves a file before it and
+looks the rest up among that file's embedded assets. A name the file does not
+hold is a compile error that lists the names it does hold. It is also available as
 `concerto_foundation::asset_id!` and `concerto_foundation::assets::asset_id!`.
 
 Register the package's content directory for stable Rust build tracking, and
@@ -617,8 +636,9 @@ leave stale UUIDs in the executable. Existing examples include this setup.
 
 `track_assets` also scans the `content` tree and reads `content.toml`, failing
 the build when the file is invalid or sets a root other than `content`, and writes
-the registry to `$OUT_DIR/concerto_registry.toml`. Two files with one id, or an
-unreadable header, print the paths as a Cargo warning and fail the build.
+the registry to `$OUT_DIR/concerto_registry.toml`, with one line for each asset
+of a file, embedded ones included. Two assets with one id, or an unreadable
+header, print their locations as a Cargo warning and fail the build.
 It also records the package directory as `CONCERTO_PROJECT_ROOT`.
 `concerto::content_registry!()` embeds the file and that directory; it needs a
 `build.rs` that calls `track_assets`. `concerto::run` installs both, and a

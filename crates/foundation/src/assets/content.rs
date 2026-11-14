@@ -113,6 +113,7 @@ pub fn save_content_asset_into<A: Asset>(
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 
     registry.insert(AssetEntry {
+        embedded_as: None,
         id: asset_id,
         address: address.to_owned(),
         kind,
@@ -154,6 +155,7 @@ pub fn resave_content_asset<A: Asset>(
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 
     registry.insert(AssetEntry {
+        embedded_as: None,
         id: header.asset_id,
         address: address.to_owned(),
         kind: header.kind,

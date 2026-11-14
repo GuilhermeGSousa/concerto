@@ -1,4 +1,5 @@
 //! How the catalogue folds an import's output under the scene it made.
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -20,14 +21,14 @@ pub fn is_import_face(asset: &AssetEntry) -> bool {
 }
 
 /// The name the catalogue shows for `asset`: its source's file name without the extension for an import's scene, its own file name otherwise.
-pub fn shown_name(asset: &AssetEntry) -> &str {
+pub fn shown_name(asset: &AssetEntry) -> Cow<'_, str> {
     asset
         .provenance
         .as_ref()
         .filter(|_| is_import_face(asset))
         .and_then(|provenance| Path::new(&provenance.source).file_stem())
         .and_then(|stem| stem.to_str())
-        .unwrap_or_else(|| asset.name())
+        .map_or_else(|| asset.name(), Cow::Borrowed)
 }
 
 /// The imports of a registry that have a scene, each folded into that scene, its face, with the rest of its output as the face's parts.
@@ -74,9 +75,9 @@ impl<'a> ImportFolds<'a> {
     pub fn matches(&self, asset: &AssetEntry, query: &str) -> bool {
         let has = |text: &str| text.to_lowercase().contains(query);
         if self.face_of(asset).is_some() {
-            has(asset.name()) || has(&asset.kind)
+            has(&asset.name()) || has(&asset.kind)
         } else {
-            has(shown_name(asset)) || has(&asset.address) || has(&asset.kind)
+            has(&shown_name(asset)) || has(&asset.address) || has(&asset.kind)
         }
     }
 }

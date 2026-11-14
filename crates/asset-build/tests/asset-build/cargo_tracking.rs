@@ -3,7 +3,10 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use concerto_asset_format::{write_content_asset, AssetId, ContentAssetHeader};
+use concerto_asset_format::{
+    write_content_asset, write_content_asset_with_embedded, AssetId, ContentAssetHeader,
+    EmbeddedPayload, ImportProvenance,
+};
 
 fn cargo(project: &Path) -> Output {
     Command::new(env!("CARGO"))
@@ -31,6 +34,56 @@ fn write_asset(project: &Path, id: AssetId) {
     std::fs::write(
         project.join("content/fixture.gasset"),
         write_content_asset(&header, &payload).unwrap(),
+    )
+    .unwrap();
+}
+
+fn write_host(project: &Path, embedded: AssetId) {
+    let header = |id, kind: &str, sub_asset: &str| ContentAssetHeader {
+        asset_id: id,
+        references: vec![],
+        kind: kind.into(),
+        kind_version: 1,
+        provenance: Some(ImportProvenance {
+            source: "assets/fixture.glb".into(),
+            sub_asset: sub_asset.into(),
+        }),
+        derived: None,
+        embedded: Vec::new(),
+    };
+    std::fs::write(
+        project.join("content/host.gasset"),
+        write_content_asset_with_embedded(
+            &header(AssetId::new(), "Scene", "scene"),
+            b"scene",
+            &[
+                EmbeddedPayload {
+                    header: header(AssetId::new(), "Fixture", "mesh/0"),
+                    payload: b"first",
+                    derived_blob: None,
+                },
+                EmbeddedPayload {
+                    header: header(embedded, "Fixture", "mesh/a#b"),
+                    payload: b"second",
+                    derived_blob: None,
+                },
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn write_main(project: &Path, literal: &str) {
+    std::fs::write(
+        project.join("src/main.rs"),
+        format!(
+            r#"
+use concerto_asset_format::AssetId;
+const ID: AssetId = AssetId::from_bytes(concerto_foundation_macros::asset_id_bytes!("{literal}"));
+fn main() {{ println!("{{}}", ID.simple_hex()); }}
+"#
+        ),
     )
     .unwrap();
 }
@@ -90,11 +143,7 @@ concerto-asset-build = {{ path = {:?} }}
         "fn main() { concerto_asset_build::track_assets(\"content\").unwrap(); }",
     )
     .unwrap();
-    std::fs::write(root.join("src/main.rs"), r#"
-use concerto_asset_format::AssetId;
-const ID: AssetId = AssetId::from_bytes(concerto_foundation_macros::asset_id_bytes!("content/fixture.gasset"));
-fn main() { println!("{}", ID.simple_hex()); }
-"#).unwrap();
+    write_main(root, "content/fixture.gasset");
 
     let first = AssetId::new();
     write_asset(root, first);
@@ -110,6 +159,14 @@ fn main() { println!("{}", ID.simple_hex()); }
     let second = AssetId::new();
     write_asset(root, second);
     assert_id(cargo(root), second);
+
+    let embedded = AssetId::new();
+    write_host(root, embedded);
+    write_main(root, "content/host.gasset#mesh/a#b");
+    assert_id(cargo(root), embedded);
+    write_main(root, "content/host.gasset#mesh/9");
+    assert_error(cargo(root), "it holds [mesh/0, mesh/a#b]");
+    write_main(root, "content/fixture.gasset");
 
     std::fs::write(root.join("content/fixture.gasset"), b"broken header").unwrap();
     assert_error(cargo(root), "missing the GRDY magic prefix");

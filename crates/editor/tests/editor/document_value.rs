@@ -302,6 +302,7 @@ impl Editing {
 
     fn open<A: Asset>(&mut self) -> Entity {
         let asset = AssetEntry {
+            embedded_as: None,
             id: AssetId::new(),
             address: format!("{}.gasset", A::name()),
             kind: A::name().into(),
@@ -1026,6 +1027,7 @@ fn a_picked_asset_lands_in_a_value_when_the_editors_server_knows_its_type() {
         .register_asset(&store);
     w.world().insert_resource(store);
     let cube = AssetEntry {
+        embedded_as: None,
         id: AssetId::new(),
         address: "content/cube.gasset".into(),
         kind: Mesh::name().into(),
@@ -1043,7 +1045,7 @@ fn a_picked_asset_lands_in_a_value_when_the_editors_server_knows_its_type() {
     let row = w.row_entity("mesh");
     w.click_last_child(row);
     w.editor.update();
-    w.click_labelled(cube.name());
+    w.click_labelled(&cube.name());
     w.editor.update();
 
     assert_eq!(w.held(document).look.mesh.id(), cube.id);

@@ -667,6 +667,7 @@ mod tests {
 
     fn scene_entry(id: AssetId) -> AssetEntry {
         AssetEntry {
+            embedded_as: None,
             id,
             address: "content/hero/scene.gasset".into(),
             kind: "Scene".into(),

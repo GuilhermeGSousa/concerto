@@ -520,6 +520,7 @@ mod tests {
         world.insert_resource(registry);
         let doc = document(&mut world, true);
         let next = concerto_foundation::assets::registry::AssetEntry {
+            embedded_as: None,
             id: AssetId::new(),
             address: "next.gasset".into(),
             kind: Scene::name().into(),

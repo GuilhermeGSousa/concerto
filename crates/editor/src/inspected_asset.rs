@@ -250,7 +250,7 @@ fn save_document(
         .context("The saved asset was not registered")?;
     state.loaded = std::fs::read(root.join(&saved.address))
         .with_context(|| format!("Cannot read {} back", saved.address))?;
-    document.title = saved.name().to_owned();
+    document.title = saved.name().into_owned();
     document.current = Some(saved.clone());
     Ok(saved)
 }

@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use concerto_asset_format::{
-    parse_registry, scan_content, write_content_asset, write_registry, AssetId, ContentAssetHeader,
-    ContentConfig, ImportProvenance, ScannedEntry,
+    asset_location, parse_registry, scan_content, write_content_asset,
+    write_content_asset_with_embedded, write_registry, AssetId, ContentAssetHeader, ContentConfig,
+    EmbeddedPayload, ImportProvenance, ScannedEntry,
 };
 
 fn temp_root(tag: &str) -> PathBuf {
@@ -65,6 +66,7 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
                 kind: "AnimationClip".into(),
                 kind_version: Some(1),
                 provenance: None,
+                embedded_as: None,
             },
             ScannedEntry {
                 id: body,
@@ -72,6 +74,7 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
                 kind: "Mesh".into(),
                 kind_version: Some(1),
                 provenance,
+                embedded_as: None,
             },
         ]
     );
@@ -88,6 +91,7 @@ fn the_registry_text_round_trips_without_the_kind_version() {
             kind: "Mesh".into(),
             kind_version: None,
             provenance: None,
+            embedded_as: None,
         },
         ScannedEntry {
             id: AssetId::new(),
@@ -95,6 +99,23 @@ fn the_registry_text_round_trips_without_the_kind_version() {
             kind: "Scene".into(),
             kind_version: Some(3),
             provenance: None,
+            embedded_as: None,
+        },
+        ScannedEntry {
+            id: AssetId::new(),
+            address: "content/quoted \"b\".gasset".into(),
+            kind: "Mesh".into(),
+            kind_version: None,
+            provenance: None,
+            embedded_as: Some("mesh/\"0\"".into()),
+        },
+        ScannedEntry {
+            id: AssetId::new(),
+            address: "content/quoted \"b\".gasset".into(),
+            kind: "Mesh".into(),
+            kind_version: None,
+            provenance: None,
+            embedded_as: Some("mesh/1".into()),
         },
     ];
 
@@ -121,6 +142,7 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
                 source: "assets/b.glb".into(),
                 sub_asset: "b".into(),
             }),
+            embedded_as: None,
         },
         ScannedEntry {
             id: ids[0],
@@ -128,6 +150,7 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
             kind: "Mesh".into(),
             kind_version: None,
             provenance: None,
+            embedded_as: None,
         },
     ];
 
@@ -163,6 +186,14 @@ fn parsing_refuses_the_legacy_address_only_form_and_two_ids_at_one_address() {
                 AssetId::new().simple_hex(),
             ),
             names: "content/a.gasset",
+        },
+        RegistryRefusal {
+            text: format!(
+                "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n",
+                AssetId::new().simple_hex(),
+                AssetId::new().simple_hex(),
+            ),
+            names: "content/a.gasset#mesh/0",
         },
     ] {
         let err = parse_registry(&case.text).expect_err("refused");
@@ -304,6 +335,34 @@ fn content(root: &Path) -> Scan {
     }
 }
 
+fn host(path: &Path, id: AssetId, embedded: AssetId) -> Vec<u8> {
+    let header = |id, kind: &str, sub_asset: &str| ContentAssetHeader {
+        asset_id: id,
+        references: Vec::new(),
+        kind: kind.to_string(),
+        kind_version: 1,
+        provenance: Some(ImportProvenance {
+            source: "assets/hero.glb".into(),
+            sub_asset: sub_asset.into(),
+        }),
+        derived: None,
+        embedded: Vec::new(),
+    };
+    let bytes = write_content_asset_with_embedded(
+        &header(id, "Scene", "scene"),
+        b"scene",
+        &[EmbeddedPayload {
+            header: header(embedded, "Mesh", "mesh/0"),
+            payload: b"mesh payload",
+            derived_blob: None,
+        }],
+    )
+    .unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, &bytes).unwrap();
+    bytes
+}
+
 fn mesh(path: &Path) {
     write_asset(path, AssetId::new(), "Mesh", None);
 }
@@ -344,6 +403,38 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
                 content(root)
             },
             expected: Scanned::Refused(&["content/a.gasset", "content/b.gasset"]),
+        },
+        Layout {
+            name: "a host, then its embedded assets",
+            build: |root| {
+                host(
+                    &root.join("content/scene.gasset"),
+                    AssetId::new(),
+                    AssetId::new(),
+                );
+                content(root)
+            },
+            expected: Scanned::Listed(&["content/scene.gasset", "content/scene.gasset#mesh/0"]),
+        },
+        Layout {
+            name: "an embedded id repeated by a loose file names both locations",
+            build: |root| {
+                let id = AssetId::new();
+                host(&root.join("content/a/scene.gasset"), AssetId::new(), id);
+                write_asset(&root.join("content/b.gasset"), id, "Mesh", None);
+                content(root)
+            },
+            expected: Scanned::Refused(&["content/a/scene.gasset#mesh/0", "content/b.gasset"]),
+        },
+        Layout {
+            name: "a host cut short of its embedded assets names its path",
+            build: |root| {
+                let path = root.join("content/scene.gasset");
+                let bytes = host(&path, AssetId::new(), AssetId::new());
+                std::fs::write(&path, &bytes[..bytes.len() - 4]).unwrap();
+                content(root)
+            },
+            expected: Scanned::Refused(&["scene.gasset", "mesh/0"]),
         },
         Layout {
             name: "an unreadable header names its path",
@@ -446,7 +537,10 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
                 assert_eq!(
                     entries
                         .iter()
-                        .map(|entry| entry.address.replace(&root_text, "<root>"))
+                        .map(|entry| {
+                            asset_location(&entry.address, entry.embedded_as.as_deref())
+                                .replace(&root_text, "<root>")
+                        })
                         .collect::<Vec<_>>(),
                     addresses,
                     "{}",

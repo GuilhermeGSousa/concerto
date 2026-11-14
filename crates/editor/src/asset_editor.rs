@@ -318,7 +318,7 @@ pub fn finish_asset_request(
             doc.current = doc.pending.take();
             doc.failed = None;
             if let Some(asset) = &doc.current {
-                doc.title = asset.name().to_owned();
+                doc.title = asset.name().into_owned();
             }
             doc.status.clear();
         }
@@ -402,7 +402,7 @@ pub fn process_editor_commands(
                         entity,
                         EditorDocument {
                             asset_type,
-                            title: asset.name().to_owned(),
+                            title: asset.name().into_owned(),
                             status: format!("Opening {}…", asset.address),
                             failed: None,
                             current: None,
@@ -521,6 +521,7 @@ mod tests {
     impl AssetEditor for OtherFake {}
     fn asset(path: &str) -> AssetEntry {
         AssetEntry {
+            embedded_as: None,
             id: AssetId::from_path(path),
             address: path.into(),
             kind: "TestAsset".into(),

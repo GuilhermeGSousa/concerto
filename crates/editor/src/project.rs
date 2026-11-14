@@ -606,6 +606,7 @@ mod tests {
             .get_resource_mut::<AssetRegistry>()
             .unwrap()
             .insert(AssetEntry {
+                embedded_as: None,
                 id: AssetId::new(),
                 address: "content/a.gasset".into(),
                 kind: Scene::name().into(),
@@ -821,6 +822,7 @@ mod tests {
 
     fn versioned(kind: &str, kind_version: Option<u32>) -> AssetEntry {
         AssetEntry {
+            embedded_as: None,
             id: AssetId::new(),
             address: format!("content/{:?}.gasset", AssetId::new()),
             kind: kind.into(),

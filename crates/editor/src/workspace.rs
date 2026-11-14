@@ -863,6 +863,7 @@ mod tests {
         world.insert_resource(UIInputState::default());
         world.insert_resource(ActionMap::default());
         let asset = concerto_foundation::assets::registry::AssetEntry {
+            embedded_as: None,
             id: AssetId::new(),
             address: "notes.gasset".into(),
             kind: "Notes".into(),

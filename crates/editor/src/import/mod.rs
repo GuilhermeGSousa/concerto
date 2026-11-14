@@ -713,6 +713,7 @@ mod tests {
         use concerto_foundation::assets::AssetId;
         use concerto_foundation::assets::registry::AssetEntry;
         let entry = |address: &str| AssetEntry {
+            embedded_as: None,
             id: AssetId::new(),
             address: address.into(),
             kind: "Scene".into(),

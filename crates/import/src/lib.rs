@@ -325,6 +325,7 @@ fn import_with(
             write_content_asset(&header, &sub_asset.bytes)?,
         ));
         let entry = AssetEntry {
+            embedded_as: None,
             id: sub_asset.asset_id,
             address,
             kind: header.kind,
