@@ -92,7 +92,6 @@ const MOONLIGHT: f32 = 0.18;
 const MOON_COLOR: Color = Color::rgba(0.62, 0.72, 1.0, 1.0);
 const LAMP_GLOW: f32 = 5.0;
 const SERVICE_LAMP_GLOW: f32 = 3.6;
-const LAMP_FADE_DISTANCE: f32 = 25.0;
 const LAMP_COLOR: Color = Color::rgba(1.0, 0.74, 0.46, 1.0);
 const SERVICE_LAMP_COLOR: Color = Color::rgba(1.0, 0.88, 0.7, 1.0);
 const DEVICE_HALF_EXTENTS: Vec3 = Vec3::new(0.35, 0.5, 0.3);
@@ -698,10 +697,7 @@ fn spawn_case(
             cmd.spawn((
                 Light {
                     intensity: light.intensity * lamp.glow,
-                    ..light
-                        .with_range(lamp.range)
-                        .with_fade_distance(LAMP_FADE_DISTANCE)
-                        .with_shadows()
+                    ..light.with_range(lamp.range).with_shadows()
                 },
                 Transform::from_translation(lamp.position),
             ));

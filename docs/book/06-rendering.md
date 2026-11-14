@@ -116,7 +116,6 @@ cmd.spawn((
         intensity: 1.0,
         light_type: LightType::Directional,
         range: 0.0,
-        fade_distance: 0.0,
         shadowmaps_enabled: true,
     },
     Transform::from_translation_rotation(Vec3::new(0.0, 8.0, 4.0), Quat::from_rotation_x(-0.8)),
@@ -134,14 +133,6 @@ some camera's view; a directional light, and a light whose `range` is 0, is
 always seen, so give a light a range wherever it has one. With no camera, no
 light is seen. Up to 128 seen lights are drawn; the later ones in entity order
 are left out, with a warning.
-
-`fade_distance` makes a point or spot light fade out as a camera moves away
-from it: the light is whole up to 80% of that distance from the camera and
-gone at it, and from there on that camera does not see it. Each camera fades
-a light by its own distance. 0, the default, never fades.
-`Light::fade_at(camera_distance)` gives the same factor in code. In a level
-with many lamps this keeps the lights and the shadows to the ones near the
-player.
 
 Up to 128 seen spot and directional lights cast shadows at once. A point light
 casts into a cube map that reaches as far as its `range`, or 20 metres when

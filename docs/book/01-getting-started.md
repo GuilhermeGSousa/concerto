@@ -107,7 +107,6 @@ fn setup(mut cmd: CommandQueue) {
             intensity: 100.0,
             light_type: LightType::Point,
             range: 0.0,
-            fade_distance: 0.0,
             shadowmaps_enabled: false,
         },
         Transform::from_translation(Vec3::new(0.0, 8.0, 4.0)),

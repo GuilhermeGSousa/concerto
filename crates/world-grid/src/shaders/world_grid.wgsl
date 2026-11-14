@@ -1,7 +1,6 @@
 const MAX_LIGHT_COUNT: u32 = 128u;
 const DIRECTIONAL_LIGHT: u32 = 2u;
 const SPOT_LIGHT: u32 = 1u;
-const FADE_START: f32 = 0.8;
 
 struct WorldGridUniform {
     line_color: vec4<f32>,
@@ -28,7 +27,6 @@ struct Light {
     shadow_layer: i32,
     range: f32,
     shadow_far: f32,
-    fade_distance: f32,
 };
 
 struct Lights {
@@ -162,10 +160,6 @@ fn fs_main(in: VertexOutput) -> FragOutput {
                 let ratio = distance_sq / (L.range * L.range);
                 let window = clamp(1.0 - ratio * ratio, 0.0, 1.0);
                 attenuation *= window * window;
-            }
-            if L.fade_distance > 0.0 {
-                let camera_distance = distance(camera.view_pos, L.position);
-                attenuation *= 1.0 - smoothstep(L.fade_distance * FADE_START, L.fade_distance, camera_distance);
             }
         }
         if L.light_type == SPOT_LIGHT {
