@@ -6,7 +6,7 @@ use glam::Vec2;
 use super::{CanvasLink, CanvasMode, CanvasNode, CanvasNodeId, CanvasPart};
 
 /// Width of every node box, in logical pixels.
-pub const NODE_WIDTH: f32 = 176.0;
+pub const NODE_WIDTH: f32 = 224.0;
 /// Height of a node's title row.
 pub const HEADER_HEIGHT: f32 = 24.0;
 /// Height of a node's subtitle row, when it has one.
@@ -15,8 +15,10 @@ pub const SUBTITLE_HEIGHT: f32 = 18.0;
 pub const PIN_ROW_HEIGHT: f32 = 20.0;
 /// Space under a node's last row.
 pub const NODE_PADDING: f32 = 4.0;
-/// Space between two columns of nodes, which links cross.
+/// Space between two columns of nodes in `Flow`, which links cross.
 pub const COLUMN_GAP: f32 = 72.0;
+/// Space between two columns of nodes in `Diagram`, wide enough for a link's label.
+pub const DIAGRAM_COLUMN_GAP: f32 = 200.0;
 /// Space between two nodes stacked in a column.
 pub const ROW_GAP: f32 = 16.0;
 /// Space between the content's edge and its outermost nodes.
@@ -26,7 +28,10 @@ pub const PIN_REACH: f32 = 7.0;
 /// How far from a link's line a pointer still hits it.
 pub const LINK_REACH: f32 = 4.0;
 
-const OPPOSITE_OFFSET: f32 = 8.0;
+const FORWARD_BEND: f32 = 110.0;
+const BACKWARD_BEND: f32 = 110.0;
+const LOOP_BEND: f32 = 40.0;
+const LOOP_OFFSET: f32 = 8.0;
 
 /// Which way a link's arrowhead points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -309,10 +314,11 @@ fn boxes(
         .zip(placements)
         .zip(heights)
         .map(|((node, at), &height)| {
-            let min = Vec2::new(
-                MARGIN + at.column as f32 * (NODE_WIDTH + COLUMN_GAP),
-                at.top,
-            );
+            let gap = match mode {
+                CanvasMode::Flow => COLUMN_GAP,
+                CanvasMode::Diagram => DIAGRAM_COLUMN_GAP,
+            };
+            let min = Vec2::new(MARGIN + at.column as f32 * (NODE_WIDTH + gap), at.top);
             let subtitle = if node.subtitle.is_some() {
                 SUBTITLE_HEIGHT
             } else {
@@ -373,12 +379,11 @@ fn diagram_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
     let to = boxes[edge.to].rect;
     let upper = |rect: UIBox| rect.min.y + rect.size.y / 3.0;
     let lower = |rect: UIBox| rect.min.y + rect.size.y * 2.0 / 3.0;
-    let half_gap = COLUMN_GAP / 2.0;
     if to.min.x > from.min.x {
         LinkRoute {
             link: edge.link,
             start: Vec2::new(from.max().x, upper(from)),
-            bend: to.min.x - half_gap - OPPOSITE_OFFSET,
+            bend: to.min.x - FORWARD_BEND,
             end: Vec2::new(to.min.x, upper(to)),
             arrow: Some(ArrowDirection::Right),
         }
@@ -386,20 +391,20 @@ fn diagram_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
         LinkRoute {
             link: edge.link,
             start: Vec2::new(from.min.x, lower(from)),
-            bend: to.max().x + half_gap + OPPOSITE_OFFSET,
+            bend: to.max().x + BACKWARD_BEND,
             end: Vec2::new(to.max().x, lower(to)),
             arrow: Some(ArrowDirection::Left),
         }
     } else {
         let offset = if to.min.y < from.min.y {
-            OPPOSITE_OFFSET
+            LOOP_OFFSET
         } else {
-            -OPPOSITE_OFFSET
+            -LOOP_OFFSET
         };
         LinkRoute {
             link: edge.link,
             start: Vec2::new(from.max().x, upper(from)),
-            bend: from.max().x + half_gap + offset,
+            bend: from.max().x + LOOP_BEND + offset,
             end: Vec2::new(to.max().x, lower(to)),
             arrow: Some(ArrowDirection::Left),
         }

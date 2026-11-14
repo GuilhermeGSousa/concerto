@@ -396,7 +396,7 @@ fn mark_color(emphasis: Option<CanvasEmphasis>, selected: bool, theme: &UITheme)
         return Some(theme.accent);
     }
     emphasis.map(|emphasis| match emphasis {
-        CanvasEmphasis::Active => theme.accent_secondary,
+        CanvasEmphasis::Active => theme.active,
         CanvasEmphasis::Warning => theme.warning,
     })
 }
@@ -781,6 +781,7 @@ fn build_link(
     items: &mut concerto_ecs::command::EntityCommandQueue<'_>,
     link: &CanvasLink,
     route: &LinkRoute,
+    stacked: usize,
     selected: bool,
     theme: &UITheme,
 ) -> BuiltLink {
@@ -805,6 +806,18 @@ fn build_link(
     if let Some(label) = &link.label {
         let height = theme.line_height(theme.font_size_sm);
         let middle = (route.start.y + route.end.y) / 2.0;
+        let beside_run = route.bend + LABEL_OFFSET;
+        let below = stacked as f32 * height;
+        let at = match route.arrow {
+            Some(ArrowDirection::Right) => {
+                Vec2::new(beside_run, route.end.y - height - LABEL_OFFSET - below)
+            }
+            Some(ArrowDirection::Left) if route.start.x > route.end.x => {
+                Vec2::new(route.end.x + ICON_SIZE, route.end.y + LABEL_OFFSET + below)
+            }
+            Some(ArrowDirection::Left) => Vec2::new(beside_run, middle - height / 2.0 + below),
+            None => Vec2::new(beside_run, middle - height),
+        };
         items.add_child(
             theme
                 .label(label.clone())
@@ -813,8 +826,8 @@ fn build_link(
                 .no_wrap()
                 .node(|node| {
                     node.with_position(Position::Absolute).with_inset(UIInset {
-                        left: UIValue::Px(route.bend + LABEL_OFFSET),
-                        top: UIValue::Px(middle - height),
+                        left: UIValue::Px(at.x),
+                        top: UIValue::Px(at.y),
                         ..Default::default()
                     })
                 }),
@@ -926,12 +939,23 @@ fn rebuild(
     built.links = placed
         .links
         .iter()
-        .map(|route| {
+        .enumerate()
+        .map(|(index, route)| {
             let selected = canvas.selection == Some(CanvasTarget::Link(route.link));
+            let stacked = placed.links[..index]
+                .iter()
+                .filter(|other| {
+                    other.end == route.end
+                        && other.arrow == route.arrow
+                        && (other.start.x > other.end.x) == (route.start.x > route.end.x)
+                        && canvas.links[other.link].label.is_some()
+                })
+                .count();
             build_link(
                 &mut items,
                 &canvas.links[route.link],
                 route,
+                stacked,
                 selected,
                 theme,
             )

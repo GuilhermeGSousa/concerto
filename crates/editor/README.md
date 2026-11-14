@@ -1572,19 +1572,20 @@ owner sizes it and writes its `nodes`, `links`, `mode` and `selection`; the
 widget never writes them. Every gesture is a signal sent to the `GraphCanvas`
 entity, and a canvas nobody answers changes nothing.
 
-- A `CanvasNode::new(id, title)` is a box, 176 px wide, with its title on the
+- A `CanvasNode::new(id, title)` is a box, 224 px wide, with its title on the
   first row. `with_subtitle` adds a muted second row, `with_input(label)` adds
   one input pin with its label, `with_output()` gives it an output pin,
   `with_badge` puts a short readout at the right of the title row, and
-  `with_emphasis` outlines it: `CanvasEmphasis::Active` in the theme's second
-  accent, `Warning` in the warning colour. The `id` is a `CanvasNodeId`, a
+  `with_emphasis` outlines it: `CanvasEmphasis::Active` in the theme's `active`
+  colour, which is not the accent a selection is drawn in, `Warning` in the
+  warning colour. The `id` is a `CanvasNodeId`, a
   `u32` the owner chooses; links, the selection and the signals name a node by
   it. An owner may rewrite a badge and a subtitle on every frame: they change
   in place, and under `--mcp` a change of either does not keep the editor
   busy.
 - A `CanvasLink::new(from, to)` runs out of `from` and into `to`. `with_slot`
   names the input pin of `to` it ends on, `with_label` writes a label beside
-  its vertical run, and `with_emphasis` colours it as it does a node. A link
+  it, and `with_emphasis` colours it as it does a node. A link
   whose `from` or `to` is no node's id is not drawn. A link is named by its
   index in `links`.
 - `mode` is a `CanvasMode`. In `Flow` a node shows its pins, an input per row
@@ -1650,8 +1651,14 @@ leaves the left side two thirds of the way down and enters the right side
 there. A link within a column, or from a node to itself, leaves the right side
 at the upper height and comes back into the right side at the lower one. Two
 links between the same pair in opposite directions so differ in height at
-both ends and in where they turn. Nodes are drawn over links, so a link that
-spans several columns passes behind the boxes between.
+both ends and in where they turn. Columns of a diagram are 200 px apart, which
+leaves room for the labels: a link to a later column has its label over its
+last run, before the arrowhead, a link to an earlier column under its last
+run, after the arrowhead, and a link within a column beside its vertical run.
+Labels of links that end at the same place stack, in link order, away from the
+line. Nodes are drawn over links, so a link that spans several columns passes
+behind the boxes between, where it lies on the links of the columns it
+crosses.
 
 The boxes are rebuilt only when the layout could change: the mode, a node's
 id, title, pins or having a subtitle, or a link's ends, slot or label. A
