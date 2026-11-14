@@ -45,7 +45,7 @@ fn save_document(
         held.changed = false;
         written.files.push(saved.clone());
         if id == written.tab.id {
-            document.title = saved.name().to_owned();
+            document.title = saved.name().into_owned();
             document.current = Some(saved.clone());
             written.tab = saved.clone();
         }

@@ -135,6 +135,7 @@ fn write_broken_graph(root: &Path) {
         kind_version: AnimationGraph::FORMAT_VERSION,
         provenance: None,
         derived: None,
+        embedded: Vec::new(),
     };
     std::fs::create_dir(root.join("content")).unwrap();
     std::fs::write(

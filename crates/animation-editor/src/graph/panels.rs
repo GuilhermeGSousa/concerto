@@ -251,7 +251,7 @@ pub(crate) fn subtitle(
     };
     node.live()?.as_reflect().visit(&mut first);
     let asset = assets.get(first.found?)?;
-    Some(asset.name().to_owned())
+    Some(asset.name().into_owned())
 }
 
 fn canvas_id(id: GraphNodeId) -> CanvasNodeId {

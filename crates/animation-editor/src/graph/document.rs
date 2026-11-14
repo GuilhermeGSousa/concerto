@@ -401,7 +401,7 @@ impl GraphDocument {
                     .graphs
                     .iter()
                     .find(|held| held.asset.id == *asset)
-                    .map_or_else(String::new, |held| held.asset.name().to_owned()),
+                    .map_or_else(String::new, |held| held.asset.name().into_owned()),
                 GraphLevel::Machine { .. } => "States".to_owned(),
             })
             .collect()
