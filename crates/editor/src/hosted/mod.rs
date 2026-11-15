@@ -848,7 +848,7 @@ mod tests {
     };
     use std::sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     const KEY: PhysicalKey = PhysicalKey::Code(KeyCode::KeyW);
@@ -1278,6 +1278,13 @@ mod tests {
         app.insert_resource(loading_server());
     }
 
+    #[derive(Resource)]
+    struct HiddenSteps(Arc<AtomicUsize>);
+
+    fn count_hidden_step(steps: concerto_ecs::Res<HiddenSteps>) {
+        steps.0.fetch_add(1, Ordering::SeqCst);
+    }
+
     #[test]
     fn a_play_app_still_loading_is_stepped_hidden_until_it_settles() {
         let (mut world, document) = host_world(plain_recipe);
@@ -1285,15 +1292,17 @@ mod tests {
         let edit = hosted_id(&world, document);
         let server = loading_server();
         let play_server = server.clone();
+        let steps = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&steps);
         start_play(&mut world, document, plain_recipe, move |app| {
-            app.insert_resource(play_server);
+            app.insert_resource(play_server)
+                .insert_resource(HiddenSteps(counted))
+                .add_system(Update, count_hidden_step);
         });
-        let held = std::time::Instant::now();
-        while held.elapsed() < std::time::Duration::from_millis(500) {
-            finish_play(&mut world);
-            assert_eq!(play_state(&world, document), Some(PlayState::Starting));
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        frames_until(&mut world, finish_play, |world| {
+            assert_eq!(play_state(world, document), Some(PlayState::Starting));
+            steps.load(Ordering::SeqCst) >= 3
+        });
         assert_eq!(hosted_id(&world, document), edit);
 
         server.cancel_pending();
