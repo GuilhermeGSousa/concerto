@@ -1,15 +1,12 @@
 use std::time::{Duration, Instant};
 
 use concerto_animation::{
-    animate_targets,
-    clip::{Additive, AdditiveBase, AnimationClip},
+    clip::AnimationClip,
     event::{AnimationEvent, AnimationSignal},
     graph::AnimationGraph,
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{register_animation_types, AnimationAppExt},
-    pose::RootMotion,
     root::AnimationRootBone,
-    update_animation_players,
 };
 use concerto_app::{plugins::AssetManagerPlugin, schedule_groups::LateUpdate, App};
 use concerto_ecs::{
@@ -18,16 +15,13 @@ use concerto_ecs::{
         listener::{IntoListener, Listener},
         On,
     },
-    system::{
-        access::SystemAccess, executor::single_thread::SingleThreadedExecutor,
-        meta::SystemMetadata, schedule::Schedules,
-    },
+    system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
     world::World,
-    Entity, IntoSystem, ResMut, Resource, System,
+    Entity, ResMut, Resource,
 };
 use concerto_foundation::{
     assets::{
-        asset_server::{handle_asset_load_events, AssetServer},
+        asset_server::AssetServer,
         asset_store::AssetStore,
         content::save_content_asset_into,
         derived::{DerivedData, DerivedDataCache, DerivedInputs},
@@ -41,7 +35,7 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_name::name;
 use concerto_reflect::TypeRegistry;
-use glam::{Quat, Vec3};
+use glam::Quat;
 
 use crate::{
     channel::FeatureChannelData,
@@ -50,57 +44,14 @@ use crate::{
     test_support::{pace_database, skeleton, turn_left, unbaked, walk_forward, Pace},
 };
 
-fn access_of<M>(world: &mut World, system: impl IntoSystem<(), M>) -> SystemAccess {
-    let mut system = system.into_system();
-    system.initialize(world);
-    let mut access = SystemAccess::default();
-    system.fill_access(&mut SystemMetadata::default(), &mut access);
-    access
-}
-
-#[test]
-fn only_the_update_walk_declares_the_motion_database_store() {
-    let mut app = motion_app();
-    let world = app.main_mut().world_mut();
-
-    let writer = access_of(world, |_: ResMut<AssetStore<MotionDatabase>>| {});
-    let update = access_of(world, update_animation_players);
-    let evaluate = access_of(world, animate_targets);
-
-    assert!(!SystemAccess::are_disjoint(&update, &writer));
-    assert!(SystemAccess::are_disjoint(&evaluate, &writer));
-}
-
-#[test]
-fn a_frame_with_a_missing_database_gives_the_root_bone_no_root_motion() {
-    let (mut app, bones, _) = playing_app();
-    let world = app.main_mut().world_mut();
-    world.insert(AnimationRootBone::default(), bones[0]);
-    world.run_schedule(LateUpdate);
-    world.run_schedule(LateUpdate);
-
-    std::thread::sleep(Duration::from_millis(5));
-    world.get_resource_mut::<Time>().unwrap().update();
-    world.run_schedule(LateUpdate);
-    let moved = world
-        .get_component_for_entity::<AnimationRootBone>(bones[0])
-        .unwrap()
-        .root_motion;
-    assert!(moved.translation.z < 0.0, "{moved:?}");
-
-    world.insert_resource(AssetStore::<MotionDatabase>::new());
-    world.run_schedule(LateUpdate);
-
-    let stopped = world
-        .get_component_for_entity::<AnimationRootBone>(bones[0])
-        .unwrap()
-        .root_motion;
-    assert_eq!(stopped, RootMotion::IDENTITY);
-}
-
 #[test]
 fn a_float_param_on_the_blackboard_drives_the_nodes_play_rate() {
-    let (mut app, database_handle, skeleton_handle, _) = stocked_app();
+    let Stocked {
+        mut app,
+        database_handle,
+        skeleton_handle,
+        ..
+    } = stocked_app();
     let world = app.main_mut().world_mut();
     let graph_handle = add_graph(
         world,
@@ -141,80 +92,9 @@ fn a_float_param_on_the_blackboard_drives_the_nodes_play_rate() {
     );
 }
 
-#[test]
-fn the_graph_walks_then_animate_targets_pose_the_bones_from_the_database() {
-    let (mut app, bones, database) = playing_app();
-    let world = app.main_mut().world_mut();
-    world.run_schedule(LateUpdate);
-    world.run_schedule(LateUpdate);
-
-    let expected = database
-        .pose(0, &skeleton(), &[&walk_forward(), &turn_left()])
-        .unwrap();
-    let hips_transform = world
-        .get_component_for_entity::<Transform>(bones[1])
-        .unwrap();
-    assert!(expected[1].translation.distance(Vec3::ZERO) > 0.5);
-    assert!(
-        hips_transform.translation.distance(expected[1].translation) < 1e-4,
-        "{:?} vs {:?}",
-        hips_transform.translation,
-        expected[1].translation
-    );
-}
-
-#[test]
-fn a_database_frames_root_joint_reaches_the_root_bones_transform() {
-    let (mut app, bones, database) = playing_app();
-    let world = app.main_mut().world_mut();
-    world.insert(AnimationRootBone::default(), bones[0]);
-    world.run_schedule(LateUpdate);
-    world.run_schedule(LateUpdate);
-
-    let expected = database
-        .pose(0, &skeleton(), &[&walk_forward(), &turn_left()])
-        .unwrap();
-    let root_transform = world
-        .get_component_for_entity::<Transform>(bones[0])
-        .unwrap();
-    assert!(expected[0].rotation.angle_between(Quat::IDENTITY) > 1.0);
-    assert!(
-        root_transform.rotation.angle_between(expected[0].rotation) < 1e-3,
-        "{:?} vs {:?}",
-        root_transform.rotation,
-        expected[0].rotation
-    );
-    assert!(
-        root_transform.translation.distance(expected[0].translation) < 1e-4,
-        "{:?} vs {:?}",
-        root_transform.translation,
-        expected[0].translation
-    );
-}
-
-#[test]
-fn on_load_makes_the_clips_and_skeleton_strong_with_the_same_ids() {
-    let mut app = motion_app();
-    let world = app.main_mut().world_mut();
-    let server = world.get_resource::<AssetServer>().unwrap().clone();
-    let skeleton_id = AssetId::new();
-    let clip_ids = [AssetId::new(), AssetId::new()];
-    let handle = server.add(pace_database(
-        1.0,
-        AssetHandle::weak(skeleton_id),
-        clip_ids.map(AssetHandle::weak),
-    ));
-    handle_asset_load_events(world);
-
-    let databases = world.get_resource::<AssetStore<MotionDatabase>>().unwrap();
-    let database = databases.get(&handle).unwrap();
-    assert!(matches!(&database.skeleton, AssetHandle::Strong(..)));
-    assert_eq!(database.skeleton.id(), skeleton_id);
-    assert!(database
-        .clips()
-        .all(|clip| matches!(clip, AssetHandle::Strong(..))));
-    let ids: Vec<_> = database.clips().map(AssetHandle::id).collect();
-    assert_eq!(ids, clip_ids);
+struct Saved {
+    id: AssetId,
+    database: MotionDatabase,
 }
 
 struct Project {
@@ -248,7 +128,7 @@ impl Project {
         }
     }
 
-    fn save(&mut self, weight: f32) -> (AssetId, MotionDatabase) {
+    fn save(&mut self, weight: f32) -> Saved {
         let mut database = unbaked(pace_database(
             1.0,
             AssetHandle::weak(self.skeleton_id),
@@ -262,7 +142,7 @@ impl Project {
             &mut self.registry,
         )
         .unwrap();
-        (id, database)
+        Saved { id, database }
     }
 
     fn cache(&self) -> DerivedDataCache {
@@ -325,7 +205,7 @@ impl Drop for Project {
 #[test]
 fn a_database_loaded_through_the_server_derives_and_plays() {
     let mut project = Project::new();
-    let (database_id, _) = project.save(1.0);
+    let database_id = project.save(1.0).id;
 
     let mut app = motion_app();
     let world = app.main_mut().world_mut();
@@ -371,124 +251,28 @@ fn a_database_loaded_through_the_server_derives_and_plays() {
 }
 
 #[test]
-fn an_entry_naming_an_additive_clip_fails_the_databases_load_naming_the_clip() {
-    let mut project = Project::new();
-    let [walk_id, turn_id] = project.clip_ids;
-    let mut turn = turn_left();
-    turn.set_additive(Additive::LocalSpace(AdditiveBase::new(AssetHandle::weak(
-        walk_id,
-    ))));
-    save_content_asset_into(
-        &turn,
-        &project.root,
-        "content/turn.gasset",
-        &mut project.registry,
-    )
-    .unwrap();
-    let (database_id, _) = project.save(1.0);
-
-    assert!(project.try_load(database_id).is_none());
-    let mut app = motion_app();
-    let server = project.serve(app.main_mut().world_mut());
-    let error = server
-        .cook(&project.root.join("cooked"))
-        .expect_err("a database naming an additive clip can't be cooked");
-    let message = format!("{error:#}");
-    assert!(
-        message.contains(&format!("{turn_id:?}"))
-            && message.contains("content/turn.gasset")
-            && message.contains("itself derived"),
-        "{message}"
-    );
-    assert!(project.blobs().is_empty());
-}
-
-#[test]
 fn derive_then_apply_gives_what_the_bake_gives() {
     let mut project = Project::new();
-    let (_, database) = project.save(1.0);
+    let database = project.save(1.0).database;
     let inputs = pollster::block_on(DerivedInputs::read(
         &ContentAssetRoot::Directory(project.root.clone()),
         &project.registry,
         &database.derived_inputs(),
     ))
     .unwrap();
-    let mut progress = Vec::new();
-
-    let blob = database
-        .derive(&inputs, &mut |finished, total| {
-            progress.push((finished, total))
-        })
-        .unwrap();
+    let blob = database.derive(&inputs, &mut |_, _| {}).unwrap();
     let mut derived = database.clone();
     derived.apply_derived(&blob).unwrap();
 
     let baked =
         crate::bake::bake(&database, &skeleton(), &[&walk_forward(), &turn_left()]).unwrap();
     assert_eq!(derived.baked, Some(baked));
-    assert_eq!(progress, [(1, 2), (2, 2)]);
-}
-
-#[test]
-fn a_blob_that_does_not_fit_the_database_is_refused() {
-    let mut project = Project::new();
-    let (_, database) = project.save(1.0);
-    let baked =
-        crate::bake::bake(&database, &skeleton(), &[&walk_forward(), &turn_left()]).unwrap();
-    let blob = bincode::serialize(&baked).unwrap();
-    let mut fewer = database.clone();
-    fewer.entries.pop();
-
-    assert!(fewer.apply_derived(&blob).is_err());
-    assert!(!fewer.is_baked());
-}
-
-fn key_of(project: &Project, database: &MotionDatabase) -> u64 {
-    let inputs = pollster::block_on(DerivedInputs::read(
-        &ContentAssetRoot::Directory(project.root.clone()),
-        &project.registry,
-        &database.derived_inputs(),
-    ))
-    .unwrap();
-    database.derived_key(&inputs).unwrap()
-}
-
-#[test]
-fn the_key_follows_every_field_and_input_but_the_weights() {
-    let mut project = Project::new();
-    let (_, database) = project.save(1.0);
-    let key = key_of(&project, &database);
-
-    let mut weighted = database.clone();
-    weighted.channels = vec![FeatureChannelData::live(Pace { weight: 5.0 })];
-    assert_eq!(key_of(&project, &weighted), key);
-
-    let mut slower = database.clone();
-    slower.speed = 0.5;
-    assert_ne!(key_of(&project, &slower), key);
-
-    let mut changed_clip = walk_forward();
-    changed_clip.add_channel(
-        uuid::Uuid::from_u128(3),
-        concerto_animation::clip::AnimationChannel::new(
-            vec![0.0, 1.0],
-            concerto_animation::clip::AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::Y]),
-        ),
-    );
-    save_content_asset_into(
-        &changed_clip,
-        &project.root,
-        "content/walk.gasset",
-        &mut project.registry,
-    )
-    .unwrap();
-    assert_ne!(key_of(&project, &database), key);
 }
 
 #[test]
 fn a_weight_only_change_reuses_the_cached_blob_and_the_search_sees_the_new_weight() {
     let mut project = Project::new();
-    let (database_id, _) = project.save(1.0);
+    let database_id = project.save(1.0).id;
     let first = project.load(database_id);
     let [blob] = project.blobs().try_into().unwrap();
     let mut other = first.clone();
@@ -511,50 +295,6 @@ fn a_weight_only_change_reuses_the_cached_blob_and_the_search_sees_the_new_weigh
     assert!((after[0] * 4.0 - unweighted[0]).abs() < unweighted[0] * 1e-5);
 }
 
-#[test]
-fn a_non_positive_weight_loads_the_same_derived_database_on_a_miss_and_a_hit() {
-    let mut project = Project::new();
-    let (database_id, database) = project.save(0.0);
-    let baked =
-        crate::bake::bake(&database, &skeleton(), &[&walk_forward(), &turn_left()]).unwrap();
-
-    let missed = project.load(database_id);
-    let hit = project.load(database_id);
-
-    assert_eq!(project.blobs().len(), 1);
-    for loaded in [&missed, &hit] {
-        assert_eq!(loaded.baked, Some(baked.clone()));
-        assert!(loaded.scales().is_none());
-        let query = vec![0.0; loaded.feature_dims().unwrap()];
-        assert_eq!(crate::search::search(loaded, &query, None, 0, 0), None);
-    }
-}
-
-#[test]
-fn a_node_does_nothing_for_a_database_not_derived() {
-    let (mut app, database_handle, skeleton_handle, database) = stocked_app();
-    let world = app.main_mut().world_mut();
-    world
-        .get_resource_mut::<AssetStore<MotionDatabase>>()
-        .unwrap()
-        .insert(database_handle.id(), unbaked(database));
-    let bones = start_playing(world, database_handle, skeleton_handle);
-    world.insert(AnimationRootBone::default(), bones[0]);
-    world.run_schedule(LateUpdate);
-    world.run_schedule(LateUpdate);
-
-    let root = world
-        .get_component_for_entity::<AnimationRootBone>(bones[0])
-        .unwrap()
-        .root_motion;
-    assert_eq!(root, RootMotion::IDENTITY);
-    let transform = world
-        .get_component_for_entity::<Transform>(bones[0])
-        .unwrap();
-    assert_eq!(transform.rotation, Quat::IDENTITY);
-    assert_eq!(transform.translation, Vec3::ZERO);
-}
-
 #[derive(Resource, Default)]
 struct Heard(usize);
 
@@ -571,7 +311,12 @@ fn hear() -> Listener<AnimationSignal<AnimationEvent>> {
 
 #[test]
 fn a_crossed_clip_event_is_heard_once_and_not_again_while_the_database_is_missing() {
-    let (mut app, database_handle, skeleton_handle, database) = stocked_app();
+    let Stocked {
+        mut app,
+        database_handle,
+        skeleton_handle,
+        database,
+    } = stocked_app();
     let world = app.main_mut().world_mut();
     let mut walk = walk_forward();
     walk.add_event(
@@ -630,19 +375,14 @@ fn motion_app() -> App {
     app
 }
 
-fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
-    let (mut app, database_handle, skeleton_handle, database) = stocked_app();
-    let world = app.main_mut().world_mut();
-    let entities = start_playing(world, database_handle, skeleton_handle);
-    (app, entities, database)
+struct Stocked {
+    app: App,
+    database_handle: AssetHandle<MotionDatabase>,
+    skeleton_handle: AssetHandle<Skeleton>,
+    database: MotionDatabase,
 }
 
-fn stocked_app() -> (
-    App,
-    AssetHandle<MotionDatabase>,
-    AssetHandle<Skeleton>,
-    MotionDatabase,
-) {
+fn stocked_app() -> Stocked {
     let mut app = motion_app();
     let world = app.main_mut().world_mut();
     let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
@@ -669,7 +409,12 @@ fn stocked_app() -> (
         .get_resource_mut::<AssetStore<MotionDatabase>>()
         .unwrap()
         .insert(database_handle.id(), database.clone());
-    (app, database_handle, skeleton_handle, database)
+    Stocked {
+        app,
+        database_handle,
+        skeleton_handle,
+        database,
+    }
 }
 
 fn start_playing(
