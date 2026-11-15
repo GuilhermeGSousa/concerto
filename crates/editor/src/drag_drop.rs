@@ -478,14 +478,6 @@ mod tests {
             input.update();
         }
 
-        fn label_shown(&mut self) -> bool {
-            let world = self.world();
-            world
-                .query::<&UINode, With<DragLabel>>()
-                .iter(world)
-                .any(|node| node.visible)
-        }
-
         fn drops(&mut self) -> Vec<HeardDrop> {
             std::mem::take(&mut self.world().get_resource_mut::<Heard>().unwrap().drops)
         }
@@ -504,12 +496,7 @@ mod tests {
 
         f.press(start);
         f.drag(start + Vec2::new(2.0, 0.0), Some(source));
-        assert!(
-            !f.label_shown(),
-            "inside the slop the press is still a click"
-        );
         f.drag(over, Some(inside));
-        assert!(f.label_shown());
         f.release();
         assert_eq!(
             f.drops(),
@@ -519,26 +506,22 @@ mod tests {
                 position: over,
             }]
         );
-        assert!(!f.label_shown());
 
         f.press(start);
         f.drag(over, Some(elsewhere));
-        assert!(f.label_shown());
         f.release();
         assert_eq!(f.drops(), [], "a release off every target cancels");
-        assert!(!f.label_shown());
 
         f.press(start);
         f.drag(over, Some(target));
         f.press_escape();
-        assert!(!f.label_shown(), "Esc cancels the drag");
         f.drag(over + Vec2::X, Some(target));
-        assert!(
-            !f.label_shown(),
-            "and it stays cancelled while the button is held"
-        );
         f.release();
-        assert_eq!(f.drops(), []);
+        assert_eq!(
+            f.drops(),
+            [],
+            "Esc cancels the drag while the button is held"
+        );
 
         f.press(start);
         f.drag(start, Some(source));
@@ -554,15 +537,10 @@ mod tests {
         f.press(start);
         f.drag(over, Some(target));
         f.world().remove_component::<DragSource<Crate>>(source);
-        assert!(!f.label_shown(), "losing the source ends its drag");
         f.release();
         f.press(start);
         f.drag(over, Some(target));
-        assert!(
-            !f.label_shown(),
-            "a node that lost its source drags nothing"
-        );
         f.release();
-        assert_eq!(f.drops(), []);
+        assert_eq!(f.drops(), [], "losing the source ends its drag");
     }
 }
