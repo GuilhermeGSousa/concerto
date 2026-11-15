@@ -687,7 +687,7 @@ mod tests {
             .0
     }
 
-    fn said_in(app: &App, document: Entity) -> Vec<(u32, usize)> {
+    fn said_in(app: &App, document: Entity) -> Vec<Heard> {
         preview_world(app, document)
             .unwrap()
             .get_resource::<Said>()
@@ -702,14 +702,32 @@ mod tests {
         send(app.main_mut().world_mut(), document, 5);
 
         update_until_built(&mut app, document);
-        assert_eq!(said_in(&app, document), [(5, 0)]);
+        assert_eq!(
+            said_in(&app, document),
+            [Heard {
+                value: 5,
+                at_frame: 0
+            }]
+        );
         assert_eq!(frames_in(&app, document), 1);
 
         app.update();
         let frames = frames_in(&app, document);
         send(app.main_mut().world_mut(), document, 7);
         app.update();
-        assert_eq!(said_in(&app, document), [(5, 0), (7, frames)]);
+        assert_eq!(
+            said_in(&app, document),
+            [
+                Heard {
+                    value: 5,
+                    at_frame: 0
+                },
+                Heard {
+                    value: 7,
+                    at_frame: frames
+                }
+            ]
+        );
         assert_eq!(frames_in(&app, document), frames + 1);
     }
 }

@@ -84,10 +84,20 @@ fn count_frame(mut frames: ResMut<Frames>) {
 }
 
 #[derive(Resource, Default)]
-pub struct Said(pub Vec<(u32, usize)>);
+pub struct Said(pub Vec<Heard>);
+
+/// A `Say` value and the number of frames its `App` had run when it arrived.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Heard {
+    pub value: u32,
+    pub at_frame: usize,
+}
 
 pub fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
-    said.0.push((on.signal().0, frames.0));
+    said.0.push(Heard {
+        value: on.signal().0,
+        at_frame: frames.0,
+    });
 }
 
 fn previewed_build(app: &mut App) {
