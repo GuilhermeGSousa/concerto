@@ -816,26 +816,4 @@ impl concerto_foundation::assets::Asset for GatedAsset {
     }
 }
 
-pub static ENTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub static RELEASED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub fn wait_for(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !done() {
-        assert!(Instant::now() < deadline, "{what}");
-        std::thread::yield_now();
-    }
-}
-
-impl concerto_foundation::assets::LoadableAsset for GatedAsset {
-    fn on_load(
-        &mut self,
-        _: &concerto_foundation::assets::asset_server::AssetLoadContext,
-    ) -> anyhow::Result<()> {
-        ENTERED.store(true, std::sync::atomic::Ordering::SeqCst);
-        wait_for("the test never released the load", || {
-            RELEASED.load(std::sync::atomic::Ordering::SeqCst)
-        });
-        Ok(())
-    }
-}
+impl concerto_foundation::assets::LoadableAsset for GatedAsset {}
