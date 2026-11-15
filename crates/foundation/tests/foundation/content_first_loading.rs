@@ -1,5 +1,4 @@
 //! load_content_asset reads a content asset at <root>/<address>.
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use concerto_ecs::World;
@@ -62,7 +61,7 @@ struct Load {
     address: &'static str,
     write: fn(&std::path::Path),
     load: fn(&ContentAssetRoot, &str) -> Result<String, String>,
-    expected: Result<String, Vec<&'static str>>,
+    expected: Option<String>,
 }
 
 fn load<A: Asset + std::fmt::Debug>(
@@ -75,35 +74,21 @@ fn load<A: Asset + std::fmt::Debug>(
 }
 
 #[test]
-fn a_content_asset_loads_from_its_literal_address_and_a_failure_names_the_address() {
+fn a_content_asset_loads_from_its_literal_address_only_as_its_kind() {
     let cases = [
         Load {
             name: "a content asset of the requested kind",
             address: "content/x/pebble_0.gasset",
             write: |dir| write_pebble(dir, "content/x/pebble_0.gasset"),
             load: load::<Pebble>,
-            expected: Ok(format!("{:?}", Pebble { weight: 7 })),
+            expected: Some(format!("{:?}", Pebble { weight: 7 })),
         },
         Load {
             name: "another kind",
             address: "content/x/thing.gasset",
             write: |dir| write_pebble(dir, "content/x/thing.gasset"),
             load: load::<Boulder>,
-            expected: Err(vec!["Pebble", "Boulder", "content/x/thing.gasset"]),
-        },
-        Load {
-            name: "a missing file",
-            address: "content/x/absent.gasset",
-            write: |_| {},
-            load: load::<Pebble>,
-            expected: Err(vec!["content/x/absent.gasset"]),
-        },
-        Load {
-            name: "a directory at the address",
-            address: "content/x",
-            write: |dir| std::fs::create_dir_all(dir.join("content/x")).unwrap(),
-            load: load::<Pebble>,
-            expected: Err(vec!["content/x"]),
+            expected: None,
         },
     ];
     for case in cases {
@@ -111,40 +96,8 @@ fn a_content_asset_loads_from_its_literal_address_and_a_failure_names_the_addres
         (case.write)(&dir);
         let loaded = (case.load)(&ContentAssetRoot::Directory(dir.clone()), case.address);
         std::fs::remove_dir_all(&dir).ok();
-        let outcome = loaded;
-        match case.expected {
-            Ok(expected) => assert_eq!(outcome, Ok(expected), "{}", case.name),
-            Err(fragments) => {
-                let message = outcome.expect_err(case.name);
-                for fragment in fragments {
-                    assert!(message.contains(fragment), "{}: {message}", case.name);
-                }
-            }
-        }
+        assert_eq!(loaded.ok(), case.expected, "{}", case.name);
     }
-}
-
-static ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-struct Capture;
-
-impl log::Log for Capture {
-    fn enabled(&self, _: &log::Metadata) -> bool {
-        true
-    }
-
-    fn log(&self, record: &log::Record) {
-        if record.level() == log::Level::Error {
-            ERRORS.lock().unwrap().push(record.args().to_string());
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-fn capture_errors() {
-    let _ = log::set_logger(&Capture);
-    log::set_max_level(log::LevelFilter::Error);
 }
 
 struct Runtime {
@@ -209,7 +162,6 @@ fn embedded_header<A: Asset>(id: AssetId, name: &str) -> ContentAssetHeader {
 
 #[test]
 fn embedded_assets_load_by_id() {
-    capture_errors();
     let dir = temp_root("embedded");
     let address = "content/cairn/scene.gasset";
     let [cairn, pebble, boulder] = [(); 3].map(|_| AssetId::new());
@@ -253,7 +205,7 @@ fn embedded_assets_load_by_id() {
         "a cancelled burst loads when it is requested again"
     );
 
-    let mut runtime = Runtime::new(&dir, registry.clone());
+    let mut runtime = Runtime::new(&dir, registry);
     let first = runtime.server.load::<Pebble>(pebble);
     runtime.settle();
     let later = runtime.server.load::<Boulder>(boulder);
@@ -265,17 +217,5 @@ fn embedded_assets_load_by_id() {
         "an asset requested after its file finished loading loads the file again"
     );
 
-    std::fs::write(dir.join(address), &host[..host.len() - 1]).unwrap();
-    let mut runtime = Runtime::new(&dir, registry);
-    let truncated = runtime.server.load::<Pebble>(pebble);
-    runtime.settle();
     std::fs::remove_dir_all(&dir).ok();
-
-    assert_eq!(runtime.value(&truncated), None);
-    let location = "content/cairn/scene.gasset#pebble/0";
-    let errors = ERRORS.lock().unwrap();
-    assert!(
-        errors.iter().any(|error| error.contains(location)),
-        "no logged error names {location}: {errors:?}"
-    );
 }

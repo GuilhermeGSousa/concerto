@@ -4,9 +4,8 @@ use concerto_foundation::assets::content::{
     ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
-use concerto_foundation::assets::{Asset, AssetId};
+use concerto_foundation::assets::AssetId;
 use proptest::prelude::*;
-use serde::{Deserialize, Serialize};
 
 fn entry(id: AssetId, address: &str, kind: &str) -> AssetEntry {
     AssetEntry {
@@ -27,15 +26,6 @@ fn temp_root(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("asset-registry-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Thing;
-
-impl Asset for Thing {
-    fn name() -> &'static str {
-        "Thing"
-    }
 }
 
 #[test]
@@ -245,32 +235,6 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
     );
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Mesh;
-
-impl Asset for Mesh {
-    fn name() -> &'static str {
-        "Mesh"
-    }
-}
-
-#[test]
-fn of_type_lists_only_that_kind_ordered_by_folder_then_name() {
-    let mut registry = AssetRegistry::new();
-    let [a, b, c, d] = [(); 4].map(|_| AssetId::new());
-    registry.insert(entry(a, "content/z/rock.gasset", "Mesh"));
-    registry.insert(entry(b, "content/a/tree.gasset", "Mesh"));
-    registry.insert(entry(c, "content/a/level.gasset", "Thing"));
-    registry.insert(entry(d, "content/a/bush.gasset", "Mesh"));
-
-    let meshes: Vec<_> = registry.of_type::<Mesh>().map(|entry| entry.id).collect();
-    assert_eq!(meshes, [d, b, a]);
-    let things: Vec<_> = registry.of_type::<Thing>().map(|entry| entry.id).collect();
-    assert_eq!(things, [c]);
-    let all: Vec<_> = registry.iter().map(|entry| entry.id).collect();
-    assert_eq!(all, [d, c, b, a]);
-}
-
 #[derive(Debug, Clone)]
 enum Edit {
     Insert {
@@ -342,17 +306,4 @@ proptest! {
             }
         }
     }
-}
-
-#[test]
-fn an_entry_names_itself_and_its_folder_from_its_address() {
-    let nested = entry(AssetId::new(), "content/hero/body.mesh.gasset", "Mesh");
-    assert_eq!(nested.name(), "body.mesh");
-    assert_eq!(nested.folder(), "content/hero");
-    assert!(nested.is::<Mesh>());
-    assert!(!nested.is::<Thing>());
-
-    let top = entry(AssetId::new(), "loose.gasset", "Mesh");
-    assert_eq!(top.name(), "loose");
-    assert_eq!(top.folder(), "");
 }

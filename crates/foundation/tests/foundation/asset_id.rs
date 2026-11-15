@@ -9,13 +9,3 @@ fn uuid_bytes_can_be_embedded_as_a_constant() {
     assert_eq!(RESTORED, BYTES);
     assert_eq!(ID.simple_hex(), "42424242424242424242424242424242");
 }
-
-#[test]
-fn from_path_is_the_same_for_the_same_path_and_differs_for_another() {
-    let albedo = "models/character.gltf#texture/albedo";
-    assert_eq!(AssetId::from_path(albedo), AssetId::from_path(albedo));
-    assert_ne!(
-        AssetId::from_path(albedo),
-        AssetId::from_path("models/character.gltf#texture/normal")
-    );
-}

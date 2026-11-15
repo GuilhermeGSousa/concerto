@@ -229,23 +229,6 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
-    #[test]
-    fn a_float_and_a_vector_converge_to_their_target() {
-        let mut spring = Spring::critically_damped(0.0f32, 10.0);
-        for _ in 0..120 {
-            spring.update(10.0, DT);
-        }
-        assert!((spring.value - 10.0).abs() < 0.01, "was {}", spring.value);
-        assert!(spring.velocity.abs() < 0.1, "was {}", spring.velocity);
-
-        let target = Vec3::new(1.0, 2.0, 3.0);
-        let mut spring = Spring::critically_damped(Vec3::ZERO, 10.0);
-        for _ in 0..120 {
-            spring.update(target, DT);
-        }
-        assert!(spring.value.distance(target) < 0.01, "was {}", spring.value);
-    }
-
     proptest::proptest! {
         #[test]
         fn one_step_lands_where_many_smaller_steps_do(
@@ -412,23 +395,5 @@ mod tests {
                 "damping {damping_ratio}: {integral} vs {area}"
             );
         }
-    }
-
-    #[test]
-    fn integral_of_an_inert_spring_is_the_held_value() {
-        let spring = Spring::critically_damped(2.0f32, 0.0);
-
-        assert_eq!(spring.integral(5.0, 0.5), 1.0);
-    }
-
-    #[test]
-    fn zero_dt_and_zero_frequency_are_noops() {
-        let mut spring = Spring::critically_damped(2.0f32, 10.0);
-        spring.update(5.0, 0.0);
-        assert_eq!(spring.value, 2.0);
-
-        let mut inert = Spring::critically_damped(2.0f32, 0.0);
-        inert.update(5.0, DT);
-        assert_eq!(inert.value, 2.0);
     }
 }

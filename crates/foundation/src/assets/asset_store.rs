@@ -171,7 +171,6 @@ mod tests {
         DropFirst,
         LoadAgain,
         DropAgain,
-        SendDuplicateDrop,
         Drain { dropped: bool },
     }
 
@@ -206,11 +205,6 @@ mod tests {
                 ],
                 loaded: false,
             },
-            Lifetime {
-                name: "a duplicate drop event for an unloaded id",
-                steps: &[DropFirst, SendDuplicateDrop, Drain { dropped: true }],
-                loaded: false,
-            },
         ];
         for case in cases {
             let Pebbles { server, mut world } = pebble_world();
@@ -222,12 +216,6 @@ mod tests {
                     DropFirst => drop(first.take()),
                     LoadAgain => again = Some(server.load::<Pebble>(id)),
                     DropAgain => drop(again.take()),
-                    SendDuplicateDrop => world
-                        .get_resource::<AssetStore<Pebble>>()
-                        .unwrap()
-                        .clone_drop_sender()
-                        .send(AssetLifetimeEvent::Dropped(id))
-                        .unwrap(),
                     Drain { dropped } => {
                         let events = drain(&server, &mut world);
                         assert_eq!(

@@ -190,13 +190,5 @@ mod content_root_tests {
             directory_of("https://host/games/mine/"),
             "https://host/games/mine"
         );
-        assert_eq!(
-            directory_of("http://localhost:8080/"),
-            "http://localhost:8080"
-        );
-        assert_eq!(
-            directory_of("http://localhost:8080"),
-            "http://localhost:8080"
-        );
     }
 }

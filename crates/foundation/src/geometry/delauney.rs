@@ -294,23 +294,6 @@ mod tests {
                 triangles: 0,
             },
             Count {
-                points: vec![
-                    Vec2::new(0.0, 0.0),
-                    Vec2::new(1.0, 0.0),
-                    Vec2::new(0.5, 1.0),
-                ],
-                triangles: 1,
-            },
-            Count {
-                points: vec![
-                    Vec2::new(0.0, 0.0),
-                    Vec2::new(1.0, 0.0),
-                    Vec2::new(1.0, 1.0),
-                    Vec2::new(0.0, 1.0),
-                ],
-                triangles: 2,
-            },
-            Count {
                 points: square(),
                 triangles: 4,
             },

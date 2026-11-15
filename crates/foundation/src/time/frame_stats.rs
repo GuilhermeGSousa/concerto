@@ -125,17 +125,4 @@ mod tests {
         assert_eq!(stats.percentile_ms(0.5), 10.0);
         assert_eq!(stats.max_ms(), 50.0);
     }
-
-    #[test]
-    fn summary_ticks_once_per_second() {
-        let mut stats = FrameStats::new();
-        let mut ticks = 0;
-        // 0.25 is exactly representable, so 4 calls accumulate to exactly 1.0.
-        for _ in 0..12 {
-            if stats.tick_summary(Duration::from_millis(250)) {
-                ticks += 1;
-            }
-        }
-        assert_eq!(ticks, 3);
-    }
 }

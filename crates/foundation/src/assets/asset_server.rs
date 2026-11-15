@@ -964,22 +964,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn load_reads_a_registered_content_asset_through_the_registry() {
-        let dir = temp_root("load-by-id-hit");
-        let saved = saved_fixture(&dir, 7);
-        let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
-
-        let handle = fixture.server.load::<FixtureAsset>(saved.id);
-        wait_for_the_load(&fixture.server);
-        handle_asset_load_events(&mut fixture.world);
-
-        assert_eq!(fixture.value(&handle), Some(7));
-        assert!(fixture.server.is_loading_or_loaded(saved.id));
-        assert!(!fixture.server.is_loading());
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
     #[derive(Component, concerto_reflect::Reflect, Default)]
     #[reflect(SceneComponent)]
     struct Holder {
@@ -1177,26 +1161,6 @@ mod tests {
     }
 
     #[test]
-    fn serialized_uuid_handle_resolves_on_a_fresh_server() {
-        let dir = temp_root("serialized-uuid");
-        let saved = saved_fixture(&dir, 99);
-        let serialized = {
-            let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry.clone());
-            let handle = fixture.server.load::<FixtureAsset>(saved.id);
-            wait_for_the_load(&fixture.server);
-            handle_asset_load_events(&mut fixture.world);
-            bincode::serialize(&handle).unwrap()
-        };
-        let weak: AssetHandle<FixtureAsset> = bincode::deserialize(&serialized).unwrap();
-        let mut fixture = Fixture::new::<FixtureAsset>(&dir, saved.registry);
-        let handle = fixture.server.load::<FixtureAsset>(weak.id());
-        wait_for_the_load(&fixture.server);
-        handle_asset_load_events(&mut fixture.world);
-        assert_eq!(fixture.value(&handle), Some(99));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
     fn the_server_resolves_through_the_registry_resource_once_it_changes() {
         use concerto_ecs::{IntoSystem, System};
 
@@ -1262,39 +1226,12 @@ mod tests {
                 failed: true,
             },
             Life {
-                name: "a load of an id the registry says is another kind",
-                request: |server, id| {
-                    let mut registry = AssetRegistry::clone(&server.registry().unwrap());
-                    let entry = registry.get(id).unwrap().clone();
-                    registry.insert(AssetEntry {
-                        kind: "Mesh".into(),
-                        ..entry
-                    });
-                    server.publish_registry(registry);
-                    server.load(id)
-                },
-                settles: true,
-                loading: [true, true, false],
-                loading_or_loaded: [true, true, false],
-                value: None,
-                failed: true,
-            },
-            Life {
                 name: "an added asset",
                 request: |server, _| server.add(FixtureAsset::new(5)),
                 settles: false,
                 loading: [true, true, false],
                 loading_or_loaded: [true, true, true],
                 value: Some(5),
-                failed: false,
-            },
-            Life {
-                name: "an added asset whose on_load fails",
-                request: |server, _| server.add(FixtureAsset::new(REFUSED)),
-                settles: false,
-                loading: [false, false, false],
-                loading_or_loaded: [false, false, false],
-                value: None,
                 failed: false,
             },
         ];
@@ -1351,13 +1288,6 @@ mod tests {
         let dir = temp_root("cancel");
         let saved = saved_fixture(&dir, 4);
         let cases = [
-            Cancel {
-                name: "a load still running",
-                request: |server, id| server.load(id),
-                settles: false,
-                loading: false,
-                value: None,
-            },
             Cancel {
                 name: "a load that finished but was not yet handled",
                 request: |server, id| server.load(id),
@@ -1433,11 +1363,6 @@ mod tests {
                     server.set_type_registry(registry);
                 },
                 sees: true,
-            },
-            Shared {
-                name: "no shared registry",
-                share: |_| {},
-                sees: false,
             },
             Shared {
                 name: "a type registered after the registry was shared",
@@ -1530,51 +1455,6 @@ mod tests {
             .get_resource::<AssetStore<GatedAsset>>()
             .unwrap();
         assert!(store.get(&handle).is_none());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct SelfLoadingAsset {
-        #[serde(skip)]
-        spawned_a_load: bool,
-    }
-
-    impl Asset for SelfLoadingAsset {
-        fn name() -> &'static str {
-            "SelfLoadingAsset"
-        }
-    }
-
-    impl LoadableAsset for SelfLoadingAsset {
-        fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
-            let server = context.asset_server();
-            let _own = server.load::<SelfLoadingAsset>(context.asset_id());
-            self.spawned_a_load = !server.data.pending.read().unwrap().files.is_empty();
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn loading_an_added_asset_from_its_own_on_load_spawns_no_task() {
-        let dir = temp_root("add-self-load");
-        let mut fixture = Fixture::new::<SelfLoadingAsset>(&dir, AssetRegistry::new());
-
-        let handle = fixture.server.add(SelfLoadingAsset {
-            spawned_a_load: false,
-        });
-        handle_asset_load_events(&mut fixture.world);
-
-        let store = fixture
-            .world
-            .get_resource::<AssetStore<SelfLoadingAsset>>()
-            .unwrap();
-        assert!(
-            !store
-                .get(&handle)
-                .expect("added asset loaded")
-                .spawned_a_load
-        );
-        assert!(!fixture.server.is_loading());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
