@@ -29,6 +29,7 @@ fn registered_importers() -> Vec<Box<dyn Importer>> {
         Box::new(concerto_gltf::gltf_importer::GltfImporter),
         Box::new(concerto_obj::obj_importer::ObjImporter),
         Box::new(concerto_bvh::bvh_importer::BvhImporter),
+        Box::new(concerto_audio::AudioImporter),
     ]
 }
 
@@ -207,6 +208,7 @@ fn import_placed(
         "gltf" | "glb" => "gltf",
         "obj" => "obj",
         "bvh" => "bvh",
+        "ogg" | "wav" => "audio",
         _ => "image",
     };
     import_with(
@@ -812,6 +814,10 @@ mod tests {
         let cases = [
             Extension {
                 extension: "GLB",
+                supported: true,
+            },
+            Extension {
+                extension: "WAV",
                 supported: true,
             },
             Extension {

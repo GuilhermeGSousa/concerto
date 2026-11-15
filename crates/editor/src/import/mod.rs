@@ -210,7 +210,9 @@ impl ImportQueue {
     }
 }
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["gltf", "glb", "obj", "bvh", "png", "jpg", "jpeg"];
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "gltf", "glb", "obj", "bvh", "png", "jpg", "jpeg", "ogg", "wav",
+];
 
 /// The native file picker running on its own thread.
 #[derive(Resource, Default)]
@@ -506,7 +508,7 @@ mod tests {
         let candidates = [
             "png", "jpg", "jpeg", "gltf", "glb", "obj", "bmp", "tga", "gif", "webp", "tiff", "tif",
             "hdr", "exr", "dds", "ktx2", "fbx", "dae", "ply", "stl", "usd", "usdz", "blend", "3ds",
-            "mtl", "bvh",
+            "mtl", "bvh", "ogg", "wav",
         ];
         for extension in candidates {
             assert_eq!(

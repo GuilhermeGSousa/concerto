@@ -5,6 +5,7 @@
 "crates/asset-build" = 4
 "crates/asset-format" = 6
 "crates/asset-import" = 2
+"crates/audio" = 4
 "crates/bvh" = 9
 "crates/color" = 3
 "crates/debug-gizmos" = 2
