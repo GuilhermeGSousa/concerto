@@ -1451,7 +1451,6 @@ dependencies = [
  "concerto-render",
  "concerto-scene",
  "log",
- "pollster",
  "proptest",
  "serde",
  "serde_json",
@@ -1531,7 +1530,6 @@ name = "concerto-motion-matching-editor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bincode",
  "concerto",
  "concerto-animation",
  "concerto-animation-editor",
