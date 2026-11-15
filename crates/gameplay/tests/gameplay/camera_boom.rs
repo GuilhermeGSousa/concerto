@@ -23,15 +23,6 @@ fn world() -> World {
     world
 }
 
-fn rig(world: &mut World, target_at: Vec3) -> Entity {
-    rig_with(
-        world,
-        target_at,
-        Transform::from_translation(PIVOT),
-        CameraBoom::default(),
-    )
-}
-
 fn rig_with(world: &mut World, target_at: Vec3, pivot: Transform, boom: CameraBoom) -> Entity {
     let target = world.spawn((
         Collider::capsule(0.5, 0.3),
@@ -51,13 +42,6 @@ fn rig_with(world: &mut World, target_at: Vec3, pivot: Transform, boom: CameraBo
     ))
 }
 
-fn wall(world: &mut World, near_face_z: f32, half_thickness: f32) {
-    world.spawn((
-        Collider::cuboid(5.0, 5.0, half_thickness),
-        Transform::from_translation(PIVOT + Vec3::new(0.0, 0.0, near_face_z - half_thickness)),
-    ));
-}
-
 fn run_boom(world: &mut World, camera: Entity) -> Vec3 {
     let mut schedule = Schedule::new();
     schedule.add_system(register_colliders);
@@ -73,129 +57,108 @@ fn run_boom(world: &mut World, camera: Entity) -> Vec3 {
         .translation
 }
 
-fn assert_near(actual: Vec3, expected: Vec3) {
-    assert!(
-        (actual - expected).length() < 0.01,
-        "expected the camera at {expected:?}, got {actual:?}"
-    );
+struct Obstacle {
+    center: Vec3,
+    half_extents: Vec3,
+}
+
+struct Boom {
+    name: &'static str,
+    pivot: Quat,
+    boom: CameraBoom,
+    target_at: Vec3,
+    obstacle: Option<Obstacle>,
+    camera: Vec3,
 }
 
 #[test]
-fn camera_with_nothing_in_the_way_sits_at_its_offset() {
-    let mut world = world();
-    let camera = rig(&mut world, Vec3::new(10.0, 1.0, 0.0));
-
-    let translation = run_boom(&mut world, camera);
-
-    assert_near(translation, CameraBoom::default().offset);
-}
-
-#[test]
-fn wall_between_pivot_and_camera_pulls_it_in_to_the_probe_radius() {
-    let mut world = world();
-    let camera = rig(&mut world, Vec3::new(10.0, 1.0, 0.0));
-    wall(&mut world, -1.9, 0.1);
-
-    let translation = run_boom(&mut world, camera);
-
+fn the_boom_holds_the_camera_at_its_shoulder_and_offset_pulled_in_by_what_is_in_the_way() {
     let boom = CameraBoom::default();
-    assert_near(translation, Vec3::NEG_Z * (1.9 - boom.probe_radius));
-}
+    let shoulder = |shoulder: Vec3| CameraBoom::default().with_shoulder(shoulder);
+    let pitch = Quat::from_rotation_x(30f32.to_radians());
+    let away = Vec3::new(10.0, 1.0, 10.0);
+    let booms = [
+        Boom {
+            name: "the followed capsule around the pivot",
+            pivot: Quat::IDENTITY,
+            boom: boom.clone(),
+            target_at: PIVOT,
+            obstacle: None,
+            camera: boom.offset,
+        },
+        Boom {
+            name: "a wall behind the pivot",
+            pivot: Quat::IDENTITY,
+            boom: boom.clone(),
+            target_at: away,
+            obstacle: Some(Obstacle {
+                center: PIVOT + Vec3::new(0.0, 0.0, -2.0),
+                half_extents: Vec3::new(5.0, 5.0, 0.1),
+            }),
+            camera: Vec3::NEG_Z * (1.9 - boom.probe_radius),
+        },
+        Boom {
+            name: "a wall closer than the min distance",
+            pivot: Quat::IDENTITY,
+            boom: boom.clone(),
+            target_at: away,
+            obstacle: Some(Obstacle {
+                center: PIVOT + Vec3::new(0.0, 0.0, -0.4),
+                half_extents: Vec3::new(5.0, 5.0, 0.05),
+            }),
+            camera: Vec3::NEG_Z * boom.min_distance,
+        },
+        Boom {
+            name: "a wall beside the pivot",
+            pivot: Quat::IDENTITY,
+            boom: shoulder(Vec3::X),
+            target_at: -away,
+            obstacle: Some(Obstacle {
+                center: PIVOT + Vec3::new(0.7, 0.0, 0.0),
+                half_extents: Vec3::new(0.1, 5.0, 5.0),
+            }),
+            camera: Vec3::X * (0.6 - boom.probe_radius - BOOM_SKIN) + boom.offset,
+        },
+        Boom {
+            name: "a pitched pivot",
+            pivot: pitch,
+            boom: shoulder(Vec3::Y * -0.5),
+            target_at: away,
+            obstacle: None,
+            camera: pitch.inverse() * (Vec3::Y * -0.5) + boom.offset,
+        },
+        Boom {
+            name: "a turned pivot",
+            pivot: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            boom: shoulder(Vec3::X * 0.5),
+            target_at: away,
+            obstacle: None,
+            camera: Vec3::X * 0.5 + boom.offset,
+        },
+    ];
+    for case in booms {
+        let mut world = world();
+        if let Some(obstacle) = case.obstacle {
+            let half = obstacle.half_extents;
+            world.spawn((
+                Collider::cuboid(half.x, half.y, half.z),
+                Transform::from_translation(obstacle.center),
+            ));
+        }
+        let camera = rig_with(
+            &mut world,
+            case.target_at,
+            Transform::from_translation_rotation(PIVOT, case.pivot),
+            case.boom,
+        );
 
-#[test]
-fn followed_capsule_around_the_pivot_does_not_pull_the_camera_in() {
-    let mut world = world();
-    let camera = rig(&mut world, PIVOT);
+        let translation = run_boom(&mut world, camera);
 
-    let translation = run_boom(&mut world, camera);
-
-    assert_near(translation, CameraBoom::default().offset);
-}
-
-#[test]
-fn wall_closer_than_min_distance_holds_the_camera_at_min_distance() {
-    let mut world = world();
-    let camera = rig(&mut world, Vec3::new(10.0, 1.0, 0.0));
-    wall(&mut world, -0.35, 0.05);
-
-    let translation = run_boom(&mut world, camera);
-
-    let boom = CameraBoom::default();
-    assert_near(translation, Vec3::NEG_Z * boom.min_distance);
-}
-
-#[test]
-fn sideways_shoulder_with_nothing_in_the_way_puts_the_camera_at_shoulder_plus_offset() {
-    let mut world = world();
-    let boom = CameraBoom::default().with_shoulder(Vec3::X * 0.5);
-    let camera = rig_with(
-        &mut world,
-        Vec3::new(10.0, 1.0, 0.0),
-        Transform::from_translation(PIVOT),
-        boom.clone(),
-    );
-
-    let translation = run_boom(&mut world, camera);
-
-    assert_near(translation, boom.shoulder + boom.offset);
-}
-
-#[test]
-fn wall_beside_the_pivot_stops_the_shoulder_short_and_keeps_the_full_offset() {
-    let mut world = world();
-    let boom = CameraBoom::default().with_shoulder(Vec3::X * 1.0);
-    let camera = rig_with(
-        &mut world,
-        Vec3::new(-10.0, 1.0, 0.0),
-        Transform::from_translation(PIVOT),
-        boom.clone(),
-    );
-    let near_face_x = 0.6;
-    let half_thickness = 0.1;
-    world.spawn((
-        Collider::cuboid(half_thickness, 5.0, 5.0),
-        Transform::from_translation(PIVOT + Vec3::new(near_face_x + half_thickness, 0.0, 0.0)),
-    ));
-
-    let translation = run_boom(&mut world, camera);
-
-    let shoulder = Vec3::X * (near_face_x - boom.probe_radius - BOOM_SKIN);
-    assert_near(translation, shoulder + boom.offset);
-}
-
-#[test]
-fn shoulder_stays_level_when_the_pivot_pitches() {
-    let mut world = world();
-    let boom = CameraBoom::default().with_shoulder(Vec3::Y * -0.5);
-    let rotation = Quat::from_rotation_x(30f32.to_radians());
-    let camera = rig_with(
-        &mut world,
-        Vec3::new(10.0, 1.0, 0.0),
-        Transform::from_translation_rotation(PIVOT, rotation),
-        boom.clone(),
-    );
-
-    let translation = run_boom(&mut world, camera);
-
-    assert_near(
-        translation,
-        rotation.inverse() * (Vec3::Y * -0.5) + boom.offset,
-    );
-}
-
-#[test]
-fn shoulder_turns_with_the_pivots_yaw() {
-    let mut world = world();
-    let boom = CameraBoom::default().with_shoulder(Vec3::X * 0.5);
-    let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-    let camera = rig_with(
-        &mut world,
-        Vec3::new(10.0, 1.0, 10.0),
-        Transform::from_translation_rotation(PIVOT, rotation),
-        boom.clone(),
-    );
-
-    let translation = run_boom(&mut world, camera);
-
-    assert_near(translation, boom.shoulder + boom.offset);
+        assert!(
+            (translation - case.camera).length() < 0.01,
+            "{}: expected the camera at {}, got {translation}",
+            case.name,
+            case.camera
+        );
+    }
 }

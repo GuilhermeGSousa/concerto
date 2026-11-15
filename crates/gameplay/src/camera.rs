@@ -220,26 +220,58 @@ pub fn update_camera_booms(
 mod tests {
     use super::boom_distance;
 
-    #[test]
-    fn a_shorter_allowed_distance_is_taken_at_once() {
-        assert_eq!(boom_distance(3.0, 1.0, 0.01, 0.15), 1.0);
+    struct Ease {
+        current: f32,
+        allowed: f32,
+        steps: &'static [f32],
+        halflife: f32,
+        distance: f32,
     }
 
     #[test]
-    fn a_longer_allowed_distance_closes_half_the_gap_in_one_halflife() {
-        let distance = boom_distance(1.0, 3.0, 0.15, 0.15);
-        assert!((distance - 2.0).abs() < 1e-5, "got {distance}");
-    }
-
-    #[test]
-    fn two_half_steps_land_where_one_full_step_does() {
-        let full = boom_distance(1.0, 3.0, 0.1, 0.15);
-        let halves = boom_distance(boom_distance(1.0, 3.0, 0.05, 0.15), 3.0, 0.05, 0.15);
-        assert!((full - halves).abs() < 1e-5, "{full} vs {halves}");
-    }
-
-    #[test]
-    fn a_zero_halflife_snaps_out() {
-        assert_eq!(boom_distance(1.0, 3.0, 0.01, 0.0), 3.0);
+    fn the_boom_pulls_in_at_once_and_eases_out_half_the_gap_per_halflife_however_the_time_is_split()
+    {
+        let eases = [
+            Ease {
+                current: 3.0,
+                allowed: 1.0,
+                steps: &[0.01],
+                halflife: 0.15,
+                distance: 1.0,
+            },
+            Ease {
+                current: 1.0,
+                allowed: 3.0,
+                steps: &[0.15],
+                halflife: 0.15,
+                distance: 2.0,
+            },
+            Ease {
+                current: 1.0,
+                allowed: 3.0,
+                steps: &[0.05, 0.1],
+                halflife: 0.15,
+                distance: 2.0,
+            },
+            Ease {
+                current: 1.0,
+                allowed: 3.0,
+                steps: &[0.01],
+                halflife: 0.0,
+                distance: 3.0,
+            },
+        ];
+        for ease in eases {
+            let distance = ease.steps.iter().fold(ease.current, |current, dt| {
+                boom_distance(current, ease.allowed, *dt, ease.halflife)
+            });
+            assert!(
+                (distance - ease.distance).abs() < 1e-5,
+                "from {} toward {} over {:?}: {distance}",
+                ease.current,
+                ease.allowed,
+                ease.steps
+            );
+        }
     }
 }

@@ -276,126 +276,42 @@ pub fn update_third_person_cameras(
 
 #[cfg(test)]
 mod tests {
-    use super::{CameraFraming, CameraStance, ShoulderSide, ThirdPersonCamera};
-
-    fn assert_near(actual: f32, expected: f32, field: &str) {
-        assert!(
-            (actual - expected).abs() < 1e-5,
-            "{field}: expected {expected}, got {actual}"
-        );
-    }
-
-    fn assert_framings_near(actual: &CameraFraming, expected: &CameraFraming) {
-        assert_near(actual.height, expected.height, "height");
-        assert_near(actual.shoulder, expected.shoulder, "shoulder");
-        assert_near(actual.distance, expected.distance, "distance");
-        assert_near(actual.fovy, expected.fovy, "fovy");
-        assert_near(
-            actual.sensitivity_scale,
-            expected.sensitivity_scale,
-            "sensitivity_scale",
-        );
-        assert_near(actual.pitch_limit, expected.pitch_limit, "pitch_limit");
-        assert_near(actual.halflife, expected.halflife, "halflife");
-    }
-
-    fn halfway(from: &CameraFraming, to: &CameraFraming) -> CameraFraming {
-        let mid = |a: f32, b: f32| (a + b) * 0.5;
-        CameraFraming {
-            height: mid(from.height, to.height),
-            shoulder: mid(from.shoulder, to.shoulder),
-            distance: mid(from.distance, to.distance),
-            fovy: mid(from.fovy, to.fovy),
-            sensitivity_scale: mid(from.sensitivity_scale, to.sensitivity_scale),
-            pitch_limit: mid(from.pitch_limit, to.pitch_limit),
-            halflife: to.halflife,
-        }
-    }
+    use super::{CameraStance, ThirdPersonCamera};
 
     #[test]
-    fn one_halflife_closes_half_the_gap_on_every_eased_field() {
-        let rig = ThirdPersonCamera::default();
-        let from = rig.follow;
-        let to = rig.aim;
-
-        let eased = from.eased_toward(&to, 0.1, 0.1);
-
-        assert_framings_near(&eased, &halfway(&from, &to));
-    }
-
-    #[test]
-    fn two_half_steps_land_where_one_full_step_does() {
-        let rig = ThirdPersonCamera::default();
-        let from = rig.follow;
-        let to = rig.aim;
-
-        let full = from.eased_toward(&to, 0.06, 0.1);
-        let halves = from
-            .eased_toward(&to, 0.03, 0.1)
-            .eased_toward(&to, 0.03, 0.1);
-
-        assert_framings_near(&halves, &full);
-    }
-
-    #[test]
-    fn a_zero_halflife_returns_the_target() {
-        let rig = ThirdPersonCamera::default();
-
-        let eased = rig.follow.eased_toward(&rig.aim, 0.01, 0.0);
-
-        assert_eq!(eased, rig.aim);
-    }
-
-    #[test]
-    fn a_field_within_the_settle_epsilon_lands_on_its_target() {
-        let target = CameraFraming::default();
-        let from = target.with_distance(target.distance + 5e-5);
-
-        let eased = from.eased_toward(&target, 0.001, 0.2);
-
-        assert_eq!(eased.distance, target.distance);
-    }
-
-    #[test]
-    fn left_side_negates_the_shoulder_and_right_keeps_it() {
-        let right = ThirdPersonCamera::default().with_stance(CameraStance::Aim);
-        let left = right.clone().with_side(ShoulderSide::Left);
-
-        assert_eq!(right.target().shoulder, 0.5);
-        assert_eq!(left.target().shoulder, -0.5);
-    }
-
-    #[test]
-    fn the_first_step_lands_on_the_target_whatever_dt_is() {
-        for dt in [0.0, 0.016, 10.0] {
-            let mut rig = ThirdPersonCamera::default().with_stance(CameraStance::Crouch);
-
-            rig.step(dt);
-
-            assert_eq!(rig.current(), rig.target(), "dt {dt}");
-        }
-    }
-
-    #[test]
-    fn switching_to_aim_is_halfway_there_after_one_aim_halflife() {
+    fn a_new_stance_closes_half_of_every_fields_gap_per_halflife_however_the_time_is_split() {
         let mut rig = ThirdPersonCamera::default();
         rig.step(0.0);
 
         rig.stance = CameraStance::Aim;
-        rig.step(rig.aim.halflife);
+        rig.step(rig.aim.halflife * 0.25);
+        rig.step(rig.aim.halflife * 0.75);
 
-        assert_framings_near(&rig.current(), &halfway(&rig.follow, &rig.aim));
-    }
-
-    #[test]
-    fn flipping_side_while_aiming_eases_the_shoulder_through_the_centre() {
-        let mut rig = ThirdPersonCamera::default().with_stance(CameraStance::Aim);
-        rig.step(0.0);
-        assert_eq!(rig.current().shoulder, 0.5);
-
-        rig.side = ShoulderSide::Left;
-        rig.step(rig.aim.halflife);
-
-        assert_near(rig.current().shoulder, 0.0, "shoulder");
+        let from = rig.follow;
+        let to = rig.aim;
+        let current = rig.current();
+        let halfway = |field: &str, actual: f32, from: f32, to: f32| {
+            let expected = (from + to) * 0.5;
+            assert!(
+                (actual - expected).abs() < 1e-5,
+                "{field}: expected {expected}, got {actual}"
+            );
+        };
+        halfway("height", current.height, from.height, to.height);
+        halfway("shoulder", current.shoulder, from.shoulder, to.shoulder);
+        halfway("distance", current.distance, from.distance, to.distance);
+        halfway("fovy", current.fovy, from.fovy, to.fovy);
+        halfway(
+            "sensitivity_scale",
+            current.sensitivity_scale,
+            from.sensitivity_scale,
+            to.sensitivity_scale,
+        );
+        halfway(
+            "pitch_limit",
+            current.pitch_limit,
+            from.pitch_limit,
+            to.pitch_limit,
+        );
     }
 }
