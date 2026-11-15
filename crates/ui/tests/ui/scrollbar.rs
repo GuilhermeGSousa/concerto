@@ -20,6 +20,12 @@ fn the_thumb_is_the_visible_fraction_of_the_track_at_the_scrolled_fraction() {
             thumb: None,
         },
         Case {
+            name: "content exactly filling its viewport draws none either",
+            offset: 0.0,
+            content: 500.0,
+            thumb: None,
+        },
+        Case {
             name: "a quarter visible is a quarter of the track",
             offset: 0.0,
             content: 2000.0,
