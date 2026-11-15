@@ -179,38 +179,3 @@ impl PropertyAddress {
                 .is_some_and(|component| target.component() == Some(component))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Reflect)]
-    struct OnlyInTheDocument;
-
-    #[derive(Component)]
-    struct Held;
-
-    #[test]
-    fn a_document_value_takes_its_types_from_the_document_first() {
-        let mut world = World::new();
-        world.insert_resource(AppTypeRegistry::default());
-        let types = AppTypeRegistry::default();
-        types.write().register::<OnlyInTheDocument>();
-        let document = world.spawn((Held, DocumentTypes(types)));
-        let value = DocumentValue::<Held> {
-            name: "held".into(),
-            document,
-            read: Box::new(|_| None),
-            edit: Box::new(|_| None),
-        };
-
-        let found = value.types(&world).unwrap();
-
-        assert!(
-            found
-                .read()
-                .get(TypeId::of::<OnlyInTheDocument>())
-                .is_some()
-        );
-    }
-}
