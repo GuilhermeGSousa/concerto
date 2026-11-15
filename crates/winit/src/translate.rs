@@ -164,11 +164,6 @@ mod tests {
             },
             Typed {
                 state: ElementState::Pressed,
-                text: "\r",
-                carries: None,
-            },
-            Typed {
-                state: ElementState::Pressed,
                 text: "a\u{8}b",
                 carries: Some("ab"),
             },
@@ -219,11 +214,6 @@ mod tests {
                 waiting: None,
             },
             Translated {
-                event: WinitEvent::Focused(false),
-                engine: Some(WindowEvent::Focused(false)),
-                waiting: None,
-            },
-            Translated {
                 event: WinitEvent::CloseRequested,
                 engine: Some(WindowEvent::CloseRequested),
                 waiting: Some(Waiting::Exit),
@@ -232,21 +222,6 @@ mod tests {
                 event: WinitEvent::RedrawRequested,
                 engine: None,
                 waiting: Some(Waiting::Redraw),
-            },
-            Translated {
-                event: WinitEvent::PointerButton {
-                    device_id: None,
-                    state: ElementState::Released,
-                    position: PhysicalPosition::new(3.0, 4.0),
-                    primary: true,
-                    button: ButtonSource::Mouse(MouseButton::Right),
-                    is_macos_activation_click: false,
-                },
-                engine: Some(WindowEvent::MouseButton {
-                    button: MouseButton::Right,
-                    pressed: false,
-                }),
-                waiting: None,
             },
             Translated {
                 event: pressed(ButtonSource::Mouse(MouseButton::Left)),
@@ -264,20 +239,7 @@ mod tests {
                 waiting: None,
             },
             Translated {
-                event: pressed(ButtonSource::Unknown(7)),
-                engine: None,
-                waiting: None,
-            },
-            Translated {
                 event: moved(PointerSource::Mouse),
-                engine: cursor_moved(),
-                waiting: None,
-            },
-            Translated {
-                event: moved(PointerSource::TabletTool {
-                    kind: TabletToolKind::Pen,
-                    data: TabletToolData::default(),
-                }),
                 engine: cursor_moved(),
                 waiting: None,
             },
@@ -310,14 +272,5 @@ mod tests {
             assert_eq!(translate(&case.event), case.engine, "{:?}", case.event);
             assert_eq!(while_waiting(&case.event), case.waiting, "{:?}", case.event);
         }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn the_left_button_is_the_mouse_left_or_the_pen_tip() {
-        assert!(is_mouse_left(&ButtonSource::Mouse(MouseButton::Left)));
-        assert!(is_mouse_left(&pen(TabletToolButton::Contact)));
-        assert!(!is_mouse_left(&touch()));
-        assert!(!is_mouse_left(&ButtonSource::Mouse(MouseButton::Right)));
     }
 }

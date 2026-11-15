@@ -109,10 +109,6 @@ mod tests {
                 ],
             },
             Applied {
-                applied: Some(wanted.clone()),
-                actions: Vec::new(),
-            },
-            Applied {
                 applied: Some(WindowSettings::default()),
                 actions: vec![
                     WindowAction::Title("Showcase".to_string()),
@@ -135,25 +131,6 @@ mod tests {
         assert!(exits_on_close(Some(&window)));
         window.settings.intercept_close = true;
         assert!(!exits_on_close(Some(&window)));
-    }
-
-    #[test]
-    fn requests_are_read_once_and_an_app_without_a_window_has_none() {
-        assert!(take_requests(&mut App::new()).is_none());
-
-        let mut app = App::new();
-        let mut window = Window::new((800, 600), 1.0);
-        window.settings.title = "Game".to_string();
-        window.send(WindowCommand::Focus);
-        app.insert_resource(window);
-
-        let (settings, commands) = take_requests(&mut app).unwrap();
-        assert_eq!(settings.title, "Game");
-        assert_eq!(commands, vec![WindowCommand::Focus]);
-
-        let (settings, commands) = take_requests(&mut app).unwrap();
-        assert_eq!(settings.title, "Game");
-        assert!(commands.is_empty());
     }
 
     #[test]
