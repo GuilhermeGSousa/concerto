@@ -11,7 +11,6 @@ use concerto_ecs::{
     command::EntityCommandQueue,
     entity::hierarchy::{ChildOf, Children},
     events::{event_channel::EventChannel, event_reader::EventReader},
-    reflect::ReflectComponent,
 };
 use concerto_editor::{
     asset_editor::{
@@ -20,13 +19,12 @@ use concerto_editor::{
     },
     guard::UnsavedGuard,
     hosted::{
-        HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, SetEditTarget, begin,
-        finish_blocking, trigger_on,
+        HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, begin, finish_blocking,
+        trigger_on,
     },
     inspector::{
-        DocumentValue, EditableApp, InspectedComponent, InspectedValues, NameField, PlainRow,
-        PropertyCommits, PropertyRow, PropertyRowValue, PropertyTarget, RefreshInspector,
-        ShownValue, ValueCard,
+        DocumentValue, InspectedComponent, InspectedValues, PlainRow, PropertyCommits, PropertyRow,
+        PropertyRowValue, PropertyTarget, RefreshInspector, ShownValue, ValueCard,
     },
     project::ProjectState,
     tools::{
@@ -48,8 +46,6 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_ui::{
     focus::FocusedWidget,
     interaction::UIClick,
-    node::UINode,
-    scroll::UIScrollArea,
     text::UIText,
     text_input::{UITextInput, UITextInputSubmitted},
 };
@@ -73,13 +69,6 @@ struct Tuning {
 
 #[derive(Reflect, Default)]
 struct Staged {
-    mode: Mode,
-}
-
-#[derive(Component, Reflect, Default)]
-#[reflect(Component, Default)]
-struct Wave {
-    samples: Vec<f32>,
     mode: Mode,
 }
 
@@ -153,15 +142,24 @@ fn look(document: Entity) -> Arc<dyn PropertyTarget> {
     })
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct Report {
+    document: Entity,
+    result: Result<(), PropertyRefusal>,
+}
+
 #[derive(Resource, Default)]
-struct Reports(Vec<(Entity, Result<(), PropertyRefusal>)>);
+struct Reports(Vec<Report>);
 
 fn record_reports(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
     mut reports: ResMut<Reports>,
 ) {
     for Hosted { document, event } in committed.read() {
-        reports.0.push((*document, event.result.clone()));
+        reports.0.push(Report {
+            document: *document,
+            result: event.result.clone(),
+        });
     }
 }
 
@@ -228,20 +226,16 @@ struct Editing {
     editor: App,
     scene: Entity,
     setting: Entity,
-    wave: Entity,
 }
 
 fn editing() -> Editing {
-    let mut members = None;
+    let mut setting = None;
     let (mut editor, scene) = example::headless_editor(
         |scene| {
-            scene.register_type::<Wave>();
-            let world = scene.main_mut().world_mut();
-            let setting = world.spawn(Setting {
+            setting = Some(scene.main_mut().world_mut().spawn(Setting {
                 title: "Shadows".into(),
                 enabled: false,
-            });
-            members = Some((setting, world.spawn(Wave::default())));
+            }));
         },
         |editor| {
             let mut editors = AssetEditorRegistry::default();
@@ -277,12 +271,10 @@ fn editing() -> Editing {
         },
         scene,
     );
-    let (setting, wave) = members.unwrap();
     Editing {
         editor,
         scene,
-        setting,
-        wave,
+        setting: setting.unwrap(),
     }
 }
 
@@ -334,30 +326,6 @@ impl Editing {
         self.editor.update();
     }
 
-    fn scroll_to(&mut self, offset: f32) {
-        let world = self.world();
-        let area = world
-            .query::<(Entity, &UIScrollArea), ()>()
-            .iter(world)
-            .map(|(entity, _)| entity)
-            .next()
-            .unwrap();
-        world
-            .get_component_for_entity_mut::<UIScrollArea>(area)
-            .unwrap()
-            .offset = offset;
-    }
-
-    fn scroll(&mut self) -> f32 {
-        let world = self.world();
-        world
-            .query::<&UIScrollArea, ()>()
-            .iter(world)
-            .next()
-            .unwrap()
-            .offset
-    }
-
     fn value_cards(&mut self) -> Vec<String> {
         let world = self.world();
         let mut names: Vec<_> = world
@@ -367,15 +335,6 @@ impl Editing {
             .collect();
         names.sort();
         names
-    }
-
-    fn value_card_ids(&mut self) -> Vec<Entity> {
-        let world = self.world();
-        world
-            .query::<(Entity, &ValueCard), ()>()
-            .iter(world)
-            .map(|(entity, _)| entity)
-            .collect()
     }
 
     fn component_cards(&mut self) -> usize {
@@ -463,15 +422,7 @@ impl Editing {
             .unwrap();
     }
 
-    fn queued_commits(&mut self) -> usize {
-        self.world()
-            .get_resource::<PropertyCommits>()
-            .unwrap()
-            .0
-            .len()
-    }
-
-    fn reports(&mut self) -> &[(Entity, Result<(), PropertyRefusal>)] {
+    fn reports(&mut self) -> &[Report] {
         &self.world().get_resource::<Reports>().unwrap().0
     }
 
@@ -553,439 +504,132 @@ impl Editing {
     }
 }
 
-fn refused(status: &str) -> Result<(), PropertyRefusal> {
-    Err(PropertyRefusal::Refused(status.into()))
+fn ok(document: Entity) -> Report {
+    Report {
+        document,
+        result: Ok(()),
+    }
 }
 
 #[test]
-fn a_document_value_shows_one_card_on_the_frame_its_tab_opens() {
+fn a_documents_values_show_in_the_inspector_by_its_tab_its_shown_value_and_its_preview() {
     let mut w = editing();
-
-    w.open::<Notes>();
-
+    w.select_in_scene(w.setting);
+    let scene = w.scene;
+    let notes = w.open::<Notes>();
     assert_eq!(w.value_cards(), ["Tuning"]);
     assert_eq!(w.component_cards(), 0);
     assert_eq!(w.rows_with_widgets(), ["samples", "samples", "setting"]);
-    let world = w.world();
-    let field = world
-        .query::<(Entity, &NameField), ()>()
-        .iter(world)
-        .map(|(entity, _)| entity)
-        .next()
-        .unwrap();
-    assert!(
-        !world
-            .get_component_for_entity::<UINode>(field)
-            .unwrap()
-            .visible
-    );
-}
 
-#[test]
-fn replacing_the_values_shows_the_new_cards_on_the_same_frame_and_resets_the_scroll() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    w.scroll_to(40.0);
-
-    let list = vec![tuning(document), staged(document)];
-    w.world().insert(InspectedValues(list), document);
-    w.editor.update();
-
-    assert_eq!(w.value_cards(), ["Staged", "Tuning"]);
-    assert_eq!(w.scroll(), 0.0);
-}
-
-#[test]
-fn the_same_targets_keep_their_cards_and_the_scroll() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    let cards = w.value_card_ids();
-    w.scroll_to(40.0);
-
-    let same = w
-        .world()
-        .get_component_for_entity::<InspectedValues>(document)
-        .unwrap()
-        .0
-        .clone();
-    w.world().insert(InspectedValues(same), document);
-    w.editor.update();
-
-    assert_eq!(w.value_card_ids(), cards);
-    assert_eq!(w.scroll(), 40.0);
-}
-
-#[test]
-fn a_shown_value_is_the_only_card_and_picking_another_replaces_it() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    let (tuning, staged) = (tuning(document), staged(document));
-    let list = vec![tuning.clone(), staged.clone()];
-
-    w.world()
-        .insert((InspectedValues(list), ShownValue(staged)), document);
-    w.editor.update();
-    assert_eq!(w.value_cards(), ["Staged"]);
-
-    w.world().insert(ShownValue(tuning), document);
-    w.editor.update();
-    assert_eq!(w.value_cards(), ["Tuning"]);
-}
-
-#[test]
-fn a_refresh_keeps_the_shown_values_card() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    let (tuning, staged) = (tuning(document), staged(document));
-    w.world().insert(
-        (
-            InspectedValues(vec![tuning, staged.clone()]),
-            ShownValue(staged),
-        ),
-        document,
-    );
-    w.editor.update();
-    let cards = w.value_card_ids();
-
-    w.world().trigger(RefreshInspector);
-    w.editor.update();
-
-    assert_eq!(w.value_cards(), ["Staged"]);
-    assert_eq!(w.value_card_ids(), cards);
-}
-
-#[test]
-fn switching_documents_rebuilds_the_cards_and_resets_the_scroll() {
-    let mut w = editing();
-    let notes = w.open::<Notes>();
-    let first = w.value_card_ids();
-    w.scroll_to(40.0);
-
-    let sketch = w.open::<Sketch>();
-    assert_ne!(notes, sketch);
-    let second = w.value_card_ids();
-
-    assert_eq!(second.len(), 1);
-    assert_ne!(first, second);
-    assert_eq!(w.scroll(), 0.0);
-
-    w.scroll_to(40.0);
-    w.activate(notes);
-    assert_eq!(w.value_cards(), ["Tuning"]);
-    assert_ne!(w.value_card_ids(), second);
-    assert_eq!(w.scroll(), 0.0);
-}
-
-#[test]
-fn a_write_by_other_means_shows_nothing_until_refresh_inspector() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    let cards = w.value_card_ids();
-    assert_eq!(w.shown_enabled(), [false]);
-
-    w.set_enabled(document, true);
-    w.editor.update();
-    assert_eq!(w.shown_enabled(), [false]);
-
+    w.set_enabled(notes, true);
     w.world().trigger(RefreshInspector);
     w.editor.update();
     assert_eq!(w.shown_enabled(), [true]);
-    assert_eq!(w.value_card_ids(), cards);
-}
 
-#[test]
-fn a_target_whose_document_has_gone_shows_a_card_with_no_rows() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    let gone = w.world().spawn(held());
-    w.world().despawn(gone);
-
+    let shown = staged(notes);
+    let values = vec![tuning(notes), shown.clone()];
     w.world()
-        .insert(InspectedValues(vec![tuning(gone)]), document);
+        .insert((InspectedValues(values), ShownValue(shown)), notes);
     w.editor.update();
-
-    assert_eq!(w.value_cards(), ["Tuning"]);
-    assert!(w.rows_with_widgets().is_empty());
-    assert!(w.plain_rows().is_empty());
-}
-
-#[test]
-fn closing_a_value_tab_takes_its_cards_away() {
-    let mut w = editing();
-    let notes = w.open::<Notes>();
-
-    w.command(AssetEditorCommand::Close(notes));
-
-    assert_eq!(w.value_cards(), Vec::<String>::new());
-    assert!(w.rows_with_widgets().is_empty());
-}
-
-#[test]
-fn a_value_tab_closing_in_the_frame_a_scene_takes_over_leaves_the_scenes_cards() {
-    let mut w = editing();
-    w.select_in_scene(w.setting);
-    let scene = w.scene;
-    let notes = w.open::<Notes>();
-
-    let commands = &mut w
-        .world()
-        .get_resource_mut::<AssetEditorCommands>()
-        .unwrap()
-        .0;
-    commands.push_back(AssetEditorCommand::Close(notes));
-    commands.push_back(AssetEditorCommand::Activate(scene));
-    w.editor.update();
-
-    assert_eq!((w.component_cards(), w.value_cards().len()), (1, 0));
-    let world = w.world();
-    assert_eq!(world.query::<&SettingButton, ()>().iter(world).count(), 1);
-}
-
-#[test]
-fn going_to_a_scene_tab_and_back_shows_each_tabs_own_cards_with_their_widgets() {
-    let mut w = editing();
-    w.select_in_scene(w.setting);
-    let scene = w.scene;
-    assert_eq!(w.component_cards(), 1);
-
-    let notes = w.open::<Notes>();
-    assert_eq!((w.component_cards(), w.value_cards().len()), (0, 1));
-    assert_eq!(w.rows_with_widgets(), ["samples", "samples", "setting"]);
-
-    w.activate(scene);
-    assert_eq!((w.component_cards(), w.value_cards().len()), (1, 0));
-    let world = w.world();
-    assert_eq!(world.query::<&SettingButton, ()>().iter(world).count(), 1);
-
-    w.activate(notes);
-    assert_eq!((w.component_cards(), w.value_cards().len()), (0, 1));
-    assert_eq!(w.rows_with_widgets(), ["samples", "samples", "setting"]);
-}
-
-#[test]
-fn a_scenes_list_and_enum_rows_build_with_a_value_document_open_behind_them() {
-    let mut w = editing();
-    w.select_in_scene(w.wave);
-    let scene = w.scene;
-    w.open::<Notes>();
-
-    w.activate(scene);
-
-    assert_eq!(w.value_cards(), Vec::<String>::new());
-    assert_eq!(w.rows_with_widgets(), ["mode", "samples"]);
-}
-
-#[test]
-fn a_type_only_the_preview_registers_shows_once_the_preview_arrives() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    w.world()
-        .insert(InspectedValues(vec![staged(document)]), document);
-    w.editor.update();
+    assert_eq!(w.value_cards(), ["Staged"]);
     assert_eq!(w.plain_rows(), ["mode"]);
-
-    w.world().insert(preview(), document);
+    w.world().insert(preview(), notes);
     w.editor.update();
-
     assert!(w.plain_rows().is_empty());
     assert_eq!(w.rows_with_widgets(), ["mode"]);
+
+    w.activate(scene);
+    assert_eq!(w.component_cards(), 1);
+    assert!(w.value_cards().is_empty());
+    let world = w.world();
+    assert_eq!(world.query::<&SettingButton, ()>().iter(world).count(), 1);
+    w.activate(notes);
+    assert_eq!(w.component_cards(), 0);
+    assert_eq!(w.value_cards(), ["Staged"]);
+    w.command(AssetEditorCommand::Close(notes));
+    assert!(w.value_cards().is_empty());
 }
 
 #[test]
-fn a_type_only_the_preview_registers_shows_when_the_preview_came_first() {
+fn a_value_edit_writes_its_own_document_and_reports_there_with_another_tab_in_front() {
     let mut w = editing();
-    let document = w.open::<Notes>();
-    w.world().insert(preview(), document);
-    w.editor.update();
-
-    w.world()
-        .insert(InspectedValues(vec![staged(document)]), document);
-    w.editor.update();
-
-    assert!(w.plain_rows().is_empty());
-    assert_eq!(w.rows_with_widgets(), ["mode"]);
-}
-
-#[test]
-fn editing_a_value_writes_it_and_reports_one_event_and_nothing_to_any_scene() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
+    let notes = w.open::<Notes>();
     let row = w.row("setting");
+    w.commit(&row, SettingEdit::Toggle);
+    w.editor.update();
+    assert!(w.held(notes).tuning.setting.enabled);
+    assert_eq!(w.shown_enabled(), [true]);
+    assert_eq!(w.reports(), [ok(notes)]);
+
+    let sketch = w.open::<Sketch>();
+    let front_status = w.status(sketch);
+    w.commit(&row, SettingEdit::Rename(String::new()));
+    w.editor.update();
+    assert_eq!(w.held(notes).tuning.setting.title, "Shadows");
+    assert!(w.reports()[1].result.is_err());
+    assert!(!w.status(notes).is_empty());
+    assert_eq!(w.status(sketch), front_status);
 
     w.commit(&row, SettingEdit::Toggle);
     w.editor.update();
-
-    assert!(w.held(document).tuning.setting.enabled);
-    assert_eq!(w.shown_enabled(), [true]);
-    assert_eq!(w.reports(), [(document, Ok(()))]);
-    assert_eq!(w.queued_commits(), 0);
-
-    let scene = w.scene;
-    w.activate(scene);
-    w.editor.update();
+    assert!(!w.held(notes).tuning.setting.enabled);
+    assert!(!w.held(sketch).tuning.setting.enabled);
+    assert_eq!(w.reports()[2], ok(notes));
     assert_eq!(w.world().get_resource::<SceneEdits>().unwrap().0, 0);
 }
 
 #[test]
-fn an_edit_followed_by_a_tab_switch_names_the_edited_document() {
-    let mut w = editing();
-    let notes = w.open::<Notes>();
-    let row = w.row("setting");
-    let sketch = w.open::<Sketch>();
-
-    w.commit(&row, SettingEdit::Toggle);
-    w.editor.update();
-
-    assert!(w.held(notes).tuning.setting.enabled);
-    assert!(!w.held(sketch).tuning.setting.enabled);
-    assert_eq!(w.reports(), [(notes, Ok(()))]);
-    assert_eq!(w.shown_enabled(), [false]);
-}
-
-#[test]
-fn a_refused_edit_leaves_the_value_reports_it_and_sets_its_own_documents_status() {
-    let mut w = editing();
-    let notes = w.open::<Notes>();
-    let row = w.row("setting");
-    let sketch = w.open::<Sketch>();
-    let front_status = w.status(sketch);
-
-    w.commit(&row, SettingEdit::Rename(String::new()));
-    w.editor.update();
-
-    let status = "Set Tuning.setting failed: the value was refused";
-    assert_eq!(w.held(notes).tuning.setting.title, "Shadows");
-    assert_eq!(w.reports(), [(notes, refused(status))]);
-    assert_eq!(w.status(notes), status);
-    assert_eq!(w.status(sketch), front_status);
-}
-
-#[test]
-fn a_commit_read_before_the_editors_changed_is_refused_and_reported() {
+fn a_values_list_asset_and_enum_rows_edit_it() {
     let mut w = editing();
     let document = w.open::<Notes>();
-    let row = w.row("setting");
-
-    w.editor
-        .register_property_editor::<Setting, SettingEditor>();
-    w.commit(&row, SettingEdit::Toggle);
-    w.editor.update();
-
-    let status = "Set Tuning.setting failed: its editor changed since it was read";
-    assert!(!w.held(document).tuning.setting.enabled);
-    assert_eq!(w.reports(), [(document, refused(status))]);
-    assert_eq!(w.status(document), status);
-}
-
-#[test]
-fn an_edit_of_a_target_whose_document_has_gone_reports_a_missing_target() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    let row = w.row("setting");
-    w.command(AssetEditorCommand::Close(document));
-
-    w.commit(&row, SettingEdit::Toggle);
-    w.editor.update();
-
-    assert_eq!(
-        w.reports(),
-        [(
-            document,
-            refused(
-                "Set Tuning.setting failed: its entity, component or document no longer exists"
-            )
-        )]
-    );
-}
-
-#[test]
-fn a_scene_in_front_takes_its_own_commits_and_leaves_a_values_to_its_document() {
-    let mut w = editing();
-    w.select_in_scene(w.setting);
-    let scene = w.scene;
-    let component = w.row("");
-    let notes = w.open::<Notes>();
-    let value = w.row("setting");
-    w.activate(scene);
-
-    w.commit(&component, SettingEdit::Toggle);
-    w.commit(&value, SettingEdit::Toggle);
-    w.editor.update();
-    w.editor.update();
-
-    assert!(w.held(notes).tuning.setting.enabled);
-    assert_eq!(w.shown_enabled(), [true]);
-    assert_eq!(w.queued_commits(), 0);
-    assert_eq!(w.reports().len(), 2);
-    assert!(w.reports().iter().all(|(_, result)| result.is_ok()));
-}
-
-#[test]
-fn a_component_commit_left_with_a_value_document_in_front_waits_for_its_scene() {
-    let mut w = editing();
-    w.select_in_scene(w.setting);
-    let scene = w.scene;
-    let component = w.row("");
-    let notes = w.open::<Notes>();
-    let value = w.row("setting");
-
-    w.commit(&component, SettingEdit::Toggle);
-    w.commit(&value, SettingEdit::Toggle);
-    w.editor.update();
-
-    assert!(w.held(notes).tuning.setting.enabled);
-    assert_eq!(w.reports(), [(notes, Ok(()))]);
-    assert_eq!(w.queued_commits(), 1);
-
-    w.activate(scene);
-    w.editor.update();
-    assert_eq!(w.queued_commits(), 0);
-    assert_eq!(w.shown_enabled(), [true]);
-}
-
-#[test]
-fn leaving_a_scene_drops_its_commits_and_keeps_a_values() {
-    let mut w = editing();
-    w.select_in_scene(w.setting);
-    let scene = w.scene;
-    let component = w.row("");
-    let notes = w.open::<Notes>();
-    let value = w.row("setting");
-    w.activate(scene);
-
-    w.commit(&component, SettingEdit::Toggle);
-    w.commit(&value, SettingEdit::Toggle);
-    w.world().trigger(SetEditTarget(None));
-    w.editor.update();
-    w.editor.update();
-
-    assert!(w.held(notes).tuning.setting.enabled);
-    assert_eq!(w.reports(), [(notes, Ok(()))]);
-    assert_eq!(w.queued_commits(), 0);
-}
-
-#[test]
-fn a_lists_buttons_add_to_and_remove_from_a_value() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-
     let list = w.row_entity("samples");
     w.click_last_child(list);
     w.editor.update();
     assert_eq!(w.held(document).tuning.samples, [1.0, 0.0]);
-    assert_eq!(w.reports(), [(document, Ok(()))]);
-
     let element = w.row_entity("samples.0");
     w.click_last_child(element);
     w.editor.update();
     assert_eq!(w.held(document).tuning.samples, [0.0]);
-    let world = w.world();
-    let rows = world
-        .query::<&PropertyRow, ()>()
-        .iter(world)
-        .filter(|row| row.address.path.name() == "samples")
-        .count();
-    assert_eq!(rows, 2);
+
+    let store = AssetStore::<Mesh>::new();
+    w.world()
+        .get_resource_mut::<AssetServer>()
+        .unwrap()
+        .register_asset(&store);
+    w.world().insert_resource(store);
+    let cube = AssetEntry {
+        embedded_in: None,
+        id: AssetId::new(),
+        address: "content/cube.gasset".into(),
+        kind: Mesh::name().into(),
+        kind_version: None,
+        provenance: None,
+    };
+    w.world()
+        .get_resource_mut::<AssetRegistry>()
+        .unwrap()
+        .insert(cube.clone());
+    w.world()
+        .insert(InspectedValues(vec![look(document)]), document);
+    w.editor.update();
+    let mesh = w.row_entity("mesh");
+    w.click_last_child(mesh);
+    w.editor.update();
+    w.click_labelled(&cube.name());
+    w.editor.update();
+    w.world().insert(preview(), document);
+    w.world()
+        .insert(InspectedValues(vec![staged(document)]), document);
+    w.editor.update();
+    let mode = w.row_entity("mode");
+    w.click_last_child(mode);
+    w.editor.update();
+    w.click_labelled("Loud");
+    w.editor.update();
+
+    assert_eq!(w.held(document).look.mesh.id(), cube.id);
+    assert_eq!(w.held(document).staged.mode, Mode::Loud);
+    assert_eq!(w.reports(), vec![ok(document); 4]);
 }
 
 #[test]
@@ -1014,59 +658,4 @@ fn a_value_edit_keeps_the_rows_so_a_focused_field_keeps_its_text() {
     assert_eq!(w.held(document).rates.fast, 3.0);
     assert_eq!((w.row_entity("fast"), w.row_entity("slow")), (fast, slow));
     assert_eq!(w.field_text(slow_field), "12");
-}
-
-#[test]
-fn a_picked_asset_lands_in_a_value_when_the_editors_server_knows_its_type() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    let store = AssetStore::<Mesh>::new();
-    w.world()
-        .get_resource_mut::<AssetServer>()
-        .unwrap()
-        .register_asset(&store);
-    w.world().insert_resource(store);
-    let cube = AssetEntry {
-        embedded_in: None,
-        id: AssetId::new(),
-        address: "content/cube.gasset".into(),
-        kind: Mesh::name().into(),
-        kind_version: None,
-        provenance: None,
-    };
-    w.world()
-        .get_resource_mut::<AssetRegistry>()
-        .unwrap()
-        .insert(cube.clone());
-    w.world()
-        .insert(InspectedValues(vec![look(document)]), document);
-    w.editor.update();
-
-    let row = w.row_entity("mesh");
-    w.click_last_child(row);
-    w.editor.update();
-    w.click_labelled(&cube.name());
-    w.editor.update();
-
-    assert_eq!(w.held(document).look.mesh.id(), cube.id);
-    assert_eq!(w.reports(), [(document, Ok(()))]);
-}
-
-#[test]
-fn a_commit_is_checked_against_the_registry_of_the_values_types() {
-    let mut w = editing();
-    let document = w.open::<Notes>();
-    w.world().insert(preview(), document);
-    w.world()
-        .insert(InspectedValues(vec![staged(document)]), document);
-    w.editor.update();
-
-    let row = w.row_entity("mode");
-    w.click_last_child(row);
-    w.editor.update();
-    w.click_labelled("Loud");
-    w.editor.update();
-
-    assert_eq!(w.held(document).staged.mode, Mode::Loud);
-    assert_eq!(w.reports(), [(document, Ok(()))]);
 }

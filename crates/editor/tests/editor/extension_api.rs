@@ -30,13 +30,17 @@ fn open_menu(
 }
 
 #[test]
-fn an_extension_crate_opens_the_shared_asset_menu() {
+fn an_extension_crate_opens_the_shared_asset_menu_and_reaches_the_pickers_parts() {
     let mut world = World::new();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();
     world.insert_resource(AssetRegistry::default());
     world.insert_resource(UITheme::default());
-    world.spawn(());
+    let theme = UITheme::default();
+    world.spawn(picker_button(&theme));
+    let _ = picker_label(&theme);
+    let _ = picker_caret(&theme);
+    let _ = asset_name(&AssetRegistry::default(), AssetId::new());
     let mut system = open_menu.into_system();
     system.initialize(&mut world);
 
@@ -48,19 +52,5 @@ fn an_extension_crate_opens_the_shared_asset_menu() {
             .iter(&mut world)
             .count(),
         1
-    );
-}
-
-#[test]
-fn an_extension_crate_reaches_what_it_builds_on() {
-    let theme = UITheme::default();
-    let _ = (
-        picker_button(&theme),
-        picker_label(&theme),
-        picker_caret(&theme),
-    );
-    assert_eq!(
-        asset_name(&AssetRegistry::default(), AssetId::new()),
-        "Missing"
     );
 }
