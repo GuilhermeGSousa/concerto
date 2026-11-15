@@ -359,4 +359,36 @@ mod cook_tests {
         assert_eq!(std::fs::read(mine.join("notes.txt")).unwrap(), b"mine");
         assert!(!mine.join("content").exists());
     }
+
+    struct CookArgRow {
+        args: &'static [&'static str],
+        cook: super::CookArg,
+    }
+
+    #[test]
+    fn the_cook_flag_takes_the_directory_after_it_and_no_flag_means_no_cook() {
+        let dir = |path: &str| super::CookArg::Dir(std::path::PathBuf::from(path));
+        let rows = [
+            CookArgRow {
+                args: &[],
+                cook: super::CookArg::Absent,
+            },
+            CookArgRow {
+                args: &["--forest"],
+                cook: super::CookArg::Absent,
+            },
+            CookArgRow {
+                args: &["--cook", "out"],
+                cook: dir("out"),
+            },
+            CookArgRow {
+                args: &["--forest", "--cook", "cooked/dir", "--sanatorium"],
+                cook: dir("cooked/dir"),
+            },
+        ];
+        for row in rows {
+            let args = row.args.iter().map(|arg| arg.to_string());
+            assert_eq!(super::cook_arg(args), row.cook, "{:?}", row.args);
+        }
+    }
 }
