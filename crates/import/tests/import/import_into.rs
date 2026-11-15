@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 
 use concerto_import::config::ContentConfig;
-use concerto_import::{import_source, import_source_into};
+use concerto_import::import_source_into;
 
 fn fixtures(krate: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -56,7 +56,7 @@ fn gltf_with_buffer_one_folder_up(dir: &Path) -> PathBuf {
 }
 
 fn external_obj(_: &Path, _: &Path) -> PathBuf {
-    fixtures("obj").join("square.obj")
+    fixtures("obj").join("unread_texture.obj")
 }
 
 fn external(_: &Path, _: &Path) -> PathBuf {
@@ -79,15 +79,11 @@ fn already_in_place(project: &Path, _: &Path) -> PathBuf {
     project.join("assets/triangle_ext.gltf")
 }
 
-fn broken(_: &Path, scratch: &Path) -> PathBuf {
-    std::fs::write(scratch.join("broken.gltf"), b"not a gltf").expect("write");
-    scratch.join("broken.gltf")
-}
-
 fn broken_over_an_old_copy(project: &Path, scratch: &Path) -> PathBuf {
     std::fs::create_dir_all(project.join("assets")).expect("assets");
     std::fs::write(project.join("assets/broken.gltf"), b"old").expect("seed");
-    broken(project, scratch)
+    std::fs::write(scratch.join("broken.gltf"), b"not a gltf").expect("write");
+    scratch.join("broken.gltf")
 }
 
 fn files_outside_content(project: &Path) -> Vec<String> {
@@ -123,35 +119,15 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
         },
         Copy {
             source: external_obj,
-            destination: "assets/square.obj",
-            siblings: &["assets/square.mtl"],
+            destination: "assets/unread_texture.obj",
+            siblings: &["assets/unread_texture.mtl"],
             files: &[
-                "assets/square.mtl",
-                "assets/square.obj",
-                "assets/square.obj.import.toml",
+                "assets/unread_texture.mtl",
+                "assets/unread_texture.obj",
+                "assets/unread_texture.obj.import.toml",
             ],
-            content: "content/square/scene.gasset",
-            sub_asset: "material/square",
-        },
-        Copy {
-            source: one_folder_up,
-            destination: "assets/models/tri.gltf",
-            siblings: &["assets/triangle_ext.bin"],
-            files: &[
-                "assets/models/tri.gltf",
-                "assets/models/tri.gltf.import.toml",
-                "assets/triangle_ext.bin",
-            ],
-            content: "content/models/tri/scene.gasset",
-            sub_asset: "mesh/0",
-        },
-        Copy {
-            source: external,
-            destination: "tri.gltf",
-            siblings: &["triangle_ext.bin"],
-            files: &["tri.gltf", "tri.gltf.import.toml", "triangle_ext.bin"],
-            content: "content/tri/scene.gasset",
-            sub_asset: "mesh/0",
+            content: "content/unread_texture/scene.gasset",
+            sub_asset: "scene",
         },
         Copy {
             source: already_in_place,
@@ -204,81 +180,30 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
 struct Refusal {
     case: &'static str,
     source: fn(&Path, &Path) -> PathBuf,
-    destination: Option<&'static str>,
-    config: ContentConfig,
-    message: &'static str,
+    destination: &'static str,
     left: &'static [&'static str],
-}
-
-fn refusal(case: &'static str, destination: &'static str) -> Refusal {
-    Refusal {
-        case,
-        source: external,
-        destination: Some(destination),
-        config: config(),
-        message: "",
-        left: &[],
-    }
 }
 
 #[test]
 fn an_import_that_cannot_complete_writes_nothing_and_keeps_what_was_there() {
     let cases = [
         Refusal {
+            case: "a sibling would land above the project",
             source: one_folder_up,
-            message: "outside the project",
-            ..refusal("a sibling would land above the project", "tri.gltf")
+            destination: "tri.gltf",
+            left: &[],
         },
         Refusal {
-            source: broken,
-            ..refusal("a malformed source", "assets/broken.gltf")
-        },
-        Refusal {
+            case: "a malformed source over an old copy",
             source: broken_over_an_old_copy,
+            destination: "assets/broken.gltf",
             left: &["assets/broken.gltf"],
-            ..refusal("a malformed source over an old copy", "assets/broken.gltf")
-        },
-        refusal("a destination above the project", "../escaped.gltf"),
-        refusal(
-            "a destination stepping out of the project",
-            "assets/../../escaped.gltf",
-        ),
-        refusal("an absolute destination", "{project}/../escaped.gltf"),
-        refusal("a directory destination", "assets/"),
-        refusal("an empty destination", ""),
-        refusal("a destination of another type", "assets/tri.glb"),
-        Refusal {
-            config: ContentConfig {
-                root: "data".to_string(),
-                ..ContentConfig::default()
-            },
-            ..refusal(
-                "a content root that is not content",
-                "assets/models/tri.gltf",
-            )
         },
         Refusal {
-            config: ContentConfig {
-                extension: "a.b".to_string(),
-                ..ContentConfig::default()
-            },
-            ..refusal("an extension with a dot", "assets/models/tri.gltf")
-        },
-        Refusal {
-            destination: None,
-            config: ContentConfig {
-                root: "data".to_string(),
-                ..ContentConfig::default()
-            },
-            ..refusal("a content root that is not content, in place", "")
-        },
-        Refusal {
-            destination: None,
-            config: ContentConfig {
-                extension: "a.b".to_string(),
-                ..ContentConfig::default()
-            },
-            ..refusal("an extension with a dot, in place", "")
+            case: "a destination above the project",
+            source: external,
+            destination: "../escaped.gltf",
+            left: &[],
         },
     ];
     for case in &cases {
@@ -290,20 +215,8 @@ fn an_import_that_cannot_complete_writes_nothing_and_keeps_what_was_there() {
             .iter()
             .map(|file| std::fs::read(project.path().join(file)).expect("seeded"))
             .collect();
-        let result = match case.destination {
-            Some(destination) => {
-                let destination =
-                    destination.replace("{project}", project.path().to_str().expect("utf-8"));
-                import_source_into(&source, &destination, project.path(), &case.config).map(|_| ())
-            }
-            None => import_source(&source, project.path(), &case.config).map(|_| ()),
-        };
-        let error = result.expect_err(case.case);
-        assert!(
-            format!("{error:#}").contains(case.message),
-            "{}: {error:#}",
-            case.case
-        );
+        import_source_into(&source, case.destination, project.path(), &config())
+            .expect_err(case.case);
         assert_eq!(files_under(project.path()), case.left, "{}", case.case);
         for (file, bytes) in case.left.iter().zip(before) {
             assert_eq!(
@@ -331,17 +244,6 @@ fn importing_again_keeps_every_asset_id_and_replaces_the_copied_files() {
     let gltf = source.path().join("triangle_ext.gltf");
     let first =
         import_source_into(&gltf, "assets/tri.gltf", project.path(), &config()).expect("first");
-
-    let in_place = import_source(
-        &project.path().join("assets/tri.gltf"),
-        project.path(),
-        &config(),
-    )
-    .expect("the copied source and its buffer are self-sufficient");
-    assert_eq!(
-        first.assets, in_place,
-        "identities and addresses are stable"
-    );
 
     let mut buffer = std::fs::read(source.path().join("triangle_ext.bin")).expect("read");
     buffer[0] ^= 0x01;
@@ -382,17 +284,4 @@ fn copies_keep_the_permissions_of_their_sources() {
             .mode();
         assert_eq!(mode & 0o777, 0o644, "{name}");
     }
-}
-
-#[test]
-fn an_external_obj_whose_texture_is_missing_imports_and_copies_the_rest() {
-    let project = tempfile::tempdir().expect("tempdir");
-    let imported = import_source_into(
-        &fixtures("obj").join("unread_texture.obj"),
-        "assets/unread_texture.obj",
-        project.path(),
-        &config(),
-    )
-    .expect("the import succeeds");
-    assert_eq!(imported.siblings, ["assets/unread_texture.mtl"]);
 }

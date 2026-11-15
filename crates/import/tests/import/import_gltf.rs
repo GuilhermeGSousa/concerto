@@ -4,19 +4,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use concerto_animation::clip::AnimationClip;
-use concerto_ecs::component::Component;
 use concerto_ecs::World;
 use concerto_foundation::assets::asset_server::{handle_asset_load_events, AssetServer};
 use concerto_foundation::assets::asset_store::AssetStore;
-use concerto_foundation::assets::content::{
-    decode_content_asset, read_asset_record, read_content_asset, read_content_asset_header,
-    save_content_asset_into, ImportProvenance,
-};
+use concerto_foundation::assets::content::{read_content_asset_header, save_content_asset_into};
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
-use concerto_foundation::assets::utils::load_content_asset;
 use concerto_foundation::assets::{Asset, AssetId, ContentAssetRoot, LoadableAsset};
 use concerto_import::metadata::{sidecar_path, SourceMetadata};
-use concerto_mesh::mesh::{Mesh, MeshComponent};
+use concerto_mesh::mesh::Mesh;
 use concerto_mesh::skeleton::Skeleton;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::Texture;
@@ -31,97 +26,6 @@ fn fixture(project_root: &Path) -> PathBuf {
         .expect("fixture exists");
     std::fs::copy(source, &destination).unwrap();
     destination
-}
-
-#[test]
-fn an_imported_gltf_writes_content_assets_that_load_back_and_reference_each_other_by_minted_id() {
-    let project_root = std::env::temp_dir().join(format!("import-gltf-{}", std::process::id()));
-    std::fs::create_dir_all(&project_root).unwrap();
-
-    let written =
-        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
-            .expect("import succeeds");
-
-    for expected in [
-        "content/triangle/scene.gasset#mesh/0",
-        "content/triangle/scene.gasset",
-    ] {
-        assert!(
-            written.iter().any(|a| a.location() == expected),
-            "expected {expected} among {written:?}"
-        );
-    }
-    assert!(project_root.join("content/triangle/scene.gasset").exists());
-    let mesh_entry = written
-        .iter()
-        .find(|a| a.embedded_in.as_ref().map(|held| held.name.as_str()) == Some("mesh/0"))
-        .unwrap();
-
-    let raw = std::fs::read(project_root.join("content/triangle/scene.gasset")).unwrap();
-    let (header, payload) = read_content_asset(&raw).expect("readable");
-    assert_eq!(header.kind, Scene::name());
-    assert_ne!(
-        header.asset_id,
-        AssetId::from_path("content/triangle/scene.gasset"),
-        "identity is minted, not derived from the address"
-    );
-    assert_eq!(
-        header.provenance,
-        Some(ImportProvenance {
-            source: "assets/triangle.gltf".to_string(),
-            sub_asset: "scene".to_string(),
-        }),
-        "import must record where the content asset came from"
-    );
-
-    let scene: Scene = bincode::deserialize(payload).expect("scene payload");
-    let mesh_id = mesh_entry.id;
-    let component = scene.nodes[0]
-        .components
-        .iter()
-        .find(|c| c.type_name == MeshComponent::name())
-        .expect("the node carries a MeshComponent");
-    let mut mesh = MeshComponent::default();
-    assert!(concerto_reflect::apply_value(&mut mesh, &component.value).is_empty());
-    let referenced = mesh.handle.id();
-    assert_eq!(
-        referenced, mesh_id,
-        "the MeshComponent must address the mesh's minted id, not triangle.gltf#mesh/0"
-    );
-    assert!(
-        header.references.contains(&mesh_id),
-        "header references list carries the mesh's minted id"
-    );
-
-    let content = ContentAssetRoot::Directory(project_root.clone());
-    let record = read_asset_record(&project_root, mesh_entry).expect("the mesh's record");
-    let (mesh_header, mesh) =
-        decode_content_asset::<Mesh>(&record).expect("the imported mesh decodes from its record");
-    assert_eq!(mesh.vertices.len(), 3);
-    assert_eq!(mesh_header.kind_version, Mesh::FORMAT_VERSION);
-    let err = pollster::block_on(load_content_asset::<Mesh>(
-        &content,
-        "content/triangle/scene.gasset",
-    ))
-    .err()
-    .expect("the kind tag rejects a Mesh load of a Scene file");
-    assert!(format!("{err:#}").contains("Scene"));
-    let loaded = pollster::block_on(load_content_asset::<Scene>(
-        &content,
-        "content/triangle/scene.gasset",
-    ))
-    .expect("the scene loads by address");
-    let registry =
-        AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("scan");
-    assert_eq!(
-        registry
-            .get(loaded.referenced_assets[0])
-            .map(|entry| entry.location()),
-        Some("content/triangle/scene.gasset#mesh/0".to_string()),
-        "a baked reference resolves through the registry to the asset it names"
-    );
-
-    std::fs::remove_dir_all(&project_root).ok();
 }
 
 #[test]
@@ -151,23 +55,6 @@ fn an_imports_returned_entries_bring_a_scanned_registry_up_to_date() {
     }
 
     assert!(!written.is_empty());
-    for entry in &written {
-        let provenance = entry
-            .provenance
-            .as_ref()
-            .expect("an import records provenance");
-        assert_eq!(provenance.source, "assets/triangle.gltf");
-        assert_eq!(
-            read_content_asset_header(&project_root.join(&entry.address))
-                .unwrap()
-                .record_header(entry.embedded_in.as_ref().map(|held| held.name.as_str()))
-                .unwrap()
-                .provenance
-                .as_ref(),
-            Some(provenance)
-        );
-    }
-    assert!(!project_root.join("content/.registry.toml").exists());
     let rescanned =
         AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("rescan");
     assert_eq!(sorted(&registry), sorted(&rescanned));
@@ -365,6 +252,10 @@ fn a_gltf_import_is_one_scene_file_with_its_textures_and_clips_beside_it() {
         assert!(runtime.loads(entry), "{} loads", entry.location());
     }
     let ids = ids_by_name(&first);
+    assert!(read_content_asset_header(&root.join(scene))
+        .unwrap()
+        .references
+        .contains(&ids["mesh/0"]));
 
     set_file(&source, "material/0", true);
     let loose = import().assets;

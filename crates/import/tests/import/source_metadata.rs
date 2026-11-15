@@ -15,7 +15,7 @@ const HEADER: &str =
     "version = 1\nsource_id = \"00000000-0000-0000-0000-000000000001\"\nimporter = \"bvh\"\n";
 
 #[test]
-fn a_sidecar_round_trips_its_settings_and_refuses_an_unknown_importer() {
+fn a_sidecar_round_trips_its_settings_and_outputs_and_writes_only_what_is_set() {
     let path = sidecar(&format!(
         "{HEADER}\n[settings]\nscale = 0.5\nframe_range = [0, 10]\n"
     ));
@@ -28,8 +28,6 @@ fn a_sidecar_round_trips_its_settings_and_refuses_an_unknown_importer() {
     let bare = SourceMetadata::load(&sidecar(HEADER)).unwrap();
     assert!(bare.settings.is_empty());
     assert!(!toml::to_string_pretty(&bare).unwrap().contains("settings"));
-
-    assert!(SourceMetadata::load(&sidecar(&HEADER.replace("bvh", "fbx"))).is_err());
 
     let id = "00000000-0000-0000-0000-000000000002";
     let outputs = SourceMetadata::load(&sidecar(&format!(

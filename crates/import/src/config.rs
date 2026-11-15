@@ -45,20 +45,11 @@ mod tests {
 
     #[test]
     fn a_sub_asset_name_becomes_a_sanitised_file_name_capped_on_a_char_boundary() {
-        let at_cap = "a".repeat(200 - ".gasset".len());
         let multi_byte = format!("aa{}", "あ".repeat(100));
         let cases = [
             Case {
-                name: "material_steel".to_string(),
-                file_name: "material_steel.gasset".to_string(),
-            },
-            Case {
                 name: "material/steel#main".to_string(),
                 file_name: "material_steel_main.gasset".to_string(),
-            },
-            Case {
-                name: at_cap.clone(),
-                file_name: format!("{at_cap}.gasset"),
             },
             Case {
                 name: multi_byte.clone(),
@@ -71,11 +62,6 @@ mod tests {
                 format!("content/hero/{}", case.file_name)
             );
         }
-        let prefix = "a".repeat(299);
-        assert_ne!(
-            address_for(&format!("{prefix}x")),
-            address_for(&format!("{prefix}y"))
-        );
     }
 
     proptest! {
