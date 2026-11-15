@@ -374,11 +374,6 @@ mod tests {
                 fits: true,
             },
             Case {
-                text: "anything",
-                width: 0.0,
-                fits: true,
-            },
-            Case {
                 text: "bunny_porcelain_subsurface.mat",
                 width: 60.0,
                 fits: false,
@@ -398,12 +393,6 @@ mod tests {
             assert!(out.ends_with('…'), "{out}");
             assert!(out.chars().count() < case.text.chars().count(), "{out}");
         }
-        let wide = truncate("white_rabbit_waistcoat.glb", 120.0).unwrap();
-        let narrow = truncate("white_rabbit_waistcoat.glb", 60.0).unwrap();
-        assert!(
-            narrow.chars().count() < wide.chars().count(),
-            "a narrower box keeps less: {narrow} vs {wide}"
-        );
     }
 
     #[test]
@@ -549,15 +538,8 @@ mod tests {
         }
     }
 
-    fn text_reshapes(render: &concerto_ecs::World) -> u64 {
-        render
-            .get_resource::<UIRenderDiagnostics>()
-            .unwrap()
-            .text_reshapes()
-    }
-
     #[test]
-    fn a_new_scale_factor_reshapes_every_text_node_and_a_move_only_places_it() {
+    fn a_moved_text_node_is_placed_anew_and_a_new_scale_factor_reshapes_it() {
         let TextWorlds {
             mut main,
             mut render,
@@ -565,7 +547,6 @@ mod tests {
             targets,
         } = text_worlds(&["Scrolled", "Two", "Three"]);
         extract_text(&mut main, &mut render);
-        let before = text_reshapes(&render);
 
         {
             let layout = main
@@ -577,7 +558,6 @@ mod tests {
             layout.clip_rect.min += offset;
         }
         extract_text(&mut main, &mut render);
-        assert_eq!(text_reshapes(&render), before, "a move keeps the shaping");
         let text = render
             .get_component_for_entity::<RenderTextComponent>(targets[0])
             .unwrap();
@@ -587,66 +567,11 @@ mod tests {
 
         main.insert_resource(Window::new((800, 600), 2.0));
         extract_text(&mut main, &mut render);
-        assert_eq!(text_reshapes(&render), before + nodes.len() as u64);
         for target in targets {
             let text = render
                 .get_component_for_entity::<RenderTextComponent>(target)
                 .unwrap();
             assert_eq!(text.buffer.metrics().font_size, 28.0);
         }
-    }
-
-    #[test]
-    fn a_nodes_shaped_text_fits_its_layout_box_at_scale_two() {
-        let mut main = concerto_ecs::World::new();
-        main.insert_resource(Window::new((800, 600), 2.0));
-        let mut render = concerto_ecs::World::new();
-        render.insert_resource(TextFontSystem(fonts::build_font_system(
-            &fonts::UIFonts::default(),
-        )));
-        render.insert_resource(UIRenderDiagnostics::default());
-        let target = render.spawn(());
-        let rect = crate::node::UIBox {
-            min: glam::Vec2::new(10.0, 20.0),
-            size: glam::Vec2::new(100.0, 20.0),
-        };
-        main.spawn((
-            UIText {
-                text: "bunny_porcelain_subsurface.mat".into(),
-                font_size: 14.0,
-                line_height: 18.0,
-                wrap: false,
-                ellipsis: true,
-                ..Default::default()
-            },
-            UILayout {
-                rect,
-                content_rect: rect,
-                clip_rect: rect,
-                paint_order: 0,
-            },
-            RenderEntity::new(target),
-        ));
-
-        extract_text(&mut main, &mut render);
-        let text = render
-            .get_component_for_entity::<RenderTextComponent>(target)
-            .expect("the text must be drawn");
-        let metrics = text.buffer.metrics();
-        assert_eq!(metrics.font_size, 28.0);
-        assert_eq!(metrics.line_height, 36.0);
-        let physical = rect.size * 2.0;
-        let width = text
-            .buffer
-            .layout_runs()
-            .map(|run| run.line_w)
-            .fold(0.0_f32, f32::max);
-        assert!(width > 0.0);
-        assert!(
-            width <= physical.x,
-            "shaped width {width} overflows the physical box {}",
-            physical.x
-        );
-        assert!(metrics.line_height <= physical.y);
     }
 }

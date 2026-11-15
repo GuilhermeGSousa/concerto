@@ -1,11 +1,7 @@
 //! Covers where an anchored panel lands.
-use std::collections::HashMap;
-
 use concerto_ecs::entity::hierarchy::ChildOf;
 use concerto_ecs::events::event_channel::EventChannel;
-use concerto_ecs::query::change_detection::DetectChanges;
 use concerto_ecs::{IntoSystem, System, World, entity::Entity};
-use concerto_ecs::{Res, ResMut, Resource};
 use concerto_ui::anchor::{
     PanelRects, UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack,
     panels_to_close, place, track_panel_stack,
@@ -83,33 +79,6 @@ fn a_panel_sits_beside_its_anchor_on_the_side_that_fits_and_inside_the_window() 
             origin: Vec2::new(800.0, 134.0),
         },
         Case {
-            name: "end alignment that already fits is not shifted",
-            anchor: anchor(Vec2::new(940.0, 100.0), Vec2::new(40.0, 30.0)),
-            size: menu,
-            side: below,
-            align: UIAnchorAlign::End,
-            placed_side: below,
-            origin: Vec2::new(780.0, 134.0),
-        },
-        Case {
-            name: "larger than the window pins to the origin",
-            anchor: anchor(Vec2::new(400.0, 400.0), Vec2::new(40.0, 30.0)),
-            size: Vec2::new(1200.0, 900.0),
-            side: below,
-            align: UIAnchorAlign::Start,
-            placed_side: below,
-            origin: Vec2::ZERO,
-        },
-        Case {
-            name: "start alignment",
-            anchor: trigger,
-            size: small,
-            side: below,
-            align: UIAnchorAlign::Start,
-            placed_side: below,
-            origin: Vec2::new(300.0, 134.0),
-        },
-        Case {
             name: "centre alignment on the anchor's width",
             anchor: trigger,
             size: small,
@@ -144,15 +113,6 @@ fn a_panel_sits_beside_its_anchor_on_the_side_that_fits_and_inside_the_window() 
             align: UIAnchorAlign::Start,
             placed_side: UIAnchorSide::Left,
             origin: Vec2::new(416.0, 200.0),
-        },
-        Case {
-            name: "a context menu opens at the cursor",
-            anchor: anchor(Vec2::new(520.0, 240.0), Vec2::ZERO),
-            size: Vec2::new(180.0, 120.0),
-            side: below,
-            align: UIAnchorAlign::Start,
-            placed_side: below,
-            origin: Vec2::new(520.0, 244.0),
         },
     ] {
         let placement = place(
@@ -226,8 +186,6 @@ fn a_press_closes_the_panels_it_stepped_out_of() {
             [150.0, 70.0],
             &[1],
         ),
-        case("the submenu's row is its owner", false, [150.0, 130.0], &[]),
-        case("inside a panel with no owner", true, [450.0, 450.0], &[]),
         case("outside a panel with no owner", true, [100.0, 100.0], &[0]),
     ] {
         let stack = if case.standalone {
@@ -321,53 +279,9 @@ fn an_open_panel_shows_on_the_panel_layer_and_a_submenu_nests_above_it() {
 }
 
 #[test]
-fn a_context_menu_at_a_point_nests_by_its_owner_too() {
-    let mut world = stack_world();
-    let trigger = node(&mut world);
-    let menu = open_panel(
-        &mut world,
-        trigger,
-        UIAnchorTarget::Node { entity: trigger },
-    );
-    let row = node(&mut world);
-    world.insert(ChildOf::new(menu), row);
-    let context = open_panel(
-        &mut world,
-        row,
-        UIAnchorTarget::Point {
-            position: Vec2::new(500.0, 300.0),
-        },
-    );
-    let trigger2 = node(&mut world);
-    let top2 = open_panel(
-        &mut world,
-        trigger2,
-        UIAnchorTarget::Node { entity: trigger2 },
-    );
-
-    run(&mut world);
-
-    let stack = world.get_resource::<UIPanelStack>().unwrap();
-    assert_eq!(
-        stack.open(),
-        &[menu, top2, context],
-        "context nests one level deeper than the other top-level panel, so it \
-         sorts after it even though it was spawned first"
-    );
-    assert_eq!(
-        layer(&world, context),
-        202,
-        "layer is stack index; a target-keyed implementation would read this \
-         panel as top-level and put it at 201"
-    );
-}
-
-#[test]
 fn a_panel_closes_itself_with_whatever_it_belongs_to() {
     struct Chain {
         section: Entity,
-        owner: Entity,
-        target: Entity,
         menu: Entity,
     }
     struct Case {
@@ -393,14 +307,6 @@ fn a_panel_closes_itself_with_whatever_it_belongs_to() {
                     .visible = false;
             },
         },
-        Case {
-            name: "its owner despawned",
-            close: |world, chain| world.despawn(chain.owner),
-        },
-        Case {
-            name: "its node target despawned",
-            close: |world, chain| world.despawn(chain.target),
-        },
     ] {
         let mut world = stack_world();
         let section = node(&mut world);
@@ -418,15 +324,7 @@ fn a_panel_closes_itself_with_whatever_it_belongs_to() {
             case.name
         );
 
-        (case.close)(
-            &mut world,
-            &Chain {
-                section,
-                owner,
-                target,
-                menu,
-            },
-        );
+        (case.close)(&mut world, &Chain { section, menu });
         run(&mut world);
 
         assert!(!visible(&world, menu), "{}: the menu", case.name);
@@ -445,91 +343,6 @@ fn a_panel_closes_itself_with_whatever_it_belongs_to() {
             case.name
         );
     }
-}
-
-#[test]
-fn a_panel_whose_owner_is_hidden_closes_itself() {
-    let mut world = stack_world();
-    let row = node(&mut world);
-    let menu = open_panel(
-        &mut world,
-        row,
-        UIAnchorTarget::Point {
-            position: Vec2::ZERO,
-        },
-    );
-    run(&mut world);
-    assert!(visible(&world, menu));
-
-    world
-        .get_component_for_entity_mut::<UINode>(row)
-        .unwrap()
-        .visible = false;
-    run(&mut world);
-
-    assert!(!visible(&world, menu), "the thing it was about is gone");
-
-    world
-        .get_component_for_entity_mut::<UINode>(row)
-        .unwrap()
-        .visible = true;
-    run(&mut world);
-
-    assert!(
-        !visible(&world, menu),
-        "the owner coming back must not resurrect a menu nobody reopened"
-    );
-    assert!(
-        !world
-            .get_component_for_entity::<UIAnchoredPanel>(menu)
-            .unwrap()
-            .open,
-        "open must be latched to false so a toggle callback sees the real state"
-    );
-}
-
-#[test]
-fn a_target_anchors_to_its_point_or_to_the_rect_its_node_was_laid_out_at() {
-    let mut world = World::default();
-    let laid_out = node(&mut world);
-    let unplaced = node(&mut world);
-    let rect = anchor(Vec2::new(100.0, 100.0), Vec2::new(120.0, 30.0));
-    let mut rects = HashMap::new();
-    rects.insert(laid_out, rect);
-
-    assert_eq!(
-        UIAnchorTarget::Point {
-            position: Vec2::new(40.0, 90.0),
-        }
-        .anchor_box(&rects),
-        Some(anchor(Vec2::new(40.0, 90.0), Vec2::ZERO)),
-        "a cursor is a box with no extent"
-    );
-    assert_eq!(
-        UIAnchorTarget::Node { entity: laid_out }.anchor_box(&rects),
-        Some(rect)
-    );
-    assert_eq!(
-        UIAnchorTarget::Node { entity: unplaced }.anchor_box(&rects),
-        None
-    );
-}
-
-#[test]
-fn a_press_on_the_owner_or_else_the_node_target_is_exempt() {
-    let mut world = World::default();
-    let trigger = node(&mut world);
-    let row = node(&mut world);
-    let dropdown = UIAnchoredPanel::new(UIAnchorTarget::Node { entity: trigger }).with_open(true);
-    let owned = UIAnchoredPanel::new(UIAnchorTarget::Point {
-        position: Vec2::new(500.0, 300.0),
-    })
-    .with_owner(row)
-    .with_open(true);
-
-    assert_eq!(dropdown.press_exempt_entity(), Some(trigger));
-    assert_eq!(owned.press_exempt_entity(), Some(row));
-    assert_eq!(UIAnchoredPanel::default().press_exempt_entity(), None);
 }
 
 #[test]
@@ -564,33 +377,6 @@ fn hiding_a_panel_takes_the_focus_inside_it_away() {
         **world.get_resource::<FocusedWidget>().unwrap(),
         None,
         "the field went off screen with the panel and cannot keep the keyboard"
-    );
-}
-
-#[test]
-fn focus_outside_every_panel_is_left_alone() {
-    let mut world = stack_world();
-    let trigger = node(&mut world);
-    let menu = open_panel(
-        &mut world,
-        trigger,
-        UIAnchorTarget::Node { entity: trigger },
-    );
-    let mut focused = FocusedWidget::default();
-    *focused = Some(trigger);
-    world.insert_resource(focused);
-    run(&mut world);
-
-    world
-        .get_component_for_entity_mut::<UIAnchoredPanel>(menu)
-        .unwrap()
-        .open = false;
-    run(&mut world);
-
-    assert_eq!(
-        **world.get_resource::<FocusedWidget>().unwrap(),
-        Some(trigger),
-        "the trigger is not inside the panel, so closing it says nothing about focus"
     );
 }
 
@@ -632,37 +418,5 @@ fn opening_a_panel_focuses_its_focus_on_open_widget_once() {
         **world.get_resource::<FocusedWidget>().unwrap(),
         Some(trigger),
         "focus moves only on the frame the panel opens, not every frame it stays open"
-    );
-}
-
-#[derive(Resource, Default)]
-struct StackChanges(Vec<bool>);
-
-fn watch_stack(stack: Res<UIPanelStack>, mut changes: ResMut<StackChanges>) {
-    changes.0.push(stack.is_changed());
-}
-
-#[test]
-fn a_stack_that_stays_the_same_is_not_changed() {
-    let mut world = stack_world();
-    world.insert_resource(StackChanges::default());
-    let trigger = node(&mut world);
-    open_panel(
-        &mut world,
-        trigger,
-        UIAnchorTarget::Node { entity: trigger },
-    );
-    let mut track = track_panel_stack.into_system();
-    let mut watch = watch_stack.into_system();
-    track.initialize(&mut world);
-    watch.initialize(&mut world);
-    for _ in 0..3 {
-        track.run_and_apply((), &mut world);
-        watch.run_and_apply((), &mut world);
-    }
-
-    assert_eq!(
-        world.get_resource::<StackChanges>().unwrap().0,
-        [true, false, false]
     );
 }

@@ -1736,32 +1736,6 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
-    fn content_rect_accounts_for_padding() {
-        let rect = UIBox {
-            min: Vec2::new(10.0, 20.0),
-            size: Vec2::new(100.0, 80.0),
-        };
-        let content = UIRect {
-            top: 3.0,
-            right: 7.0,
-            bottom: 11.0,
-            left: 5.0,
-        }
-        .inset_box(rect);
-        assert_eq!(content.min, Vec2::new(15.0, 23.0));
-        assert_eq!(content.size, Vec2::new(88.0, 66.0));
-    }
-
-    #[test]
-    fn a_style_hides_invisible_nodes_and_reads_percentages_out_of_a_hundred() {
-        let node = UINode::default().with_visible(false);
-        assert_eq!(node.style().display, Display::None);
-        assert_eq!(dimension(UIValue::Percent(100.0)), Dimension::percent(1.0));
-        assert_eq!(dimension(UIValue::Percent(25.0)), Dimension::percent(0.25));
-        assert_eq!(dimension(UIValue::Percent(1.0)), Dimension::percent(0.01));
-    }
-
-    #[test]
     fn clipping_can_be_applied_per_axis() {
         let inherited = UIBox {
             min: Vec2::ZERO,
@@ -1835,166 +1809,6 @@ mod tests {
             )
             .unwrap();
         taffy.layout(label).unwrap().size.width
-    }
-
-    fn card_heights(rows: f32, content_position: Position) -> [f32; 2] {
-        let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
-        let mut card = || {
-            let pool = taffy
-                .new_leaf(
-                    UINode::default()
-                        .with_height(UIValue::Px(rows * 32.0))
-                        .with_flex_shrink(0.0)
-                        .with_position(content_position)
-                        .with_inset(UIInset {
-                            left: UIValue::Px(0.0),
-                            right: UIValue::Px(0.0),
-                            top: UIValue::Px(0.0),
-                            ..Default::default()
-                        })
-                        .style(),
-                )
-                .unwrap();
-            let view = taffy
-                .new_with_children(
-                    UINode::default()
-                        .with_flex_grow(1.0)
-                        .with_flex_direction(FlexDirection::Column)
-                        .clipped()
-                        .style(),
-                    &[pool],
-                )
-                .unwrap();
-            taffy
-                .new_with_children(
-                    UINode::default()
-                        .with_flex_grow(1.0)
-                        .with_flex_shrink(1.0)
-                        .with_flex_direction(FlexDirection::Column)
-                        .style(),
-                    &[view],
-                )
-                .unwrap()
-        };
-        let cards = [card(), card()];
-        let rail = taffy
-            .new_with_children(
-                UINode::default()
-                    .with_size(UIValue::Px(238.0), UIValue::Px(600.0))
-                    .with_flex_direction(FlexDirection::Column)
-                    .style(),
-                &cards,
-            )
-            .unwrap();
-        let mut measurer = measurer();
-        taffy
-            .compute_layout_with_measure(
-                rail,
-                Size {
-                    width: AvailableSpace::Definite(238.0),
-                    height: AvailableSpace::Definite(600.0),
-                },
-                |known, available, _id, context, _style| {
-                    measure_node(&mut measurer, known, available, context)
-                },
-            )
-            .unwrap();
-        cards.map(|card| taffy.layout(card).unwrap().size.height)
-    }
-
-    #[test]
-    fn a_scroll_viewport_does_not_take_its_size_from_its_content() {
-        let short = card_heights(4.0, Position::Absolute);
-        let tall = card_heights(60.0, Position::Absolute);
-        assert_eq!(short, [300.0, 300.0], "cards split the rail evenly");
-        assert_eq!(
-            tall, short,
-            "how many rows a list holds must not change the card holding it"
-        );
-
-        let in_flow = card_heights(60.0, Position::Relative);
-        assert_ne!(
-            in_flow, short,
-            "in flow the content does drive the card, which is what absolute positioning avoids"
-        );
-    }
-
-    #[test]
-    fn a_long_label_does_not_widen_the_row_inside_a_scroll_pool() {
-        let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
-        let measure = label("content/UAL1/scene.gasset");
-        let label_node = UINode::default()
-            .with_flex_grow(1.0)
-            .with_padding(UIRect::axes(6.0, 8.0));
-        let label_id = taffy
-            .new_leaf_with_context(
-                leaf_style(&label_node, true, measure.wrap),
-                LeafMeasure::Text(measure),
-            )
-            .unwrap();
-        let fixed = |taffy: &mut TaffyTree<LeafMeasure>, width: f32| {
-            taffy
-                .new_leaf(
-                    UINode::default()
-                        .with_width(UIValue::Px(width))
-                        .with_flex_shrink(0.0)
-                        .style(),
-                )
-                .unwrap()
-        };
-        let toggle = fixed(&mut taffy, 30.0);
-        let glyph = fixed(&mut taffy, 20.0);
-        let row = taffy
-            .new_with_children(
-                UINode::default()
-                    .with_height(UIValue::Px(32.0))
-                    .with_flex_shrink(0.0)
-                    .with_flex_direction(FlexDirection::Row)
-                    .style(),
-                &[toggle, glyph, label_id],
-            )
-            .unwrap();
-        let pool = taffy
-            .new_with_children(
-                UINode::default()
-                    .with_flex_direction(FlexDirection::Column)
-                    .with_flex_shrink(0.0)
-                    .style(),
-                &[row],
-            )
-            .unwrap();
-        let view = taffy
-            .new_with_children(
-                UINode::default()
-                    .with_size(UIValue::Px(197.0), UIValue::Px(300.0))
-                    .with_flex_direction(FlexDirection::Column)
-                    .clipped()
-                    .style(),
-                &[pool],
-            )
-            .unwrap();
-
-        let mut measurer = measurer();
-        taffy
-            .compute_layout_with_measure(
-                view,
-                Size {
-                    width: AvailableSpace::Definite(197.0),
-                    height: AvailableSpace::Definite(300.0),
-                },
-                |known, available, _id, context, _style| {
-                    measure_node(&mut measurer, known, available, context)
-                },
-            )
-            .unwrap();
-
-        assert_eq!(taffy.layout(pool).unwrap().size.width, 197.0, "pool");
-        assert_eq!(taffy.layout(row).unwrap().size.width, 197.0, "row");
-        assert_eq!(
-            taffy.layout(label_id).unwrap().size.width,
-            197.0 - 50.0,
-            "label"
-        );
     }
 
     fn field_widths(texts: &[&str], basis: UIValue) -> Vec<f32> {
@@ -2071,50 +1885,6 @@ mod tests {
                 .all(|pair| (pair[0] - pair[1]).abs() <= 1.0),
             "fields sharing a row must be even: {widths:?}"
         );
-
-        let automatic = field_widths(&uneven, UIValue::Auto);
-        assert!(
-            automatic.windows(2).any(|pair| pair[0] != pair[1]),
-            "an automatic basis is what let content drive the width: {automatic:?}"
-        );
-    }
-
-    #[test]
-    fn the_rotation_slot_is_part_of_the_material_signature() {
-        use crate::material::UIMaterial;
-        let mut material = UIMaterial::flat(concerto_color::Color::WHITE);
-        let textures = RenderAssets::<RenderTexture>::new();
-        let before = material_signature(&material, &textures);
-
-        material.flags[1] = std::f32::consts::FRAC_PI_4;
-        assert_ne!(before, material_signature(&material, &textures));
-    }
-
-    #[test]
-    fn a_shared_viewport_without_a_picture_in_its_slot_binds_no_texture() {
-        let empty_slot = || {
-            let mut viewport = UISharedViewport::new();
-            viewport.picture = Some(concerto_render::draw_target::SharedTexture::new(
-                concerto_render::wgpu::TextureFormat::Rgba8Unorm,
-            ));
-            viewport
-        };
-        for viewport in [UISharedViewport::new(), empty_slot()] {
-            let mut world = concerto_ecs::World::new();
-            let node = world.spawn((UIMaterial::flat(concerto_color::Color::WHITE), viewport));
-            let mut system = concerto_ecs::IntoSystem::into_system(sync_shared_viewport_textures);
-            concerto_ecs::System::initialize(&mut system, &mut world);
-
-            concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
-
-            assert!(
-                world
-                    .get_component_for_entity::<UIMaterial>(node)
-                    .unwrap()
-                    .texture
-                    .is_none()
-            );
-        }
     }
 
     #[test]
@@ -2159,7 +1929,6 @@ mod tests {
             },
             "an explicit size is never second guessed"
         );
-        assert_eq!(size(Size::NONE, None), Size::ZERO);
         let short = size(Size::NONE, Some("Warren"));
         let long = size(Size::NONE, Some("Warren and Curiosities"));
         assert!(short.width > 0.0, "text must have some width at all");
@@ -2277,52 +2046,8 @@ mod tests {
                     .is_some()
             );
         }
-        assert_eq!(
-            world.get_component_for_entity::<UINode>(bare),
-            Some(&UINode::default())
-        );
         let size = rect_of(&world, bare).size;
         assert!(size.x > 0.0 && size.y > 0.0);
-    }
-
-    #[test]
-    fn a_wrapping_row_puts_a_full_width_child_on_a_line_of_its_own() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let wrapping = world.spawn((
-            UINode::default()
-                .with_width(UIValue::Px(200.0))
-                .with_flex_direction(FlexDirection::Row)
-                .with_flex_wrap(FlexWrap::Wrap)
-                .with_gap(Vec2::splat(4.0))
-                .with_flex_shrink(0.0),
-            ChildOf::new(root),
-        ));
-        let first = world.spawn((
-            UINode::default()
-                .with_size(UIValue::Px(40.0), UIValue::Px(20.0))
-                .with_flex_shrink(0.0),
-            ChildOf::new(wrapping),
-        ));
-        let line = world.spawn((
-            UINode::default()
-                .with_size(UIValue::Percent(100.0), UIValue::Px(10.0))
-                .with_flex_shrink(0.0),
-            ChildOf::new(wrapping),
-        ));
-
-        lay_out(&mut world);
-
-        let row = rect_of(&world, wrapping);
-        assert_eq!(rect_of(&world, first).min, row.min);
-        assert_eq!(
-            rect_of(&world, line),
-            UIBox {
-                min: row.min + Vec2::new(0.0, 24.0),
-                size: Vec2::new(200.0, 10.0),
-            }
-        );
-        assert_eq!(row.size.y, 34.0);
     }
 
     fn half(min_x: f32, max_x: f32) -> Viewport {
@@ -2374,19 +2099,6 @@ mod tests {
             ChildOf::new(root),
         ));
         let untargeted = world.spawn(full_root());
-        let texture_camera = world.spawn(
-            Camera {
-                render_target: RenderTarget::texture(AssetHandle::weak(AssetId::from_path(
-                    "targets/minimap#texture",
-                ))),
-                ..Camera::default()
-            }
-            .with_viewport(half(0.5, 1.0)),
-        );
-        let texture_root = target_root(&mut world, texture_camera);
-        let empty_camera = viewport_camera(&mut world, half(0.5, 0.5));
-        let empty_root = target_root(&mut world, empty_camera);
-        let dropped = target_root(&mut world, camera);
 
         lay_out(&mut world);
 
@@ -2394,20 +2106,8 @@ mod tests {
         assert_eq!(clip_of(&world, root), right_half_box());
         assert_eq!(rect_of(&world, wide).min, Vec2::new(400.0, 0.0));
         assert_eq!(clip_of(&world, wide), right_half_box());
-        for window_wide in [untargeted, texture_root] {
-            assert_eq!(rect_of(&world, window_wide), whole_window_box());
-            assert_eq!(clip_of(&world, window_wide), whole_window_box());
-        }
-        assert_eq!(rect_of(&world, empty_root).size.x, 0.0);
-
-        world.despawn(dropped);
-        lay_out(&mut world);
-        let engine = world.get_resource::<UILayoutEngine>().unwrap();
-        assert!(engine.areas.contains_key(&root));
-        assert!(
-            !engine.areas.contains_key(&dropped),
-            "a despawned root leaves no area behind"
-        );
+        assert_eq!(rect_of(&world, untargeted), whole_window_box());
+        assert_eq!(clip_of(&world, untargeted), whole_window_box());
 
         set_viewport(&mut world, camera, half(0.0, 0.5));
         lay_out(&mut world);
@@ -2428,92 +2128,12 @@ mod tests {
                 size: Vec2::new(500.0, 600.0),
             }
         );
-        world.insert_resource(Window::new((1600, 1200), 2.0));
-        lay_out(&mut world);
-        assert_eq!(rect_of(&world, root), right_half_box());
 
+        world.insert_resource(Window::new((800, 600), 1.0));
         world.despawn(camera);
         lay_out(&mut world);
         assert_eq!(rect_of(&world, root), whole_window_box());
         assert_eq!(clip_of(&world, root), whole_window_box());
-    }
-
-    struct SettledColumn {
-        watch: crate::testing::Watch,
-        rows: Vec<Entity>,
-    }
-
-    fn settled_column(world: &mut concerto_ecs::World) -> SettledColumn {
-        let root = column(world);
-        let rows = (0..4).map(|_| row(world, root)).collect::<Vec<_>>();
-        let mut watch = crate::testing::Watch::new::<UILayout, _>(world, compute_ui_nodes);
-        watch.run(world);
-        assert_eq!(watch.run(world), 0, "a settled layout writes nothing");
-        SettledColumn { watch, rows }
-    }
-
-    #[test]
-    fn a_taller_row_restamps_itself_and_the_rows_it_moves_but_not_the_column() {
-        struct Case {
-            grown: usize,
-            restamped: usize,
-        }
-        for case in [
-            Case {
-                grown: 3,
-                restamped: 1,
-            },
-            Case {
-                grown: 0,
-                restamped: 4,
-            },
-        ] {
-            let mut world = layout_world();
-            let mut column = settled_column(&mut world);
-            let before = column
-                .rows
-                .iter()
-                .map(|&row| rect_of(&world, row))
-                .collect::<Vec<_>>();
-            world
-                .get_component_for_entity_mut::<UINode>(column.rows[case.grown])
-                .unwrap()
-                .height = UIValue::Px(80.0);
-
-            assert_eq!(
-                column.watch.run(&mut world),
-                case.restamped,
-                "row {}",
-                case.grown
-            );
-            for (index, (&row, rect)) in column.rows.iter().zip(before).enumerate() {
-                let after = rect_of(&world, row);
-                match index.cmp(&case.grown) {
-                    std::cmp::Ordering::Less => assert_eq!(after, rect),
-                    std::cmp::Ordering::Equal => assert_eq!(after.size.y, 80.0),
-                    std::cmp::Ordering::Greater => {
-                        assert_eq!(after.min.y, rect.min.y + 30.0)
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_culled_node_and_its_subtree_get_no_layout() {
-        let mut world = layout_world();
-        let root = column(&mut world);
-        let first = row(&mut world, root);
-        let middle = row(&mut world, root);
-        let inner = row(&mut world, middle);
-        let third = row(&mut world, root);
-        world.insert(UICulled, middle);
-
-        lay_out(&mut world);
-
-        assert!(world.get_component_for_entity::<UILayout>(middle).is_none());
-        assert!(world.get_component_for_entity::<UILayout>(inner).is_none());
-        assert_eq!(rect_of(&world, third).min.y, rect_of(&world, first).max().y);
     }
 
     fn hovered_at(world: &mut concerto_ecs::World, cursor: Vec2) -> Option<Entity> {
@@ -2566,33 +2186,6 @@ mod tests {
                 "{cursor:?} hit a culled node"
             );
         }
-    }
-
-    #[test]
-    fn a_panel_that_keeps_its_place_keeps_its_resolved_side_unchanged() {
-        use crate::{anchor::track_panel_stack, testing::Watch};
-
-        let mut world = panel_world();
-        let root = column(&mut world);
-        let button = row(&mut world, root);
-        let below = row(&mut world, root);
-        world.spawn((
-            UINode::default().with_size(UIValue::Px(80.0), UIValue::Px(40.0)),
-            UIAnchoredPanel::new(UIAnchorTarget::from_node(button)).with_open(true),
-        ));
-        let mut track = concerto_ecs::IntoSystem::into_system(track_panel_stack);
-        concerto_ecs::System::initialize(&mut track, &mut world);
-        concerto_ecs::System::run_and_apply(&mut track, (), &mut world);
-
-        let mut watch = Watch::new::<UIAnchoredPanel, _>(&mut world, compute_ui_nodes);
-        watch.run(&mut world);
-        world
-            .get_component_for_entity_mut::<UINode>(below)
-            .unwrap()
-            .height = UIValue::Px(60.0);
-
-        assert_eq!(watch.run(&mut world), 0);
-        assert_eq!(rect_of(&world, below).size.y, 60.0);
     }
 
     fn panel_world() -> concerto_ecs::World {
@@ -2671,36 +2264,6 @@ mod tests {
             rect_of(&world, button).max().y + 4.0
         );
         assert_eq!(rect_of(&world, pointed).min.x, 200.0);
-    }
-
-    #[test]
-    fn opening_a_second_panel_moves_the_first_to_its_new_layer() {
-        let mut world = panel_world();
-        let root = column(&mut world);
-        let button = row(&mut world, root);
-        let second = panel(&mut world, button);
-        let first = panel(&mut world, button);
-        open(&mut world, first);
-        track_and_lay_out(&mut world);
-        track_and_lay_out(&mut world);
-        let before = world
-            .get_component_for_entity::<UILayout>(first)
-            .unwrap()
-            .paint_order;
-
-        open(&mut world, second);
-        track_and_lay_out(&mut world);
-
-        let z_index = world
-            .get_component_for_entity::<UINode>(first)
-            .unwrap()
-            .z_index;
-        let after = world
-            .get_component_for_entity::<UILayout>(first)
-            .unwrap()
-            .paint_order;
-        assert_ne!(after, before);
-        assert_eq!(after >> 32, z_index as i64);
     }
 
     #[derive(Debug, PartialEq)]

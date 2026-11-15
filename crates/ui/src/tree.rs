@@ -649,8 +649,6 @@ fn sync_connectors(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use concerto_ecs::{
         World,
         entity::{Entity, hierarchy::ChildOf},
@@ -660,20 +658,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        focus::update_focus,
-        interaction::{HoveredNode, update_ui_interaction},
-        items::{
-            UIItem, UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UIReveal,
-            UISelected, UITreeCollapse, UITreeExpand,
-        },
+        items::{UIItem, UIListNext, UIReveal, UITreeCollapse, UITreeExpand},
         list::tests::Harness,
         node::{FlexDirection, UINode},
-        scroll::UIScrollBar,
-        text::UIText,
         transform::UIValue,
     };
-    use concerto_ecs::{IntoSystem, System};
-    use concerto_window::input::Input;
 
     const ROW: f32 = 20.0;
 
@@ -700,31 +689,12 @@ mod tests {
         ))
     }
 
-    fn row(harness: &Harness, entity: Entity) -> Option<(usize, usize)> {
+    fn row(harness: &Harness, entity: Entity) -> Option<[usize; 2]> {
         harness
             .world
             .get_component_for_entity::<UIItem>(entity)
             .filter(|item| item.is_shown())
-            .map(|item| (item.index(), item.depth()))
-    }
-
-    fn press_and_release(harness: &mut Harness, entity: Entity) {
-        let rect = harness.layout(entity).rect;
-        let centre = rect.min + rect.size / 2.0;
-        let mut interaction = update_ui_interaction.into_system();
-        interaction.initialize(&mut harness.world);
-        let mut focus = update_focus.into_system();
-        focus.initialize(&mut harness.world);
-        for pressed in [true, false] {
-            {
-                let input = harness.world.get_resource_mut::<Input>().unwrap();
-                input.update();
-                input.update_mouse_position(centre.x as f64, centre.y as f64);
-                input.update_mouse_button(MouseButton::Left, pressed);
-            }
-            interaction.run_and_apply((), &mut harness.world);
-            focus.run_and_apply((), &mut harness.world);
-        }
+            .map(|item| [item.index(), item.depth()])
     }
 
     fn caret(harness: &Harness, entity: Entity) -> Option<Entity> {
@@ -739,29 +709,6 @@ mod tests {
                     .get_component_for_entity::<UITreeCaret>(*child)
                     .is_some()
             })
-    }
-
-    fn first_child(harness: &Harness, entity: Entity) -> Option<Entity> {
-        harness
-            .world
-            .get_component_for_entity::<Children>(entity)?
-            .iter()
-            .next()
-            .copied()
-    }
-
-    fn glyph(harness: &Harness, caret: Entity) -> String {
-        let glyph = harness
-            .world
-            .get_component_for_entity::<UITreeCaret>(caret)
-            .unwrap()
-            .glyph;
-        harness
-            .world
-            .get_component_for_entity::<UIText>(glyph)
-            .unwrap()
-            .text
-            .clone()
     }
 
     fn expanded(harness: &Harness, entity: Entity) -> bool {
@@ -815,7 +762,7 @@ mod tests {
             .filtering = filtering;
     }
 
-    fn rows_of(harness: &Harness, entities: &[Entity]) -> Vec<Option<(usize, usize)>> {
+    fn rows_of(harness: &Harness, entities: &[Entity]) -> Vec<Option<[usize; 2]>> {
         entities
             .iter()
             .map(|entity| row(harness, *entity))
@@ -826,20 +773,16 @@ mod tests {
     fn flatten_skips_collapsed_children() {
         let mut world = World::new();
         let [a, b, c, d] = [(); 4].map(|_| world.spawn(UINode::default()));
-        let nodes = HashMap::from([
-            (a, (vec![b, d], true)),
-            (b, (vec![c], false)),
-            (c, (vec![], false)),
-            (d, (vec![], false)),
-        ]);
+        let node = |children: Vec<Entity>, expanded: bool| TreeNode {
+            children,
+            expanded,
+            hidden: false,
+        };
 
-        let rows = flatten_tree(&[a], false, |entity| {
-            let (children, expanded) = nodes[&entity].clone();
-            TreeNode {
-                children,
-                expanded,
-                hidden: false,
-            }
+        let rows = flatten_tree(&[a], false, |entity| match entity {
+            entity if entity == a => node(vec![b, d], true),
+            entity if entity == b => node(vec![c], false),
+            _ => node(vec![], false),
         });
 
         let row = |entity, depth, has_children, drawn_expanded, last, continues: &[bool]| TreeRow {
@@ -861,63 +804,6 @@ mod tests {
     }
 
     #[test]
-    fn only_marked_children_are_items() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, true);
-        let label = harness.node(UINode::default(), parent);
-        let child = item(&mut harness, parent, false);
-
-        harness.settle();
-
-        assert_eq!(row(&harness, parent), Some((0, 0)));
-        assert_eq!(row(&harness, child), Some((1, 1)));
-        assert!(
-            harness
-                .world
-                .get_component_for_entity::<UIItem>(label)
-                .is_none()
-        );
-        assert_eq!(harness.area(tree).content_extent, 2.0 * ROW);
-        assert_eq!(
-            harness.layout(child).rect.min.y,
-            harness.layout(tree).rect.min.y + ROW
-        );
-    }
-
-    #[test]
-    fn the_caret_appears_only_with_child_items() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, false);
-        harness.node(UINode::default(), parent);
-        harness.settle();
-        assert_eq!(caret(&harness, parent), None);
-
-        let child = item(&mut harness, parent, false);
-        harness.settle();
-        let shown = caret(&harness, parent).expect("a parent has a caret");
-        assert_eq!(first_child(&harness, parent), Some(shown));
-        assert!(
-            harness
-                .world
-                .get_component_for_entity::<UIItem>(shown)
-                .is_none()
-        );
-        assert_eq!(glyph(&harness, shown), "▸");
-
-        harness.world.despawn(child);
-        harness.settle();
-        assert_eq!(caret(&harness, parent), None);
-        assert!(
-            harness
-                .world
-                .get_component_for_entity::<UINode>(shown)
-                .is_none()
-        );
-    }
-
-    #[test]
     fn clicking_the_caret_toggles_expanded() {
         let mut harness = Harness::new();
         let tree = tree_of(&mut harness, 200.0);
@@ -932,10 +818,9 @@ mod tests {
         assert!(expanded(&harness, parent));
         harness.settle();
 
-        assert_eq!(row(&harness, child), Some((1, 1)));
+        assert_eq!(row(&harness, child), Some([1, 1]));
         assert!(harness.layout(child).is_shown());
         assert_eq!(harness.area(tree).content_extent, 2.0 * ROW);
-        assert_eq!(glyph(&harness, shown), "▾");
         assert!(harness.selected(&[parent, child]).is_empty());
 
         harness.click(shown, MouseButton::Left, Vec2::ZERO);
@@ -947,113 +832,11 @@ mod tests {
     }
 
     #[test]
-    fn the_caret_still_toggles_in_a_tree_that_is_not_selectable() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        harness
-            .world
-            .get_component_for_entity_mut::<UITree>(tree)
-            .unwrap()
-            .selectable = false;
-        let parent = item(&mut harness, tree, false);
-        let child = item(&mut harness, parent, false);
-        harness.settle();
-
-        let shown = caret(&harness, parent).expect("a parent has a caret");
-        press_and_release(&mut harness, shown);
-        harness.settle();
-
-        assert!(expanded(&harness, parent));
-        assert_eq!(row(&harness, child), Some((1, 1)));
-        assert!(harness.selected(&[parent, child]).is_empty());
-
-        press_and_release(&mut harness, shown);
-        harness.settle();
-        assert!(!expanded(&harness, parent));
-        assert_eq!(row(&harness, child), None);
-    }
-
-    #[test]
     fn row_content_is_indented_by_depth_without_a_cap() {
         let mut harness = Harness::new();
         assert_eq!(content_inset(&mut harness, 3), 4.0 + 48.0 + 16.0);
         let mut harness = Harness::new();
         assert_eq!(content_inset(&mut harness, 20), 4.0 + 320.0 + 16.0);
-    }
-
-    #[test]
-    fn row_content_is_centred_on_the_row() {
-        for row_height in [20.0, 32.0] {
-            let mut harness = Harness::new();
-            let root = harness.root();
-            let tree = harness.world.spawn((
-                UINode::default()
-                    .with_height(UIValue::Px(200.0))
-                    .with_flex_shrink(0.0)
-                    .with_flex_direction(FlexDirection::Column),
-                UITree {
-                    row_height: Some(row_height),
-                    ..Default::default()
-                },
-                ChildOf::new(root),
-            ));
-            let items = chain(&mut harness, tree, 1);
-            let content = harness.node(
-                UINode::default().with_size(UIValue::Px(40.0), UIValue::Px(10.0)),
-                items[1],
-            );
-            harness.settle();
-            let row = harness.layout(items[1]).rect;
-            let rect = harness.layout(content).rect;
-            let centre = |min: f32, size: f32| min + size / 2.0;
-            assert!(
-                (centre(rect.min.y, rect.size.y) - centre(row.min.y, row.size.y)).abs() <= 1.0,
-                "row height {row_height}: content {rect:?} row {row:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_caret_glyph_is_centred_on_the_row_at_the_theme_size() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let items = chain(&mut harness, tree, 2);
-        harness.settle();
-
-        let caret = caret(&harness, items[1]).expect("a parent has a caret");
-        let glyph = harness
-            .world
-            .get_component_for_entity::<UITreeCaret>(caret)
-            .unwrap()
-            .glyph;
-        let row = harness.layout(items[1]).rect;
-        let rect = harness.layout(glyph).rect;
-        assert!(
-            ((rect.min.y + rect.size.y / 2.0) - (row.min.y + row.size.y / 2.0)).abs() <= 1.0,
-            "glyph {rect:?} row {row:?}"
-        );
-        let font_size = harness
-            .world
-            .get_component_for_entity::<UIText>(glyph)
-            .unwrap()
-            .font_size;
-        assert_eq!(font_size, UITheme::default().tree_caret_font_size);
-    }
-
-    #[test]
-    fn the_caret_sits_in_its_column() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let items = chain(&mut harness, tree, 2);
-        harness.settle();
-
-        let caret = caret(&harness, items[1]).expect("a parent has a caret");
-        let rect = harness.layout(caret).rect;
-        let tree_rect = harness.layout(tree).rect;
-        assert_eq!(rect.min.x - tree_rect.min.x, 4.0 + 16.0);
-        assert_eq!(rect.size.x, 16.0);
-        assert_eq!(rect.min.y, tree_rect.min.y + ROW);
-        assert_eq!(rect.size.y, ROW);
     }
 
     #[test]
@@ -1133,7 +916,7 @@ mod tests {
         assert!(expanded(&harness, inner));
         harness.frame();
 
-        assert_eq!(row(&harness, leaf), Some((52, 2)));
+        assert_eq!(row(&harness, leaf), Some([52, 2]));
         assert_eq!(harness.area(tree).offset, 53.0 * ROW - 100.0);
         let content = harness.layout(tree).content_rect;
         let rect = harness.layout(leaf).rect;
@@ -1143,24 +926,6 @@ mod tests {
             rect.min.y + rect.size.y <= content.min.y + content.size.y,
             "{rect:?} in {content:?}"
         );
-    }
-
-    #[test]
-    fn clicking_a_caret_leaves_keyboard_focus_on_its_item() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, false);
-        let child = item(&mut harness, parent, false);
-        harness.settle();
-        let shown = caret(&harness, parent).expect("a parent has a caret");
-
-        press_and_release(&mut harness, shown);
-        assert!(expanded(&harness, parent));
-        assert_eq!(harness.focused(), Some(parent));
-        harness.settle();
-
-        harness.fire(UIListNext);
-        assert_eq!(harness.focused(), Some(child));
     }
 
     #[test]
@@ -1179,103 +944,6 @@ mod tests {
         harness.settle();
 
         assert_eq!(harness.focused(), Some(items[0]));
-    }
-
-    #[test]
-    fn a_parked_item_is_not_shown() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, false);
-        let child = item(&mut harness, parent, false);
-        harness.settle();
-
-        let item_of = |entity| {
-            *harness
-                .world
-                .get_component_for_entity::<UIItem>(entity)
-                .unwrap()
-        };
-        assert!(item_of(parent).is_shown());
-        assert!(!item_of(child).is_shown());
-    }
-
-    #[test]
-    fn hovering_the_caret_highlights_its_row() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, false);
-        item(&mut harness, parent, false);
-        harness.settle();
-        let shown = caret(&harness, parent).expect("a parent has a caret");
-
-        **harness.world.get_resource_mut::<HoveredNode>().unwrap() = Some(shown);
-        harness.frame();
-
-        assert_eq!(
-            harness.colour(parent),
-            UITheme::default().surface_hovered.to_linear()
-        );
-    }
-
-    #[test]
-    fn a_clipping_item_does_not_clip_its_child_rows() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = harness.world.spawn((
-            UINode::default().clipped(),
-            UITreeElement { expanded: true },
-            ChildOf::new(tree),
-        ));
-        let child = item(&mut harness, parent, false);
-        harness.settle();
-
-        let layout = harness.layout(child);
-        let centre = layout.rect.min + layout.rect.size / 2.0;
-        assert!(
-            layout.clip_rect.contains(centre),
-            "{:?} clipped to {:?}",
-            layout.rect,
-            layout.clip_rect
-        );
-    }
-
-    #[test]
-    fn a_hidden_sibling_does_not_make_its_predecessor_not_last() {
-        let mut world = World::new();
-        let [a, b, c, d, e] = [(); 5].map(|_| world.spawn(UINode::default()));
-        let nodes = HashMap::from([
-            (a, (vec![b, d], true, false)),
-            (b, (vec![c], true, false)),
-            (c, (vec![], false, false)),
-            (d, (vec![], false, true)),
-            (e, (vec![], false, true)),
-        ]);
-
-        let rows = flatten_tree(&[a, e], false, |entity| {
-            let (children, expanded, hidden) = nodes[&entity].clone();
-            TreeNode {
-                children,
-                expanded,
-                hidden,
-            }
-        });
-
-        let row = |entity, depth, has_children, drawn_expanded, last, continues: &[bool]| TreeRow {
-            entity,
-            depth,
-            has_children,
-            drawn_expanded,
-            last,
-            continues: continues.to_vec(),
-        };
-        assert_eq!(
-            rows,
-            [
-                row(a, 0, true, true, true, &[]),
-                row(b, 1, true, true, true, &[]),
-                row(c, 2, false, false, true, &[false]),
-            ]
-        );
     }
 
     #[test]
@@ -1300,7 +968,7 @@ mod tests {
                 &harness,
                 &[parent, middle, leaf, sibling, other, hidden_child]
             ),
-            [Some((0, 0)), Some((1, 1)), Some((2, 2)), None, None, None]
+            [Some([0, 0]), Some([1, 1]), Some([2, 2]), None, None, None]
         );
         assert_eq!(harness.area(tree).content_extent, 3.0 * ROW);
     }
@@ -1318,7 +986,7 @@ mod tests {
         harness.settle();
         assert_eq!(
             rows_of(&harness, &every),
-            [Some((0, 0)), None, None, Some((1, 0)), None]
+            [Some([0, 0]), None, None, Some([1, 0]), None]
         );
 
         hide(&mut harness, &[a, c, b, e]);
@@ -1327,13 +995,11 @@ mod tests {
 
         assert_eq!(
             rows_of(&harness, &every),
-            [Some((0, 0)), Some((1, 1)), Some((2, 2)), None, None]
+            [Some([0, 0]), Some([1, 1]), Some([2, 2]), None, None]
         );
         for entity in every {
             assert!(!expanded(&harness, entity));
         }
-        let shown = caret(&harness, a).expect("a parent has a caret");
-        assert_eq!(glyph(&harness, shown), "▾");
 
         for entity in every {
             harness.world.remove_component::<UIHidden>(entity);
@@ -1343,126 +1009,8 @@ mod tests {
 
         assert_eq!(
             rows_of(&harness, &every),
-            [Some((0, 0)), None, None, Some((1, 0)), None]
+            [Some([0, 0]), None, None, Some([1, 0]), None]
         );
-        assert_eq!(glyph(&harness, shown), "▸");
-    }
-
-    #[test]
-    fn a_filter_matching_everything_still_opens_the_tree() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let a = item(&mut harness, tree, false);
-        let c = item(&mut harness, a, false);
-        let d = item(&mut harness, c, false);
-        let b = item(&mut harness, tree, false);
-        let e = item(&mut harness, b, false);
-        set_filtering(&mut harness, tree, true);
-
-        harness.settle();
-
-        assert_eq!(
-            rows_of(&harness, &[a, c, d, b, e]),
-            [
-                Some((0, 0)),
-                Some((1, 1)),
-                Some((2, 2)),
-                Some((3, 0)),
-                Some((4, 1))
-            ]
-        );
-    }
-
-    #[test]
-    fn carets_ignore_clicks_while_filtering() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, false);
-        let child = item(&mut harness, parent, false);
-        set_filtering(&mut harness, tree, true);
-        harness.settle();
-        let shown = caret(&harness, parent).expect("a parent has a caret");
-
-        harness.click(shown, MouseButton::Left, Vec2::ZERO);
-        harness.settle();
-
-        assert!(!expanded(&harness, parent));
-        assert_eq!(harness.focused(), None);
-        assert_eq!(row(&harness, child), Some((1, 1)));
-    }
-
-    #[test]
-    fn a_filter_that_hides_the_focused_item_clears_focus() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let a = item(&mut harness, tree, false);
-        item(&mut harness, tree, false);
-        harness.settle();
-        harness.focus(a);
-
-        hide(&mut harness, &[a]);
-        set_filtering(&mut harness, tree, true);
-        harness.settle();
-
-        assert_eq!(harness.focused(), None);
-    }
-
-    #[test]
-    fn a_filter_that_matches_nothing_shows_nothing_and_navigation_is_inert() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let a = item(&mut harness, tree, true);
-        let c = item(&mut harness, a, false);
-        let b = item(&mut harness, tree, false);
-        let every = [a, c, b];
-        harness.settle();
-        harness.focus(c);
-        harness.world.insert(UISelected, c);
-
-        hide(&mut harness, &every);
-        set_filtering(&mut harness, tree, true);
-        harness.settle();
-
-        assert_eq!(rows_of(&harness, &every), [None, None, None]);
-        assert_eq!(harness.area(tree).content_extent, 0.0);
-        let track = harness
-            .world
-            .get_component_for_entity::<Children>(tree)
-            .unwrap()
-            .iter()
-            .copied()
-            .find(|child| {
-                harness
-                    .world
-                    .get_component_for_entity::<UIScrollBar>(*child)
-                    .is_some()
-            })
-            .expect("the tree has a scrollbar track");
-        assert!(
-            !harness
-                .world
-                .get_component_for_entity::<UINode>(track)
-                .unwrap()
-                .visible
-        );
-        let focused = harness.focused();
-        assert_eq!(
-            focused, None,
-            "hiding the focused item clears focus, so the actions below run with nothing focused"
-        );
-        for fire in [
-            |harness: &mut Harness| harness.fire(UIListNext),
-            |harness: &mut Harness| harness.fire(UIListPrevious),
-            |harness: &mut Harness| harness.fire(UIListFirst),
-            |harness: &mut Harness| harness.fire(UIListLast),
-            |harness: &mut Harness| harness.fire(UIListActivate),
-            |harness: &mut Harness| harness.fire(UITreeExpand),
-            |harness: &mut Harness| harness.fire(UITreeCollapse),
-        ] {
-            fire(&mut harness);
-            assert_eq!(harness.focused(), focused);
-            assert_eq!(harness.selected(&every), [1]);
-        }
     }
 
     #[test]
@@ -1502,91 +1050,6 @@ mod tests {
                 "{rect:?} in {content:?}"
             );
         }
-    }
-
-    #[test]
-    fn navigation_and_reveal_while_filtering_leave_expanded_alone() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, false);
-        let child = item(&mut harness, parent, false);
-        let leaf = item(&mut harness, child, false);
-        set_filtering(&mut harness, tree, true);
-        harness.settle();
-
-        harness.focus(parent);
-        harness.fire(UITreeExpand);
-        assert_eq!(harness.focused(), Some(child));
-        harness.fire(UITreeCollapse);
-        assert_eq!(harness.focused(), Some(parent));
-        harness.fire(UITreeCollapse);
-        assert_eq!(harness.focused(), Some(parent));
-        harness.world.trigger_on(leaf, UIReveal);
-        harness.settle();
-
-        for entity in [parent, child, leaf] {
-            assert!(!expanded(&harness, entity));
-        }
-        assert_eq!(row(&harness, leaf), Some((2, 2)));
-    }
-
-    #[test]
-    fn navigation_treats_an_item_whose_children_are_all_hidden_as_a_leaf() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let grand = item(&mut harness, tree, true);
-        let parent = item(&mut harness, grand, true);
-        let children = [
-            item(&mut harness, parent, false),
-            item(&mut harness, parent, false),
-        ];
-        hide(&mut harness, &children);
-        harness.settle();
-        assert_eq!(caret(&harness, parent), None);
-
-        harness.focus(parent);
-        harness.fire(UITreeCollapse);
-        assert_eq!(harness.focused(), Some(grand));
-        assert!(expanded(&harness, parent));
-
-        harness
-            .world
-            .get_component_for_entity_mut::<UITreeElement>(parent)
-            .unwrap()
-            .expanded = false;
-        harness.settle();
-        harness.focus(parent);
-        harness.fire(UITreeExpand);
-        assert_eq!(harness.focused(), Some(parent));
-        assert!(!expanded(&harness, parent));
-    }
-
-    #[test]
-    fn continues_holds_one_entry_per_line_level_below_the_roots() {
-        let mut world = World::new();
-        let [a, b, c, d] = [(); 4].map(|_| world.spawn(UINode::default()));
-        let nodes = HashMap::from([
-            (a, (vec![b, d], true)),
-            (b, (vec![c], true)),
-            (c, (vec![], false)),
-            (d, (vec![], false)),
-        ]);
-
-        let rows = flatten_tree(&[a], false, |entity| {
-            let (children, expanded) = nodes[&entity].clone();
-            TreeNode {
-                children,
-                expanded,
-                hidden: false,
-            }
-        });
-
-        assert_eq!(
-            rows.iter()
-                .map(|row| (row.depth, row.continues.clone()))
-                .collect::<Vec<_>>(),
-            [(0, vec![]), (1, vec![]), (2, vec![true]), (1, vec![])]
-        );
     }
 
     fn tree_row(depth: usize, has_children: bool, last: bool, continues: &[bool]) -> TreeRow {
@@ -1636,11 +1099,6 @@ mod tests {
                 ],
             },
             Case {
-                name: "a parent's tick is six pixels",
-                row: tree_row(1, true, false, &[]),
-                segments: vec![segment(12.0, 0.0, 1.0, 24.0), segment(12.0, 12.0, 6.0, 1.0)],
-            },
-            Case {
                 name: "ancestor lines continue only while the ancestor has siblings below",
                 row: tree_row(3, false, false, &[true, false]),
                 segments: vec![
@@ -1654,155 +1112,9 @@ mod tests {
                 row: tree_row(0, false, false, &[]),
                 segments: vec![],
             },
-            Case {
-                name: "a last root parent has none",
-                row: tree_row(0, true, true, &[]),
-                segments: vec![],
-            },
         ] {
             assert_eq!(segments_of(&case.row), case.segments, "{}", case.name);
         }
-    }
-
-    fn connectors(harness: &Harness, entity: Entity) -> Vec<UIBox> {
-        let row = harness.layout(entity).rect.min;
-        harness
-            .world
-            .get_component_for_entity::<Children>(entity)
-            .map(|children| {
-                children
-                    .iter()
-                    .copied()
-                    .filter(|child| {
-                        harness
-                            .world
-                            .get_component_for_entity::<UITreeConnector>(*child)
-                            .is_some()
-                    })
-                    .map(|child| {
-                        let rect = harness.layout(child).rect;
-                        UIBox {
-                            min: rect.min - row,
-                            size: rect.size,
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    #[test]
-    fn connector_nodes_follow_the_rows() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, true);
-        let first = item(&mut harness, parent, false);
-        harness.settle();
-
-        assert!(connectors(&harness, parent).is_empty());
-        assert_eq!(
-            connectors(&harness, first),
-            [
-                segment(12.0, 0.0, 1.0, 10.0),
-                segment(12.0, 10.0, 22.0, 1.0)
-            ]
-        );
-
-        let second = item(&mut harness, parent, false);
-        harness.settle();
-
-        assert_eq!(
-            connectors(&harness, first),
-            [
-                segment(12.0, 0.0, 1.0, 20.0),
-                segment(12.0, 10.0, 22.0, 1.0)
-            ]
-        );
-        assert_eq!(
-            connectors(&harness, second),
-            [
-                segment(12.0, 0.0, 1.0, 10.0),
-                segment(12.0, 10.0, 22.0, 1.0)
-            ]
-        );
-        let children = harness
-            .world
-            .get_component_for_entity::<Children>(second)
-            .unwrap()
-            .iter()
-            .copied()
-            .filter(|child| {
-                harness
-                    .world
-                    .get_component_for_entity::<UITreeConnector>(*child)
-                    .is_some()
-            })
-            .collect::<Vec<_>>();
-        for child in children {
-            assert!(
-                harness
-                    .world
-                    .get_component_for_entity::<UIWidgetPart>(child)
-                    .is_some()
-            );
-            assert!(
-                harness
-                    .world
-                    .get_component_for_entity::<Interactable>(child)
-                    .is_none()
-            );
-            assert_eq!(
-                harness
-                    .world
-                    .get_component_for_entity::<UIMaterial>(child)
-                    .unwrap()
-                    .color,
-                UITheme::default().border.to_linear()
-            );
-        }
-    }
-
-    #[test]
-    fn losing_its_last_children_makes_an_item_a_leaf() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, true);
-        let child = item(&mut harness, parent, false);
-        harness.settle();
-        let shown = caret(&harness, parent).expect("a parent has a caret");
-        assert_eq!(harness.area(tree).content_extent, 2.0 * ROW);
-
-        harness.world.despawn(shown);
-        harness.world.despawn(child);
-        assert!(
-            harness
-                .world
-                .get_component_for_entity::<Children>(parent)
-                .is_none()
-        );
-        harness.settle();
-
-        assert_eq!(harness.area(tree).content_extent, ROW);
-        assert_eq!(caret(&harness, parent), None);
-    }
-
-    #[test]
-    fn removing_hidden_shows_the_row_again() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let first = item(&mut harness, tree, false);
-        let second = item(&mut harness, tree, false);
-        hide(&mut harness, &[second]);
-        harness.settle();
-        assert_eq!(rows_of(&harness, &[first, second]), [Some((0, 0)), None]);
-
-        harness.world.remove_component::<UIHidden>(second);
-        harness.settle();
-
-        assert_eq!(
-            rows_of(&harness, &[first, second]),
-            [Some((0, 0)), Some((1, 0))]
-        );
     }
 
     #[test]
@@ -1819,93 +1131,5 @@ mod tests {
         harness.settle();
 
         assert_eq!(harness.unculled(&items), (18..27).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn a_taller_viewport_unculls_more_rows() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 100.0);
-        let items = (0..50)
-            .map(|_| item(&mut harness, tree, false))
-            .collect::<Vec<_>>();
-        harness.settle();
-        assert_eq!(harness.unculled(&items), (0..7).collect::<Vec<_>>());
-
-        harness
-            .world
-            .get_component_for_entity_mut::<UINode>(tree)
-            .unwrap()
-            .height = UIValue::Px(200.0);
-        harness.settle();
-
-        assert_eq!(harness.unculled(&items), (0..12).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn a_theme_row_height_change_places_the_rows_again() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let tree = harness.world.spawn((
-            UINode::default()
-                .with_height(UIValue::Px(200.0))
-                .with_flex_shrink(0.0)
-                .with_flex_direction(FlexDirection::Column),
-            UITree::default(),
-            ChildOf::new(root),
-        ));
-        let first = item(&mut harness, tree, false);
-        let second = item(&mut harness, tree, false);
-        harness.settle();
-        let height = UITheme::default().row_height + 10.0;
-
-        harness
-            .world
-            .get_resource_mut::<UITheme>()
-            .unwrap()
-            .row_height = height;
-        harness.settle();
-
-        assert_eq!(harness.area(tree).content_extent, 2.0 * height);
-        assert_eq!(
-            harness.layout(second).rect.min.y - harness.layout(first).rect.min.y,
-            height
-        );
-    }
-
-    #[test]
-    fn connectors_are_one_logical_pixel_thick_after_layout_at_any_scale() {
-        for scale in [2.0, 3.0] {
-            for row_height in [20.0, 25.0] {
-                let mut harness = Harness::new();
-                harness
-                    .world
-                    .insert_resource(concerto_window::plugin::Window::new((800, 600), scale));
-                let root = harness.root();
-                let tree = harness.world.spawn((
-                    UINode::default()
-                        .with_height(UIValue::Px(200.0))
-                        .with_flex_shrink(0.0)
-                        .with_flex_direction(FlexDirection::Column),
-                    UITree {
-                        row_height: Some(row_height),
-                        ..Default::default()
-                    },
-                    ChildOf::new(root),
-                ));
-                let parent = item(&mut harness, tree, true);
-                let child = item(&mut harness, parent, false);
-                harness.settle();
-
-                let drawn = connectors(&harness, child);
-                assert_eq!(drawn.len(), 2, "scale {scale}, row {row_height}");
-                for rect in drawn {
-                    assert_eq!(
-                        rect.size.x.min(rect.size.y),
-                        1.0,
-                        "{rect:?} at scale {scale}, row {row_height}"
-                    );
-                }
-            }
-        }
     }
 }

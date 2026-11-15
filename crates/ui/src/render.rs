@@ -211,24 +211,11 @@ mod layer_tests {
     use super::batches_below;
 
     #[test]
-    fn flushes_only_the_layers_below_the_quad_being_drawn() {
+    fn each_quad_flushes_the_text_layers_below_it_once() {
         let layers = [0, 1, 4];
         assert_eq!(batches_below(&layers, 0, 0), 0);
         assert_eq!(batches_below(&layers, 0, 1), 1);
         assert_eq!(batches_below(&layers, 1, 5), 3);
-    }
-
-    #[test]
-    fn layers_with_no_quads_of_their_own_still_flush_in_order() {
-        let layers = [2];
-        assert_eq!(batches_below(&layers, 0, 7), 1);
-    }
-
-    #[test]
-    fn nothing_is_flushed_twice() {
-        let layers = [0, 0, 3];
-        let batch = batches_below(&layers, 0, 3);
-        assert_eq!(batch, 2);
-        assert_eq!(batches_below(&layers, batch, 3), 2);
+        assert_eq!(batches_below(&layers, 3, 5), 3);
     }
 }

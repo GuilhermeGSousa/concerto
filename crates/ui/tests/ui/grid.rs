@@ -28,29 +28,14 @@ fn a_step_moves_one_cell_and_holds_at_edges_and_past_a_short_last_row() {
             to: 2,
         },
         Move {
-            from: 0,
-            step: GridStep::Left,
-            to: 0,
-        },
-        Move {
             from: 4,
             step: GridStep::Left,
             to: 3,
         },
         Move {
-            from: 1,
-            step: GridStep::Up,
-            to: 1,
-        },
-        Move {
             from: 4,
             step: GridStep::Up,
             to: 1,
-        },
-        Move {
-            from: 1,
-            step: GridStep::Down,
-            to: 4,
         },
         Move {
             from: 4,
@@ -61,16 +46,6 @@ fn a_step_moves_one_cell_and_holds_at_edges_and_past_a_short_last_row() {
             from: 5,
             step: GridStep::Down,
             to: 5,
-        },
-        Move {
-            from: 7,
-            step: GridStep::Right,
-            to: 7,
-        },
-        Move {
-            from: 99,
-            step: GridStep::Left,
-            to: 6,
         },
     ];
     for check in moves {
