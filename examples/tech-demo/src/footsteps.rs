@@ -1,10 +1,17 @@
 use concerto::animation::graph::AnimationGraph;
 use concerto::animation::player::AnimationPlayer;
-use concerto::app::{App, schedule_groups::Update};
+use concerto::app::{
+    App,
+    schedule_groups::{Startup, Update},
+};
+use concerto::asset_id;
+use concerto::audio::{AudioClip, AudioPlayer};
 use concerto::color::Color;
 use concerto::ecs::events::{Event, event_reader::EventReader, event_writer::EventWriter};
-use concerto::ecs::{Component, Query, Res, ResMut, Resource};
-use concerto::foundation::assets::asset_store::AssetStore;
+use concerto::ecs::{CommandQueue, Component, Query, Res, ResMut, Resource};
+use concerto::foundation::assets::{
+    AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+};
 use concerto::foundation::time::Time;
 use concerto::procedural_animation::{FootLockNode, LockPhase};
 use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
@@ -14,6 +21,11 @@ const MARK_LIFETIME: f32 = 1.5;
 const MARK_RADIUS: f32 = 0.12;
 const MIN_STRIDE: f32 = 0.1;
 const MARK_COLOR: Color = Color::rgba(1.0, 0.85, 0.2, 1.0);
+const STEP_VOLUME: f32 = 0.6;
+const LEFT_STEP: AssetId =
+    asset_id!("content/audio/kenney_impact-sounds/Audio/footstep_concrete_000/main.gasset");
+const RIGHT_STEP: AssetId =
+    asset_id!("content/audio/kenney_impact-sounds/Audio/footstep_concrete_001/main.gasset");
 
 /// Which foot came down.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,12 +159,46 @@ pub(crate) fn draw_footsteps(log: Res<FootstepLog>, mut gizmos: DebugGizmos) {
     }
 }
 
-/// Registers the `Footstep` event and the systems that send, log and draw it; the drawing only where gizmos are.
+/// The clip each foot plays when it comes down.
+#[derive(Resource)]
+pub(crate) struct FootstepSounds {
+    left: AssetHandle<AudioClip>,
+    right: AssetHandle<AudioClip>,
+}
+
+fn load_footstep_sounds(server: Res<AssetServer>, mut cmd: CommandQueue) {
+    cmd.insert_resource(FootstepSounds {
+        left: server.load(LEFT_STEP),
+        right: server.load(RIGHT_STEP),
+    });
+}
+
+/// Plays the foot's clip for each `Footstep`, on an entity that despawns when the clip ends.
+pub(crate) fn play_footsteps(
+    mut steps: EventReader<Footstep>,
+    sounds: Option<Res<FootstepSounds>>,
+    mut cmd: CommandQueue,
+) {
+    let Some(sounds) = sounds else {
+        return;
+    };
+    for step in steps.read() {
+        let clip = match step.foot {
+            Foot::Left => sounds.left.clone(),
+            Foot::Right => sounds.right.clone(),
+        };
+        cmd.spawn(AudioPlayer::new(clip).with_volume(STEP_VOLUME));
+    }
+}
+
+/// Registers the `Footstep` event and the systems that send, log, play and draw it; the drawing only where gizmos are.
 pub(crate) fn install_footsteps(app: &mut App) {
     app.register_event::<Footstep>()
         .insert_resource(FootstepLog::default())
+        .add_system(Startup, load_footstep_sounds)
         .add_system(Update, detect_footsteps)
-        .add_system(Update, log_footsteps);
+        .add_system(Update, log_footsteps)
+        .add_system(Update, play_footsteps);
     if app.is_plugin_added::<DebugGizmosPlugin>() {
         app.add_system(Update, draw_footsteps);
     }

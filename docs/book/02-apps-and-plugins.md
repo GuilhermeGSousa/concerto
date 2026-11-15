@@ -21,8 +21,8 @@ anything itself. Whoever calls it, the **host**, decides when frames happen:
   derived data under the project root it recorded.
 - The editor calls `game` for every scene it opens, and again when you press
   Play. The scenes you edit therefore run your own components and systems.
-- `concerto::headless(game)` builds an `App` with a GPU and no window, which is
-  handy in tests. It exists only on native targets and returns `None` when
+- `concerto::headless(game)` builds an `App` with a GPU, no window and silent
+  audio, which is handy in tests. It exists only on native targets and returns `None` when
   there is no GPU.
 
 Keep the recipe the only place that sets the game up. Code that runs before
@@ -49,7 +49,7 @@ implement `ready`, for set-up that finishes asynchronously, and `finish`,
 which runs once every plugin is ready.
 
 `DefaultPlugins` registers the engine's standard plugins in a fixed order:
-schedules, assets, time, window, transforms, the camera director, rendering,
+schedules, assets, time, window, audio, transforms, the camera director, rendering,
 the skybox, shadows, the standard material, physics, motion matching,
 procedural animation, animation, scenes, the world grid, navigation, gameplay
 helpers and the UI. Most games start with it. Plugin order

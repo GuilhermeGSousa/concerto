@@ -9,7 +9,7 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 | Core | `ecs`, `tasks`, `app`, `foundation`, `name`, `noise` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math; interned names; seeded hashes and noise |
 | Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj`, `bvh` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF, OBJ and BVH importers |
 | Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `motion-matching-gizmos`, `procedural-animation-gizmos`, `navigation-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; extra passes; the debug drawing of motion matching, in the running game and the database preview; the debug drawing of foot locks in the running game; the debug drawing of the nav graph and each loaded navmesh, in the game and at edit time, and of each agent's route; a renderer that draws to a terminal |
-| Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `procedural-animation`, `navigation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database derived from its clips; animation graphs; procedural animation graph nodes, foot placement, foot locking, look-at, aim and procedural motion, kept out of `animation` so it has no physics dependency; the graph of hand-placed nav points and links, its path queries, the navmesh baked from colliders and its path queries, and agents that route on the navmesh or else the graph and write steering toward a destination; scene spawn and capture; the virtual-camera stack; player and movement helpers, and the copy of nav steering into `DesiredMotion` |
+| Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `procedural-animation`, `navigation`, `scene`, `director`, `gameplay`, `audio` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database derived from its clips; animation graphs; procedural animation graph nodes, foot placement, foot locking, look-at, aim and procedural motion, kept out of `animation` so it has no physics dependency; the graph of hand-placed nav points and links, its path queries, the navmesh baked from colliders and its path queries, and agents that route on the navmesh or else the graph and write steering toward a destination; scene spawn and capture; the virtual-camera stack; player and movement helpers, and the copy of nav steering into `DesiredMotion`; sound clips played by `AudioPlayer` through kira on four mixer buses |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
 | Tooling | `editor`, `animation-editor`, `motion-matching-editor`, `reflect`, `project`, `mcp` | the editor, with the timeline and graph canvas widgets its tabs share; its extension crates: the clip, rig and graph tabs of `animation-editor`, the graph tab showing an `AnimationGraph` on the canvas and playing it in its preview, and the motion database tab of `motion-matching-editor`; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry`, a shared `Arc<RwLock<TypeRegistry>>` that the inspector, scenes and the `AssetServer`'s asset loads read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
 
@@ -70,7 +70,7 @@ render world.
 
 `concerto::run` is the winit host: it owns the event loop, the OS window, the
 surface, and the device. `concerto::headless` builds an `App` with a device and
-no window, for tests. `concerto_terminal_renderer::run` drives one from a
+no window, for tests, on kira's mock audio backend. `concerto_terminal_renderer::run` drives one from a
 terminal. `concerto_mcp::host::run` serves one over MCP on stdin and stdout
 with no window: it runs one frame before it starts the server, so no call is
 served before that frame ends, then runs frames only while a call or the `App`
@@ -106,8 +106,8 @@ reads whether the last frame prepared or deferred any render asset under the
 
 ## Assets
 
-Source files (`.glb`, `.gltf`, `.obj`, `.bvh`, images) are imported once, ahead of
-time. The running game never reads them.
+Source files (`.glb`, `.gltf`, `.obj`, `.bvh`, images, and `.ogg` and `.wav`
+sounds) are imported once, ahead of time. The running game never reads them.
 
 - The editor's Import… writes a source's outputs under `content/<stem>/`: a
   `scene.gasset` that holds the scene with its meshes, materials and skeletons

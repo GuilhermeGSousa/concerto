@@ -741,8 +741,8 @@ revealed.
 
 ## Importing
 
-**Import…** beside the Asset Browser search opens a file picker for glTF, OBJ, BVH, and
-image sources; several files can be picked at once. A dialog then lists each
+**Import…** beside the Asset Browser search opens a file picker for glTF, OBJ, BVH, image,
+Ogg and WAV sources; several files can be picked at once. A dialog then lists each
 file with the project-relative destination it will be copied to, which you can
 edit before confirming. Enter confirms and Escape cancels. Files are imported
 one at a time. Each import's assets replace the registry's entries for that

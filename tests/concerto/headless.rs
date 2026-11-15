@@ -1,4 +1,4 @@
-use concerto::DefaultPlugins;
+use concerto::{audio::Audio, DefaultPlugins};
 use concerto_app::schedule_groups::Update;
 use concerto_ecs::resource::{ResMut, Resource};
 use concerto_window::plugin::Window;
@@ -25,4 +25,5 @@ fn default_plugins_step_without_a_window() {
 
     assert_eq!(app.get_resource::<Steps>().unwrap().0, 2);
     assert_eq!(app.get_resource::<Window>().unwrap().size(), (1280, 720));
+    assert!(app.get_resource::<Audio>().is_some());
 }

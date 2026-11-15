@@ -1,5 +1,6 @@
 pub use concerto_animation as animation;
 pub use concerto_app as app;
+pub use concerto_audio as audio;
 pub use concerto_color as color;
 pub use concerto_director as director;
 pub use concerto_ecs as ecs;
@@ -29,6 +30,7 @@ use concerto_app::{
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     App, Plugin,
 };
+use concerto_audio::AudioPlugin;
 use concerto_director::CameraDirectorPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use concerto_foundation::assets::derived::CookReport;
@@ -193,7 +195,8 @@ impl Plugin for DefaultPlugins {
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(AssetManagerPlugin)
             .register_plugin(TimePlugin)
-            .register_plugin(WindowPlugin);
+            .register_plugin(WindowPlugin)
+            .register_plugin(AudioPlugin);
 
         app.register_plugin(TransformPlugin)
             .register_plugin(CameraDirectorPlugin)
@@ -214,10 +217,11 @@ impl Plugin for DefaultPlugins {
     }
 }
 
-/// Builds an `App` with a GPU and no window, ready to step; `None` when there is no GPU adapter.
+/// Builds an `App` with a GPU, no window and the mock audio backend, ready to step; `None` when there is no GPU adapter.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
     use concerto_app::plugins::PluginsState;
+    use concerto_audio::AudioBackend;
     use concerto_render::{draw_target::DrawTarget, gpu::Gpu};
     use concerto_window::plugin::Window;
 
@@ -225,7 +229,8 @@ pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
     let mut app = App::new();
     app.insert_resource(gpu)
         .insert_resource(DrawTarget::None)
-        .insert_resource(Window::new((1280, 720), 1.0));
+        .insert_resource(Window::new((1280, 720), 1.0))
+        .insert_resource(AudioBackend::Mock);
     build(&mut app);
     while app.plugin_state() != PluginsState::Ready {}
     app.finish_plugin_build();

@@ -46,7 +46,10 @@ impl SourceMetadata {
                 path.display()
             );
         }
-        if !matches!(metadata.importer.as_str(), "gltf" | "obj" | "image" | "bvh") {
+        if !matches!(
+            metadata.importer.as_str(),
+            "gltf" | "obj" | "image" | "bvh" | "audio"
+        ) {
             bail!(
                 "unknown importer '{}' in '{}'",
                 metadata.importer,
