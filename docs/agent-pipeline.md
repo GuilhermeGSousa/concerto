@@ -73,8 +73,8 @@ Merge the PR yourself; agents never do. Comment `/stop`, or close the PR, to
 stop the agent. It removes `agent` from the issue and leaves the branch. Add
 `agent` again to hand the issue back; the next agent resumes from the branch.
 
-Cloud agents run only `cargo fmt`, plus `cargo metadata` to update `Cargo.lock`
-when a `Cargo.toml` changed, and leave clippy, tests and the wasm build to CI.
+Cloud agents run only `cargo fmt` and the test budget check, plus
+`cargo metadata` to update `Cargo.lock` when a `Cargo.toml` changed, and leave clippy, tests and the wasm build to CI.
 For rendering, UI and editor changes they list the visual checks left for you
 in the review comment.
 

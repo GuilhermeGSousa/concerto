@@ -139,6 +139,7 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 
 ```sh
 cargo fmt --all -- --check
+python3 .github/scripts/test_budget.py
 cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo test --locked --workspace
@@ -166,14 +167,14 @@ in the debugger; `--profile profiling` is the fully optimized build, and the
 one to measure performance with.
 
 While a plan is in progress, each task runs a gate scoped to the crates it
-touched: `cargo fmt --all -- --check`, then the clippy and test lines above
+touched: `cargo fmt --all -- --check` and the test budget, then the clippy and test lines above
 with `-p <crate>` for each crate in place of `--workspace` (and the Rapier
 lines when physics is one of them). The full gate runs once, after the last
 task and before the branch review.
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
-alone needs none of them. A cloud pipeline session runs only the first, and
+alone needs none of them. A cloud pipeline session runs only the first two, and
 the `cargo metadata` step below when a `Cargo.toml` changed, and leaves the
 rest to CI. When CI could not start its jobs, for want of Actions minutes, the
 session goes on and reports those commands as not run.
@@ -279,7 +280,10 @@ read; a test-only setter may reach a state no public path can.
 Engine maths and a value's persisted encoding stay however simple they look.
 Being the only cover of a behaviour is not enough on its own: a test stays only
 if a break it catches would reach a user, a game or an agent. When in doubt,
-delete it.
+delete it. `test-budget.toml` caps each package's test count: a change that
+deletes tests lowers it, and one that adds tests raises it and says why. It is
+a ceiling the owner reviews, not a revision counter; see the budget section of
+[docs/testing.md](docs/testing.md).
 
 ## Editor rules
 

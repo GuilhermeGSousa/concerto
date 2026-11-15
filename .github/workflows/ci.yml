@@ -104,6 +104,15 @@ jobs:
       - name: Run clippy on the Rapier physics backend
         run: cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
         
+  test_budget:
+    name: Test budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the test budget
+        run: python3 .github/scripts/test_budget.py
+
   format:
     name: Format
     runs-on: ubuntu-latest

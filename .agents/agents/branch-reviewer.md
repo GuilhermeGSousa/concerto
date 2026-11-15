@@ -51,7 +51,9 @@ Check:
    behaviour. A deleted test that nothing covers is a finding only when a break
    it caught would reach a user, a game or an agent; deleting the rest is the
    point. Nothing measures coverage, so this check is the proof. Also flag
-   tests the branch keeps that fall below that bar.
+   tests the branch keeps that fall below that bar. A net increase in tests is
+   a finding unless the branch adds a feature, at one scenario per feature, and
+   `test-budget.toml` must change with the counts.
 6. **Leftovers.** `SELFTEST` code, debug prints, `todo!()`, dependencies no
    longer used, files added and never referenced.
 7. **Documentation.** Every change in behaviour is reflected in the document
@@ -63,6 +65,8 @@ Your reply is the report and nothing else:
 - `GATE:` each command with `pass`, `fail`, or `not run`.
 - Findings, most severe first. Each gives `path:line`, what is wrong, the input
   or sequence that shows it, and whether you reproduced it or inferred it.
+- `TESTS:` `+added −deleted, net n` for the whole branch against `master`,
+  with the packages whose budget rose.
 - `REQUIREMENTS:` one line per spec requirement: met, met without a test, or
   not met.
 - `NOT CHECKED:` what you could not verify and why.

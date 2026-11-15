@@ -76,6 +76,30 @@ level where the bug was visible.
 Fixtures and helpers live once per crate, in its `tests/` directory or a
 `testing` module, so a change of API is one edit and not a hundred.
 
+## The budget
+
+`test-budget.toml` at the root holds each package's `#[test]` count, and CI's
+Test budget job fails when a package has more or fewer tests than it says:
+
+```sh
+python3 .github/scripts/test_budget.py
+python3 .github/scripts/test_budget.py --write
+```
+
+The second writes the current counts. A change that deletes tests lowers the
+budget with it. A change that adds tests raises it in the same diff and says
+why in its report or PR, after trying an assertion in an existing scenario, a
+row in a table or a property first. The budget is a ceiling the owner reviews,
+not a revision counter. Every report gives its net change as
+`TESTS: +added −deleted, net n`.
+
+Coverage is never a target: it counts lines run, not breaks caught, and
+chasing it grows the suite this budget holds down. To find a gap or a test
+that catches nothing, run `cargo mutants -p <crate>` now and then on a crate
+where a break costs most, and read what survives.
+
+## Layout
+
 A crate's integration tests are one binary: each file is a module of
 `tests/<crate>/main.rs`, where `<crate>` is the crate's directory name. A new
 file adds a `mod` line there; a file directly in `tests/` would be a binary of
