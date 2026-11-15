@@ -95,6 +95,7 @@ profiling = "1"
 log = "0.4"
 concerto-app.workspace = true
 concerto-animation.workspace = true
+concerto-audio.workspace = true
 concerto-foundation.workspace = true
 concerto-render.workspace = true
 concerto-director.workspace = true

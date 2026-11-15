@@ -37,6 +37,7 @@ game adds itself when it needs them.
 | | `scene` | scenes: spawning and capturing | `scene` |
 | | `director` | the virtual-camera stack | `director` |
 | | `gameplay` | camera rigs and player helpers, and the copy of nav steering into `DesiredMotion` | `gameplay` |
+| | `audio` | `AudioClip` and its Ogg and WAV importer, `AudioPlayer`, the `AudioMixer`'s buses, over kira | `audio` |
 | Interface | `window` | the window, input and their events as plain data, the clipboard | `window` |
 | | `winit` | the winit host behind `concerto::run` | |
 | | `ui` | the UI: layout, text, theme, widgets | `ui` |

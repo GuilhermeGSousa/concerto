@@ -3,7 +3,8 @@
 Sound for Concerto games, on [kira](https://docs.rs/kira/0.12): imported clips
 played by a component on an entity, mixed on four buses under a master.
 
-`AudioPlugin` needs an `AssetServer` (`AssetManagerPlugin`).
+`DefaultPlugins` registers `AudioPlugin` after `WindowPlugin`, re-exported as
+`concerto::audio`. On its own it needs an `AssetServer` (`AssetManagerPlugin`).
 
 ## Clips
 
@@ -69,10 +70,17 @@ and inserts `Audio`:
   no device (CI, a container, a server) it warns once and runs silently on
   kira's mock backend.
 - `AudioBackend::Mock` always uses the mock backend, at 1000 frames a second.
-  A test that registers `AudioPlugin` inserts it before the plugin.
+  `concerto::headless` inserts it before the recipe; a test that registers
+  `AudioPlugin` itself inserts it before the plugin.
 
 An edit `App` (`App::for_editing`) gets no `Audio` and plays nothing. The
 `Audio` resource is dropped with its `App`, which stops every sound.
+
+On the web a browser starts audio only after a user gesture, so `finish` opens
+nothing there. The first key or mouse button press opens the output and
+inserts `Audio` on that frame. A gamepad press is not a gesture and does not
+open it. Players spawned before then wait, and start once `Audio` exists, so a
+title screen's music begins on the first click.
 
 On the mock backend nothing renders on its own: `Audio::advance(seconds)`
 renders that much audio, so sounds move forward and end. On a device it does

@@ -4,6 +4,8 @@ mod importer;
 mod mixer;
 mod player;
 mod plugin;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 pub use audio::{Audio, AudioBackend};
 pub use clip::AudioClip;

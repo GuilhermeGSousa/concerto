@@ -13,10 +13,12 @@ concerto-asset-import.workspace = true
 concerto-ecs.workspace = true
 concerto-foundation.workspace = true
 concerto-reflect.workspace = true
-concerto-window.workspace = true
 kira = { version = "0.12", default-features = false, features = ["cpal", "ogg", "vorbis", "wav", "pcm"] }
 log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+concerto-window.workspace = true
 
 [dev-dependencies]
 bincode = "1.3"

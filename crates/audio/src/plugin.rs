@@ -10,7 +10,7 @@ use crate::{
     Audio, AudioBackend, AudioBus, AudioClip, AudioMixer, AudioPlayer, PlaybackEnd, SoundFinished,
 };
 
-/// Plays `AudioPlayer`s through the `Audio` it opens on `finish`, except in an edit `App`; needs an `AssetServer`.
+/// Plays `AudioPlayer`s through the `Audio` it opens on `finish`, or on the web at the first key or click, except in an edit `App`; needs an `AssetServer`.
 pub struct AudioPlugin;
 
 impl Plugin for AudioPlugin {
@@ -34,10 +34,15 @@ impl Plugin for AudioPlugin {
             )
             .add_listener(stop_removed_player)
             .add_listener(stop_replaced_player);
+        #[cfg(target_arch = "wasm32")]
+        app.add_system(
+            concerto_app::schedule_groups::First,
+            crate::web::open_audio_on_input,
+        );
     }
 
     fn finish(&self, app: &mut App) {
-        if app.is_editing() {
+        if cfg!(target_arch = "wasm32") || app.is_editing() {
             return;
         }
         let backend = app
