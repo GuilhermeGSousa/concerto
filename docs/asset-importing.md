@@ -64,6 +64,7 @@ The import picks the importer by file extension:
 | `.obj` (+ its `.mtl`)| `ObjImporter`   | `mesh/*`, one `material/<mtl stem>`, `scene`       |
 | `.bvh`               | `BvhImporter`   | `skeleton/0`, `animation/<file stem>`, `scene`     |
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
+| `.ogg` `.wav`        | `AudioImporter` | one `main` audio clip                             |
 
 ### `content.toml`
 
@@ -236,8 +237,8 @@ file the editor can save on its own.
 
 An optional `[settings]` table holds importer-specific settings. The importer
 that owns the source reads it on every import; a sidecar without one uses the
-importer's defaults, and a first import writes none. The `obj` and `image`
-importers read no settings. The `gltf` importer reads only `events` and
+importer's defaults, and a first import writes none. The `obj`, `image` and
+`audio` importers read no settings. The `gltf` importer reads only `events` and
 `additive`, described under [Clip events](#clip-events) and
 [Additive clips](#additive-clips), and an unknown key fails its import. The
 `bvh` importer's are described under [BVH motion capture](#bvh-motion-capture).
@@ -1029,7 +1030,11 @@ impl Importer for MyImporter {
 }
 ```
 
-Then register it in `crates/import/src/lib.rs::registered_importers()`.
+Then register it in `crates/import/src/lib.rs::registered_importers()`, give
+its extensions an importer name in the match in `import_placed` there, accept
+that name in the sidecar check in `crates/import/src/metadata.rs`, and add the
+extensions to the editor's file picker, `SUPPORTED_EXTENSIONS` in
+`crates/editor/src/import/mod.rs`.
 
 `ImportContext::emit<T: Asset>` requires the emitted type to implement
 `Asset` (`Serialize + DeserializeOwned` + a `name()` tag). There is no

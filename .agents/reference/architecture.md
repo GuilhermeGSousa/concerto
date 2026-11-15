@@ -106,8 +106,8 @@ reads whether the last frame prepared or deferred any render asset under the
 
 ## Assets
 
-Source files (`.glb`, `.gltf`, `.obj`, `.bvh`, images) are imported once, ahead of
-time. The running game never reads them.
+Source files (`.glb`, `.gltf`, `.obj`, `.bvh`, images, and `.ogg` and `.wav`
+sounds) are imported once, ahead of time. The running game never reads them.
 
 - The editor's Import… writes a source's outputs under `content/<stem>/`: a
   `scene.gasset` that holds the scene with its meshes, materials and skeletons
