@@ -48,8 +48,10 @@ Check:
    works; a `#[cfg(test)]` field, counter or getter in a production type; a
    performance guarantee written as a test instead of a benchmark. For every
    test the branch deletes, name the test or benchmark that still covers its
-   behaviour; a deleted test whose behaviour nothing covers, and that was not
-   trivia, is a finding. Nothing measures coverage, so this check is the proof.
+   behaviour. A deleted test that nothing covers is a finding only when a break
+   it caught would reach a user, a game or an agent; deleting the rest is the
+   point. Nothing measures coverage, so this check is the proof. Also flag
+   tests the branch keeps that fall below that bar.
 6. **Leftovers.** `SELFTEST` code, debug prints, `todo!()`, dependencies no
    longer used, files added and never referenced.
 7. **Documentation.** Every change in behaviour is reflected in the document

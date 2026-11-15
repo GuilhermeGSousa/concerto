@@ -45,6 +45,12 @@ test, as `World::set_change_tick` does for the tick-check threshold.
 
 ## What not to write
 
+A test has to earn its place; the default is to delete. Being the only cover
+of a behaviour does not save a test whose failure nobody would notice: a
+message's wording, an internal ordering, a defensive branch, a helper's edge
+case. Keep the tests whose failure would reach a user, a game or an agent, and
+cover each feature once.
+
 - A test of a getter, a constructor, a `Default`, a derive, a constant, a
   label's formatting, or command-line flag parsing.
 - One test per error variant or per edge case. Put the cases in a table.

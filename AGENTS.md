@@ -276,8 +276,10 @@ private functions are for maths only. Do not test a getter, a constructor, a
 dependency does on its own. Performance guarantees are benchmarks, and no
 production type carries a `#[cfg(test)]` field, counter or getter for a test to
 read; a test-only setter may reach a state no public path can.
-Engine maths, a value's persisted encoding, and a test that is the only cover
-for a behaviour stay however simple they look.
+Engine maths and a value's persisted encoding stay however simple they look.
+Being the only cover of a behaviour is not enough on its own: a test stays only
+if a break it catches would reach a user, a game or an agent. When in doubt,
+delete it.
 
 ## Editor rules
 
