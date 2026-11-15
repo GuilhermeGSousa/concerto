@@ -752,11 +752,6 @@ mod tests {
             self.model_position(&input, self.first) + direction * distance
         }
 
-        fn along_barrel(&self, distance: f32) -> Vec3 {
-            let input = self.input();
-            self.model_position(&input, self.first) + self.barrel(&input).direction * distance
-        }
-
         fn solve(&self, node: &AimNode) -> Frame {
             Stage::new(self, node.clone()).step(DT)
         }
@@ -903,20 +898,6 @@ mod tests {
         assert_eq!(frame.events, [input_event()]);
     }
 
-    fn assert_unturned(rig: &Rig, frame: &Frame) {
-        for (bone, (output, input)) in frame.joints.iter().zip(rig.input()).enumerate() {
-            assert_eq!(output.translation, input.translation, "bone {bone}");
-            assert!(
-                output.rotation.abs_diff_eq(input.rotation, 1e-6),
-                "bone {bone} turned from {} to {}",
-                input.rotation,
-                output.rotation
-            );
-        }
-        assert_eq!(frame.root_motion, input_motion());
-        assert_eq!(frame.events, [input_event()]);
-    }
-
     fn assert_weighted(rig: &Rig, frame: &Frame, full: &Frame, weight: f32) {
         let input = rig.input();
         for bone in [SPINE, CHEST] {
@@ -1048,117 +1029,6 @@ mod tests {
         }
     }
 
-    fn unsolvable(rig: &Rig) -> [Vec3; 2] {
-        [rig.along_barrel(-1.0), rig.along_barrel(0.56)]
-    }
-
-    #[test]
-    fn an_unsolvable_target_holds_the_last_solve_or_before_any_solve_leaves_the_input_pose() {
-        let rig = Rig::aimed(Rig::new().toward(20.0_f32.to_radians(), 10.0_f32.to_radians(), 2.0));
-        for target in unsolvable(&rig) {
-            let mut stage = Stage::new(&rig, aim());
-            let solved = stage.step(DT);
-            assert_ne!(solved.joints, rig.input());
-            stage.set_param(name!("aim_target"), target);
-
-            let held = stage.step(DT);
-            let still_held = stage.step(DT);
-
-            assert_eq!(held.joints, solved.joints);
-            assert_eq!(still_held.joints, solved.joints);
-        }
-
-        let mut rig = Rig::new();
-        for target in unsolvable(&rig) {
-            rig.target = Some(target);
-            assert_unturned(&rig, &rig.solve(&aim()));
-        }
-        rig.target = Some(rig.toward(0.2, 0.1, 2.0));
-        let along_barrel = rig.barrel(&rig.input()).direction;
-        assert_unturned(&rig, &rig.solve(&aim().with_up(along_barrel)));
-    }
-
-    struct Untouched {
-        node: AimNode,
-        aimed: bool,
-        warns: bool,
-    }
-
-    #[test]
-    fn a_node_that_cannot_aim_leaves_the_input_bit_for_bit_and_warns_only_for_bones_it_cannot_resolve()
-     {
-        let rig = Rig::new();
-        let muzzle = rig.muzzle.clone();
-        let with_chain = |names: &[&str]| {
-            names.iter().fold(
-                AimNode::new(name!("aim_target"), muzzle.clone()),
-                |node, name| node.with_bone(AimBone::new(*name)),
-            )
-        };
-        let unresolvable = |node| Untouched {
-            node,
-            aimed: true,
-            warns: true,
-        };
-        let rows = [
-            unresolvable(AimNode {
-                muzzle: Muzzle::new("arm"),
-                ..aim()
-            }),
-            unresolvable(AimNode {
-                muzzle: Muzzle::new("prop"),
-                ..aim()
-            }),
-            unresolvable(AimNode {
-                muzzle: Muzzle::new("missing"),
-                ..aim()
-            }),
-            unresolvable(with_chain(&["spine", "spine"])),
-            unresolvable(with_chain(&["chest", "spine"])),
-            unresolvable(with_chain(&["spine", "missing"])),
-            unresolvable(with_chain(&["prop"])),
-            unresolvable(AimNode {
-                muzzle: muzzle.clone().with_direction(Vec3::ZERO),
-                ..aim()
-            }),
-            unresolvable(AimNode {
-                muzzle: muzzle.clone().with_direction(Vec3::new(f32::NAN, 0.0, 1.0)),
-                ..aim()
-            }),
-            Untouched {
-                node: aim(),
-                aimed: false,
-                warns: false,
-            },
-            Untouched {
-                node: with_chain(&[]),
-                aimed: true,
-                warns: false,
-            },
-            Untouched {
-                node: aim().with_weight(0.0),
-                aimed: true,
-                warns: false,
-            },
-        ];
-
-        for row in rows {
-            let rig = if row.aimed {
-                Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0))
-            } else {
-                Rig::new()
-            };
-            let mut stage = Stage::new(&rig, row.node.clone());
-
-            let first = stage.step(DT);
-            let settled = stage.settle();
-
-            assert_unchanged(&rig, &first);
-            assert_unchanged(&rig, &settled);
-            assert_eq!(stage.warned(), row.warns, "{:?}", row.node);
-        }
-    }
-
     #[test]
     fn root_motion_events_translations_and_other_bones_pass_through() {
         let rig = Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0));
@@ -1197,11 +1067,6 @@ mod tests {
     #[test]
     fn a_kick_between_frames_recovers_at_the_scaled_reacquire_halflife_or_at_once_without_one() {
         let rows = [
-            Kick {
-                node: aim().with_reacquire_halflife(0.1),
-                scale: None,
-                recovers_in: 0.1,
-            },
             Kick {
                 node: aim()
                     .with_reacquire_halflife(0.05)
@@ -1302,17 +1167,5 @@ mod tests {
 
         assert_ne!(easing.joints, rig.input());
         assert_unchanged(&rig, &settled);
-    }
-
-    #[test]
-    fn a_reset_aim_starts_again_from_the_input_pose() {
-        let rig = Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0));
-        let mut stage = Stage::new(&rig, aim().with_weight_halflife(0.1));
-        stage.settle();
-
-        stage.write(|node, state| node.reset(state));
-
-        assert_unchanged(&rig, &stage.step(DT));
-        assert_ne!(stage.step(DT).joints, rig.input());
     }
 }

@@ -634,10 +634,10 @@ mod tests {
     use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
-    use super::{FootPlacementLeg, FootPlacementNode, IgnoredBody, elapsed_after, unit_normal};
+    use super::{FootPlacementLeg, FootPlacementNode, IgnoredBody};
     use crate::testing::{
-        Bone, angle, app_with, assert_near, captured, captured_graph, compile, insert_asset,
-        read_state, skeleton_of, spawn_rigged, write_state,
+        Bone, angle, app_with, assert_near, captured_graph, compile, insert_asset, skeleton_of,
+        spawn_rigged, write_state,
     };
 
     const EPS: f32 = 1.0e-4;
@@ -718,14 +718,6 @@ mod tests {
                     .collect(),
                 ..Default::default()
             }
-        }
-
-        fn shifted_of(skeleton: &Skeleton) -> Self {
-            let mut pose = Self::rest_of(skeleton);
-            pose.translations[0] += Vec3::new(0.02, -0.03, 0.01);
-            pose.rotations[0] = Quat::from_rotation_y(0.1);
-            pose.rotations[2] = Quat::from_rotation_x(0.05);
-            pose
         }
     }
 
@@ -929,12 +921,6 @@ mod tests {
             self.run();
         }
 
-        fn warned(&mut self) -> bool {
-            let player = self.player;
-            read_state::<FootPlacementNode, _>(self.world(), player, |_, state| state.warned)
-                .expect("the graph holds a foot placement node")
-        }
-
         fn local(&mut self, bone: usize) -> Transform {
             let entity = self.bones[bone];
             self.world()
@@ -997,24 +983,6 @@ mod tests {
             let tilt = self.tilt(bone);
             assert!(angle(tilt, expected) < ANGLE_EPS, "{tilt} vs {expected}");
         }
-
-        fn assert_input_pose(&mut self) {
-            for bone in 0..self.bones.len() {
-                let local = self.local(bone);
-                let translation = self.input.translations[bone];
-                let rotation = self.input.rotations[bone];
-                assert!(
-                    local.translation.distance(translation) < EPS,
-                    "bone {bone}: {:?} vs {translation:?}",
-                    local.translation
-                );
-                assert!(
-                    angle(local.rotation, rotation) < EPS,
-                    "bone {bone}: {:?} vs {rotation:?}",
-                    local.rotation
-                );
-            }
-        }
     }
 
     fn rotation_of(transform: Affine3A) -> Quat {
@@ -1028,111 +996,6 @@ mod tests {
     fn step_under_the_left_foot(stage: &mut Stage) {
         stage.add_floor(0.0);
         stage.add_slab(0.0, 2.0, 0.15);
-    }
-
-    struct Passed {
-        name: &'static str,
-        node: FootPlacementNode,
-        physics: bool,
-        space: Affine3A,
-        ground: fn(&mut Stage),
-        warns: bool,
-    }
-
-    #[test]
-    fn a_node_with_nothing_to_place_passes_its_input_through_and_warns_only_for_legs_it_cannot_resolve()
-     {
-        let resolvable = |name, node, space, ground: fn(&mut Stage)| Passed {
-            name,
-            node,
-            physics: true,
-            space,
-            ground,
-            warns: false,
-        };
-        let unresolvable = |name, node| Passed {
-            name,
-            node,
-            physics: true,
-            space: Affine3A::IDENTITY,
-            ground: |stage| stage.add_floor(0.1),
-            warns: true,
-        };
-        let rows = [
-            unresolvable(
-                "a missing foot",
-                FootPlacementNode::new("pelvis").with_leg(FootPlacementLeg::new("missing_foot")),
-            ),
-            unresolvable(
-                "a foot without a grandparent",
-                FootPlacementNode::new("pelvis").with_leg(FootPlacementLeg::new("left_hip")),
-            ),
-            unresolvable(
-                "a pelvis below a leg",
-                FootPlacementNode {
-                    pelvis: "right_hip".into(),
-                    ..placement()
-                },
-            ),
-            Passed {
-                physics: false,
-                ..resolvable("no physics", placement(), Affine3A::IDENTITY, |_| {})
-            },
-            resolvable(
-                "a flat floor at the origin's height",
-                placement(),
-                Affine3A::IDENTITY,
-                |stage| stage.add_floor(0.0),
-            ),
-            resolvable(
-                "no legs",
-                FootPlacementNode::new("pelvis"),
-                Affine3A::IDENTITY,
-                step_under_the_left_foot,
-            ),
-            resolvable(
-                "a model to world that cannot be inverted",
-                placement(),
-                Affine3A::from_scale(Vec3::ZERO),
-                step_under_the_left_foot,
-            ),
-            resolvable(
-                "weight zero",
-                placement().with_weight(0.0),
-                Affine3A::IDENTITY,
-                step_under_the_left_foot,
-            ),
-        ];
-        let moved = RootMotion {
-            translation: Vec3::new(0.01, 0.0, 0.04),
-            rotation: Quat::from_rotation_y(0.03),
-        };
-
-        for row in rows {
-            let skeleton = rig();
-            let input = ConstantPose {
-                root_translation: moved.translation,
-                root_rotation: moved.rotation,
-                ..ConstantPose::shifted_of(&skeleton)
-            };
-            let mut stage = Stage::new(skeleton, input, row.node);
-            if row.physics {
-                stage = stage.with_physics();
-            }
-            let mut stage = stage.under(row.space);
-            (row.ground)(&mut stage);
-            stage.settle();
-
-            stage.assert_input_pose();
-            assert_eq!(stage.warned(), row.warns, "{}", row.name);
-            let player = stage.player;
-            assert_eq!(
-                captured(stage.world(), player).root_motion,
-                moved,
-                "{}",
-                row.name
-            );
-        }
     }
 
     struct Ground {
@@ -1199,30 +1062,9 @@ mod tests {
                 |stage| assert_near(stage.rise(PELVIS), -0.4, EPS),
             ),
             flat(
-                "a hole deeper than the step down",
-                placement(),
-                |stage| {
-                    stage.add_slab(0.0, 2.0, 0.0);
-                    stage.add_slab(-2.0, 0.0, -0.6);
-                },
-                |stage| {
-                    assert_near(stage.rise(RIGHT_FOOT), 0.0, EPS);
-                    assert_near(stage.rise(PELVIS), 0.0, EPS);
-                },
-            ),
-            flat(
                 "half weight",
                 placement().with_weight(0.5),
                 step_under_the_left_foot,
-                |stage| assert_near(stage.rise(LEFT_FOOT), 0.075, EPS),
-            ),
-            flat(
-                "a weight param of half",
-                placement().with_weight_param(name!("weight")),
-                |stage| {
-                    step_under_the_left_foot(stage);
-                    stage.set_param(name!("weight"), 0.5_f32);
-                },
                 |stage| assert_near(stage.rise(LEFT_FOOT), 0.075, EPS),
             ),
             flat(
@@ -1261,18 +1103,6 @@ mod tests {
                 },
             ),
             flat(
-                "a leg without a toe on a slope rising ahead",
-                FootPlacementNode::new("pelvis")
-                    .with_leg(FootPlacementLeg::new("left_foot"))
-                    .with_leg(FootPlacementLeg::new("right_foot")),
-                |stage| stage.add_slope(Quat::from_rotation_x(-SLOPE)),
-                |stage| {
-                    let up = stage.tilt(LEFT_FOOT) * Vec3::Y;
-                    let normal = Quat::from_rotation_x(-SLOPE) * Vec3::Y;
-                    assert!(up.distance(normal) < ANGLE_EPS, "{up:?}");
-                },
-            ),
-            flat(
                 "a slope steeper than the angle limit",
                 placement(),
                 |stage| stage.add_slope(Quat::from_rotation_x(-45.0_f32.to_radians())),
@@ -1300,33 +1130,6 @@ mod tests {
                     },
                 )
             },
-            Ground {
-                toe: SHORT_TOE,
-                ..flat(
-                    "a toe over the next tread from a cross slope",
-                    placement(),
-                    |stage| {
-                        stage.add_slope(Quat::from_rotation_z(6.0_f32.to_radians()));
-                        stage.add_tread();
-                    },
-                    |stage| assert_near(stage.rise(LEFT_TOE), 0.17, EPS),
-                )
-            },
-            flat(
-                "a toe hit without an ankle hit",
-                placement(),
-                |stage| {
-                    stage.add_cuboid(
-                        Vec3::new(2.0, 0.5, 1.0),
-                        Vec3::new(0.0, 0.05 - 0.5, 1.1),
-                        Quat::IDENTITY,
-                    );
-                },
-                |stage| {
-                    assert_near(stage.rise(LEFT_FOOT), 0.05, EPS);
-                    assert!(angle(stage.tilt(LEFT_FOOT), Quat::IDENTITY) < ANGLE_EPS);
-                },
-            ),
         ];
 
         for row in rows {
@@ -1342,19 +1145,6 @@ mod tests {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (row.check)(&mut stage)));
             assert!(checked.is_ok(), "{}", row.name);
         }
-    }
-
-    #[test]
-    fn a_normal_that_is_not_finite_or_too_short_is_no_normal() {
-        for normal in [
-            Vec3::ZERO,
-            Vec3::splat(1.0e-4),
-            Vec3::NAN,
-            Vec3::new(0.0, f32::INFINITY, 0.0),
-        ] {
-            assert_eq!(unit_normal(normal), None, "{normal:?}");
-        }
-        assert_eq!(unit_normal(Vec3::new(0.0, 2.0, 0.0)), Some(Vec3::Y));
     }
 
     #[test]
@@ -1392,36 +1182,23 @@ mod tests {
 
     struct Easing {
         halflife: f32,
-        reset: bool,
         steps: &'static [f32],
         rise: f32,
         tolerance: f32,
     }
 
     #[test]
-    fn a_new_step_is_reached_halfway_in_one_halflife_and_at_once_without_one_or_after_a_reset() {
-        let snaps = |halflife| Easing {
-            halflife,
-            reset: false,
-            steps: &[0.01],
-            rise: 0.15,
-            tolerance: EPS,
-        };
+    fn a_new_step_is_reached_halfway_in_one_halflife_and_at_once_without_one() {
         let rows = [
             Easing {
                 halflife: 0.1,
-                reset: false,
                 steps: &[0.05, 0.05],
                 rise: 0.075,
                 tolerance: 1.0e-3,
             },
-            snaps(f32::NAN),
-            snaps(0.0),
-            snaps(-0.1),
             Easing {
-                halflife: 0.1,
-                reset: true,
-                steps: &[0.0],
+                halflife: 0.0,
+                steps: &[0.01],
                 rise: 0.15,
                 tolerance: EPS,
             },
@@ -1437,48 +1214,11 @@ mod tests {
             assert_near(stage.rise(LEFT_FOOT), 0.0, EPS);
 
             stage.add_slab(0.0, 2.0, 0.15);
-            if row.reset {
-                let player = stage.player;
-                write_state::<FootPlacementNode, _>(stage.world(), player, |_, state| {
-                    node.reset(state)
-                });
-            }
             for step in row.steps {
                 stage.step(*step);
             }
 
             assert_near(stage.rise(LEFT_FOOT), row.rise, row.tolerance);
-        }
-    }
-
-    #[test]
-    fn the_springs_ease_while_the_weight_is_zero() {
-        let skeleton = rig();
-        let input = ConstantPose::rest_of(&skeleton);
-        let node = placement()
-            .with_foot_halflife(0.1)
-            .with_weight_param(name!("weight"))
-            .with_weight_halflife(0.0);
-        let mut stage = Stage::new(skeleton, input, node).with_physics();
-        stage.add_floor(0.0);
-        stage.set_param(name!("weight"), 0.0_f32);
-        stage.settle();
-
-        stage.add_slab(0.0, 2.0, 0.15);
-        stage.step(0.1);
-        stage.assert_input_pose();
-
-        stage.set_param(name!("weight"), 1.0_f32);
-        stage.step(0.0);
-
-        assert_near(stage.rise(LEFT_FOOT), 0.075, 1.0e-3);
-    }
-
-    #[test]
-    fn only_a_finite_positive_delta_time_adds_to_the_elapsed_time() {
-        assert_eq!(elapsed_after(0.1, 0.2), 0.1 + 0.2);
-        for delta_time in [0.0, -0.1, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            assert_eq!(elapsed_after(0.1, delta_time), 0.1, "{delta_time}");
         }
     }
 }

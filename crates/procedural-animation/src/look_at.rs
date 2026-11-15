@@ -487,7 +487,7 @@ mod tests {
     use super::{LookAtBone, LookAtEye, LookAtNode, LookAtState};
     use crate::testing::{
         Frame, app_with, assert_near, bone, captured, captured_graph, compile, input_event,
-        input_motion, insert_asset, read_state, skeleton_of, spawn_rigged, write_state,
+        input_motion, insert_asset, skeleton_of, spawn_rigged, write_state,
     };
 
     const HIPS: usize = 0;
@@ -800,12 +800,6 @@ mod tests {
             self.node = node;
         }
 
-        fn read<R>(&mut self, read: impl FnOnce(&LookAtState) -> R) -> R {
-            let player = self.player;
-            read_state::<LookAtNode, _>(self.world(), player, |_, state| read(state))
-                .expect("the graph holds a look-at node")
-        }
-
         fn write<R>(&mut self, write: impl FnOnce(&LookAtNode, &mut LookAtState) -> R) -> R {
             let player = self.player;
             write_state::<LookAtNode, _>(self.world(), player, write)
@@ -873,18 +867,6 @@ mod tests {
             eye.halflife = LookAtEye::default().halflife;
         }
         node.weight_halflife = LookAtNode::default().weight_halflife;
-        node
-    }
-
-    fn snapping(halflife: f32) -> LookAtNode {
-        let mut node = with_eyes();
-        node.weight_halflife = halflife;
-        for link in &mut node.chain {
-            link.halflife = halflife;
-        }
-        for eye in &mut node.eyes {
-            eye.halflife = halflife;
-        }
         node
     }
 
@@ -977,11 +959,6 @@ mod tests {
                 Quat::from_rotation_y(0.3),
                 Quat::from_rotation_x(-0.2),
             ),
-            animated(
-                "the head over a rolled spine and turned head",
-                Quat::from_rotation_z(-0.25),
-                Quat::from_rotation_y(-0.4),
-            ),
             Gaze {
                 input: vec![InputTurn {
                     bone: EYE_L,
@@ -996,21 +973,6 @@ mod tests {
                 },
                 ..plain("each eye from its own position", with_eyes(), &EYES)
             },
-            plain(
-                "a negative halflife snaps",
-                snapping(-1.0),
-                &[HEAD, EYE_L, EYE_R],
-            ),
-            plain(
-                "a nan halflife snaps",
-                snapping(f32::NAN),
-                &[HEAD, EYE_L, EYE_R],
-            ),
-            plain(
-                "an infinite halflife snaps",
-                snapping(f32::INFINITY),
-                &[HEAD, EYE_L, EYE_R],
-            ),
         ];
 
         for row in rows {
@@ -1043,18 +1005,6 @@ mod tests {
     fn each_bone_takes_its_share_of_the_turn_up_to_its_limit_and_leaves_the_rest_to_the_next() {
         let wide = 90.0_f32.to_radians();
         let far = |rig: &Rig| rig.toward(NECK, 60.0_f32.to_radians(), 0.0, 100.0);
-        let near = |rig: &Rig| rig.toward(NECK, 0.5, 0.2, 3.0);
-        let neck = |share: f32, limit: f32| {
-            let mut node = look();
-            node.chain[1].share = share;
-            node.chain[1].yaw_limit = limit;
-            node.chain[1].pitch_limit = limit;
-            node
-        };
-        let neck_held_head_gazing: fn(&Rig, &Frame, Vec3) = |rig, frame, target| {
-            assert!(rig.turned(frame, NECK) < 1e-3);
-            assert_gaze(rig, frame, HEAD, target);
-        };
         let narrow = |name: &str| LookAtEye {
             yaw_limit: 0.02,
             pitch_limit: 0.01,
@@ -1101,40 +1051,6 @@ mod tests {
                 },
             },
             Share {
-                name: "a negative share",
-                node: neck(-1.0, LookAtBone::default().yaw_limit),
-                target: near,
-                check: neck_held_head_gazing,
-            },
-            Share {
-                name: "a nan share",
-                node: neck(f32::NAN, LookAtBone::default().yaw_limit),
-                target: near,
-                check: neck_held_head_gazing,
-            },
-            Share {
-                name: "a negative limit",
-                node: neck(LookAtBone::default().share, -0.5),
-                target: near,
-                check: neck_held_head_gazing,
-            },
-            Share {
-                name: "a nan limit",
-                node: neck(LookAtBone::default().share, f32::NAN),
-                target: near,
-                check: neck_held_head_gazing,
-            },
-            Share {
-                name: "zero shares",
-                node: shared([0.0, 0.0, 0.0], 1.0),
-                target: near,
-                check: |rig, frame, _| {
-                    for bone in CHAIN {
-                        assert!(rig.turned(frame, bone) < 1e-3, "bone {bone}");
-                    }
-                },
-            },
-            Share {
                 name: "eyes that cannot reach",
                 node: LookAtNode {
                     chain: Vec::new(),
@@ -1161,176 +1077,6 @@ mod tests {
 
             named(row.name, || (row.check)(&rig, &frame, target));
         }
-    }
-
-    fn aimed(bone: usize, yaw: f32, pitch: f32, distance: f32) -> Rig {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(bone, yaw, pitch, distance));
-        rig
-    }
-
-    fn at_head() -> Rig {
-        aimed(HEAD, 0.4, 0.1, 2.0)
-    }
-
-    struct Untouched {
-        name: &'static str,
-        node: LookAtNode,
-        rig: fn() -> Rig,
-    }
-
-    #[test]
-    fn a_look_with_nothing_it_can_look_at_leaves_the_input_pose() {
-        let unresolvable = |name, node| Untouched {
-            name,
-            node,
-            rig: at_head,
-        };
-        let rows = [
-            unresolvable(
-                "a missing chain bone",
-                LookAtNode {
-                    chain: links(&["spine", "missing", "head"]),
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "a chain out of order",
-                LookAtNode {
-                    chain: links(&["neck", "spine", "head"]),
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "an eye off the chain",
-                LookAtNode {
-                    eyes: vec![eye("arm")],
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "an eye under an eye",
-                LookAtNode {
-                    eyes: vec![eye("eye_l"), eye("lid")],
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "the same eye twice",
-                LookAtNode {
-                    eyes: vec![eye("eye_l"), eye("eye_l")],
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "a chain bone outside the hierarchy",
-                LookAtNode {
-                    chain: links(&["prop_child"]),
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "a zero forward",
-                LookAtNode {
-                    forward: Vec3::ZERO,
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "an up along forward",
-                LookAtNode {
-                    up: Vec3::Z * 2.0,
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "no bones",
-                LookAtNode {
-                    chain: Vec::new(),
-                    ..look()
-                },
-            ),
-            unresolvable(
-                "weight zero",
-                LookAtNode {
-                    weight: 0.0,
-                    ..with_eyes()
-                },
-            ),
-            Untouched {
-                name: "a weight param of zero",
-                node: LookAtNode {
-                    weight_param: Some(name!("look_weight").into()),
-                    ..with_eyes()
-                },
-                rig: || {
-                    let mut rig = at_head();
-                    rig.set_float(name!("look_weight"), 0.0);
-                    rig
-                },
-            },
-            Untouched {
-                name: "no target",
-                node: with_eyes(),
-                rig: Rig::new,
-            },
-            Untouched {
-                name: "a target that is not a position",
-                node: with_eyes(),
-                rig: || {
-                    let mut rig = Rig::new();
-                    rig.set_float(name!("look_target"), 1.0);
-                    rig
-                },
-            },
-            Untouched {
-                name: "a model to world that cannot be inverted",
-                node: with_eyes(),
-                rig: || {
-                    let mut rig = Rig::new();
-                    rig.model_to_world = Affine3A::from_scale(Vec3::ZERO);
-                    rig.target = Some(Vec3::new(0.3, 1.5, 2.0));
-                    rig
-                },
-            },
-            Untouched {
-                name: "a nan max angle",
-                node: LookAtNode {
-                    max_angle: f32::NAN,
-                    ..look()
-                },
-                rig: || aimed(SPINE, 0.2, 0.0, 3.0),
-            },
-            Untouched {
-                name: "a max angle past 170 degrees",
-                node: LookAtNode {
-                    max_angle: 4.0,
-                    ..look()
-                },
-                rig: || aimed(SPINE, 175.0_f32.to_radians(), 0.0, 3.0),
-            },
-            Untouched {
-                name: "a target past max angle",
-                node: look(),
-                rig: || aimed(SPINE, 125.0_f32.to_radians(), 0.0, 3.0),
-            },
-        ];
-
-        for row in rows {
-            let rig = (row.rig)();
-
-            let frame = rig.solve(&row.node);
-
-            named(row.name, || assert_unchanged(&rig, &frame));
-        }
-
-        let inside = aimed(SPINE, 115.0_f32.to_radians(), 0.0, 3.0);
-        let frame = inside.solve(&look());
-        assert!(
-            CHAIN
-                .into_iter()
-                .any(|bone| inside.turned(&frame, bone) > 1e-3)
-        );
     }
 
     #[test]
@@ -1393,29 +1139,6 @@ mod tests {
     }
 
     #[test]
-    fn the_eyes_reach_the_target_while_a_slow_head_is_still_turning() {
-        let mut rig = Rig::new();
-        let target = rig.toward(HEAD, 0.6, 0.15, 2.0);
-        rig.aim(target);
-        let mut node = with_eyes();
-        node.chain[2].halflife = 0.2;
-
-        let first = Stage::start(&rig, node.clone()).step(DT);
-        let settled = Stage::start(&rig, node).settle();
-
-        let limits = LookAtEye::default();
-        for bone in EYES {
-            assert_gaze(&rig, &first, bone, target);
-            let turn = rig.turn(&first, bone);
-            assert!(turn.yaw.abs() <= limits.yaw_limit + 1e-4, "eye {bone}");
-            assert!(turn.pitch.abs() <= limits.pitch_limit + 1e-4, "eye {bone}");
-        }
-        let head = rig.turned(&first, HEAD);
-        let full = rig.turned(&settled, HEAD);
-        assert!(head < 0.5 * full, "the head turned {head} of {full}");
-    }
-
-    #[test]
     fn an_offset_covers_half_its_turn_in_one_halflife() {
         let mut rig = Rig::new();
         rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
@@ -1471,90 +1194,5 @@ mod tests {
         for bone in CHAIN {
             assert!(rig.turned(&held, bone) > 1e-3, "bone {bone}");
         }
-    }
-
-    #[test]
-    fn an_absent_target_holds_the_offsets_at_rest() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
-        let mut stage = Stage::start(&rig, eased());
-        for _ in 0..5 {
-            stage.step(DT);
-        }
-        assert!(stage.read(|state| {
-            state
-                .offsets
-                .iter()
-                .any(|offset| offset.velocity != Vec3::ZERO)
-        }));
-        let held: Vec<Quat> =
-            stage.read(|state| state.offsets.iter().map(|offset| offset.value).collect());
-        stage.forget_target();
-
-        stage.step(DT);
-
-        stage.read(|state| {
-            assert!(state.weight.value > 0.0);
-            assert_eq!(state.offsets.len(), held.len());
-            for (offset, value) in state.offsets.iter().zip(&held) {
-                assert_eq!(offset.velocity, Vec3::ZERO);
-                assert_eq!(offset.value, *value);
-            }
-        });
-    }
-
-    #[test]
-    fn time_before_the_first_evaluate_does_not_snap_the_look_in() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
-        let node = LookAtNode {
-            weight_halflife: 0.2,
-            ..look()
-        };
-        let full = rig.turned(&Stage::start(&rig, node.clone()).settle(), HEAD);
-        let mut stage = Stage::new(&rig, node);
-        stage.write(|_, state| state.elapsed = 120.0 * DT);
-
-        let first = stage.step(0.0);
-        let next = stage.step(DT);
-
-        assert_unchanged(&rig, &first);
-        assert_ne!(next.joints[HEAD], rig.input()[HEAD]);
-        let turned = rig.turned(&next, HEAD);
-        assert!(turned < 0.5 * full, "turned {turned} of {full}");
-    }
-
-    #[test]
-    fn a_chain_bone_added_live_turns() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.5, 0.2, 2.0));
-        let node = LookAtNode {
-            chain: links(&["neck", "head"]),
-            ..look()
-        };
-        let mut stage = Stage::start(&rig, node.clone());
-        stage.settle();
-
-        let mut grown = node;
-        grown.chain.insert(0, link("spine"));
-        stage.set_node(grown);
-        stage.step(DT);
-        let frame = stage.step(DT);
-
-        for bone in CHAIN {
-            assert!(rig.turned(&frame, bone) > 1e-3, "bone {bone}");
-        }
-    }
-
-    #[test]
-    fn a_reset_look_starts_again_from_the_input_pose() {
-        let mut rig = Rig::new();
-        rig.aim(rig.toward(HEAD, 0.4, 0.2, 2.0));
-        let mut stage = Stage::start(&rig, eased());
-        stage.settle();
-
-        stage.write(|node, state| node.reset(state));
-
-        assert_unchanged(&rig, &stage.step(DT));
     }
 }

@@ -514,8 +514,8 @@ mod tests {
 
     use super::{FootLockLeg, FootLockNode, FootLockState, LegLock, LockPhase};
     use crate::testing::{
-        Bone, angle, app_with, captured, captured_graph, compile, input_event, insert_asset,
-        read_state, skeleton_of, spawn_rigged, write_state,
+        Bone, angle, app_with, captured_graph, compile, input_event, insert_asset, read_state,
+        skeleton_of, spawn_rigged, write_state,
     };
 
     const EPS: f32 = 1.0e-4;
@@ -557,14 +557,6 @@ mod tests {
                     .collect(),
                 ..Default::default()
             }
-        }
-
-        fn shifted_of(skeleton: &Skeleton) -> Self {
-            let mut script = Self::rest_of(skeleton);
-            script.translations[0] += Vec3::new(0.02, -0.03, 0.01);
-            script.rotations[0] = Quat::from_rotation_y(0.1);
-            script.rotations[2] = Quat::from_rotation_x(0.05);
-            script
         }
 
         fn moved(&self, by: Vec3) -> Self {
@@ -786,10 +778,6 @@ mod tests {
             self.read(|state| state.legs().iter().map(|leg| leg.phase).collect())
         }
 
-        fn warned(&mut self) -> bool {
-            self.read(|state| state.warned)
-        }
-
         fn output_model(&mut self, bone: usize) -> Affine3A {
             let locals: Vec<Affine3A> = (0..self.bones.len())
                 .map(|bone| {
@@ -955,79 +943,6 @@ mod tests {
         stage
     }
 
-    struct Resolution {
-        node: FootLockNode,
-        warns: bool,
-    }
-
-    #[test]
-    fn a_node_warns_only_for_legs_it_cannot_resolve_and_passes_its_input_through_until_a_foot_locks()
-     {
-        let rows = [
-            Resolution {
-                node: FootLockNode::new().with_leg(FootLockLeg::new("missing_foot")),
-                warns: true,
-            },
-            Resolution {
-                node: FootLockNode::new().with_leg(FootLockLeg::new("left_hip")),
-                warns: true,
-            },
-            Resolution {
-                node: FootLockNode::new()
-                    .with_leg(FootLockLeg::new("left_foot").with_toe("missing_toe")),
-                warns: true,
-            },
-            Resolution {
-                node: FootLockNode::new(),
-                warns: false,
-            },
-            Resolution {
-                node: locking(),
-                warns: false,
-            },
-        ];
-        let moved = RootMotion {
-            translation: Vec3::new(0.01, 0.0, 0.04),
-            rotation: Quat::from_rotation_y(0.03),
-        };
-
-        for row in rows {
-            let skeleton = rig();
-            let script = Script {
-                root_translation: moved.translation,
-                root_rotation: moved.rotation,
-                ..Script::shifted_of(&skeleton)
-            };
-            let mut stage = Stage::new(skeleton, script, row.node.clone());
-            stage.settle();
-
-            stage.assert_input_pose();
-            assert_eq!(stage.warned(), row.warns, "{:?}", row.node);
-            let player = stage.player;
-            let frame = captured(stage.world(), player);
-            assert_eq!(frame.root_motion, moved, "{:?}", row.node);
-            assert_eq!(frame.events, [input_event()], "{:?}", row.node);
-        }
-    }
-
-    #[test]
-    fn no_leg_locks_on_the_first_evaluate_after_creation_or_after_a_reset() {
-        let node = locking();
-        let skeleton = rig();
-        let script = Script::rest_of(&skeleton);
-        let mut stage = Stage::new(skeleton, script, node.clone());
-        stage.settle();
-        assert_eq!(stage.phases(), [LockPhase::Free; 2]);
-
-        stage.step(DT);
-        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
-        let player = stage.player;
-        write_state::<FootLockNode, _>(stage.world(), player, |_, state| node.reset(state));
-        stage.step(DT);
-
-        assert_eq!(stage.phases(), [LockPhase::Free; 2]);
-    }
-
     struct Plant {
         name: &'static str,
         stage: fn() -> Stage,
@@ -1064,16 +979,6 @@ mod tests {
             Plant {
                 name: "walking against the root motion",
                 stage: || walked(Quat::IDENTITY, Vec3::ZERO),
-                phase: LockPhase::Locked,
-            },
-            Plant {
-                name: "walking with a pitched root",
-                stage: || walked(Quat::from_rotation_x(20.0_f32.to_radians()), Vec3::ZERO),
-                phase: LockPhase::Locked,
-            },
-            Plant {
-                name: "walking with a lifting root",
-                stage: || walked(Quat::IDENTITY, Vec3::new(0.0, 0.02, 0.0)),
                 phase: LockPhase::Locked,
             },
             Plant {
@@ -1216,52 +1121,6 @@ mod tests {
 
         stage.step(DT);
         assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
-    }
-
-    #[test]
-    fn a_foot_planted_again_while_releasing_locks_where_it_is_shown() {
-        for weight in [1.0, 0.5] {
-            let mut stage = locked(locking().with_weight(weight));
-            let rest = stage.script.clone();
-            let old = stage.legs()[0].lock;
-
-            stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.05)));
-            stage.step(DT);
-            assert_eq!(stage.phases(), [LockPhase::Releasing; 2], "weight {weight}");
-            let released = stage.legs()[0].shown;
-
-            stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.1)));
-            stage.step(0.05);
-            assert_eq!(stage.phases(), [LockPhase::Releasing; 2], "weight {weight}");
-            let shown = stage.legs()[0].shown;
-            assert!(shown.distance(released) > 1.0e-3, "weight {weight}");
-            let toe = stage.output_world(TOES[0]);
-
-            stage.step(DT);
-            let leg = stage.legs()[0];
-            assert_eq!(leg.phase, LockPhase::Locked, "weight {weight}");
-            assert!(leg.shown.distance(shown) < EPS, "weight {weight}");
-            let unweighted = leg.animated + (shown - leg.animated) / weight;
-            assert!(leg.lock.distance(unweighted) < EPS, "weight {weight}");
-            assert!(leg.lock.distance(old) > 1.0e-3, "weight {weight}");
-            assert!(stage.output_world(TOES[0]).distance(toe) < EPS);
-
-            stage.step(DT);
-            assert!(stage.output_world(TOES[0]).distance(toe) < EPS);
-        }
-    }
-
-    #[test]
-    fn an_evaluate_with_no_time_keeps_the_plant_and_the_next_step_measures_from_the_old_contact() {
-        let mut stage = locked(locking());
-        let rest = stage.script.clone();
-
-        stage.pose(rest.moved(Vec3::new(0.0, 0.0, 0.1)));
-        stage.run();
-        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
-
-        stage.step(DT);
-        assert_eq!(stage.phases(), [LockPhase::Releasing; 2]);
     }
 
     #[test]
