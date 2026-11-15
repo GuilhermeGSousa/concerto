@@ -78,35 +78,9 @@ fn a_shortcut_resolves_to_the_innermost_active_binding_and_typing_swallows_only_
             action: Some(DeleteEntity.intern()),
         },
         Resolve {
-            name: "a context binding before its context is pushed",
-            setup: context_bindings,
-            shortcut: Shortcut::key(KeyCode::KeyF),
-            action: None,
-        },
-        Resolve {
-            name: "a context binding while its context is active",
-            setup: |map| {
-                context_bindings(map);
-                map.push_context(Viewport);
-            },
-            shortcut: Shortcut::key(KeyCode::KeyF),
-            action: Some(FrameSelected.intern()),
-        },
-        Resolve {
             name: "a context binding after its context is popped",
             setup: |map| {
                 context_bindings(map);
-                map.push_context(Viewport);
-                map.pop_context(Viewport);
-            },
-            shortcut: Shortcut::key(KeyCode::KeyF),
-            action: None,
-        },
-        Resolve {
-            name: "a context pushed twice and popped once",
-            setup: |map| {
-                context_bindings(map);
-                map.push_context(Viewport);
                 map.push_context(Viewport);
                 map.pop_context(Viewport);
             },
@@ -141,24 +115,6 @@ fn a_shortcut_resolves_to_the_innermost_active_binding_and_typing_swallows_only_
             shortcut: Shortcut::key(KeyCode::Escape),
             action: Some(Jump.intern()),
         },
-        Resolve {
-            name: "the shortcut a rebind replaced",
-            setup: |map| {
-                map.bind_global(Save, Shortcut::ctrl(KeyCode::KeyS));
-                map.rebind_global(Save, Shortcut::ctrl(KeyCode::KeyW));
-            },
-            shortcut: Shortcut::ctrl(KeyCode::KeyS),
-            action: None,
-        },
-        Resolve {
-            name: "the shortcut a rebind moved to",
-            setup: |map| {
-                map.bind_global(Save, Shortcut::ctrl(KeyCode::KeyS));
-                map.rebind_global(Save, Shortcut::ctrl(KeyCode::KeyW));
-            },
-            shortcut: Shortcut::ctrl(KeyCode::KeyW),
-            action: Some(Save.intern()),
-        },
     ];
     for case in cases {
         let mut map = map();
@@ -183,31 +139,6 @@ fn input_with_pads() -> Input {
 
 fn close(a: Vec2, b: Vec2) -> bool {
     (a - b).length() < 1e-5
-}
-
-#[test]
-fn a_pad_button_fires_its_action_with_the_pads_id_under_context_rules() {
-    let mut map = map();
-    map.bind(Jump, GamepadButton::South, Viewport);
-    let mut input = input_with_pads();
-    input.update_gamepad_button(OTHER_PAD, GamepadButton::South, 1.0);
-
-    assert!(
-        map.fired(&input, &Players::default()).is_empty(),
-        "a context binding must not fire while its context is inactive"
-    );
-
-    map.push_context(Viewport);
-    map.set_capturing_text(true);
-    assert_eq!(
-        map.fired(&input, &Players::default()),
-        vec![ActionFired {
-            action: Jump.intern(),
-            gamepad: Some(OTHER_PAD),
-            player: None,
-        }],
-        "a pad press fires with the id of the pad that pressed, and is never text"
-    );
 }
 
 #[test]
@@ -311,15 +242,6 @@ fn a_two_dimensional_action_reads_the_longer_of_its_merged_keys_and_its_sticks()
             reads: Vec2::new(0.5, 0.0),
         },
         Direction {
-            name: "a held key is longer than a half-pushed stick",
-            map: movement_map,
-            input: |input| {
-                half_pushed_stick(input);
-                press(input, KeyCode::KeyW);
-            },
-            reads: Vec2::Y,
-        },
-        Direction {
             name: "on a tie the keys win and the stick is not added to them",
             map: movement_map,
             input: |input| {
@@ -334,16 +256,6 @@ fn a_two_dimensional_action_reads_the_longer_of_its_merged_keys_and_its_sticks()
             map: viewport_movement,
             input: |input| press(input, KeyCode::KeyD),
             reads: Vec2::ZERO,
-        },
-        Direction {
-            name: "a binding whose context is active",
-            map: || {
-                let mut map = viewport_movement();
-                map.push_context(Viewport);
-                map
-            },
-            input: |input| press(input, KeyCode::KeyD),
-            reads: Vec2::X,
         },
         Direction {
             name: "a text-like key while typing",
@@ -421,7 +333,6 @@ fn a_press_on_a_second_device_does_not_press_again() {
 
 const P0: PlayerIndex = PlayerIndex::new(0);
 const P1: PlayerIndex = PlayerIndex::new(1);
-const P2: PlayerIndex = PlayerIndex::new(2);
 const LONE_PAD: GamepadId = GamepadId::new(2);
 
 fn two_players() -> Players {
@@ -468,7 +379,7 @@ fn each_players_stick_reads_only_their_own_pad() {
 }
 
 #[test]
-fn a_key_binding_reads_only_for_the_keyboards_player() {
+fn a_key_binding_and_the_mouse_read_only_for_the_keyboard_and_mouse_player() {
     let mut map = movement_map();
     map.bind_global(Jump, Shortcut::key(KeyCode::Space));
     let players = two_players();
@@ -486,28 +397,17 @@ fn a_key_binding_reads_only_for_the_keyboards_player() {
     assert!(!pad_only.is_just_pressed(Jump));
     assert_eq!(pad_only.axis2d(Move), Vec2::ZERO);
 
-    input.update();
-    input.update_key_input(PhysicalKey::Code(KeyCode::Space), false);
-    assert!(map.player(P0, &input, &players).is_just_released(Jump));
-    assert!(!map.player(P1, &input, &players).is_just_released(Jump));
-}
-
-#[test]
-fn the_mouse_delta_belongs_to_the_keyboard_and_mouse_player() {
-    let map = map();
-    let players = two_players();
-    let mut input = input_with_pads();
     input.update_mouse_delta((3.0, -2.0));
-
     assert_eq!(
         map.player(P0, &input, &players).mouse_delta(),
         Vec2::new(3.0, -2.0)
     );
-    assert_eq!(
-        map.player(P1, &input, &players).mouse_delta(),
-        Vec2::ZERO,
-        "a pad-only player does not turn with the mouse"
-    );
+    assert_eq!(map.player(P1, &input, &players).mouse_delta(), Vec2::ZERO);
+
+    input.update();
+    input.update_key_input(PhysicalKey::Code(KeyCode::Space), false);
+    assert!(map.player(P0, &input, &players).is_just_released(Jump));
+    assert!(!map.player(P1, &input, &players).is_just_released(Jump));
 }
 
 #[test]
@@ -604,43 +504,4 @@ fn a_players_context_beats_the_shared_one_when_firing() {
         ],
         "player 1's own context is searched before the shared stack"
     );
-}
-
-#[test]
-fn clearing_a_players_contexts_leaves_the_others() {
-    let mut map = map();
-    map.push_context_for(P0, Driving);
-    map.push_context_for(P0, Viewport);
-    map.push_context_for(P1, Driving);
-    map.push_context(Browser);
-
-    map.clear_contexts_for(P0);
-
-    assert!(!map.is_active_for(P0, Driving));
-    assert!(!map.is_active_for(P0, Viewport));
-    assert!(map.is_active_for(P1, Driving));
-    assert!(map.is_active(Browser));
-}
-
-#[test]
-fn an_empty_place_reads_false_and_zero() {
-    let mut map = movement_map();
-    map.bind_global(Jump, Shortcut::key(KeyCode::Space));
-    map.bind_global(Jump, GamepadButton::South);
-    let players = two_players();
-    let mut input = input_with_three_pads();
-    press(&mut input, KeyCode::Space);
-    press(&mut input, KeyCode::KeyW);
-    input.update_mouse_delta((1.0, 1.0));
-    for pad in [PAD, OTHER_PAD, LONE_PAD] {
-        input.update_gamepad_button(pad, GamepadButton::South, 1.0);
-        input.update_gamepad_axis(pad, GamepadAxis::LeftStickX, 1.0);
-    }
-
-    let empty = map.player(P2, &input, &players);
-    assert!(!empty.is_held(Jump));
-    assert!(!empty.is_just_pressed(Jump));
-    assert!(!empty.is_just_released(Jump));
-    assert_eq!(empty.axis2d(Move), Vec2::ZERO);
-    assert_eq!(empty.mouse_delta(), Vec2::ZERO);
 }

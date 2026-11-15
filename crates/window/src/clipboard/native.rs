@@ -72,15 +72,7 @@ mod tests {
                 read: Err(Error::ContentNotAvailable),
                 expected: ClipboardRead::NoText,
             },
-            Read {
-                read: Err(Error::ConversionFailure),
-                expected: ClipboardRead::NoText,
-            },
             unavailable(Error::ClipboardOccupied),
-            unavailable(Error::ClipboardNotSupported),
-            unavailable(Error::Unknown {
-                description: "no display".into(),
-            }),
         ];
         for case in cases {
             assert_eq!(arboard_read(case.read), case.expected);

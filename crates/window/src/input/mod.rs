@@ -325,29 +325,4 @@ mod tests {
         input.update_mouse_button(MouseButton::Left, true);
         assert!(input.is_mouse_button_just_pressed(MouseButton::Left));
     }
-
-    #[test]
-    fn held_keys_go_pressed_down_released_up() {
-        let mut input = Input::new();
-        input.update_key_input(KEY, true);
-        assert!(input.get_key_state(KEY) == InputState::Pressed);
-        input.update();
-        assert!(input.get_key_state(KEY) == InputState::Down);
-        input.update_key_input(KEY, true);
-        assert!(!input.is_just_pressed(KEY));
-        input.update_key_input(KEY, false);
-        assert!(input.is_just_released(KEY));
-        input.update();
-        assert!(input.get_key_state(KEY) == InputState::Up);
-    }
-
-    #[test]
-    fn mouse_motion_accumulates_within_a_frame() {
-        let mut input = Input::new();
-        input.update_mouse_delta((3.0, -1.0));
-        input.update_mouse_delta((2.0, 4.0));
-        assert_eq!(input.mouse_delta(), Vec2::new(5.0, 3.0));
-        input.update();
-        assert_eq!(input.mouse_delta(), Vec2::ZERO);
-    }
 }

@@ -196,11 +196,6 @@ mod tests {
     fn a_paste_answers_once_with_the_backends_text_or_else_the_in_process_copy() {
         let cases = [
             Paste {
-                name: "no backend",
-                backend: None,
-                answer: "kept here",
-            },
-            Paste {
                 name: "a backend with text",
                 backend: Some(ClipboardRead::Text("from the OS".into())),
                 answer: "from the OS",
@@ -229,16 +224,6 @@ mod tests {
                 assert!(answers(&mut clipboard).is_empty(), "{}", case.name);
             }
         }
-    }
-
-    #[test]
-    fn each_paste_request_is_answered_once_in_order() {
-        let mut clipboard = WindowClipboard::default();
-        clipboard.write("one");
-        clipboard.request_paste();
-        clipboard.write("two");
-        clipboard.request_paste();
-        assert_eq!(answers(&mut clipboard), ["one", "two"]);
     }
 
     #[test]

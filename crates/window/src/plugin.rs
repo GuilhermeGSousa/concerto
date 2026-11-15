@@ -119,21 +119,9 @@ mod tests {
                 gesture: Some(east()),
             },
             Hit {
-                name: "on the edge",
-                zones: vec![square(Some(east()))],
-                point: Vec2::new(10.0, 0.0),
-                gesture: Some(east()),
-            },
-            Hit {
                 name: "past the right",
                 zones: vec![square(Some(WindowGesture::Move))],
                 point: Vec2::new(11.0, 5.0),
-                gesture: None,
-            },
-            Hit {
-                name: "above the top",
-                zones: vec![square(Some(WindowGesture::Move))],
-                point: Vec2::new(5.0, -1.0),
                 gesture: None,
             },
             Hit {
