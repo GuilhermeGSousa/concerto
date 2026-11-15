@@ -209,7 +209,8 @@ executable's directory otherwise.
 ## Editor
 
 A game that has an editor is a library plus a thin binary; `tech-demo` and
-`one-more-night` are built that way, and `ui-showcase` is a binary only. The library
+`one-more-night`, in their own repositories beside this one, are built that
+way, and `ui-showcase` is a binary only. The library
 exposes one recipe, `pub fn game(app: &mut App)`, which registers the game's
 plugins, components, systems, and startup scene; `main` is
 `concerto::run(<game>::game, concerto::content_registry!())`. The editor is a
@@ -221,7 +222,8 @@ game's `Cargo.toml` lists editor extension crates. A game without an
 `editor/` crate has no editor:
 
 ```sh
-cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
+cd ../tech-demo
+cargo run -p tech-demo-editor -- --project <scratch copy of the tech demo>
 ```
 
 `--project <dir>` opens that project's `content/` tree instead of the game's

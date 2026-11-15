@@ -11,12 +11,13 @@ is not the path.
 ## Run
 
 ```sh
-cd examples/tech-demo
+cd ../tech-demo
 trunk serve
 ```
 
-It serves at `http://127.0.0.1:8080`. `tech-demo` and
-`one-more-night` have a `Trunk.toml` and an `index.html`; an example without them does not run on the
+It serves at `http://127.0.0.1:8080`. The games in the sibling repositories,
+`../tech-demo` and `../one-more-night`, have a `Trunk.toml` and an
+`index.html`; a game without them, such as `ui-showcase`, does not run on the
 web yet.
 
 `trunk serve` is uncooked: the motion database is derived in the browser, on
@@ -24,7 +25,7 @@ the main thread, so the page stalls at startup. The cooked build carries the
 derived blob and doesn't:
 
 ```sh
-cargo concerto build examples/tech-demo --cook --target wasm32-unknown-unknown --dist <dir>
+cargo concerto build ../tech-demo --cook --target wasm32-unknown-unknown --dist <dir>
 ```
 
 It runs `trunk build` into `<dir>` and stages the cooked files over it; serve

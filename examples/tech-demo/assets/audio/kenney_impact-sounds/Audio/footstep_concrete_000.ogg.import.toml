@@ -1,6 +1,0 @@
-version = 1
-source_id = "3ec800db-05b1-40d8-b452-250cacef9d58"
-importer = "audio"
-
-[outputs.main]
-asset_id = "b45ad0ce-c96d-4eb8-979b-d8e652ccdc31"

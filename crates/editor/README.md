@@ -10,7 +10,8 @@ scene is edited with the game's own systems and components. A game without an
 `editor/` crate has no editor. `cargo concerto editor <dir>` generates one.
 
 ```sh
-cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
+cd ../tech-demo
+cargo run -p tech-demo-editor -- --project <scratch copy of the tech demo>
 ```
 
 Add `--decorated` to use the window manager's title bar.
@@ -76,15 +77,18 @@ no window, served over [MCP](https://modelcontextprotocol.io) on stdin and
 stdout. Logs stay on stderr.
 
 ```sh
-cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
+cd ../tech-demo
+cargo run -p tech-demo-editor -- --mcp --project <scratch copy of the tech demo>
 ```
 
-`.mcp.json` at the repository root registers it as the `concerto` server, so an
+`.mcp.json` at the repository root registers it as the `concerto` server, built
+from the tech demo checked out beside this repository in `../tech-demo`, so an
 agent working in the repository can start its own editor. That entry opens the
 game's own project; an agent that will change anything opens a scratch copy
 with `open_project` first. The entry runs `cargo run`, which compiles the editor
 before it starts and can outlast an MCP client's connect timeout, so build it
-first with `cargo build -p tech-demo-editor`.
+first with
+`cargo build --manifest-path ../tech-demo/Cargo.toml -p tech-demo-editor`.
 
 The editor draws into a 1600×900 picture unless `--mcp-size <width>x<height>`
 names another size. `--decorated` is ignored there, and `--mcp-size` without

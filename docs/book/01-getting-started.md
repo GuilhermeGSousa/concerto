@@ -8,7 +8,7 @@ and, for the browser, the wasm target and Trunk. Then check that an example
 runs:
 
 ```sh
-cargo run -p tech-demo
+cargo run -p ui-showcase
 ```
 
 The first build compiles Jolt, a C++ physics library, and takes a few minutes.

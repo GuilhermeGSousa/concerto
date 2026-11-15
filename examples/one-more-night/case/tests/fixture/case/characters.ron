@@ -1,5 +1,0 @@
-[
-    Character(id: "npc_a", name: "npc_a.name", portrait: "portrait_01", questioned_by: Guest),
-    Character(id: "npc_b", name: "npc_b.name", portrait: "portrait_02", questioned_by: Staff),
-    Character(id: "npc_c", name: "npc_c.name", portrait: "portrait_02", questioned_by: Guest),
-]

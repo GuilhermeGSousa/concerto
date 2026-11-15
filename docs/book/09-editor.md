@@ -131,8 +131,9 @@ in the editor's README, and `cargo run -p concerto-editor --example custom_prope
 `--mcp` runs the whole editor with no window and serves it over
 [MCP](https://modelcontextprotocol.io) on stdin and stdout, so an AI agent can
 open scenes, look at them, edit them, save, and play the game. The repository's
-`.mcp.json` registers `tech-demo-editor -- --mcp` with Claude Code; build the
-editor first, since a client gives up if starting it takes too long:
+`.mcp.json` registers `tech-demo-editor -- --mcp` with Claude Code, built from
+the tech demo checked out beside it in `../tech-demo`; build the editor first,
+since a client gives up if starting it takes too long:
 
 ```sh
 cargo build -p my-game-editor
