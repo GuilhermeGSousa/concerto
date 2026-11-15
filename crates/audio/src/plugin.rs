@@ -1,6 +1,7 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::IntoSystemConfig;
 
+use crate::audio::advance_fallback;
 use crate::mixer::apply_mixer;
 use crate::player::{
     fail_sounds, finish_sounds, start_sounds, stop_removed_player, stop_replaced_player,
@@ -30,7 +31,14 @@ impl Plugin for AudioPlugin {
         app.add_system(Update, apply_mixer)
             .add_system(
                 Update,
-                (start_sounds, fail_sounds, update_sounds, finish_sounds).chain(),
+                (
+                    advance_fallback,
+                    start_sounds,
+                    fail_sounds,
+                    update_sounds,
+                    finish_sounds,
+                )
+                    .chain(),
             )
             .add_listener(stop_removed_player)
             .add_listener(stop_replaced_player);

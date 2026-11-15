@@ -185,11 +185,10 @@ fn a_player_plays_its_clip_on_its_bus_and_ends_as_its_settings_say() {
     );
     assert_eq!(playback.sounds_on(AudioBus::Effects), 1);
 
-    playback
-        .app
-        .main_mut()
-        .world_mut()
-        .insert(AudioPlayer::new(tone).with_end(PlaybackEnd::Keep), kept);
+    playback.app.main_mut().world_mut().insert(
+        AudioPlayer::new(tone.clone()).with_end(PlaybackEnd::Keep),
+        kept,
+    );
     assert_eq!(playback.step(0.0), []);
     assert_eq!(playback.sounds_on(AudioBus::Effects), 2);
     assert_eq!(
@@ -198,6 +197,23 @@ fn a_player_plays_its_clip_on_its_bus_and_ends_as_its_settings_say() {
         "a re-inserted player plays again"
     );
     assert!(playback.is_alive(looping));
+
+    playback
+        .app
+        .main_mut()
+        .world_mut()
+        .insert(AudioPlayer::new(tone).with_looping(true), looping);
+    playback.step(0.0);
+    assert_eq!(
+        playback.step(0.02),
+        [],
+        "a player inserted over a playing one sends nothing"
+    );
+    assert_eq!(
+        playback.sounds_on(AudioBus::Effects),
+        1,
+        "a player inserted over a playing one stops the old sound"
+    );
 }
 
 #[test]

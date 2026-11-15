@@ -51,7 +51,7 @@ When a sound ends, a `SoundFinished { entity }` event is sent once, and then
   new one is inserted.
 
 A player whose clip fails to load warns and ends the same way, with its
-`SoundFinished`. One spawned after its clip failed waits silently, since the
+`SoundFinished`, whether or not an output is open yet. One spawned after its clip failed waits silently, since the
 failure event has passed.
 
 ## Buses
@@ -68,8 +68,11 @@ and inserts `Audio`:
 
 - `AudioBackend::Device`, the default, opens the default output device. With
   no device (CI, a container, a server) it warns once and runs silently on
-  kira's mock backend.
+  kira's mock backend, which follows the game's clock, so sounds still end
+  and send `SoundFinished` on time.
 - `AudioBackend::Mock` always uses the mock backend, at 1000 frames a second.
+  It renders only when `Audio::advance` is called, so a test sets the pace and
+  nothing ends until it does.
   `concerto::headless` inserts it before the recipe; a test that registers
   `AudioPlugin` itself inserts it before the plugin.
 

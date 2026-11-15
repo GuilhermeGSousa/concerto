@@ -1,4 +1,5 @@
-use concerto_ecs::Resource;
+use concerto_ecs::{Res, ResMut, Resource};
+use concerto_foundation::time::Time;
 use kira::{
     AudioManager, AudioManagerSettings, PlaySoundError,
     backend::{
@@ -50,11 +51,13 @@ impl Output {
 pub struct Audio {
     output: Output,
     buses: [TrackHandle; 4],
+    follows_time: bool,
 }
 
 impl Audio {
     pub(crate) fn open(backend: AudioBackend, mixer: &AudioMixer) -> Self {
         let main = MainTrackBuilder::new().volume(decibels(mixer.master));
+        let mut follows_time = false;
         let mut output = match backend {
             AudioBackend::Device => {
                 match AudioManager::<CpalBackend>::new(AudioManagerSettings {
@@ -64,6 +67,7 @@ impl Audio {
                     Ok(manager) => Output::Device(Box::new(manager)),
                     Err(error) => {
                         log::warn!("no audio device, so the game plays silently: {error}");
+                        follows_time = true;
                         Output::Mock(mock(MainTrackBuilder::new().volume(decibels(mixer.master))))
                     }
                 }
@@ -71,7 +75,11 @@ impl Audio {
             AudioBackend::Mock => Output::Mock(mock(main)),
         };
         let buses = AudioBus::ALL.map(|bus| output.add_bus(mixer.bus(bus)));
-        Self { output, buses }
+        Self {
+            output,
+            buses,
+            follows_time,
+        }
     }
 
     /// Renders `seconds` of audio on the mock backend; does nothing on a device, whose audio thread renders on its own.
@@ -85,6 +93,10 @@ impl Audio {
             backend.on_start_processing();
             backend.process();
         }
+    }
+
+    pub(crate) fn follows_time(&self) -> bool {
+        self.follows_time
     }
 
     /// How many sounds are playing on `bus`.
@@ -121,4 +133,12 @@ fn mock(main: MainTrackBuilder) -> Box<AudioManager<MockBackend>> {
     })
     .expect("the mock backend always starts");
     Box::new(manager)
+}
+
+pub(crate) fn advance_fallback(audio: Option<ResMut<Audio>>, time: Res<Time>) {
+    if let Some(mut audio) = audio
+        && audio.follows_time()
+    {
+        audio.advance(time.delta().as_secs_f32());
+    }
 }

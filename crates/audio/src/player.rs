@@ -132,10 +132,7 @@ fn end(
     finished.write(SoundFinished { entity });
     match end {
         PlaybackEnd::Despawn => cmd.despawn(entity),
-        PlaybackEnd::Remove => {
-            cmd.remove::<AudioPlayer>(entity);
-            cmd.remove::<PlayingSound>(entity);
-        }
+        PlaybackEnd::Remove => cmd.remove::<AudioPlayer>(entity),
         PlaybackEnd::Keep => {
             cmd.remove::<PlayingSound>(entity);
             cmd.insert(SoundDone, entity);
@@ -177,15 +174,10 @@ pub(crate) fn start_sounds(
 pub(crate) fn fail_sounds(
     mut failed: EventReader<AssetLoadFailed>,
     players: Query<(Entity, &AudioPlayer), (Without<PlayingSound>, Without<SoundDone>)>,
-    audio: Option<ResMut<Audio>>,
     mut finished: EventWriter<SoundFinished>,
     mut cmd: CommandQueue,
 ) {
-    let failed: Vec<AssetId> = failed.read().map(|event| event.id).collect();
-    if audio.is_none() {
-        return;
-    }
-    for id in failed {
+    for id in failed.read().map(|event| event.id) {
         for (entity, player) in players.iter() {
             if player.clip.id() == id {
                 log::warn!("{entity:?} plays nothing: its clip {id:?} failed to load");
@@ -233,26 +225,35 @@ pub(crate) fn finish_sounds(
     }
 }
 
-fn stop(entity: Entity, sounds: &Query<&mut PlayingSound>, cmd: &mut CommandQueue) {
+fn stop(
+    entity: Entity,
+    sounds: &Query<&mut PlayingSound>,
+    done: &Query<&SoundDone>,
+    cmd: &mut CommandQueue,
+) {
     if let Some(mut playing) = sounds.get_entity(entity) {
         playing.handle.stop(FADE);
+        cmd.remove::<PlayingSound>(entity);
     }
-    cmd.remove::<PlayingSound>(entity);
-    cmd.remove::<SoundDone>(entity);
+    if done.get_entity(entity).is_some() {
+        cmd.remove::<SoundDone>(entity);
+    }
 }
 
 pub(crate) fn stop_removed_player(
     on: On<Remove<AudioPlayer>>,
     sounds: Query<&mut PlayingSound>,
+    done: Query<&SoundDone>,
     mut cmd: CommandQueue,
 ) {
-    stop(on.signal().entity, &sounds, &mut cmd);
+    stop(on.signal().entity, &sounds, &done, &mut cmd);
 }
 
 pub(crate) fn stop_replaced_player(
     on: On<Replace<AudioPlayer>>,
     sounds: Query<&mut PlayingSound>,
+    done: Query<&SoundDone>,
     mut cmd: CommandQueue,
 ) {
-    stop(on.signal().entity, &sounds, &mut cmd);
+    stop(on.signal().entity, &sounds, &done, &mut cmd);
 }
