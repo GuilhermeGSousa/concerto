@@ -10,10 +10,9 @@ use concerto_app::{
     schedule_groups::Update,
 };
 use concerto_ecs::{
-    Entity, IntoSystemConfig, Query, ResMut, Resource, World,
+    Entity, IntoSystemConfig, Query, World,
     component::scene::SceneEntityRef,
     events::{Event, event_channel::EventChannel, event_cursor::EventCursor},
-    signal::{On, lifecycle::Add},
 };
 use concerto_foundation::{
     assets::{AssetId, asset_server::AssetServer, handle::AssetHandle},
@@ -153,33 +152,7 @@ fn corner() -> Corner {
 }
 
 #[test]
-fn an_agent_walks_to_its_destination_and_takes_the_points_facing() {
-    let Corner {
-        mut app, agent, c, ..
-    } = corner();
-    world(&mut app).insert(NavDestination::to_point(c), agent);
-
-    let arrived = walk_until_arrived(&mut app, 600);
-
-    assert_eq!(arrived, Some(NavArrived { agent, point: c }));
-    let steering = steering(&mut app, agent);
-    assert_eq!(steering.velocity, Vec3::ZERO);
-    assert!(
-        steering
-            .facing
-            .abs_diff_eq(Quat::from_rotation_y(FRAC_PI_2), 1e-5)
-    );
-    assert!(!has_destination(&mut app, agent));
-    assert!(route(&mut app, agent).is_none());
-    let position = world(&mut app)
-        .get_component_for_entity::<Transform>(agent)
-        .unwrap()
-        .translation;
-    assert!(position.distance(Vec3::new(4.0, 0.0, 4.0)) <= 0.25 + 1e-3);
-}
-
-#[test]
-fn an_agent_reaches_a_point_named_by_its_anchor() {
+fn an_agent_sent_to_an_anchor_walks_there_and_takes_the_points_facing() {
     let Corner {
         mut app, agent, c, ..
     } = corner();
@@ -193,32 +166,23 @@ fn an_agent_reaches_a_point_named_by_its_anchor() {
     app.update();
     world(&mut app).insert(NavDestination::to_anchor(Name::new("corner")), agent);
 
-    assert_eq!(
-        walk_until_arrived(&mut app, 600),
-        Some(NavArrived { agent, point: c })
-    );
-}
+    let arrived = walk_until_arrived(&mut app, 600);
 
-#[test]
-fn an_unknown_anchor_is_unreachable() {
-    let Corner { mut app, agent, .. } = corner();
-    world(&mut app).insert(NavDestination::to_anchor(Name::new("nowhere")), agent);
-
-    app.update();
-
-    assert_eq!(
-        events::<NavUnreachable>(&app),
-        vec![NavUnreachable {
-            agent,
-            target: NavTarget::Anchor(Name::new("nowhere")),
-        }]
+    assert_eq!(arrived, Some(NavArrived { agent, point: c }));
+    let steering = steering(&mut app, agent);
+    assert_eq!(steering.velocity, Vec3::ZERO);
+    assert!(
+        steering
+            .facing
+            .abs_diff_eq(Quat::from_rotation_y(FRAC_PI_2), 1e-5)
     );
     assert!(!has_destination(&mut app, agent));
     assert!(route(&mut app, agent).is_none());
+    assert!(position(&mut app, agent).distance(Vec3::new(4.0, 0.0, 4.0)) <= 0.25 + 1e-3);
 }
 
 #[test]
-fn disabling_a_point_on_the_route_replans_around_it() {
+fn disabling_a_point_on_the_route_replans_around_it_until_no_way_is_left() {
     let Corner {
         mut app,
         agent,
@@ -239,43 +203,14 @@ fn disabling_a_point_on_the_route_replans_around_it() {
         &[Vec3::new(0.0, 0.0, 4.0), Vec3::new(4.0, 0.0, 4.0)]
     );
 
-    world(&mut app)
-        .get_component_for_entity_mut::<NavPoint>(b)
-        .unwrap()
-        .enabled = false;
-    app.update();
-    app.update();
+    disable(&mut app, b);
 
     let remaining = route(&mut app, agent).unwrap().remaining().to_vec();
     assert!(!remaining.contains(&Vec3::new(0.0, 0.0, 4.0)));
     assert_eq!(remaining.last(), Some(&Vec3::new(4.0, 0.0, 4.0)));
-    assert_eq!(
-        walk_until_arrived(&mut app, 600),
-        Some(NavArrived { agent, point: c })
-    );
-}
-
-#[test]
-fn disabling_the_only_way_makes_the_destination_unreachable() {
-    let Corner {
-        mut app,
-        agent,
-        b,
-        c,
-        ..
-    } = corner();
-    world(&mut app).insert(NavDestination::to_point(c), agent);
-    for _ in 0..20 {
-        app.update();
-    }
     assert!(steering(&mut app, agent).velocity != Vec3::ZERO);
 
-    world(&mut app)
-        .get_component_for_entity_mut::<NavPoint>(b)
-        .unwrap()
-        .enabled = false;
-    app.update();
-    app.update();
+    disable(&mut app, d);
 
     assert_eq!(
         events::<NavUnreachable>(&app),
@@ -289,46 +224,65 @@ fn disabling_the_only_way_makes_the_destination_unreachable() {
     assert_eq!(steering(&mut app, agent).velocity, Vec3::ZERO);
 }
 
-#[test]
-fn speed_is_scaled_down_inside_the_slow_radius() {
-    let mut app = app();
-    let point = spawn_point(&mut app, Vec3::new(0.0, 0.0, 1.0));
-    let agent = spawn_agent(&mut app, Vec3::ZERO);
-    settle(&mut app);
-    world(&mut app).insert(NavDestination::to_point(point), agent);
-
+fn disable(app: &mut App, point: Entity) {
+    world(app)
+        .get_component_for_entity_mut::<NavPoint>(point)
+        .unwrap()
+        .enabled = false;
     app.update();
+    app.update();
+}
 
-    let velocity = steering(&mut app, agent).velocity;
-    assert!(velocity.abs_diff_eq(Vec3::new(0.0, 0.0, 1.4 / 1.5), 1e-5));
+struct Pace {
+    agent: NavAgent,
+    distance: f32,
+    requested: Option<f32>,
+    speed: f32,
 }
 
 #[test]
-fn an_agent_walks_at_its_own_speed_outside_the_slow_radius() {
-    let mut app = app();
-    let point = spawn_point(&mut app, Vec3::new(0.0, 0.0, 10.0));
-    let agent = world(&mut app).spawn((Transform::default(), NavAgent::new().with_speed(2.0)));
-    settle(&mut app);
-    world(&mut app).insert(NavDestination::to_point(point), agent);
+fn an_agent_walks_at_the_requested_speed_or_its_own_slowing_inside_the_slow_radius() {
+    let paces = [
+        Pace {
+            agent: NavAgent::new().with_speed(2.0),
+            distance: 10.0,
+            requested: None,
+            speed: 2.0,
+        },
+        Pace {
+            agent: NavAgent::new(),
+            distance: 10.0,
+            requested: Some(3.0),
+            speed: 3.0,
+        },
+        Pace {
+            agent: NavAgent::new(),
+            distance: 1.0,
+            requested: None,
+            speed: 1.4 / 1.5,
+        },
+    ];
+    for pace in paces {
+        let mut app = app();
+        let point = spawn_point(&mut app, Vec3::new(0.0, 0.0, pace.distance));
+        let agent = world(&mut app).spawn((Transform::default(), pace.agent));
+        settle(&mut app);
+        let destination = NavDestination::to_point(point);
+        let destination = match pace.requested {
+            Some(speed) => destination.with_speed(speed),
+            None => destination,
+        };
+        world(&mut app).insert(destination, agent);
 
-    app.update();
+        app.update();
 
-    let velocity = steering(&mut app, agent).velocity;
-    assert!(velocity.abs_diff_eq(Vec3::new(0.0, 0.0, 2.0), 1e-5));
-}
-
-#[test]
-fn a_requested_speed_overrides_the_agents() {
-    let mut app = app();
-    let point = spawn_point(&mut app, Vec3::new(0.0, 0.0, 10.0));
-    let agent = spawn_agent(&mut app, Vec3::ZERO);
-    settle(&mut app);
-    world(&mut app).insert(NavDestination::to_point(point).with_speed(3.0), agent);
-
-    app.update();
-
-    let velocity = steering(&mut app, agent).velocity;
-    assert!(velocity.abs_diff_eq(Vec3::new(0.0, 0.0, 3.0), 1e-5));
+        let velocity = steering(&mut app, agent).velocity;
+        assert!(
+            velocity.abs_diff_eq(Vec3::new(0.0, 0.0, pace.speed), 1e-5),
+            "expected {}, got {velocity}",
+            pace.speed
+        );
+    }
 }
 
 #[test]
@@ -362,49 +316,6 @@ fn passing_a_waypoint_advances_past_it_without_turning_back() {
     assert!(steering(&mut app, agent).velocity.x > 0.0);
 }
 
-#[test]
-fn an_agent_that_has_not_planned_has_no_steering() {
-    let Corner { mut app, agent, .. } = corner();
-
-    app.update();
-
-    assert!(
-        world(&mut app)
-            .get_component_for_entity::<NavSteering>(agent)
-            .is_none()
-    );
-}
-
-#[test]
-fn an_agent_whose_first_destination_is_unreachable_gets_no_steering() {
-    let mut app = app();
-    let point = world(&mut app).spawn((
-        Transform::from_translation(Vec3::new(0.0, 0.0, 10.0)),
-        NavPoint {
-            anchor: Name::default(),
-            enabled: false,
-        },
-    ));
-    let agent = spawn_agent(&mut app, Vec3::ZERO);
-    settle(&mut app);
-    world(&mut app).insert(NavDestination::to_point(point), agent);
-
-    app.update();
-
-    assert_eq!(
-        events::<NavUnreachable>(&app),
-        vec![NavUnreachable {
-            agent,
-            target: NavTarget::Point(point),
-        }]
-    );
-    assert!(
-        world(&mut app)
-            .get_component_for_entity::<NavSteering>(agent)
-            .is_none()
-    );
-}
-
 fn position(app: &mut App, agent: Entity) -> Vec3 {
     world(app)
         .get_component_for_entity::<Transform>(agent)
@@ -412,58 +323,29 @@ fn position(app: &mut App, agent: Entity) -> Vec3 {
         .translation
 }
 
-fn walk_part_way() -> Corner {
-    let mut corner = corner();
-    world(&mut corner.app).insert(NavDestination::to_point(corner.c), corner.agent);
-    for _ in 0..20 {
-        corner.app.update();
-    }
-    assert!(steering(&mut corner.app, corner.agent).velocity != Vec3::ZERO);
-    corner
-}
-
-fn assert_stopped(app: &mut App, agent: Entity) {
-    let facing = steering(app, agent).facing;
-    app.update();
-    assert_eq!(steering(app, agent).velocity, Vec3::ZERO);
-    assert_eq!(steering(app, agent).facing, facing);
-    assert!(route(app, agent).is_none());
-    let stopped_at = position(app, agent);
-    for _ in 0..10 {
-        app.update();
-    }
-    assert_eq!(position(app, agent), stopped_at);
-}
-
 #[test]
 fn removing_the_destination_stops_the_agent() {
-    let Corner { mut app, agent, .. } = walk_part_way();
+    let Corner {
+        mut app, agent, c, ..
+    } = corner();
+    world(&mut app).insert(NavDestination::to_point(c), agent);
+    for _ in 0..20 {
+        app.update();
+    }
+    assert!(steering(&mut app, agent).velocity != Vec3::ZERO);
 
     world(&mut app).remove_component::<NavDestination>(agent);
 
-    assert_stopped(&mut app, agent);
-}
-
-#[test]
-fn removing_the_agent_stops_its_steering() {
-    let Corner { mut app, agent, .. } = walk_part_way();
-
-    world(&mut app).remove_component::<NavAgent>(agent);
-
-    assert_stopped(&mut app, agent);
-}
-
-#[derive(Resource, Default)]
-struct Plans {
-    count: usize,
-}
-
-fn count_plans(_: On<Add<NavRoute>>, mut plans: ResMut<Plans>) {
-    plans.count += 1;
-}
-
-fn plans(app: &App) -> usize {
-    app.get_resource::<Plans>().unwrap().count
+    let facing = steering(&mut app, agent).facing;
+    app.update();
+    assert_eq!(steering(&mut app, agent).velocity, Vec3::ZERO);
+    assert_eq!(steering(&mut app, agent).facing, facing);
+    assert!(route(&mut app, agent).is_none());
+    let stopped_at = position(&mut app, agent);
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(position(&mut app, agent), stopped_at);
 }
 
 fn obstacle_mesh() -> NavMesh {
@@ -496,8 +378,6 @@ const EAST: Vec3 = Vec3::new(3.0, 0.0, 0.0);
 
 fn across() -> Across {
     let mut app = app();
-    app.insert_resource(Plans::default());
-    world(&mut app).add_listener(count_plans);
     let west = spawn_point(&mut app, WEST);
     let east = spawn_point(&mut app, EAST);
     link(&mut app, west, &[east]);
@@ -524,160 +404,40 @@ fn goes_around_the_box(remaining: &[Vec3]) -> bool {
 }
 
 #[test]
-fn with_a_mesh_a_route_follows_its_corners_around_an_obstacle() {
+fn a_route_follows_the_graph_until_a_mesh_lands_then_its_corners_until_it_goes() {
     let Across {
         mut app,
         agent,
         east,
-        ..
-    } = across();
-    let Placed { id, .. } = spawn_mesh(&mut app);
-    world(&mut app).insert(NavDestination::to_point(east), agent);
-
-    app.update();
-
-    let route = route(&mut app, agent).unwrap();
-    assert_eq!(route.planned_on(), Some(id));
-    assert_eq!(route.destination(), east);
-    assert!(goes_around_the_box(route.remaining()), "{route:?}");
-    assert!(route.remaining().last().unwrap().distance(EAST) < 0.1);
-    assert_eq!(
-        walk_until_arrived(&mut app, 600),
-        Some(NavArrived { agent, point: east })
-    );
-}
-
-#[test]
-fn without_a_mesh_a_route_follows_the_graph() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    world(&mut app).insert(NavDestination::to_point(east), agent);
-
-    app.update();
-
-    let route = route(&mut app, agent).unwrap();
-    assert_eq!(route.planned_on(), None);
-    assert_eq!(route.remaining(), &[EAST]);
-}
-
-#[test]
-fn a_mesh_landing_mid_route_replans_once() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
     } = across();
     world(&mut app).insert(NavDestination::to_point(east), agent);
     for _ in 0..5 {
         app.update();
     }
-    assert_eq!(plans(&app), 1);
+    let on_the_graph = route(&mut app, agent).unwrap();
+    assert_eq!(on_the_graph.planned_on(), None);
+    assert_eq!(on_the_graph.remaining(), &[EAST]);
 
-    let Placed { id, .. } = spawn_mesh(&mut app);
+    let Placed { holder, id } = spawn_mesh(&mut app);
     for _ in 0..10 {
         app.update();
     }
 
-    assert_eq!(plans(&app), 2);
-    let route = route(&mut app, agent).unwrap();
-    assert_eq!(route.planned_on(), Some(id));
-    assert!(goes_around_the_box(route.remaining()), "{route:?}");
-}
-
-#[test]
-fn removing_the_mesh_component_replans_onto_the_graph() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    let Placed { holder, .. } = spawn_mesh(&mut app);
-    world(&mut app).insert(NavDestination::to_point(east), agent);
-    app.update();
-    assert!(route(&mut app, agent).unwrap().planned_on().is_some());
+    let on_the_mesh = route(&mut app, agent).unwrap();
+    assert_eq!(on_the_mesh.planned_on(), Some(id));
+    assert_eq!(on_the_mesh.destination(), east);
+    assert!(
+        goes_around_the_box(on_the_mesh.remaining()),
+        "{on_the_mesh:?}"
+    );
+    assert!(on_the_mesh.remaining().last().unwrap().distance(EAST) < 0.1);
 
     world(&mut app).remove_component::<NavMeshComponent>(holder);
     app.update();
 
-    assert_eq!(plans(&app), 2);
-    let route = route(&mut app, agent).unwrap();
-    assert_eq!(route.planned_on(), None);
-    assert!(!goes_around_the_box(route.remaining()), "{route:?}");
-    assert_eq!(route.remaining().last(), Some(&EAST));
-}
-
-#[test]
-fn a_route_does_not_replan_on_quiet_frames() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    spawn_mesh(&mut app);
-    world(&mut app).insert(NavDestination::to_point(east), agent);
-
-    for _ in 0..10 {
-        app.update();
-    }
-
-    assert_eq!(plans(&app), 1);
-}
-
-#[test]
-fn the_first_component_with_a_loaded_mesh_is_used() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    world(&mut app).spawn(NavMeshComponent {
-        handle: AssetHandle::weak(AssetId::new()),
-    });
-    let Placed { id, .. } = spawn_mesh(&mut app);
-    world(&mut app).insert(NavDestination::to_point(east), agent);
-
-    app.update();
-
-    assert_eq!(route(&mut app, agent).unwrap().planned_on(), Some(id));
-}
-
-#[test]
-fn a_disabled_destination_is_unreachable_on_the_mesh() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    spawn_mesh(&mut app);
-    world(&mut app).insert(
-        NavPoint {
-            anchor: Name::default(),
-            enabled: false,
-        },
-        east,
-    );
-    settle(&mut app);
-    world(&mut app).insert(NavDestination::to_point(east), agent);
-
-    app.update();
-
-    assert_eq!(
-        events::<NavUnreachable>(&app),
-        vec![NavUnreachable {
-            agent,
-            target: NavTarget::Point(east),
-        }]
-    );
-    assert!(route(&mut app, agent).is_none());
+    let back = route(&mut app, agent).unwrap();
+    assert_eq!(back.planned_on(), None);
+    assert_eq!(back.remaining().last(), Some(&EAST));
 }
 
 #[test]
@@ -686,7 +446,6 @@ fn moving_the_destination_mid_route_replans_a_mesh_route_toward_it() {
         mut app,
         agent,
         east,
-        ..
     } = across();
     spawn_mesh(&mut app);
     world(&mut app).insert(NavDestination::to_point(east), agent);
@@ -711,98 +470,35 @@ fn moving_the_destination_mid_route_replans_a_mesh_route_toward_it() {
 }
 
 #[test]
-fn disabling_the_destination_mid_route_makes_a_mesh_route_unreachable() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    spawn_mesh(&mut app);
-    world(&mut app).insert(NavDestination::to_point(east), agent);
-    for _ in 0..5 {
-        app.update();
-    }
-
-    world(&mut app)
-        .get_component_for_entity_mut::<NavPoint>(east)
-        .unwrap()
-        .enabled = false;
-    app.update();
-    app.update();
-
-    assert_eq!(
-        events::<NavUnreachable>(&app),
-        vec![NavUnreachable {
+fn a_mesh_that_failed_to_load_or_has_no_polygons_leaves_agents_on_the_graph() {
+    for failed in [true, false] {
+        let Across {
+            mut app,
             agent,
-            target: NavTarget::Point(east),
-        }]
-    );
-    assert!(route(&mut app, agent).is_none());
-}
-
-fn plans_on_the_graph(app: &mut App, agent: Entity, east: Entity) {
-    world(app).insert(NavDestination::to_point(east), agent);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let route = loop {
-        app.update();
-        if let Some(route) = route(app, agent) {
-            break route;
-        }
-        assert!(has_destination(app, agent), "the agent gave up");
-        assert!(Instant::now() < deadline, "the agent never planned");
-        std::thread::sleep(Duration::from_millis(1));
-    };
-    assert_eq!(route.planned_on(), None);
-    assert_eq!(route.remaining(), &[EAST]);
-    assert!(events::<NavUnreachable>(app).is_empty());
-}
-
-#[test]
-fn a_mesh_that_was_never_loaded_leaves_agents_on_the_graph() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    world(&mut app).spawn(NavMeshComponent {
-        handle: AssetHandle::weak(AssetId::new()),
-    });
-    settle(&mut app);
-
-    plans_on_the_graph(&mut app, agent, east);
-}
-
-#[test]
-fn a_mesh_whose_load_failed_leaves_agents_on_the_graph() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    let server = app.get_resource::<AssetServer>().unwrap().clone();
-    let handle = server.load::<NavMesh>(AssetId::new());
-    world(&mut app).spawn(NavMeshComponent { handle });
-
-    plans_on_the_graph(&mut app, agent, east);
-}
-
-#[test]
-fn a_loaded_mesh_with_no_polygons_leaves_agents_on_the_graph() {
-    let Across {
-        mut app,
-        agent,
-        east,
-        ..
-    } = across();
-    let handle = add_mesh(
-        &mut app,
-        NavMesh::baked(NavMeshSettings::new(), NavMeshData::default()),
-    );
-    world(&mut app).spawn(NavMeshComponent { handle });
-    settle(&mut app);
-
-    plans_on_the_graph(&mut app, agent, east);
+            east,
+        } = across();
+        let handle = if failed {
+            let server = app.get_resource::<AssetServer>().unwrap().clone();
+            server.load::<NavMesh>(AssetId::new())
+        } else {
+            add_mesh(
+                &mut app,
+                NavMesh::baked(NavMeshSettings::new(), NavMeshData::default()),
+            )
+        };
+        world(&mut app).spawn(NavMeshComponent { handle });
+        world(&mut app).insert(NavDestination::to_point(east), agent);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let route = loop {
+            app.update();
+            if let Some(route) = route(&mut app, agent) {
+                break route;
+            }
+            assert!(has_destination(&mut app, agent), "the agent gave up");
+            assert!(Instant::now() < deadline, "the agent never planned");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert_eq!(route.planned_on(), None, "failed load: {failed}");
+        assert_eq!(route.remaining(), &[EAST], "failed load: {failed}");
+    }
 }

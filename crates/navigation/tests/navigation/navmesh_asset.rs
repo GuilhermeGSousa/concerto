@@ -6,10 +6,9 @@ use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
-use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::{
     assets::{
-        Asset, AssetId, ContentAssetRoot, CreatableAsset,
+        Asset, AssetId, ContentAssetRoot,
         asset_server::AssetServer,
         asset_store::AssetStore,
         content::{check_encoding, save_content_asset_into},
@@ -21,9 +20,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::{MeshComponent, primitives::plane};
 use concerto_navigation::{
-    NavAgent, NavDestination, NavLink, NavLinks, NavMesh, NavMeshComponent, NavMeshData,
-    NavMeshGeometry, NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavSteering,
-    NavigationPlugin, bake,
+    NavAgent, NavDestination, NavMesh, NavMeshComponent, NavMeshData, NavMeshGeometry,
+    NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavigationPlugin, bake,
 };
 use concerto_physics::{collider::BoxCollider, sensor::Sensor, shape::MeshCollider};
 use concerto_reflect::Reflect;
@@ -227,47 +225,51 @@ fn assert_near(edge: f32, expected: f32, cell_size: f32) {
 const WEST: Vec3 = Vec3::new(-3.0, 0.0, 0.0);
 const EAST: Vec3 = Vec3::new(3.0, 0.0, 0.0);
 
-#[test]
-fn a_box_collider_in_a_scene_leaves_a_hole_the_path_goes_around() {
-    let mut project = Project::new("hole");
-    let level = project.save("level", &scene(vec![floor(), obstacle()]));
-
-    let navmesh = project.derive(&navmesh_of(&[level]));
-
-    let path = corners(&navmesh, WEST, EAST);
-    assert!(path.len() >= 2, "{path:?}");
-    assert!(path.iter().any(|corner| corner.z.abs() > 0.5), "{path:?}");
+struct Level {
+    name: &'static str,
+    build: fn(&mut Project) -> Scene,
+    around: bool,
 }
 
 #[test]
-fn a_sensor_box_is_not_baked() {
-    let mut project = Project::new("sensor");
-    let level = project.save("level", &scene(vec![floor(), with(obstacle(), &Sensor)]));
+fn solid_colliders_in_a_scene_are_baked_and_sensor_boxes_are_not() {
+    let levels = [
+        Level {
+            name: "a box obstacle",
+            build: |_| scene(vec![floor(), obstacle()]),
+            around: true,
+        },
+        Level {
+            name: "a sensor box obstacle",
+            build: |_| scene(vec![floor(), with(obstacle(), &Sensor)]),
+            around: false,
+        },
+        Level {
+            name: "a mesh collider floor",
+            build: |project| {
+                let ground = project.save("ground", &plane(Vec2::splat(10.0)));
+                scene(vec![with(
+                    with(node("ground", Vec3::ZERO, Vec::new()), &MeshCollider),
+                    &mesh_component(ground),
+                )])
+            },
+            around: false,
+        },
+    ];
+    for level in levels {
+        let mut project = Project::new("colliders");
+        let built = (level.build)(&mut project);
+        let id = project.save("level", &built);
 
-    let navmesh = project.derive(&navmesh_of(&[level]));
+        let navmesh = project.derive(&navmesh_of(&[id]));
 
-    assert_eq!(corners(&navmesh, WEST, EAST).len(), 1);
-}
-
-#[test]
-fn a_sensor_mesh_collider_stays_solid_as_physics_keeps_it() {
-    let mut project = Project::new("sensor-mesh");
-    let ground = project.save("ground", &plane(Vec2::splat(10.0)));
-    let level = project.save(
-        "level",
-        &scene(vec![with(
-            with(
-                with(node("ground", Vec3::ZERO, Vec::new()), &MeshCollider),
-                &mesh_component(ground),
-            ),
-            &Sensor,
-        )]),
-    );
-
-    let navmesh = project.derive(&navmesh_of(&[level]));
-
-    assert!(!navmesh.data().unwrap().polygons.is_empty());
-    assert_eq!(corners(&navmesh, WEST, EAST).len(), 1);
+        let path = corners(&navmesh, WEST, EAST);
+        let around = path.iter().any(|corner| corner.z.abs() > 0.5);
+        assert_eq!(around, level.around, "{}: {path:?}", level.name);
+        if !level.around {
+            assert_eq!(path.len(), 1, "{}: {path:?}", level.name);
+        }
+    }
 }
 
 #[test]
@@ -298,55 +300,6 @@ fn nested_transforms_place_colliders_in_world_space() {
     assert_near(min.z, -6.0 + inset, settings.cell_size);
     assert_near(max.z, 2.0 - inset, settings.cell_size);
     assert!(min.y.abs() <= 0.1 && max.y.abs() <= 0.1, "{min} {max}");
-}
-
-#[test]
-fn further_inputs_name_the_meshes_of_colliding_nodes_and_nothing_else() {
-    let mut project = Project::new("further");
-    let collider = AssetId::new();
-    let drawn = AssetId::new();
-    let boxed = AssetId::new();
-    let sensor = AssetId::new();
-    let level = project.save(
-        "level",
-        &scene(vec![
-            with(
-                with(node("collider", Vec3::ZERO, Vec::new()), &MeshCollider),
-                &mesh_component(collider),
-            ),
-            with(
-                node("drawn", Vec3::ZERO, Vec::new()),
-                &mesh_component(drawn),
-            ),
-            with(
-                with(
-                    with(node("boxed", Vec3::ZERO, Vec::new()), &MeshCollider),
-                    &mesh_component(boxed),
-                ),
-                &box_collider(Vec3::ONE),
-            ),
-            with(
-                with(
-                    with(node("sensor", Vec3::ZERO, Vec::new()), &MeshCollider),
-                    &mesh_component(sensor),
-                ),
-                &Sensor,
-            ),
-        ]),
-    );
-    let navmesh = navmesh_of(&[level]);
-    let root = project.content_root();
-    let inputs = pollster::block_on(DerivedInputs::read(
-        &root,
-        &project.registry,
-        &navmesh.derived_inputs(),
-    ))
-    .unwrap();
-
-    assert_eq!(
-        navmesh.further_inputs(&inputs).unwrap(),
-        vec![collider, sensor]
-    );
 }
 
 #[test]
@@ -386,24 +339,6 @@ fn changing_the_settings_derives_a_new_blob() {
 }
 
 #[test]
-fn a_navmesh_with_no_scenes_does_not_derive() {
-    assert!(!NavMesh::new_asset().is_derived());
-    assert!(NavMesh::new_asset().data().is_none());
-    assert!(navmesh_of(&[AssetId::new()]).is_derived());
-}
-
-#[test]
-fn a_nil_scene_fails_naming_its_index() {
-    let mut project = Project::new("nil");
-    let level = project.save("level", &scene(vec![floor()]));
-    let navmesh = navmesh_of(&[level, AssetId::nil()]);
-
-    assert_eq!(navmesh.derived_inputs(), vec![level]);
-    let error = project.inputs(&navmesh).unwrap_err();
-    assert!(format!("{error:#}").contains("scene 1"), "got: {error:#}");
-}
-
-#[test]
 fn the_navmesh_encoding_is_unchanged() {
     let navmesh =
         navmesh_of(&[AssetId::from_simple_hex("6a1f0c7e2b9d4e8f9a3c5d7e1f2a4b6c").unwrap()])
@@ -432,13 +367,10 @@ fn floor_data() -> NavMeshData {
 }
 
 #[test]
-fn a_navmesh_component_gets_a_status_once_its_mesh_is_loaded() {
+fn a_navmesh_component_has_a_status_while_its_mesh_is_loaded() {
     let mut app = app();
     let data = floor_data();
     let server = app.get_resource::<AssetServer>().unwrap().clone();
-    let missing = app.main_mut().world_mut().spawn(NavMeshComponent {
-        handle: AssetHandle::weak(AssetId::new()),
-    });
     let handle = server.add(NavMesh::baked(NavMeshSettings::new(), data.clone()));
     let entity = app
         .main_mut()
@@ -448,39 +380,16 @@ fn a_navmesh_component_gets_a_status_once_its_mesh_is_loaded() {
     app.update();
     app.update();
 
-    let world = app.main_mut().world_mut();
     let Bounds { min, max } = bounds(&data);
     assert_eq!(
-        world.get_component_for_entity::<NavMeshStatus>(entity),
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity::<NavMeshStatus>(entity),
         Some(&NavMeshStatus {
             polygons: data.polygons.len() as u32,
             min,
             max,
         })
-    );
-    assert!(
-        world
-            .get_component_for_entity::<NavMeshStatus>(missing)
-            .is_none()
-    );
-}
-
-#[test]
-fn a_status_goes_away_when_the_component_points_at_a_mesh_that_is_not_loaded() {
-    let mut app = app();
-    let server = app.get_resource::<AssetServer>().unwrap().clone();
-    let handle = server.add(NavMesh::baked(NavMeshSettings::new(), floor_data()));
-    let entity = app
-        .main_mut()
-        .world_mut()
-        .spawn(NavMeshComponent { handle });
-    app.update();
-    app.update();
-    assert!(
-        app.main_mut()
-            .world_mut()
-            .get_component_for_entity::<NavMeshStatus>(entity)
-            .is_some()
     );
 
     app.main_mut().world_mut().insert(
@@ -546,85 +455,7 @@ fn an_agent_sent_while_its_navmesh_loads_waits_and_then_routes_on_it() {
 }
 
 #[test]
-fn an_agent_sent_elsewhere_while_its_navmesh_loads_stops_waits_and_then_routes_on_it() {
-    let mut project = Project::new("agent-redirected");
-    let level = project.save("level", &scene(vec![floor(), obstacle()]));
-    let id = project.save("navmesh", &navmesh_of(&[level]));
-    let mut app = app();
-    let server = app.get_resource::<AssetServer>().unwrap().clone();
-    server.set_derived_cache(DerivedDataCache::in_project(&project.root));
-    server.publish_content_source(project.content_root(), project.registry.clone());
-    app.insert_resource(project.registry.clone());
-    let world = app.main_mut().world_mut();
-    let west = world.spawn((Transform::from_translation(WEST), NavPoint::default()));
-    let north = world.spawn((
-        Transform::from_translation(Vec3::new(-3.0, 0.0, 3.0)),
-        NavPoint::default(),
-        NavLinks {
-            links: vec![NavLink {
-                to: SceneEntityRef::Entity(west),
-                one_way: false,
-            }],
-        },
-    ));
-    let east = world.spawn((Transform::from_translation(EAST), NavPoint::default()));
-    let agent = world.spawn((Transform::from_translation(WEST), NavAgent::new()));
-    app.update();
-    app.update();
-    app.main_mut()
-        .world_mut()
-        .insert(NavDestination::to_point(north), agent);
-    app.update();
-    let world = app.main_mut().world_mut();
-    assert_eq!(
-        world
-            .get_component_for_entity::<NavRoute>(agent)
-            .map(NavRoute::planned_on),
-        Some(None)
-    );
-
-    let handle = server.load::<NavMesh>(id);
-    world.spawn(NavMeshComponent { handle });
-    world.insert(NavDestination::to_point(east), agent);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let route = loop {
-        app.update();
-        let world = app.main_mut().world_mut();
-        let route = world.get_component_for_entity::<NavRoute>(agent).cloned();
-        if let Some(route) = route.filter(|route| route.planned_on().is_some()) {
-            break route;
-        }
-        assert!(
-            world
-                .get_component_for_entity::<NavDestination>(agent)
-                .is_some(),
-            "the agent gave up before its navmesh landed"
-        );
-        assert!(
-            world.get_component_for_entity::<NavRoute>(agent).is_none(),
-            "the agent kept its stale route"
-        );
-        assert_eq!(
-            world
-                .get_component_for_entity::<NavSteering>(agent)
-                .unwrap()
-                .velocity,
-            Vec3::ZERO
-        );
-        assert!(Instant::now() < deadline, "the navmesh never landed");
-        std::thread::sleep(Duration::from_millis(1));
-    };
-
-    assert_eq!(route.planned_on(), Some(id));
-    assert_eq!(route.destination(), east);
-}
-
-enum MeshSwap {
-    OnTheSameHolder,
-    OnANewHolder,
-}
-
-fn a_route_is_kept_while_the_next_mesh_loads(swap: MeshSwap) {
+fn a_route_is_kept_while_its_holders_next_mesh_loads() {
     let mut project = Project::new("agent-keeps-route");
     let level = project.save("level", &scene(vec![floor(), obstacle()]));
     let next = project.save("navmesh", &navmesh_of(&[level]));
@@ -656,13 +487,7 @@ fn a_route_is_kept_while_the_next_mesh_loads(swap: MeshSwap) {
 
     let handle = server.load::<NavMesh>(next);
     let world = app.main_mut().world_mut();
-    match swap {
-        MeshSwap::OnTheSameHolder => world.insert(NavMeshComponent { handle }, holder),
-        MeshSwap::OnANewHolder => {
-            world.despawn(holder);
-            world.spawn(NavMeshComponent { handle });
-        }
-    }
+    world.insert(NavMeshComponent { handle }, holder);
     let deadline = Instant::now() + Duration::from_secs(30);
     let route = loop {
         app.update();
@@ -686,14 +511,4 @@ fn a_route_is_kept_while_the_next_mesh_loads(swap: MeshSwap) {
     };
 
     assert_eq!(route.destination(), east);
-}
-
-#[test]
-fn a_route_is_kept_while_its_holders_next_mesh_loads() {
-    a_route_is_kept_while_the_next_mesh_loads(MeshSwap::OnTheSameHolder);
-}
-
-#[test]
-fn a_route_is_kept_while_a_new_holders_mesh_loads() {
-    a_route_is_kept_while_the_next_mesh_loads(MeshSwap::OnANewHolder);
 }

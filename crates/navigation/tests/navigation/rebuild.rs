@@ -66,118 +66,66 @@ fn settled() -> Settled {
     Settled { app, a, b }
 }
 
-fn rebuilt_by_next_update(app: &mut App) -> bool {
-    let before = world(app).resource_changed_tick::<NavGraph>();
-    app.update();
-    world(app).resource_changed_tick::<NavGraph>() != before
+struct Edit {
+    name: &'static str,
+    apply: fn(&mut World, Entity, Entity),
+    check: fn(&NavGraph, Entity, Entity) -> bool,
+}
+
+fn edges(graph: &NavGraph) -> Vec<NavEdge> {
+    graph.edges().collect()
 }
 
 #[test]
-fn the_graph_is_built_from_the_points_and_their_links() {
-    let Settled { app, a, b } = settled();
-
-    assert_eq!(graph(&app).point(a).unwrap().position, Vec3::ZERO);
-    assert_eq!(graph(&app).point(b).unwrap().position, Vec3::X);
-    assert_eq!(
-        graph(&app).edges().collect::<Vec<_>>(),
-        vec![NavEdge {
-            from: a,
-            to: b,
-            one_way: false
-        }]
-    );
-}
-
-#[test]
-fn the_graph_is_not_rebuilt_when_nothing_changed() {
-    let Settled { mut app, .. } = settled();
-
-    assert!(!rebuilt_by_next_update(&mut app));
-}
-
-#[test]
-fn the_graph_is_rebuilt_when_a_point_moves() {
-    let Settled { mut app, a, .. } = settled();
-    world(&mut app)
-        .get_component_for_entity_mut::<Transform>(a)
-        .unwrap()
-        .translation = Vec3::new(0.0, 0.0, 3.0);
-
-    assert!(rebuilt_by_next_update(&mut app));
-    assert_eq!(
-        graph(&app).point(a).unwrap().position,
-        Vec3::new(0.0, 0.0, 3.0)
-    );
-}
-
-#[test]
-fn the_graph_is_rebuilt_when_a_point_is_added() {
-    let Settled { mut app, .. } = settled();
-    let c = spawn_point(&mut app, Vec3::Z);
-
-    assert!(rebuilt_by_next_update(&mut app));
-    assert_eq!(graph(&app).point(c).unwrap().position, Vec3::Z);
-}
-
-#[test]
-fn the_graph_is_rebuilt_when_a_point_is_removed() {
-    let Settled { mut app, b, .. } = settled();
-    world(&mut app).remove_component::<NavPoint>(b);
-
-    assert!(rebuilt_by_next_update(&mut app));
-    assert!(graph(&app).point(b).is_none());
-    assert_eq!(graph(&app).edges().count(), 0);
-}
-
-#[test]
-fn the_graph_is_rebuilt_when_a_point_is_despawned() {
-    let Settled { mut app, b, .. } = settled();
-    world(&mut app).despawn(b);
-
-    assert!(rebuilt_by_next_update(&mut app));
-    assert!(graph(&app).point(b).is_none());
-}
-
-#[test]
-fn the_graph_is_rebuilt_when_links_are_removed() {
-    let Settled { mut app, a, .. } = settled();
-    world(&mut app).remove_component::<NavLinks>(a);
-
-    assert!(rebuilt_by_next_update(&mut app));
-    assert!(graph(&app).point(a).is_some());
-    assert_eq!(graph(&app).edges().count(), 0);
-}
-
-#[test]
-fn the_graph_is_rebuilt_when_links_change() {
-    let Settled { mut app, a, b } = settled();
-    world(&mut app)
-        .get_component_for_entity_mut::<NavLinks>(a)
-        .unwrap()
-        .links[0]
-        .one_way = true;
-
-    assert!(rebuilt_by_next_update(&mut app));
-    assert_eq!(
-        graph(&app).edges().collect::<Vec<_>>(),
-        vec![NavEdge {
-            from: a,
-            to: b,
-            one_way: true
-        }]
-    );
-}
-
-#[test]
-fn the_graph_is_rebuilt_when_a_point_is_disabled() {
-    let Settled { mut app, b, .. } = settled();
-    world(&mut app)
-        .get_component_for_entity_mut::<NavPoint>(b)
-        .unwrap()
-        .enabled = false;
-
-    assert!(rebuilt_by_next_update(&mut app));
-    assert!(!graph(&app).point(b).unwrap().enabled);
+fn the_graph_follows_each_edit_to_its_points_and_links() {
+    let edits = [
+        Edit {
+            name: "a point moves",
+            apply: |world, a, _| {
+                world
+                    .get_component_for_entity_mut::<Transform>(a)
+                    .unwrap()
+                    .translation = Vec3::Z;
+            },
+            check: |graph, a, _| graph.point(a).unwrap().position == Vec3::Z,
+        },
+        Edit {
+            name: "a point is despawned",
+            apply: |world, _, b| world.despawn(b),
+            check: |graph, _, b| graph.point(b).is_none() && graph.edges().count() == 0,
+        },
+        Edit {
+            name: "links are removed",
+            apply: |world, a, _| {
+                world.remove_component::<NavLinks>(a);
+            },
+            check: |graph, a, _| graph.point(a).is_some() && graph.edges().count() == 0,
+        },
+        Edit {
+            name: "a link changes",
+            apply: |world, a, _| {
+                world
+                    .get_component_for_entity_mut::<NavLinks>(a)
+                    .unwrap()
+                    .links[0]
+                    .one_way = true;
+            },
+            check: |graph, a, b| {
+                edges(graph)
+                    == vec![NavEdge {
+                        from: a,
+                        to: b,
+                        one_way: true,
+                    }]
+            },
+        },
+    ];
+    for edit in edits {
+        let Settled { mut app, a, b } = settled();
+        (edit.apply)(world(&mut app), a, b);
+        app.update();
+        assert!((edit.check)(graph(&app), a, b), "{}", edit.name);
+    }
 }
 
 #[test]

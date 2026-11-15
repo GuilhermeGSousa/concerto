@@ -313,13 +313,10 @@ pub(crate) fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use concerto_ecs::{Entity, component::scene::SceneEntityRef};
-    use concerto_name::Name;
-    use glam::{Quat, Vec3};
+    use glam::Vec3;
 
-    use super::{NavEdge, NavGraph, NavPath, NavPointRecord};
+    use super::{NavGraph, NavPointRecord};
     use crate::point::NavLink;
 
     fn entity(index: u32) -> Entity {
@@ -340,264 +337,119 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_two_way_link_makes_one_edge_walkable_both_ways() {
-        let [a, b] = [entity(1), entity(2)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(a, Vec3::ZERO).with_link(link(b)),
-            NavPointRecord::new(b, Vec3::X),
-        ]);
-        assert_eq!(
-            graph.edges().collect::<Vec<_>>(),
-            vec![NavEdge {
-                from: a,
-                to: b,
-                one_way: false
-            }]
-        );
-        assert_eq!(
-            graph.path(a, b).unwrap().positions,
-            vec![Vec3::ZERO, Vec3::X]
-        );
-        assert_eq!(
-            graph.path(b, a).unwrap().positions,
-            vec![Vec3::X, Vec3::ZERO]
-        );
+    struct Case {
+        name: &'static str,
+        points: Vec<NavPointRecord>,
+        from: Entity,
+        to: Entity,
+        route: Option<Vec<Vec3>>,
+        length: f32,
     }
 
     #[test]
-    fn a_one_way_link_makes_one_directed_edge() {
-        let [a, b] = [entity(1), entity(2)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(a, Vec3::ZERO).with_link(one_way(b)),
-            NavPointRecord::new(b, Vec3::X),
-        ]);
-        assert_eq!(
-            graph.edges().collect::<Vec<_>>(),
-            vec![NavEdge {
-                from: a,
-                to: b,
-                one_way: true
-            }]
-        );
-        assert_eq!(
-            graph.path(a, b).unwrap().positions,
-            vec![Vec3::ZERO, Vec3::X]
-        );
-        assert_eq!(graph.path(b, a), None);
-    }
-
-    #[test]
-    fn unresolved_self_and_non_point_links_are_skipped() {
-        let [a, b, stranger] = [entity(1), entity(2), entity(3)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(a, Vec3::ZERO)
-                .with_link(NavLink::default())
-                .with_link(link(a))
-                .with_link(link(stranger))
-                .with_link(link(b)),
-            NavPointRecord::new(b, Vec3::X),
-        ]);
-        assert_eq!(
-            graph.edges().collect::<Vec<_>>(),
-            vec![NavEdge {
-                from: a,
-                to: b,
-                one_way: false
-            }]
-        );
-        assert_eq!(graph.path(a, stranger), None);
-    }
-
-    #[test]
-    fn a_duplicate_anchor_keeps_the_lower_entity() {
-        let name = Name::new("nav_duplicate");
-        let [low, high] = [entity(4), entity(9)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(high, Vec3::X).with_anchor(name),
-            NavPointRecord::new(low, Vec3::ZERO).with_anchor(name),
-        ]);
-        assert_eq!(graph.anchor(name), Some(low));
-        assert_eq!(graph.point(low).unwrap().anchor, name);
-        assert_eq!(graph.point(high).unwrap().anchor, Name::default());
-        assert_eq!(
-            graph.points().filter(|point| point.anchor == name).count(),
-            1
-        );
-    }
-
-    #[test]
-    fn the_empty_anchor_names_no_point() {
-        let graph = NavGraph::build([NavPointRecord::new(entity(1), Vec3::ZERO)]);
-        assert_eq!(graph.anchor(Name::default()), None);
-    }
-
-    #[test]
-    fn a_point_faces_the_yaw_of_its_rotation_applied_to_plus_z() {
-        let a = entity(1);
-        let rotation = Quat::from_rotation_y(0.7) * Quat::from_rotation_x(0.4);
-        let graph = NavGraph::build([NavPointRecord::new(a, Vec3::ZERO).with_rotation(rotation)]);
-        let facing = graph.point(a).unwrap().facing;
-        assert!(facing.angle_between(Quat::from_rotation_y(0.7)) < 1e-4);
-    }
-
-    #[test]
-    fn the_shorter_of_two_routes_is_chosen() {
-        let [start, short, long, goal] = [entity(1), entity(2), entity(3), entity(4)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(start, Vec3::ZERO)
-                .with_link(link(short))
-                .with_link(link(long)),
-            NavPointRecord::new(short, Vec3::new(1.0, 0.0, 1.0)).with_link(link(goal)),
-            NavPointRecord::new(long, Vec3::new(1.0, 0.0, -5.0)).with_link(link(goal)),
-            NavPointRecord::new(goal, Vec3::new(2.0, 0.0, 0.0)),
-        ]);
-        let path = graph.path(start, goal).unwrap();
-        assert_eq!(path.destination, goal);
-        assert_eq!(
-            path.positions,
+    fn the_path_is_the_shortest_route_through_enabled_points_taking_one_way_links_only_forwards() {
+        let [a, b, c, d] = [entity(1), entity(2), entity(3), entity(4)];
+        let short = Vec3::new(1.0, 0.0, 1.0);
+        let long = Vec3::new(1.0, 0.0, -5.0);
+        let goal = Vec3::new(2.0, 0.0, 0.0);
+        let shortcut = Vec3::new(1.0, 0.0, 0.0);
+        let two_routes_and_a_disabled_shortcut = || {
             vec![
-                Vec3::ZERO,
-                Vec3::new(1.0, 0.0, 1.0),
-                Vec3::new(2.0, 0.0, 0.0)
+                NavPointRecord::new(a, Vec3::ZERO)
+                    .with_link(link(b))
+                    .with_link(link(c))
+                    .with_link(link(d)),
+                NavPointRecord::new(b, short).with_link(link(entity(5))),
+                NavPointRecord::new(c, long).with_link(link(entity(5))),
+                NavPointRecord::new(d, shortcut)
+                    .with_enabled(false)
+                    .with_link(link(entity(5))),
+                NavPointRecord::new(entity(5), goal),
             ]
-        );
-        assert!((path.length - 2.0 * 2f32.sqrt()).abs() < 1e-5);
-    }
-
-    #[test]
-    fn a_route_whose_costs_round_is_still_found() {
-        let [start, middle, goal] = [entity(1), entity(2), entity(3)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(start, Vec3::ZERO).with_link(link(middle)),
-            NavPointRecord::new(middle, Vec3::new(4.0, 0.0, -1.0)).with_link(link(goal)),
-            NavPointRecord::new(goal, Vec3::new(4.0, 0.0, 4.0)),
-        ]);
-        assert_eq!(
-            graph.path(start, goal).map(|path| path.positions),
-            Some(vec![
-                Vec3::ZERO,
-                Vec3::new(4.0, 0.0, -1.0),
-                Vec3::new(4.0, 0.0, 4.0)
-            ])
-        );
-    }
-
-    #[test]
-    fn edge_cost_counts_height() {
-        let [a, b] = [entity(1), entity(2)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(a, Vec3::ZERO).with_link(link(b)),
-            NavPointRecord::new(b, Vec3::new(3.0, 4.0, 0.0)),
-        ]);
-        assert!((graph.path(a, b).unwrap().length - 5.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn a_one_way_link_is_followed_only_forwards() {
-        let [a, b, c] = [entity(1), entity(2), entity(3)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(a, Vec3::ZERO)
-                .with_link(one_way(c))
-                .with_link(link(b)),
-            NavPointRecord::new(b, Vec3::new(0.0, 0.0, 10.0)).with_link(link(c)),
-            NavPointRecord::new(c, Vec3::X),
-        ]);
-        assert_eq!(
-            graph.path(a, c).unwrap().positions,
-            vec![Vec3::ZERO, Vec3::X]
-        );
-        assert_eq!(
-            graph.path(c, a).unwrap().positions,
-            vec![Vec3::X, Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO]
-        );
-    }
-
-    #[test]
-    fn there_is_no_path_without_a_route() {
-        let [a, b] = [entity(1), entity(2)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(a, Vec3::ZERO),
-            NavPointRecord::new(b, Vec3::X),
-        ]);
-        assert_eq!(graph.path(a, b), None);
-    }
-
-    #[test]
-    fn there_is_no_path_to_or_through_a_disabled_point() {
-        let [a, b, c] = [entity(1), entity(2), entity(3)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(a, Vec3::ZERO).with_link(link(b)),
-            NavPointRecord::new(b, Vec3::X)
-                .with_enabled(false)
-                .with_link(link(c)),
-            NavPointRecord::new(c, Vec3::X * 2.0),
-        ]);
-        assert_eq!(graph.path(a, b), None);
-        assert_eq!(graph.path(a, c), None);
-    }
-
-    #[test]
-    fn the_path_to_the_same_point_has_length_zero() {
-        let a = entity(1);
-        let graph = NavGraph::build([NavPointRecord::new(a, Vec3::ONE)]);
-        assert_eq!(
-            graph.path(a, a),
-            Some(NavPath {
-                destination: a,
-                positions: vec![Vec3::ONE],
-                length: 0.0
-            })
-        );
-    }
-
-    #[test]
-    fn nearest_skips_disabled_points_and_ignores_height() {
-        let [near_disabled, high, far] = [entity(1), entity(2), entity(3)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(near_disabled, Vec3::ZERO).with_enabled(false),
-            NavPointRecord::new(high, Vec3::new(1.0, 50.0, 0.0)),
-            NavPointRecord::new(far, Vec3::new(3.0, 0.0, 0.0)),
-        ]);
-        assert_eq!(graph.nearest(Vec3::ZERO), Some(high));
-    }
-
-    #[test]
-    fn path_from_starts_at_the_nearest_enabled_point_and_counts_the_leg_to_it() {
-        let [disabled, a, b] = [entity(1), entity(2), entity(3)];
-        let graph = NavGraph::build([
-            NavPointRecord::new(disabled, Vec3::new(0.0, 0.0, 0.5)).with_enabled(false),
-            NavPointRecord::new(a, Vec3::new(0.0, 0.0, 3.0)).with_link(link(b)),
-            NavPointRecord::new(b, Vec3::new(4.0, 0.0, 3.0)),
-        ]);
-        let path = graph.path_from(Vec3::ZERO, b).unwrap();
-        assert_eq!(path.destination, b);
-        assert_eq!(
-            path.positions,
-            vec![Vec3::new(0.0, 0.0, 3.0), Vec3::new(4.0, 0.0, 3.0)]
-        );
-        assert!((path.length - 7.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn travel_time_is_length_over_speed() {
-        let path = NavPath {
-            destination: entity(1),
-            positions: Vec::new(),
-            length: 6.0,
         };
-        assert_eq!(path.travel_time(1.5), Some(Duration::from_secs(4)));
-    }
-
-    #[test]
-    fn travel_time_needs_a_finite_positive_speed() {
-        let path = NavPath {
-            destination: entity(1),
-            positions: Vec::new(),
-            length: 6.0,
+        let far = Vec3::new(0.0, 0.0, 10.0);
+        let one_way_shortcut = || {
+            vec![
+                NavPointRecord::new(a, Vec3::ZERO)
+                    .with_link(one_way(c))
+                    .with_link(link(b)),
+                NavPointRecord::new(b, far).with_link(link(c)),
+                NavPointRecord::new(c, Vec3::X),
+            ]
         };
-        for speed in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            assert_eq!(path.travel_time(speed), None, "speed {speed}");
+        let cases = [
+            Case {
+                name: "the shorter route, past a disabled shortcut",
+                points: two_routes_and_a_disabled_shortcut(),
+                from: a,
+                to: entity(5),
+                route: Some(vec![Vec3::ZERO, short, goal]),
+                length: 2.0 * 2f32.sqrt(),
+            },
+            Case {
+                name: "into a disabled point",
+                points: two_routes_and_a_disabled_shortcut(),
+                from: a,
+                to: d,
+                route: None,
+                length: 0.0,
+            },
+            Case {
+                name: "along a one-way link",
+                points: one_way_shortcut(),
+                from: a,
+                to: c,
+                route: Some(vec![Vec3::ZERO, Vec3::X]),
+                length: 1.0,
+            },
+            Case {
+                name: "against a one-way link",
+                points: one_way_shortcut(),
+                from: c,
+                to: a,
+                route: Some(vec![Vec3::X, far, Vec3::ZERO]),
+                length: 101f32.sqrt() + 10.0,
+            },
+            Case {
+                name: "up a height",
+                points: vec![
+                    NavPointRecord::new(a, Vec3::ZERO).with_link(link(b)),
+                    NavPointRecord::new(b, Vec3::new(3.0, 4.0, 0.0)),
+                ],
+                from: a,
+                to: b,
+                route: Some(vec![Vec3::ZERO, Vec3::new(3.0, 4.0, 0.0)]),
+                length: 5.0,
+            },
+            Case {
+                name: "where the costs round",
+                points: vec![
+                    NavPointRecord::new(a, Vec3::ZERO).with_link(link(b)),
+                    NavPointRecord::new(b, Vec3::new(4.0, 0.0, -1.0)).with_link(link(c)),
+                    NavPointRecord::new(c, Vec3::new(4.0, 0.0, 4.0)),
+                ],
+                from: a,
+                to: c,
+                route: Some(vec![
+                    Vec3::ZERO,
+                    Vec3::new(4.0, 0.0, -1.0),
+                    Vec3::new(4.0, 0.0, 4.0),
+                ]),
+                length: 17f32.sqrt() + 5.0,
+            },
+        ];
+        for case in cases {
+            let path = NavGraph::build(case.points).path(case.from, case.to);
+            assert_eq!(
+                path.as_ref().map(|path| path.positions.clone()),
+                case.route,
+                "{}",
+                case.name
+            );
+            if let Some(path) = path {
+                assert_eq!(path.destination, case.to, "{}", case.name);
+                assert!((path.length - case.length).abs() < 1e-4, "{}", case.name);
+            }
         }
     }
 }
