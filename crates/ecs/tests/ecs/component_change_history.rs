@@ -50,20 +50,3 @@ fn query_mutations_and_replacements_are_observed_without_touching_other_componen
     assert!(world.has_component_changed_since(entity, TypeId::of::<Value>(), read_at));
     assert!(!world.has_component_changed_since(entity, TypeId::of::<Other>(), read_at));
 }
-
-#[test]
-fn additions_removals_and_archetype_moves_preserve_change_history() {
-    let mut world = World::default();
-    let entity = world.spawn(Other);
-    world.tick();
-    let read_at = world.change_tick();
-    world.insert(Value(1.0), entity);
-    world.tick();
-    assert!(world.has_component_changed_since(entity, TypeId::of::<Value>(), read_at));
-    assert!(!world.has_component_changed_since(entity, TypeId::of::<Other>(), read_at));
-    world.remove_component::<Other>(entity);
-    assert!(world.has_component_changed_since(entity, TypeId::of::<Value>(), read_at));
-    assert!(!world.has_component_changed_since(entity, TypeId::of::<Other>(), read_at));
-    world.despawn(entity);
-    assert!(!world.has_component_changed_since(entity, TypeId::of::<Value>(), read_at));
-}

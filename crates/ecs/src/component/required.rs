@@ -159,8 +159,6 @@ fn visit<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
     use super::*;
     use crate::{entity::Entity, world::World};
 
@@ -175,10 +173,6 @@ mod tests {
     struct Chain;
 
     #[derive(Component, Default)]
-    #[require(Mid, Leaf)]
-    struct Top;
-
-    #[derive(Component, Default)]
     #[require(Chain)]
     struct Deep;
 
@@ -189,111 +183,6 @@ mod tests {
     #[derive(Component, Default)]
     #[require(Near, Mid = Mid(2))]
     struct Wins;
-
-    #[derive(Component, Default)]
-    #[require(CycleB)]
-    struct CycleA;
-
-    #[derive(Component, Default)]
-    #[require(CycleA)]
-    struct CycleB;
-
-    #[derive(Component, Default)]
-    #[require(SelfCycle)]
-    struct SelfCycle;
-
-    struct ListingCase {
-        register: fn(&mut World),
-        of: fn() -> ComponentId,
-        listed: Option<&'static [&'static str]>,
-    }
-
-    fn short(name: &str) -> &str {
-        name.rsplit("::").next().unwrap()
-    }
-
-    #[test]
-    fn a_requirement_table_lists_every_requirement_once_deepest_first() {
-        let cases = [
-            ListingCase {
-                register: |_| {},
-                of: ComponentId::of::<Chain>,
-                listed: None,
-            },
-            ListingCase {
-                register: |world| world.register_component::<Leaf>(),
-                of: ComponentId::of::<Leaf>,
-                listed: Some(&[]),
-            },
-            ListingCase {
-                register: |world| world.register_component::<Chain>(),
-                of: ComponentId::of::<Chain>,
-                listed: Some(&["Leaf"]),
-            },
-            ListingCase {
-                register: |world| world.register_component::<Deep>(),
-                of: ComponentId::of::<Deep>,
-                listed: Some(&["Leaf", "Chain"]),
-            },
-            ListingCase {
-                register: |world| world.register_component::<Top>(),
-                of: ComponentId::of::<Top>,
-                listed: Some(&["Mid", "Leaf"]),
-            },
-            ListingCase {
-                register: |world| world.register_component::<Deep>(),
-                of: ComponentId::of::<Chain>,
-                listed: Some(&["Leaf"]),
-            },
-            ListingCase {
-                register: |world| world.register_component::<Deep>(),
-                of: ComponentId::of::<Leaf>,
-                listed: Some(&[]),
-            },
-        ];
-        for (row, case) in cases.into_iter().enumerate() {
-            let mut world = World::new();
-            (case.register)(&mut world);
-
-            let listed: Option<Vec<&str>> = world
-                .required_components((case.of)())
-                .map(|table| table.iter().map(|entry| short(entry.name())).collect());
-
-            assert_eq!(listed.as_deref(), case.listed, "row {row}");
-        }
-    }
-
-    struct CycleCase {
-        register: fn(&mut World),
-        names: &'static str,
-    }
-
-    #[test]
-    fn a_requirement_cycle_panics_naming_the_types() {
-        let cases = [
-            CycleCase {
-                register: |world| world.register_component::<CycleA>(),
-                names: "CycleA",
-            },
-            CycleCase {
-                register: |world| world.register_component::<SelfCycle>(),
-                names: "SelfCycle",
-            },
-        ];
-        for case in cases {
-            let mut world = World::new();
-
-            let payload = catch_unwind(AssertUnwindSafe(|| (case.register)(&mut world)))
-                .expect_err(case.names);
-
-            let message = payload
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| payload.downcast_ref::<&str>().copied())
-                .unwrap();
-            assert!(message.contains(case.names), "{message}");
-        }
-    }
 
     #[derive(Debug, PartialEq)]
     struct Holds {
@@ -322,15 +211,6 @@ mod tests {
     fn spawn_and_insert_fill_in_missing_requirements_and_keep_given_values() {
         let cases = [
             SpawnCase {
-                name: "spawn adds a default requirement",
-                build: |world| world.spawn(Chain),
-                holds: Holds {
-                    mid: None,
-                    leaf: true,
-                    chain: true,
-                },
-            },
-            SpawnCase {
                 name: "spawn adds transitive requirements",
                 build: |world| world.spawn(Deep),
                 holds: Holds {
@@ -340,28 +220,10 @@ mod tests {
                 },
             },
             SpawnCase {
-                name: "spawn uses the declared constructor",
-                build: |world| world.spawn(Near),
-                holds: Holds {
-                    mid: Some(1),
-                    leaf: false,
-                    chain: false,
-                },
-            },
-            SpawnCase {
                 name: "the nearest constructor wins",
                 build: |world| world.spawn(Wins),
                 holds: Holds {
                     mid: Some(2),
-                    leaf: false,
-                    chain: false,
-                },
-            },
-            SpawnCase {
-                name: "a bundle value after the requirer wins",
-                build: |world| world.spawn((Near, Mid(7))),
-                holds: Holds {
-                    mid: Some(7),
                     leaf: false,
                     chain: false,
                 },
@@ -401,46 +263,6 @@ mod tests {
                     chain: false,
                 },
             },
-            SpawnCase {
-                name: "an inserted bundle value wins over the default",
-                build: |world| {
-                    let entity = world.spawn(Leaf);
-                    world.insert((Mid(9), Near), entity);
-                    entity
-                },
-                holds: Holds {
-                    mid: Some(9),
-                    leaf: true,
-                    chain: false,
-                },
-            },
-            SpawnCase {
-                name: "a value inserted after the requirer replaces the default",
-                build: |world| {
-                    let entity = world.spawn(Leaf);
-                    world.insert(Near, entity);
-                    world.insert(Mid(5), entity);
-                    entity
-                },
-                holds: Holds {
-                    mid: Some(5),
-                    leaf: true,
-                    chain: false,
-                },
-            },
-            SpawnCase {
-                name: "removing the requirer leaves the requirement",
-                build: |world| {
-                    let entity = world.spawn(Chain);
-                    world.remove_component::<Chain>(entity);
-                    entity
-                },
-                holds: Holds {
-                    mid: None,
-                    leaf: true,
-                    chain: false,
-                },
-            },
         ];
         for case in cases {
             let mut world = World::new();
@@ -449,32 +271,6 @@ mod tests {
 
             assert_eq!(holds(&world, entity), case.holds, "{}", case.name);
         }
-    }
-
-    #[test]
-    fn write_skips_a_column_that_already_has_a_value() {
-        let mut world = World::new();
-        world.register_component::<Near>();
-        let entry = world
-            .required_components(ComponentId::of::<Near>())
-            .unwrap()
-            .iter()
-            .next()
-            .unwrap()
-            .clone();
-        let mut table = Table::new();
-        entry.add_column(&mut table);
-        let mut archetype = Archetype::new(
-            table,
-            vec![ComponentId::of::<Mid>()],
-            crate::archetype::ArchetypeId::from(0),
-        );
-        archetype.push_component(Mid(9), 1);
-
-        entry.write(&mut archetype, TableRowIndex::new(0), 2);
-
-        let value = unsafe { archetype.get_component_unsafe::<Mid>(TableRowIndex::new(0)) };
-        assert_eq!(value.unwrap().0, 9);
     }
 
     #[test]

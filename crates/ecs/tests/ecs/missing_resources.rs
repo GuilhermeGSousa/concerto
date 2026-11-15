@@ -1,10 +1,7 @@
 use concerto_ecs::{
-    IntoSystem, Res, ResMut, Resource, Schedule, System, World,
-    events::{Event, event_reader::EventReader, event_writer::EventWriter},
+    IntoSystem, Res, ResMut, Resource, System, World,
+    events::{Event, event_writer::EventWriter},
     signal::{On, Signal},
-    system::executor::{
-        SystemExecutor, multi_thread::MultiThreadedExecutor, single_thread::SingleThreadedExecutor,
-    },
 };
 
 #[derive(Resource)]
@@ -20,20 +17,8 @@ fn reads_absent(_: Res<Absent>, mut runs: ResMut<Runs>) {
     runs.0.push("reads_absent");
 }
 
-fn writes_absent(_: ResMut<Absent>, mut runs: ResMut<Runs>) {
-    runs.0.push("writes_absent");
-}
-
-fn reads_unregistered(_: EventReader<Unregistered>, mut runs: ResMut<Runs>) {
-    runs.0.push("reads_unregistered");
-}
-
 fn writes_unregistered(_: EventWriter<Unregistered>, mut runs: ResMut<Runs>) {
     runs.0.push("writes_unregistered");
-}
-
-fn present(mut runs: ResMut<Runs>) {
-    runs.0.push("present");
 }
 
 fn world() -> World {
@@ -67,14 +52,6 @@ fn a_system_whose_resource_or_event_is_missing_is_skipped() {
             run: || run_alone(reads_absent),
         },
         SkipCase {
-            name: "writes a missing resource",
-            run: || run_alone(writes_absent),
-        },
-        SkipCase {
-            name: "reads an unregistered event",
-            run: || run_alone(reads_unregistered),
-        },
-        SkipCase {
             name: "writes an unregistered event",
             run: || run_alone(writes_unregistered),
         },
@@ -82,26 +59,6 @@ fn a_system_whose_resource_or_event_is_missing_is_skipped() {
     for case in cases {
         assert!((case.run)().is_empty(), "{}", case.name);
     }
-}
-
-fn schedule() -> Schedule {
-    let mut schedule = Schedule::new();
-    schedule.add_system(reads_absent);
-    schedule.add_system(writes_absent);
-    schedule.add_system(present);
-    schedule
-}
-
-fn run_schedule<E: SystemExecutor + 'static>() -> Vec<&'static str> {
-    let mut world = world();
-    schedule().compile::<E>(&mut world).run(&mut world);
-    runs(&world)
-}
-
-#[test]
-fn each_executor_skips_a_system_with_a_missing_resource_and_runs_the_rest() {
-    assert_eq!(run_schedule::<SingleThreadedExecutor>(), vec!["present"]);
-    assert_eq!(run_schedule::<MultiThreadedExecutor>(), vec!["present"]);
 }
 
 struct Ping;

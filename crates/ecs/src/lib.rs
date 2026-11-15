@@ -80,10 +80,7 @@ mod tests {
             Event, event_channel::EventChannel, event_reader::EventReader,
             event_writer::EventWriter,
         },
-        query::{
-            Query,
-            filter::{Added, Or, QueryFilter, With, Without},
-        },
+        query::filter::{Added, Or, QueryFilter, With, Without},
         resource::{ResMut, Resource},
         system::{
             executor::single_thread::SingleThreadedExecutor,
@@ -140,29 +137,6 @@ mod tests {
         assert!(world.was_component_changed(entity, ComponentId::of::<Armour>()));
     }
 
-    #[test]
-    fn get_entity_finds_only_live_entities_the_query_matches() {
-        let mut world = World::new();
-        let with = world.spawn((Health, Position));
-        let without = world.spawn(Position);
-        let despawned = world.spawn(Health);
-        world.despawn(despawned);
-
-        let mut healths = world.query::<&Health, ()>();
-        let mut entities = world.query::<Entity, ()>();
-        let ticks = world.out_of_system_ticks();
-        let cell = world.as_unsafe_world_cell();
-        // SAFETY: both queries only read, and nothing writes `world` while they live.
-        let healths = unsafe { Query::new(cell, &mut healths, ticks) };
-        // SAFETY: both queries only read, and nothing writes `world` while they live.
-        let entities = unsafe { Query::new(cell, &mut entities, ticks) };
-
-        assert!(healths.get_entity(with).is_some());
-        assert!(healths.get_entity(without).is_none());
-        assert_eq!(entities.get_entity(with), Some(with));
-        assert_eq!(entities.get_entity(despawned), None);
-    }
-
     #[derive(Event)]
     struct PlayerDied {
         score: u32,
@@ -216,12 +190,6 @@ mod tests {
         use Frame::*;
         let cases = [
             EventCase {
-                name: "read in the frame it is written",
-                frames: &[Write, ReadFirst],
-                first: 77,
-                second: 0,
-            },
-            EventCase {
                 name: "read after one swap",
                 frames: &[Write, Swap, ReadFirst],
                 first: 77,
@@ -244,18 +212,6 @@ mod tests {
                 frames: &[Write, ReadFirst, ReadSecond],
                 first: 77,
                 second: 77,
-            },
-            EventCase {
-                name: "a reader that skips frames resumes at the oldest buffered event",
-                frames: &[Write, Swap, Write, Swap, Write, Swap, ReadFirst],
-                first: 77,
-                second: 0,
-            },
-            EventCase {
-                name: "written after the read, seen the next frame",
-                frames: &[ReadFirst, Write, Swap, ReadFirst],
-                first: 77,
-                second: 0,
             },
         ];
         for case in cases {

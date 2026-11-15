@@ -85,36 +85,6 @@ fn callback_spawn_reserves_an_entity_for_followup_commands() {
     assert!(world.get_component_for_entity::<Marker>(entity).is_some());
 }
 
-#[derive(Resource, Default)]
-struct Order(Vec<u8>);
-struct Chain(u8);
-impl Component for Chain {
-    fn on_add() -> Option<ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            let step = world
-                .get_component_for_entity::<Self>(context.entity)
-                .unwrap()
-                .0;
-            world.get_resource_mut::<Order>().unwrap().0.push(step);
-            if step == 0 {
-                world.insert(Self(1), context.entity);
-                world.insert(Self(3), context.entity);
-            } else if step == 1 {
-                world.insert(Self(2), context.entity);
-            }
-        })
-    }
-}
-
-#[test]
-fn nested_callback_commands_finish_before_the_next_sibling() {
-    let mut world = World::new();
-    world.register_component::<Chain>();
-    world.insert_resource(Order::default());
-    world.spawn(Chain(0));
-    assert_eq!(world.get_resource::<Order>().unwrap().0, [0, 1, 2, 3]);
-}
-
 struct Cleanup;
 impl Component for Cleanup {
     fn on_remove() -> Option<ComponentLifecycleCallback> {

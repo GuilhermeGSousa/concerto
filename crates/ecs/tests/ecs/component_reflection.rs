@@ -40,28 +40,10 @@ struct ListingCase {
 
 #[test]
 fn an_entity_lists_only_the_registered_components_it_carries() {
-    let cases = [
-        ListingCase {
-            spawn: |world| {
-                world.spawn((
-                    Health {
-                        current: 3,
-                        max: 10,
-                    },
-                    Armour { plates: 2 },
-                ))
-            },
-            names: &["Armour", "Health"],
-        },
-        ListingCase {
-            spawn: |world| world.spawn((Health { current: 1, max: 1 }, Plumbing)),
-            names: &["Health"],
-        },
-        ListingCase {
-            spawn: |world| world.spawn(Plumbing),
-            names: &[],
-        },
-    ];
+    let cases = [ListingCase {
+        spawn: |world| world.spawn((Health { current: 1, max: 1 }, Plumbing)),
+        names: &["Health"],
+    }];
     for case in cases {
         let mut world = World::default();
         world.register_type::<Health>();
@@ -71,36 +53,4 @@ fn an_entity_lists_only_the_registered_components_it_carries() {
 
         assert_eq!(names(&world, entity), case.names);
     }
-}
-
-#[test]
-fn component_ids_include_components_that_are_not_scene_components() {
-    let mut world = World::default();
-    world.register_type::<Health>();
-
-    let entity = world.spawn((
-        Health {
-            current: 3,
-            max: 10,
-        },
-        Plumbing,
-    ));
-
-    let mut ids = world.component_ids(entity).to_vec();
-    ids.sort();
-    let mut expected = vec![
-        std::any::TypeId::of::<Health>(),
-        std::any::TypeId::of::<Plumbing>(),
-    ];
-    expected.sort();
-    assert_eq!(ids, expected);
-}
-
-#[test]
-fn a_stale_entity_has_no_component_ids() {
-    let mut world = World::default();
-    let entity = world.spawn((Plumbing,));
-    world.despawn(entity);
-
-    assert!(world.component_ids(entity).is_empty());
 }

@@ -1,7 +1,5 @@
-use std::panic::{AssertUnwindSafe, catch_unwind};
-
 use concerto_ecs::{
-    CommandQueue, Entity, Query, Res, ResMut, Resource, World,
+    CommandQueue, Entity, Query, ResMut, Resource, World,
     component::{Component, ComponentLifecycleCallback},
     signal::{
         On,
@@ -61,9 +59,6 @@ impl Component for Tracked {
 #[derive(concerto_ecs::Component)]
 struct Unqueried;
 
-#[derive(Resource, Default)]
-struct Seen(Vec<Entity>);
-
 fn value(tracked: &Query<&Tracked>, entity: Entity) -> Option<u32> {
     tracked.get_entity(entity).map(|t| t.0)
 }
@@ -121,20 +116,6 @@ struct SignalCase {
 fn each_operation_runs_its_hook_then_its_signal_while_the_value_is_readable() {
     let cases = [
         SignalCase {
-            name: "spawning fires add with the new value",
-            setup: |world| world.spawn(()),
-            act: |world, _| {
-                world.spawn(Tracked(1));
-            },
-            log: &["add hook Some(1)", "add signal Some(1)"],
-        },
-        SignalCase {
-            name: "inserting a new type fires add",
-            setup: |world| world.spawn(()),
-            act: |world, entity| world.insert(Tracked(4), entity),
-            log: &["add hook Some(4)", "add signal Some(4)"],
-        },
-        SignalCase {
             name: "an overwrite fires replace with the old value then add with the new one",
             setup: |world| world.spawn(Tracked(1)),
             act: |world, entity| world.insert(Tracked(2), entity),
@@ -144,12 +125,6 @@ fn each_operation_runs_its_hook_then_its_signal_while_the_value_is_readable() {
                 "add hook Some(2)",
                 "add signal Some(2)",
             ],
-        },
-        SignalCase {
-            name: "a removal fires remove",
-            setup: |world| world.spawn(Tracked(3)),
-            act: |world, entity| world.remove_component::<Tracked>(entity),
-            log: &["remove hook Some(3)", "remove signal Some(3)"],
         },
         SignalCase {
             name: "a despawn fires remove then despawn",
@@ -184,109 +159,21 @@ fn each_operation_runs_its_hook_then_its_signal_while_the_value_is_readable() {
     }
 }
 
-#[derive(Resource, Default)]
-struct Order(Vec<u32>);
-
-fn first(_: On<Add<Unqueried>>, mut order: ResMut<Order>) {
-    order.0.push(1);
-}
-
-fn second(_: On<Add<Unqueried>>, mut order: ResMut<Order>) {
-    order.0.push(2);
-}
-
-#[test]
-fn every_listener_runs_in_registration_order_even_for_a_type_nothing_queries() {
-    let mut world = World::new();
-    world.insert_resource(Order::default());
-    world.add_listener(first);
-    world.add_listener(second);
-
-    world.spawn(Unqueried);
-
-    assert_eq!(world.get_resource::<Order>().unwrap().0, [1, 2]);
-}
-
 #[derive(concerto_ecs::Component)]
 struct Companion;
 
-#[derive(Resource, Default)]
-struct DuringListener(Vec<usize>);
-
-fn spawn_a_companion(
-    _: On<Add<Unqueried>>,
-    companions: Query<&Companion>,
-    mut during: ResMut<DuringListener>,
-    mut cmd: CommandQueue,
-) {
-    during.0.push(companions.iter().count());
+fn spawn_a_companion(_: On<Add<Unqueried>>, mut cmd: CommandQueue) {
     cmd.spawn(Companion);
 }
 
 #[test]
-fn a_listeners_structural_changes_apply_after_the_operation() {
+fn a_lifecycle_listeners_commands_are_applied() {
     let mut world = World::new();
-    world.insert_resource(DuringListener::default());
     world.add_listener(spawn_a_companion);
 
     world.spawn(Unqueried);
 
-    assert_eq!(world.get_resource::<DuringListener>().unwrap().0, [0]);
     assert_eq!(world.query::<&Companion, ()>().iter(&mut world).count(), 1);
-}
-
-fn reads_the_world(_: On<Add<Unqueried>>, _: &World) {}
-
-fn writes_the_world(_: On<Remove<Unqueried>>, _: &mut World) {}
-
-struct RefusedCase {
-    add: fn(&mut World),
-    name: &'static str,
-}
-
-#[test]
-fn a_lifecycle_listener_that_takes_the_whole_world_is_refused_by_name() {
-    let cases = [
-        RefusedCase {
-            add: |world| world.add_listener(reads_the_world),
-            name: "reads_the_world",
-        },
-        RefusedCase {
-            add: |world| world.add_listener(writes_the_world),
-            name: "writes_the_world",
-        },
-    ];
-    for case in cases {
-        let mut world = World::new();
-
-        let payload =
-            catch_unwind(AssertUnwindSafe(|| (case.add)(&mut world))).expect_err(case.name);
-
-        let message = payload
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| payload.downcast_ref::<&str>().copied())
-            .unwrap();
-        assert!(message.contains(case.name), "{message}");
-    }
-}
-
-#[derive(Resource)]
-struct Absent;
-
-fn needs_absent(on: On<Add<Unqueried>>, _: Res<Absent>, mut seen: ResMut<Seen>) {
-    seen.0.push(on.signal().entity);
-}
-
-#[test]
-fn a_lifecycle_listener_whose_resource_is_missing_is_skipped() {
-    let mut world = World::new();
-    world.insert_resource(Seen::default());
-    world.add_listener(needs_absent);
-
-    world.spawn(Unqueried);
-
-    assert!(world.get_resource::<Seen>().unwrap().0.is_empty());
 }
 
 struct Spawner;

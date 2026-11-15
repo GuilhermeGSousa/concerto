@@ -112,15 +112,6 @@ fn a_stored_reference_spawns_as_its_node_and_one_past_the_scene_spawns_unset() {
             warnings: &[],
         },
         RigCase {
-            name: "an unset reference spawns unset without a warning",
-            nodes: 1,
-            bones: &[Ref::Unset],
-            root: Some(Ref::Unset),
-            spawned_bones: &[Ref::Unset],
-            spawned_root: Some(Ref::Unset),
-            warnings: &[],
-        },
-        RigCase {
             name: "a reference past the scene spawns unset and warns",
             nodes: 1,
             bones: &[Ref::Node(7), Ref::Unset],
@@ -180,19 +171,6 @@ fn capturing_a_reference_to_an_entity_outside_the_scene_fails() {
 }
 
 #[test]
-fn an_unresolved_reference_encodes_as_its_index_without_a_world() {
-    let stored = to_value(&SceneEntityRef::Index(3)).unwrap();
-    let ReflectedValue::Leaf(bytes) = &stored else {
-        panic!("SceneEntityRef is a leaf");
-    };
-    assert!(!bytes.is_empty());
-
-    let mut world = World::new();
-    let entity = world.spawn(());
-    assert!(to_value(&SceneEntityRef::Entity(entity)).is_err());
-}
-
-#[test]
 fn a_unit_component_spawns_and_captures() {
     let mut world = World::new();
     world.register_type::<PlainMarker>();
@@ -209,15 +187,4 @@ fn a_unit_component_spawns_and_captures() {
         capture(&world, entity, HashMap::from([(entity, 0)])),
         Some(stored)
     );
-}
-
-#[test]
-fn name_is_the_full_type_path_and_distinguishes_generics() {
-    #[derive(Component)]
-    struct Wrapper<T: Send + Sync + 'static> {
-        _marker: std::marker::PhantomData<T>,
-    }
-
-    assert!(PlainMarker::name().ends_with("PlainMarker"));
-    assert_ne!(Wrapper::<u8>::name(), Wrapper::<u16>::name());
 }

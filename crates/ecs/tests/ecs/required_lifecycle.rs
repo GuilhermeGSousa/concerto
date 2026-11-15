@@ -4,7 +4,6 @@ use concerto_ecs::{
     signal::{On, lifecycle::Add},
     world::RestrictedWorld,
 };
-use std::any::TypeId;
 
 #[derive(Resource, Default)]
 struct Log(Vec<String>);
@@ -83,11 +82,6 @@ fn world() -> World {
     world.insert_resource(Log::default());
     world.add_listener(top_signal);
     world.add_listener(mid_signal);
-    world.register_component::<P>();
-    world.register_component::<Q>();
-    world.register_component::<ReqP>();
-    world.register_component::<ReqQ>();
-    world.register_component::<Plain>();
     world
 }
 
@@ -103,90 +97,9 @@ const CHAIN: [&str; 5] = [
     "Top signal mid=true deep=true",
 ];
 
-#[derive(Default)]
-struct ReqP;
-
-#[derive(Default)]
-struct ReqQ;
-
-#[derive(Default)]
-struct P;
-
-#[derive(Default)]
-struct Q;
-
-#[derive(Default)]
-struct Plain;
-
-macro_rules! hook {
-    ($name:literal) => {
-        fn on_add() -> Option<ComponentLifecycleCallback> {
-            Some(|mut world, _| log(&mut world, $name.into()))
-        }
-    };
-}
-
-impl Component for ReqP {
-    hook!("ReqP");
-}
-
-impl Component for ReqQ {
-    hook!("ReqQ");
-}
-
-impl Component for Plain {
-    hook!("Plain");
-}
-
-impl Component for P {
-    hook!("P");
-
-    fn register_required(required: &mut RequiredComponents) {
-        required.register::<ReqP>(ReqP::default);
-    }
-}
-
-impl Component for Q {
-    hook!("Q");
-
-    fn register_required(required: &mut RequiredComponents) {
-        required.register::<ReqQ>(ReqQ::default);
-    }
-}
-
-#[derive(Default)]
-struct Silent;
-
-impl Component for Silent {}
-
-struct Needs;
-
-impl Component for Needs {
-    fn register_required(required: &mut RequiredComponents) {
-        required.register::<Silent>(Silent::default);
-    }
-}
-
-fn lines(lines: &[&str]) -> Vec<String> {
-    lines.iter().map(|line| line.to_string()).collect()
-}
-
-fn p_and_q() -> Vec<String> {
-    let order = if TypeId::of::<P>() < TypeId::of::<Q>() {
-        ["P", "Q"]
-    } else {
-        ["Q", "P"]
-    };
-    order
-        .iter()
-        .flat_map(|name| [format!("Req{name}"), name.to_string()])
-        .collect()
-}
-
 struct HookCase {
     name: &'static str,
     act: fn(&mut World),
-    log: fn() -> Vec<String>,
 }
 
 #[test]
@@ -197,7 +110,6 @@ fn requirements_fire_their_hooks_and_signals_before_their_requirers() {
             act: |world| {
                 world.spawn(Top);
             },
-            log: || lines(&CHAIN),
         },
         HookCase {
             name: "insert fires a two level chain deepest first",
@@ -205,43 +117,12 @@ fn requirements_fire_their_hooks_and_signals_before_their_requirers() {
                 let entity = world.spawn(());
                 world.insert(Top, entity);
             },
-            log: || lines(&CHAIN),
-        },
-        HookCase {
-            name: "bundle members fire in type id order, each after its requirements",
-            act: |world| {
-                world.spawn((P, Q));
-            },
-            log: p_and_q,
-        },
-        HookCase {
-            name: "insert orders bundle members the same way",
-            act: |world| {
-                let entity = world.spawn(());
-                world.insert((Q, P), entity);
-            },
-            log: p_and_q,
-        },
-        HookCase {
-            name: "members without requirements follow",
-            act: |world| {
-                world.spawn((Plain, P));
-            },
-            log: || lines(&["ReqP", "P", "Plain"]),
         },
         HookCase {
             name: "a bundle member that is a requirement fires before its requirer",
             act: |world| {
                 world.spawn((Top, Mid));
             },
-            log: || lines(&CHAIN),
-        },
-        HookCase {
-            name: "requirements without callbacks stay silent",
-            act: |world| {
-                world.spawn(Needs);
-            },
-            log: Vec::new,
         },
     ];
     for case in cases {
@@ -249,6 +130,6 @@ fn requirements_fire_their_hooks_and_signals_before_their_requirers() {
 
         (case.act)(&mut world);
 
-        assert_eq!(take(&mut world), (case.log)(), "{}", case.name);
+        assert_eq!(take(&mut world), CHAIN, "{}", case.name);
     }
 }

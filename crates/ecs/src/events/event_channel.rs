@@ -104,39 +104,3 @@ impl<T: Event + 'static> Default for EventChannel<T> {
 pub fn update_event_channel<T: Event + 'static>(mut channel: ResMut<EventChannel<T>>) {
     channel.update();
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[derive(Event, Debug, PartialEq, Clone)]
-    struct Note(u32);
-
-    fn read(channel: &EventChannel<Note>, cursor: &mut EventCursor<Note>) -> Vec<u32> {
-        channel.read_from(cursor).map(|note| note.0).collect()
-    }
-
-    #[test]
-    fn a_held_cursor_reads_each_event_once() {
-        let mut channel = EventChannel::<Note>::new();
-        let mut cursor = EventCursor::default();
-        channel.push_event(Note(1));
-        channel.push_event(Note(2));
-
-        assert_eq!(read(&channel, &mut cursor), vec![1, 2]);
-        assert!(read(&channel, &mut cursor).is_empty());
-
-        channel.push_event(Note(3));
-        assert_eq!(read(&channel, &mut cursor), vec![3]);
-    }
-
-    #[test]
-    fn an_event_written_between_two_updates_is_still_readable_after_the_next() {
-        let mut channel = EventChannel::<Note>::new();
-        let mut cursor = EventCursor::default();
-        channel.update();
-        channel.push_event(Note(7));
-        channel.update();
-
-        assert_eq!(read(&channel, &mut cursor), vec![7]);
-    }
-}

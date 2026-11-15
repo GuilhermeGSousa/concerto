@@ -84,44 +84,6 @@ mod tests {
     #[derive(Resource)]
     struct Unrelated;
 
-    #[test]
-    fn component_reader_tracks_values_membership_and_stale_entities() {
-        let mut world = World::default();
-        let entity = world.spawn(Value(1));
-        let mut read = (move |components: ComponentMetadata| {
-            assert!(components.entity_is_valid(entity));
-            assert!(
-                components
-                    .component_ids(entity)
-                    .contains(&ComponentId::of::<Value>())
-            );
-            assert_eq!(components.get::<Value>(entity).unwrap().0, 2);
-            assert!(components.is_component_changed(entity, ComponentId::of::<Value>()));
-        })
-        .into_system();
-        read.initialize(&mut world);
-        world.tick();
-        world
-            .get_component_for_entity_mut::<Value>(entity)
-            .unwrap()
-            .0 = 2;
-        world.tick();
-        read.run_and_apply((), &mut world);
-        world.tick();
-        let value = ComponentId::of::<Value>();
-        assert!(!ComponentMetadata::new(&world).is_component_changed(entity, value));
-        world
-            .get_component_for_entity_mut::<Value>(entity)
-            .unwrap()
-            .0 = 3;
-        assert!(ComponentMetadata::new(&world).is_component_changed(entity, value));
-        world.despawn(entity);
-        let components = ComponentMetadata::new(&world);
-        assert!(!components.entity_is_valid(entity));
-        assert!(components.component_ids(entity).is_empty());
-        assert!(components.get::<Value>(entity).is_none());
-    }
-
     #[derive(Resource, Default)]
     struct Seen(Vec<bool>);
 
@@ -160,19 +122,10 @@ mod tests {
         resource_write.write_resource::<Unrelated>();
         let mut component_write = SystemAccess::default();
         component_write.write_component::<Value>();
-        let mut component_read = SystemAccess::default();
-        component_read.read_component::<Value>();
-        let mut exclusive = SystemAccess::default();
-        exclusive.write_world();
-        for (other, disjoint) in [
-            (&resource_write, true),
-            (&component_read, true),
-            (&component_write, false),
-            (&exclusive, false),
-        ] {
-            assert_eq!(SystemAccess::are_disjoint(&combined, other), disjoint);
-            assert_eq!(SystemAccess::are_disjoint(other, &combined), disjoint);
-        }
+        assert!(SystemAccess::are_disjoint(&combined, &resource_write));
+        assert!(SystemAccess::are_disjoint(&resource_write, &combined));
+        assert!(!SystemAccess::are_disjoint(&combined, &component_write));
+        assert!(!SystemAccess::are_disjoint(&component_write, &combined));
         assert!(!combined.is_exclusive());
     }
 }

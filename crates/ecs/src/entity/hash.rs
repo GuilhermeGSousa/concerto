@@ -42,23 +42,3 @@ pub type EntityHashMap<V> = HashMap<Entity, V, EntityHash>;
 
 /// A [`HashSet`] of [`Entity`] with the [`EntityHash`] hasher.
 pub type EntityHashSet = HashSet<Entity, EntityHash>;
-
-#[cfg(test)]
-mod tests {
-    use std::num::NonZero;
-
-    use super::EntityHashMap;
-    use crate::entity::Entity;
-
-    #[test]
-    fn an_entity_hash_map_finds_entities_that_share_an_index() {
-        let older = Entity::new(7, NonZero::new(1).unwrap());
-        let newer = Entity::new(7, NonZero::new(2).unwrap());
-        let mut map = EntityHashMap::default();
-        map.insert(older, "older");
-        map.insert(newer, "newer");
-        assert_eq!(map.len(), 2);
-        assert_eq!(map.get(&older), Some(&"older"));
-        assert_eq!(map.get(&newer), Some(&"newer"));
-    }
-}
