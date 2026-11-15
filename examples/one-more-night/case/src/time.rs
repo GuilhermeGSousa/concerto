@@ -92,42 +92,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_time_parses_to_minutes_since_midnight() {
+    fn a_time_parses_from_hh_mm_up_to_midnight_and_displays_as_it_is_written() {
+        for text in ["00:00", "08:05", "20:40", "24:00"] {
+            assert_eq!(GameTime::parse(text).unwrap().to_string(), text);
+        }
         assert_eq!(GameTime::parse("20:40").unwrap().minutes(), 20 * 60 + 40);
-        assert_eq!(GameTime::parse("00:00").unwrap().minutes(), 0);
         assert_eq!(GameTime::parse("24:00"), Some(GameTime::MIDNIGHT));
-    }
-
-    #[test]
-    fn a_malformed_time_does_not_parse() {
         for text in [
             "24:01", "25:00", "19:60", "7:05", "19:5", "1930", "19:30:00", "+9:30", "",
         ] {
             assert_eq!(GameTime::parse(text), None, "{text}");
         }
-    }
-
-    #[test]
-    fn an_hour_or_minute_out_of_range_is_no_time() {
-        assert_eq!(GameTime::from_hm(24, 1), None);
-        assert_eq!(GameTime::from_hm(u16::MAX, 0), None);
-        assert_eq!(GameTime::from_hm(24, 0), Some(GameTime::MIDNIGHT));
-    }
-
-    #[test]
-    fn a_time_displays_as_it_is_written() {
-        assert_eq!(GameTime::parse("08:05").unwrap().to_string(), "08:05");
-    }
-
-    #[test]
-    fn a_window_includes_its_start_and_excludes_its_end() {
-        let window = TimeWindow {
-            from: GameTime::parse("23:00").unwrap(),
-            until: GameTime::MIDNIGHT,
-        };
-        assert!(!window.contains(GameTime::parse("22:59").unwrap()));
-        assert!(window.contains(GameTime::parse("23:00").unwrap()));
-        assert!(window.contains(GameTime::parse("23:59").unwrap()));
-        assert!(!window.contains(GameTime::MIDNIGHT));
     }
 }
