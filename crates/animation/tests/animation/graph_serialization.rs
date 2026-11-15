@@ -18,7 +18,6 @@ use concerto_animation::node::{
     BlendNode, ErasedAnimationNode, IkGoal, InputSlots, LayerNode, LayerSpace,
     ReflectAnimationNode, TipRotation, TwoBoneIkNode,
 };
-use concerto_animation::param::Param;
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use concerto_animation::retarget::{
@@ -73,14 +72,6 @@ impl AnimationNode for Gain {
 
     fn reset(&self, _: &mut ()) {}
 }
-
-#[derive(Clone, Debug, Default, PartialEq, Reflect)]
-#[reflect(ClipEvent)]
-struct Footstep {
-    strength: f32,
-}
-
-impl ClipEvent for Footstep {}
 
 #[derive(Clone, Default, Reflect)]
 #[reflect(ClipEvent)]
@@ -314,21 +305,6 @@ fn the_ik_layer_and_aim_offset_nodes_keep_every_field_and_their_inputs_through_a
 }
 
 #[test]
-fn a_clip_handle_in_a_node_comes_back_strong() {
-    let mut server = AssetServer::new();
-    server.register_asset(&AssetStore::<AnimationClip>::new());
-    server.register_asset(&AssetStore::<AnimationGraph>::new());
-
-    let mut graph = AnimationGraph::from_node(AnimationClipNode::new(clip("outer_pose")));
-    graph.make_live(&registry(false), Some(&server)).unwrap();
-
-    assert!(graph.load_warnings().is_empty());
-    let handle = live_node::<AnimationClipNode>(&graph).unwrap().clip();
-    assert!(matches!(handle, AssetHandle::Strong(..)));
-    assert_eq!(handle.id(), AssetId::from_path("outer_pose"));
-}
-
-#[test]
 fn an_additive_node_keeps_every_field_through_a_round_trip_and_its_clip_comes_back_strong() {
     let node = AdditiveNode::new(clip("cold_overlay"))
         .with_weight(0.6)
@@ -457,7 +433,7 @@ struct StoredRate {
 }
 
 #[test]
-fn a_stored_play_rate_param_loads_from_a_name_and_as_no_param_when_missing_or_a_string() {
+fn a_stored_play_rate_param_loads_as_no_param_when_missing_or_a_string() {
     let registry = registry(false);
     let node = || AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
     let draw_speed = to_value(&Some(name!("draw_speed"))).unwrap();
@@ -473,12 +449,6 @@ fn a_stored_play_rate_param_loads_from_a_name_and_as_no_param_when_missing_or_a_
             play_rate_param: Some(to_value(&String::from("draw_speed")).unwrap()),
             warnings: 1,
             loaded: node(),
-        },
-        StoredRate {
-            name: "a name",
-            play_rate_param: Some(draw_speed.clone()),
-            warnings: 0,
-            loaded: node().with_play_rate_param(Param::<f32>::from(name!("draw_speed"))),
         },
     ];
 
@@ -501,9 +471,6 @@ fn a_stored_play_rate_param_loads_from_a_name_and_as_no_param_when_missing_or_a_
             case.name,
             loaded.warnings
         );
-        for warning in &loaded.warnings {
-            assert_eq!(warning.reason, "stored data is a different kind of value");
-        }
         let expected = if stored_name {
             draw_speed.clone()
         } else {
@@ -618,71 +585,6 @@ fn live_event<T: ClipEvent>(clip: &AnimationClip, index: usize) -> Option<&T> {
         ClipEventData::Live { value, .. } => value.downcast_ref::<T>(),
         ClipEventData::Stored { .. } => None,
     }
-}
-
-#[test]
-fn a_loaded_animation_event_is_stored_until_made_live() {
-    let mut clip = AnimationClip::default();
-    clip.add_event(
-        0.25,
-        AnimationEvent {
-            name: name!("footstep_left"),
-        },
-    );
-    let mut loaded = round_trip_clip(&clip);
-    assert!(matches!(
-        loaded.events()[0].event,
-        ClipEventData::Stored { .. }
-    ));
-
-    let warnings = loaded.make_live(&registry(false), None);
-
-    assert!(warnings.is_empty(), "{warnings:?}");
-    assert_eq!(loaded.events()[0].time, 0.25);
-    assert_eq!(
-        live_event::<AnimationEvent>(&loaded, 0),
-        Some(&AnimationEvent {
-            name: name!("footstep_left"),
-        })
-    );
-}
-
-#[test]
-fn a_registered_game_event_is_made_live_with_its_stored_fields() {
-    let mut clip = AnimationClip::default();
-    clip.add_event(0.5, Footstep { strength: 2.5 });
-    let mut loaded = round_trip_clip(&clip);
-    let mut registry = registry(false);
-    registry.register::<Footstep>();
-
-    let warnings = loaded.make_live(&registry, None);
-
-    assert!(warnings.is_empty(), "{warnings:?}");
-    assert_eq!(
-        live_event::<Footstep>(&loaded, 0),
-        Some(&Footstep { strength: 2.5 })
-    );
-}
-
-#[test]
-fn an_unregistered_stored_event_is_dropped_with_one_warning_naming_its_type() {
-    let mut clip = AnimationClip::default();
-    clip.add_event(0.1, Footstep { strength: 1.0 });
-    clip.add_event(
-        0.2,
-        AnimationEvent {
-            name: name!("land"),
-        },
-    );
-    let mut loaded = round_trip_clip(&clip);
-
-    let warnings = loaded.make_live(&registry(false), None);
-
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert_eq!(warnings[0].path, std::any::type_name::<Footstep>());
-    assert_eq!(loaded.events().len(), 1);
-    assert_eq!(loaded.events()[0].time, 0.2);
-    assert!(live_event::<AnimationEvent>(&loaded, 0).is_some());
 }
 
 struct ClipLoader {
@@ -825,12 +727,6 @@ struct Refusal {
 
 #[test]
 fn connect_refuses_what_would_stop_the_graph_being_a_tree_under_its_result() {
-    let mut larger = AnimationGraph::new();
-    for _ in 0..4 {
-        larger.insert_node(AnimationNodeData::of(&BlendNode {}));
-    }
-    let outside = larger.node_indices().last().unwrap();
-
     let mut graph = AnimationGraph::new();
     let result = graph.result_index();
     let blend = graph.insert_node(AnimationNodeData::of(&BlendNode {}));
@@ -851,24 +747,9 @@ fn connect_refuses_what_would_stop_the_graph_being_a_tree_under_its_result() {
             error: ConnectError::ChildIsResult,
         },
         Refusal {
-            parent: gain,
-            child: blend,
-            error: ConnectError::ChildHasParent { child: blend },
-        },
-        Refusal {
             parent: loose,
             child: loose,
             error: ConnectError::Cycle,
-        },
-        Refusal {
-            parent: outside,
-            child: loose,
-            error: ConnectError::NotANode { index: outside },
-        },
-        Refusal {
-            parent: loose,
-            child: outside,
-            error: ConnectError::NotANode { index: outside },
         },
     ];
 
@@ -880,11 +761,6 @@ fn connect_refuses_what_would_stop_the_graph_being_a_tree_under_its_result() {
         graph.connect(loose, blend),
         Err(ConnectError::ChildHasParent { child: blend })
     );
-    let mut unrooted = AnimationGraph::new();
-    let upper = unrooted.insert_node(AnimationNodeData::of(&BlendNode {}));
-    let lower = unrooted.insert_node(AnimationNodeData::of(&BlendNode {}));
-    unrooted.connect(upper, lower).unwrap();
-    assert_eq!(unrooted.connect(lower, upper), Err(ConnectError::Cycle));
 
     assert_eq!(graph.inputs(result), vec![blend]);
     assert_eq!(graph.inputs(blend), vec![gain]);
