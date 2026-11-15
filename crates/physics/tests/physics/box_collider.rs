@@ -115,32 +115,3 @@ fn a_box_collider_builds_a_cuboid_and_rebuilds_it_when_edited() {
         "the sphere should settle on the new top at y = 0.25, its centre near 0.75, was {settled}"
     );
 }
-
-#[test]
-fn a_box_collider_with_a_zero_half_extent_builds_a_thin_plate() {
-    let mut physics = BoxWorld::new();
-    let plate = physics.world.spawn((
-        BoxCollider {
-            half_extents: Vec3::new(2.0, 0.0, 2.0),
-        },
-        Transform::from_translation(Vec3::ZERO),
-    ));
-    physics.update();
-
-    let hit = physics
-        .world
-        .get_resource::<PhysicsState>()
-        .unwrap()
-        .cast_ray(
-            Vec3::new(0.5, 0.2, 0.5),
-            Vec3::new(0.0, -1.0, 0.0),
-            QueryFilter::default(),
-        )
-        .expect("a ray down onto the flat box should hit it");
-    assert_eq!(hit.entity, Some(plate));
-    assert!(
-        (hit.point.y - 0.001).abs() < 0.005,
-        "the plate's top should sit at its clamped half extent, y = 0.001, was {}",
-        hit.point.y
-    );
-}

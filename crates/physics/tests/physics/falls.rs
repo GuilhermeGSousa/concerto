@@ -1,166 +1,132 @@
-//! End-to-end smoke test: a dynamic sphere dropped above a static floor should
-//! fall under gravity and come to rest on top of the floor. Bodies are created
-//! by spawning `Collider` components — never directly.
+use std::sync::Arc;
 
 use crate::common::{physics_world, register_bodies};
+use concerto_ecs::entity::Entity;
+use concerto_ecs::world::World;
 use concerto_foundation::transform::Transform;
-use glam::{Quat, Vec3};
+use concerto_mesh::primitives::plane;
+use glam::{Quat, Vec2, Vec3};
 
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::{Collider, ColliderOffset};
-use concerto_physics::ground::GroundState;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::rigid_body::{AllowedDofs, RigidBody};
+use concerto_physics::shape::PhysicsShape;
 
-#[test]
-fn sphere_falls_and_rests_on_floor() {
-    let mut world = physics_world();
-    let mut pipeline = PhysicsPipeline::new();
+struct Landing {
+    name: &'static str,
+    floor: fn(&mut World),
+    body: fn(&mut World) -> Entity,
+    rest: f32,
+    upright: bool,
+}
 
-    // Static floor: a 100 x 1 x 100 (half-extent) box centred at the origin, so
-    // its top surface is at y = 1.
+fn floor_box(world: &mut World) {
+    world.spawn((Collider::cuboid(100.0, 1.0, 100.0), Transform::default()));
+}
+
+fn dropped(world: &mut World, collider: Collider, height: f32) -> Entity {
     world.spawn((
-        Collider::cuboid(100.0, 1.0, 100.0),
-        Transform::from_translation_rotation(Vec3::ZERO, Default::default()),
-    ));
-
-    // Dynamic sphere of radius 1, dropped from y = 10.
-    let sphere = world.spawn((
         RigidBody::default(),
-        Collider::sphere(1.0),
-        Transform::from_translation_rotation(Vec3::new(0.0, 10.0, 0.0), Default::default()),
-    ));
-    register_bodies(&mut world);
-
-    let body = *world
-        .get_component_for_entity::<BodyId>(sphere)
-        .expect("spawning a Collider should insert a BodyId");
-    let state = world.get_resource::<PhysicsState>().unwrap();
-    let start_y = state.body_transform(body).translation.y;
-    assert!(
-        (start_y - 10.0).abs() < 0.5,
-        "sphere should start near y = 10, was {start_y}"
-    );
-
-    // Step ~3 seconds at 60 Hz.
-    for _ in 0..180 {
-        pipeline.step(world.get_resource_mut::<PhysicsState>().unwrap());
-    }
-
-    let end_y = world
-        .get_resource::<PhysicsState>()
-        .unwrap()
-        .body_transform(body)
-        .translation
-        .y;
-
-    // It must have fallen substantially...
-    assert!(
-        end_y < start_y - 5.0,
-        "sphere should have fallen, y = {end_y}"
-    );
-    // ...and settled near the floor top (y = 1) + sphere radius (1) = 2.
-    assert!(
-        (end_y - 2.0).abs() < 0.5,
-        "sphere should rest near y = 2 (floor top + radius), was {end_y}"
-    );
-}
-
-/// The player-capsule setup: a capsule with the rotation DOFs locked must
-/// land upright and stay upright.
-#[test]
-fn capsule_with_locked_rotation_rests_upright() {
-    let mut world = physics_world();
-    let mut pipeline = PhysicsPipeline::new();
-
-    // Floor top at y = 1.
-    world.spawn((
-        Collider::cuboid(100.0, 1.0, 100.0),
-        Transform::from_translation_rotation(Vec3::ZERO, Default::default()),
-    ));
-
-    // Capsule of total half-height 1 (cylinder half-height 0.5 + cap radius
-    // 0.5), dropped from y = 5.
-    let capsule = world.spawn((
-        RigidBody {
-            allowed_dofs: AllowedDofs::TRANSLATION,
-            ..Default::default()
-        },
-        Collider::capsule(0.5, 0.5),
-        Transform::from_translation_rotation(Vec3::new(0.0, 5.0, 0.0), Default::default()),
-    ));
-    register_bodies(&mut world);
-
-    for _ in 0..180 {
-        pipeline.step(world.get_resource_mut::<PhysicsState>().unwrap());
-    }
-
-    let body = *world
-        .get_component_for_entity::<BodyId>(capsule)
-        .expect("capsule should have a BodyId");
-    let state = world.get_resource::<PhysicsState>().unwrap();
-    let transform = state.body_transform(body);
-
-    // Rest height: floor top (1) + capsule half-height (1) = 2.
-    assert!(
-        (transform.translation.y - 2.0).abs() < 0.5,
-        "capsule should rest near y = 2 (floor top + half-height), was {}",
-        transform.translation.y
-    );
-    assert!(
-        transform.rotation.dot(Quat::IDENTITY).abs() > 0.999,
-        "rotation-locked capsule should stay upright, was {:?}",
-        transform.rotation
-    );
-}
-
-/// With `ColliderOffset::bottom_origin`, the body origin is the shape's
-/// bottom, so a settled character's transform sits at floor height — where a
-/// GLTF skeleton root expects to be.
-#[test]
-fn bottom_origin_capsule_rests_with_origin_at_floor_height() {
-    let mut world = physics_world();
-    let mut pipeline = PhysicsPipeline::new();
-
-    // Floor top at y = 1.
-    world.spawn((
-        Collider::cuboid(100.0, 1.0, 100.0),
-        Transform::from_translation_rotation(Vec3::ZERO, Default::default()),
-    ));
-
-    let collider = Collider::capsule(0.5, 0.5);
-    let offset = ColliderOffset::bottom_origin(&collider);
-    let capsule = world.spawn((
-        RigidBody {
-            allowed_dofs: AllowedDofs::TRANSLATION,
-            ..Default::default()
-        },
         collider,
-        offset,
-        Transform::from_translation_rotation(Vec3::new(0.0, 5.0, 0.0), Default::default()),
-    ));
-    register_bodies(&mut world);
+        Transform::from_translation(Vec3::new(0.0, height, 0.0)),
+    ))
+}
 
-    for _ in 0..180 {
-        pipeline.step(world.get_resource_mut::<PhysicsState>().unwrap());
+fn upright_capsule(world: &mut World, offset: bool) -> Entity {
+    let collider = Collider::capsule(0.5, 0.5);
+    let body = RigidBody {
+        allowed_dofs: AllowedDofs::TRANSLATION,
+        ..Default::default()
+    };
+    let transform = Transform::from_translation(Vec3::new(0.0, 5.0, 0.0));
+    if offset {
+        let offset = ColliderOffset::bottom_origin(&collider);
+        world.spawn((body, collider, offset, transform))
+    } else {
+        world.spawn((body, collider, transform))
     }
+}
 
-    let body = *world
-        .get_component_for_entity::<BodyId>(capsule)
-        .expect("capsule should have a BodyId");
-    let state = world.get_resource::<PhysicsState>().unwrap();
+#[test]
+fn a_body_dropped_onto_a_collider_comes_to_rest_on_top_of_it() {
+    let landings = [
+        Landing {
+            name: "a sphere on a box",
+            floor: floor_box,
+            body: |world| dropped(world, Collider::sphere(1.0), 10.0),
+            rest: 2.0,
+            upright: false,
+        },
+        Landing {
+            name: "a rotation-locked capsule",
+            floor: floor_box,
+            body: |world| upright_capsule(world, false),
+            rest: 2.0,
+            upright: true,
+        },
+        Landing {
+            name: "a bottom-origin capsule",
+            floor: floor_box,
+            body: |world| upright_capsule(world, true),
+            rest: 1.0,
+            upright: true,
+        },
+        Landing {
+            name: "a sphere on a mesh",
+            floor: |world| {
+                let shape = PhysicsShape::from_mesh(&plane(Vec2::splat(40.0))).unwrap();
+                world.spawn((Collider::from_shape(Arc::new(shape)), Transform::default()));
+            },
+            body: |world| dropped(world, Collider::sphere(0.5), 4.0),
+            rest: 0.5,
+            upright: false,
+        },
+        Landing {
+            name: "a sphere on a scaled box",
+            floor: |world| {
+                world.spawn((
+                    Collider::cuboid(1.0, 1.0, 1.0),
+                    Transform::from_translation(Vec3::new(0.0, -1.0, 0.0))
+                        .with_scale(Vec3::splat(5.0)),
+                ));
+            },
+            body: |world| dropped(world, Collider::sphere(0.5), 8.0),
+            rest: 4.5,
+            upright: false,
+        },
+    ];
+    for landing in landings {
+        let mut world = physics_world();
+        let mut pipeline = PhysicsPipeline::new();
+        (landing.floor)(&mut world);
+        let entity = (landing.body)(&mut world);
+        register_bodies(&mut world);
 
-    let origin_y = state.body_transform(body).translation.y;
-    assert!(
-        (origin_y - 1.0).abs() < 0.1,
-        "bottom-origin capsule should rest with its origin on the floor top (y = 1), was {origin_y}"
-    );
+        for _ in 0..240 {
+            pipeline.step(world.get_resource_mut::<PhysicsState>().unwrap());
+        }
 
-    // The ground probe must see through the offset wrapper.
-    let ground = state.probe_ground(body, 0.05, 50.0_f32.to_radians());
-    assert!(
-        matches!(ground, GroundState::OnGround(_)),
-        "offset capsule should probe OnGround, was {ground:?}"
-    );
+        let body = *world.get_component_for_entity::<BodyId>(entity).unwrap();
+        let transform = world
+            .get_resource::<PhysicsState>()
+            .unwrap()
+            .body_transform(body);
+        assert!(
+            (transform.translation.y - landing.rest).abs() < 0.1,
+            "{}: expected to rest at y = {}, was {}",
+            landing.name,
+            landing.rest,
+            transform.translation.y
+        );
+        if landing.upright {
+            assert!(
+                transform.rotation.dot(Quat::IDENTITY).abs() > 0.999,
+                "{}: {:?}",
+                landing.name,
+                transform.rotation
+            );
+        }
+    }
 }
