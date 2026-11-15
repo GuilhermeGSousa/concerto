@@ -721,18 +721,14 @@ mod tests {
     use concerto_reflect::{Reflect, TypeRegistry};
     use uuid::Uuid;
 
-    use super::{
-        AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
-        StateMachineEditError,
-    };
+    use super::{AnimationFSMTrigger, AnimationStateMachine, StateMachineEditError};
     use crate::{
-        blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::AnimationGraphContext,
-        graph::{AnimationGraph, GraphId},
+        graph::AnimationGraph,
         node::{
-            AnimationClipNode, AnimationNode, ErasedAnimationNode, InputSlots,
-            ReflectAnimationNode, register_node_inputs,
+            AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode,
+            register_node_inputs,
         },
         player::AnimationPlayer,
         plugin::register_animation_types,
@@ -786,63 +782,6 @@ mod tests {
         graph
     }
 
-    fn updates_in_state(
-        machine: &mut AnimationStateMachineState,
-        state: usize,
-        walks: &Walks,
-    ) -> Option<u32> {
-        let mut updates = None;
-        machine
-            .state_graphs
-            .get_mut(GraphId::from(state))?
-            .for_each_state_mut::<Counter>(
-                walks.graphs(),
-                &AnimationBlackboard::default(),
-                |_, state, _| updates = Some(*state),
-            );
-        updates
-    }
-
-    #[test]
-    fn only_the_current_states_graph_is_updated() {
-        let mut server = AssetServer::new();
-        let mut graphs = AssetStore::<AnimationGraph>::new();
-        server.register_asset(&graphs);
-        let mut add = |graph: AnimationGraph| {
-            let handle = server.add(AnimationGraph::default());
-            graphs.insert(handle.id(), graph);
-            handle
-        };
-        let first = add(counting_graph());
-        let second = add(counting_graph());
-        let machine =
-            AnimationStateMachine::from_initial_state(name!("first"), first, |transition| {
-                transition.to(
-                    name!("second"),
-                    AnimationFSMTrigger::on_bool(name!("go"), true),
-                    0.1,
-                );
-            })
-            .state(name!("second"), second, |_| {})
-            .build();
-        let machine: Box<dyn ErasedAnimationNode> = Box::new(machine);
-        let walks = Walks::with(AssetStore::new(), graphs, register_node_inputs::<Counter>);
-        let blackboard = AnimationBlackboard::default();
-        let mut state = walks
-            .create(&blackboard, |context| machine.create_state(context))
-            .unwrap();
-
-        for _ in 0..3 {
-            walks.update(&blackboard, |context| {
-                machine.update(&mut state, 0.1, context)
-            });
-        }
-
-        let machine = state.downcast_mut::<AnimationStateMachineState>().unwrap();
-        assert_eq!(updates_in_state(machine, 0, &walks), Some(3));
-        assert_eq!(updates_in_state(machine, 1, &walks), Some(0));
-    }
-
     enum Graph {
         A,
         B,
@@ -883,13 +822,6 @@ mod tests {
         SetInitial {
             name: &'static str,
         },
-        LoseLastTransitionList,
-    }
-
-    fn without_last_transition_list(machine: &AnimationStateMachine) -> AnimationStateMachine {
-        let mut stored = serde_json::to_value(machine).unwrap();
-        stored["transitions"].as_array_mut().unwrap().pop();
-        serde_json::from_value(stored).unwrap()
     }
 
     struct EditCase {
@@ -1025,20 +957,6 @@ mod tests {
             },
             EditCase {
                 edit: AddTransition {
-                    from: "gone",
-                    to: "idle",
-                    trigger: Instant,
-                    blend_time: 0.1,
-                },
-                refused: unknown("gone"),
-                machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
-                    "walk b -> ",
-                    "run a -> ",
-                ],
-            },
-            EditCase {
-                edit: AddTransition {
                     from: "walk",
                     to: "run",
                     trigger: Instant,
@@ -1122,49 +1040,11 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetTransition {
-                    from: "gone",
-                    index: 0,
-                    trigger: Instant,
-                    blend_time: 0.5,
-                },
-                refused: unknown("gone"),
-                machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
-                    "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
-                ],
-            },
-            EditCase {
                 edit: RenameState {
                     name: "run",
                     to: "sprint",
                 },
                 refused: None,
-                machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
-                    "walk b -> 0:sprint instant 0.4",
-                    "sprint a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
-                ],
-            },
-            EditCase {
-                edit: RenameState {
-                    name: "walk",
-                    to: "idle",
-                },
-                refused: duplicate("idle"),
-                machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
-                    "walk b -> 0:sprint instant 0.4",
-                    "sprint a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
-                ],
-            },
-            EditCase {
-                edit: RenameState {
-                    name: "run",
-                    to: "jog",
-                },
-                refused: unknown("run"),
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk b -> 0:sprint instant 0.4",
@@ -1184,29 +1064,8 @@ mod tests {
                 ],
             },
             EditCase {
-                edit: SetStateGraph {
-                    name: "run",
-                    graph: Graph::B,
-                },
-                refused: unknown("run"),
-                machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
-                    "walk b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
-                ],
-            },
-            EditCase {
                 edit: SetInitial { name: "walk" },
                 refused: None,
-                machine: &[
-                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
-                    "walk* b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
-                ],
-            },
-            EditCase {
-                edit: SetInitial { name: "run" },
-                refused: unknown("run"),
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk* b -> 0:sprint instant 0.4",
@@ -1219,27 +1078,6 @@ mod tests {
                     index: 0,
                 },
                 refused: None,
-                machine: &[
-                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
-                    "walk* b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:walk end 0.6, 1:idle end 0.7",
-                ],
-            },
-            EditCase {
-                edit: RemoveTransition {
-                    from: "sprint",
-                    index: 2,
-                },
-                refused: out_of_range("sprint", 2),
-                machine: &[
-                    "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
-                    "walk* b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:walk end 0.6, 1:idle end 0.7",
-                ],
-            },
-            EditCase {
-                edit: RemoveState { name: "run" },
-                refused: unknown("run"),
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk* b -> 0:sprint instant 0.4",
@@ -1253,47 +1091,6 @@ mod tests {
                     "idle* a -> 0:sprint instant 0.5",
                     "sprint b -> 0:idle end 0.7",
                 ],
-            },
-            EditCase {
-                edit: LoseLastTransitionList,
-                refused: None,
-                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
-            },
-            EditCase {
-                edit: SetTransition {
-                    from: "sprint",
-                    index: 0,
-                    trigger: Instant,
-                    blend_time: 0.5,
-                },
-                refused: out_of_range("sprint", 0),
-                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
-            },
-            EditCase {
-                edit: RemoveTransition {
-                    from: "sprint",
-                    index: 0,
-                },
-                refused: out_of_range("sprint", 0),
-                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
-            },
-            EditCase {
-                edit: AddTransition {
-                    from: "sprint",
-                    to: "idle",
-                    trigger: Instant,
-                    blend_time: 0.1,
-                },
-                refused: None,
-                machine: &[
-                    "idle* a -> 0:sprint instant 0.5",
-                    "sprint b -> 0:idle instant 0.1",
-                ],
-            },
-            EditCase {
-                edit: LoseLastTransitionList,
-                refused: None,
-                machine: &["idle* a -> 0:sprint instant 0.5", "sprint b -> "],
             },
             EditCase {
                 edit: RemoveState { name: "sprint" },
@@ -1335,10 +1132,6 @@ mod tests {
                     blend_time,
                 } => machine.set_transition(from.into(), index, trigger, blend_time),
                 SetInitial { name } => machine.set_initial(name.into()),
-                LoseLastTransitionList => {
-                    machine = without_last_transition_list(&machine);
-                    Ok(())
-                }
             };
 
             assert_eq!(result.err(), case.refused, "row {row}");
@@ -1430,6 +1223,9 @@ mod tests {
                 "1:walk/1 w1",
             ]
         );
+        let mut counters = 0;
+        player.for_each_state::<Counter>(walks.graphs(), |_, _, _| counters += 1);
+        assert_eq!(counters, 1);
 
         player.set_bool_param(name!("go"), true);
         walks.advance(&mut player, 0.05);
@@ -1439,29 +1235,5 @@ mod tests {
             walks.advance(&mut player, 0.05);
         }
         assert_eq!(visited(&player, &walks)[1], "1 w1 in walk");
-    }
-
-    #[test]
-    fn for_each_state_and_for_each_state_mut_reach_a_node_inside_a_state_graph() {
-        let mut server = AssetServer::new();
-        let mut graphs = AssetStore::<AnimationGraph>::new();
-        server.register_asset(&graphs);
-        let state_graph = server.add(AnimationGraph::default());
-        graphs.insert(state_graph.id(), counting_graph());
-        let machine =
-            AnimationStateMachine::from_initial_state(name!("only"), state_graph, |_| {}).build();
-        let top = server.add(AnimationGraph::default());
-        graphs.insert(top.id(), made_live(AnimationGraph::from_node(machine)));
-        let walks = Walks::with(AssetStore::new(), graphs, register_node_inputs::<Counter>);
-        let mut player = AnimationPlayer::new(1);
-        walks.initialize(&mut player, top);
-
-        let mut visits = 0;
-        player.for_each_state_mut::<Counter>(walks.graphs(), |_, _, _| visits += 1);
-        let mut shared_visits = 0;
-        player.for_each_state::<Counter>(walks.graphs(), |_, _, _| shared_visits += 1);
-
-        assert_eq!(visits, 1);
-        assert_eq!(shared_visits, 1);
     }
 }

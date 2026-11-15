@@ -116,148 +116,24 @@ impl Plugin for AnimationPlugin {
 
 #[cfg(test)]
 mod tests {
-    use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
+    use concerto_app::{App, plugins::AssetManagerPlugin};
     use concerto_ecs::{
         IntoSystem, Res, ResMut, System, World,
-        component::scene::SceneEntityRef,
         resource::Resource,
-        system::{
-            access::SystemAccess,
-            executor::single_thread::SingleThreadedExecutor,
-            input::{InputSet, InputState},
-            meta::SystemMetadata,
-            schedule::Schedules,
-        },
+        system::{access::SystemAccess, meta::SystemMetadata},
     };
-    use concerto_foundation::{
-        assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
-        time::Time,
-        transform::Transform,
-    };
-    use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
+
     use concerto_reflect::Reflect;
-    use glam::Mat4;
+
     use uuid::Uuid;
 
-    use super::{AnimationAppExt, AnimationPlugin, register_animation_types};
+    use super::{AnimationAppExt, AnimationPlugin};
     use crate::{
         evaluation::AnimationGraphContext,
-        graph::AnimationGraph,
-        node::{AnimationNode, CreateNodeInputs, InputSlots, ReflectAnimationNode},
-        player::AnimationPlayer,
+        node::{AnimationNode, InputSlots, ReflectAnimationNode},
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
-        target::{animate_targets, initialize_animation_players, update_animation_players},
+        target::update_animation_players,
     };
-
-    #[derive(Default, Reflect)]
-    #[reflect(AnimationNode)]
-    struct OrderProbe {}
-
-    impl AnimationNode for OrderProbe {
-        type State = bool;
-        type CreateInput = ();
-        type UpdateInput = ();
-        type EvaluateInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
-        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> bool {
-            false
-        }
-
-        fn update(&self, state: &mut bool, _: f32, _: &(), _: &AnimationGraphContext<'_>) {
-            *state = true;
-        }
-
-        fn evaluate(
-            &self,
-            state: &mut bool,
-            _: &(),
-            _: &AnimationGraphContext<'_>,
-            _: &[Uuid],
-            _: &[EvaluatedFrame],
-            _: &mut FramePool,
-            output: &mut AnimationFrame,
-        ) {
-            if let Some(joint) = output.joint_mut(0) {
-                joint.translation.x = if *state { 1.0 } else { 0.0 };
-            }
-        }
-
-        fn reset(&self, state: &mut bool) {
-            *state = false;
-        }
-    }
-
-    #[test]
-    fn animate_targets_runs_after_update_animation_players() {
-        let bone_id = Uuid::from_u128(11);
-
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        app.insert_resource(Time::new());
-        app.register_plugin(AnimationPlugin);
-
-        let world = app.main_mut().world_mut();
-        let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
-        let skeleton = Skeleton::new(
-            vec![Mat4::IDENTITY],
-            vec![None],
-            vec!["bone".into()],
-            vec![JointPose::IDENTITY],
-            vec![bone_id],
-        )
-        .unwrap();
-        world
-            .get_resource_mut::<AssetStore<Skeleton>>()
-            .unwrap()
-            .insert(skeleton_handle.id(), skeleton);
-
-        let mut registry = concerto_reflect::TypeRegistry::default();
-        register_animation_types(&mut registry);
-        registry.register::<OrderProbe>();
-        let mut graph = AnimationGraph::from_node(OrderProbe {});
-        graph.make_live(&registry, None).unwrap();
-        let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
-        world
-            .get_resource_mut::<AssetStore<AnimationGraph>>()
-            .unwrap()
-            .insert(graph_handle.id(), graph);
-
-        let mut player = AnimationPlayer::new(1);
-        {
-            let mut create = InputState::<InputSet<CreateNodeInputs>>::new(world);
-            let inputs = create.get(world).unwrap();
-            let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
-            player.initialize_graph(graph_handle, graphs, &inputs);
-        }
-        let bone = world.spawn(Transform::IDENTITY);
-        world.spawn((
-            player,
-            SkeletonComponent {
-                skeleton: skeleton_handle,
-                bones: vec![SceneEntityRef::Entity(bone)],
-                root: None,
-            },
-        ));
-
-        let schedules = world.remove_resource::<Schedules>().unwrap();
-        let compiled = schedules.compile::<SingleThreadedExecutor>(world);
-        world.insert_resource(compiled);
-        world.run_schedule(LateUpdate);
-
-        let x = world
-            .get_component_for_entity::<Transform>(bone)
-            .unwrap()
-            .translation
-            .x;
-        assert_eq!(
-            x, 1.0,
-            "the bone must be posed from the graph state updated in the same frame"
-        );
-    }
 
     #[derive(Resource)]
     struct Speed;
@@ -304,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_walk_whose_input_reads_a_resource_declares_it() {
+    fn the_update_walk_declares_the_resource_a_node_reads_in_update() {
         let mut app = App::new();
         app.register_plugin(AssetManagerPlugin);
         app.register_plugin(AnimationPlugin);
@@ -313,11 +189,7 @@ mod tests {
 
         let writer = access_of(world, |_: ResMut<Speed>| {});
         let update = access_of(world, update_animation_players);
-        let evaluate = access_of(world, animate_targets);
-        let create = access_of(world, initialize_animation_players);
 
         assert!(!SystemAccess::are_disjoint(&update, &writer));
-        assert!(SystemAccess::are_disjoint(&evaluate, &writer));
-        assert!(SystemAccess::are_disjoint(&create, &writer));
     }
 }

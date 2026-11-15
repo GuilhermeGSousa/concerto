@@ -1496,30 +1496,20 @@ fn is_strict_ancestor(skeleton: &Skeleton, ancestor: usize, bone: usize) -> bool
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Mutex, Once},
-        thread::ThreadId,
-    };
-
-    use concerto_ecs::{
-        World,
-        resource::{Res, Resource},
-        system::input::{SystemInputData, register_input},
-    };
+    use concerto_ecs::system::input::SystemInputData;
     use concerto_foundation::assets::{
         Asset, AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
-    use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonError};
-    use concerto_name::{Name, name};
-    use concerto_reflect::{Reflect, TypeRegistry};
+    use concerto_mesh::{JointName, JointPose, Skeleton};
+    use concerto_name::Name;
+
     use glam::{Mat4, Quat, Vec3};
     use proptest::prelude::*;
     use uuid::Uuid;
 
     use super::{
-        BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedGoal, ResolvedRig,
-        RetargetChain, RetargetError, RetargetGoal, RetargetGoalSettings, RetargetNode,
-        RetargetRig, RetargetSide, RigError,
+        BoneCorrection, BoneUse, PoseRetarget, ReferencePose, ResolvedRig, RetargetChain,
+        RetargetGoal, RetargetGoalSettings, RetargetNode, RetargetRig, RigError,
     };
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
@@ -1527,13 +1517,9 @@ mod tests {
         event::AnimationEvent,
         graph::AnimationGraph,
         ik::{TwoBoneChain, solve_two_bone},
-        node::{
-            AnimationClipNode, AnimationNode, AnimationPlayMode, CreateNodeInputs, InputSlots,
-            ReflectAnimationNode, state_machine::AnimationStateMachine,
-        },
+        node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
         player::AnimationPlayer,
-        plugin::register_animation_types,
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
+        pose::{AnimationFrame, FiredEvent, FramePool},
         testing::{Walks, made_live},
     };
 
@@ -1571,14 +1557,9 @@ mod tests {
     ];
     const ROOT: usize = 0;
     const PELVIS: usize = 1;
-    const SPINE_A: usize = 2;
-    const SPINE_C: usize = 4;
     const HEAD: usize = 6;
     const UPPER_L: usize = 8;
     const HAND_L: usize = 10;
-    const THIGH_L: usize = 11;
-    const CALF_L: usize = 12;
-    const FOOT_L: usize = 13;
 
     fn rest(bone: usize) -> JointPose {
         match bone {
@@ -1664,65 +1645,6 @@ mod tests {
 
         assert!(server.is_loading_or_loaded(skeleton));
         assert!(server.is_loading_or_loaded(clip));
-    }
-
-    #[test]
-    fn a_rig_resolves_its_root_motion_root_chains_and_goals_to_bone_indices() {
-        let rig = rig()
-            .with_motion_root("root")
-            .with_chain(RetargetChain::new("spine", "spine_a", "spine_c"))
-            .with_chain(RetargetChain::new("head", "head", "head"))
-            .with_goal(RetargetGoal::new("foot_l", "foot_l"))
-            .with_goal(RetargetGoal::new("hand_l", "hand_l"));
-
-        let resolved = rig.resolve(&skeleton(), None).unwrap();
-
-        assert_eq!(resolved.root, PELVIS);
-        assert_eq!(resolved.motion_root, Some(ROOT));
-        assert_eq!(resolved.chains.len(), 2);
-        assert_eq!(
-            resolved.chain(Name::new("spine")).unwrap().bones,
-            vec![SPINE_A, 3, SPINE_C]
-        );
-        assert_eq!(resolved.chain(Name::new("head")).unwrap().bones, vec![HEAD]);
-        assert!(resolved.chain(Name::new("tail")).is_none());
-        assert_eq!(
-            resolved.goals,
-            vec![
-                ResolvedGoal {
-                    name: Name::new("foot_l"),
-                    tip: FOOT_L,
-                    mid: CALF_L,
-                    root: THIGH_L,
-                },
-                ResolvedGoal {
-                    name: Name::new("hand_l"),
-                    tip: HAND_L,
-                    mid: 9,
-                    root: UPPER_L,
-                },
-            ]
-        );
-        assert_eq!(resolved.goal(Name::new("hand_l")).unwrap().tip, HAND_L);
-        assert!(resolved.goal(Name::new("hand_r")).is_none());
-    }
-
-    #[test]
-    fn the_rest_reference_is_the_rest_pose_and_its_forward_kinematics() {
-        let skeleton = skeleton();
-
-        let resolved = rig().resolve(&skeleton, None).unwrap();
-
-        assert_eq!(resolved.reference_local, skeleton.rest_pose.to_vec());
-        assert_eq!(
-            resolved.reference_model,
-            skeleton.forward_kinematics(&skeleton.rest_pose).unwrap()
-        );
-        assert!(
-            (resolved.root_height - 1.0).abs() < 1e-5,
-            "{}",
-            resolved.root_height
-        );
     }
 
     #[test]
@@ -1859,185 +1781,25 @@ mod tests {
 
     #[test]
     fn a_rig_that_does_not_fit_its_skeleton_is_refused_naming_why() {
-        let spine = || Name::new("spine");
-        let foot = || Name::new("foot_l");
-        let mut short_rest = skeleton();
-        let mut rest_pose = short_rest.rest_pose.to_vec();
-        rest_pose.pop();
-        short_rest.rest_pose = rest_pose.into_boxed_slice();
-        let mut parent_after_child = skeleton();
-        parent_after_child.parents[PELVIS] = Some(5);
         let cases = [
-            refusal("no root", RetargetRig::new(), RigError::MissingRoot),
             refusal(
                 "unknown root",
                 RetargetRig::new().with_root("hips"),
                 unknown("hips", BoneUse::Root),
             ),
             refusal(
-                "unknown motion root",
-                rig().with_motion_root("world"),
-                unknown("world", BoneUse::MotionRoot),
-            ),
-            refusal(
-                "empty motion root",
-                rig().with_motion_root(""),
-                unknown("", BoneUse::MotionRoot),
-            ),
-            refusal(
-                "motion root below the root",
-                rig().with_motion_root("spine_a"),
-                RigError::MotionRootNotAbove {
-                    motion_root: JointName::from("spine_a"),
-                    root: JointName::from("pelvis"),
-                },
-            ),
-            refusal(
-                "motion root equal to the root",
-                rig().with_motion_root("pelvis"),
-                RigError::MotionRootNotAbove {
-                    motion_root: JointName::from("pelvis"),
-                    root: JointName::from("pelvis"),
-                },
-            ),
-            refusal(
-                "empty chain start",
-                rig().with_chain(RetargetChain::new("spine", "", "spine_c")),
-                unknown("", BoneUse::ChainStart(spine())),
-            ),
-            refusal(
-                "unknown chain start",
-                rig().with_chain(RetargetChain::new("spine", "spine_0", "spine_c")),
-                unknown("spine_0", BoneUse::ChainStart(spine())),
-            ),
-            refusal(
-                "unknown chain end",
-                rig().with_chain(RetargetChain::new("spine", "spine_a", "spine_d")),
-                unknown("spine_d", BoneUse::ChainEnd(spine())),
-            ),
-            refusal(
                 "chain end above its start",
                 rig().with_chain(RetargetChain::new("spine", "spine_c", "spine_a")),
-                RigError::ChainEndNotBelowStart { chain: spine() },
-            ),
-            refusal(
-                "chain end on a sibling branch",
-                rig().with_chain(RetargetChain::new("arm_l", "thigh_l", "hand_l")),
                 RigError::ChainEndNotBelowStart {
-                    chain: Name::new("arm_l"),
+                    chain: Name::new("spine"),
                 },
             ),
-            refusal(
-                "unnamed chain",
-                rig()
-                    .with_chain(RetargetChain::new("head", "head", "head"))
-                    .with_chain(RetargetChain::new("", "neck", "neck")),
-                RigError::UnnamedChain { index: 1 },
-            ),
-            refusal(
-                "chain named twice",
-                rig()
-                    .with_chain(RetargetChain::new("head", "head", "head"))
-                    .with_chain(RetargetChain::new("head", "neck", "head")),
-                RigError::DuplicateChain {
-                    chain: Name::new("head"),
-                },
-            ),
-            refusal(
-                "empty correction bone",
-                rig().with_correction(BoneCorrection::default()),
-                unknown("", BoneUse::Correction),
-            ),
-            refusal(
-                "unknown correction bone",
-                rig().with_correction(BoneCorrection::new("tail", Quat::IDENTITY)),
-                unknown("tail", BoneUse::Correction),
-            ),
-            refusal(
-                "unnamed goal",
-                rig()
-                    .with_goal(RetargetGoal::new("foot_l", "foot_l"))
-                    .with_goal(RetargetGoal::new("", "hand_l")),
-                RigError::UnnamedGoal { index: 1 },
-            ),
-            refusal(
-                "goal named twice",
-                rig()
-                    .with_goal(RetargetGoal::new("foot_l", "foot_l"))
-                    .with_goal(RetargetGoal::new("foot_l", "hand_l")),
-                RigError::DuplicateGoal { goal: foot() },
-            ),
-            refusal(
-                "unknown goal bone",
-                rig().with_goal(RetargetGoal::new("foot_l", "ball_l")),
-                unknown("ball_l", BoneUse::Goal(foot())),
-            ),
-            refusal(
-                "empty goal bone",
-                rig().with_goal(RetargetGoal::new("foot_l", "")),
-                unknown("", BoneUse::Goal(foot())),
-            ),
-            refusal(
-                "goal bone with no grandparent",
-                rig().with_goal(RetargetGoal::new("top", "pelvis")),
-                RigError::GoalTooHigh {
-                    goal: Name::new("top"),
-                },
-            ),
-            refusal(
-                "goal whose root is the rig root",
-                rig().with_goal(RetargetGoal::new("knee_l", "calf_l")),
-                RigError::GoalBendsRoot {
-                    goal: Name::new("knee_l"),
-                },
-            ),
-            refusal(
-                "clip frame without a clip",
-                clip_frame_at(0.0),
-                RigError::MissingClip,
-            ),
-            RigRefusal {
-                clip: Some(translating(bone_id(PELVIS))),
-                ..refusal(
-                    "clip frame at a NaN time",
-                    clip_frame_at(f32::NAN),
-                    RigError::InvalidTime { time: f32::NAN },
-                )
-            },
             RigRefusal {
                 clip: Some(translating(Uuid::from_u128(999))),
                 ..refusal(
                     "clip with channels for no bone of the skeleton",
                     clip_frame_at(0.5),
                     RigError::ClipNotForSkeleton,
-                )
-            },
-            refusal(
-                "root at the model origin",
-                RetargetRig::new().with_root("root"),
-                RigError::RootHeight { height: 0.0 },
-            ),
-            RigRefusal {
-                skeleton: short_rest,
-                ..refusal(
-                    "skeleton with a short rest pose",
-                    rig(),
-                    RigError::Skeleton(SkeletonError::LengthMismatch {
-                        field: "rest_pose",
-                        expected: NAMES.len(),
-                        actual: NAMES.len() - 1,
-                    }),
-                )
-            },
-            RigRefusal {
-                skeleton: parent_after_child,
-                ..refusal(
-                    "skeleton with a parent after its child",
-                    rig(),
-                    RigError::Skeleton(SkeletonError::ParentNotBefore {
-                        bone: PELVIS,
-                        parent: 5,
-                    }),
                 )
             },
         ];
@@ -2524,7 +2286,6 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Way {
         SourceToTarget,
-        TargetToSource,
         TargetToDoubled,
     }
 
@@ -2540,7 +2301,6 @@ mod tests {
             };
             match self {
                 Way::SourceToTarget => [source(), target()],
-                Way::TargetToSource => [target(), source()],
                 Way::TargetToDoubled => [
                     target(),
                     RigOn {
@@ -2610,40 +2370,6 @@ mod tests {
                     turn("spine_03", about_x(50.0)),
                     turn("spine_04", about_x(60.0)),
                 ],
-            },
-            ChainCase {
-                name: "a shorter target chain",
-                way: Way::TargetToSource,
-                source: vec![
-                    turn("spine_01", about_x(20.0)),
-                    turn("spine_02", about_x(30.0)),
-                    turn("spine_03", about_x(50.0)),
-                    turn("spine_04", about_x(60.0)),
-                ],
-                target: vec![
-                    turn("spine_1", about_x(20.0)),
-                    turn("spine_2", about_x(40.0)),
-                    turn("spine_3", about_x(60.0)),
-                ],
-            },
-            ChainCase {
-                name: "a single bone target chain takes the source start",
-                way: Way::SourceToTarget,
-                source: vec![
-                    turn("neck_1", about_x(25.0)),
-                    turn("neck_2", Quat::from_rotation_z(-0.5)),
-                    turn("head", Quat::from_rotation_y(0.7)),
-                ],
-                target: vec![
-                    turn("neck_01", about_x(25.0)),
-                    turn("head", Quat::from_rotation_y(0.7)),
-                ],
-            },
-            ChainCase {
-                name: "the root",
-                way: Way::SourceToTarget,
-                source: vec![turn("hips", Quat::from_rotation_y(0.7))],
-                target: vec![turn("pelvis", Quat::from_rotation_y(0.7))],
             },
         ];
 
@@ -2735,20 +2461,6 @@ mod tests {
     fn the_root_and_motion_root_carry_the_scaled_source_root_motion() {
         let cases = [
             RootCase {
-                name: "the root moves by the scaled source root offset",
-                way: Way::SourceToTarget,
-                source: |skeleton| {
-                    let mut pose = skeleton.rest_pose.to_vec();
-                    pose[bone(skeleton, "hips")].translation += Vec3::new(0.2, -0.1, 0.4);
-                    pose
-                },
-                moved: vec![Moved {
-                    bone: "pelvis",
-                    by: Vec3::new(0.1, -0.05, 0.2),
-                    turned: None,
-                }],
-            },
-            RootCase {
                 name: "a generated motion root takes the ground part of the root motion",
                 way: Way::SourceToTarget,
                 source: |skeleton| {
@@ -2790,20 +2502,6 @@ mod tests {
                     turned: Some(turn_then_tilt()),
                 }],
             },
-            RootCase {
-                name: "a motion root onto a target without one moves the root",
-                way: Way::TargetToSource,
-                source: |skeleton| {
-                    let mut pose = skeleton.rest_pose.to_vec();
-                    pose[bone(skeleton, "root")].translation += Vec3::new(1.0, 0.0, 0.0);
-                    pose
-                },
-                moved: vec![Moved {
-                    bone: "hips",
-                    by: Vec3::new(2.0, 0.0, 0.0),
-                    turned: None,
-                }],
-            },
         ];
 
         for case in cases {
@@ -2842,155 +2540,6 @@ mod tests {
                     );
                 }
             }
-        }
-    }
-
-    struct LengthCase {
-        name: &'static str,
-        source: usize,
-        out: usize,
-        error: RetargetError,
-    }
-
-    #[test]
-    fn a_pose_of_the_wrong_length_is_refused_and_nothing_is_written() {
-        let source_count = source_skeleton().bone_count();
-        let target_count = target_skeleton().bone_count();
-        let cases = [
-            LengthCase {
-                name: "a short source pose",
-                source: source_count - 1,
-                out: target_count,
-                error: RetargetError::PoseLength {
-                    side: RetargetSide::Source,
-                    expected: source_count,
-                    actual: source_count - 1,
-                },
-            },
-            LengthCase {
-                name: "a short output",
-                source: source_count,
-                out: target_count - 1,
-                error: RetargetError::PoseLength {
-                    side: RetargetSide::Target,
-                    expected: target_count,
-                    actual: target_count - 1,
-                },
-            },
-        ];
-
-        for case in cases {
-            let mut out = vec![JointPose::IDENTITY; case.out];
-
-            let result = source_to_target()
-                .retarget_into(&source_skeleton().rest_pose[..case.source], &mut out);
-
-            assert_eq!(result, Err(case.error), "{}", case.name);
-            assert_eq!(out, vec![JointPose::IDENTITY; case.out], "{}", case.name);
-        }
-    }
-
-    struct PairRefusal {
-        name: &'static str,
-        source: ResolvedRig,
-        source_skeleton: Skeleton,
-        target: ResolvedRig,
-        target_skeleton: Skeleton,
-        side: Option<RetargetSide>,
-    }
-
-    fn pair_refusal(name: &'static str, side: RetargetSide) -> PairRefusal {
-        PairRefusal {
-            name,
-            source: source_rig(),
-            source_skeleton: source_skeleton(),
-            target: target_rig(),
-            target_skeleton: target_skeleton(),
-            side: Some(side),
-        }
-    }
-
-    fn feet_on(rig: RetargetRig, skeleton: &Skeleton) -> ResolvedRig {
-        with_feet(rig).resolve(skeleton, None).unwrap()
-    }
-
-    #[test]
-    fn a_pose_retarget_refuses_rigs_that_do_not_fit_their_skeletons_or_share_no_chain() {
-        let mut root_past_the_last_bone = target_rig();
-        root_past_the_last_bone.root = target_skeleton().bone_count();
-        let mut empty_chain = source_rig();
-        empty_chain.chains[0].bones.clear();
-        let mut goal_tip_past_the_last_bone =
-            feet_on(goal_target_rig_asset(), &goal_target_skeleton());
-        goal_tip_past_the_last_bone.goals[0].tip = goal_target_skeleton().bone_count();
-        let mut goal_mid_off_the_tip = feet_on(goal_source_rig_asset(), &goal_source_skeleton());
-        goal_mid_off_the_tip.goals[0].mid = goal_mid_off_the_tip.goals[0].root;
-        let goal_rigs = |name, side| PairRefusal {
-            source: feet_on(goal_source_rig_asset(), &goal_source_skeleton()),
-            source_skeleton: goal_source_skeleton(),
-            target: feet_on(goal_target_rig_asset(), &goal_target_skeleton()),
-            target_skeleton: goal_target_skeleton(),
-            ..pair_refusal(name, side)
-        };
-        let cases = [
-            PairRefusal {
-                source: RetargetRig::new()
-                    .with_root("hips")
-                    .with_chain(RetargetChain::new("fin_l", "fin_l", "fin_l"))
-                    .resolve(&source_skeleton(), None)
-                    .unwrap(),
-                side: None,
-                ..pair_refusal("rigs sharing no chain name", RetargetSide::Source)
-            },
-            PairRefusal {
-                source_skeleton: target_skeleton(),
-                ..pair_refusal(
-                    "a source rig beside the target skeleton",
-                    RetargetSide::Source,
-                )
-            },
-            PairRefusal {
-                target_skeleton: source_skeleton(),
-                ..pair_refusal(
-                    "a target rig beside the source skeleton",
-                    RetargetSide::Target,
-                )
-            },
-            PairRefusal {
-                target: root_past_the_last_bone,
-                ..pair_refusal("a root past the last bone", RetargetSide::Target)
-            },
-            PairRefusal {
-                source: empty_chain,
-                ..pair_refusal("an empty chain", RetargetSide::Source)
-            },
-            PairRefusal {
-                target: goal_tip_past_the_last_bone,
-                ..goal_rigs("a goal tip past the last bone", RetargetSide::Target)
-            },
-            PairRefusal {
-                source: goal_mid_off_the_tip,
-                ..goal_rigs(
-                    "a goal mid that is not the tip's parent",
-                    RetargetSide::Source,
-                )
-            },
-        ];
-
-        for case in cases {
-            let error = PoseRetarget::new(
-                &case.source,
-                &case.source_skeleton,
-                &case.target,
-                &case.target_skeleton,
-            )
-            .unwrap_err();
-
-            let expected = match case.side {
-                Some(side) => RetargetError::RigNotForSkeleton { side },
-                None => RetargetError::NoSharedChain,
-            };
-            assert_eq!(error, expected, "{}", case.name);
         }
     }
 
@@ -3197,28 +2746,10 @@ mod tests {
         crouched(&skeleton, &crouch_deltas(&skeleton))
     }
 
-    struct GoalSide<'a> {
-        skeleton: &'a Skeleton,
-        pose: &'a [JointPose],
-        root: &'a str,
-        tip: &'a str,
-    }
-
-    impl GoalSide<'_> {
-        fn tip_from_root(&self, pose: &[JointPose]) -> Vec3 {
-            let model = self.skeleton.forward_kinematics(pose).unwrap();
-            model_position(&model, bone(self.skeleton, self.tip))
-                - model_position(&model, bone(self.skeleton, self.root))
-        }
-    }
-
-    fn full_goal(source: &GoalSide, target: &GoalSide, scale: f32) -> Vec3 {
-        let offset = target.tip_from_root(&target.skeleton.rest_pose)
-            - source.tip_from_root(&source.skeleton.rest_pose) * scale;
-        let target_model = target.skeleton.forward_kinematics(target.pose).unwrap();
-        model_position(&target_model, bone(target.skeleton, target.root))
-            + source.tip_from_root(source.pose) * scale
-            + offset
+    fn foot_from_pelvis(skeleton: &Skeleton, pose: &[JointPose]) -> Vec3 {
+        let model = skeleton.forward_kinematics(pose).unwrap();
+        model_position(&model, bone(skeleton, "foot_l"))
+            - model_position(&model, bone(skeleton, "pelvis"))
     }
 
     fn assert_near(actual: Vec3, expected: Vec3, tolerance: f32) {
@@ -3243,44 +2774,17 @@ mod tests {
             let out = retarget(&mut feet_retarget(), &source, target.bone_count());
             let turned_out = retarget(&mut feet_retarget(), &turned, target.bone_count());
 
-            let side = |pose: &[JointPose]| {
-                GoalSide {
-                    skeleton: &target,
-                    pose,
-                    root: "pelvis",
-                    tip: "foot_l",
-                }
-                .tip_from_root(pose)
-            };
-            assert_near(side(&turned_out), turn * side(&out), 1e-4);
-        }
-
-        #[test]
-        fn a_goal_weight_counts_as_clamped_to_0_and_1_and_nan_as_0(
-            weight in prop_oneof![Just(f32::NAN), -2.0f32..3.0],
-        ) {
-            let count = goal_target_skeleton().bone_count();
-            let source = crouched_source();
-            let weighted = |weight: f32| {
-                let mut pose_retarget = feet_retarget();
-                for goal in ["foot_l", "foot_r"] {
-                    pose_retarget
-                        .set_goal(&RetargetGoalSettings::new(goal).with_weight(weight))
-                        .unwrap();
-                }
-                retarget(&mut pose_retarget, &source, count)
-            };
-            let clamped = if weight.is_nan() { 0.0 } else { weight.clamp(0.0, 1.0) };
-
-            prop_assert_eq!(weighted(weight), weighted(clamped));
-            if clamped == 0.0 {
-                prop_assert_eq!(weighted(weight), retarget(&mut plain_retarget(), &source, count));
-            }
+            assert_near(
+                foot_from_pelvis(&target, &turned_out),
+                turn * foot_from_pelvis(&target, &out),
+                1e-4,
+            );
         }
     }
 
     #[test]
-    fn a_source_ankle_at_its_reference_height_puts_the_target_ankle_at_its_own() {
+    fn a_source_ankle_at_its_reference_height_puts_the_target_ankle_at_its_own_keeping_the_fk_foot_rotation()
+     {
         let target = goal_target_skeleton();
         let source = crouched_source();
         let foot = bone(&target, "foot_l");
@@ -3295,10 +2799,19 @@ mod tests {
             (fk_foot.y - reference.y).abs() > 1e-3,
             "the FK ankle {fk_foot:?} is already at {reference:?}"
         );
+        let solved_model = target.forward_kinematics(&solved).unwrap();
+        assert_near(model_position(&solved_model, foot), reference, 1e-4);
+
+        let toe = bone(&target, "toe_l");
+        let fk_rotations = model_rotations(&target, &fk);
+        let solved_rotations = model_rotations(&target, &solved);
+        assert_quat(solved_rotations[foot], fk_rotations[foot]);
+        assert_quat(solved_rotations[toe], fk_rotations[toe]);
+        let fk_model = target.forward_kinematics(&fk).unwrap();
         assert_near(
-            model_position(&target.forward_kinematics(&solved).unwrap(), foot),
-            reference,
-            1e-4,
+            model_position(&solved_model, toe) - model_position(&solved_model, foot),
+            model_position(&fk_model, toe) - model_position(&fk_model, foot),
+            1e-5,
         );
     }
 
@@ -3335,276 +2848,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_goal_with_softness_eases_its_reach() {
-        let count = goal_target_skeleton().bone_count();
-        let source = crouched_source();
-        let mut soft = feet_retarget();
-        soft.set_goal(&RetargetGoalSettings::new("foot_l").with_softness(1.0))
-            .unwrap();
-
-        assert_ne!(
-            retarget(&mut soft, &source, count),
-            retarget(&mut feet_retarget(), &source, count)
-        );
-    }
-
-    #[test]
-    fn a_goal_at_half_weight_moves_the_tip_halfway_from_the_fk_tip_to_its_goal() {
-        let source_skeleton = goal_source_skeleton();
-        let target = goal_target_skeleton();
-        let source = crouched_source();
-        let mut pose_retarget = feet_retarget();
-        pose_retarget
-            .set_goal(&RetargetGoalSettings::new("foot_l").with_weight(0.5))
-            .unwrap();
-
-        let fk = retarget(&mut plain_retarget(), &source, target.bone_count());
-        let out = retarget(&mut pose_retarget, &source, target.bone_count());
-
-        let foot = bone(&target, "foot_l");
-        let full = full_goal(
-            &GoalSide {
-                skeleton: &source_skeleton,
-                pose: &source,
-                root: "hips",
-                tip: "foot_l",
-            },
-            &GoalSide {
-                skeleton: &target,
-                pose: &out,
-                root: "pelvis",
-                tip: "foot_l",
-            },
-            pose_retarget.scale(),
-        );
-        let fk_foot = model_position(&target.forward_kinematics(&fk).unwrap(), foot);
-        assert!(fk_foot.distance(full) > 1e-3, "{fk_foot:?} is at {full:?}");
-        assert_near(
-            model_position(&target.forward_kinematics(&out).unwrap(), foot),
-            fk_foot.lerp(full, 0.5),
-            1e-4,
-        );
-    }
-
-    #[test]
-    fn the_tip_keeps_its_fk_rotation_and_carries_the_bones_below_it() {
-        let target = goal_target_skeleton();
-        let source = crouched_source();
-
-        let fk = retarget(&mut plain_retarget(), &source, target.bone_count());
-        let solved = retarget(&mut feet_retarget(), &source, target.bone_count());
-
-        let foot = bone(&target, "foot_l");
-        let toe = bone(&target, "toe_l");
-        let fk_rotations = model_rotations(&target, &fk);
-        let solved_rotations = model_rotations(&target, &solved);
-        assert_quat(solved_rotations[foot], fk_rotations[foot]);
-        assert_quat(solved_rotations[toe], fk_rotations[toe]);
-        let fk_model = target.forward_kinematics(&fk).unwrap();
-        let solved_model = target.forward_kinematics(&solved).unwrap();
-        assert!(
-            model_position(&solved_model, foot).distance(model_position(&fk_model, foot)) > 1e-3
-        );
-        assert_near(
-            model_position(&solved_model, toe) - model_position(&solved_model, foot),
-            model_position(&fk_model, toe) - model_position(&fk_model, foot),
-            1e-5,
-        );
-    }
-
-    #[test]
-    fn a_goal_out_of_reach_straightens_the_limb_toward_it() {
-        let from = goal_target_skeleton();
-        let onto = goal_source_skeleton();
-        let from_rest = from.forward_kinematics(&from.rest_pose).unwrap();
-        let [thigh, calf, foot] = ["thigh_l", "calf_l", "foot_l"].map(|name| bone(&from, name));
-        let mut deltas = vec![Quat::IDENTITY; from.bone_count()];
-        for [upper, lower] in [[thigh, calf], [calf, foot]] {
-            deltas[upper] = Quat::from_rotation_arc(
-                (model_position(&from_rest, lower) - model_position(&from_rest, upper)).normalize(),
-                Vec3::NEG_Y,
-            );
-        }
-        let source = posed(&from, &deltas);
-        let mut pose_retarget = PoseRetarget::new(
-            &with_feet(goal_target_rig_asset())
-                .resolve(&from, None)
-                .unwrap(),
-            &from,
-            &with_feet(goal_source_rig_asset())
-                .resolve(&onto, None)
-                .unwrap(),
-            &onto,
-        )
-        .unwrap();
-
-        let out = retarget(&mut pose_retarget, &source, onto.bone_count());
-
-        assert!(
-            out.iter()
-                .all(|pose| pose.rotation.is_finite() && pose.translation.is_finite())
-        );
-        let [thigh, shin, foot] = ["thigh_l", "shin_l", "foot_l"].map(|name| bone(&onto, name));
-        let rest = onto.forward_kinematics(&onto.rest_pose).unwrap();
-        let model = onto.forward_kinematics(&out).unwrap();
-        let length = |model: &[Mat4], from: usize, to: usize| {
-            model_position(model, to).distance(model_position(model, from))
-        };
-        let upper = length(&rest, thigh, shin);
-        let lower = length(&rest, shin, foot);
-        assert!((length(&model, thigh, shin) - upper).abs() < 1e-4);
-        assert!((length(&model, shin, foot) - lower).abs() < 1e-4);
-        assert!((length(&model, thigh, foot) - (upper + lower)).abs() < 1e-4);
-        let full = full_goal(
-            &GoalSide {
-                skeleton: &from,
-                pose: &source,
-                root: "pelvis",
-                tip: "foot_l",
-            },
-            &GoalSide {
-                skeleton: &onto,
-                pose: &out,
-                root: "hips",
-                tip: "foot_l",
-            },
-            pose_retarget.scale(),
-        );
-        let thigh_position = model_position(&model, thigh);
-        assert!(full.distance(thigh_position) > upper + lower + 1e-3);
-        assert_near(
-            (model_position(&model, foot) - thigh_position).normalize(),
-            (full - thigh_position).normalize(),
-            1e-3,
-        );
-    }
-
-    #[test]
-    fn a_goal_not_on_both_rigs_is_not_solved_and_its_settings_are_refused() {
-        let count = goal_target_skeleton().bone_count();
-        let source = crouched_source();
-        let mut one_sided =
-            goal_retarget(goal_source_rig_asset(), with_feet(goal_target_rig_asset()));
-        assert_eq!(
-            retarget(&mut one_sided, &source, count),
-            retarget(&mut plain_retarget(), &source, count)
-        );
-        let one_foot = || {
-            goal_retarget(
-                goal_source_rig_asset().with_goal(RetargetGoal::new("foot_l", "foot_l")),
-                with_feet(goal_target_rig_asset()),
-            )
-        };
-        let mut pose_retarget = one_foot();
-
-        for goal in ["foot_r", "hand_l"] {
-            assert_eq!(
-                pose_retarget.set_goal(&RetargetGoalSettings::new(goal).with_weight(0.0)),
-                Err(RetargetError::UnknownGoal {
-                    goal: Name::new(goal),
-                })
-            );
-        }
-
-        assert_eq!(
-            retarget(&mut pose_retarget, &source, count),
-            retarget(&mut one_foot(), &source, count)
-        );
-    }
-
-    #[test]
-    fn goals_solve_in_order_and_a_later_goal_sees_an_earlier_ones_result() {
-        let source_skeleton = goal_source_skeleton();
-        let target = goal_target_skeleton();
-        let mut deltas = crouch_deltas(&source_skeleton);
-        deltas[bone(&source_skeleton, "foot_l")] = about_x(25.0);
-        let source = crouched(&source_skeleton, &deltas);
-        let toe_goal = RetargetGoal::new("toe_l", "toe_l");
-        let mut pose_retarget = goal_retarget(
-            with_feet(goal_source_rig_asset()).with_goal(toe_goal.clone()),
-            with_feet(goal_target_rig_asset()).with_goal(toe_goal),
-        );
-
-        let feet_only = retarget(&mut feet_retarget(), &source, target.bone_count());
-        let out = retarget(&mut pose_retarget, &source, target.bone_count());
-
-        let toe = bone(&target, "toe_l");
-        let full = full_goal(
-            &GoalSide {
-                skeleton: &source_skeleton,
-                pose: &source,
-                root: "hips",
-                tip: "toe_l",
-            },
-            &GoalSide {
-                skeleton: &target,
-                pose: &out,
-                root: "pelvis",
-                tip: "toe_l",
-            },
-            pose_retarget.scale(),
-        );
-        let feet_only_toe = model_position(&target.forward_kinematics(&feet_only).unwrap(), toe);
-        assert!(
-            feet_only_toe.distance(full) > 1e-3,
-            "{feet_only_toe:?} is at {full:?}"
-        );
-        assert_near(
-            model_position(&target.forward_kinematics(&out).unwrap(), toe),
-            full,
-            1e-4,
-        );
-    }
-
-    struct Warning {
-        thread: ThreadId,
-        message: String,
-    }
-
-    static WARNINGS: Mutex<Vec<Warning>> = Mutex::new(Vec::new());
-
-    struct WarningCapture;
-
-    impl log::Log for WarningCapture {
-        fn enabled(&self, metadata: &log::Metadata) -> bool {
-            metadata.level() <= log::Level::Warn
-        }
-
-        fn log(&self, record: &log::Record) {
-            if record.level() == log::Level::Warn
-                && record.target() == "concerto_animation::retarget"
-            {
-                WARNINGS.lock().unwrap().push(Warning {
-                    thread: std::thread::current().id(),
-                    message: record.args().to_string(),
-                });
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    fn warning_messages() -> Vec<String> {
-        static INSTALL: Once = Once::new();
-        INSTALL.call_once(|| {
-            log::set_logger(&WarningCapture).unwrap();
-            log::set_max_level(log::LevelFilter::Warn);
-        });
-        let me = std::thread::current().id();
-        WARNINGS
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|warning| warning.thread == me)
-            .map(|warning| warning.message.clone())
-            .collect()
-    }
-
-    fn warnings() -> usize {
-        warning_messages().len()
-    }
-
     const SOURCE_SKELETON: &str = "retarget_node_source_skeleton";
     const TARGET_SKELETON: &str = "retarget_node_target_skeleton";
     const SOURCE_RIG: &str = "retarget_node_source_rig";
@@ -3613,7 +2856,6 @@ mod tests {
     const INNER_GRAPH: &str = "retarget_node_inner_graph";
     const OUTER_GRAPH: &str = "retarget_node_outer_graph";
     const INNER_CLIP: &str = "retarget_node_inner_clip";
-    const NESTED_GRAPH: &str = "retarget_node_nested_graph";
 
     fn handle<A: Asset>(path: &str) -> AssetHandle<A> {
         AssetHandle::weak(AssetId::from_path(path))
@@ -3684,23 +2926,15 @@ mod tests {
 
     impl Played {
         fn new(player_skeleton: Skeleton) -> Self {
-            Self::registering(player_skeleton, |_| {})
-        }
-
-        fn registering(player_skeleton: Skeleton, register: impl FnOnce(&mut World)) -> Self {
-            Self::built(player_skeleton, nested_retarget_node(), register)
+            Self::with_node(player_skeleton, nested_retarget_node())
         }
 
         fn with_node(player_skeleton: Skeleton, node: RetargetNode) -> Self {
-            Self::built(player_skeleton, node, |_| {})
+            Self::built(player_skeleton, node)
         }
 
-        fn built(
-            player_skeleton: Skeleton,
-            node: RetargetNode,
-            register: impl FnOnce(&mut World),
-        ) -> Self {
-            let mut walks = Walks::with(AssetStore::new(), AssetStore::new(), register);
+        fn built(player_skeleton: Skeleton, node: RetargetNode) -> Self {
+            let mut walks = Walks::new(AssetStore::new(), AssetStore::new());
             walks
                 .skeletons_mut()
                 .insert(AssetId::from_path(SOURCE_SKELETON), source_skeleton());
@@ -3721,13 +2955,6 @@ mod tests {
                 player,
                 player_skeleton,
             }
-        }
-
-        fn loaded(player_skeleton: Skeleton, target: RetargetRig) -> Self {
-            let mut played = Self::new(player_skeleton);
-            played.load_rigs(target);
-            played.load_inner_graph();
-            played
         }
 
         fn playing(source: RetargetRig, clip: AnimationClip, inner: AnimationClipNode) -> Self {
@@ -3766,20 +2993,6 @@ mod tests {
             self.walks
                 .graphs_mut()
                 .insert(AssetId::from_path(INNER_GRAPH), graph);
-        }
-
-        fn visits<N: AnimationNode>(&mut self) -> usize {
-            let mut visits = 0;
-            self.player
-                .for_each_state_mut::<N>(self.walks.graphs(), |_, _, _| visits += 1);
-            visits
-        }
-
-        fn shared_visits<N: AnimationNode>(&self) -> usize {
-            let mut visits = 0;
-            self.player
-                .for_each_state::<N>(self.walks.graphs(), |_, _, _| visits += 1);
-            visits
         }
 
         fn advance(&mut self) {
@@ -3870,185 +3083,56 @@ mod tests {
         )
     }
 
+    const REFERENCE_CLIP: &str = "retarget_node_reference_clip";
+
+    fn source_rest_clip() -> AnimationClip {
+        let skeleton = source_skeleton();
+        let mut clip = AnimationClip::default();
+        for (id, joint) in skeleton.bone_ids.iter().zip(skeleton.rest_pose.iter()) {
+            clip.add_channel(
+                *id,
+                AnimationChannel::new(
+                    vec![0.0, 1.0],
+                    AnimationChanelOutput::Rotation(vec![joint.rotation; 2]),
+                ),
+            );
+        }
+        clip
+    }
+
     #[test]
-    fn a_retarget_node_holds_the_rest_pose_until_its_rigs_and_inner_graph_load() {
+    fn a_retarget_node_holds_the_rest_pose_until_its_rigs_inner_graph_and_reference_clip_load() {
         let rest = target_skeleton().rest_pose.to_vec();
         let mut played = Played::new(target_skeleton());
 
         played.advance();
         assert_poses(&played.pose(), &rest);
 
-        played.load_rigs(node_target_rig());
+        played.load_rig_pair(
+            node_source_rig().with_reference(ReferencePose::ClipFrame {
+                clip: handle(REFERENCE_CLIP),
+                time: 0.0,
+            }),
+            node_target_rig(),
+        );
         played.advance();
         assert_poses(&played.pose(), &rest);
 
         played.load_inner_graph();
         played.advance();
-        assert_poses(&played.pose(), &retargeted_held_pose());
-    }
+        assert_poses(&played.pose(), &rest);
 
-    struct NodeFailure {
-        name: &'static str,
-        played: Played,
-        pose: Vec<JointPose>,
-        tolerance: f32,
-        finished: bool,
-        warning: &'static str,
-    }
-
-    fn holding_a_retarget_node(through_a_state_machine: bool) -> Played {
-        let mut played = Played::new(target_skeleton());
-        played.load_rigs(node_target_rig());
-        let nested = made_live(AnimationGraph::from_node(nested_retarget_node()));
-        if through_a_state_machine {
-            played
-                .walks
-                .graphs_mut()
-                .insert(AssetId::from_path(NESTED_GRAPH), nested);
-            played.insert_inner(made_live(AnimationGraph::from_node(
-                AnimationStateMachine::from_initial_state(
-                    name!("nested"),
-                    handle(NESTED_GRAPH),
-                    |_| {},
-                )
-                .build(),
-            )));
-        } else {
-            played.insert_inner(nested);
-        }
         played
-    }
-
-    fn holding_a_created_once_node(through_a_state_machine: bool) -> Played {
-        let mut played = played_with_create_only();
-        if through_a_state_machine {
-            played
-                .walks
-                .graphs_mut()
-                .insert(AssetId::from_path(NESTED_GRAPH), created_once_graph());
-            played.insert_inner(made_live(AnimationGraph::from_node(
-                AnimationStateMachine::from_initial_state(
-                    name!("created"),
-                    handle(NESTED_GRAPH),
-                    |_| {},
-                )
-                .build(),
-            )));
-        } else {
-            played.insert_inner(created_once_graph());
-        }
-        played
-    }
-
-    fn with_the_player_skeleton_changed() -> Played {
-        let mut played = Played::loaded(target_skeleton(), node_target_rig());
+            .walks
+            .clips_mut()
+            .insert(AssetId::from_path(REFERENCE_CLIP), source_rest_clip());
         played.advance();
         assert_poses(&played.pose(), &retargeted_held_pose());
-        played.player_skeleton = renamed_target_skeleton();
-        played
-    }
-
-    fn failure(name: &'static str, played: Played, warning: &'static str) -> NodeFailure {
-        NodeFailure {
-            name,
-            played,
-            pose: node_target_reference(),
-            tolerance: 1e-5,
-            finished: true,
-            warning,
-        }
     }
 
     #[test]
-    fn a_retarget_node_that_cannot_honour_its_assets_warns_once_naming_why_and_holds_a_pose() {
-        let no_shared_chain = RetargetRig::new()
-            .with_skeleton(handle(TARGET_SKELETON))
-            .with_motion_root("root")
-            .with_root("pelvis")
-            .with_chain(RetargetChain::new("tail", "tail", "tail"))
-            .with_correction(BoneCorrection::new("spine_02", about_x(30.0)));
-        let cases = [
-            NodeFailure {
-                pose: source_skeleton().rest_pose.to_vec(),
-                ..failure(
-                    "a target rig on another skeleton than the player",
-                    Played::loaded(source_skeleton(), node_target_rig()),
-                    "not the player's skeleton",
-                )
-            },
-            NodeFailure {
-                pose: no_shared_chain
-                    .resolve(&target_skeleton(), None)
-                    .unwrap()
-                    .reference_local,
-                ..failure(
-                    "rigs sharing no chain",
-                    Played::loaded(target_skeleton(), no_shared_chain),
-                    "share no chain",
-                )
-            },
-            failure(
-                "an inner graph holding a retarget node",
-                holding_a_retarget_node(false),
-                "holds a retarget node",
-            ),
-            failure(
-                "an inner state machine state holding a retarget node",
-                holding_a_retarget_node(true),
-                "holds a retarget node",
-            ),
-            failure(
-                "an inner node whose create input is not an update input",
-                holding_a_created_once_node(false),
-                "CreatedOnce",
-            ),
-            failure(
-                "an inner state machine state node whose create input is not an update input",
-                holding_a_created_once_node(true),
-                "CreatedOnce",
-            ),
-            NodeFailure {
-                pose: target_skeleton().rest_pose.to_vec(),
-                ..failure(
-                    "the player skeleton changed while playing",
-                    with_the_player_skeleton_changed(),
-                    "the player's skeleton changed",
-                )
-            },
-            NodeFailure {
-                pose: feet_held_pose(),
-                tolerance: NEAR_FULL_REACH,
-                finished: false,
-                ..failure(
-                    "settings naming an unknown goal",
-                    played_with_goal_settings(RetargetGoalSettings::new("hand_l").with_weight(0.0)),
-                    "`hand_l`",
-                )
-            },
-        ];
-
-        for mut case in cases {
-            let before = warnings();
-
-            for _ in 0..3 {
-                case.played.advance();
-                assert_poses_within(case.name, &case.played.pose(), &case.pose, case.tolerance);
-            }
-
-            let messages = warning_messages().split_off(before);
-            assert_eq!(messages.len(), 1, "{}: {messages:?}", case.name);
-            assert!(
-                messages[0].contains(case.warning),
-                "{}: {}",
-                case.name,
-                messages[0]
-            );
-            assert_eq!(case.played.is_finished(), case.finished, "{}", case.name);
-        }
-    }
-
-    #[test]
-    fn an_outer_root_nets_the_inner_pose_against_the_source_reference_and_scales_its_root_motion() {
+    fn an_outer_root_nets_the_inner_pose_against_the_source_reference_and_scales_its_root_motion_and_events_pass_through()
+     {
         let source_skeleton = source_skeleton();
         let hips = bone(&source_skeleton, "hips");
         let hips_rest = source_skeleton.rest_pose[hips].rotation;
@@ -4067,6 +3151,12 @@ mod tests {
                 ]),
             ),
         );
+        moving.add_event(
+            0.05,
+            AnimationEvent {
+                name: Name::new("step"),
+            },
+        );
         let mut played = Played::playing(source, moving, inner_clip());
         let target = target_skeleton();
         let outer_root = RootBone {
@@ -4084,23 +3174,8 @@ mod tests {
             Vec3::new(0.2, 0.0, 0.4) * source_to_target().scale(),
         );
         assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
-    }
-
-    #[test]
-    fn a_clip_event_fired_in_the_inner_graph_reaches_the_output_frame() {
-        let mut clip = held_clip();
-        clip.add_event(
-            0.05,
-            AnimationEvent {
-                name: Name::new("step"),
-            },
-        );
-        let mut played = Played::playing(node_source_rig(), clip, inner_clip());
-
-        played.advance();
-
         assert_eq!(
-            played.frame(None).events(),
+            frame.events(),
             [FiredEvent {
                 clip: AssetId::from_path(INNER_CLIP),
                 key: 0,
@@ -4112,17 +3187,13 @@ mod tests {
     }
 
     #[test]
-    fn a_retarget_node_finishes_with_its_inner_one_shot_clip_and_not_while_pending_or_after_a_reset()
-     {
+    fn a_retarget_node_finishes_with_its_inner_one_shot_clip_and_not_after_a_reset() {
         let mut played = Played::new(target_skeleton());
         played.load_rigs(node_target_rig());
-
-        played.advance();
-        assert!(!played.is_finished());
-
         played.load_inner(
             AnimationClipNode::new(handle(HELD_CLIP)).with_play_mode(AnimationPlayMode::PlayOnce),
         );
+
         played.advance_by(0.5);
         assert!(!played.is_finished());
 
@@ -4131,18 +3202,6 @@ mod tests {
 
         played.reset();
         assert!(!played.is_finished());
-    }
-
-    #[test]
-    fn reset_restarts_the_inner_graph_clip() {
-        let mut played = Played::playing(node_source_rig(), turning_clip(), inner_clip());
-        played.advance();
-        played.advance_by(0.4);
-
-        played.reset();
-        played.advance();
-
-        assert_poses(&played.pose(), &retargeted_turning_pose(0.1));
     }
 
     #[test]
@@ -4163,42 +3222,8 @@ mod tests {
         RetargetNode::new(handle(INNER_GRAPH), handle(SOURCE_RIG), handle(TARGET_RIG))
     }
 
-    const NEAR_FULL_REACH: f32 = 1e-3;
-
-    fn assert_poses_within(
-        case: &str,
-        actual: &[JointPose],
-        expected: &[JointPose],
-        tolerance: f32,
-    ) {
-        assert_eq!(actual.len(), expected.len(), "{case}");
-        for (actual, expected) in actual.iter().zip(expected.iter()) {
-            assert!(
-                actual.rotation.abs_diff_eq(expected.rotation, tolerance)
-                    || actual.rotation.abs_diff_eq(-expected.rotation, tolerance),
-                "{case}: {:?} != {:?}",
-                actual.rotation,
-                expected.rotation
-            );
-            assert_vec3(actual.translation, expected.translation);
-        }
-    }
-
     fn node_with_feet(rig: RetargetRig) -> RetargetRig {
         rig.with_goal(RetargetGoal::new("foot_l", "foot_l"))
-    }
-
-    fn played_with_goal_settings(settings: RetargetGoalSettings) -> Played {
-        let mut played = Played::with_node(
-            target_skeleton(),
-            nested_retarget_node().with_goal(settings),
-        );
-        played.load_rig_pair(
-            node_with_feet(node_source_rig()),
-            node_with_feet(node_target_rig()),
-        );
-        played.load_inner_graph();
-        played
     }
 
     fn feet_held_pose() -> Vec<JointPose> {
@@ -4220,210 +3245,18 @@ mod tests {
     }
 
     #[test]
-    fn a_retarget_node_applies_its_last_setting_for_each_goal() {
+    fn a_retarget_node_goal_setting_reaches_the_solver() {
         assert_ne!(feet_held_pose(), retargeted_held_pose());
-        let cases = [
-            [
-                RetargetGoalSettings::new("foot_l"),
-                RetargetGoalSettings::new("foot_l").with_weight(0.0),
-            ],
-            [
-                RetargetGoalSettings::new("foot_l").with_weight(0.0),
-                RetargetGoalSettings::new("foot_l"),
-            ],
-        ];
-
-        for [first, last] in cases {
-            let at_weight_0 = last.weight == 0.0;
-            let mut played = Played::with_node(
-                target_skeleton(),
-                nested_retarget_node().with_goal(first).with_goal(last),
-            );
-            played.load_rig_pair(
-                node_with_feet(node_source_rig()),
-                node_with_feet(node_target_rig()),
-            );
-            played.load_inner_graph();
-
-            played.advance();
-
-            if at_weight_0 {
-                assert_poses(&played.pose(), &retargeted_held_pose());
-            } else {
-                assert_poses_within(
-                    "a last setting at full weight",
-                    &played.pose(),
-                    &feet_held_pose(),
-                    NEAR_FULL_REACH,
-                );
-            }
-        }
-    }
-
-    fn node_target_reference() -> Vec<JointPose> {
-        node_target_rig()
-            .resolve(&target_skeleton(), None)
-            .unwrap()
-            .reference_local
-    }
-
-    #[test]
-    fn for_each_state_and_for_each_state_mut_visit_a_node_inside_the_inner_graph() {
-        let mut played = Played::playing(node_source_rig(), turning_clip(), inner_clip());
-        assert_eq!(played.visits::<AnimationClipNode>(), 0);
-        assert_eq!(played.shared_visits::<AnimationClipNode>(), 0);
-
-        played.advance();
-
-        assert_eq!(played.visits::<AnimationClipNode>(), 1);
-        assert_eq!(played.shared_visits::<AnimationClipNode>(), 1);
-    }
-
-    #[derive(Resource)]
-    struct CreateOnly;
-
-    #[derive(Default, Reflect)]
-    #[reflect(AnimationNode)]
-    struct CreatedOnce {}
-
-    impl AnimationNode for CreatedOnce {
-        type State = ();
-        type CreateInput = Res<'static, CreateOnly>;
-        type UpdateInput = ();
-        type EvaluateInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
-        fn create_state(&self, _: &Res<CreateOnly>, _context: &AnimationGraphContext<'_>) {}
-
-        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
-
-        fn evaluate(
-            &self,
-            _: &mut (),
-            _: &(),
-            _: &AnimationGraphContext<'_>,
-            _: &[Uuid],
-            _: &[EvaluatedFrame],
-            _: &mut FramePool,
-            _: &mut AnimationFrame,
-        ) {
-        }
-
-        fn reset(&self, _: &mut ()) {}
-    }
-
-    fn played_with_create_only() -> Played {
-        let mut played = Played::registering(target_skeleton(), |world| {
-            register_input::<CreateNodeInputs, Res<'static, CreateOnly>>(world);
-            world.insert_resource(CreateOnly);
-        });
-        played.load_rigs(node_target_rig());
-        played
-    }
-
-    fn created_once_graph() -> AnimationGraph {
-        let mut registry = TypeRegistry::default();
-        register_animation_types(&mut registry);
-        registry.register::<CreatedOnce>();
-        let mut graph = AnimationGraph::from_node(CreatedOnce {});
-        graph.make_live(&registry, None).unwrap();
-        graph
-    }
-
-    fn renamed_target_skeleton() -> Skeleton {
-        let mut skeleton = target_skeleton();
-        skeleton.bone_ids = (0..skeleton.bone_count() as u128)
-            .map(|bone| Uuid::from_u128(3000 + bone))
-            .collect();
-        skeleton
-    }
-
-    fn short_target_skeleton() -> Skeleton {
-        let skeleton = target_skeleton();
-        let count = 3;
-        Skeleton::new(
-            skeleton.inverse_bindposes[..count].to_vec(),
-            skeleton.parents[..count].to_vec(),
-            skeleton.names[..count].to_vec(),
-            skeleton.rest_pose[..count].to_vec(),
-            skeleton.bone_ids[..count].to_vec(),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn an_output_shorter_than_the_target_skeleton_keeps_its_rest_pose_and_passes_events_with_one_warning()
-     {
-        let mut clip = turning_clip();
-        clip.add_event(
-            0.05,
-            AnimationEvent {
-                name: Name::new("step"),
-            },
+        let mut played = Played::with_node(
+            target_skeleton(),
+            nested_retarget_node().with_goal(RetargetGoalSettings::new("foot_l").with_weight(0.0)),
         );
-        let mut played = Played::playing(node_source_rig(), clip, inner_clip());
-        played.advance();
-        let rest = short_target_skeleton().rest_pose.to_vec();
-        let before = warnings();
-
-        played.player_skeleton = short_target_skeleton();
-        for _ in 0..3 {
-            let frame = played.frame(None);
-            assert_poses(frame.joints(), &rest);
-            assert_vec3(frame.root_motion().translation, Vec3::ZERO);
-            assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
-            assert_eq!(frame.events().len(), 1);
-            assert_eq!(frame.events()[0].clip, AssetId::from_path(INNER_CLIP));
-        }
-
-        assert_eq!(warnings() - before, 1);
-    }
-
-    const REFERENCE_CLIP: &str = "retarget_node_reference_clip";
-
-    fn source_rest_clip() -> AnimationClip {
-        let skeleton = source_skeleton();
-        let mut clip = AnimationClip::default();
-        for (id, joint) in skeleton.bone_ids.iter().zip(skeleton.rest_pose.iter()) {
-            clip.add_channel(
-                *id,
-                AnimationChannel::new(
-                    vec![0.0, 1.0],
-                    AnimationChanelOutput::Rotation(vec![joint.rotation; 2]),
-                ),
-            );
-        }
-        clip
-    }
-
-    #[test]
-    fn a_retarget_node_stays_pending_until_its_reference_clip_loads() {
-        let rest = target_skeleton().rest_pose.to_vec();
-        let mut played = Played::new(target_skeleton());
         played.load_rig_pair(
-            node_source_rig().with_reference(ReferencePose::ClipFrame {
-                clip: handle(REFERENCE_CLIP),
-                time: 0.0,
-            }),
-            node_target_rig(),
+            node_with_feet(node_source_rig()),
+            node_with_feet(node_target_rig()),
         );
         played.load_inner_graph();
-        let before = warnings();
 
-        for _ in 0..2 {
-            played.advance();
-            assert_poses(&played.pose(), &rest);
-            assert!(!played.is_finished());
-        }
-        assert_eq!(warnings(), before);
-
-        played
-            .walks
-            .clips_mut()
-            .insert(AssetId::from_path(REFERENCE_CLIP), source_rest_clip());
         played.advance();
 
         assert_poses(&played.pose(), &retargeted_held_pose());

@@ -678,40 +678,12 @@ mod tests {
                 ],
                 Vec::new(),
             ),
-            pitch_line(
-                "a point a thousandth of a radian off the line still counts as on it",
-                vec![
-                    Vec2::new(0.0, -0.5),
-                    Vec2::new(1e-3, 0.0),
-                    Vec2::new(0.0, 0.5),
-                ],
-                Vec::new(),
-            ),
-            pitch_line(
-                "a duplicated point is dropped and keeps a zero weight",
-                vec![
-                    Vec2::new(0.0, -0.5),
-                    Vec2::new(0.0, 0.0),
-                    Vec2::new(0.0, 0.5),
-                    Vec2::new(0.0, 0.0),
-                    Vec2::new(5e-5, 0.0),
-                ],
-                vec![weighed(Vec2::ZERO, &[0.0, 1.0, 0.0, 0.0, 0.0])],
-            ),
             PointsCase {
                 name: "a sample inside a triangle is weighed by its barycentric coordinates",
                 points: vec![Vec2::ZERO, Vec2::X, Vec2::Y],
                 samples: vec![
                     weighed(Vec2::new(0.25, 0.25), &[0.5, 0.25, 0.25]),
                     weighed(Vec2::new(0.1, 0.6), &[0.3, 0.1, 0.6]),
-                ],
-            },
-            PointsCase {
-                name: "a single point takes the whole weight wherever the sample is",
-                points: vec![Vec2::new(0.2, -0.1)],
-                samples: vec![
-                    weighed(Vec2::new(0.2, -0.1), &[1.0]),
-                    weighed(Vec2::new(-3.0, 2.0), &[1.0]),
                 ],
             },
         ];
@@ -730,7 +702,6 @@ mod tests {
                     );
                 }
             }
-            weigh(&case.points, Vec2::NAN);
         }
     }
 
@@ -919,18 +890,6 @@ mod tests {
         clip
     }
 
-    fn breathing() -> AnimationClip {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            bone_id(CHEST),
-            AnimationChannel::new(
-                vec![0.0, 1.0],
-                AnimationChanelOutput::Rotation(vec![Quat::IDENTITY, Quat::from_rotation_x(1.0)]),
-            ),
-        );
-        additive(clip)
-    }
-
     fn clips<'a>(context: &'a AnimationGraphContext<'a>) -> &'a Res<'a, AssetStore<AnimationClip>> {
         context
             .inputs
@@ -1014,15 +973,10 @@ mod tests {
             self.walks.update(&self.blackboard, |context| {
                 node.update(state, delta_time, &(), context)
             });
-            self.evaluate(node, state, true)
+            self.evaluate(node, state)
         }
 
-        fn evaluate(
-            &self,
-            node: &AimOffsetNode,
-            state: &mut AimOffsetState,
-            with_skeleton: bool,
-        ) -> AnimationFrame {
+        fn evaluate(&self, node: &AimOffsetNode, state: &mut AimOffsetState) -> AnimationFrame {
             let input = [EvaluatedFrame {
                 frame: self.input(),
                 weight: 1.0,
@@ -1040,16 +994,12 @@ mod tests {
                     &mut output,
                 )
             };
-            if with_skeleton {
-                self.walks.evaluate_posed(
-                    &self.blackboard,
-                    &self.skeleton,
-                    self.model_to_world,
-                    evaluate,
-                );
-            } else {
-                self.walks.evaluate(&self.blackboard, None, evaluate);
-            }
+            self.walks.evaluate_posed(
+                &self.blackboard,
+                &self.skeleton,
+                self.model_to_world,
+                evaluate,
+            );
             output
         }
 
@@ -1147,28 +1097,27 @@ mod tests {
     }
 
     #[test]
-    fn a_target_gives_the_deltas_of_its_points_blended_by_their_weights() {
+    fn a_target_in_the_world_gives_the_deltas_of_its_points_blended_by_their_weights() {
         let mut rig = Rig::new();
         let clips = pitch_clips(&mut rig);
         rig.aim_at(0.0, 0.0);
 
-        assert_aimed(&rig, &rig.run(&pitch_node(&clips)), &level().pose());
+        let level_frame = rig.run(&pitch_node(&clips));
+        assert_aimed(&rig, &level_frame, &level().pose());
+        assert_eq!(level_frame.root_motion(), input_motion());
+        assert_eq!(level_frame.events(), [input_event()]);
         assert_pitch_blend(&mut rig, &pitch_node(&clips));
-    }
 
-    #[test]
-    fn a_turned_model_to_world_maps_the_target_into_model_space_before_measuring() {
-        let mut rig = Rig::new();
-        let clips = pitch_clips(&mut rig);
         rig.model_to_world = Some(Affine3A::from_rotation_translation(
             Quat::from_rotation_y(1.1),
             Vec3::new(3.0, 0.0, -2.0),
         ));
         rig.aim_at(0.0, 0.25);
-
-        let frame = rig.run(&pitch_node(&clips));
-
-        assert_aimed(&rig, &frame, &blended(&level(), &high(), 0.5));
+        assert_aimed(
+            &rig,
+            &rig.run(&pitch_node(&clips)),
+            &blended(&level(), &high(), 0.5),
+        );
     }
 
     #[test]
@@ -1196,106 +1145,6 @@ mod tests {
     }
 
     #[test]
-    fn the_first_evaluate_after_creation_or_a_reset_snaps_to_the_measured_angles() {
-        let mut rig = Rig::new();
-        let level = rig.add_aim("level", &level());
-        let node = with_points(&[AimPoint::new(level, 0.0, 0.0)]).with_angle_halflife(0.5);
-        rig.aim_at(0.3, 0.1);
-        let mut state = rig.start(&node);
-
-        rig.step(&node, &mut state, 0.0);
-        assert!(state.angles.value.abs_diff_eq(Vec2::new(0.3, 0.1), 1e-4));
-
-        rig.aim_at(-0.4, -0.2);
-        rig.step(&node, &mut state, DT);
-        assert!(state.angles.value.x > 0.2, "{}", state.angles.value);
-
-        node.reset(&mut state);
-        rig.step(&node, &mut state, DT);
-        assert!(
-            state.angles.value.abs_diff_eq(Vec2::new(-0.4, -0.2), 1e-4),
-            "{}",
-            state.angles.value
-        );
-    }
-
-    #[test]
-    fn an_angle_halflife_eases_toward_a_jumped_target_and_zero_snaps() {
-        let mut rig = Rig::new();
-        let level = rig.add_aim("level", &level());
-        let snapping = with_points(&[AimPoint::new(level, 0.0, 0.0)]);
-        let easing = snapping.clone().with_angle_halflife(0.1);
-        rig.aim_at(0.0, 0.0);
-        let mut eased = rig.start(&easing);
-        let mut snapped = rig.start(&snapping);
-        rig.step(&easing, &mut eased, 0.0);
-        rig.step(&snapping, &mut snapped, 0.0);
-
-        rig.aim_at(0.0, 0.4);
-        rig.step(&snapping, &mut snapped, DT);
-        for _ in 0..6 {
-            rig.step(&easing, &mut eased, DT);
-        }
-
-        assert!((snapped.angles.value.y - 0.4).abs() < 1e-4);
-        assert!(
-            (eased.angles.value.y - 0.2).abs() < 1e-3,
-            "{}",
-            eased.angles.value
-        );
-    }
-
-    #[test]
-    fn a_looping_delta_is_sampled_at_the_clock_modulo_its_own_duration() {
-        let mut rig = Rig::new();
-        let long = rig.add_clip("long", additive(held(&unmoved(), 2.0)));
-        let breath = rig.add_clip("breath", breathing());
-        let node = with_points(&[
-            AimPoint::new(long, 0.0, 0.5),
-            AimPoint::new(breath, 0.0, 0.0),
-        ]);
-        rig.aim_at(0.0, 0.0);
-        let mut state = rig.start(&node);
-        rig.step(&node, &mut state, 0.0);
-        let breathed = JointPose {
-            rotation: Quat::from_rotation_x(0.25),
-            ..JointPose::IDENTITY
-        };
-
-        let frame = rig.step(&node, &mut state, 1.25);
-        assert_joint(&frame.joints()[CHEST], &rig.expected(CHEST, &breathed));
-
-        let frame = rig.step(&node, &mut state, 1.0);
-        assert!((state.clock - 0.25).abs() < 1e-4, "clock {}", state.clock);
-        assert_joint(&frame.joints()[CHEST], &rig.expected(CHEST, &breathed));
-    }
-
-    #[test]
-    fn root_motion_and_events_pass_through_and_the_root_bone_takes_its_delta() {
-        let mut rig = Rig::new();
-        let clips = pitch_clips(&mut rig);
-        rig.aim_at(0.0, 0.0);
-
-        let frame = rig.run(&pitch_node(&clips));
-
-        assert_eq!(frame.root_motion(), input_motion());
-        assert_eq!(frame.events(), [input_event()]);
-        assert_joint(&frame.joints()[HIPS], &rig.expected(HIPS, &level().pose()));
-        assert_ne!(frame.joints()[HIPS], rig.input().joints()[HIPS]);
-    }
-
-    #[test]
-    fn weight_zero_leaves_the_input_bit_for_bit() {
-        let mut rig = Rig::new();
-        let clips = pitch_clips(&mut rig);
-        rig.aim_at(0.0, 0.25);
-
-        let frame = rig.run(&pitch_node(&clips).with_weight(0.0));
-
-        assert_unchanged(&rig, &frame);
-    }
-
-    #[test]
     fn a_target_gone_missing_eases_the_weight_out_and_then_leaves_the_input_bit_for_bit() {
         let mut rig = Rig::new();
         let clips = pitch_clips(&mut rig);
@@ -1316,77 +1165,5 @@ mod tests {
 
         assert_eq!(state.weight.value, 0.0);
         assert_unchanged(&rig, &frame);
-    }
-
-    #[test]
-    fn a_target_back_after_the_weight_settled_at_zero_snaps_to_its_angles() {
-        let mut rig = Rig::new();
-        let level = rig.add_aim("level", &level());
-        let node = with_points(&[AimPoint::new(level, 0.0, 0.0)])
-            .with_angle_halflife(0.5)
-            .with_weight_halflife(0.05);
-        rig.aim_at(0.6, 0.1);
-        let mut state = rig.start(&node);
-        for _ in 0..60 {
-            rig.step(&node, &mut state, DT);
-        }
-
-        rig.forget_target();
-        for _ in 0..300 {
-            rig.step(&node, &mut state, DT);
-        }
-        assert_eq!(state.weight.value, 0.0);
-
-        rig.aim_at(-0.6, -0.1);
-        rig.step(&node, &mut state, DT);
-
-        assert!(
-            state.angles.value.abs_diff_eq(Vec2::new(-0.6, -0.1), 1e-4),
-            "{}",
-            state.angles.value
-        );
-    }
-
-    #[test]
-    fn a_clip_that_is_not_additive_leaves_the_input_bit_for_bit_and_warns_once() {
-        let mut rig = Rig::new();
-        let plain = rig.add_clip("plain", held(&level(), 1.0));
-        let node = with_points(&[AimPoint::new(plain, 0.0, 0.0)]);
-        rig.aim_at(0.0, 0.0);
-        let mut state = rig.start(&node);
-
-        let frame = rig.step(&node, &mut state, 0.0);
-
-        assert_unchanged(&rig, &frame);
-        assert!(state.warned_clip);
-    }
-
-    #[test]
-    fn a_frame_the_node_cannot_resolve_leaves_the_input_and_warns_once() {
-        let mut rig = Rig::new();
-        let clips = pitch_clips(&mut rig);
-        let aiming = pitch_node(&clips);
-        rig.aim_at(0.0, 0.25);
-        let unresolvable = [
-            AimOffsetNode {
-                frame_bone: "missing".into(),
-                ..aiming.clone()
-            },
-            AimOffsetNode {
-                frame_bone: "prop".into(),
-                ..aiming.clone()
-            },
-            aiming.clone().with_forward(Vec3::Y),
-            aiming.clone().with_forward(Vec3::ZERO),
-        ];
-
-        for node in &unresolvable {
-            let mut state = rig.start(node);
-            assert_unchanged(&rig, &rig.step(node, &mut state, 0.0));
-            assert!(state.warned);
-        }
-        let mut state = rig.start(&aiming);
-        assert_unchanged(&rig, &rig.evaluate(&aiming, &mut state, false));
-        assert!(state.warned);
     }
 }

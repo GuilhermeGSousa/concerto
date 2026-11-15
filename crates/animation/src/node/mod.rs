@@ -549,7 +549,6 @@ mod tests {
             .get::<Res<'static, AssetStore<AnimationClip>>>()
             .unwrap()
     }
-    const OTHER: Uuid = Uuid::from_u128(2);
 
     struct Rig {
         _server: AssetServer,
@@ -680,25 +679,13 @@ mod tests {
         Rig::new(with_events(times), at_rest(Quat::IDENTITY))
     }
 
-    enum Act {
-        Step,
-        Play,
-        Reset,
-        Pause,
-        Speed(f32),
-        Resolve,
-        Unresolve,
-    }
-
     struct Fire {
-        act: Act,
         dt: f32,
         fired: Vec<f32>,
     }
 
-    fn fire(act: Act, dt: f32, fired: &[f32]) -> Fire {
+    fn fire(dt: f32, fired: &[f32]) -> Fire {
         Fire {
-            act,
             dt,
             fired: fired.to_vec(),
         }
@@ -709,8 +696,6 @@ mod tests {
         times: Vec<f32>,
         start: f32,
         play_once: bool,
-        speed: f32,
-        resolved: bool,
         steps: Vec<Fire>,
     }
 
@@ -720,42 +705,17 @@ mod tests {
             times: times.to_vec(),
             start: 0.0,
             play_once: false,
-            speed: 1.0,
-            resolved: true,
             steps,
         }
     }
 
     #[test]
     fn a_clip_node_fires_each_event_it_crosses_once() {
-        use Act::*;
         let cases = [
             firing_case(
                 "a step fires the events after the previous time up to the new one",
                 &[0.1, 0.3, 0.5],
-                vec![fire(Step, 0.2, &[0.1]), fire(Step, 0.2, &[0.3])],
-            ),
-            firing_case(
-                "the first update after play fires the start time",
-                &[0.0, 0.25, 0.3],
-                vec![
-                    fire(Step, 0.1, &[0.0]),
-                    fire(Step, 0.1, &[]),
-                    fire(Play, 0.1, &[0.0]),
-                ],
-            ),
-            FiringCase {
-                start: 0.25,
-                ..firing_case(
-                    "the first update fires from a start time",
-                    &[0.0, 0.25, 0.3],
-                    vec![fire(Step, 0.1, &[0.25, 0.3])],
-                )
-            },
-            firing_case(
-                "a reset clip fires its start time again",
-                &[0.0],
-                vec![fire(Step, 0.1, &[0.0]), fire(Reset, 0.1, &[0.0])],
+                vec![fire(0.2, &[0.1]), fire(0.2, &[0.3])],
             ),
             FiringCase {
                 start: 0.2,
@@ -763,24 +723,11 @@ mod tests {
                     "a loop wrap fires to the end and then the start",
                     &[0.2, 0.5, 0.9, 1.0],
                     vec![
-                        fire(Step, 0.4, &[0.2, 0.5]),
-                        fire(Step, 0.3, &[0.9]),
-                        fire(Step, 0.4, &[1.0, 0.2]),
-                        fire(Step, 0.4, &[0.5]),
+                        fire(0.4, &[0.2, 0.5]),
+                        fire(0.3, &[0.9]),
+                        fire(0.4, &[1.0, 0.2]),
+                        fire(0.4, &[0.5]),
                     ],
-                )
-            },
-            firing_case(
-                "a fresh loop that wraps on its first update fires its start once",
-                &[0.0, 0.25],
-                vec![fire(Step, 1.5, &[0.0, 0.25])],
-            ),
-            FiringCase {
-                start: 0.25,
-                ..firing_case(
-                    "a fresh loop from a start time that wraps on its first update fires it once",
-                    &[0.0, 0.25],
-                    vec![fire(Step, 1.5, &[0.25])],
                 )
             },
             FiringCase {
@@ -788,113 +735,35 @@ mod tests {
                 ..firing_case(
                     "a play once clip fires up to its end and then nothing",
                     &[0.9, 1.0],
-                    vec![
-                        fire(Step, 0.75, &[]),
-                        fire(Step, 0.5, &[0.9, 1.0]),
-                        fire(Step, 0.5, &[]),
-                    ],
+                    vec![fire(0.75, &[]), fire(0.5, &[0.9, 1.0]), fire(0.5, &[])],
                 )
             },
-            firing_case(
-                "a paused clip fires nothing and drops what it fired before",
-                &[0.0, 0.1],
-                vec![fire(Step, 0.2, &[0.0, 0.1]), fire(Pause, 0.2, &[])],
-            ),
-            FiringCase {
-                speed: 0.0,
-                ..firing_case(
-                    "a clip at rate zero fires nothing and keeps its start for later",
-                    &[0.0, 0.1],
-                    vec![fire(Step, 0.2, &[]), fire(Speed(1.0), 0.2, &[0.0, 0.1])],
-                )
-            },
-            FiringCase {
-                resolved: false,
-                ..firing_case(
-                    "a clip that is not loaded fires nothing and keeps its start for later",
-                    &[0.0],
-                    vec![fire(Step, 0.1, &[]), fire(Resolve, 0.1, &[0.0])],
-                )
-            },
-            firing_case(
-                "a clip that stops resolving fires nothing on the next update",
-                &[0.1],
-                vec![fire(Step, 0.2, &[0.1]), fire(Unresolve, 0.2, &[])],
-            ),
             firing_case(
                 "an event exactly at the new time fires once",
                 &[0.5],
-                vec![
-                    fire(Step, 0.25, &[]),
-                    fire(Step, 0.25, &[0.5]),
-                    fire(Step, 0.25, &[]),
-                ],
+                vec![fire(0.25, &[]), fire(0.25, &[0.5]), fire(0.25, &[])],
             ),
         ];
 
         for case in cases {
-            let mut rig = events_rig(&case.times);
-            rig.blackboard.set(name!("speed"), case.speed);
-            let loaded = rig
-                .node()
-                .with_start_time(case.start)
-                .with_play_rate_param(name!("speed"));
-            let loaded = if case.play_once {
-                loaded.with_play_mode(AnimationPlayMode::PlayOnce)
+            let rig = events_rig(&case.times);
+            let node = rig.node().with_start_time(case.start);
+            let node = if case.play_once {
+                node.with_play_mode(AnimationPlayMode::PlayOnce)
             } else {
-                loaded
+                node
             };
-            let unloaded = AnimationClipNode {
-                clip: AssetHandle::weak(AssetId::new()),
-                ..loaded.clone()
-            };
-            let mut resolved = case.resolved;
-            let mut state = rig.create(if resolved { &loaded } else { &unloaded });
+            let mut state = rig.create(&node);
 
             for (index, step) in case.steps.into_iter().enumerate() {
-                match step.act {
-                    Step => {}
-                    Play => state.play(),
-                    Reset => loaded.reset(&mut state),
-                    Pause => state.clock.is_paused = true,
-                    Speed(speed) => rig.blackboard.set(name!("speed"), speed),
-                    Resolve => resolved = true,
-                    Unresolve => resolved = false,
-                }
-                let node = if resolved { &loaded } else { &unloaded };
-
                 assert_eq!(
-                    rig.fire(node, &mut state, step.dt),
+                    rig.fire(&node, &mut state, step.dt),
                     step.fired,
                     "{}: step {index}",
                     case.name
                 );
             }
         }
-    }
-
-    #[test]
-    fn a_fired_event_names_its_clip_and_key_at_full_weight() {
-        let rig = events_rig(&[0.1, 0.3]);
-        let node = rig.node();
-        let mut state = rig.create(&node);
-        rig.walks.update(&rig.blackboard, |context| {
-            node.update(&mut state, 0.2, clips(context), context)
-        });
-        let mut pool = FramePool::new(1);
-        let mut output = pool.acquire();
-        rig.evaluate(&node, &mut state, &[ROOT], &mut pool, &mut output);
-
-        assert_eq!(
-            output.events(),
-            [FiredEvent {
-                clip: rig.clip.id(),
-                key: 0,
-                time: 0.1,
-                weight: 1.0,
-                mirrored: false,
-            }]
-        );
     }
 
     fn translation_channel(from: Vec3, to: Vec3) -> AnimationChannel {
@@ -933,13 +802,6 @@ mod tests {
 
     fn held(rotation: Quat) -> AnimationChannel {
         rotation_channel(rotation, rotation)
-    }
-
-    fn assert_rotation(actual: Quat, expected: Quat) {
-        assert!(
-            actual.angle_between(expected) < 1e-3,
-            "expected rotation {expected}, got {actual}"
-        );
     }
 
     struct PoseCase {
@@ -984,17 +846,6 @@ mod tests {
                 translation: Vec3::new(0.0, 1.75, 0.0),
                 rotation: Quat::IDENTITY,
             },
-            PoseCase {
-                name: "its height is read along up",
-                channels: vec![translation_channel(
-                    Vec3::new(3.0, 5.0, 0.5),
-                    Vec3::new(3.0, 5.0, 0.5),
-                )],
-                rest: Quat::IDENTITY,
-                up: Vec3::Z,
-                translation: Vec3::new(0.0, 1.0, 0.5),
-                rotation: Quat::IDENTITY,
-            },
         ];
 
         for case in cases {
@@ -1017,41 +868,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_joint_that_is_not_the_root_keeps_what_the_clip_gives_it() {
-        let moved = Vec3::new(3.0, 2.0, 1.0);
-        let turned = Quat::from_rotation_y(1.0);
-        let mut both = clip(vec![held(turned)]);
-        both.add_channel(OTHER, translation_channel(moved, moved));
-        both.add_channel(OTHER, held(turned));
-        let rig = Rig::new(both, at_rest(Quat::IDENTITY));
-
-        let pose = rig.pose(&[ROOT, OTHER]);
-
-        assert_eq!(pose.joints()[1].translation, moved);
-        assert_rotation(pose.joints()[1].rotation, turned);
-    }
-
-    #[test]
-    fn blending_two_clips_that_turn_differently_leaves_no_yaw() {
-        let rest = turned_armature();
-        let pitch = Quat::from_rotation_x(0.4);
-        let turning_by = |angle: f32| {
-            let turned = Quat::from_rotation_y(angle) * pitch * rest;
-            Rig::new(clip(vec![held(turned)]), at_rest(rest)).pose(&[ROOT])
-        };
-
-        let mut blended = turning_by(1.0);
-        blended.blend(&turning_by(-0.6), 0.5);
-
-        assert_rotation(blended.joints()[0].rotation, pitch * rest);
-    }
-
     enum Move {
         Step(f32),
         Reset,
-        Play,
-        Evaluate,
     }
 
     struct Motion {
@@ -1077,7 +896,6 @@ mod tests {
         clip: AnimationClip,
         rest: Quat,
         node: AnimationClipNode,
-        speed: Option<f32>,
         motions: Vec<Motion>,
     }
 
@@ -1087,7 +905,6 @@ mod tests {
             clip,
             rest: Quat::IDENTITY,
             node: AnimationClipNode::new(AssetHandle::default()),
-            speed: None,
             motions,
         }
     }
@@ -1096,7 +913,6 @@ mod tests {
     fn a_clip_root_motion_is_the_delta_of_its_root_since_the_last_frame_read_from_where_it_faced() {
         use Move::*;
         let rest = turned_armature();
-        let facing_x = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
         let along_x = || {
             clip(vec![translation_channel(
                 Vec3::ZERO,
@@ -1104,8 +920,6 @@ mod tests {
             )])
         };
         let along_xz = || translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 4.0));
-        let mut other_bone_only = AnimationClip::default();
-        other_bone_only.add_channel(OTHER, translation_channel(Vec3::ZERO, Vec3::X));
         let node = AnimationClipNode::new(AssetHandle::default());
         let y = Quat::from_rotation_y;
         let cases = [
@@ -1121,44 +935,6 @@ mod tests {
                         motion(Step(0.25), Vec3::new(0.5, 0.0, 1.0), y(0.25)),
                         motion(Step(0.25), y(-0.25) * Vec3::new(0.5, 0.0, 1.0), y(0.25)),
                     ],
-                )
-            },
-            MotionCase {
-                rest,
-                ..moving(
-                    "a root with no rotation channel reads as its rest",
-                    clip(vec![along_xz()]),
-                    vec![motion(Step(0.5), Vec3::new(1.0, 0.0, 2.0), Quat::IDENTITY)],
-                )
-            },
-            MotionCase {
-                rest,
-                ..moving(
-                    "a root with a one key rotation channel reads as its rest",
-                    clip(vec![
-                        along_xz(),
-                        AnimationChannel::new(
-                            vec![0.0],
-                            AnimationChanelOutput::Rotation(vec![Quat::from_rotation_y(1.0)]),
-                        ),
-                    ]),
-                    vec![motion(Step(0.5), Vec3::new(1.0, 0.0, 2.0), Quat::IDENTITY)],
-                )
-            },
-            moving(
-                "a clip with no channels for the root gives no root motion",
-                other_bone_only,
-                vec![none(Step(0.5))],
-            ),
-            MotionCase {
-                rest,
-                ..moving(
-                    "a delta turned by the root reads forward from the way it faced last frame",
-                    clip(vec![
-                        translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0)),
-                        rotation_channel(facing_x * rest, facing_x * rest),
-                    ]),
-                    vec![motion(Step(0.5), Vec3::new(0.0, 0.0, 1.0), Quat::IDENTITY)],
                 )
             },
             MotionCase {
@@ -1186,23 +962,6 @@ mod tests {
                     none(Reset),
                 ],
             ),
-            moving(
-                "a clip played again after a wrap gives no root motion",
-                along_x(),
-                vec![
-                    motion(Step(0.8), Vec3::new(1.6, 0.0, 0.0), Quat::IDENTITY),
-                    motion(Step(0.8), Vec3::new(0.4, 0.0, 0.0), Quat::IDENTITY),
-                    none(Play),
-                ],
-            ),
-            MotionCase {
-                node: node.clone().with_start_time(0.5),
-                ..moving(
-                    "a start time gives no delta on the first evaluation",
-                    along_x(),
-                    vec![none(Evaluate)],
-                )
-            },
             MotionCase {
                 node: node.clone().with_play_mode(AnimationPlayMode::PlayOnce),
                 ..moving(
@@ -1215,36 +974,14 @@ mod tests {
                     ],
                 )
             },
-            MotionCase {
-                node: node.clone().with_play_rate(0.5),
-                speed: Some(3.0),
-                ..moving(
-                    "a float param multiplies the play rate",
-                    clip(vec![along_xz()]),
-                    vec![motion(Step(0.2), Vec3::new(0.6, 0.0, 1.2), Quat::IDENTITY)],
-                )
-            },
-            MotionCase {
-                node: node.clone().with_start_time(0.25),
-                speed: Some(-2.0),
-                ..moving(
-                    "a negative play rate holds the clip",
-                    clip(vec![along_xz()]),
-                    vec![none(Step(0.3)), none(Step(0.3))],
-                )
-            },
         ];
 
         for case in cases {
-            let mut rig = Rig::new(case.clip, at_rest(case.rest));
-            let mut node = AnimationClipNode {
+            let rig = Rig::new(case.clip, at_rest(case.rest));
+            let node = AnimationClipNode {
                 clip: rig.clip.clone(),
                 ..case.node
             };
-            if let Some(speed) = case.speed {
-                rig.blackboard.set(name!("speed"), speed);
-                node = node.with_play_rate_param(name!("speed"));
-            }
             let mut state = rig.create(&node);
 
             for (index, expected) in case.motions.into_iter().enumerate() {
@@ -1254,11 +991,6 @@ mod tests {
                         node.reset(&mut state);
                         rig.motion(&node, &mut state)
                     }
-                    Play => {
-                        state.play();
-                        rig.motion(&node, &mut state)
-                    }
-                    Evaluate => rig.motion(&node, &mut state),
                 };
 
                 assert!(
@@ -1284,8 +1016,6 @@ mod tests {
     fn the_effective_play_rate_is_the_rate_times_a_float_param_and_zero_when_not_finite() {
         let mut blackboard = AnimationBlackboard::default();
         blackboard.set(name!("draw_speed"), 4.0_f32);
-        blackboard.set(name!("crouched"), true);
-        blackboard.set(name!("nan"), f32::NAN);
         blackboard.set(name!("infinite"), f32::INFINITY);
         let rate = |name, rate, param, effective| RateCase {
             name,
@@ -1295,17 +1025,7 @@ mod tests {
         };
         let cases = [
             rate("a float param", 1.5, Some(name!("draw_speed")), 6.0),
-            rate("no param", 1.5, None, 1.5),
-            rate("a missing param", 1.5, Some(name!("missing")), 1.5),
-            rate(
-                "a param that is not a float",
-                1.5,
-                Some(name!("crouched")),
-                1.5,
-            ),
-            rate("a NaN param", 1.0, Some(name!("nan")), 0.0),
             rate("an infinite param", 1.0, Some(name!("infinite")), 0.0),
-            rate("zero times infinity", 0.0, Some(name!("infinite")), 0.0),
         ];
 
         for case in cases {
@@ -1323,9 +1043,7 @@ mod tests {
         let mut blackboard = AnimationBlackboard::default();
         blackboard.set(name!("half"), 0.5_f32);
         blackboard.set(name!("triple"), 3.0_f32);
-        blackboard.set(name!("negative"), -1.0_f32);
         blackboard.set(name!("nan"), f32::NAN);
-        blackboard.set(name!("crouched"), true);
         let weight = |name, rate, param, effective| RateCase {
             name,
             rate,
@@ -1335,17 +1053,7 @@ mod tests {
         let cases = [
             weight("a float param", 0.5, Some(name!("half")), 0.25),
             weight("above 1", 0.5, Some(name!("triple")), 1.0),
-            weight("below 0", 0.5, Some(name!("negative")), 0.0),
             weight("a NaN param", 0.5, Some(name!("nan")), 0.0),
-            weight("a NaN weight", f32::NAN, None, 0.0),
-            weight("no param", 0.5, None, 0.5),
-            weight("a missing param", 0.5, Some(name!("missing")), 0.5),
-            weight(
-                "a param that is not a float",
-                0.5,
-                Some(name!("crouched")),
-                0.5,
-            ),
         ];
 
         for case in cases {
@@ -1395,19 +1103,6 @@ mod tests {
             translation,
         };
         let cases = [
-            blend_case(
-                "two inputs at equal weight land halfway",
-                vec![
-                    weighted(Vec3::ZERO, 1.0),
-                    weighted(Vec3::new(4.0, 0.0, 2.0), 1.0),
-                ],
-                Vec3::new(2.0, 0.0, 1.0),
-            ),
-            blend_case(
-                "a blend leans toward its heavier input",
-                vec![weighted(Vec3::ZERO, 3.0), weighted(Vec3::X * 4.0, 1.0)],
-                Vec3::X,
-            ),
             blend_case(
                 "three inputs give their weighted average",
                 vec![

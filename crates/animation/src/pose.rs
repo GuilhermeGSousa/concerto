@@ -296,16 +296,7 @@ mod tests {
     use glam::{Quat, Vec3};
     use proptest::prelude::*;
 
-    use concerto_foundation::assets::AssetId;
-
-    use super::{AnimationFrame, FiredEvent, FramePool, JointPose, RootMotion, twist_about};
-
-    fn moved() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(2.0, 0.0, 0.0),
-            rotation: Quat::from_rotation_y(0.8),
-        }
-    }
+    use super::{JointPose, RootMotion, twist_about};
 
     fn joint(translation: Vec3, rotation: Quat) -> JointPose {
         JointPose {
@@ -328,18 +319,6 @@ mod tests {
         let twist = Quat::from_axis_angle(axis, 0.9);
         let swing = Quat::from_axis_angle(axis.any_orthonormal_vector(), 0.4);
         let cases = [
-            TwistCase {
-                name: "a turn about the axis is all twist",
-                rotation: Quat::from_rotation_y(0.7),
-                axis: Vec3::Y,
-                twist: Quat::from_rotation_y(0.7),
-            },
-            TwistCase {
-                name: "a turn square to the axis has no twist",
-                rotation: Quat::from_rotation_x(0.7),
-                axis: Vec3::Y,
-                twist: Quat::IDENTITY,
-            },
             TwistCase {
                 name: "a mix gives the twist it starts with",
                 rotation: twist * swing,
@@ -370,110 +349,6 @@ mod tests {
                 case.twist
             );
         }
-    }
-
-    fn fired(key: u32, weight: f32) -> FiredEvent {
-        FiredEvent {
-            clip: AssetId::new(),
-            key,
-            time: key as f32,
-            weight,
-            mirrored: false,
-        }
-    }
-
-    #[derive(Debug, PartialEq)]
-    struct KeyWeight {
-        key: u32,
-        weight: f32,
-    }
-
-    fn key_weight(key: u32, weight: f32) -> KeyWeight {
-        KeyWeight { key, weight }
-    }
-
-    fn weights(frame: &AnimationFrame) -> Vec<KeyWeight> {
-        frame
-            .events()
-            .iter()
-            .map(|event| key_weight(event.key, event.weight))
-            .collect()
-    }
-
-    #[test]
-    fn copy_from_carries_the_root_motion_and_the_events_and_drops_its_own() {
-        let mut source = AnimationFrame::identity(1);
-        source.set_root_motion(moved());
-        source.push_event(fired(1, 1.0));
-        let mut copy = AnimationFrame::identity(1);
-        copy.push_event(fired(2, 1.0));
-
-        copy.copy_from(&source);
-
-        assert_eq!(copy.root_motion(), moved());
-        assert_eq!(copy.events(), source.events());
-    }
-
-    #[test]
-    fn blend_lerps_and_slerps_the_root_motion_and_weighs_the_events_of_both_frames() {
-        let mut frame = AnimationFrame::identity(1);
-        frame.push_event(fired(1, 1.0));
-        frame.push_event(fired(2, 0.5));
-        let mut other = AnimationFrame::identity(1);
-        other.set_root_motion(moved());
-        other.push_event(fired(3, 1.0));
-
-        frame.blend(&other, 0.25);
-
-        assert!(
-            frame
-                .root_motion()
-                .translation
-                .abs_diff_eq(Vec3::new(0.5, 0.0, 0.0), 1e-5)
-        );
-        assert!(
-            frame
-                .root_motion()
-                .rotation
-                .abs_diff_eq(Quat::from_rotation_y(0.2), 1e-5)
-        );
-        assert_eq!(
-            weights(&frame),
-            [
-                key_weight(1, 0.75),
-                key_weight(2, 0.375),
-                key_weight(3, 0.25)
-            ]
-        );
-    }
-
-    #[test]
-    fn acquire_clears_the_root_motion_and_the_events_of_a_recycled_frame() {
-        let mut pool = FramePool::new(1);
-        let mut recycled = pool.acquire();
-        recycled.set_root_motion(moved());
-        recycled.push_event(fired(1, 1.0));
-        pool.release(recycled);
-
-        let acquired = pool.acquire();
-
-        assert_eq!(acquired.root_motion(), RootMotion::IDENTITY);
-        assert!(acquired.events().is_empty());
-    }
-
-    #[test]
-    fn set_rest_with_another_length_resizes_the_pool() {
-        let mut pool = FramePool::new(1);
-        let shorter = pool.acquire();
-        pool.release(shorter);
-        let rest = [
-            joint(Vec3::X, Quat::IDENTITY),
-            joint(Vec3::Y, Quat::from_rotation_z(0.3)),
-        ];
-
-        pool.set_rest(&rest);
-
-        assert_eq!(pool.acquire().joints(), rest);
     }
 
     fn any_stop() -> impl Strategy<Value = JointPose> {

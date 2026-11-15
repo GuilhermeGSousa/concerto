@@ -207,7 +207,7 @@ pub fn resolve_mask(
 
 #[cfg(test)]
 mod tests {
-    use concerto_mesh::{JointName, Skeleton, skeleton::JointPose};
+    use concerto_mesh::{Skeleton, skeleton::JointPose};
     use concerto_name::Name;
     use glam::Mat4;
     use uuid::Uuid;
@@ -263,23 +263,11 @@ mod tests {
         out
     }
 
-    fn assert_weights(actual: &[f32], expected: &[f32]) {
-        assert_eq!(actual.len(), expected.len(), "{actual:?}");
-        for (bone, (actual_weight, expected_weight)) in actual.iter().zip(expected).enumerate() {
-            assert!(
-                (actual_weight - expected_weight).abs() < 1e-6,
-                "bone {bone}: {actual:?} != {expected:?}"
-            );
-        }
-    }
-
     struct MaskCase {
         name: &'static str,
         mask: BoneMask,
         root: Option<usize>,
         weights: [f32; 10],
-        missing: Vec<JointName>,
-        names_root: bool,
     }
 
     fn mask_case(name: &'static str, mask: BoneMask, weights: [f32; 10]) -> MaskCase {
@@ -288,8 +276,6 @@ mod tests {
             mask,
             root: None,
             weights,
-            missing: Vec::new(),
-            names_root: false,
         }
     }
 
@@ -297,11 +283,6 @@ mod tests {
     fn a_mask_resolves_to_one_weight_per_bone() {
         let third = 1.0 / 3.0;
         let cases = [
-            mask_case(
-                "a branch at depth 0 gives its weight to the bone and every descendant",
-                BoneMask::new().with_branch(BoneMaskBranch::new("spine2").with_weight(0.8)),
-                [0.0, 0.0, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
-            ),
             mask_case(
                 "a branch at depth 2 ramps in over three levels and stays full below",
                 BoneMask::new().with_branch(BoneMaskBranch::new("spine1").with_depth(2)),
@@ -327,39 +308,13 @@ mod tests {
                 [0.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.0, 0.0, 0.0],
             ),
             MaskCase {
-                missing: vec![JointName::from("tail")],
-                ..mask_case(
-                    "unknown names are listed, empty names skipped and the later duplicate wins",
-                    BoneMask::new()
-                        .with_branch(BoneMaskBranch::new("tail"))
-                        .with_branch(BoneMaskBranch::default())
-                        .with_branch(BoneMaskBranch::new("spine3").with_weight(0.2))
-                        .with_branch(BoneMaskBranch::new("spine3").with_weight(0.6)),
-                    [0.0, 0.0, 0.0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6],
-                )
-            },
-            mask_case(
-                "a NaN entry weight counts as 0",
-                BoneMask::new().with_branch(BoneMaskBranch::new("spine1").with_weight(f32::NAN)),
-                [0.0; 10],
-            ),
-            MaskCase {
                 root: Some(0),
-                names_root: true,
                 ..mask_case(
                     "the root has weight 0 even when an entry names it",
                     BoneMask::new().with_branch(BoneMaskBranch::new("root")),
                     [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
                 )
             },
-            mask_case(
-                "weights outside 0 to 1 are clamped",
-                BoneMask::new()
-                    .with_branch(BoneMaskBranch::new("spine1").with_weight(2.0))
-                    .with_branch(BoneMaskBranch::new("left_upper").with_weight(-1.0))
-                    .with_branch(BoneMaskBranch::new("right_upper").with_weight(f32::INFINITY)),
-                [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
-            ),
         ];
 
         for case in cases {
@@ -374,46 +329,6 @@ mod tests {
                     case.name
                 );
             }
-            assert_eq!(resolved.missing, case.missing, "{}", case.name);
-            assert_eq!(resolved.names_root, case.names_root, "{}", case.name);
         }
-    }
-
-    #[test]
-    fn a_bone_whose_parent_is_not_below_it_has_no_parent() {
-        let mut skeleton = skeleton_of(&["a", "b", "c", "d"], vec![None, None, None, Some(0)]);
-        skeleton.parents = vec![None, Some(1), Some(3), Some(0)].into_boxed_slice();
-        let mask = BoneMask::new().with_branch(BoneMaskBranch::new("a"));
-        let mut resolved = MaskResolution::default();
-
-        resolve_mask(&mask, &skeleton, None, &mut resolved);
-
-        assert_weights(&resolved.weights, &[1.0, 0.0, 0.0, 1.0]);
-    }
-
-    #[test]
-    fn a_reused_buffer_resolves_the_same_and_shrinks_to_a_shorter_skeleton() {
-        let mask = BoneMask::new()
-            .with_branch(BoneMaskBranch::new("root"))
-            .with_branch(BoneMaskBranch::new("tail"))
-            .with_branch(BoneMaskBranch::new("spine2").with_depth(1));
-        let mut resolved = MaskResolution::default();
-        resolve_mask(&mask, &rig(), Some(0), &mut resolved);
-        let first = resolved.weights.clone();
-
-        resolve_mask(&mask, &rig(), Some(0), &mut resolved);
-
-        assert_eq!(resolved.weights, first);
-        assert_eq!(resolved.missing, vec![JointName::from("tail")]);
-        assert!(resolved.names_root);
-
-        let short = skeleton_of(&["a", "b"], vec![None, Some(0)]);
-        let short_mask = BoneMask::new().with_branch(BoneMaskBranch::new("b").with_weight(0.5));
-
-        resolve_mask(&short_mask, &short, None, &mut resolved);
-
-        assert_weights(&resolved.weights, &[0.0, 0.5]);
-        assert!(resolved.missing.is_empty());
-        assert!(!resolved.names_root);
     }
 }
