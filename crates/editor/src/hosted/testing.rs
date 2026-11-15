@@ -175,13 +175,6 @@ pub fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     }
 }
 
-pub fn preview_request(recipe: fn(&mut App)) -> HostRequest<'static> {
-    HostRequest {
-        role: HostRole::Preview,
-        ..request(recipe)
-    }
-}
-
 pub fn start_play(
     world: &mut World,
     document: Entity,
@@ -218,12 +211,6 @@ pub fn play_state(world: &World, document: Entity) -> Option<PlayState> {
 
 pub fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> HostedApp {
     super::begin(request(recipe), extra, |_| {})
-        .finish_now()
-        .expect("a recipe without asynchronous plugins is ready at once")
-}
-
-pub fn preview_now(recipe: fn(&mut App)) -> HostedApp {
-    super::begin(preview_request(recipe), |_| {}, |_| {})
         .finish_now()
         .expect("a recipe without asynchronous plugins is ready at once")
 }
