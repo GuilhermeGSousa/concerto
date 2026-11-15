@@ -3265,6 +3265,11 @@ struct ListEdits {
     refused: Vec<Value>,
 }
 
+struct Refusal {
+    tool: &'static str,
+    arguments: Value,
+}
+
 #[test]
 fn list_elements_are_listed_written_pushed_and_removed() {
     let fixture = Fixture::new();
@@ -3341,49 +3346,49 @@ fn list_elements_are_listed_written_pushed_and_removed() {
             .await;
             let samples = inspect(&sword, "Samples").await;
             let mut refused = Vec::new();
-            for (tool, arguments) in [
-                (
-                    "set_property",
-                    json!({ "entity": rig, "component": "Roster", "path": "strides.0", "value": { "length": 1.0 } }),
-                ),
-                (
-                    "set_property",
-                    json!({ "entity": rig, "component": "Roster", "path": "moods.0", "value": "Calm" }),
-                ),
-                (
-                    "set_property",
-                    json!({ "entity": sword, "component": "Samples", "path": "values.100", "value": 1.0 }),
-                ),
-                (
-                    "list_push",
-                    json!({ "entity": root, "component": "Transform", "path": "translation" }),
-                ),
-                (
-                    "list_remove",
-                    json!({ "entity": root, "component": "Transform", "path": "translation", "index": 0 }),
-                ),
-                (
-                    "list_push",
-                    json!({ "entity": rig, "component": "Roster", "path": "gain" }),
-                ),
-                (
-                    "list_push",
-                    json!({ "entity": rig, "component": "Roster", "path": "locked" }),
-                ),
-                (
-                    "list_remove",
-                    json!({ "entity": rig, "component": "Roster", "path": "locked", "index": 0 }),
-                ),
-                (
-                    "list_remove",
-                    json!({ "entity": rig, "component": "Roster", "path": "strides", "index": 1 }),
-                ),
-                (
-                    "list_push",
-                    json!({ "entity": rig, "component": "Roster", "path": "crew" }),
-                ),
+            for refusal in [
+                Refusal {
+                    tool: "set_property",
+                    arguments: json!({ "entity": rig, "component": "Roster", "path": "strides.0", "value": { "length": 1.0 } }),
+                },
+                Refusal {
+                    tool: "set_property",
+                    arguments: json!({ "entity": rig, "component": "Roster", "path": "moods.0", "value": "Calm" }),
+                },
+                Refusal {
+                    tool: "set_property",
+                    arguments: json!({ "entity": sword, "component": "Samples", "path": "values.100", "value": 1.0 }),
+                },
+                Refusal {
+                    tool: "list_push",
+                    arguments: json!({ "entity": root, "component": "Transform", "path": "translation" }),
+                },
+                Refusal {
+                    tool: "list_remove",
+                    arguments: json!({ "entity": root, "component": "Transform", "path": "translation", "index": 0 }),
+                },
+                Refusal {
+                    tool: "list_push",
+                    arguments: json!({ "entity": rig, "component": "Roster", "path": "gain" }),
+                },
+                Refusal {
+                    tool: "list_push",
+                    arguments: json!({ "entity": rig, "component": "Roster", "path": "locked" }),
+                },
+                Refusal {
+                    tool: "list_remove",
+                    arguments: json!({ "entity": rig, "component": "Roster", "path": "locked", "index": 0 }),
+                },
+                Refusal {
+                    tool: "list_remove",
+                    arguments: json!({ "entity": rig, "component": "Roster", "path": "strides", "index": 1 }),
+                },
+                Refusal {
+                    tool: "list_push",
+                    arguments: json!({ "entity": rig, "component": "Roster", "path": "crew" }),
+                },
             ] {
-                refused.push(error_with(&client, tool, arguments).await);
+                refused.push(error_with(&client, refusal.tool, refusal.arguments).await);
             }
             client.cancel().await.unwrap();
             ListEdits {
