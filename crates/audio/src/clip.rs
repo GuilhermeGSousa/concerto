@@ -29,6 +29,10 @@ impl AudioClip {
     pub fn sample_rate(&self) -> u32 {
         self.sound.as_ref().map_or(0, |sound| sound.sample_rate)
     }
+
+    pub(crate) fn sound(&self) -> Option<&StaticSoundData> {
+        self.sound.as_ref()
+    }
 }
 
 impl Asset for AudioClip {

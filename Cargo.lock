@@ -1235,6 +1235,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-window",
  "kira",
+ "log",
  "serde",
  "tempfile",
 ]

@@ -8,7 +8,7 @@ use concerto_app::{
     plugins::{AssetManagerPlugin, TimePlugin},
 };
 use concerto_asset_import::{EmittedSubAsset, ImportContext, ImportError, Importer};
-use concerto_audio::{AudioClip, AudioImporter, AudioPlugin};
+use concerto_audio::{AudioBackend, AudioClip, AudioImporter, AudioPlugin};
 use concerto_foundation::assets::{
     Asset, AssetId, ContentAssetRoot,
     asset_server::AssetServer,
@@ -17,7 +17,7 @@ use concerto_foundation::assets::{
     registry::AssetRegistry,
 };
 
-fn fixture(name: &str) -> Vec<u8> {
+pub(crate) fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
@@ -30,7 +30,11 @@ fn encoding_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"))
 }
 
-fn import(project: &Path, name: &str, bytes: &[u8]) -> Result<EmittedSubAsset, ImportError> {
+pub(crate) fn import(
+    project: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<EmittedSubAsset, ImportError> {
     let relative = PathBuf::from("assets").join(name);
     let source = project.join(&relative);
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -49,7 +53,7 @@ fn import(project: &Path, name: &str, bytes: &[u8]) -> Result<EmittedSubAsset, I
     Ok(clip.clone())
 }
 
-fn write_content(project: &Path, name: &str, clip: &EmittedSubAsset) {
+pub(crate) fn write_content(project: &Path, name: &str, clip: &EmittedSubAsset) {
     let path = project.join(format!("content/{name}/main.gasset"));
     let header = ContentAssetHeader {
         asset_id: clip.asset_id,
@@ -72,6 +76,7 @@ struct Loaded {
 
 fn load(project: &Path, ids: &[AssetId]) -> Vec<Option<Loaded>> {
     let mut app = App::new();
+    app.insert_resource(AudioBackend::Mock);
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(AssetManagerPlugin)
