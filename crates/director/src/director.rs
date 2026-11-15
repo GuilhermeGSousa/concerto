@@ -342,7 +342,9 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let mut world = World::new();
+            // Inserts the GlobalTransform the director reads poses from.
             world.register_component::<Transform>();
+            // Joins/leaves the stack on spawn and despawn.
             world.register_component::<VirtualCamera>();
             world.register_type::<VirtualCamera>();
             world.insert_resource(Time::new());
@@ -370,11 +372,13 @@ mod tests {
             self.world.spawn((vcam, Transform::from_translation(at)))
         }
 
+        /// The only way out of the stack short of despawning.
         fn remove_vcam(&mut self, vcam: concerto_ecs::Entity) {
             self.world.remove_component::<VirtualCamera>(vcam);
         }
 
         fn step(&mut self) -> Vec3 {
+            // Advances `Time::delta` off the wall clock, so blends make progress.
             self.world.get_resource_mut::<Time>().unwrap().update();
             self.schedule.run(&mut self.world);
             self.world.tick();
