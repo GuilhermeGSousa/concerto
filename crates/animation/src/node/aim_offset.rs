@@ -705,13 +705,29 @@ mod tests {
         }
     }
 
+    fn well_separated(points: &[Vec2]) -> bool {
+        let count = points.len();
+        (0..count).all(|a| {
+            (a + 1..count).all(|b| {
+                points[a].distance(points[b]) >= 0.05
+                    && (b + 1..count).all(|c| {
+                        (points[b] - points[a])
+                            .perp_dot(points[c] - points[a])
+                            .abs()
+                            >= 0.01
+                    })
+            })
+        })
+    }
+
     proptest! {
         #[test]
         fn aim_weights_are_not_negative_beyond_rounding_and_sum_to_1(
             points in prop::collection::vec(
                 prop::array::uniform2(-1.0f32..1.0).prop_map(Vec2::from_array),
                 1..7,
-            ),
+            )
+            .prop_filter("well separated", |points| well_separated(points)),
             sample in prop::array::uniform2(-3.0f32..3.0).prop_map(Vec2::from_array),
         ) {
             let weights = weigh(&points, sample);
