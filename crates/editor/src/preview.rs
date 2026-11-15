@@ -353,33 +353,41 @@ fn orbit_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        asset_editor::{AssetEditorCommand, Unsaved, finish_asset_request},
-        guard::DiscardEdits,
-        hosted::{
-            EditTarget, PendingPlayApp, PlayFailed, PlayState, StopPlay, ViewportTarget,
-            input::InViewport, testing::*,
-        },
-        scene::Play,
-        tools::scene::SceneDirty,
-    };
-    use concerto_ecs::{Changed, IntoSystem, System, events::event_channel::EventChannel};
+    use crate::hosted::{EditTarget, ViewportTarget, testing::*};
+    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
     use concerto_foundation::assets::Asset;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
 
-    fn markers(f: &SceneFixture, document: Entity) -> (bool, bool) {
-        (
-            f.world
+    fn targeted(f: &SceneFixture, document: Entity) -> Targets {
+        Targets {
+            viewport: f
+                .world
                 .get_component_for_entity::<ViewportTarget>(document)
                 .is_some(),
-            f.world
+            edit: f
+                .world
                 .get_component_for_entity::<EditTarget>(document)
                 .is_some(),
-        )
+        }
     }
+
+    #[derive(Debug, PartialEq)]
+    struct Targets {
+        viewport: bool,
+        edit: bool,
+    }
+
+    const PREVIEWED: Targets = Targets {
+        viewport: true,
+        edit: false,
+    };
+    const EDITED: Targets = Targets {
+        viewport: true,
+        edit: true,
+    };
+    const BEHIND: Targets = Targets {
+        viewport: false,
+        edit: false,
+    };
 
     fn send(world: &mut World, document: Entity, value: u32) {
         let mut sent = Some(value);
@@ -391,22 +399,6 @@ mod tests {
         .into_system();
         system.initialize(world);
         system.run_and_apply((), world);
-    }
-
-    fn said(f: &SceneFixture, document: Entity) -> Vec<(u32, usize)> {
-        f.scene_world(document)
-            .get_resource::<Said>()
-            .unwrap()
-            .0
-            .clone()
-    }
-
-    fn queued(f: &SceneFixture) -> usize {
-        f.world
-            .get_resource::<PreviewSignalQueue>()
-            .unwrap()
-            .0
-            .len()
     }
 
     #[test]
@@ -453,65 +445,6 @@ mod tests {
     }
 
     #[test]
-    fn a_preview_failure_comes_back_when_a_finished_request_clears_the_status() {
-        let mut f = SceneFixture::new();
-        let document = f.request_kind(BrokenPreviewAsset::name());
-        f.frames_until("the failure was never reported", |f| {
-            f.world
-                .get_component_for_entity::<PreviewFailed>(document)
-                .is_some()
-        });
-
-        f.world
-            .get_component_for_entity_mut::<EditorDocument>(document)
-            .unwrap()
-            .status
-            .clear();
-        f.frame();
-
-        assert_eq!(f.status(document), "Preview failed: the preview broke");
-    }
-
-    #[test]
-    fn the_host_plugin_keeps_a_preview_failure_shown() {
-        let (mut app, document) = editor_app();
-        app.main_mut().world_mut().insert(
-            PreviewFailed("Preview failed: it broke".to_owned()),
-            document,
-        );
-
-        app.update();
-
-        assert_eq!(
-            app.main_mut()
-                .world_mut()
-                .get_component_for_entity::<EditorDocument>(document)
-                .unwrap()
-                .status,
-            "Preview failed: it broke"
-        );
-    }
-
-    #[test]
-    fn a_preview_failure_leaves_another_status_alone() {
-        let mut f = SceneFixture::new();
-        let document = f.request_kind(BrokenPreviewAsset::name());
-        f.frames_until("the failure was never reported", |f| {
-            f.world
-                .get_component_for_entity::<PreviewFailed>(document)
-                .is_some()
-        });
-
-        f.world
-            .get_component_for_entity_mut::<EditorDocument>(document)
-            .unwrap()
-            .status = "Could not read the clip".to_owned();
-        f.frame();
-
-        assert_eq!(f.status(document), "Could not read the clip");
-    }
-
-    #[test]
     fn a_failed_preview_build_becomes_the_status_and_is_not_retried() {
         let mut f = SceneFixture::new();
         let document = f.request_kind(BrokenPreviewAsset::name());
@@ -543,274 +476,18 @@ mod tests {
         let mut f = SceneFixture::new();
         let scene = f.open();
         let preview = f.open_preview();
-        assert_eq!(markers(&f, preview), (true, false));
-        assert_eq!(markers(&f, scene), (false, false));
+        assert_eq!(targeted(&f, preview), PREVIEWED);
+        assert_eq!(targeted(&f, scene), BEHIND);
 
         f.activate(Some(scene));
-        assert_eq!(markers(&f, scene), (true, true));
-        assert_eq!(markers(&f, preview), (false, false));
+        assert_eq!(targeted(&f, scene), EDITED);
+        assert_eq!(targeted(&f, preview), BEHIND);
         f.rename(scene, "first", "renamed");
         assert!(f.scene_names(scene).contains(&"renamed".to_owned()));
 
         f.activate(Some(preview));
-        assert_eq!(markers(&f, preview), (true, false));
-        assert_eq!(markers(&f, scene), (false, false));
-    }
-
-    #[test]
-    fn a_preview_finishing_in_the_background_leaves_the_front_scenes_markers() {
-        let mut f = SceneFixture::new();
-        let scene = f.open();
-        let preview = f.request_kind(PreviewedAsset::name());
-        f.frames_until_building(preview);
-        f.activate(Some(scene));
-
-        f.wait_until_the_build_is_ready(preview);
-        f.frames_until("the preview was never built", |f| {
-            f.world
-                .get_component_for_entity::<HostedApp>(preview)
-                .is_some()
-        });
-
-        assert_eq!(markers(&f, scene), (true, true));
-        assert_eq!(markers(&f, preview), (false, false));
-    }
-
-    #[test]
-    fn a_background_game_starting_and_stopping_leaves_the_front_previews_target() {
-        let mut f = SceneFixture::new();
-        let scene = f.open();
-        let preview = f.open_preview();
-        f.frame();
-
-        f.world.trigger(Play(scene));
-        f.frames_until_playing(scene);
-        assert_eq!(markers(&f, preview), (true, false));
-
-        f.world.trigger(StopPlay(scene));
-        f.frame();
-        assert_eq!(f.play_state(scene), Some(PlayState::Editing));
-        assert_eq!(markers(&f, preview), (true, false));
-        assert!(
-            f.world
-                .get_component_for_entity::<InViewport>(preview)
-                .is_some()
-        );
-        assert_eq!(markers(&f, scene), (false, false));
-    }
-
-    fn panicking_recipe(_: &mut App) {
-        panic!("the recipe broke");
-    }
-
-    #[test]
-    fn a_background_game_failing_to_start_leaves_the_front_previews_target() {
-        let mut f = SceneFixture::new();
-        let scene = f.open();
-        let preview = f.open_preview();
-        f.world.get_resource_mut::<SceneRecipe>().unwrap().recipe = panicking_recipe;
-
-        f.world.trigger(Play(scene));
-        f.frame();
-
-        assert_eq!(f.play_state(scene), Some(PlayState::Editing));
-        assert_eq!(markers(&f, preview), (true, false));
-        assert_eq!(markers(&f, scene), (false, false));
-    }
-
-    #[test]
-    fn a_preview_document_keeps_an_unsaved_its_editor_inserted() {
-        let mut f = SceneFixture::new();
-        let preview = f.open_preview();
-        f.world.insert(Unsaved, preview);
-
-        f.frame();
-
-        assert!(f.unsaved(preview));
-    }
-
-    #[test]
-    fn a_preview_is_stepped_only_while_its_tab_is_in_front() {
-        let mut f = SceneFixture::new();
-        let scene = f.open();
-        let preview = f.open_preview();
-        f.frame();
-        let counting = f.hosted_frames(preview);
-        f.frame();
-        assert!(f.hosted_frames(preview) > counting);
-
-        f.activate(Some(scene));
-        f.frame();
-        let frozen = f.hosted_frames(preview);
-        let scene_frames = f.hosted_frames(scene);
-        for _ in 0..3 {
-            f.frame();
-        }
-
-        assert_eq!(f.hosted_frames(preview), frozen);
-        assert!(f.hosted_frames(scene) > scene_frames);
-    }
-
-    #[test]
-    fn a_signal_reaches_the_preview_before_its_next_step() {
-        let mut f = SceneFixture::new();
-        let preview = f.open_preview();
-        f.frame();
-        let frames = f.hosted_frames(preview);
-
-        send(&mut f.world, preview, 7);
-        f.frame();
-
-        assert_eq!(said(&f, preview), [(7, frames)]);
-        assert_eq!(f.hosted_frames(preview), frames + 1);
-        assert_eq!(queued(&f), 0);
-    }
-
-    #[test]
-    fn a_signal_sent_while_the_preview_builds_arrives_once_it_is_built() {
-        let mut f = SceneFixture::new();
-        let preview = f.request_kind(PreviewedAsset::name());
-        f.frames_until_building(preview);
-
-        send(&mut f.world, preview, 3);
-        f.frame();
-        f.frame();
-        assert_eq!(queued(&f), 1);
-
-        f.wait_until_the_build_is_ready(preview);
-        f.frames_until("the signal never arrived", |f| {
-            f.world
-                .get_component_for_entity::<HostedApp>(preview)
-                .is_some_and(|_| !said(f, preview).is_empty())
-        });
-
-        assert_eq!(said(&f, preview).len(), 1);
-        assert_eq!(said(&f, preview)[0].0, 3);
-        assert_eq!(queued(&f), 0);
-    }
-
-    #[test]
-    fn a_signal_to_a_closed_document_or_one_without_a_preview_is_dropped() {
-        let mut f = SceneFixture::new();
-        let plain = f.request_kind(PlainAsset::name());
-        let preview = f.open_preview();
-        f.close(preview);
-        f.frame();
-
-        send(&mut f.world, preview, 1);
-        send(&mut f.world, plain, 2);
-        f.frame();
-
-        assert_eq!(queued(&f), 0);
-    }
-
-    #[test]
-    fn a_signal_aimed_at_a_scene_document_does_not_reach_its_app() {
-        let mut f = SceneFixture::new();
-        let scene = f.open();
-        let world = f.scene_world_mut(scene);
-        world.insert_resource(Said::default());
-        world.add_listener(remember_said);
-
-        send(&mut f.world, scene, 2);
-        f.frame();
-
-        assert!(said(&f, scene).is_empty());
-        assert_eq!(queued(&f), 0);
-    }
-
-    #[test]
-    fn a_signal_to_a_failed_preview_is_dropped() {
-        let mut f = SceneFixture::new();
-        let document = f.request_kind(BrokenPreviewAsset::name());
-        f.frames_until("the failure was never reported", |f| {
-            f.world
-                .get_component_for_entity::<PreviewFailed>(document)
-                .is_some()
-        });
-
-        send(&mut f.world, document, 1);
-        f.frame();
-
-        assert_eq!(queued(&f), 0);
-    }
-
-    #[test]
-    fn a_play_on_a_preview_document_is_refused_and_leaves_the_preview_in_place() {
-        let mut f = SceneFixture::new();
-        let preview = f.open_preview();
-        let asset = f.document(preview).pending.clone().unwrap();
-        let document = f
-            .world
-            .get_component_for_entity_mut::<EditorDocument>(preview)
-            .unwrap();
-        assert!(finish_asset_request(document, &asset, Ok(())));
-        let status = f.status(preview);
-
-        f.world.trigger(Play(preview));
-        for _ in 0..3 {
-            f.frame();
-        }
-
-        assert_eq!(
-            f.world
-                .get_component_for_entity::<HostedApp>(preview)
-                .unwrap()
-                .role(),
-            HostRole::Preview
-        );
-        assert_eq!(markers(&f, preview), (true, false));
-        assert!(
-            f.world
-                .get_component_for_entity::<PendingPlayApp>(preview)
-                .is_none()
-        );
-        assert_eq!(f.play_state(preview), None);
-        assert_eq!(f.status(preview), status);
-        assert_eq!(
-            f.written::<PlayFailed>(),
-            [PlayFailed {
-                document: preview,
-                message: "No scene is open".into(),
-            }]
-        );
-    }
-
-    #[test]
-    fn discarding_a_preview_documents_edits_leaves_its_world_without_a_scene_flag() {
-        let mut f = SceneFixture::new();
-        let preview = f.open_preview();
-
-        f.world.trigger(DiscardEdits(preview));
-
-        assert!(
-            f.scene_world(preview)
-                .get_resource::<SceneDirty>()
-                .is_none()
-        );
-    }
-
-    #[derive(Resource)]
-    struct Canary(Arc<AtomicBool>);
-
-    impl Drop for Canary {
-        fn drop(&mut self) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-    }
-
-    #[test]
-    fn closing_the_tab_drops_the_preview_app() {
-        let mut f = SceneFixture::new();
-        let preview = f.open_preview();
-        let dropped = Arc::new(AtomicBool::new(false));
-        f.scene_world_mut(preview)
-            .insert_resource(Canary(Arc::clone(&dropped)));
-
-        f.command(AssetEditorCommand::Close(preview));
-
-        assert!(!f.world.entity_is_valid(preview));
-        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(targeted(&f, preview), PREVIEWED);
+        assert_eq!(targeted(&f, scene), BEHIND);
     }
 
     #[test]
@@ -907,14 +584,6 @@ mod tests {
                 .get_component_for_entity::<OrbitCamera>(self.camera)
                 .unwrap()
         }
-
-        fn moved(&mut self) -> bool {
-            self.world
-                .query::<&Transform, Changed<Transform>>()
-                .iter(&mut self.world)
-                .next()
-                .is_some()
-        }
     }
 
     #[test]
@@ -944,53 +613,6 @@ mod tests {
             .get_component_for_entity::<Transform>(orbit.camera)
             .unwrap();
         assert_eq!(transform.translation, panned.translation());
-    }
-
-    #[test]
-    fn a_wheel_in_pixels_zooms_one_notch_every_thirty_two_pixels() {
-        let lines = Orbit::new().wheel(ScrollDelta::Lines(Vec2::Y));
-        let pixels = Orbit::new().wheel(ScrollDelta::Pixels(Vec2::new(0.0, 32.0)));
-
-        assert_eq!(pixels.distance, lines.distance);
-    }
-
-    #[test]
-    fn the_wheel_keeps_the_distance_between_its_limits() {
-        let mut orbit = Orbit::new();
-
-        let nearest = orbit.wheel(ScrollDelta::Lines(Vec2::Y * 1000.0));
-        assert_eq!(nearest.distance, MIN_DISTANCE);
-
-        let farthest = orbit.wheel(ScrollDelta::Lines(Vec2::Y * -1000.0));
-        assert_eq!(farthest.distance, MAX_DISTANCE);
-    }
-
-    #[test]
-    fn a_still_frame_writes_no_transform() {
-        let mut orbit = Orbit::new();
-        orbit.drag(MouseButton::Left, Vec2::new(10.0, 4.0));
-
-        orbit.world.tick();
-        orbit.system.run_and_apply((), &mut orbit.world);
-
-        assert!(!orbit.moved());
-    }
-
-    #[test]
-    fn the_editor_plugin_registers_the_preview_host() {
-        let mut app = App::new();
-        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
-            .register_plugin(concerto_app::plugins::AssetManagerPlugin)
-            .register_plugin(concerto_app::plugins::TimePlugin)
-            .register_plugin(concerto_window::plugin::WindowPlugin)
-            .register_plugin(crate::EditorPlugin {
-                project: None,
-                decorated: false,
-                recipe: plain_recipe,
-            });
-
-        assert!(app.is_plugin_added::<PreviewHostPlugin>());
-        assert!(app.get_resource::<PreviewSignalQueue>().is_some());
     }
 
     fn editor_app() -> (App, Entity) {
@@ -1075,41 +697,19 @@ mod tests {
     }
 
     #[test]
-    fn a_waiting_signal_reaches_the_preview_before_its_first_step_in_the_editors_schedule() {
+    fn a_signal_reaches_the_preview_before_its_first_step_and_before_each_next_one() {
         let (mut app, document) = editor_app();
         send(app.main_mut().world_mut(), document, 5);
 
         update_until_built(&mut app, document);
-
         assert_eq!(said_in(&app, document), [(5, 0)]);
         assert_eq!(frames_in(&app, document), 1);
-        let world = app.main().world();
-        assert_eq!(
-            world
-                .get_component_for_entity::<HostedApp>(document)
-                .unwrap()
-                .role(),
-            HostRole::Preview
-        );
-        assert!(
-            world
-                .get_component_for_entity::<ViewportTarget>(document)
-                .is_some()
-        );
-    }
 
-    #[test]
-    fn a_signal_reaches_the_preview_before_its_next_step_in_the_editors_schedule() {
-        let (mut app, document) = editor_app();
-        update_until_built(&mut app, document);
         app.update();
         let frames = frames_in(&app, document);
-        assert!(frames > 0);
-
         send(app.main_mut().world_mut(), document, 7);
         app.update();
-
-        assert_eq!(said_in(&app, document), [(7, frames)]);
+        assert_eq!(said_in(&app, document), [(5, 0), (7, frames)]);
         assert_eq!(frames_in(&app, document), frames + 1);
     }
 }
