@@ -2,7 +2,7 @@
 strip = true
 
 # Release-speed build that keeps debug symbols, for profilers (samply, perf,
-# flamegraph, Tracy). Usage: cargo run --profile profiling -p tech-demo
+# flamegraph, Tracy). Usage: cargo run --profile profiling -p ui-showcase
 # See docs/profiling.md.
 [profile.profiling]
 inherits = "release"
@@ -28,7 +28,7 @@ multithreaded = ["concerto-app/multithreaded"]
 tracy = ["profiling/profile-with-tracy"]
 
 [workspace]
-members = ["crates/*", "examples/*", "examples/*/case", "examples/*/editor"]
+members = ["crates/*", "examples/*"]
 
 [workspace.package]
 version = "0.1.0"

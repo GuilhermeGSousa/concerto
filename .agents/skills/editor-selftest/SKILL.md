@@ -18,8 +18,10 @@ ever committed.
   `src/inspector/selftest.rs`, which can reach that module's private
   components). The generated `editor/src/main.rs` cannot register it: it only
   passes the game's recipe, which builds each edit `App`, not the editor's.
-- Run it against tech-demo's editor: `cargo build -p tech-demo-editor`, then
-  `./target/debug/tech-demo-editor --decorated --project <scratch copy>`.
+- Run it against tech-demo's editor, from the sibling repository `../tech-demo`,
+  which builds against this checkout:
+  `cargo build --manifest-path ../tech-demo/Cargo.toml -p tech-demo-editor`, then
+  `../tech-demo/target/debug/tech-demo-editor --decorated --project <scratch copy>`.
 - One `Update` system steps a small stage machine held in a resource. Each
   stage waits on an `Instant`, does one thing, and prints a marker:
   `eprintln!("SELFTEST <stage>")`.
@@ -81,9 +83,9 @@ shows up.
 
 ## Rules
 
-- **Never point a saving or importing flow at `examples/*`.** Copy
-  `examples/tech-demo/content` to `<scratch>/td/content` and
-  `examples/tech-demo/content.toml` to `<scratch>/td/content.toml`, and pass
+- **Never point a saving or importing flow at `examples/*` or a sibling game
+  repository.** Copy `../tech-demo/content` to `<scratch>/td/content` and
+  `../tech-demo/content.toml` to `<scratch>/td/content.toml`, and pass
   `--project <scratch>/td`: `--project` takes the directory that contains
   `content/`, and given the `content` directory itself the editor opens an
   empty project without an error. Without `content.toml` the editor opens the
@@ -104,4 +106,5 @@ shows up.
 
 1. Delete the selftest module and the line that registers it.
 2. `grep -rn SELFTEST crates examples src` returns nothing.
-3. `git status` shows no selftest file and no change under `examples/*/content`.
+3. `git status` shows no selftest file, and `git -C ../tech-demo status` no
+   change under `content/`.

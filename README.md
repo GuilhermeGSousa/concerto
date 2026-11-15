@@ -75,27 +75,36 @@ and animation, an engine-native UI, and an editor built on that same UI.
 ### Run an example
 
 ```sh
-cargo run -p tech-demo
+cargo run -p ui-showcase
 ```
 
-| Example | What it shows |
+`ui-showcase` shows every UI element on one screen. The first build compiles
+Jolt and takes a while.
+
+### The games
+
+Two games built on Concerto live in their own repositories, checked out beside
+this one, each depending on it by path (`../concerto`) and run from its own
+directory:
+
+| Game | What it shows |
 |---|---|
 | `tech-demo` | A motion matched character driven from the keyboard, with a follow camera and debug gizmos, on the world grid; `-- --sanatorium` picks the sanatorium, the dressed level its editor opens, and `-- --retarget` plays the grid with the UAL1 character driven by LAFAN1 motion matching through a retarget node; it has an editor |
-| `ui-showcase` | Every UI element on one screen |
 | `one-more-night` | The start of One More Night, a couch co-op mystery: two players walk one night of an open test case in split screen, as the Guest and the Staff, find facts, fill deductions together and loop the night; it has an editor |
 
-The first build compiles Jolt and takes a while. In the browser:
-
 ```sh
-cd examples/tech-demo
+cd ../tech-demo
+cargo run
 trunk serve
 ```
 
-The editor, over a copy of the tech demo, so nothing you save lands in the
-repository:
+`trunk serve` runs it in the browser. The editor, over a copy of the tech
+demo's content, so nothing you save lands in its repository:
 
 ```sh
-cp -r examples/tech-demo /tmp/td
+mkdir /tmp/td
+cp -r ../tech-demo/content ../tech-demo/content.toml /tmp/td
+cd ../tech-demo
 cargo run -p tech-demo-editor -- --project /tmp/td
 ```
 
@@ -131,7 +140,7 @@ it is added to the engine's workspace.
 
 ```
 crates/      the engine, one crate per directory, each named concerto-<dir>
-examples/    standalone games
+examples/    ui-showcase
 src/         the `concerto` crate: re-exports, DefaultPlugins and concerto::run
 docs/        user documentation and the book
 ```
@@ -144,6 +153,3 @@ open an issue or contact the author to ask for one.
 
 Versions released before the license change, including `concerto` 0.1.0 on
 crates.io, remain available under the MIT license they were published with.
-
-The motion capture data in `examples/tech-demo/assets/lafan1` is Ubisoft's and
-has [its own license](examples/tech-demo/assets/lafan1/README.md).

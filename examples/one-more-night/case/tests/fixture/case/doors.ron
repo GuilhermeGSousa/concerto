@@ -1,7 +1,0 @@
-Doors(
-    staff_opens: ["d_service"],
-    overrides: [
-        DoorOverride(door: "d_ab", state: Locked, key: "k_service", zone: Private, locked: [TimeWindow(from: "23:00", until: "24:00")]),
-        DoorOverride(door: "d_service", enabled: false),
-    ],
-)

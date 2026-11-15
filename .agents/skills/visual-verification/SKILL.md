@@ -10,9 +10,13 @@ its window, and read the image before calling a visual change done.
 
 ## Steps
 
-1. Build the binary you will look at: `cargo build -p <example>`, or for the
-   editor `cargo build -p tech-demo-editor`. The editor is built per game; only
-   a game with an `editor/` crate has one.
+1. Build the binary you will look at: `cargo build -p ui-showcase` for the
+   engine's example, or a game in its sibling repository with
+   `cargo build --manifest-path ../tech-demo/Cargo.toml`, and for the editor
+   `cargo build --manifest-path ../tech-demo/Cargo.toml -p tech-demo-editor`.
+   A game's binaries land in its own `target/`, such as
+   `../tech-demo/target/debug/`. The editor is built per game; only a game
+   with an `editor/` crate has one.
 2. Start it in the background and note the process id.
 3. Wait for the scene to load (table below). Do not judge an early frame.
 4. Capture the window to a PNG and open the PNG with the Read tool.

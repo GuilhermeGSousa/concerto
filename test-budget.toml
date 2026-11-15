@@ -39,6 +39,3 @@
 "crates/ui" = 99
 "crates/window" = 31
 "crates/winit" = 8
-"examples/one-more-night" = 26
-"examples/one-more-night/case" = 3
-"examples/tech-demo" = 13

@@ -640,7 +640,8 @@ one that is missing or holds another type, leaves the node's rate alone. A produ
 finite holds the node at rate 0.
 `crates/animation/tests/animation/graph_serialization.rs` builds a graph with a blend
 space and a state machine. The tech demo's character plays no authored graph:
-`examples/tech-demo/src/character.rs` gives it one `MotionMatchingNode`, which
+`src/character.rs` in the tech demo's repository gives it one
+`MotionMatchingNode`, which
 plays a motion database, and the
 [motion matching README](../../crates/motion-matching/README.md#playing-a-database)
 covers that node.

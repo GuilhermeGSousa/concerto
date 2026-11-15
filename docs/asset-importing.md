@@ -15,7 +15,7 @@ assets/hero.glb   ──(import)──▶   content/hero/scene.gasset
 assets/hero.glb.import.toml       (persistent source/output identities)
 ```
 
-- **Source files** live wherever you like (`examples/*/assets/` by
+- **Source files** live wherever you like (a game's `assets/` by
   convention). They are never read by the running game.
 - **Content assets** (`*.gasset`) are the game-ready form, each a small
   header plus a `bincode` payload. A source's scene is one file that also
@@ -45,11 +45,12 @@ shows, with every file it refers to. A file the importer does not read itself,
 such as a texture an OBJ's `.mtl` names, is skipped with a warning naming it when
 it cannot be read, and the import goes on without it. A missing `.mtl`, or a
 glTF's missing `.bin` or external image, still fails the import. To
-re-import an example's sources, run its editor over a scratch copy of the
-project, never over `examples/*` itself:
+re-import a game's sources, run its editor over a scratch copy of the
+project, never over the game's own directory:
 
 ```sh
-cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
+cd ../tech-demo
+cargo run -p tech-demo-editor -- --project <scratch copy of the tech demo>
 ```
 
 The editor's import engine is the `concerto-import` library
@@ -527,8 +528,9 @@ When you change one:
    affected sources, or re-save editor-authored assets, and commit the
    rewritten content.
 5. A legacy struct and its `migrate` arm may be deleted once no committed
-   `.gasset` under `examples/*` carries that version. Its fixture and test go
-   with it, and the PR says so. After that, files at that version are
+   `.gasset` under `examples/*` or in the sibling game repositories
+   (`../tech-demo`, `../one-more-night`) carries that version. Its fixture
+   and test go with it, and the PR says so. After that, files at that version are
    rejected.
 
 `AnimationClip` is at version 3. Version 2 adds the clip's events, and
@@ -540,8 +542,8 @@ version-2 payload through `legacy::AnimationClipV2`
 payload through `legacy::AnimationClipV1`, which becomes an `AnimationClipV2`
 with no events and then the current clip. `AnimationClip.v1.bin` and
 `AnimationClip.v2.bin` stay, each with a test that decodes it. The clips committed
-under `examples/tech-demo/content/UAL1/` and
-`examples/tech-demo/content/lafan1/animations/` are still version 1: they
+in the tech demo's repository under `content/UAL1/` and
+`content/lafan1/animations/` are still version 1: they
 migrate in memory on every load, and the editor reports them as outdated until
 they are re-imported. Like a graph's nodes, each event is stored as its Rust
 type name and reflected fields. A clip makes its events live when it loads; an

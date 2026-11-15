@@ -1,6 +1,0 @@
-version = 1
-source_id = "98ffc92d-f6ba-42ad-8d99-a20504ee6d25"
-importer = "image"
-
-[outputs.main]
-asset_id = "14b5330c-8e45-413a-bd8e-4799769dc507"

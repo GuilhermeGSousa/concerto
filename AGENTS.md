@@ -6,8 +6,28 @@ work in progress; `concerto` 0.1.0 is on crates.io and predates the hosting
 work.
 
 The workspace is `crates/*` (the engine crates, all named `concerto-<dir>`)
-plus `examples/*` (standalone games). The root crate re-exports the engine and
-defines `DefaultPlugins`.
+plus `examples/ui-showcase`. The root crate re-exports the engine and defines
+`DefaultPlugins`.
+
+## Workspace
+
+This repository is checked out as `concerto/` inside a `concerto-dev/`
+directory, beside the games built on it, each in its own repository:
+
+```
+concerto-dev/
+  concerto/                 this repository, the engine
+  tech-demo/                the tech demo, with its tech-demo-editor
+  one-more-night/           One More Night, with its case crate and editor
+  concerto.code-workspace   a VS Code workspace over all three, with launch configs
+```
+
+Each game depends on the engine by path (`../concerto`), is its own Cargo
+workspace, and is built and run from its own directory, for example
+`cd ../tech-demo && cargo run`. Each has its own `AGENTS.md` with its commands,
+its content and its constraints; this file's rules apply there too. An engine
+change that a game shows, such as rendering or animation, is checked by
+running that game from its directory.
 
 ## Read when relevant
 
@@ -38,102 +58,27 @@ the whole-branch reviewer. Both are linked into `.claude/`.
   pointers fails with `missing the GRDY magic prefix`.
 - Linux system packages: `libasound2-dev libudev-dev libwayland-dev`.
 - The wasm target: `rustup target add wasm32-unknown-unknown`.
-- `trunk` to run an example in a browser.
+- `trunk` to run a game in a browser.
 
 ## Commands
 
 ```sh
 cargo build --workspace
-cargo run -p tech-demo
-cargo run -p tech-demo -- --sanatorium
-cargo run -p tech-demo -- --retarget
-cargo run -p tech-demo -- --sanatorium --retarget
-cargo run -p one-more-night
-cargo run -p one-more-night -- --manor
-cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
-cargo build -p tech-demo-editor
-cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
-cargo run -p one-more-night-editor -- --project <scratch copy of examples/one-more-night>
+cargo run -p ui-showcase
 cargo run -p concerto-editor --example custom_property
-cd examples/tech-demo && trunk serve
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
 cargo concerto editor <dir> --update [--engine <path>]
 cargo concerto build <dir> [--cook] [--release] [--target wasm32-unknown-unknown]
 cargo concerto run <dir> [--cook] [--release] [-- <game args>]
-cargo concerto build examples/tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
+cargo concerto build ../tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
 cargo run -p concerto-import --bin pack-imports -- <scratch copy of a project>
 ```
 
-Examples are `tech-demo`, `ui-showcase` and `one-more-night`.
-`one-more-night` is the start of a couch co-op mystery; its
-[README](examples/one-more-night/README.md) has the controls, the mechanics and
-the module map. It plays the open test case in `examples/one-more-night/cases/test`
-on a graybox test level, `content/level/test_level.gasset`, authored in the
-editor over MCP, with the window split in two side by side: two players join
-with their pads and walk the night, 18:00 to 00:00 over 18 real minutes, as the
-Guest and the Staff. The level's doors and other interactive objects are scene
-entities with the game's `Fixture` component. Its art, the rooms in `assets/art` and the
-characters in `assets/characters`, is built by Blender scripts kept beside it.
-The game writes `saves/` under its working directory.
-Its manor graybox is in `examples/one-more-night/assets/manor/`: the
-Blender source, the scripts that generate and export it, and the export, with a
-`README.md` that says how to run them; `-- --manor` loads it. The art over the
-graybox, Hyper3D models and textured rooms in `manor_art.glb`, is built by
-`assets/manor/tools/art` and dresses every room. Its
-mystery is data: `examples/one-more-night/case` is `one-more-night-case`, an
-engine-free crate that loads a case directory of RON files, and
-`examples/one-more-night/docs/case-schema.md` is the schema; nothing in the
-game reads a case yet. `tech-demo` starts on the grid level: the character with every gizmo layer on a floor under the world grid,
-four boxes, and an NPC patrolling a square of nav points that routes around the
-boxes on a navmesh baked at startup. That is also the only level of the web build, which ships no
-sanatorium content; the cooked release build above, zipped with `index.html` at
-the root, is what goes on a web host such as itch.io. `-- --sanatorium` runs the sanatorium, the
-level scene `content/sanatorium/level.gasset` that the editor opens: the graybox dressed by
-the art pass in `examples/tech-demo/assets/sanatorium/art` (Hyper3D props, Poly Haven
-surfaces, lamp lights and a moon), its collision spawned from the graybox's `COL` scene,
-with the character placed on its
-capsule each frame (`Synchronization` at `data_factor` 0, as on the grid; M does not cycle the
-method there; hold the right mouse button or the left trigger to aim, C or the
-east face button to lower the camera, Q or the right bumper to swap shoulders). While the aim button is held, on every level, the
-character faces where the camera looks and strafes instead of turning. `-- --retarget` runs the grid
-level with the player swapped for the UAL1 character, driven by LAFAN1 motion
-matching through a retarget node; the NPC stays LAFAN1. `--sanatorium
---retarget` puts the same player in the sanatorium. That player's graph is the main character's: the fingers, which LAFAN1's
-motion does not move, taken from UAL1's `Idle_Loop`, a tired overlay
-(`Idle_Tired_Loop`, additive) over the retargeted locomotion, UAL1's pistol
-clips layered on the upper body, an aim offset and an aim that point the gun at
-a point thirty metres along the camera's view, a look-at on the head, sway and
-tremor on the gun arm, the off hand held on the gun by two-bone IK, and foot
-locking and foot placement last. G or the north face button draws and holsters
-the pistol; with it out, the aim button aims it and the left mouse button or
-the right trigger fires. Five sliders under the readout set fatigue, sway,
-tremor, the look-at weight and the pace of the locomotion while the game runs.
-Every level's camera sits close over the player's right shoulder on a boom
-that walls pull in, about two metres back; it moves in on the shoulder with a
-longer lens while the aim button is held, drops while crouched (C or the east
-face button), and Q or the right bumper swaps shoulders.
-Every level sends a `Footstep` event when a foot of the player's foot lock
-plants, drawn as a ring on the ground, counted in the readout, and heard: each
-foot plays its own step from Kenney's CC0 Impact Sounds pack, committed in
-`assets/audio/kenney_impact-sounds` (on the web, after the first key or
-click). UAL1's
-`Pistol_Aim_Up`, `Pistol_Aim_Down`, `Pistol_Shoot` and `Idle_Tired_Loop` are
-additive clips, set in `assets/UAL1.glb.import.toml`. Its two rigs are content assets,
-`content/UAL1/rig.gasset` and `content/lafan1/model_skeleton/rig.gasset`, that
-the editor's rig tab edits. The sanatorium's Blender source and exports are in
-`examples/tech-demo/assets/sanatorium/`. Sources are imported through the
-editor's Import…, over a scratch copy of the project; there is no import
-command line. Both games' imports keep a source's meshes, materials and
-skeletons inside its `scene.gasset`, each named like
-`content/UAL1/scene.gasset#skeleton/0`, with textures and clips as files
-beside it; such a scene is read-only. `pack-imports`, in the commands above,
-converts a project that still has a file per mesh. An example may have an `editor/` crate, named `<game>-editor`,
-that runs the editor over the game's library; an editor exists only for a game
-that has one. Today those are `tech-demo` and `one-more-night`. Build
-`tech-demo-editor` before an MCP client starts it through `.mcp.json`: that
-entry runs `cargo run`, which compiles first and can outlast the client's
-connect timeout.
+The engine's only example is `ui-showcase`. A game may have an `editor/`
+crate, named `<game>-editor`, that runs the editor over the game's library; an
+editor exists only for a game that has one. The `custom_property` example in
+the commands above runs the editor without a game.
 
 ## Done gate
 
@@ -337,12 +282,9 @@ editor's MCP tools.
   light, mesh, material and UI layout components require it; a new extracted
   component declares `#[require(SyncWithRenderWorld)]`.
 - `content/` trees and `<source>.import.toml` files are committed. Never run a
-  flow that saves, imports or converts against `examples/*`; copy the project's `content/`
-  somewhere disposable first.
-- `examples/tech-demo/assets/lafan1` is Ubisoft's LAFAN1 data under CC BY-NC-ND
-  4.0, not the engine's licence. Keep its files byte-identical to the release,
-  with its `README.md` and `license.txt` beside them. Ask the owner before
-  committing anything imported or adapted from it, `.gasset` files included.
+  flow that saves, imports or converts against `examples/*` or the sibling game
+  repositories `../tech-demo` and `../one-more-night`; copy the project's
+  `content/` somewhere disposable first.
 
 ## Git
 
