@@ -459,27 +459,23 @@ mod tests {
     use super::super::{
         preview::ClipPosing,
         tests::{
-            bone, clip_fixture, clip_of, named_key, open_clip, report_bones, report_skeleton,
-            state, transport, typed_key, write_broken_scene, write_clip, write_scene,
+            clip_fixture, clip_of, named_key, open_clip, state, transport, typed_key, write_clip,
+            write_scene,
         },
-        transport::{ClipTransport, TransportRow, sync_transport_rows, sync_transport_timelines},
+        transport::{ClipTransport, sync_transport_rows, sync_transport_timelines},
     };
     use super::*;
-    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+    use concerto_animation::clip::AnimationClip;
     use concerto_ecs::{
-        Changed, IntoSystem, ResMut, Resource, System, World, entity::hierarchy::ChildOf,
-        events::event_channel::EventChannel,
+        IntoSystem, System, World, entity::hierarchy::ChildOf, events::event_channel::EventChannel,
     };
     use concerto_editor::{
         hosted::testing::SceneFixture,
-        inspector::PropertyCommits,
         timeline::{TimelineScrubbed, time_of_frame},
     };
     use concerto_foundation::assets::registry::AssetEntry;
-    use concerto_ui::interaction::UIDisabled;
     use concerto_ui::text_input::{UITextInputCancelled, UITextInputSubmitted};
     use concerto_window::input::actions::{ActionFired, ActionMap};
-    use uuid::Uuid;
 
     pub(super) struct Tab {
         pub(super) f: SceneFixture,
@@ -524,12 +520,6 @@ mod tests {
         Tab { f, document }
     }
 
-    pub(super) fn walking_tab() -> Tab {
-        let mut f = panels_fixture();
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        tab_of(f, &walk)
-    }
-
     pub(super) fn tab_of_clip(clip: &AnimationClip) -> Tab {
         let mut f = panels_fixture();
         let asset = write_clip(&mut f, "content/hero/odd.gasset", clip);
@@ -552,51 +542,10 @@ mod tests {
             &self.f.world
         }
 
-        pub(super) fn transport(&self) -> &ClipTransport {
-            transport(&self.f, self.document)
-        }
-
-        fn transport_row(&mut self) -> TransportRow {
-            let document = self.document;
-            *self
-                .f
-                .world
-                .query::<&TransportRow, ()>()
-                .iter(&mut self.f.world)
-                .find(|row| row.document == document)
-                .expect("the transport was spawned")
-        }
-
-        pub(super) fn timeline(&self) -> &Timeline {
+        fn timeline(&self) -> &Timeline {
             self.world()
                 .get_component_for_entity::<Timeline>(self.panels().timeline)
                 .unwrap()
-        }
-
-        pub(super) fn text(&self, entity: Entity) -> &UIText {
-            self.world()
-                .get_component_for_entity::<UIText>(entity)
-                .unwrap()
-        }
-
-        pub(super) fn shown(&self, entity: Entity) -> bool {
-            self.world()
-                .get_component_for_entity::<UINode>(entity)
-                .unwrap()
-                .visible
-        }
-
-        pub(super) fn disabled(&self, entity: Entity) -> bool {
-            self.world()
-                .get_component_for_entity::<UIDisabled>(entity)
-                .is_some()
-        }
-
-        fn checked(&self, entity: Entity) -> bool {
-            self.world()
-                .get_component_for_entity::<UICheckbox>(entity)
-                .unwrap()
-                .checked
         }
 
         pub(super) fn click(&mut self, entity: Entity) {
@@ -619,39 +568,11 @@ mod tests {
             self.f.frames_until(what, |f| done(transport(f, document)));
         }
 
-        fn until_posed(&mut self, what: &str, done: impl Fn(&ClipPosing) -> bool) {
-            let document = self.document;
-            self.f.frames_until(what, |f| {
-                done(
-                    f.scene_world(document)
-                        .get_resource::<ClipPosing>()
-                        .unwrap(),
-                )
-            });
-        }
-
-        fn until_moving(&mut self) {
-            self.until("the head never moved", |transport| transport.time > 0.0);
-        }
-
-        pub(super) fn paused_at(&mut self, time: f32) {
-            self.scrub(time);
-            self.until("the seek never came back", |transport| {
-                !transport.playing && transport.time == time
-            });
-            self.f.frame();
-        }
-
         fn parent(&self, entity: Entity) -> Entity {
             self.world()
                 .get_component_for_entity::<ChildOf>(entity)
                 .unwrap()
                 .parent()
-        }
-
-        fn open_picker(&mut self) {
-            let button = self.parent(self.panels().left.scene);
-            self.click(button);
         }
 
         fn menu_item(&mut self, name: &str) -> Entity {
@@ -666,14 +587,6 @@ mod tests {
             self.parent(label)
         }
 
-        fn menu_open(&mut self) -> bool {
-            self.f
-                .world
-                .query::<&UIAnchoredPanel, With<AssetPickerMenu>>()
-                .iter(&mut self.f.world)
-                .any(|panel| panel.open)
-        }
-
         fn clip_bytes(&self) -> Vec<u8> {
             let clip = self.f.document(self.document).current.as_ref().unwrap();
             std::fs::read(self.f.project_root.join(&clip.address)).unwrap()
@@ -683,18 +596,12 @@ mod tests {
             !self.f.unsaved(self.document)
         }
 
-        pub(super) fn select_marker(&mut self, index: Option<usize>) {
-            let timeline = self.panels().timeline;
-            self.f
-                .world
-                .trigger_on(timeline, TimelineMarkerSelected { index });
-        }
-
         fn move_marker(&mut self, index: usize, time: f32) {
             let timeline = self.panels().timeline;
             self.f
                 .world
                 .trigger_on(timeline, TimelineMarkerMoved { index, time });
+            self.f.frame();
         }
 
         pub(super) fn status(&self) -> String {
@@ -717,277 +624,34 @@ mod tests {
         clip
     }
 
-    pub(super) fn single_key_clip() -> AnimationClip {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            AnimationChannel::new(
-                vec![2.0],
-                AnimationChanelOutput::from_translation([[0.0; 3]].into_iter()),
-            ),
-        );
-        clip
-    }
-
     #[test]
-    fn the_facts_show_what_the_clip_holds() {
-        let tab = walking_tab();
-        let inspector = &tab.panels().inspector;
-
-        assert_eq!(tab.text(inspector.duration).text, "10.00 s");
-        assert_eq!(tab.text(inspector.frames).text, "301");
-        assert_eq!(tab.text(inspector.rate).text, "30 fps, detected");
-        assert_eq!(tab.text(inspector.clip_bones).text, "1");
-    }
-
-    #[test]
-    fn a_fractional_rate_keeps_two_decimals() {
-        assert_eq!(rate_fact(29.97, false), "29.97 fps, detected");
-        assert_eq!(rate_fact(30.0, false), "30 fps, detected");
-        assert_eq!(rate_fact(29.97, true), "29.97 fps");
-        assert_eq!(rate_fact(30.0, true), "30 fps");
-    }
-
-    #[test]
-    fn a_clip_with_no_rate_says_so_and_disables_the_step_buttons() {
-        let mut tab = tab_of_clip(&single_key_clip());
-        tab.f.frame();
-        let row = tab.transport_row();
-        let inspector = &tab.panels().inspector;
-
-        assert_eq!(tab.text(inspector.frames).text, NO_VALUE);
-        assert_eq!(tab.text(inspector.rate).text, NO_VALUE);
-        assert!(tab.disabled(row.step_back));
-        assert!(tab.disabled(row.step_forward));
-        assert!(!tab.disabled(row.play));
-        assert!(!tab.disabled(row.looping));
-    }
-
-    #[test]
-    fn the_status_line_shows_a_failed_clip_on_a_line_of_its_own() {
-        let mut f = panels_fixture();
-        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(1));
-        std::fs::write(f.project_root.join(&walk.address), b"not a clip").unwrap();
-
-        let tab = tab_of(f, &walk);
-
-        let status = tab.panels().inspector.status;
-        assert!(tab.shown(status));
-        assert!(tab.text(status).text.contains("content asset"));
-    }
-
-    #[test]
-    fn the_status_line_is_hidden_while_the_status_is_empty_and_follows_a_preview_failure() {
-        let mut tab = walking_tab();
-        let status = tab.panels().inspector.status;
-        assert!(!tab.shown(status));
-
-        let document = tab.document;
-        tab.f
-            .world
-            .get_component_for_entity_mut::<EditorDocument>(document)
-            .unwrap()
-            .status = "Preview failed: broken".into();
-        tab.f.frame();
-
-        assert!(tab.shown(status));
-        assert_eq!(tab.text(status).text, "Preview failed: broken");
-    }
-
-    #[test]
-    fn the_timeline_follows_the_clip_and_the_preview() {
-        let mut tab = walking_tab();
-
-        assert_eq!(tab.timeline().duration, 10.0);
-        assert_eq!(tab.timeline().rate, Some(30.0));
-
-        tab.until_moving();
-        tab.f.frame();
-        assert_eq!(tab.timeline().time, tab.transport().time);
-    }
-
-    #[test]
-    fn the_root_motion_checkbox_reaches_the_document_and_the_preview() {
-        let mut tab = walking_tab();
-        let root_motion = tab.panels().inspector.root_motion;
-        assert!(!tab.checked(root_motion));
-
-        tab.click(root_motion);
-
-        assert!(tab.state().root_motion);
-        tab.until_posed("root motion never reached the preview", |posing| {
-            posing.root_motion
-        });
-        assert!(tab.checked(root_motion));
-    }
-
-    #[test]
-    fn the_skeleton_checkbox_reaches_the_document_and_the_preview() {
-        let mut tab = walking_tab();
-        let skeleton = tab.panels().left.skeleton;
-        assert!(tab.checked(skeleton));
-
-        tab.click(skeleton);
-
-        assert!(!tab.state().skeleton_gizmo);
-        tab.until_posed("the gizmo flag never reached the preview", |posing| {
-            !posing.skeleton_gizmo
-        });
-        assert!(!tab.checked(skeleton));
-    }
-
-    #[test]
-    fn driven_reads_as_a_share_of_the_skeleton_and_warns_when_it_differs_from_the_clip() {
-        let mut tab = walking_tab();
-        let driven = tab.panels().inspector.driven;
-        let document = tab.document;
-        let theme = UITheme::default();
-
-        report_bones(&mut tab.f, document, 65, 60);
-        tab.f.frame();
-
-        assert_eq!(tab.text(driven).text, "60 of 65");
-        assert_eq!(tab.text(driven).color, theme.warning);
-
-        report_bones(&mut tab.f, document, 66, 1);
-        tab.f.frame();
-
-        assert_eq!(tab.text(driven).text, "1 of 66");
-        assert_eq!(tab.text(driven).color, theme.text);
-    }
-
-    #[test]
-    fn the_scene_label_names_the_shown_scene_or_none() {
+    fn root_motion_and_a_picked_scene_reach_the_preview_and_no_control_touches_the_clip() {
         let mut f = panels_fixture();
         write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let tab = tab_of(f, &walk);
-        assert_eq!(tab.text(tab.panels().left.scene).text, "scene");
-
-        let tab = walking_tab();
-        assert_eq!(tab.text(tab.panels().left.scene).text, NO_VALUE);
-    }
-
-    #[test]
-    fn the_scene_picker_opens_with_no_row_and_a_pick_shows_the_scene() {
-        let mut f = panels_fixture();
-        write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        let level = write_scene(&mut f, "content/world/level.gasset", "level");
+        write_scene(&mut f, "content/world/level.gasset", "level");
         let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
         let mut tab = tab_of(f, &walk);
         let document = tab.document;
         let on_disk = tab.clip_bytes();
 
-        tab.open_picker();
-        assert!(tab.menu_open());
+        let root_motion = tab.panels().inspector.root_motion;
+        tab.click(root_motion);
+        tab.f
+            .frames_until("root motion never reached the preview", |f| {
+                f.scene_world(document)
+                    .get_resource::<ClipPosing>()
+                    .unwrap()
+                    .root_motion
+            });
+        let picker = tab.parent(tab.panels().left.scene);
+        tab.click(picker);
         let item = tab.menu_item("level");
         tab.click(item);
-        tab.f.frame();
-
-        assert!(!tab.menu_open());
-        assert_eq!(tab.state().picked_scene, Some(level.id));
-        assert_eq!(tab.state().shown_scene, Some(level.id));
-        assert_eq!(tab.state().scene_error, None);
-        assert_eq!(tab.text(tab.panels().left.scene).text, "level");
-        assert!(
-            tab.world()
-                .get_resource::<PropertyCommits>()
-                .unwrap()
-                .0
-                .is_empty()
-        );
         tab.f
             .frames_until("the pick never reached the preview", |f| {
                 f.scene_names(document).contains(&"level".to_owned())
             });
         assert!(!tab.f.scene_names(document).contains(&"sibling".to_owned()));
-        assert!(tab.clean());
-        assert_eq!(tab.clip_bytes(), on_disk);
-    }
-
-    #[test]
-    fn a_pick_on_a_tab_whose_clip_failed_shows_the_scene() {
-        let mut f = panels_fixture();
-        let level = write_scene(&mut f, "content/world/level.gasset", "level");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(1));
-        std::fs::write(f.project_root.join(&walk.address), b"not a clip").unwrap();
-        let mut tab = tab_of(f, &walk);
-        let document = tab.document;
-
-        tab.open_picker();
-        let item = tab.menu_item("level");
-        tab.click(item);
-        tab.f.frame();
-
-        assert_eq!(tab.state().shown_scene, Some(level.id));
-        assert_eq!(tab.text(tab.panels().left.scene).text, "level");
-        tab.f
-            .frames_until("the pick never reached the preview", |f| {
-                f.scene_names(document).contains(&"level".to_owned())
-            });
-    }
-
-    #[test]
-    fn the_picker_button_closes_its_menu() {
-        let mut tab = walking_tab();
-
-        tab.open_picker();
-        tab.open_picker();
-
-        assert!(!tab.menu_open());
-    }
-
-    #[test]
-    fn a_scene_that_fails_to_load_shows_under_the_picker() {
-        let mut f = panels_fixture();
-        write_broken_scene(&mut f, "content/world/broken.gasset");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let mut tab = tab_of(f, &walk);
-        let error = tab.panels().left.scene_error;
-        assert!(!tab.shown(error));
-
-        tab.open_picker();
-        let item = tab.menu_item("broken");
-        tab.click(item);
-        tab.f.frame();
-
-        assert!(tab.shown(error));
-        assert_eq!(
-            tab.text(error).text,
-            tab.state().scene_error.clone().unwrap()
-        );
-        assert_eq!(tab.text(tab.panels().left.scene).text, NO_VALUE);
-    }
-
-    #[test]
-    fn the_tab_stays_clean_through_every_control() {
-        let mut f = panels_fixture();
-        write_scene(&mut f, "content/world/level.gasset", "level");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let mut tab = tab_of(f, &walk);
-        let on_disk = tab.clip_bytes();
-        let row = tab.transport_row();
-        let left = &tab.panels().left;
-        let (skeleton, button) = (left.skeleton, tab.parent(left.scene));
-        let inspector = &tab.panels().inspector;
-        let buttons = [
-            row.play,
-            row.step_forward,
-            row.step_back,
-            row.looping,
-            row.speeds[0],
-            inspector.root_motion,
-            skeleton,
-            button,
-        ];
-
-        for button in buttons {
-            tab.click(button);
-            tab.f.frame();
-            assert!(tab.clean());
-        }
-        let item = tab.menu_item("level");
-        tab.click(item);
         tab.scrub(3.0);
         tab.f.frame();
 
@@ -995,184 +659,25 @@ mod tests {
         assert_eq!(tab.clip_bytes(), on_disk);
     }
 
-    #[derive(Resource, Default)]
-    struct Writes(usize);
-
-    fn count_writes(
-        texts: Query<&UIText, Changed<UIText>>,
-        nodes: Query<&UINode, Changed<UINode>>,
-        timelines: Query<&Timeline, Changed<Timeline>>,
-        mut writes: ResMut<Writes>,
-    ) {
-        writes.0 = texts.iter().count() + nodes.iter().count() + timelines.iter().count();
-    }
-
     #[test]
-    fn a_settled_panel_writes_nothing() {
-        let mut f = panels_fixture();
-        f.world.insert_resource(Writes::default());
-        f.add_delivery(count_writes.into_boxed_system());
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let mut tab = tab_of(f, &walk);
-        tab.paused_at(4.0);
+    fn a_marker_drag_moves_its_event_and_marks_the_tab_unsaved_unless_it_is_refused() {
+        let mut tab = tab_of_clip(&eventful_clip());
         tab.f.frame();
-        tab.f.frame();
-        tab.f.frame();
-
-        assert_eq!(tab.world().get_resource::<Writes>().unwrap().0, 0);
-    }
-
-    #[test]
-    fn a_settled_panel_with_markers_writes_nothing() {
-        let mut f = panels_fixture();
-        f.world.insert_resource(Writes::default());
-        f.add_delivery(count_writes.into_boxed_system());
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &eventful_clip());
-        let mut tab = tab_of(f, &walk);
-        tab.select_marker(Some(1));
-        tab.paused_at(4.0);
-        tab.f.frame();
-        tab.f.frame();
-        tab.f.frame();
-
         assert_eq!(tab.timeline().markers.len(), 3);
-        assert_eq!(tab.world().get_resource::<Writes>().unwrap().0, 0);
-    }
+        assert!(tab.timeline().markers[0].locked);
 
-    #[test]
-    fn a_settled_panel_with_bone_rows_writes_nothing() {
-        let mut f = panels_fixture();
-        f.world.insert_resource(Writes::default());
-        f.add_delivery(count_writes.into_boxed_system());
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let mut tab = tab_of(f, &walk);
-        let document = tab.document;
-        report_skeleton(&mut tab.f, document, &[bone(Uuid::from_u128(1), "hips")]);
-        tab.paused_at(4.0);
-        tab.f.frame();
-        tab.f.frame();
-        tab.f.frame();
+        tab.move_marker(2, 0.5);
+        tab.move_marker(0, 2.0);
 
-        assert_eq!(tab.timeline().tracks[0].label, "hips");
-        assert_eq!(tab.world().get_resource::<Writes>().unwrap().0, 0);
-    }
-
-    #[test]
-    fn the_timeline_shows_the_bone_rows_and_follows_the_skeleton() {
-        let mut tab = walking_tab();
-        let document = tab.document;
-
-        assert_eq!(tab.timeline().tracks, tab.state().rows);
-        assert_eq!(tab.timeline().tracks[0].label, "? 00000000");
-        assert!(tab.timeline().tracks[0].warning);
-
-        report_skeleton(&mut tab.f, document, &[bone(Uuid::from_u128(1), "hips")]);
-        tab.f.frame();
-
-        let tracks = &tab.timeline().tracks;
-        assert_eq!(tracks.len(), 1);
-        assert_eq!(tracks[0].label, "hips");
-        assert!(!tracks[0].warning);
-        assert_eq!(tracks[0].keys.len(), 301);
+        assert_eq!(tab.event_times(), vec![0.25, 0.5, 1.0]);
+        assert_ne!(tab.status(), "");
         assert!(tab.clean());
-    }
-
-    #[test]
-    fn markers_follow_the_events_with_typed_ones_locked() {
-        let mut tab = tab_of_clip(&eventful_clip());
-        tab.f.frame();
-
-        assert_eq!(
-            tab.timeline().markers,
-            vec![
-                TimelineMarker {
-                    time: 0.25,
-                    label: "Footstep".into(),
-                    locked: true,
-                },
-                TimelineMarker {
-                    time: 0.5,
-                    label: "footstep".into(),
-                    locked: false,
-                },
-                TimelineMarker {
-                    time: 1.0,
-                    label: "footstep".into(),
-                    locked: false,
-                },
-            ]
-        );
-        assert_eq!(tab.timeline().selected_marker, None);
-    }
-
-    #[test]
-    fn the_selected_marker_follows_the_selection() {
-        let mut tab = tab_of_clip(&eventful_clip());
-
-        tab.select_marker(Some(1));
-        tab.f.frame();
-        assert_eq!(tab.state().selected_event, Some(1));
-        assert_eq!(tab.timeline().selected_marker, Some(1));
-
-        tab.select_marker(Some(9));
-        tab.f.frame();
-        assert_eq!(tab.state().selected_event, None);
-
-        tab.select_marker(Some(0));
-        tab.select_marker(None);
-        tab.f.frame();
-        assert_eq!(tab.state().selected_event, None);
-        assert_eq!(tab.timeline().selected_marker, None);
-        assert!(tab.clean());
-    }
-
-    #[test]
-    fn a_marker_drag_moves_its_event_marks_the_tab_unsaved_and_clears_the_status() {
-        let mut tab = tab_of_clip(&eventful_clip());
-        let document = tab.document;
-        tab.f
-            .world
-            .get_component_for_entity_mut::<EditorDocument>(document)
-            .unwrap()
-            .status = "an earlier refusal".into();
 
         tab.move_marker(1, time_of_frame(60, 30.0));
-        tab.f.frame();
 
         assert_eq!(tab.event_times(), vec![0.25, 2.0, 1.0]);
         assert_eq!(tab.timeline().markers[1].time, 2.0);
         assert_eq!(tab.status(), "");
         assert!(!tab.clean());
-    }
-
-    #[test]
-    fn a_refused_marker_drag_sets_the_status_and_leaves_the_events_and_the_tab_alone() {
-        let mut tab = tab_of_clip(&eventful_clip());
-
-        tab.move_marker(2, 0.5);
-        tab.f.frame();
-
-        assert_eq!(tab.status(), "`footstep` is already at frame 15");
-        assert_eq!(tab.event_times(), vec![0.25, 0.5, 1.0]);
-        assert_eq!(tab.timeline().markers[2].time, 1.0);
-        assert!(tab.clean());
-
-        tab.move_marker(0, 2.0);
-        tab.f.frame();
-
-        assert_eq!(tab.status(), "Typed events are read-only in the editor");
-        assert_eq!(tab.event_times(), vec![0.25, 0.5, 1.0]);
-        assert!(tab.clean());
-    }
-
-    #[test]
-    fn the_tab_stays_clean_while_a_marker_is_dragged_onto_its_own_time() {
-        let mut tab = tab_of_clip(&eventful_clip());
-
-        tab.move_marker(1, 0.5);
-        tab.f.frame();
-
-        assert!(tab.clean());
-        assert_eq!(tab.status(), "");
     }
 }

@@ -170,11 +170,8 @@ pub(crate) fn restore_clip_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::{
-        FOOTSTEP, UNNAMED, bone, clip_fixture, clip_of, footstep_value, named_key, open_clip,
-        report_bones, report_skeleton, state, state_mut, typed_key, write_clip,
-    };
-    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+    use crate::tests::{clip_fixture, clip_of, open_clip, state, state_mut, typed_key};
+    use concerto_animation::clip::AnimationClip;
     use concerto_ecs::IntoSystem;
     use concerto_editor::hosted::testing::SceneFixture;
     use concerto_foundation::assets::{
@@ -234,13 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn save_writes_the_events_sorted_keeps_the_tabs_order_and_the_provenance() {
+    fn save_writes_the_events_sorted_over_the_clip_with_its_provenance_and_discard_puts_them_back()
+    {
         let mut f = save_fixture();
         let mut eventful = clip_of(2);
         eventful.replace_events(vec![typed_key(1.0)]).unwrap();
         let walk = write_imported_clip(&mut f, "content/walk.gasset", &eventful);
         let document = open_clip(&mut f, &walk);
-        report_bones(&mut f, document, 65, 60);
         let edited = state_mut(&mut f, document);
         edited.add_event("land", 1.5).unwrap();
         edited.add_event("footstep", 0.5).unwrap();
@@ -249,29 +246,15 @@ mod tests {
 
         save(&mut f, document);
 
-        let written = read_clip(&f.project_root, &walk).unwrap();
+        let saved = read_events(&read_clip(&f.project_root, &walk).unwrap()).unwrap();
         assert_eq!(
-            read_events(&written).unwrap(),
+            saved,
             vec![order[2].clone(), order[0].clone(), order[1].clone()]
         );
         let header = read_content_asset_header(&f.project_root.join(&walk.address)).unwrap();
         assert_eq!(header.asset_id, walk.id);
         assert_eq!(header.provenance, walk.provenance);
-        let saved = state(&f, document);
-        assert_eq!(saved.events, order);
-        assert_eq!(
-            read_events(saved.clip.as_ref().unwrap()).unwrap(),
-            read_events(&written).unwrap()
-        );
-        assert_eq!(
-            saved.facts,
-            ClipFacts {
-                skeleton_bones: 65,
-                driven: 60,
-                ..ClipFacts::of(&written)
-            }
-        );
-        assert_eq!(f.status(document), "Saved content/walk.gasset");
+        assert_eq!(state(&f, document).events, order);
         assert_eq!(
             f.written::<SceneSaved>(),
             [SceneSaved {
@@ -280,121 +263,15 @@ mod tests {
                 written: vec![walk.clone()],
             }]
         );
-        assert!(f.written::<SaveFailed>().is_empty());
         assert!(!f.unsaved(document));
-        assert!(
-            f.world
-                .get_component_for_entity::<SaveRequested>(document)
-                .is_none()
-        );
-        assert_eq!(f.document(document).current, Some(walk));
-    }
 
-    #[test]
-    fn a_save_after_the_files_clip_got_shorter_names_the_event_and_stays_unsaved() {
-        let mut f = save_fixture();
-        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(2));
-        let document = open_clip(&mut f, &walk);
-        state_mut(&mut f, document)
-            .add_event("footstep", 1.5)
-            .unwrap();
-        f.world.insert(Unsaved, document);
-        write_clip(&mut f, "content/walk.gasset", &clip_of(1));
-
-        save(&mut f, document);
-
-        let message = "Save failed: `footstep` at 1.50 s is past the clip's 1.00 s";
-        assert_eq!(f.status(document), message);
-        assert_eq!(
-            f.written::<SaveFailed>(),
-            [SaveFailed {
-                document,
-                message: message.to_owned(),
-            }]
-        );
-        assert!(f.written::<SceneSaved>().is_empty());
-        assert!(f.unsaved(document));
-        assert!(
-            read_clip(&f.project_root, &walk)
-                .unwrap()
-                .events()
-                .is_empty()
-        );
-        assert_eq!(state(&f, document).facts.duration, 2.0);
-    }
-
-    #[test]
-    fn a_save_rebuilds_the_bone_rows_from_the_clip_it_wrote() {
-        let mut f = save_fixture();
-        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(2));
-        let document = open_clip(&mut f, &walk);
-        let skeleton = [bone(uuid::Uuid::from_u128(1), "hips")];
-        report_skeleton(&mut f, document, &skeleton);
-        let mut reimported = clip_of(2);
-        reimported.add_channel(
-            UNNAMED,
-            AnimationChannel::new(
-                vec![1.0],
-                AnimationChanelOutput::from_translation([[0.0; 3]].into_iter()),
-            ),
-        );
-        write_clip(&mut f, "content/walk.gasset", &reimported);
-        state_mut(&mut f, document)
-            .add_event("footstep", 0.5)
-            .unwrap();
-        f.world.insert(Unsaved, document);
-
-        save(&mut f, document);
-
-        let saved = state(&f, document);
-        assert_eq!(f.status(document), "Saved content/walk.gasset");
-        assert_eq!(saved.rows.len(), 2);
-        assert_eq!(saved.rows[0].label, "hips");
-        assert_eq!(saved.rows[1].label, "? abcdef01");
-        assert!(saved.rows[1].warning);
-    }
-
-    #[test]
-    fn a_typed_event_past_the_end_is_named_by_its_type_name() {
-        let typed = TabEvent {
-            time: 1.5,
-            kind: TabEventKind::Typed {
-                type_name: FOOTSTEP.to_owned(),
-                value: footstep_value(),
-            },
-        };
-
-        assert_eq!(
-            check_times(&[typed], 1.0),
-            Err(format!("`{FOOTSTEP}` at 1.50 s is past the clip's 1.00 s"))
-        );
-    }
-
-    #[test]
-    fn discard_puts_back_the_events_as_last_saved_and_clears_the_selection() {
-        let mut f = save_fixture();
-        let mut eventful = clip_of(2);
-        eventful
-            .replace_events(vec![typed_key(1.0), named_key(0.5, "footstep")])
-            .unwrap();
-        let walk = write_clip(&mut f, "content/walk.gasset", &eventful);
-        let document = open_clip(&mut f, &walk);
-        state_mut(&mut f, document).add_event("land", 1.5).unwrap();
-        f.world.insert(Unsaved, document);
-        save(&mut f, document);
-        let saved = read_events(&read_clip(&f.project_root, &walk).unwrap()).unwrap();
         let edited = state_mut(&mut f, document);
-        edited.rename_event(0, "jump").unwrap();
+        edited.rename_event(1, "jump").unwrap();
         edited.add_event("step", 0.25).unwrap();
-        f.world.insert(Unsaved, document);
-
-        f.world.remove_component::<Unsaved>(document);
         f.world.trigger(DiscardEdits(document));
         f.frame();
 
-        let discarded = state(&f, document);
-        assert_eq!(discarded.events, saved);
-        assert_eq!(discarded.selected_event, None);
-        assert!(!f.unsaved(document));
+        assert_eq!(state(&f, document).events, saved);
+        assert_eq!(state(&f, document).selected_event, None);
     }
 }

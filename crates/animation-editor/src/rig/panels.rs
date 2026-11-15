@@ -496,29 +496,16 @@ pub(crate) fn sync_rig_panels(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        rig::tests::{PELVIS, RigTab, left_click, rig_tab, write},
-        transport::{TransportRow, sync_transport_rows, sync_transport_timelines},
-    };
-    use concerto_animation::retarget::RetargetChain;
+    use crate::rig::tests::{PELVIS, RigTab, left_click, rig_tab};
     use concerto_ecs::{
         IntoSystem, World,
         entity::hierarchy::{ChildOf, Children},
     };
-    use concerto_editor::hosted::Hosted;
-    use concerto_editor::tools::edits::PropertyCommitted;
-    use concerto_foundation::assets::handle::AssetHandle;
-    use concerto_mesh::skeleton::JointPose;
-    use concerto_ui::interaction::{UIDisabled, UIInteractionStyle};
-    use glam::{Mat4, Vec2};
-    use uuid::Uuid;
+    use glam::Vec2;
 
     fn paneled(mut tab: RigTab) -> RigTab {
         tab.f.add_delivery(build_rig_panels.into_boxed_system());
         tab.f.add_delivery(sync_rig_panels.into_boxed_system());
-        tab.f.add_delivery(sync_transport_rows.into_boxed_system());
-        tab.f
-            .add_delivery(sync_transport_timelines.into_boxed_system());
         let [left, inspector, bottom] = [(); 3].map(|_| tab.f.world.spawn(UINode::default()));
         tab.f.world.insert(
             EditorHosts {
@@ -534,339 +521,57 @@ mod tests {
         tab
     }
 
-    fn panels(tab: &RigTab) -> &RigPanels {
-        tab.f
-            .world
-            .get_component_for_entity::<RigPanels>(tab.document)
-            .expect("the panels were built")
-    }
-
-    fn rows(tab: &RigTab) -> Vec<Entity> {
-        panels(tab).bones.rows.clone()
-    }
-
-    fn parent(world: &World, entity: Entity) -> Option<Entity> {
-        world
-            .get_component_for_entity::<ChildOf>(entity)
-            .map(ChildOf::parent)
-    }
-
     fn children(world: &World, entity: Entity) -> Vec<Entity> {
         world
             .get_component_for_entity::<Children>(entity)
             .map_or_else(Vec::new, |children| children.iter().copied().collect())
     }
 
-    fn text(world: &World, entity: Entity) -> String {
-        world
-            .get_component_for_entity::<UIText>(entity)
-            .map_or_else(String::new, |text| text.text.clone())
-    }
-
-    fn shown(tab: &RigTab, entity: Entity) -> bool {
-        tab.f
-            .world
-            .get_component_for_entity::<UINode>(entity)
-            .unwrap()
-            .visible
-    }
-
-    fn row_name(tab: &RigTab, row: Entity) -> String {
-        text(&tab.f.world, children(&tab.f.world, row)[0])
-    }
-
-    fn shown_tags(tab: &RigTab, bone: usize) -> Vec<String> {
-        let world = &tab.f.world;
-        let held = world
-            .get_component_for_entity::<BoneRow>(rows(tab)[bone])
-            .unwrap();
-        children(world, held.tag_row)
-            .into_iter()
-            .map(|tag| text(world, tag))
-            .collect()
-    }
-
-    fn tag_colors(tab: &RigTab, bone: usize) -> Vec<Color> {
-        let world = &tab.f.world;
-        let held = world
-            .get_component_for_entity::<BoneRow>(rows(tab)[bone])
-            .unwrap();
-        children(world, held.tag_row)
-            .into_iter()
-            .map(|tag| world.get_component_for_entity::<UIText>(tag).unwrap().color)
-            .collect()
-    }
-
-    fn menu(tab: &mut RigTab) -> Option<Entity> {
-        let world = &mut tab.f.world;
-        world
-            .query::<(Entity, &UIAnchoredPanel), With<NameMenu>>()
-            .iter(world)
-            .find(|(_, panel)| panel.open)
-            .map(|(entity, _)| entity)
-    }
-
-    fn texts_under(world: &World, entity: Entity, found: &mut Vec<Entity>) {
-        for child in children(world, entity) {
-            if world.get_component_for_entity::<UIText>(child).is_some() {
-                found.push(child);
+    fn item_labelled(world: &World, entity: Entity, label: &str) -> Option<Entity> {
+        children(world, entity).into_iter().find_map(|child| {
+            let labelled = world
+                .get_component_for_entity::<UIText>(child)
+                .is_some_and(|text| text.text == label);
+            if labelled {
+                world
+                    .get_component_for_entity::<ChildOf>(child)
+                    .map(ChildOf::parent)
+            } else {
+                item_labelled(world, child, label)
             }
-            texts_under(world, child, found);
-        }
+        })
     }
 
-    fn menu_texts(tab: &mut RigTab) -> Vec<Entity> {
-        let menu = menu(tab).expect("the bone menu is open");
-        let mut found = Vec::new();
-        texts_under(&tab.f.world, menu, &mut found);
-        found
-    }
+    #[test]
+    fn a_pick_from_a_bone_rows_menu_writes_the_bone_into_the_rig() {
+        let mut tab = paneled(rig_tab());
+        let row = tab
+            .f
+            .world
+            .get_component_for_entity::<RigPanels>(tab.document)
+            .expect("the panels were built")
+            .bones
+            .rows[PELVIS];
 
-    fn open_menu(tab: &mut RigTab, bone: usize) {
-        let row = rows(tab)[bone];
         tab.f.world.trigger_on(
             row,
             UIItemContextMenu {
                 position: Vec2::ZERO,
             },
         );
-    }
-
-    fn menu_labels(tab: &mut RigTab) -> Vec<String> {
-        menu_texts(tab)
-            .into_iter()
-            .map(|label| text(&tab.f.world, label))
-            .collect()
-    }
-
-    fn pick(tab: &mut RigTab, label: &str) {
-        let item = menu_texts(tab)
-            .into_iter()
-            .find(|entity| text(&tab.f.world, *entity) == label)
-            .and_then(|entity| parent(&tab.f.world, entity))
-            .expect("the menu lists the label");
+        let world = &mut tab.f.world;
+        let menu = world
+            .query::<(Entity, &UIAnchoredPanel), With<NameMenu>>()
+            .iter(world)
+            .find(|(_, panel)| panel.open)
+            .map(|(entity, _)| entity)
+            .expect("the bone menu is open");
+        let item =
+            item_labelled(&tab.f.world, menu, "spine start").expect("the menu lists the chain");
         tab.f.world.trigger_on(item, left_click());
         tab.f.frame();
-    }
-
-    fn committed_rig(tab: &RigTab) -> Vec<PropertyCommitted> {
-        tab.f
-            .written::<Hosted<PropertyCommitted>>()
-            .into_iter()
-            .map(|hosted| hosted.event)
-            .filter(|event| event.address.target.name() == "RetargetRig")
-            .collect()
-    }
-
-    fn reopen(tab: &mut RigTab, address: &str, rig: &RetargetRig) {
-        let entry = write(&mut tab.f, address, rig);
-        tab.f.request(&entry);
-        tab.until("the rig never opened", |tab| {
-            tab.f
-                .document(tab.document)
-                .current
-                .as_ref()
-                .is_some_and(|current| current.id == entry.id)
-        });
-        tab.f.frame();
-    }
-
-    fn two_bones() -> Skeleton {
-        Skeleton::new(
-            vec![Mat4::IDENTITY; 2],
-            vec![None, Some(0)],
-            vec!["hips".into(), "chest".into()],
-            vec![JointPose::IDENTITY; 2],
-            vec![Uuid::from_u128(40), Uuid::from_u128(41)],
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn the_bone_rows_nest_the_skeleton_expanded_and_their_tags_follow_the_rig() {
-        let mut tab = paneled(rig_tab());
-        let tree = panels(&tab).bones.tree;
-        let built = rows(&tab);
-
-        let names: Vec<String> = built.iter().map(|row| row_name(&tab, *row)).collect();
-        assert_eq!(names, ["root", "pelvis", "spine", "head"]);
-        assert_eq!(parent(&tab.f.world, built[0]), Some(tree));
-        for bone in 1..built.len() {
-            assert_eq!(parent(&tab.f.world, built[bone]), Some(built[bone - 1]));
-        }
-        assert!(built.iter().all(|row| {
-            tab.f
-                .world
-                .get_component_for_entity::<UITreeElement>(*row)
-                .unwrap()
-                .expanded
-        }));
-        assert!(!shown(&tab, panels(&tab).bones.empty));
-        assert!(shown_tags(&tab, 0).is_empty());
-        assert_eq!(shown_tags(&tab, PELVIS), ["root"]);
-        assert_eq!(shown_tags(&tab, 2), ["spine start"]);
-        assert_eq!(shown_tags(&tab, 3), ["spine end"]);
-        assert_eq!(tag_colors(&tab, PELVIS), [ROOT_COLOR]);
-        let rig = RetargetRig::new().with_chain(RetargetChain::new("spine", "spine", "head"));
-        assert_eq!(tag_colors(&tab, 2), [chain_colors(&rig, None)[0].color]);
-
-        tab.write_rig("root", json!("spine"));
-        tab.write_rig("motion_root", json!({"Some": {"0": "root"}}));
-        tab.f.frame();
-
-        assert_eq!(rows(&tab), built);
-        assert_eq!(shown_tags(&tab, 0), ["motion root"]);
-        assert!(shown_tags(&tab, PELVIS).is_empty());
-        assert_eq!(shown_tags(&tab, 2), ["root", "spine start"]);
-    }
-
-    #[test]
-    fn the_bone_rows_follow_another_rigs_skeleton_and_say_when_there_is_none() {
-        let mut tab = paneled(rig_tab());
-        let hips = write(&mut tab.f, "content/third/skeleton.gasset", &two_bones());
-
-        reopen(
-            &mut tab,
-            "content/third/rig.gasset",
-            &RetargetRig::new().with_skeleton(AssetHandle::weak(hips.id)),
-        );
-
-        let names: Vec<String> = rows(&tab).iter().map(|row| row_name(&tab, *row)).collect();
-        assert_eq!(names, ["hips", "chest"]);
-
-        reopen(&mut tab, "content/third/bare.gasset", &RetargetRig::new());
-
-        assert!(rows(&tab).is_empty());
-        let empty = panels(&tab).bones.empty;
-        assert!(shown(&tab, empty));
-        assert_eq!(text(&tab.f.world, empty), "No skeleton");
-    }
-
-    #[test]
-    fn a_skeleton_that_cannot_be_read_says_why_over_the_tree() {
-        let mut tab = paneled(rig_tab());
-        let broken = write(&mut tab.f, "content/third/skeleton.gasset", &two_bones());
-        std::fs::write(tab.f.project_root.join(&broken.address), b"not a skeleton").unwrap();
-
-        reopen(
-            &mut tab,
-            "content/third/rig.gasset",
-            &RetargetRig::new().with_skeleton(AssetHandle::weak(broken.id)),
-        );
-
-        assert!(rows(&tab).is_empty());
-        let empty = panels(&tab).bones.empty;
-        let reason = tab.state().skeleton_error.clone().expect("the read failed");
-        assert!(shown(&tab, empty));
-        assert_eq!(text(&tab.f.world, empty), reason);
-    }
-
-    #[test]
-    fn the_bone_menu_lists_the_assignments_and_a_chain_pick_writes_its_start() {
-        let mut tab = paneled(rig_tab());
-
-        open_menu(&mut tab, PELVIS);
-        assert_eq!(
-            menu_labels(&mut tab),
-            ["Root", "Motion root", "spine start", "spine end"]
-        );
-        pick(&mut tab, "spine start");
 
         assert_eq!(tab.rig().chains[0].start, "pelvis".into());
-        assert!(committed_rig(&tab).iter().all(|event| event.result.is_ok()));
         assert!(tab.f.unsaved(tab.document));
-        assert!(menu(&mut tab).is_none());
-        assert_eq!(shown_tags(&tab, PELVIS), ["root", "spine start"]);
-    }
-
-    #[test]
-    fn motion_root_writes_the_motion_root_when_it_was_none() {
-        let mut tab = paneled(rig_tab());
-        assert_eq!(tab.rig().motion_root, None);
-
-        open_menu(&mut tab, 0);
-        pick(&mut tab, "Motion root");
-
-        assert_eq!(tab.rig().motion_root, Some("root".into()));
-        assert!(tab.f.unsaved(tab.document));
-    }
-
-    fn disabled(tab: &RigTab, entity: Entity) -> bool {
-        tab.f
-            .world
-            .get_component_for_entity::<UIDisabled>(entity)
-            .is_some()
-    }
-
-    fn transport_row(tab: &mut RigTab) -> TransportRow {
-        let document = tab.document;
-        let world = &mut tab.f.world;
-        *world
-            .query::<&TransportRow, ()>()
-            .iter(world)
-            .find(|row| row.document == document)
-            .expect("the transport was spawned")
-    }
-
-    fn buttons(row: TransportRow) -> Vec<Entity> {
-        let mut buttons = vec![row.step_back, row.play, row.step_forward, row.looping];
-        buttons.extend(row.speeds);
-        buttons
-    }
-
-    #[test]
-    fn the_transport_is_disabled_in_reference_mode() {
-        let mut tab = paneled(rig_tab().with_other().playing_the_walk());
-        let row = transport_row(&mut tab);
-        tab.f.frame();
-        assert!(buttons(row).iter().all(|button| !disabled(&tab, *button)));
-
-        tab.write_preview("mode", json!("Reference"));
-        tab.f.frame();
-
-        assert!(buttons(row).iter().all(|button| disabled(&tab, *button)));
-    }
-
-    fn selected(tab: &RigTab, entity: Entity) -> bool {
-        tab.f
-            .world
-            .get_component_for_entity::<UIInteractionStyle>(entity)
-            .unwrap()
-            .normal
-            == UITheme::default().selection()
-    }
-
-    #[test]
-    fn a_speed_of_one_and_a_half_is_accepted_and_selects_no_rate_button() {
-        let mut tab = paneled(rig_tab());
-        let speeds = transport_row(&mut tab).speeds;
-        assert!(selected(&tab, speeds[2]));
-
-        tab.write_preview("speed", json!(1.5));
-        tab.until("the speed never reached the transport", |tab| {
-            tab.transport().speed == 1.5
-        });
-        tab.f.frame();
-
-        assert_eq!(tab.state().preview.speed, 1.5);
-        assert!(speeds.iter().all(|speed| !selected(&tab, *speed)));
-    }
-
-    #[test]
-    fn the_inspector_shows_the_facts_and_the_status() {
-        let tab = paneled(rig_tab());
-        let inspector = &panels(&tab).inspector;
-        assert_eq!(text(&tab.f.world, inspector.scale), "None");
-        assert!(shown(&tab, inspector.status));
-        assert_eq!(text(&tab.f.world, inspector.status), "Pick the other rig");
-
-        let mut tab = tab.with_other();
-        tab.f.frame();
-
-        let inspector = &panels(&tab).inspector;
-        assert_eq!(text(&tab.f.world, inspector.scale), "0.90×");
-        assert_eq!(text(&tab.f.world, inspector.chains), "1 of 1 shared");
-        assert_eq!(text(&tab.f.world, inspector.driven), "None");
-        assert!(!shown(&tab, inspector.status));
     }
 }

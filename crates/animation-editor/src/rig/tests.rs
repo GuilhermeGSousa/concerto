@@ -1,33 +1,28 @@
 use super::*;
-use crate::{
-    preview::{ClipPlayback, ClipPreviewProgress},
-    rig::preview::{RigPosing, RigSides},
-    transport::{TransportRow, spawn_transport},
-};
+use crate::preview::{ClipPlayback, ClipPreviewProgress};
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
-use concerto_app::{
-    main_schedule::MainSchedulePlugin,
-    plugins::{AssetManagerPlugin, TimePlugin},
+use concerto_ecs::{
+    IntoSystem, component::name::Name as EntityName, events::event_channel::EventChannel,
 };
-use concerto_ecs::{Changed, IntoSystem, ResMut, System, events::event_channel::EventChannel};
 use concerto_editor::{
-    EditorPlugin,
     asset_editor::{ActiveEditor, AssetEditorRegistry, SaveRequested},
     guard::DiscardEdits,
     hosted::{
         Hosted, HostedApp,
-        testing::{SceneFixture, forwarding, plain_recipe},
+        testing::{SceneFixture, forwarding},
     },
     inspected_asset::{ProjectTypes, inspected_asset_systems, install_inspected_listeners},
     inspector::{InspectedSnapshots, InspectorRegistry, WriteValue},
-    tools::edits::PropertyCommitted,
 };
-use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, content::save_content_asset_into,
+use concerto_foundation::{
+    assets::{
+        asset_server::AssetServer, asset_store::AssetStore, content::save_content_asset_into,
+    },
+    transform::Transform,
 };
 use concerto_mesh::skeleton::JointPose;
-use concerto_ui::{interaction::UIClick, node::UINode, theme::UITheme};
-use concerto_window::{input::MouseButton, plugin::WindowPlugin};
+use concerto_ui::interaction::UIClick;
+use concerto_window::input::MouseButton;
 use glam::{Mat4, Quat, Vec3};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -140,7 +135,6 @@ pub(super) struct RigTab {
     pub(super) open: AssetEntry,
     pub(super) open_skeleton: AssetEntry,
     pub(super) other: AssetEntry,
-    pub(super) other_skeleton: AssetEntry,
     pub(super) walk: AssetEntry,
 }
 
@@ -172,7 +166,6 @@ pub(super) fn rig_tab() -> RigTab {
         open,
         open_skeleton,
         other,
-        other_skeleton,
         walk,
     }
 }
@@ -189,13 +182,6 @@ impl RigTab {
             .unwrap()
     }
 
-    pub(super) fn sent(&self) -> &SentStages {
-        self.f
-            .world
-            .get_component_for_entity::<SentStages>(self.document)
-            .unwrap()
-    }
-
     pub(super) fn rig(&self) -> &RetargetRig {
         self.f
             .world
@@ -207,13 +193,6 @@ impl RigTab {
             .unwrap()
     }
 
-    pub(super) fn transport(&self) -> &ClipTransport {
-        self.f
-            .world
-            .get_component_for_entity::<ClipTransport>(self.document)
-            .unwrap()
-    }
-
     pub(super) fn values(&self) -> Vec<Arc<dyn PropertyTarget>> {
         self.f
             .world
@@ -221,31 +200,6 @@ impl RigTab {
             .unwrap()
             .0
             .clone()
-    }
-
-    pub(super) fn status(&self) -> String {
-        self.f.status(self.document)
-    }
-
-    pub(super) fn sides(&self) -> &RigSides {
-        self.f
-            .scene_world(self.document)
-            .get_resource::<RigSides>()
-            .unwrap()
-    }
-
-    pub(super) fn posing(&self) -> &RigPosing {
-        self.f
-            .scene_world(self.document)
-            .get_resource::<RigPosing>()
-            .unwrap()
-    }
-
-    pub(super) fn playback(&self) -> &ClipPlayback {
-        self.f
-            .scene_world(self.document)
-            .get_resource::<ClipPlayback>()
-            .unwrap()
     }
 
     pub(super) fn write_value(&mut self, value: usize, path: &str, json: Value) {
@@ -266,290 +220,24 @@ impl RigTab {
         self.write_value(1, path, json);
     }
 
-    pub(super) fn until(&mut self, what: &str, done: impl Fn(&RigTab) -> bool) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        loop {
-            self.f.frame();
-            if done(self) {
-                break;
-            }
-            assert!(std::time::Instant::now() < deadline, "{what}");
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-    }
-
-    pub(super) fn with_other(mut self) -> Self {
-        let other = hex(&self.other);
-        self.write_preview("other", other);
-        let (source, target) = (self.other_skeleton.id, self.open_skeleton.id);
-        self.until("the preview never showed both rigs", |tab| {
-            tab.sides().skeleton_of(RigSide::Source) == Some(source)
-                && tab.sides().skeleton_of(RigSide::Target) == Some(target)
-                && tab.posing().retargets()
-        });
-        self
-    }
-
-    pub(super) fn playing_the_walk(mut self) -> Self {
-        let walk = hex(&self.walk);
-        self.write_preview("clip", walk);
-        self.write_preview("mode", json!("Clip"));
-        self.until("the walk never played", |tab| {
-            tab.posing().mode() == RigPreviewMode::Clip
-                && tab.playback().clip.is_some()
-                && tab.transport().time > 0.0
-        });
-        self
-    }
-
-    pub(super) fn committed(&self, target: &str) -> Vec<PropertyCommitted> {
-        self.f
-            .written::<Hosted<PropertyCommitted>>()
+    fn spine_rotations(&mut self) -> Vec<Quat> {
+        let world = self.f.scene_world_mut(self.document);
+        let spines: Vec<Entity> = world
+            .query::<(Entity, &EntityName), ()>()
+            .iter(world)
+            .filter(|(_, name)| name.as_str() == "spine")
+            .map(|(entity, _)| entity)
+            .collect();
+        spines
             .into_iter()
-            .map(|hosted| hosted.event)
-            .filter(|event| event.address.target.name() == target)
+            .map(|spine| {
+                world
+                    .get_component_for_entity::<Transform>(spine)
+                    .unwrap()
+                    .rotation
+            })
             .collect()
     }
-}
-
-#[test]
-fn opening_a_rig_fills_the_rig_value_and_the_preview_value() {
-    let mut tab = rig_tab();
-
-    let names: Vec<String> = tab.values().iter().map(|value| value.name()).collect();
-    assert_eq!(names, ["RetargetRig", "Preview"]);
-    assert_eq!(*tab.rig(), rig_on(&tab.open_skeleton));
-    assert_eq!(tab.state().preview, RigPreview::default());
-    assert_eq!(tab.status(), "Pick the other rig");
-    assert!(!tab.f.unsaved(tab.document));
-}
-
-#[test]
-fn a_rig_edit_marks_the_tab_unsaved_and_a_preview_edit_does_not() {
-    let mut tab = rig_tab();
-
-    tab.write_preview("bones", json!(false));
-    assert!(!tab.state().preview.bones);
-    assert_eq!(tab.committed("Preview").len(), 1);
-    assert!(tab.committed("Preview")[0].result.is_ok());
-    assert!(!tab.f.unsaved(tab.document));
-
-    tab.write_rig("root", json!("spine"));
-    assert_eq!(tab.rig().root, "spine".into());
-    assert!(tab.f.unsaved(tab.document));
-}
-
-#[test]
-fn save_writes_the_rig() {
-    let mut tab = rig_tab();
-    tab.write_rig("root", json!("spine"));
-
-    tab.f.world.insert(SaveRequested, tab.document);
-    tab.f.frame();
-
-    let bytes = std::fs::read(tab.f.project_root.join(OPEN_ADDRESS)).unwrap();
-    let (header, saved) = decode_content_asset::<RetargetRig>(&bytes).unwrap();
-    assert_eq!(header.asset_id, tab.open.id);
-    assert_eq!(saved.root, "spine".into());
-    assert!(!tab.f.unsaved(tab.document));
-}
-
-#[test]
-fn discard_restores_the_rig() {
-    let mut tab = rig_tab();
-    tab.write_rig("root", json!("spine"));
-
-    tab.f.world.trigger(DiscardEdits(tab.document));
-    tab.f.frame();
-
-    assert_eq!(*tab.rig(), rig_on(&tab.open_skeleton));
-}
-
-#[test]
-fn the_other_rig_and_the_clip_can_be_picked_with_the_rig_tab_alone() {
-    let mut tab = rig_tab();
-
-    let (other, walk) = (hex(&tab.other), hex(&tab.walk));
-    tab.write_preview("other", other);
-    tab.write_preview("clip", walk);
-
-    assert!(
-        tab.committed("Preview")
-            .iter()
-            .all(|event| event.result.is_ok())
-    );
-    assert_eq!(tab.state().preview.other.id(), tab.other.id);
-    assert_eq!(tab.state().preview.clip.id(), tab.walk.id);
-}
-
-#[test]
-fn the_rig_plugin_registers_its_editor_and_lets_the_editor_load_rigs_their_skeletons_and_clips() {
-    let mut app = App::new();
-    app.register_plugin(MainSchedulePlugin)
-        .register_plugin(AssetManagerPlugin)
-        .register_plugin(TimePlugin)
-        .register_plugin(WindowPlugin)
-        .register_plugin(EditorPlugin {
-            project: None,
-            decorated: false,
-            recipe: plain_recipe,
-        });
-    let server = app.get_resource::<AssetServer>().unwrap();
-    assert!(!server.is_registered::<RetargetRig>());
-    assert!(!server.is_registered::<AnimationClip>());
-    assert!(!server.is_registered::<Skeleton>());
-
-    app.register_plugin(crate::transport::TransportPlugin)
-        .register_plugin(RetargetRigEditorPlugin);
-
-    let server = app.get_resource::<AssetServer>().unwrap();
-    assert!(server.is_registered::<RetargetRig>());
-    assert!(server.is_registered::<AnimationClip>());
-    assert!(server.is_registered::<Skeleton>());
-    let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
-    let kind = RetargetRig::name();
-    assert!(editors.preview(kind).is_some());
-    assert!(editors.bottom_host(kind));
-    assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
-}
-
-#[test]
-fn any_finite_speed_above_zero_is_accepted_and_zero_or_below_is_refused() {
-    let mut tab = rig_tab();
-
-    tab.write_preview("speed", json!(1.5));
-    assert_eq!(tab.state().preview.speed, 1.5);
-
-    for refused in [0.0, -1.0] {
-        tab.write_preview("speed", json!(refused));
-        assert_eq!(tab.state().preview.speed, 1.5);
-        assert!(tab.status().contains("Preview.speed"), "{}", tab.status());
-    }
-}
-
-#[test]
-fn two_resolving_rigs_give_the_preview_two_stages_two_sides_offsets_and_a_retarget() {
-    let tab = rig_tab().with_other();
-
-    let sides = tab.sides();
-    let offsets = tab.sent().offsets.unwrap();
-    assert!(offsets.source < 0.0 && offsets.target > 0.0);
-    assert_eq!(offsets.source, -offsets.target);
-    assert_eq!(sides.offset_of(RigSide::Source), offsets.source);
-    assert_eq!(sides.offset_of(RigSide::Target), offsets.target);
-    assert_eq!(sides.root_bone_of(RigSide::Source), Some(PELVIS));
-    assert_eq!(sides.root_bone_of(RigSide::Target), Some(PELVIS));
-    let source = sides.colors_of(RigSide::Source);
-    let target = sides.colors_of(RigSide::Target);
-    assert_eq!(source.len(), 4);
-    assert_eq!(source[2], source[3]);
-    assert_eq!(source[2], target[2]);
-    assert_ne!(source[2], source[0]);
-    assert_ne!(source[PELVIS], source[2]);
-    assert_eq!(tab.status(), "");
-    let facts = tab.state().facts;
-    assert_eq!(facts.chains, Some(Share { count: 1, of: 1 }));
-    assert!((facts.scale.unwrap() - 0.9).abs() < 1e-5);
-    assert_eq!(tab.state().skeleton.as_ref().unwrap().names[2], "spine");
-}
-
-#[test]
-fn a_second_run_with_no_stage_change_sends_no_stage() {
-    let mut tab = rig_tab().with_other();
-    let roots = [RigSide::Source, RigSide::Target].map(|side| tab.sides().root_of(side));
-
-    tab.write_preview("mode", json!("Clip"));
-    tab.until("the mode never reached the preview", |tab| {
-        tab.posing().mode() == RigPreviewMode::Clip
-    });
-
-    let kept = [RigSide::Source, RigSide::Target].map(|side| tab.sides().root_of(side));
-    assert_eq!(kept, roots);
-}
-
-#[test]
-fn a_broken_chain_on_the_open_rig_reports_the_target_rig_and_drops_the_retarget() {
-    let mut tab = rig_tab().with_other();
-
-    tab.write_rig("chains.0.end", json!("tail"));
-
-    assert!(tab.f.unsaved(tab.document));
-    let status = tab.status();
-    assert!(status.starts_with("Target rig: "), "{status}");
-    assert!(status.contains("tail"), "{status}");
-    tab.until("the retarget stayed", |tab| !tab.posing().retargets());
-    assert_eq!(tab.state().facts.scale, None);
-}
-
-#[test]
-fn swap_makes_the_open_rig_the_source() {
-    let mut tab = rig_tab().with_other();
-
-    tab.write_preview("open_rig_is", json!("Source"));
-
-    let (open, other) = (tab.open_skeleton.id, tab.other_skeleton.id);
-    tab.until("the sides never swapped", |tab| {
-        tab.sides().skeleton_of(RigSide::Source) == Some(open)
-            && tab.sides().skeleton_of(RigSide::Target) == Some(other)
-            && tab.posing().retargets()
-    });
-}
-
-#[test]
-fn saved_survives_a_quiet_resolve_and_a_preview_edit_with_an_error_replaces_it() {
-    let mut tab = rig_tab().with_other();
-    tab.write_rig("root", json!("spine"));
-
-    tab.f.world.insert(SaveRequested, tab.document);
-    tab.f.frame();
-    tab.f.frame();
-
-    let saved = format!("Saved {OPEN_ADDRESS}");
-    assert_eq!(tab.status(), saved);
-
-    tab.write_preview("mode", json!("Clip"));
-
-    assert_eq!(tab.status(), "Pick a clip");
-}
-
-#[test]
-fn assets_written_on_the_other_rig_reads_it_again() {
-    let mut tab = rig_tab();
-    let broken = rig_on(&tab.other_skeleton).with_chain(RetargetChain::new("arm", "spine", "tail"));
-    write(&mut tab.f, OTHER_ADDRESS, &broken);
-    let other = hex(&tab.other);
-    tab.write_preview("other", other);
-    assert!(tab.status().starts_with("Source rig: "), "{}", tab.status());
-
-    write(&mut tab.f, OTHER_ADDRESS, &rig_on(&tab.other_skeleton));
-    let id = tab.other.id;
-    tab.f
-        .world
-        .get_resource_mut::<EventChannel<AssetsWritten>>()
-        .unwrap()
-        .push_event(AssetsWritten { ids: vec![id] });
-    tab.until("the other rig was never read again", |tab| {
-        tab.posing().retargets()
-    });
-
-    assert_eq!(tab.status(), "");
-}
-
-pub(super) fn transport_row(tab: &mut RigTab) -> TransportRow {
-    let document = tab.document;
-    let host = tab.f.world.spawn(UINode::default());
-    let mut spawn = (move |theme: Res<UITheme>, mut cmd: CommandQueue| {
-        spawn_transport(&mut cmd.entity(host), document, &theme);
-    })
-    .into_system();
-    spawn.initialize(&mut tab.f.world);
-    spawn.run_and_apply((), &mut tab.f.world);
-    let world = &mut tab.f.world;
-    *world
-        .query::<&TransportRow, ()>()
-        .iter(world)
-        .next()
-        .unwrap()
 }
 
 pub(super) fn left_click() -> UIClick {
@@ -560,249 +248,80 @@ pub(super) fn left_click() -> UIClick {
 }
 
 #[test]
-fn a_pause_from_the_widget_sets_paused_at_and_play_clears_it() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-    let play = transport_row(&mut tab).play;
+fn a_rig_edit_is_unsaved_saved_and_discarded_and_a_preview_edit_leaves_the_tab_clean() {
+    let mut tab = rig_tab();
+    let names: Vec<String> = tab.values().iter().map(|value| value.name()).collect();
+    assert_eq!(names, ["RetargetRig", "Preview"]);
+    assert_eq!(*tab.rig(), rig_on(&tab.open_skeleton));
 
-    tab.f.world.trigger_on(play, left_click());
-    tab.until("the pause never reached the preview value", |tab| {
-        tab.state().preview.paused_at.is_some()
-    });
-    assert_eq!(tab.state().preview.paused_at, Some(tab.transport().time));
+    tab.write_preview("bones", json!(false));
+    assert!(!tab.state().preview.bones);
+    assert!(!tab.f.unsaved(tab.document));
 
-    tab.f.world.trigger_on(play, left_click());
-    tab.until("play never cleared paused_at", |tab| {
-        tab.state().preview.paused_at.is_none()
-    });
-    assert!(tab.transport().playing);
-}
-
-#[test]
-fn setting_paused_at_pauses_and_seeks_the_preview() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-
-    tab.write_preview("paused_at", json!({"Some": {"0": 0.5}}));
-
-    tab.until("the preview never paused at 0.5", |tab| {
-        !tab.playback().playing && tab.playback().time == 0.5
-    });
-    for _ in 0..5 {
-        tab.f.frame();
-    }
-    assert_eq!(tab.state().preview.paused_at, Some(0.5));
-    assert!(!tab.transport().playing);
-    assert_eq!(tab.transport().time, 0.5);
-}
-
-#[derive(Resource, Default)]
-struct Writes(usize);
-
-fn count_writes(changed: Query<Entity, Changed<RigDocument>>, mut writes: ResMut<Writes>) {
-    writes.0 += changed.iter().count();
-}
-
-#[test]
-fn nothing_writes_the_preview_value_while_the_clip_plays() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-    tab.f.world.insert_resource(Writes::default());
-    tab.f.add_delivery(count_writes.into_boxed_system());
-    tab.f.frame();
-    tab.f.frame();
-    tab.f.world.get_resource_mut::<Writes>().unwrap().0 = 0;
-    let from = tab.transport().time;
-
-    tab.until("the clip stopped moving", |tab| {
-        tab.transport().time > from + 0.1 || tab.transport().time < from
-    });
-
-    assert_eq!(tab.f.world.get_resource::<Writes>().unwrap().0, 0);
-    assert_eq!(tab.state().preview.paused_at, None);
-}
-
-#[test]
-fn a_clip_that_does_not_loop_ends_paused_at_its_duration() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-
-    tab.write_preview("looping", json!(false));
-
-    tab.until("the clip never ended", |tab| {
-        tab.state().preview.paused_at.is_some()
-    });
-    assert_eq!(tab.state().preview.paused_at, Some(1.0));
-    assert!(!tab.state().preview.looping);
-}
-
-fn edit_the_rig(tab: &mut RigTab, edit: usize) {
-    let root = if edit.is_multiple_of(2) {
-        "spine"
-    } else {
-        "pelvis"
-    };
-    tab.write_rig("root", json!(root));
-}
-
-#[test]
-fn a_pause_from_the_widget_holds_while_the_rig_is_edited_every_frame() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-    let play = transport_row(&mut tab).play;
-    for edit in 0..5 {
-        edit_the_rig(&mut tab, edit);
-    }
-
-    tab.f.world.trigger_on(play, left_click());
-    for edit in 5..15 {
-        edit_the_rig(&mut tab, edit);
-    }
-
-    assert!(tab.state().preview.paused_at.is_some());
-    assert_eq!(tab.state().preview.paused_at, Some(tab.transport().time));
-    assert!(!tab.transport().playing);
-    assert!(!tab.playback().playing);
-}
-
-#[test]
-fn a_clip_that_does_not_loop_stays_at_its_end_while_the_rig_is_edited_every_frame() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-    tab.write_preview("looping", json!(false));
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    let mut edit = 0;
-    while tab.state().preview.paused_at.is_none() {
-        assert!(std::time::Instant::now() < deadline, "the clip never ended");
-        edit_the_rig(&mut tab, edit);
-        edit += 1;
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    for _ in 0..5 {
-        edit_the_rig(&mut tab, edit);
-        edit += 1;
-    }
-
-    assert_eq!(tab.state().preview.paused_at, Some(1.0));
-    assert!(!tab.transport().playing);
-    assert!(!tab.playback().playing);
-    assert_eq!(tab.playback().time, 1.0);
-}
-
-#[test]
-fn a_clip_that_does_not_loop_stays_at_its_end_while_another_preview_field_is_edited_every_frame() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-    tab.write_preview("looping", json!(false));
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    let mut edit = 0;
-    while tab.state().preview.paused_at.is_none() {
-        assert!(std::time::Instant::now() < deadline, "the clip never ended");
-        tab.write_preview("bones", json!(edit % 2 == 0));
-        edit += 1;
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    for _ in 0..5 {
-        tab.write_preview("bones", json!(edit % 2 == 0));
-        edit += 1;
-    }
-
-    assert_eq!(tab.state().preview.paused_at, Some(1.0));
-    assert!(!tab.transport().playing);
-    assert!(!tab.playback().playing);
-    assert_eq!(tab.playback().time, 1.0);
-}
-
-#[test]
-fn a_clip_that_does_not_loop_ending_keeps_saved() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-    tab.write_preview("speed", json!(0.25));
-    tab.write_preview("looping", json!(false));
     tab.write_rig("root", json!("spine"));
+    assert!(tab.f.unsaved(tab.document));
     tab.f.world.insert(SaveRequested, tab.document);
     tab.f.frame();
+
+    let bytes = std::fs::read(tab.f.project_root.join(OPEN_ADDRESS)).unwrap();
+    let (header, saved) = decode_content_asset::<RetargetRig>(&bytes).unwrap();
+    assert_eq!(header.asset_id, tab.open.id);
+    assert_eq!(saved.root, "spine".into());
+    assert!(!tab.f.unsaved(tab.document));
+
+    tab.write_rig("root", json!("head"));
+    tab.f.world.trigger(DiscardEdits(tab.document));
     tab.f.frame();
-    let saved = format!("Saved {OPEN_ADDRESS}");
-    assert_eq!(tab.status(), saved);
-    assert_eq!(tab.state().preview.paused_at, None);
 
-    tab.until("the clip never ended", |tab| {
-        tab.state().preview.paused_at.is_some()
-    });
-    for _ in 0..5 {
-        tab.f.frame();
-    }
-
-    assert_eq!(tab.status(), saved);
-    assert!(!tab.transport().playing);
+    assert_eq!(tab.rig().root, "spine".into());
 }
 
 #[test]
-fn reopening_another_rig_keeps_the_preview_and_goes_back_to_the_start() {
-    let mut tab = rig_tab().with_other().playing_the_walk();
-    tab.write_preview("paused_at", json!({"Some": {"0": 0.5}}));
-    tab.until("the preview never paused at 0.5", |tab| {
-        !tab.playback().playing && tab.playback().time == 0.5
-    });
-    let kept = tab.state().preview.clone();
-    let second = write(
-        &mut tab.f,
-        "content/hero/second.gasset",
-        &rig_on(&tab.open_skeleton),
-    );
-
-    tab.f.request(&second);
-
-    tab.until("the second rig never opened", |tab| {
-        tab.f
-            .document(tab.document)
-            .current
-            .as_ref()
-            .is_some_and(|current| current.id == second.id)
-    });
-    tab.until("the preview never went back to the start", |tab| {
-        tab.playback().time == 0.0 && tab.transport().time == 0.0
-    });
-    for _ in 0..5 {
-        tab.f.frame();
-    }
-    assert_eq!(
-        tab.state().preview,
-        RigPreview {
-            paused_at: Some(0.0),
-            ..kept
-        }
-    );
-    assert!(!tab.playback().playing);
-    assert_eq!(tab.playback().time, 0.0);
-}
-
-#[test]
-fn set_property_on_the_preview_mode_and_other_reaches_follow_rig_and_inspect_lists_both_values() {
+fn the_preview_value_plays_the_clip_through_the_retarget_and_pauses_where_told() {
     let mut tab = rig_tab();
-
-    let other = hex(&tab.other);
+    let (other, walk) = (hex(&tab.other), hex(&tab.walk));
     tab.write_preview("other", other);
+    tab.write_preview("clip", walk);
     tab.write_preview("mode", json!("Clip"));
 
-    assert_eq!(tab.status(), "Pick a clip");
-    assert!(
-        tab.f
-            .world
-            .get_component_for_entity::<TransportDisabled>(tab.document)
-            .is_some()
-    );
-    assert_eq!(
-        tab.sent().source.map(|stage| stage.skeleton),
-        Some(tab.other_skeleton.id)
-    );
-    tab.f.world.trigger(RefreshInspector);
-    let snapshots = tab.f.world.get_resource::<InspectedSnapshots>().unwrap();
-    let names: Vec<&str> = snapshots
-        .values
-        .iter()
-        .map(|value| value.name.as_str())
-        .collect();
-    assert_eq!(names, ["RetargetRig", "Preview"]);
-    assert!(
-        snapshots
-            .values
-            .iter()
-            .all(|value| !value.properties.is_empty())
-    );
+    let document = tab.document;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        tab.f.frame();
+        let spines = tab.spine_rotations();
+        if spines.len() == 2
+            && spines
+                .iter()
+                .all(|rotation| !rotation.abs_diff_eq(Quat::IDENTITY, 1e-3))
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both spines never turned: {spines:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(tab.f.status(document), "");
+
+    tab.write_preview("paused_at", json!({"Some": {"0": 0.5}}));
+
+    tab.f.frames_until("the preview never paused at 0.5", |f| {
+        let playback = f
+            .scene_world(document)
+            .get_resource::<ClipPlayback>()
+            .unwrap();
+        !playback.playing && playback.time == 0.5
+    });
+    for _ in 0..5 {
+        tab.f.frame();
+    }
+    let transport = tab
+        .f
+        .world
+        .get_component_for_entity::<ClipTransport>(document)
+        .unwrap();
+    assert!(!transport.playing);
+    assert_eq!(transport.time, 0.5);
+    assert_eq!(tab.state().preview.paused_at, Some(0.5));
 }

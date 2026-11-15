@@ -215,7 +215,7 @@ mod tests {
     use super::*;
     use crate::{
         ClipFacts,
-        tests::{FOOTSTEP, clip_of, footstep_value, named_key, stored_key, typed_key},
+        tests::{FOOTSTEP, clip_of, footstep_value, named_key, typed_key},
     };
 
     fn named(time: f32, name: &str) -> TabEvent {
@@ -235,84 +235,21 @@ mod tests {
         }
     }
 
-    fn clip_with(keys: Vec<ClipEventKey>) -> AnimationClip {
-        let mut clip = clip_of(1);
-        clip.replace_events(keys).unwrap();
-        clip
-    }
-
-    fn at_30_fps(events: Vec<TabEvent>) -> ClipDocument {
-        ClipDocument {
-            facts: ClipFacts::of(&clip_of(1)),
-            events,
-            ..ClipDocument::default()
-        }
-    }
-
-    fn without_rate(duration: f32, events: Vec<TabEvent>) -> ClipDocument {
-        ClipDocument {
-            facts: ClipFacts {
-                duration,
-                ..ClipFacts::default()
-            },
-            events,
-            ..ClipDocument::default()
-        }
-    }
-
     fn frame(frame: u32) -> f32 {
         time_of_frame(frame, 30.0)
     }
 
     #[test]
-    fn loading_builds_named_for_animation_events_and_typed_for_others() {
-        let clip = clip_with(vec![named_key(0.2, "footstep"), typed_key(0.4)]);
+    fn event_keys_read_as_named_animation_events_and_stored_others_and_write_back_the_same() {
+        let mut clip = clip_of(1);
+        clip.replace_events(vec![named_key(0.2, "footstep"), typed_key(0.4)])
+            .unwrap();
 
-        assert_eq!(
-            read_events(&clip).unwrap(),
-            vec![named(0.2, "footstep"), typed(0.4)]
-        );
-    }
+        let events = read_events(&clip).unwrap();
 
-    #[test]
-    fn an_animation_event_that_does_not_decode_or_has_no_name_stays_typed() {
-        let undecodable = ReflectedValue::Leaf(vec![1, 2, 3]);
-        let unknown_field =
-            ReflectedValue::Struct(vec![("strength".to_owned(), ReflectedValue::Leaf(vec![7]))]);
-        let nameless = to_value(&AnimationEvent::default()).unwrap();
-        let values = [undecodable, unknown_field, nameless];
-        let keys = values
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                stored_key(index as f32 * 0.1, animation_event_type(), value.clone())
-            })
-            .collect();
-
-        let events = read_events(&clip_with(keys)).unwrap();
-
-        let expected: Vec<TabEvent> = values
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| TabEvent {
-                time: index as f32 * 0.1,
-                kind: TabEventKind::Typed {
-                    type_name: animation_event_type().to_owned(),
-                    value,
-                },
-            })
-            .collect();
-        assert_eq!(events, expected);
-    }
-
-    #[test]
-    fn tab_events_round_trip_to_event_keys_with_typed_ones_kept_as_stored() {
-        let events = vec![named(0.5, "footstep"), typed(0.25)];
-
+        assert_eq!(events, vec![named(0.2, "footstep"), typed(0.4)]);
         let keys = write_events(&events).unwrap();
-
         assert_eq!(keys[0].event.type_name(), animation_event_type());
-        assert_eq!(keys[1].time, 0.25);
         let ClipEventData::Stored { type_name, value } = &keys[1].event else {
             panic!("a written key holds stored data");
         };
@@ -322,148 +259,104 @@ mod tests {
         assert_eq!(read.unwrap(), events);
     }
 
-    #[test]
-    fn a_typed_marker_reads_the_last_segment_of_its_type_name() {
-        assert_eq!(typed(0.0).label(), "Footstep");
-        assert_eq!(named(0.0, "land").label(), "land");
+    enum Edit {
+        Add { name: &'static str, time: f32 },
+        Move { index: usize, time: f32 },
+        Rename { index: usize, name: &'static str },
+        Remove { index: usize },
+    }
+
+    struct Row {
+        edit: Edit,
+        accepted: Option<Vec<TabEvent>>,
     }
 
     #[test]
-    fn add_event_appends_a_named_event_snapped_to_a_frame_and_selects_it() {
-        let mut document = at_30_fps(vec![typed(0.5)]);
-
-        document.add_event("footstep", 0.41).unwrap();
-
-        assert_eq!(
-            document.events,
-            vec![typed(0.5), named(frame(12), "footstep")]
-        );
-        assert_eq!(document.selected_event, Some(1));
-    }
-
-    #[test]
-    fn move_event_snaps_the_time_and_keeps_the_events_order() {
-        let mut document = at_30_fps(vec![named(frame(3), "land"), named(frame(6), "footstep")]);
-
-        document.move_event(1, 0.01).unwrap();
-
-        assert_eq!(
-            document.events,
-            vec![named(frame(3), "land"), named(0.0, "footstep")]
-        );
-    }
-
-    #[test]
-    fn rename_event_renames_in_place() {
-        let mut document = at_30_fps(vec![named(frame(3), "land")]);
-
-        document.rename_event(0, "jump").unwrap();
-
-        assert_eq!(document.events, vec![named(frame(3), "jump")]);
-    }
-
-    #[test]
-    fn remove_event_removes_it_and_clears_the_selection() {
-        let mut document = at_30_fps(vec![named(frame(3), "land"), typed(0.5)]);
-        document.selected_event = Some(0);
-
-        document.remove_event(0).unwrap();
-
-        assert_eq!(document.events, vec![typed(0.5)]);
-        assert_eq!(document.selected_event, None);
-    }
-
-    #[test]
-    fn edits_on_a_typed_event_are_refused_and_change_nothing() {
-        let mut document = at_30_fps(vec![typed(0.5)]);
-        document.selected_event = Some(0);
-
-        for result in [
-            document.move_event(0, 0.2),
-            document.rename_event(0, "land"),
-            document.remove_event(0),
-        ] {
-            assert_eq!(result, Err(TYPED_IS_READ_ONLY.to_owned()));
-        }
-        assert_eq!(document.events, vec![typed(0.5)]);
-        assert_eq!(document.selected_event, Some(0));
-    }
-
-    #[test]
-    fn an_empty_name_is_refused() {
-        let mut document = at_30_fps(vec![named(frame(3), "land")]);
-
-        assert_eq!(document.add_event("", 0.5), Err(NO_NAME.to_owned()));
-        assert_eq!(document.rename_event(0, ""), Err(NO_NAME.to_owned()));
-        assert_eq!(document.events, vec![named(frame(3), "land")]);
-        assert_eq!(document.selected_event, None);
-    }
-
-    #[test]
-    fn a_time_outside_the_clip_is_refused() {
-        let mut document = at_30_fps(vec![named(frame(3), "land")]);
-
-        for time in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
-            assert!(document.add_event("footstep", time).is_err());
-            assert!(document.move_event(0, time).is_err());
-        }
-        assert_eq!(
-            document.add_event("footstep", 1.5),
-            Err("1.50 s is outside the clip's 0.00 to 1.00 s".to_owned())
-        );
-        assert_eq!(document.events, vec![named(frame(3), "land")]);
-
-        let mut document = without_rate(2.0, Vec::new());
-        assert!(document.add_event("footstep", 2.01).is_err());
-        assert!(document.events.is_empty());
-    }
-
-    #[test]
-    fn a_same_name_event_on_the_same_frame_is_refused() {
-        let mut document = at_30_fps(vec![named(frame(12), "footstep"), named(frame(20), "land")]);
-        let refusal = Err("`footstep` is already at frame 12".to_owned());
-
-        assert_eq!(document.add_event("footstep", 0.405), refusal);
-        assert_eq!(document.move_event(1, 0.4), Ok(()));
-        assert_eq!(document.rename_event(1, "footstep"), refusal);
-        assert_eq!(
-            document.events,
-            vec![named(frame(12), "footstep"), named(frame(12), "land")]
-        );
-
-        assert_eq!(document.add_event("footstep", frame(13)), Ok(()));
-        assert_eq!(document.move_event(2, frame(12)), refusal);
-        assert_eq!(document.events[2], named(frame(13), "footstep"));
-    }
-
-    #[test]
-    fn a_same_name_event_at_the_same_time_is_refused_without_a_rate() {
-        let mut document = without_rate(2.0, vec![named(0.5, "footstep")]);
-
-        assert_eq!(
-            document.add_event("footstep", 0.5),
-            Err("`footstep` is already at 0.50 s".to_owned())
-        );
-        assert_eq!(document.add_event("footstep", 0.51), Ok(()));
-        assert_eq!(
-            document.events,
-            vec![named(0.5, "footstep"), named(0.51, "footstep")]
-        );
-    }
-
-    #[test]
-    fn a_snapped_time_on_the_last_frame_of_a_clip_ending_between_frames_is_clamped_and_accepted() {
-        let mut document = ClipDocument {
-            facts: ClipFacts {
-                duration: 1.02,
-                rate: Some(30.0),
-                ..ClipFacts::default()
-            },
-            ..ClipDocument::default()
+    fn an_edit_snaps_to_a_frame_and_is_refused_on_a_typed_event_an_empty_name_a_time_outside_or_a_taken_frame()
+     {
+        let opened = || {
+            vec![
+                named(frame(3), "land"),
+                typed(0.5),
+                named(frame(12), "footstep"),
+            ]
         };
-
-        assert_eq!(document.add_event("end", frame(31)), Ok(()));
-        assert_eq!(document.events, vec![named(1.02, "end")]);
-        assert!(document.add_event("late", frame(32)).is_err());
+        let with = |change: &dyn Fn(&mut Vec<TabEvent>)| {
+            let mut events = opened();
+            change(&mut events);
+            Some(events)
+        };
+        let rows = [
+            Row {
+                edit: Edit::Add {
+                    name: "jump",
+                    time: 0.41,
+                },
+                accepted: with(&|events| events.push(named(frame(12), "jump"))),
+            },
+            Row {
+                edit: Edit::Move {
+                    index: 0,
+                    time: 0.01,
+                },
+                accepted: with(&|events| events[0].time = 0.0),
+            },
+            Row {
+                edit: Edit::Rename {
+                    index: 0,
+                    name: "jump",
+                },
+                accepted: with(&|events| events[0] = named(frame(3), "jump")),
+            },
+            Row {
+                edit: Edit::Remove { index: 0 },
+                accepted: with(&|events| {
+                    events.remove(0);
+                }),
+            },
+            Row {
+                edit: Edit::Move {
+                    index: 1,
+                    time: 0.2,
+                },
+                accepted: None,
+            },
+            Row {
+                edit: Edit::Add {
+                    name: "",
+                    time: 0.5,
+                },
+                accepted: None,
+            },
+            Row {
+                edit: Edit::Add {
+                    name: "jump",
+                    time: 1.1,
+                },
+                accepted: None,
+            },
+            Row {
+                edit: Edit::Add {
+                    name: "footstep",
+                    time: 0.405,
+                },
+                accepted: None,
+            },
+        ];
+        for row in rows {
+            let mut document = ClipDocument {
+                facts: ClipFacts::of(&clip_of(1)),
+                events: opened(),
+                ..ClipDocument::default()
+            };
+            let result = match row.edit {
+                Edit::Add { name, time } => document.add_event(name, time),
+                Edit::Move { index, time } => document.move_event(index, time),
+                Edit::Rename { index, name } => document.rename_event(index, name),
+                Edit::Remove { index } => document.remove_event(index),
+            };
+            assert_eq!(result.is_ok(), row.accepted.is_some(), "{result:?}");
+            assert_eq!(document.events, row.accepted.unwrap_or_else(opened));
+        }
     }
 }

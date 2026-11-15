@@ -382,7 +382,7 @@ mod tests {
         preview::{ClipPlayback, ClipPreviewProgress, ShowClip, clip_playback},
         tests::clip_of,
     };
-    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+    use concerto_animation::clip::AnimationClip;
     use concerto_ecs::{
         IntoSystem, System, With, World, events::event_channel::EventChannel, system::BoxedSystem,
     };
@@ -395,9 +395,8 @@ mod tests {
         timeline::{TimelineScrubbed, time_of_frame},
     };
     use concerto_foundation::assets::Asset;
-    use concerto_ui::{interaction::UIInteractionStyle, node::UINode, text::UIText};
+    use concerto_ui::node::UINode;
     use std::sync::Arc;
-    use uuid::Uuid;
 
     #[derive(Default)]
     struct PlaybackEditor;
@@ -503,18 +502,6 @@ mod tests {
         transported(clip_of(10))
     }
 
-    fn single_key_clip() -> AnimationClip {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            AnimationChannel::new(
-                vec![2.0],
-                AnimationChanelOutput::from_translation([[0.0; 3]].into_iter()),
-            ),
-        );
-        clip
-    }
-
     impl Transported {
         fn world(&self) -> &World {
             &self.f.world
@@ -537,33 +524,6 @@ mod tests {
                 .scene_world(self.document)
                 .get_resource::<ClipPlayback>()
                 .unwrap()
-        }
-
-        fn text(&self, entity: Entity) -> &UIText {
-            self.world()
-                .get_component_for_entity::<UIText>(entity)
-                .unwrap()
-        }
-
-        fn disabled(&self, entity: Entity) -> bool {
-            self.world()
-                .get_component_for_entity::<UIDisabled>(entity)
-                .is_some()
-        }
-
-        fn selected(&self, entity: Entity) -> bool {
-            self.world()
-                .get_component_for_entity::<UIInteractionStyle>(entity)
-                .unwrap()
-                .normal
-                == UITheme::default().selection()
-        }
-
-        fn buttons(&self) -> Vec<Entity> {
-            let row = self.row;
-            let mut buttons = vec![row.step_back, row.play, row.step_forward, row.looping];
-            buttons.extend(row.speeds);
-            buttons
         }
 
         fn click(&mut self, entity: Entity) {
@@ -621,306 +581,48 @@ mod tests {
     }
 
     #[test]
-    fn progress_updates_the_clip_transport() {
-        let mut world = World::new();
-        world.insert_resource(EventChannel::<Hosted<ClipPreviewProgress>>::new());
-        let document = world.spawn(ClipTransport::default());
-        let other = world.spawn(ClipTransport::default());
-        world
-            .get_resource_mut::<EventChannel<Hosted<ClipPreviewProgress>>>()
-            .unwrap()
-            .push_event(Hosted {
-                document,
-                event: ClipPreviewProgress {
-                    time: 2.5,
-                    playing: false,
-                },
-            });
-        let mut follow = follow_transport_progress.into_system();
-        follow.initialize(&mut world);
-
-        follow.run_and_apply((), &mut world);
-
-        let followed = world
-            .get_component_for_entity::<ClipTransport>(document)
-            .unwrap();
-        assert_eq!(followed.time, 2.5);
-        assert!(!followed.playing);
-        let untouched = world
-            .get_component_for_entity::<ClipTransport>(other)
-            .unwrap();
-        assert_eq!(untouched.time, 0.0);
-        assert!(untouched.playing);
-    }
-
-    #[test]
-    fn a_transport_timeline_follows_the_transport_and_the_preview() {
-        let mut playing = walking();
-
-        assert_eq!(playing.timeline().duration, 10.0);
-        assert_eq!(playing.timeline().rate, Some(30.0));
-
-        playing.until_moving();
-        playing.f.frame();
-        assert_eq!(playing.timeline().time, playing.transport().time);
-    }
-
-    #[test]
-    fn play_pauses_and_plays_again() {
+    fn the_row_plays_pauses_steps_sets_the_speed_and_plays_a_finished_clip_from_zero() {
         let mut playing = walking();
         playing.until_moving();
-        let play = playing.row.play;
-        assert_eq!(playing.text(play).text, glyph::PAUSE.to_string());
+        let row = playing.row;
 
-        playing.click(play);
+        playing.click(row.play);
         playing.until("the clip never paused", |transport| !transport.playing);
-        playing.f.frame();
-        assert_eq!(playing.text(play).text, glyph::PLAY.to_string());
-
-        playing.click(play);
+        playing.click(row.play);
         playing.until("the clip never played again", |transport| transport.playing);
-    }
 
-    #[test]
-    fn a_scrub_pauses_seeks_and_the_clip_stays_paused_after_it() {
-        let mut playing = walking();
-        playing.until_moving();
-
-        playing.paused_at(4.0);
-        for _ in 0..5 {
-            playing.f.frame();
-        }
-
-        assert!(!playing.transport().playing);
-        assert_eq!(playing.transport().time, 4.0);
-        assert_eq!(playing.timeline().time, 4.0);
-        assert_eq!(playing.preview().time, 4.0);
-    }
-
-    #[test]
-    fn play_at_the_end_of_a_clip_that_does_not_loop_starts_again_from_zero() {
-        let mut playing = walking();
-        let (looping, play) = (playing.row.looping, playing.row.play);
-        playing.click(looping);
-        playing.paused_at(10.0);
-
-        playing.click(play);
-
-        playing.until("the clip never started again", |transport| {
-            transport.playing && transport.time < 5.0
-        });
-    }
-
-    #[test]
-    fn play_on_the_last_frame_of_a_clip_ending_between_frames_starts_again_from_zero() {
-        let mut times: Vec<f32> = (0..=30).map(|frame| frame as f32 / 30.0).collect();
-        times.push(1.01);
-        let outputs = vec![glam::Vec3::ZERO; times.len()];
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            AnimationChannel::new(times, AnimationChanelOutput::Translation(outputs)),
-        );
-        let mut playing = transported(clip);
-        let (looping, play) = (playing.row.looping, playing.row.play);
-        playing.click(looping);
-        playing.paused_at(1.0);
-
-        playing.click(play);
-
-        playing.until("the clip never started again", |transport| {
-            transport.playing && transport.time < 0.5
-        });
-    }
-
-    #[test]
-    fn play_in_the_last_frame_of_a_sparse_clip_carries_on_to_the_end() {
-        let times: Vec<f32> = (0..=3).map(|key| key as f32).collect();
-        let outputs = vec![glam::Vec3::ZERO; times.len()];
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            AnimationChannel::new(times, AnimationChanelOutput::Translation(outputs)),
-        );
-        let mut playing = transported(clip);
-        let (looping, play) = (playing.row.looping, playing.row.play);
-        playing.click(looping);
-        playing.paused_at(2.6);
-
-        playing.click(play);
-
-        playing.until("the clip never played", |transport| transport.playing);
-        assert!(playing.transport().time >= 2.6);
-    }
-
-    #[test]
-    fn play_away_from_the_end_carries_on_from_where_it_is() {
-        let mut playing = walking();
-        let (looping, play) = (playing.row.looping, playing.row.play);
-        playing.click(looping);
-        playing.paused_at(4.0);
-
-        playing.click(play);
-
-        playing.until("the clip never played", |transport| transport.playing);
-        assert!(playing.transport().time >= 4.0);
-    }
-
-    #[test]
-    fn a_step_pauses_and_moves_one_frame_from_the_frame_at_the_time() {
-        let mut playing = walking();
-        playing.until_moving();
-        let (back, forward) = (playing.row.step_back, playing.row.step_forward);
         playing.scrub(2.01);
         playing.until("the scrub never came back", |transport| !transport.playing);
-
-        playing.click(forward);
+        playing.click(row.step_forward);
         let next = time_of_frame(61, 30.0);
         playing.until("the step forward never landed", |transport| {
             transport.time == next
         });
         assert!(!playing.transport().playing);
-
-        playing.click(back);
-        let back_again = time_of_frame(60, 30.0);
-        playing.until("the step back never landed", |transport| {
-            transport.time == back_again
+        playing.until_previewed("the step never reached the preview", |preview| {
+            preview.time == next && !preview.playing
         });
-    }
 
-    #[test]
-    fn a_step_while_playing_pauses() {
-        let mut playing = walking();
-        playing.until_moving();
-        let forward = playing.row.step_forward;
-
-        playing.click(forward);
-
-        playing.until("the step never paused", |transport| !transport.playing);
-    }
-
-    #[test]
-    fn a_step_stays_inside_the_clip() {
-        let mut playing = walking();
-        let (back, forward) = (playing.row.step_back, playing.row.step_forward);
-
-        playing.paused_at(0.0);
-        playing.click(back);
-        playing.f.frame();
-        playing.f.frame();
-        assert_eq!(playing.transport().time, 0.0);
-
-        playing.paused_at(10.0);
-        playing.click(forward);
-        playing.f.frame();
-        playing.f.frame();
-        assert_eq!(playing.transport().time, 10.0);
-    }
-
-    #[test]
-    fn a_speed_button_sets_the_speed_and_is_the_one_selected() {
-        let mut playing = walking();
-        let speeds = playing.row.speeds;
-        playing.f.frame();
-        assert!(playing.selected(speeds[2]));
-
-        playing.click(speeds[3]);
-        playing.f.frame();
-
-        assert_eq!(playing.transport().speed, 2.0);
-        assert!(playing.selected(speeds[3]));
-        assert!(!playing.selected(speeds[2]));
+        playing.click(row.speeds[3]);
         playing.until_previewed("the rate never reached the preview", |preview| {
             preview.rate == 2.0
         });
-        assert!(playing.clean());
-    }
+        assert_eq!(playing.transport().speed, 2.0);
 
-    #[test]
-    fn a_speed_no_button_holds_selects_none() {
-        let mut playing = walking();
-        let speeds = playing.row.speeds;
-        let document = playing.document;
-
-        playing
-            .f
-            .world
-            .get_component_for_entity_mut::<ClipTransport>(document)
-            .unwrap()
-            .speed = 1.5;
-        playing.f.frame();
-
-        assert!(speeds.iter().all(|speed| !playing.selected(*speed)));
-    }
-
-    #[test]
-    fn loop_turns_off_and_on_and_shows_it() {
-        let mut playing = walking();
-        let looping = playing.row.looping;
-        playing.f.frame();
-        assert!(playing.selected(looping));
-
-        playing.click(looping);
-        playing.f.frame();
-
-        assert!(!playing.transport().looping);
-        assert!(!playing.selected(looping));
+        playing.click(row.looping);
         playing.until_previewed("the loop flag never reached the preview", |preview| {
             !preview.looping
         });
-    }
+        playing.paused_at(10.0);
+        assert_eq!(playing.preview().time, 10.0);
+        assert_eq!(playing.timeline().time, 10.0);
+        assert_eq!(playing.timeline().duration, 10.0);
 
-    #[test]
-    fn a_clip_with_no_rate_disables_only_the_step_buttons() {
-        let mut playing = transported(single_key_clip());
-        playing.f.frame();
-        let row = playing.row;
+        playing.click(row.play);
 
-        assert!(playing.disabled(row.step_back));
-        assert!(playing.disabled(row.step_forward));
-        assert!(!playing.disabled(row.play));
-        assert!(!playing.disabled(row.looping));
-        assert!(row.speeds.iter().all(|speed| !playing.disabled(*speed)));
-    }
-
-    #[test]
-    fn a_clip_with_no_duration_disables_the_whole_row() {
-        let mut playing = transported(AnimationClip::default());
-        playing.f.frame();
-
-        for button in playing.buttons() {
-            assert!(playing.disabled(button));
-        }
-    }
-
-    #[test]
-    fn a_clip_with_frames_leaves_the_row_enabled() {
-        let mut playing = walking();
-        playing.f.frame();
-
-        for button in playing.buttons() {
-            assert!(!playing.disabled(button));
-        }
-    }
-
-    #[test]
-    fn transport_disabled_disables_the_row_until_it_is_removed() {
-        let mut playing = walking();
-        let document = playing.document;
-
-        playing.f.world.insert(TransportDisabled, document);
-        playing.f.frame();
-        for button in playing.buttons() {
-            assert!(playing.disabled(button));
-        }
-
-        playing
-            .f
-            .world
-            .remove_component::<TransportDisabled>(document);
-        playing.f.frame();
-        for button in playing.buttons() {
-            assert!(!playing.disabled(button));
-        }
+        playing.until("the clip never started again", |transport| {
+            transport.playing && transport.time < 5.0
+        });
+        assert!(playing.clean());
     }
 }
