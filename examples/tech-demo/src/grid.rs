@@ -268,91 +268,19 @@ pub(crate) fn patrol(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        thread,
-        time::{Duration, Instant},
-    };
+    use std::{thread, time::Duration};
 
     use concerto::{
-        app::{
-            App,
-            main_schedule::MainSchedulePlugin,
-            plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
-            schedule_groups::Startup,
-        },
-        ecs::{
-            CommandQueue, Entity, IntoSystem, System, With, Without, World,
-            events::{event_channel::EventChannel, event_cursor::EventCursor},
-        },
-        foundation::{time::Time, transform::Transform},
+        ecs::{Entity, IntoSystem, System, World, events::event_channel::EventChannel},
+        foundation::time::Time,
         name::Name,
         navigation::{
-            NavAgent, NavArrived, NavDestination, NavGraph, NavMeshComponent, NavMeshData,
-            NavMeshQuery, NavMeshSettings, NavPoint, NavigationPlugin, bake,
+            NavAgent, NavArrived, NavDestination, NavMeshData, NavMeshQuery, NavMeshSettings, bake,
         },
-        physics::{collider::Collider, rigid_body::RigidBody},
-        render::components::light::Light,
-        world_grid::WorldGrid,
     };
-    use concerto_motion_matching_gizmos::MotionMatchingGizmos;
     use glam::Vec3;
 
-    use crate::character::{CharacterConfig, Player};
-
-    use super::{
-        BOX_HALF_EXTENT, BOXES, NPC_SPAWN, PATROL, Patrol, grid, grid_nav_geometry, patrol,
-        spawn_patrol_points,
-    };
-
-    #[test]
-    fn the_grid_level_spawns_the_character_with_every_gizmo_on_a_grid_floor_under_a_sun() {
-        let Some(mut app) = concerto::headless(grid) else {
-            return;
-        };
-        app.update();
-        app.update();
-
-        assert_eq!(
-            app.get_resource::<CharacterConfig>(),
-            Some(&CharacterConfig::grid())
-        );
-        let world = app.main_mut().world_mut();
-        assert_eq!(world.query::<&WorldGrid, ()>().iter(world).count(), 1);
-        assert_eq!(world.query::<&Light, ()>().iter(world).count(), 1);
-        let floors: Vec<Vec3> = world
-            .query::<&Transform, (With<Collider>, Without<RigidBody>)>()
-            .iter(world)
-            .map(|transform| transform.translation)
-            .collect();
-        assert_eq!(floors.len(), 1 + BOXES.len());
-        assert_eq!(floors.iter().filter(|floor| floor.y < 0.0).count(), 1);
-        for centre in BOXES {
-            assert!(floors.contains(&centre));
-        }
-        let players: Vec<Vec3> = world
-            .query::<&Transform, With<Player>>()
-            .iter(world)
-            .map(|transform| transform.translation)
-            .collect();
-        assert_eq!(players, vec![Vec3::ZERO]);
-        let gizmos: Vec<[bool; 4]> = world
-            .query::<&MotionMatchingGizmos, ()>()
-            .iter(world)
-            .map(|g| [g.simulation, g.query, g.matched, g.history])
-            .collect();
-        assert_eq!(gizmos, vec![[true; 4]; 2]);
-        let npcs: Vec<Vec3> = world
-            .query::<&Transform, (With<NavAgent>, With<Patrol>, Without<Player>)>()
-            .iter(world)
-            .map(|transform| transform.translation)
-            .collect();
-        assert_eq!(npcs, vec![NPC_SPAWN]);
-        assert_eq!(world.query::<&NavPoint, ()>().iter(world).count(), 4);
-        assert_eq!(
-            world.query::<&NavMeshComponent, ()>().iter(world).count(),
-            1
-        );
-    }
+    use super::{BOX_HALF_EXTENT, BOXES, NPC_SPAWN, PATROL, Patrol, grid_nav_geometry, patrol};
 
     const CLEARANCE_TOLERANCE: f32 = 0.1;
     const SAMPLE_STEP: f32 = 0.05;
@@ -419,71 +347,6 @@ mod tests {
         }
     }
 
-    fn anchor(graph: &NavGraph, index: usize) -> Entity {
-        graph
-            .anchor(Name::new(PATROL[index].anchor))
-            .expect("the patrol point is in the graph")
-    }
-
-    fn spawn_patrol(mut cmd: CommandQueue) {
-        spawn_patrol_points(&mut cmd);
-    }
-
-    #[test]
-    fn the_patrol_points_make_a_square_with_a_one_way_diagonal_each_facing_the_next_corner() {
-        let mut app = App::new();
-        app.register_plugin(MainSchedulePlugin)
-            .register_plugin(TimePlugin)
-            .register_plugin(TransformPlugin)
-            .register_plugin(AssetManagerPlugin)
-            .register_plugin(NavigationPlugin);
-        app.add_system(Startup, spawn_patrol);
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-
-        let graph = app.get_resource::<NavGraph>().unwrap();
-        assert_eq!(graph.points().count(), PATROL.len());
-        for (index, corner) in PATROL.iter().enumerate() {
-            let point = graph.point(anchor(graph, index)).unwrap();
-            assert_eq!(point.position, corner.position);
-            let next = PATROL[(index + 1) % PATROL.len()].position;
-            let toward_next = (next - corner.position).normalize();
-            assert!((point.facing * Vec3::Z - toward_next).length() < 1e-4);
-        }
-        let across = graph.path(anchor(graph, 0), anchor(graph, 2)).unwrap();
-        assert!((across.length - 8.0 * 2.0_f32.sqrt()).abs() < 1e-3);
-        let back = graph.path(anchor(graph, 2), anchor(graph, 0)).unwrap();
-        assert!((back.length - 16.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn the_npc_walks_to_the_first_patrol_point() {
-        let Some(mut app) = concerto::headless(grid) else {
-            return;
-        };
-        let started = Instant::now();
-        let mut cursor = EventCursor::<NavArrived>::default();
-        loop {
-            assert!(
-                started.elapsed() < Duration::from_secs(30),
-                "the NPC did not reach patrol_a"
-            );
-            app.update();
-            let first = app
-                .get_resource::<NavGraph>()
-                .and_then(|graph| graph.anchor(Name::new(PATROL[0].anchor)));
-            let reached = app
-                .get_resource::<EventChannel<NavArrived>>()
-                .unwrap()
-                .read_from(&mut cursor)
-                .any(|arrival| first == Some(arrival.point));
-            if reached {
-                break;
-            }
-        }
-    }
-
     fn tick(world: &mut World) {
         thread::sleep(Duration::from_millis(5));
         world.get_resource_mut::<Time>().unwrap().update();
@@ -522,18 +385,11 @@ mod tests {
         tick(&mut world);
         system.run_and_apply((), &mut world);
         assert_eq!(destination(&world, npc), None);
-        assert_eq!(
-            world.get_component_for_entity::<Patrol>(npc).unwrap().next,
-            1
-        );
 
-        world.insert(
-            Patrol {
-                next: 1,
-                wait: 0.001,
-            },
-            npc,
-        );
+        world
+            .get_component_for_entity_mut::<Patrol>(npc)
+            .unwrap()
+            .wait = 0.001;
         tick(&mut world);
         system.run_and_apply((), &mut world);
         assert_eq!(

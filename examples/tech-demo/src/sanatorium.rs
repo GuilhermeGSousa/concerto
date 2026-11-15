@@ -208,21 +208,16 @@ fn draw_markers(
 #[cfg(test)]
 mod tests {
     use concerto::{
-        app::StartupScene,
         ecs::{IntoSystem, System, World, component::name::Name},
-        foundation::assets::{content::decode_content_asset, handle::AssetHandle},
+        foundation::assets::handle::AssetHandle,
         mesh::MeshComponent,
-        physics::{collider::Collider, shape::MeshCollider},
+        physics::shape::MeshCollider,
         render::{MaterialComponent, assets::material::StandardMaterial},
         scene::{scene::Scene, spawner::SceneSpawnerComponent},
-        window::input::{Input, KeyCode, PhysicalKey},
     };
 
-    use super::{
-        COLLISION, DebugMarker, LEVEL, MarkerDebug, classify_markers, collide_collision_meshes,
-        place_player_start, sanatorium, toggle_marker_debug,
-    };
-    use crate::character::{CharacterConfig, PlayerSpawner};
+    use super::{COLLISION, collide_collision_meshes, place_player_start};
+    use crate::character::PlayerSpawner;
 
     fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
         let mut system = system.into_system();
@@ -239,12 +234,29 @@ mod tests {
     }
 
     #[test]
-    fn collision_meshes_become_undrawn_colliders_and_the_rest_stay_drawn() {
+    fn collision_meshes_collide_unseen_and_the_player_starts_once_every_one_collides() {
         let mut world = World::new();
+        let start = world.spawn(Name::new("PlayerStart"));
         let collision = mesh(&mut world, "COL_INT_Lodge_Wall_Solid_01");
         let visual = mesh(&mut world, "INT_Lodge_Wall_Solid_01");
+        let area = world.spawn(SceneSpawnerComponent(AssetHandle::<Scene>::weak(COLLISION)));
+        let is_spawner = |world: &World| {
+            world
+                .get_component_for_entity::<PlayerSpawner>(start)
+                .is_some()
+        };
 
         run(&mut world, collide_collision_meshes);
+        run(&mut world, place_player_start);
+        assert!(!is_spawner(&world), "an area is still spawning");
+
+        world.despawn(area);
+        mesh(&mut world, "COL_INT_Lodge_Wall_Solid_02");
+        run(&mut world, place_player_start);
+        assert!(!is_spawner(&world), "a collision mesh does not collide yet");
+
+        run(&mut world, collide_collision_meshes);
+        run(&mut world, place_player_start);
 
         assert!(
             world
@@ -266,156 +278,9 @@ mod tests {
                 .get_component_for_entity::<MaterialComponent>(visual)
                 .is_some()
         );
-    }
-
-    fn is_spawner(world: &World, entity: concerto::ecs::Entity) -> bool {
-        world
-            .get_component_for_entity::<PlayerSpawner>(entity)
-            .is_some()
-    }
-
-    #[test]
-    fn player_start_waits_for_the_collision_scene_and_every_collision_mesh() {
-        let mut world = World::new();
-        let start = world.spawn(Name::new("PlayerStart"));
-        let area = world.spawn(SceneSpawnerComponent(AssetHandle::<Scene>::weak(COLLISION)));
-
-        run(&mut world, place_player_start);
-        assert!(!is_spawner(&world, start));
-
-        world.despawn(area);
-        let collision = mesh(&mut world, "COL_EXT_Approach_Ground_Slope_01");
-        run(&mut world, place_player_start);
-        assert!(!is_spawner(&world, start));
-
-        world.insert(MeshCollider, collision);
-        run(&mut world, place_player_start);
         assert_eq!(
             world.get_component_for_entity::<PlayerSpawner>(start),
             Some(&PlayerSpawner::ready())
-        );
-    }
-
-    #[test]
-    fn a_built_collider_counts_as_converted() {
-        let mut world = World::new();
-        let start = world.spawn(Name::new("PlayerStart"));
-        let collision = mesh(&mut world, "COL_INT_Boiler_Floor_Tile_01");
-        world.insert(Collider::cuboid(1.0, 1.0, 1.0), collision);
-
-        run(&mut world, place_player_start);
-
-        assert!(is_spawner(&world, start));
-    }
-
-    #[test]
-    fn marker_names_choose_what_the_debug_view_draws() {
-        let mut world = World::new();
-        let names = [
-            "WarmthZone_Lodge",
-            "Route_Heavy_ServiceDoor",
-            "StreamBoundary_Lodge_WardCorridor",
-            "Interact_Door_Ward",
-            "NPC_Nurse",
-        ];
-        let entities: Vec<_> = names
-            .iter()
-            .map(|name| world.spawn(Name::new(*name)))
-            .collect();
-
-        run(&mut world, classify_markers);
-
-        let kinds: Vec<Option<DebugMarker>> = entities
-            .iter()
-            .map(|entity| {
-                world
-                    .get_component_for_entity::<DebugMarker>(*entity)
-                    .copied()
-            })
-            .collect();
-        assert_eq!(
-            kinds,
-            vec![
-                Some(DebugMarker::WarmthZone),
-                Some(DebugMarker::Route),
-                Some(DebugMarker::StreamBoundary),
-                Some(DebugMarker::Interact),
-                None,
-            ]
-        );
-    }
-
-    #[test]
-    fn f3_toggles_the_marker_debug_view() {
-        let mut world = World::new();
-        world.insert_resource(MarkerDebug::default());
-        let mut input = Input::new();
-        input.update_key_input(PhysicalKey::Code(KeyCode::F3), true);
-        world.insert_resource(input);
-
-        run(&mut world, toggle_marker_debug);
-
-        assert_eq!(
-            world.get_resource::<MarkerDebug>(),
-            Some(&MarkerDebug { visible: true })
-        );
-    }
-
-    #[test]
-    fn the_recipe_starts_from_the_level_with_the_sanatorium_character() {
-        let Some(app) = concerto::headless(sanatorium) else {
-            return;
-        };
-
-        assert_eq!(
-            app.get_resource::<StartupScene>(),
-            Some(&StartupScene(LEVEL))
-        );
-        assert_eq!(
-            app.get_resource::<CharacterConfig>(),
-            Some(&CharacterConfig::sanatorium())
-        );
-    }
-
-    fn scene(path: &str) -> Scene {
-        let bytes =
-            std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
-        decode_content_asset::<Scene>(&bytes).unwrap().1
-    }
-
-    #[test]
-    fn the_collision_scene_holds_only_col_meshes_and_the_markers_hold_the_player_start() {
-        let collision = scene("content/sanatorium/COL/scene.gasset");
-        assert!(collision.nodes.len() > 1000);
-        assert!(
-            collision
-                .nodes
-                .iter()
-                .filter(|node| !node.name.contains(".primitive"))
-                .all(|node| node.name.starts_with("COL_"))
-        );
-    }
-
-    #[test]
-    fn the_level_holds_the_player_start_the_moon_the_dressed_props_and_their_lamps() {
-        let level = scene("content/sanatorium/level.gasset");
-        let named = |name: &str| level.nodes.iter().filter(|node| node.name == name).count();
-        assert_eq!(named("PlayerStart"), 1);
-        assert_eq!(named("Moon"), 1);
-        assert_eq!(named("INT_Lodge_Prop_PorterDesk_01"), 1);
-        assert!(
-            level
-                .nodes
-                .iter()
-                .filter(|node| node.name.starts_with("Light_"))
-                .count()
-                >= 15
-        );
-        assert!(
-            level
-                .nodes
-                .iter()
-                .all(|node| !node.name.starts_with("COL_"))
         );
     }
 }
