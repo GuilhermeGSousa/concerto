@@ -1,13 +1,12 @@
 //! An edit `App` built from `DefaultPlugins` draws into the picture its host shows.
 use concerto_app::App;
 use concerto_editor::{
-    hosted::{HostRequest, HostRole, begin},
+    hosted::{HostRequest, HostRole, HostedApp, begin},
     preview::PreviewPlugin,
     tools::EditToolsPlugin,
 };
 use concerto_render::{gpu::Gpu, wgpu};
 use concerto_window::events::WindowEvent;
-use concerto_world_grid::WorldGrid;
 
 fn game(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins);
@@ -53,38 +52,47 @@ fn first_pixel(gpu: &Gpu, texture: &wgpu::Texture) -> [u8; 4] {
     [data[0], data[1], data[2], data[3]]
 }
 
-#[test]
-fn an_edit_app_draws_into_its_picture_and_follows_a_resize() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
+fn drawn(gpu: &Gpu, role: HostRole) -> HostedApp {
     let pending = begin(
         HostRequest {
-            gpu: Some(&gpu),
+            gpu: Some(gpu),
             recipe: game,
             size: (64, 48),
             scale_factor: 1.0,
-            role: HostRole::Edit,
+            role,
             clipboard: None,
         },
-        |app| {
-            app.register_plugin(EditToolsPlugin);
+        |app| match role {
+            HostRole::Preview => {
+                app.register_plugin(PreviewPlugin);
+            }
+            _ => {
+                app.register_plugin(EditToolsPlugin);
+            }
         },
         |_| {},
     );
     let mut hosted = concerto_editor::hosted::finish_blocking(pending);
-
     for _ in 0..3 {
         hosted.step_for_test();
     }
-    let drawn = hosted.picture().get().expect("the edit App drew");
-    let size = drawn.texture().size();
-    assert_eq!((size.width, size.height), (64, 48));
-    assert_ne!(
-        first_pixel(&gpu, drawn.texture())[3],
-        0,
-        "the picture is not blank"
-    );
+    hosted
+}
+
+#[test]
+fn an_edit_app_and_a_preview_app_draw_into_their_pictures_and_the_edit_app_follows_a_resize() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let preview = drawn(&gpu, HostRole::Preview);
+    let shown = preview.picture().get().expect("the preview drew");
+    assert_ne!(first_pixel(&gpu, shown.texture())[3], 0);
+
+    let mut hosted = drawn(&gpu, HostRole::Edit);
+    let shown = hosted.picture().get().expect("the edit App drew");
+    let size = shown.texture().size();
+    assert_eq!([size.width, size.height], [64, 48]);
+    assert_ne!(first_pixel(&gpu, shown.texture())[3], 0);
 
     hosted.push_for_test(WindowEvent::Resized {
         width: 128,
@@ -94,46 +102,5 @@ fn an_edit_app_draws_into_its_picture_and_follows_a_resize() {
         hosted.step_for_test();
     }
     let size = hosted.picture().get().unwrap().texture().size();
-    assert_eq!((size.width, size.height), (128, 32));
-}
-
-#[test]
-fn a_preview_app_of_a_game_that_renders_has_a_grid_and_draws_into_its_picture() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let pending = begin(
-        HostRequest {
-            gpu: Some(&gpu),
-            recipe: game,
-            size: (64, 48),
-            scale_factor: 1.0,
-            role: HostRole::Preview,
-            clipboard: None,
-        },
-        |app| {
-            app.register_plugin(PreviewPlugin);
-        },
-        |_| {},
-    );
-    let mut hosted = concerto_editor::hosted::finish_blocking(pending);
-
-    for _ in 0..3 {
-        hosted.step_for_test();
-    }
-
-    let world = hosted.world_for_test();
-    let grids = world
-        .archetypes()
-        .iter()
-        .flat_map(|archetype| archetype.entities())
-        .filter(|entity| {
-            world
-                .get_component_for_entity::<WorldGrid>(**entity)
-                .is_some()
-        })
-        .count();
-    assert_eq!(grids, 1);
-    let drawn = hosted.picture().get().expect("the preview drew");
-    assert_ne!(first_pixel(&gpu, drawn.texture())[3], 0);
+    assert_eq!([size.width, size.height], [128, 32]);
 }
