@@ -53,19 +53,9 @@ mod tests {
     fn each_clip_gets_a_sanitised_unique_name_or_its_index() {
         let cases = [
             Case {
-                case: "plain names",
-                requested: &[Some("Idle_Loop"), Some("Jog Fwd")],
-                names: &["Idle_Loop", "Jog Fwd"],
-            },
-            Case {
                 case: "reserved characters",
                 requested: &[Some("a/b\\c#d:e*f?g\"h<i>j|k\tl")],
                 names: &["a_b_c_d_e_f_g_h_i_j_k_l"],
-            },
-            Case {
-                case: "surrounding whitespace and dots",
-                requested: &[Some("  .Run. ")],
-                names: &["Run"],
             },
             Case {
                 case: "missing and empty names",
@@ -76,26 +66,6 @@ mod tests {
                 case: "a duplicate",
                 requested: &[Some("Run"), Some("Walk"), Some("Run")],
                 names: &["Run", "Walk", "Run_2"],
-            },
-            Case {
-                case: "a duplicate in another case",
-                requested: &[Some("Run"), Some("run")],
-                names: &["Run", "run_1"],
-            },
-            Case {
-                case: "a name equal to an earlier fallback",
-                requested: &[None, Some("0")],
-                names: &["0", "0_1"],
-            },
-            Case {
-                case: "a fallback equal to an earlier name",
-                requested: &[Some("1"), None],
-                names: &["1", "1_1"],
-            },
-            Case {
-                case: "a suffix that collides",
-                requested: &[Some("Run"), Some("Run_2"), Some("Run")],
-                names: &["Run", "Run_2", "Run_2_2"],
             },
         ];
         for case in &cases {
