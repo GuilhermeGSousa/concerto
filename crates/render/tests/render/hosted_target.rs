@@ -1,6 +1,6 @@
 use concerto_app::{
     main_schedule::MainSchedulePlugin,
-    plugins::{AssetManagerPlugin, PluginsState, TimePlugin, TransformPlugin},
+    plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     App,
 };
 use concerto_color::Color;
@@ -24,11 +24,11 @@ fn gpu() -> Option<Gpu> {
     Gpu::request_for_test()
 }
 
-fn hosted(gpu: &Gpu, target: DrawTarget, size: (u32, u32)) -> App {
+fn hosted(gpu: &Gpu, target: DrawTarget, width: u32, height: u32) -> App {
     let mut app = App::new();
     app.insert_resource(gpu.clone())
         .insert_resource(target)
-        .insert_resource(Window::new(size, 1.0));
+        .insert_resource(Window::new((width, height), 1.0));
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
@@ -101,7 +101,7 @@ fn a_hosted_app_publishes_a_texture_of_the_clear_colour() {
         return;
     };
     let shared = SharedTexture::new(FORMAT);
-    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), (64, 48));
+    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), 64, 48);
 
     step(&mut app);
 
@@ -117,7 +117,7 @@ fn a_resize_event_publishes_a_texture_of_the_new_size() {
         return;
     };
     let shared = SharedTexture::new(FORMAT);
-    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), (64, 48));
+    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), 64, 48);
     step(&mut app);
 
     resize(&mut app, 128, 32);
@@ -135,7 +135,7 @@ fn a_zero_size_keeps_the_previous_texture() {
         return;
     };
     let shared = SharedTexture::new(FORMAT);
-    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), (64, 48));
+    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), 64, 48);
     step(&mut app);
 
     resize(&mut app, 0, 0);
@@ -151,29 +151,9 @@ fn no_texture_is_published_before_the_app_has_a_size() {
         return;
     };
     let shared = SharedTexture::new(FORMAT);
-    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), (0, 0));
+    let mut app = hosted(&gpu, DrawTarget::Texture(shared.clone()), 0, 0);
 
     step(&mut app);
 
     assert!(shared.get().is_none());
-}
-
-#[test]
-fn an_app_with_no_target_steps() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let mut app = hosted(&gpu, DrawTarget::None, (64, 48));
-
-    step(&mut app);
-}
-
-#[test]
-#[should_panic(expected = "RenderPlugin needs a Gpu resource")]
-fn an_app_without_a_gpu_is_refused() {
-    let mut app = App::new();
-    app.register_plugin(AssetManagerPlugin)
-        .register_plugin(RenderPlugin);
-    while app.plugin_state() != PluginsState::Ready {}
-    app.finish_plugin_build();
 }

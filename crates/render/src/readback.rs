@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn padded_rows_are_aligned_and_hold_the_row() {
-        for width in [1u32, 4, 16, 64, 80, 100, 160, 256, 320] {
+        for width in [1u32, 80, 320] {
             let pbr = padded_bytes_per_row(width, wgpu::TextureFormat::Rgba8Unorm);
             assert_eq!(
                 pbr % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,

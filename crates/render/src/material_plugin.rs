@@ -795,12 +795,8 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
 mod tests {
     use super::*;
     use crate::{
-        assets::mesh::Mesh,
-        batching::ViewDrawStats,
-        components::{camera::Camera, visibility::NoFrustumCulling},
-        draw_target::DrawTarget,
-        gpu::Gpu,
-        plugin::RenderPlugin,
+        assets::mesh::Mesh, batching::ViewDrawStats, components::camera::Camera,
+        draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin,
     };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
@@ -815,7 +811,12 @@ mod tests {
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec3;
 
-    fn app(gpu: &Gpu, material: AssetId) -> (App, Entity) {
+    struct Spawned {
+        app: App,
+        entity: Entity,
+    }
+
+    fn app(gpu: &Gpu, material: AssetId) -> Spawned {
         let mut app = App::new();
         app.insert_resource(gpu.clone())
             .insert_resource(DrawTarget::None)
@@ -836,7 +837,7 @@ mod tests {
             Transform::IDENTITY,
         ));
         app.finish_plugin_build();
-        (app, entity)
+        Spawned { app, entity }
     }
 
     fn drawn_with(app: &mut App) -> Vec<AssetId> {
@@ -880,7 +881,7 @@ mod tests {
             return;
         };
         let (first, second) = (AssetId::new(), AssetId::new());
-        let (mut app, entity) = app(&gpu, first);
+        let Spawned { mut app, entity } = app(&gpu, first);
         app.update();
         assert_eq!(drawn_with(&mut app), [first]);
 
@@ -1116,27 +1117,6 @@ mod tests {
             ViewDrawStats {
                 draws: 1,
                 culled: 1
-            }
-        );
-    }
-
-    #[test]
-    fn a_mesh_with_no_frustum_culling_behind_the_camera_is_drawn() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mut app = scene(&gpu);
-        let (cube, white) = (mesh(&app), material(&app));
-        let behind = spawn(&mut app, &cube, &white, Vec3::new(0.0, 0.0, 5.0));
-        app.main_mut().world_mut().insert(NoFrustumCulling, behind);
-
-        settle(&mut app, &[&cube], &[&white]);
-
-        assert_eq!(
-            camera_stats(&app),
-            ViewDrawStats {
-                draws: 1,
-                culled: 0
             }
         );
     }

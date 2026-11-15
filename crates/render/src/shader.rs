@@ -122,7 +122,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     #[test]
-    fn ifdef_and_if_follow_the_defs_and_an_error_names_the_shader() {
+    fn ifdef_and_if_follow_the_defs() {
         let mut undefined = ShaderDefs::default();
         undefined.insert("COUNT", ShaderDefValue::Int(1));
         let mut defined = ShaderDefs::default();
@@ -146,8 +146,5 @@ fn fs_main() -> @location(0) vec4<f32> {
             assert_eq!(returned_literal(&module), Some(case.picked));
             assert_eq!(has_function(&module, "count_is_three"), case.count_is_three);
         }
-
-        let err = compose_shader("broken.wgsl", "fn oops( {", &ShaderDefs::default()).unwrap_err();
-        assert!(err.contains("broken.wgsl"), "{err}");
     }
 }

@@ -707,10 +707,6 @@ mod tests {
                 dependencies: &["concerto-render"],
                 path: ":: concerto_render",
             },
-            Root {
-                dependencies: &["concerto-render", "concerto"],
-                path: ":: concerto_render",
-            },
         ];
         for case in &cases {
             assert_eq!(

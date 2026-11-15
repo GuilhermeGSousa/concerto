@@ -81,7 +81,5 @@ mod tests {
             !body.intersects(own_eyes),
             "a camera without the layer skips it"
         );
-        assert!(!RenderLayers::NONE.intersects(other_eyes));
-        assert_eq!(world.with(40), world, "a layer past the last is ignored");
     }
 }

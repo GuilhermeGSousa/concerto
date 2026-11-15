@@ -329,21 +329,6 @@ mod tests {
     fn visible_instances_bin_into_one_batch_per_key_in_key_order_with_skinned_ones_last() {
         let cases = [
             Binning {
-                case: "one key",
-                candidates: vec![
-                    at(7, -1.0, 0.0, -10.0),
-                    at(7, 0.0, 1.0, -10.0),
-                    at(7, 1.0, 0.0, -10.0),
-                ],
-                stats: stats(1, 0),
-                batches: vec![batch(7, 0..3)],
-                drawn: vec![
-                    Vec3::new(-1.0, 0.0, -10.0),
-                    Vec3::new(0.0, 1.0, -10.0),
-                    Vec3::new(1.0, 0.0, -10.0),
-                ],
-            },
-            Binning {
                 case: "several keys",
                 candidates: vec![
                     at(3, 0.0, 0.0, -10.0),

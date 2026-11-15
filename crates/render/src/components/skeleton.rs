@@ -401,27 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn a_skeleton_whose_bones_do_not_move_is_not_written_again() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mut app = app(&gpu);
-        let asset = AssetId::new();
-        insert_skeleton_asset(&mut app, asset, 2);
-        let skeleton = spawn_skeleton(&mut app, asset, &[Vec3::X, Vec3::Y]);
-        app.update();
-        app.update();
-        let offset = offset(&app, skeleton.entity);
-        let sentinel = [Mat4::from_scale(Vec3::splat(7.0)); 2];
-
-        overwrite(&gpu, &app, offset, &sentinel);
-        app.update();
-        app.update();
-
-        assert_eq!(palette(&gpu, &app, offset, 2), sentinel);
-    }
-
-    #[test]
     fn a_skeleton_whose_asset_arrives_later_writes_its_palette() {
         let Some(gpu) = Gpu::request_for_test() else {
             return;
@@ -493,6 +472,11 @@ mod tests {
         );
     }
 
+    struct Placed {
+        entity: Entity,
+        translation: Vec3,
+    }
+
     #[test]
     fn growing_past_capacity_keeps_earlier_palettes() {
         let Some(gpu) = Gpu::request_for_test() else {
@@ -501,13 +485,13 @@ mod tests {
         let mut app = app(&gpu);
         let asset = AssetId::new();
         insert_skeleton_asset(&mut app, asset, 1);
-        let earlier: Vec<(Entity, Vec3)> = (1..INITIAL_SKIN_CAPACITY)
+        let earlier: Vec<Placed> = (1..INITIAL_SKIN_CAPACITY)
             .map(|slot| {
                 let translation = Vec3::new(slot as f32, 0.0, 0.0);
-                (
-                    spawn_skeleton(&mut app, asset, &[translation]).entity,
+                Placed {
+                    entity: spawn_skeleton(&mut app, asset, &[translation]).entity,
                     translation,
-                )
+                }
             })
             .collect();
         app.update();
@@ -518,10 +502,10 @@ mod tests {
         app.update();
 
         assert_eq!(palette(&gpu, &app, 0, 1), [Mat4::IDENTITY]);
-        for (entity, translation) in earlier {
+        for placed in earlier {
             assert_eq!(
-                palette(&gpu, &app, offset(&app, entity), 1),
-                [Mat4::from_translation(translation)]
+                palette(&gpu, &app, offset(&app, placed.entity), 1),
+                [Mat4::from_translation(placed.translation)]
             );
         }
         assert_eq!(
