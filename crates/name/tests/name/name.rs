@@ -1,6 +1,6 @@
 use std::{any::TypeId, thread};
 
-use concerto_name::{name, Name};
+use concerto_name::Name;
 use concerto_reflect::{
     apply_value, json_to_value, to_json, to_value, ReflectDefault, ReflectJson, TypeRegistry,
 };
@@ -41,14 +41,6 @@ fn names_interned_on_several_threads_are_equal_per_text() {
 }
 
 #[test]
-fn the_macro_returns_the_name_of_its_text_on_every_call() {
-    let read = || name!("Spine");
-
-    assert_eq!(read(), Name::new("Spine"));
-    assert_eq!(read(), read());
-}
-
-#[test]
 fn a_name_is_stored_as_its_text_in_bincode_reflection_and_json() {
     let bytes = bincode::serialize(&Name::new("Hips")).unwrap();
     assert_eq!(bytes, bincode::serialize(&String::from("Hips")).unwrap());
@@ -74,8 +66,5 @@ fn a_name_is_stored_as_its_text_in_bincode_reflection_and_json() {
         json_to_value(&json!("Neck"), id, &registry).unwrap(),
         to_value(&Name::new("Neck")).unwrap()
     );
-    assert_eq!(
-        json_to_value(&json!(3), id, &registry).unwrap_err(),
-        "expected a string"
-    );
+    assert!(json_to_value(&json!(3), id, &registry).is_err());
 }

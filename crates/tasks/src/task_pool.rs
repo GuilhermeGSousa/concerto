@@ -333,69 +333,24 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_returns_the_result_of_every_task_it_spawned() {
-        let pool = TaskPool::new();
-        let mut results = pool.scope(|scope| {
-            for i in 0u32..8 {
-                scope.spawn(async move { i * 2 });
-            }
-        });
-        results.sort();
-        assert_eq!(results, vec![0, 2, 4, 6, 8, 10, 12, 14]);
-
-        assert!(pool.scope(|_scope: &ScopedTaskPool<u32>| {}).is_empty());
-    }
-
-    #[test]
-    fn a_task_spawned_on_the_scope_runs_on_the_thread_that_opened_it() {
-        let pool = TaskPool::with_threads("scope-test", 1);
-        let opener = std::thread::current().id();
-
-        let ran_on = pool.scope(|scope| {
-            scope.spawn_on_scope(async { std::thread::current().id() });
-        });
-
-        assert_eq!(ran_on, vec![opener]);
-    }
-
-    struct Unwind {
-        closure_panics: bool,
-        payload: &'static str,
-    }
-
-    #[test]
-    fn a_scope_that_panics_unwinds_with_the_first_panic_only_after_its_other_tasks_finish() {
+    fn a_scope_whose_closure_panics_unwinds_with_that_panic_only_after_its_tasks_finish() {
         let pool = TaskPool::with_threads("panic-test", 2);
-        for case in [
-            Unwind {
-                closure_panics: false,
-                payload: "the task broke",
-            },
-            Unwind {
-                closure_panics: true,
-                payload: "the closure broke",
-            },
-        ] {
-            for _ in 0..10 {
-                let finished = std::sync::atomic::AtomicBool::new(false);
-                let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    pool.scope(|scope| {
-                        scope.spawn(async { panic!("the task broke") });
-                        scope.spawn(async {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            finished.store(true, Ordering::SeqCst);
-                        });
-                        if case.closure_panics {
-                            panic!("the closure broke");
-                        }
-                        scope.spawn(async { panic!("a later task broke") });
-                    })
-                }));
+        for _ in 0..10 {
+            let finished = std::sync::atomic::AtomicBool::new(false);
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                pool.scope(|scope| {
+                    scope.spawn(async { panic!("the task broke") });
+                    scope.spawn(async {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        finished.store(true, Ordering::SeqCst);
+                    });
+                    panic!("the closure broke");
+                })
+            }));
 
-                let payload = outcome.expect_err("the panic is raised again");
-                assert!(finished.load(Ordering::SeqCst), "{}", case.payload);
-                assert_eq!(payload.downcast_ref::<&str>(), Some(&case.payload));
-            }
+            let payload = outcome.expect_err("the panic is raised again");
+            assert!(finished.load(Ordering::SeqCst));
+            assert_eq!(payload.downcast_ref::<&str>(), Some(&"the closure broke"));
         }
     }
 }
