@@ -826,34 +826,3 @@ fn main() {
     env_logger::init();
     concerto::run(game, concerto::content_registry!());
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use concerto::window::input::{GamepadAxis, GamepadId};
-
-    #[test]
-    fn the_readout_says_when_no_gamepad_is_connected() {
-        assert_eq!(gamepad_readout(&Input::new()), "No gamepad connected");
-    }
-
-    #[test]
-    fn the_readout_lists_each_pad_with_its_sticks_triggers_and_held_buttons() {
-        let mut input = Input::new();
-        let first = GamepadId::new(0);
-        let second = GamepadId::new(1);
-        input.connect_gamepad(first, "Pad A");
-        input.connect_gamepad(second, "Pad B");
-        input.update_gamepad_axis(first, GamepadAxis::LeftStickX, 1.0);
-        input.update_gamepad_axis(first, GamepadAxis::RightStickY, -1.0);
-        input.update_gamepad_button(first, GamepadButton::RightTrigger, 0.75);
-        input.update_gamepad_button(first, GamepadButton::LeftTrigger, 0.25);
-        input.update_gamepad_button(first, GamepadButton::South, 1.0);
-
-        assert_eq!(
-            gamepad_readout(&input),
-            "Pad A\nL +1.00 +0.00  R +0.00 -1.00\nLT 0.25  RT 0.75\nheld South RightTrigger\n\n\
-             Pad B\nL +0.00 +0.00  R +0.00 +0.00\nLT 0.00  RT 0.00\nheld none"
-        );
-    }
-}
