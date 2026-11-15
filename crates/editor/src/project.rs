@@ -112,17 +112,6 @@ impl ProjectState {
             format!("{summary} · {}", self.status)
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn begin_job_for_test(&mut self, release: std::sync::mpsc::Receiver<()>) {
-        self.job = Some(ProjectJob {
-            root: PathBuf::new(),
-            worker: std::thread::spawn(move || {
-                let _ = release.recv();
-                Ok(None)
-            }),
-        });
-    }
 }
 
 pub struct ProjectPlugin;
