@@ -960,19 +960,25 @@ impl AnimationGraphStates {
 
 #[cfg(test)]
 mod tests {
+    use concerto_ecs::resource::{Res, Resource};
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_mesh::Skeleton;
-
-    use glam::Mat4;
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use glam::{Mat4, Vec3};
     use uuid::Uuid;
 
     use super::{AnimationGraph, AnimationGraphState};
     use crate::{
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        evaluation::AnimationGraphContext,
         mask::{BoneMask, BoneMaskBranch},
-        node::{AnimationClipNode, LayerNode, LayerSpace},
-        pose::{FramePool, JointPose},
+        node::{
+            AnimationClipNode, AnimationNode, BlendNode, InputSlots, LayerNode, LayerSpace,
+            ReflectAnimationNode,
+        },
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
         testing::{Walks, made_live},
     };
 
@@ -1098,5 +1104,136 @@ mod tests {
 
         assert_base_then_overlay(&layered.evaluate(built));
         assert_base_then_overlay(&layered.evaluate(loaded));
+    }
+
+    const REST_X: f32 = 3.0;
+
+    #[derive(Resource)]
+    struct NeverRegistered;
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct NeverCreated {}
+
+    impl AnimationNode for NeverCreated {
+        type State = ();
+        type CreateInput = Res<'static, NeverRegistered>;
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
+
+        fn create_state(&self, _: &Res<NeverRegistered>, _context: &AnimationGraphContext<'_>) {}
+
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut (),
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+        }
+
+        fn reset(&self, _: &mut ()) {}
+    }
+
+    fn live_with_never_created(mut graph: AnimationGraph) -> AnimationGraph {
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<NeverCreated>();
+        graph.make_live(&registry, None).unwrap();
+        graph
+    }
+
+    impl Layered {
+        fn hip_over_rest(
+            &mut self,
+            initialized_on: AnimationGraph,
+            swapped_for: Option<AnimationGraph>,
+        ) -> f32 {
+            let id = AssetId::from_path("stateless_graph");
+            self.walks
+                .graphs_mut()
+                .insert(id, live_with_never_created(initialized_on));
+            let blackboard = AnimationBlackboard::default();
+            let skeleton = skeleton();
+            let mut state = AnimationGraphState::default();
+            self.walks.create(&blackboard, |context| {
+                state.initialize(AssetHandle::weak(id), self.walks.graphs(), context)
+            });
+            if let Some(graph) = swapped_for {
+                self.walks
+                    .graphs_mut()
+                    .insert(id, live_with_never_created(graph));
+            }
+            let walks = &self.walks;
+            let rest = vec![
+                JointPose {
+                    translation: Vec3::X * REST_X,
+                    ..JointPose::IDENTITY
+                };
+                2
+            ];
+            let mut pool = FramePool::new(skeleton.bone_count());
+            pool.set_rest(&rest);
+            let mut output = pool.acquire();
+            let mut hip = 0.0;
+            for _ in 0..2 {
+                let evaluated =
+                    walks.evaluate_with(&blackboard, None, Some(&skeleton), |context| {
+                        state.evaluate(
+                            walks.graphs(),
+                            context,
+                            &skeleton.bone_ids,
+                            &mut pool,
+                            &mut output,
+                        )
+                    });
+                assert!(evaluated, "the graph evaluated");
+                hip = output.joints()[0].translation.x;
+            }
+            hip
+        }
+    }
+
+    #[test]
+    fn a_node_with_no_state_gives_its_parent_the_rest_pose() {
+        let mut layered = Layered::new();
+        let mut never_created = AnimationGraph::new();
+        never_created
+            .result_node()
+            .add_input_with(BlendNode {}, |mut blend| {
+                blend
+                    .add_input(AnimationClipNode::new(layered.base.clone()))
+                    .add_input(NeverCreated {});
+            });
+        let one_clip = AnimationGraph::from_node(AnimationClipNode::new(layered.base.clone()));
+        let mut two_clips = AnimationGraph::new();
+        two_clips
+            .result_node()
+            .add_input_with(BlendNode {}, |mut blend| {
+                blend
+                    .add_input(AnimationClipNode::new(layered.base.clone()))
+                    .add_input(AnimationClipNode::new(layered.overlay.clone()));
+            });
+
+        let beside_a_clip = layered.hip_over_rest(never_created, None);
+        let after_a_swap = layered.hip_over_rest(one_clip, Some(two_clips));
+
+        assert!(
+            (beside_a_clip - (BASE_X + REST_X) / 2.0).abs() < 1e-6,
+            "the blend mixes the clip with the rest pose of the node that has no state, got {beside_a_clip}"
+        );
+        assert!(
+            (after_a_swap - REST_X).abs() < 1e-6,
+            "a graph swapped under the states of a smaller one gives the rest pose, got {after_a_swap}"
+        );
     }
 }
