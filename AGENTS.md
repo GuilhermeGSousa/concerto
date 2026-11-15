@@ -114,7 +114,10 @@ that walls pull in, about two metres back; it moves in on the shoulder with a
 longer lens while the aim button is held, drops while crouched (C or the east
 face button), and Q or the right bumper swaps shoulders.
 Every level sends a `Footstep` event when a foot of the player's foot lock
-plants, drawn as a ring on the ground and counted in the readout. UAL1's
+plants, drawn as a ring on the ground, counted in the readout, and heard: each
+foot plays its own step from Kenney's CC0 Impact Sounds pack, committed in
+`assets/audio/kenney_impact-sounds` (on the web, after the first key or
+click). UAL1's
 `Pistol_Aim_Up`, `Pistol_Aim_Down`, `Pistol_Shoot` and `Idle_Tired_Loop` are
 additive clips, set in `assets/UAL1.glb.import.toml`. Its two rigs are content assets,
 `content/UAL1/rig.gasset` and `content/lafan1/model_skeleton/rig.gasset`, that
