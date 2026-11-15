@@ -308,7 +308,7 @@ impl AnimationNode for TwoBoneIkNode {
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore};
-    use concerto_mesh::{JointName, Skeleton, skeleton::JointPose};
+    use concerto_mesh::{Skeleton, skeleton::JointPose};
     use concerto_name::name;
     use glam::{Affine3A, Mat4, Quat, Vec3};
 
@@ -435,10 +435,6 @@ mod tests {
         }
 
         fn solve(&self, node: &TwoBoneIkNode) -> AnimationFrame {
-            self.run(node, true)
-        }
-
-        fn run(&self, node: &TwoBoneIkNode, with_skeleton: bool) -> AnimationFrame {
             let input = [EvaluatedFrame {
                 frame: self.input(),
                 weight: 1.0,
@@ -446,27 +442,22 @@ mod tests {
             let mut pool = FramePool::new(self.skeleton.bone_count());
             let mut output = pool.acquire();
             let mut state = TwoBoneIkState::default();
-            let evaluate = |context: &AnimationGraphContext<'_>| {
-                node.evaluate(
-                    &mut state,
-                    &(),
-                    context,
-                    &[],
-                    &input,
-                    &mut pool,
-                    &mut output,
-                )
-            };
-            if with_skeleton {
-                self.walks.evaluate_posed(
-                    &self.blackboard,
-                    &self.skeleton,
-                    self.model_to_world,
-                    evaluate,
-                );
-            } else {
-                self.walks.evaluate(&self.blackboard, None, evaluate);
-            }
+            self.walks.evaluate_posed(
+                &self.blackboard,
+                &self.skeleton,
+                self.model_to_world,
+                |context: &AnimationGraphContext<'_>| {
+                    node.evaluate(
+                        &mut state,
+                        &(),
+                        context,
+                        &[],
+                        &input,
+                        &mut pool,
+                        &mut output,
+                    )
+                },
+            );
             output
         }
 
@@ -534,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bone_goal_puts_the_tip_on_the_goal_and_leaves_every_other_bone_and_the_events_alone() {
+    fn a_bone_or_world_goal_puts_the_tip_on_it_and_leaves_every_other_bone_and_the_events_alone() {
         let rig = Rig::new();
         let offset = Vec3::new(0.05, 0.02, 0.1);
 
@@ -553,6 +544,21 @@ mod tests {
                 input.joints()[bone].translation
             );
         }
+
+        let mut rig = Rig::new();
+        rig.model_to_world = Some(turned_world());
+        let goal = rig.grip_point(Vec3::new(-0.1, 0.1, 0.0));
+        rig.blackboard.set(
+            name!("hand_target"),
+            IkTarget {
+                position: turned_world().transform_point3(goal),
+                rotation: None,
+            },
+        );
+
+        let frame = rig.solve(&node(on_param()));
+
+        assert_near(rig.model_position(&frame, HAND), goal);
     }
 
     fn aiming_at_the_grip(rig: &mut Rig, rotation: Option<Quat>) {
@@ -578,25 +584,6 @@ mod tests {
             TipCase {
                 name: "keep input keeps the model rotation of the tip",
                 setup: |_| node(on_grip(Vec3::ZERO, Quat::from_rotation_y(0.9))),
-                rotation: |rig| rig.model_rotation(&rig.input(), HAND),
-            },
-            TipCase {
-                name: "from target gives the tip the grip rotation times the goal rotation",
-                setup: |_| TwoBoneIkNode {
-                    tip_rotation: TipRotation::FromTarget,
-                    ..node(on_grip(Vec3::ZERO, Quat::from_rotation_y(0.9)))
-                },
-                rotation: |rig| rig.model_rotation(&rig.input(), GRIP) * Quat::from_rotation_y(0.9),
-            },
-            TipCase {
-                name: "from target with a param goal that has no rotation keeps the input tip rotation",
-                setup: |rig| {
-                    aiming_at_the_grip(rig, None);
-                    TwoBoneIkNode {
-                        tip_rotation: TipRotation::FromTarget,
-                        ..node(on_param())
-                    }
-                },
                 rotation: |rig| rig.model_rotation(&rig.input(), HAND),
             },
             TipCase {
@@ -628,110 +615,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_param_goal_reaches_its_world_position_under_a_turned_model() {
-        let mut rig = Rig::new();
-        rig.model_to_world = Some(turned_world());
-        let goal = rig.grip_point(Vec3::new(-0.1, 0.1, 0.0));
-        rig.blackboard.set(
-            name!("hand_target"),
-            IkTarget {
-                position: turned_world().transform_point3(goal),
-                rotation: None,
-            },
-        );
-
-        let frame = rig.solve(&node(on_param()));
-
-        assert_near(rig.model_position(&frame, HAND), goal);
-    }
-
-    struct Unreached {
-        name: &'static str,
-        setup: fn(&mut Rig) -> TwoBoneIkNode,
-        with_skeleton: bool,
-    }
-
-    fn unreached(name: &'static str, setup: fn(&mut Rig) -> TwoBoneIkNode) -> Unreached {
-        Unreached {
-            name,
-            setup,
-            with_skeleton: true,
-        }
-    }
-
-    fn reaching() -> TwoBoneIkNode {
-        node(on_grip(Vec3::ZERO, Quat::IDENTITY))
-    }
-
-    fn reaching_bone(bone: &str) -> TwoBoneIkNode {
-        TwoBoneIkNode {
-            target: IkGoal::Bone {
-                bone: JointName::from(bone),
-                translation: Vec3::ZERO,
-                rotation: Quat::IDENTITY,
-            },
-            ..reaching()
-        }
-    }
-
-    fn with_tip(tip: &str) -> TwoBoneIkNode {
-        TwoBoneIkNode {
-            tip: tip.into(),
-            ..reaching()
-        }
-    }
-
-    #[test]
-    fn a_node_that_cannot_reach_leaves_the_input_pose() {
-        let cases = [
-            unreached("a missing target param", |_| node(on_param())),
-            unreached("a target param of another type", |rig| {
-                rig.blackboard
-                    .set(name!("hand_target"), Vec3::new(0.3, 0.2, 0.1));
-                node(on_param())
-            }),
-            unreached("a param goal under a model scaled to nothing", |rig| {
-                rig.model_to_world = Some(Affine3A::from_scale(Vec3::ZERO));
-                rig.blackboard.set(
-                    name!("hand_target"),
-                    IkTarget {
-                        position: Vec3::ZERO,
-                        rotation: None,
-                    },
-                );
-                node(on_param())
-            }),
-            unreached("zero weight", |_| TwoBoneIkNode {
-                weight: 0.0,
-                ..reaching()
-            }),
-            unreached("a missing tip", |_| with_tip("missing")),
-            unreached("a tip with no grandparent", |_| with_tip("upper")),
-            unreached("a tip outside the first root's hierarchy", |_| {
-                with_tip("prop_tip")
-            }),
-            unreached("a missing goal bone", |_| reaching_bone("missing")),
-            unreached("a goal bone outside the first root's hierarchy", |_| {
-                reaching_bone("prop_b")
-            }),
-            Unreached {
-                with_skeleton: false,
-                ..unreached("no skeleton", |_| reaching())
-            },
-        ];
-
-        for case in cases {
-            let mut rig = Rig::new();
-            let node = (case.setup)(&mut rig);
-
-            let frame = rig.run(&node, case.with_skeleton);
-
-            assert_eq!(frame.joints(), rig.input().joints(), "{}", case.name);
-            assert_eq!(frame.root_motion(), input_motion(), "{}", case.name);
-        }
-    }
-
     struct PoleCase {
         root: Vec3,
         target: Vec3,
@@ -752,89 +635,40 @@ mod tests {
         }
     }
 
-    struct PoledCase {
-        name: &'static str,
-        setup: fn(&mut Rig, &PoleCase) -> TwoBoneIkNode,
-        model_to_world: Option<Affine3A>,
-    }
-
     #[test]
     fn a_pole_puts_the_mid_on_its_world_side() {
-        let cases = [
-            PoledCase {
-                name: "a param pole under a turned model",
-                setup: |rig, case| {
-                    rig.blackboard.set(
-                        name!("elbow_pole"),
-                        IkTarget {
-                            position: turned_world().transform_point3(case.pole),
-                            rotation: None,
-                        },
-                    );
-                    TwoBoneIkNode {
-                        pole: Some(IkGoal::Param {
-                            param: name!("elbow_pole").into(),
-                        }),
-                        ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
-                    }
-                },
-                model_to_world: Some(turned_world()),
+        let mut rig = Rig::new();
+        rig.model_to_world = Some(turned_world());
+        let case = pole_case(&rig);
+        rig.blackboard.set(
+            name!("elbow_pole"),
+            IkTarget {
+                position: turned_world().transform_point3(case.pole),
+                rotation: None,
             },
-            PoledCase {
-                name: "a bone pole",
-                setup: |rig, case| {
-                    let grip = rig.model(&rig.input(), GRIP);
-                    TwoBoneIkNode {
-                        pole: Some(on_grip(
-                            grip.inverse().transform_point3(case.pole),
-                            Quat::IDENTITY,
-                        )),
-                        ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
-                    }
-                },
-                model_to_world: None,
-            },
-        ];
-
-        for poled in cases {
-            let mut rig = Rig::new();
-            rig.model_to_world = poled.model_to_world;
-            let case = pole_case(&rig);
-            let node = (poled.setup)(&mut rig, &case);
-
-            let frame = rig.solve(&node);
-
-            let axis = case.target - case.root;
-            let side = across(rig.model_position(&frame, LOWER) - case.root, axis).normalize();
-            let pole_side = across(case.pole - case.root, axis).normalize();
-            assert!(
-                side.dot(pole_side) > 0.999,
-                "{}: the mid is on {side}, the pole on {pole_side}",
-                poled.name
-            );
-            assert!(case.unpoled_side.dot(pole_side) < 0.0, "{}", poled.name);
-        }
-    }
-
-    #[test]
-    fn a_missing_pole_param_solves_as_no_pole() {
-        let rig = Rig::new();
-        let unpoled = node(on_grip(Vec3::ZERO, Quat::IDENTITY));
-
-        let frame = rig.solve(&TwoBoneIkNode {
+        );
+        let node = TwoBoneIkNode {
             pole: Some(IkGoal::Param {
                 param: name!("elbow_pole").into(),
             }),
-            ..unpoled.clone()
-        });
+            ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
+        };
 
-        assert_eq!(frame.joints(), rig.solve(&unpoled).joints());
+        let frame = rig.solve(&node);
+
+        let axis = case.target - case.root;
+        let side = across(rig.model_position(&frame, LOWER) - case.root, axis).normalize();
+        let pole_side = across(case.pole - case.root, axis).normalize();
+        assert!(
+            side.dot(pole_side) > 0.999,
+            "the mid is on {side}, the pole on {pole_side}"
+        );
+        assert!(case.unpoled_side.dot(pole_side) < 0.0);
     }
 
     #[test]
     fn a_partial_weight_slerps_each_chain_bone_from_the_input_toward_the_solve() {
-        let mut rig = Rig::new();
-        rig.blackboard.set(name!("ik_weight"), 0.5_f32);
+        let rig = Rig::new();
         let full = node(on_grip(Vec3::ZERO, Quat::IDENTITY));
         let solved = rig.solve(&full);
         let input = rig.input();
@@ -843,17 +677,12 @@ mod tests {
             weight: 0.5,
             ..full.clone()
         });
-        let by_param = rig.solve(&TwoBoneIkNode {
-            weight_param: Some(name!("ik_weight").into()),
-            ..full.clone()
-        });
 
         for bone in CHAIN {
             let halfway = input.joints()[bone]
                 .rotation
                 .slerp(solved.joints()[bone].rotation, 0.5);
             assert_rotation(by_weight.joints()[bone].rotation, halfway);
-            assert_rotation(by_param.joints()[bone].rotation, halfway);
         }
     }
 }

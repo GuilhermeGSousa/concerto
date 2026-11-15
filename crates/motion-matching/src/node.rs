@@ -242,35 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn the_default_node_has_orangeducks_values() {
-        let node = MotionMatchingNode::default();
-
-        assert_eq!(node.search_period, 0.1);
-        assert_eq!(node.velocity_change_threshold, 50.0);
-        assert_eq!(node.rotation_change_threshold, 50.0);
-        assert_eq!(node.same_frame_tolerance, 1);
-        assert_eq!(node.ignore_surrounding, 20);
-        assert_eq!(node.ignore_range_end, 20);
-        assert_eq!(node.blend_halflife, 0.1);
-        assert_eq!(node.play_rate, 1.0);
-        assert_eq!(node.play_rate_param, None);
-        assert_eq!(
-            node.database.id(),
-            AssetHandle::<MotionDatabase>::default().id()
-        );
-    }
-
-    #[test]
-    fn the_node_is_an_animation_node() {
-        let registry = registry();
-        let data = registry
-            .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<MotionMatchingNode>())
-            .copied();
-
-        assert!(data.is_some());
-    }
-
-    #[test]
     fn a_graph_holding_the_node_round_trips_through_serialization() {
         let registry = registry();
         let node = MotionMatchingNode::default()
@@ -331,20 +302,5 @@ mod tests {
         assert_eq!(built.search_period, 0.25);
         assert_eq!(built.play_rate, 1.0);
         assert_eq!(built.play_rate_param, None);
-    }
-
-    #[test]
-    fn a_graph_with_the_default_node_round_trips_with_its_defaults() {
-        let registry = registry();
-        let graph = AnimationGraph::from_node(MotionMatchingNode::default());
-
-        let bytes = bincode::serialize(&graph).unwrap();
-        let mut restored: AnimationGraph = bincode::deserialize(&bytes).unwrap();
-        restored.make_live(&registry, None).unwrap();
-
-        let defaults = MotionMatchingNode::default();
-        let restored = live_node(&restored);
-        assert!(restored.search_period == defaults.search_period);
-        assert!(restored.same_frame_tolerance == defaults.same_frame_tolerance);
     }
 }

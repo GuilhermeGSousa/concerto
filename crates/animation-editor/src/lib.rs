@@ -407,22 +407,21 @@ fn install_event_keys(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::TabEventKind;
     use concerto_animation::{
         clip::{AnimationChanelOutput, AnimationChannel, ClipEventData, ClipEventKey},
         event::AnimationEvent,
+        graph::AnimationGraph,
+        retarget::RetargetRig,
     };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin},
     };
-    use concerto_ecs::{IntoSystem, ResMut, System, events::event_channel::EventChannel};
+    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
     use concerto_editor::{
-        EditorPlugin,
-        actions::{DeleteEntity, ViewportContext},
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::{
-            HostRole, Hosted, HostedApp, HostedPlugin,
+            Hosted, HostedApp, HostedPlugin,
             input::{ViewportShown, ViewportView},
             testing::*,
         },
@@ -431,32 +430,14 @@ mod tests {
         scene::SceneRecipe,
     };
     use concerto_foundation::assets::{Asset, content::save_content_asset_into};
-    use concerto_mesh::skeleton::SkeletonComponent;
     use concerto_name::Name;
     use concerto_reflect::{ReflectedValue, to_value};
-    use concerto_render::ExclusiveCamera;
-    use concerto_ui::{focus::FocusedWidget, theme::UITheme};
-    use concerto_window::{
-        input::{
-            KeyCode,
-            actions::{ActionLabel, ActionMap, Shortcut},
-        },
-        plugin::{Window, WindowPlugin},
-    };
+    use concerto_ui::theme::UITheme;
+    use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec2;
     use preview::{ClipPreviewProgress, SetClipTransport};
     use std::time::{Duration, Instant};
     use uuid::Uuid;
-
-    #[test]
-    fn a_clip_tab_gets_a_bottom_host() {
-        let mut editors = AssetEditorRegistry::default();
-        editors
-            .register::<AnimationClip, AnimationClipEditor>()
-            .unwrap();
-        assert!(editors.bottom_host(AnimationClip::name()));
-        assert!(!editors.bottom_host("no editor"));
-    }
 
     fn keys(seconds: usize) -> AnimationChannel {
         let times: Vec<f32> = (0..=seconds * 30).map(|key| key as f32 / 30.0).collect();
@@ -537,7 +518,7 @@ mod tests {
         assets.get(id).unwrap().clone()
     }
 
-    fn scene_at(f: &mut SceneFixture, address: &str) -> AssetEntry {
+    pub(super) fn write_scene(f: &mut SceneFixture, address: &str, node: &str) -> AssetEntry {
         let asset = AssetEntry {
             address: address.into(),
             ..scene_entry("fixture")
@@ -545,18 +526,7 @@ mod tests {
         let path = f.project_root.join(address);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         f.add_to_project(&asset);
-        asset
-    }
-
-    pub(super) fn write_scene(f: &mut SceneFixture, address: &str, node: &str) -> AssetEntry {
-        let asset = scene_at(f, address);
         write_scene_file(&f.project_root, &asset, &[node]);
-        asset
-    }
-
-    pub(super) fn write_broken_scene(f: &mut SceneFixture, address: &str) -> AssetEntry {
-        let asset = scene_at(f, address);
-        std::fs::write(f.project_root.join(address), b"not a scene").unwrap();
         asset
     }
 
@@ -590,12 +560,6 @@ mod tests {
             .expect("the document has a transport")
     }
 
-    fn transport_mut(f: &mut SceneFixture, document: Entity) -> &mut ClipTransport {
-        f.world
-            .get_component_for_entity_mut::<ClipTransport>(document)
-            .expect("the document has a transport")
-    }
-
     fn pause(f: &mut SceneFixture, document: Entity) {
         let mut system = (move |mut previews: PreviewSignals| {
             previews.trigger(
@@ -615,494 +579,55 @@ mod tests {
         });
     }
 
-    fn report_until(
-        f: &mut SceneFixture,
-        document: Entity,
-        report: ClipPreviewBones,
-        what: &str,
-        landed: impl Fn(&ClipDocument) -> bool,
-    ) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            f.scene_world_mut(document)
-                .get_resource_mut::<EventChannel<ClipPreviewBones>>()
-                .unwrap()
-                .push_event(report.clone());
-            f.frame();
-            f.frame();
-            if landed(state(f, document)) {
-                break;
-            }
-            assert!(Instant::now() < deadline, "{what}");
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    pub(super) fn report_bones(
-        f: &mut SceneFixture,
-        document: Entity,
-        bones: usize,
-        driven: usize,
-    ) {
-        let report = ClipPreviewBones {
-            bones,
-            driven,
-            skeleton: Vec::new(),
-        };
-        report_until(f, document, report, "the bones never came back", |state| {
-            state.facts.skeleton_bones == bones && state.facts.driven == driven
-        });
-    }
-
-    pub(super) fn bone(id: Uuid, name: &str) -> ShownBone {
-        ShownBone {
-            id,
-            name: Name::new(name),
-        }
-    }
-
-    pub(super) fn report_skeleton(f: &mut SceneFixture, document: Entity, skeleton: &[ShownBone]) {
-        let report = ClipPreviewBones {
-            bones: skeleton.len(),
-            driven: 0,
-            skeleton: skeleton.to_vec(),
-        };
-        report_until(
-            f,
-            document,
-            report,
-            "the skeleton never came back",
-            |state| state.skeleton == skeleton,
-        );
-    }
-
-    pub(super) const UNNAMED: Uuid = Uuid::from_u128(0xabcdef01 << 96);
-    const FIRST_UNNAMED: Uuid = Uuid::from_u128(0x12345678 << 96);
-
-    fn channel(times: Vec<f32>) -> AnimationChannel {
-        let translations = vec![[0.0; 3]; times.len()];
-        AnimationChannel::new(
-            times,
-            AnimationChanelOutput::from_translation(translations.into_iter()),
-        )
-    }
-
-    fn rotations(times: Vec<f32>) -> AnimationChannel {
-        let rotations = vec![[0.0, 0.0, 0.0, 1.0]; times.len()];
-        AnimationChannel::new(
-            times,
-            AnimationChanelOutput::from_rotation(rotations.into_iter()),
-        )
-    }
-
-    fn many_bones_clip() -> AnimationClip {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(UNNAMED, channel(vec![0.0, 2.0]));
-        clip.add_channel(Uuid::from_u128(3), channel(vec![0.0, 1.0]));
-        clip.add_channel(FIRST_UNNAMED, channel(vec![1.0]));
-        clip.add_channel(Uuid::from_u128(1), channel(vec![0.0, 1.0]));
-        clip.add_channel(Uuid::from_u128(1), rotations(vec![0.5, 1.0]));
-        clip
-    }
-
-    fn track(label: &str, warning: bool, keys: Vec<f32>) -> TimelineTrack {
-        TimelineTrack {
-            label: label.to_owned(),
-            warning,
-            keys,
-        }
-    }
-
     #[test]
-    fn bone_rows_list_the_driven_bones_in_skeleton_order_then_the_unmatched_ids() {
-        let skeleton = [
-            bone(Uuid::from_u128(3), "spine"),
-            bone(Uuid::from_u128(2), "still"),
-            bone(Uuid::from_u128(1), "hips"),
-        ];
-
-        assert_eq!(
-            bone_rows(&many_bones_clip(), &skeleton),
-            vec![
-                track("spine", false, vec![0.0, 1.0]),
-                track("hips", false, vec![0.0, 0.5, 1.0]),
-                track("? 12345678", true, vec![1.0]),
-                track("? abcdef01", true, vec![0.0, 2.0]),
-            ]
-        );
-    }
-
-    #[test]
-    fn with_no_skeleton_every_bone_row_is_an_id() {
-        let rows = bone_rows(&many_bones_clip(), &[]);
-
-        assert!(rows.iter().all(|row| row.warning));
-        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
-        assert_eq!(
-            labels,
-            ["? 00000000", "? 00000000", "? 12345678", "? abcdef01"]
-        );
-    }
-
-    #[test]
-    fn a_new_document_plays_and_loops_at_full_rate_with_the_gizmo_on() {
-        let document = ClipDocument::default();
-
-        let transport = ClipTransport::default();
-
-        assert!(document.clip.is_none());
-        assert_eq!(transport.time, 0.0);
-        assert!(transport.playing);
-        assert!(transport.looping);
-        assert_eq!(transport.speed, 1.0);
-        assert!(!document.root_motion);
-        assert!(document.skeleton_gizmo);
-        assert_eq!(document.picked_scene, None);
-        assert_eq!(document.shown_scene, None);
-        assert_eq!(document.scene_error, None);
-        assert!(document.events.is_empty());
-        assert_eq!(document.selected_event, None);
-        assert!(document.skeleton.is_empty());
-        assert!(document.rows.is_empty());
-    }
-
-    #[test]
-    fn the_facts_come_from_the_clip_and_leave_the_skeletons_counts_at_zero() {
-        let mut clip = clip_of(1);
-        clip.add_channel(Uuid::from_u128(2), keys(1));
-        clip.add_channel(Uuid::from_u128(2), keys(1));
-
-        assert_eq!(
-            ClipFacts::of(&clip),
-            ClipFacts {
-                duration: 1.0,
-                rate: Some(30.0),
-                rate_is_stored: false,
-                frames: Some(31),
-                clip_bones: 2,
-                skeleton_bones: 0,
-                driven: 0,
-            }
-        );
-    }
-
-    #[test]
-    fn a_stored_rate_wins_over_the_detected_one() {
-        let mut clip = clip_of(10);
-        clip.set_frame_rate(24.0);
-
-        let facts = ClipFacts::of(&clip);
-
-        assert_eq!(facts.rate, Some(24.0));
-        assert!(facts.rate_is_stored);
-        assert_eq!(facts.frames, Some(frame_count(10.0, 24.0)));
-    }
-
-    #[test]
-    fn the_frames_fact_is_the_timelines_frame_count() {
-        let facts = ClipFacts::of(&clip_of(10));
-
-        assert_eq!(
-            facts.frames,
-            Some(frame_count(facts.duration, facts.rate.unwrap()))
-        );
-    }
-
-    #[test]
-    fn a_clip_with_no_detected_rate_has_no_frames() {
-        let facts = ClipFacts::of(&AnimationClip::default());
-
-        assert_eq!(facts.rate, None);
-        assert_eq!(facts.frames, None);
-    }
-
-    #[test]
-    fn a_clip_opens_with_the_scene_of_its_folder() {
+    fn a_clip_opens_on_its_folders_scene_with_its_events_and_a_second_clip_replaces_them_from_zero()
+    {
         let mut f = clip_fixture();
         let scene = write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        write_scene(&mut f, "content/other/scene.gasset", "stranger");
-        write_scene(&mut f, "content/hero/level.gasset", "level");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
+        let stranger = write_scene(&mut f, "content/other/scene.gasset", "stranger");
+        let mut eventful = clip_of(10);
+        eventful
+            .replace_events(vec![typed_key(0.25), named_key(0.5, "footstep")])
+            .unwrap();
+        let walk = write_clip(&mut f, "content/hero/walk.gasset", &eventful);
+        let run = write_clip(&mut f, "content/other/run.gasset", &clip_of(20));
 
         let document = open_clip(&mut f, &walk);
 
         f.frames_until("the scene never reached the preview", |f| {
             f.scene_names(document).contains(&"sibling".to_owned())
         });
-        let names = f.scene_names(document);
-        assert!(!names.contains(&"stranger".to_owned()));
-        assert!(!names.contains(&"level".to_owned()));
+        assert!(!f.scene_names(document).contains(&"stranger".to_owned()));
         let opened = state(&f, document);
         assert_eq!(opened.shown_scene, Some(scene.id));
-        assert_eq!(opened.scene_error, None);
-        assert_eq!(opened.facts, ClipFacts::of(&clip_of(10)));
-        assert!(opened.clip.is_some());
-        assert_eq!(f.document(document).current, Some(walk));
-        assert_eq!(f.status(document), "");
-    }
-
-    #[test]
-    fn a_folder_with_no_scene_shows_none_and_clears_the_stage() {
-        let mut f = clip_fixture();
-        write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let lone = write_clip(&mut f, "content/empty/lone.gasset", &clip_of(10));
-
-        let document = open_clip(&mut f, &walk);
-        f.frames_until("the scene never reached the preview", |f| {
-            f.scene_names(document).contains(&"sibling".to_owned())
-        });
-        open_clip(&mut f, &lone);
-
-        f.frames_until("the old scene stayed on the stage", |f| {
-            !f.scene_names(document).contains(&"sibling".to_owned())
-        });
-        assert_eq!(state(&f, document).shown_scene, None);
-        assert_eq!(state(&f, document).scene_error, None);
-    }
-
-    #[test]
-    fn a_picked_scene_wins_over_the_folders() {
-        let mut f = clip_fixture();
-        write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        let level = write_scene(&mut f, "content/world/level.gasset", "level");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-
-        f.request(&walk);
-        let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
-        state_mut(&mut f, document).picked_scene = Some(level.id);
-        open_clip(&mut f, &walk);
-
-        f.frames_until("the picked scene never reached the preview", |f| {
-            f.scene_names(document).contains(&"level".to_owned())
-        });
-        assert!(!f.scene_names(document).contains(&"sibling".to_owned()));
-        assert_eq!(state(&f, document).shown_scene, Some(level.id));
-    }
-
-    #[test]
-    fn a_scene_that_fails_to_load_is_reported_and_the_clip_still_loads() {
-        let mut f = clip_fixture();
-        write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        write_broken_scene(&mut f, "content/broken/scene.gasset");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let broken = write_clip(&mut f, "content/broken/walk.gasset", &clip_of(10));
-
-        let document = open_clip(&mut f, &walk);
-        f.frames_until("the scene never reached the preview", |f| {
-            f.scene_names(document).contains(&"sibling".to_owned())
-        });
-        open_clip(&mut f, &broken);
-
-        f.frames_until("the old scene stayed on the stage", |f| {
-            !f.scene_names(document).contains(&"sibling".to_owned())
-        });
-        let opened = state(&f, document);
-        assert!(opened.scene_error.is_some());
-        assert_eq!(opened.shown_scene, None);
-        assert_eq!(f.document(document).current, Some(broken));
-        assert_eq!(f.status(document), "");
-
-        open_clip(&mut f, &walk);
-
-        assert_eq!(state(&f, document).scene_error, None);
-    }
-
-    #[test]
-    fn a_picked_scene_that_left_the_project_is_reported() {
-        let mut f = clip_fixture();
-        write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-
-        f.request(&walk);
-        let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
-        state_mut(&mut f, document).picked_scene = Some(AssetId::new());
-        open_clip(&mut f, &walk);
-
-        let opened = state(&f, document);
-        assert!(opened.scene_error.is_some());
-        assert_eq!(opened.shown_scene, None);
-        assert!(opened.clip.is_some());
-    }
-
-    #[test]
-    fn a_broken_clip_fails_its_request() {
-        let mut f = clip_fixture();
-        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(1));
-        std::fs::write(f.project_root.join(&walk.address), b"not a clip").unwrap();
-
-        let document = open_clip(&mut f, &walk);
-
-        assert!(f.status(document).contains("content asset"));
-        assert!(state(&f, document).clip.is_none());
-        assert_eq!(f.document(document).current, None);
-    }
-
-    #[test]
-    fn a_file_of_another_kind_fails_its_request() {
-        let mut f = clip_fixture();
-        let scene = write_scene(&mut f, "content/scene.gasset", "sibling");
-        let mistaken = AssetEntry {
-            kind: AnimationClip::name().into(),
-            ..scene
-        };
-        f.add_to_project(&mistaken);
-
-        let document = open_clip(&mut f, &mistaken);
-
-        assert!(
-            f.status(document)
-                .contains("holds a Scene but a AnimationClip was requested"),
-            "got: {}",
-            f.status(document)
-        );
-        assert!(state(&f, document).clip.is_none());
-    }
-
-    #[test]
-    fn a_broken_second_clip_leaves_the_first_where_it_was() {
-        let mut f = clip_fixture();
-        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(10));
-        let broken = write_clip(&mut f, "content/broken.gasset", &clip_of(1));
-        std::fs::write(f.project_root.join(&broken.address), b"not a clip").unwrap();
-
-        let document = open_clip(&mut f, &walk);
+        assert_eq!(opened.events.len(), 2);
+        assert_eq!(transport(&f, document).duration, 10.0);
         f.frames_until("the head never moved", |f| {
             transport(f, document).time > 0.0
         });
         pause(&mut f, document);
-        let paused_at = transport(&f, document).time;
-        open_clip(&mut f, &broken);
-
-        assert_ne!(f.status(document), "");
-        assert_eq!(f.document(document).current, Some(walk));
-        let kept = transport(&f, document);
-        assert_eq!(kept.time, paused_at);
-        assert!(!kept.playing);
-        assert_eq!(kept.duration, 10.0);
-        assert_eq!(state(&f, document).facts, ClipFacts::of(&clip_of(10)));
-    }
-
-    #[test]
-    fn the_document_follows_what_the_preview_reports() {
-        let mut f = clip_fixture();
-        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(10));
-
-        let document = open_clip(&mut f, &walk);
-
-        f.frames_until("the head never moved", |f| {
-            transport(f, document).time > 0.0
-        });
-        assert!(transport(&f, document).playing);
-        pause(&mut f, document);
-        report_bones(&mut f, document, 65, 60);
-        assert_eq!(state(&f, document).facts.driven, 60);
-    }
-
-    #[test]
-    fn a_second_clip_resets_time_plays_and_keeps_the_rest() {
-        let mut f = clip_fixture();
-        write_scene(&mut f, "content/hero/scene.gasset", "sibling");
-        let level = write_scene(&mut f, "content/world/level.gasset", "level");
-        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(10));
-        let run = write_clip(&mut f, "content/hero/run.gasset", &clip_of(20));
-
-        let document = open_clip(&mut f, &walk);
-        f.frames_until("the head never moved", |f| {
-            transport(f, document).time > 0.0
-        });
-        pause(&mut f, document);
-        report_bones(&mut f, document, 65, 60);
-        let chosen = state_mut(&mut f, document);
-        chosen.picked_scene = Some(level.id);
-        chosen.root_motion = true;
-        chosen.skeleton_gizmo = false;
-        let played = transport_mut(&mut f, document);
-        played.speed = 2.0;
-        played.looping = false;
 
         open_clip(&mut f, &run);
 
         let restarted = transport(&f, document);
         assert_eq!(restarted.time, 0.0);
         assert!(restarted.playing);
-        assert_eq!(restarted.speed, 2.0);
-        assert!(!restarted.looping);
         assert_eq!(restarted.duration, 20.0);
-        let reset = state(&f, document);
-        assert_eq!(reset.picked_scene, Some(level.id));
-        assert_eq!(reset.shown_scene, Some(level.id));
-        assert!(reset.root_motion);
-        assert!(!reset.skeleton_gizmo);
-        assert_eq!(reset.facts.duration, 20.0);
-        assert_eq!(reset.facts.skeleton_bones, 65);
-        assert_eq!(reset.facts.driven, 60);
+        assert!(state(&f, document).events.is_empty());
         assert_eq!(f.document(document).current, Some(run));
-
+        assert_eq!(state(&f, document).shown_scene, Some(stranger.id));
+        f.frames_until("the second scene never reached the preview", |f| {
+            f.scene_names(document).contains(&"stranger".to_owned())
+        });
+        assert!(!f.scene_names(document).contains(&"sibling".to_owned()));
         f.frames_until("the second clip never played", |f| {
             transport(f, document).time > 0.0
         });
-        assert!(transport(&f, document).playing);
-        assert!(f.scene_names(document).contains(&"level".to_owned()));
         assert!(!f.unsaved(document));
     }
 
     #[test]
-    fn a_clip_opens_with_its_events_and_a_second_clip_replaces_them() {
-        let mut f = clip_fixture();
-        let mut eventful = clip_of(10);
-        eventful
-            .replace_events(vec![typed_key(0.25), named_key(0.5, "footstep")])
-            .unwrap();
-        let walk = write_clip(&mut f, "content/walk.gasset", &eventful);
-        let run = write_clip(&mut f, "content/run.gasset", &clip_of(10));
-
-        let document = open_clip(&mut f, &walk);
-
-        let opened = state(&f, document);
-        assert_eq!(opened.events.len(), 2);
-        assert_eq!(opened.events[0].label(), "Footstep");
-        assert_eq!(opened.events[1].label(), "footstep");
-        assert_eq!(opened.selected_event, None);
-
-        state_mut(&mut f, document).selected_event = Some(1);
-        open_clip(&mut f, &run);
-
-        let reset = state(&f, document);
-        assert!(reset.events.is_empty());
-        assert_eq!(reset.selected_event, None);
-    }
-
-    #[test]
-    fn a_second_clip_keeps_the_skeleton_and_rebuilds_the_bone_rows() {
-        let mut f = clip_fixture();
-        let walk = write_clip(&mut f, "content/walk.gasset", &clip_of(10));
-        let mut wider = clip_of(1);
-        wider.add_channel(UNNAMED, channel(vec![0.5]));
-        let run = write_clip(&mut f, "content/run.gasset", &wider);
-        let skeleton = [bone(Uuid::from_u128(1), "hips")];
-
-        let document = open_clip(&mut f, &walk);
-        assert_eq!(state(&f, document).rows[0].label, "? 00000000");
-        report_skeleton(&mut f, document, &skeleton);
-
-        let named = &state(&f, document).rows;
-        assert_eq!(named.len(), 1);
-        assert_eq!(named[0].label, "hips");
-        assert!(!named[0].warning);
-        assert_eq!(named[0].keys.len(), 301);
-
-        open_clip(&mut f, &run);
-
-        let rebuilt = state(&f, document);
-        assert_eq!(rebuilt.skeleton, skeleton);
-        assert_eq!(rebuilt.rows, bone_rows(&wider, &skeleton));
-        assert_eq!(rebuilt.rows[0].keys.len(), 31);
-        assert_eq!(rebuilt.rows[1], track("? abcdef01", true, vec![0.5]));
-    }
-
-    #[test]
-    fn the_plugin_loads_a_clip_and_follows_its_preview_in_the_editors_schedule() {
+    fn install_registers_the_three_editors_and_plays_a_clip_in_the_editors_schedule() {
         let directory = tempfile::tempdir().unwrap();
         let mut assets = AssetRegistry::default();
         let id = save_content_asset_into(
@@ -1145,6 +670,11 @@ mod tests {
             })));
         install(&mut app);
         app.finish_plugin_build();
+        let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
+        assert!(editors.preview(AnimationClip::name()).is_some());
+        for kind in [RetargetRig::name(), AnimationGraph::name()] {
+            assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
+        }
         let world = app.main_mut().world_mut();
         let document = world.spawn((
             EditorDocument {
@@ -1175,110 +705,5 @@ mod tests {
             assert!(Instant::now() < deadline, "the head never moved");
             std::thread::sleep(Duration::from_millis(1));
         }
-    }
-
-    fn push_viewport_context(mut actions: ResMut<ActionMap>) {
-        actions.bind(
-            DeleteEntity,
-            Shortcut::key(KeyCode::Delete),
-            ViewportContext,
-        );
-        actions.push_context(ViewportContext);
-    }
-
-    #[test]
-    fn delete_means_remove_clip_event_over_the_contexts_the_editor_pushes() {
-        let mut app = App::new();
-        app.register_plugin(MainSchedulePlugin)
-            .register_plugin(TimePlugin)
-            .register_plugin(WindowPlugin)
-            .insert_resource(ActiveEditor::default())
-            .insert_resource(FocusedWidget::default());
-        install_event_keys(&mut app);
-        app.add_system(LateUpdate, push_viewport_context.in_set(EditorContextSet));
-        app.finish_plugin_build();
-        let world = app.main_mut().world_mut();
-        let document = world.spawn(ClipDocument {
-            events: vec![TabEvent {
-                time: 0.5,
-                kind: TabEventKind::Named(Name::new("footstep")),
-            }],
-            selected_event: Some(0),
-            ..ClipDocument::default()
-        });
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
-
-        app.update();
-        app.update();
-
-        let actions = app.get_resource::<ActionMap>().unwrap();
-        assert!(actions.is_active(ViewportContext));
-        assert_eq!(
-            actions.resolve(Shortcut::key(KeyCode::Delete)),
-            Some(RemoveClipEvent.intern())
-        );
-    }
-
-    #[test]
-    fn install_registers_the_clip_editor_and_forwards_its_reports() {
-        let mut app = App::new();
-        app.register_plugin(MainSchedulePlugin)
-            .register_plugin(AssetManagerPlugin)
-            .register_plugin(TimePlugin)
-            .register_plugin(WindowPlugin)
-            .register_plugin(EditorPlugin {
-                project: None,
-                decorated: false,
-                recipe: plain_recipe,
-            });
-
-        install(&mut app);
-
-        let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
-        assert!(editors.preview(AnimationClip::name()).is_some());
-        assert!(
-            app.get_resource::<EventChannel<Hosted<ClipPreviewProgress>>>()
-                .is_some()
-        );
-        assert!(
-            app.get_resource::<EventChannel<Hosted<ClipPreviewBones>>>()
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn opening_a_clip_opens_a_tab_with_an_empty_stage() {
-        let mut f = SceneFixture::new();
-        f.world
-            .get_resource_mut::<AssetEditorRegistry>()
-            .unwrap()
-            .register::<AnimationClip, AnimationClipEditor>()
-            .unwrap();
-
-        let document = f.request_kind(AnimationClip::name());
-        f.frames_until("the preview was never built", |f| {
-            f.world
-                .get_component_for_entity::<HostedApp>(document)
-                .is_some()
-        });
-        f.frame();
-
-        assert_eq!(
-            f.world
-                .get_component_for_entity::<HostedApp>(document)
-                .unwrap()
-                .role(),
-            HostRole::Preview
-        );
-        assert!(
-            f.scene_world(document)
-                .get_resource::<ExclusiveCamera>()
-                .is_some()
-        );
-        let stage = f.scene_world_mut(document);
-        assert_eq!(
-            stage.query::<&SkeletonComponent, ()>().iter(stage).count(),
-            0
-        );
     }
 }

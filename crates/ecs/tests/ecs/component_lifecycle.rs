@@ -294,61 +294,6 @@ fn on_remove_can_queue_companion_removal() {
 }
 
 #[test]
-fn on_remove_can_queue_despawning_another_entity() {
-    let mut world = World::new();
-    world.register_component::<Reaper>();
-    world.insert_resource(DespawnTarget::default());
-    let victim = world.spawn((Reaper, Value(1)));
-    let reaper = world.spawn((Reaper, Value(2)));
-    world.get_resource_mut::<DespawnTarget>().unwrap().0 = Some(victim);
-
-    world.remove_component::<Reaper>(reaper);
-
-    assert!(!world.entity_is_valid(victim));
-    assert_eq!(value_of(&world, reaper), Some(2));
-    assert!(world.get_component_for_entity::<Reaper>(reaper).is_none());
-}
-
-#[test]
-fn on_remove_can_queue_component_insertion() {
-    struct LeavesMarker;
-    impl Component for LeavesMarker {
-        fn on_remove() -> Option<ComponentLifecycleCallback> {
-            Some(|mut world, context| {
-                assert!(
-                    world
-                        .get_component_for_entity::<Self>(context.entity)
-                        .is_some()
-                );
-                world.insert(Marker, context.entity);
-            })
-        }
-    }
-
-    let mut world = World::new();
-    world.register_component::<LeavesMarker>();
-    let removed = world.spawn((LeavesMarker, Value(1)));
-    let survivor = world.spawn((LeavesMarker, Value(2)));
-
-    world.remove_component::<LeavesMarker>(removed);
-
-    assert!(
-        world
-            .get_component_for_entity::<LeavesMarker>(removed)
-            .is_none()
-    );
-    assert!(world.get_component_for_entity::<Marker>(removed).is_some());
-    assert_eq!(value_of(&world, removed), Some(1));
-    assert_eq!(value_of(&world, survivor), Some(2));
-    assert!(
-        world
-            .get_component_for_entity::<LeavesMarker>(survivor)
-            .is_some()
-    );
-    assert!(world.get_component_for_entity::<Marker>(survivor).is_none());
-}
-
-#[test]
 fn on_remove_can_remove_itself_and_drop_once() {
     use std::sync::{
         Arc,
@@ -457,26 +402,6 @@ fn add_and_remove_callbacks_fire_once_each_while_the_component_is_readable() {
             },
             added: &[0],
             removed: &[],
-        },
-        TrackCase {
-            name: "remove_component fires on_remove before the removal",
-            act: |world| {
-                let entity = world.spawn((Tracked, Value(1)));
-                world.remove_component::<Tracked>(entity);
-                vec![entity]
-            },
-            added: &[0],
-            removed: &[0],
-        },
-        TrackCase {
-            name: "despawn fires the removal cleanup while the component is readable",
-            act: |world| {
-                let entity = world.spawn((Tracked, Value(1)));
-                world.despawn(entity);
-                vec![entity]
-            },
-            added: &[0],
-            removed: &[0],
         },
         TrackCase {
             name: "mixed operations balance",

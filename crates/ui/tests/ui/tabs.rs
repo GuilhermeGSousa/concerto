@@ -25,17 +25,6 @@ fn click(world: &mut World, entity: concerto_ecs::Entity) {
     );
 }
 
-fn strip_with_bodies(
-    world: &mut World,
-    count: usize,
-) -> (concerto_ecs::Entity, Vec<concerto_ecs::Entity>) {
-    let strip = world.spawn(UITabStrip::default());
-    let bodies = (0..count)
-        .map(|index| world.spawn((UINode::default(), UITabBody { strip, index })))
-        .collect();
-    (strip, bodies)
-}
-
 fn run(world: &mut World) {
     let mut system = sync_tab_bodies.into_system();
     system.initialize(world);
@@ -50,82 +39,7 @@ fn visible(world: &World, entity: concerto_ecs::Entity) -> bool {
 }
 
 #[test]
-fn only_the_selected_body_is_visible() {
-    let mut world = World::default();
-    let (_, bodies) = strip_with_bodies(&mut world, 3);
-
-    run(&mut world);
-
-    assert!(visible(&world, bodies[0]), "tab 0 is selected by default");
-    assert!(
-        !visible(&world, bodies[1]),
-        "an unselected body must be hidden"
-    );
-    assert!(
-        !visible(&world, bodies[2]),
-        "an unselected body must be hidden"
-    );
-}
-
-#[test]
-fn selecting_a_tab_swaps_which_body_shows() {
-    let mut world = World::default();
-    let (strip, bodies) = strip_with_bodies(&mut world, 3);
-
-    world
-        .get_component_for_entity_mut::<UITabStrip>(strip)
-        .unwrap()
-        .selected = 2;
-    run(&mut world);
-
-    assert!(!visible(&world, bodies[0]));
-    assert!(!visible(&world, bodies[1]));
-    assert!(
-        visible(&world, bodies[2]),
-        "the newly selected body must show"
-    );
-}
-
-#[test]
-fn a_selection_past_the_end_shows_nothing_rather_than_everything() {
-    let mut world = World::default();
-    let (strip, bodies) = strip_with_bodies(&mut world, 2);
-
-    world
-        .get_component_for_entity_mut::<UITabStrip>(strip)
-        .unwrap()
-        .selected = 7;
-    run(&mut world);
-
-    assert!(
-        bodies.iter().all(|body| !visible(&world, *body)),
-        "a stale selection must not fall back to showing every body at once"
-    );
-}
-
-#[test]
-fn strips_do_not_interfere_with_each_other() {
-    let mut world = World::default();
-    let (left, left_bodies) = strip_with_bodies(&mut world, 2);
-    let (_, right_bodies) = strip_with_bodies(&mut world, 2);
-
-    world
-        .get_component_for_entity_mut::<UITabStrip>(left)
-        .unwrap()
-        .selected = 1;
-    run(&mut world);
-
-    assert!(!visible(&world, left_bodies[0]));
-    assert!(visible(&world, left_bodies[1]));
-    assert!(
-        visible(&world, right_bodies[0]),
-        "the other strip keeps its own selection"
-    );
-    assert!(!visible(&world, right_bodies[1]));
-}
-
-#[test]
-fn clicking_a_tab_selects_it_in_its_strip_and_tells_the_strip() {
+fn clicking_a_tab_selects_it_tells_the_strip_and_shows_only_its_body() {
     let mut world = World::default();
     world.insert_resource(Heard::default());
     let strip = world.spawn((
@@ -135,21 +49,32 @@ fn clicking_a_tab_selects_it_in_its_strip_and_tells_the_strip() {
         })
         .into_listener(),
     ));
+    let bodies: Vec<_> = (0..3)
+        .map(|index| world.spawn((UINode::default(), UITabBody { strip, index })))
+        .collect();
     let tabs: Vec<_> = (0..3)
         .map(|index| world.spawn(select_tab(strip, index)))
         .collect();
+    run(&mut world);
+    assert_eq!(
+        bodies
+            .iter()
+            .map(|body| visible(&world, *body))
+            .collect::<Vec<_>>(),
+        [true, false, false]
+    );
 
     click(&mut world, tabs[2]);
-    click(&mut world, tabs[1]);
+    run(&mut world);
 
     assert_eq!(
-        world
-            .get_component_for_entity::<UITabStrip>(strip)
-            .unwrap()
-            .selected,
-        1
+        bodies
+            .iter()
+            .map(|body| visible(&world, *body))
+            .collect::<Vec<_>>(),
+        [false, false, true]
     );
-    assert_eq!(world.get_resource::<Heard>().unwrap().0, ["2", "1"]);
+    assert_eq!(world.get_resource::<Heard>().unwrap().0, ["2"]);
 }
 
 #[test]

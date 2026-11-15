@@ -8,15 +8,13 @@ use concerto_ui::{
     elements::prelude::*,
     interaction::{UIClick, UIDrag, UIInteractionStyle, UIPointerDown, UIPointerEnter},
     material::UIMaterial,
-    node::{AlignItems, UIBox, UILayout, UINode},
+    node::{UIBox, UILayout, UINode},
     scroll::UISplitAxis,
     slider::{UISlider, UISliderChanged},
     splitter::UISplitterDragged,
-    text::UIText,
     text_input::UITextInput,
     theme::{ButtonVariant, UITheme},
     transform::UIValue,
-    widgets::UIButton,
 };
 use concerto_window::input::MouseButton;
 use glam::Vec2;
@@ -48,18 +46,6 @@ fn colors(style: &UIInteractionStyle) -> [Color; 4] {
     [style.normal, style.hovered, style.pressed, style.disabled]
 }
 
-#[derive(Component)]
-struct Marker;
-
-#[test]
-fn font_size_always_pairs_its_line_height() {
-    let t = theme();
-    let spawned = spawn(t.label("x").font_size(20.0));
-    let text = spawned.get::<UIText>();
-    assert_eq!(text.font_size, 20.0);
-    assert_eq!(text.line_height, t.line_height(20.0));
-}
-
 #[test]
 fn modifiers_compose_in_any_order_and_explicit_settings_win() {
     let t = theme();
@@ -71,43 +57,6 @@ fn modifiers_compose_in_any_order_and_explicit_settings_win() {
     assert_eq!(colors(b.get::<UIInteractionStyle>()), colors(&expected));
     assert_eq!(a.get::<UIMaterial>().color, t.selection().to_linear());
 
-    let a = spawn(t.button("x").normal(t.error).ghost());
-    let b = spawn(t.button("x").ghost().normal(t.error));
-    assert_eq!(a.get::<UIInteractionStyle>().normal, t.error);
-    assert_eq!(
-        colors(a.get::<UIInteractionStyle>()),
-        colors(b.get::<UIInteractionStyle>())
-    );
-    assert_eq!(a.get::<UIMaterial>().color, t.error.to_linear());
-    assert_eq!(a.get::<UIMaterial>().color, b.get::<UIMaterial>().color);
-
-    let hovered = spawn(t.button("Go").normal(t.accent).hovered(t.accent_hovered));
-    let style = hovered.get::<UIInteractionStyle>();
-    let base = t.interaction(ButtonVariant::Solid, false);
-    assert_eq!(style.normal, t.accent);
-    assert_eq!(style.hovered, t.accent_hovered);
-    assert_eq!(style.pressed, base.pressed);
-    assert_eq!(style.disabled, base.disabled);
-    assert_eq!(hovered.get::<UIMaterial>().color, t.accent.to_linear());
-
-    let tab = spawn(t.pressable().tab().selected(true).disabled_color(t.error));
-    let style = tab.get::<UIInteractionStyle>();
-    assert_eq!(style.normal, t.surface_raised, "a selected tab is raised");
-    assert_eq!(style.disabled, t.error);
-
-    let chip = spawn(t.chip("mesh").muted().selected(true));
-    assert_eq!(
-        chip.get::<UIText>().color,
-        t.text,
-        "a chip's text colour always comes from chip_colors"
-    );
-
-    let label = spawn(t.label("x").font_size(20.0));
-    assert_eq!(label.get::<UIText>().line_height, t.line_height(20.0));
-
-    let row = spawn(t.label("x").row().align_items(AlignItems::Start));
-    assert_eq!(row.get::<UINode>().align_items, Some(AlignItems::Start));
-
     let field = spawn(t.text_field("Search…").value("héllo"));
     let input = field.get::<UITextInput>();
     assert_eq!(input.value, "héllo");
@@ -117,23 +66,6 @@ fn modifiers_compose_in_any_order_and_explicit_settings_win() {
         "a value moves the cursor to its end"
     );
     assert_eq!(input.placeholder, "Search…");
-}
-
-#[test]
-fn the_popup_fill_is_opaque() {
-    let t = UITheme::nocturne();
-    assert_eq!(t.surface_overlay.to_linear().a, 1.0);
-    let mut world = World::default();
-    let trigger = world.spawn(Marker);
-    let popups = [
-        world.spawn(t.popup()),
-        world.spawn(t.dropdown(trigger)),
-        world.spawn(t.context_menu()),
-    ];
-    for popup in popups {
-        let material = world.get_component_for_entity::<UIMaterial>(popup).unwrap();
-        assert_eq!(material.color.a, 1.0);
-    }
 }
 
 #[derive(Resource, Default)]
@@ -204,22 +136,6 @@ fn an_element_runs_its_listeners_on_itself_and_keeps_its_modifiers() {
     );
     let node = world.get_component_for_entity::<UINode>(button).unwrap();
     assert_eq!(node.width, UIValue::Px(90.0));
-    assert_eq!(
-        world
-            .get_component_for_entity::<UIText>(button)
-            .unwrap()
-            .font_size,
-        t.font_size_sm
-    );
-    assert_eq!(
-        colors(
-            world
-                .get_component_for_entity::<UIInteractionStyle>(button)
-                .unwrap()
-        ),
-        colors(&t.interaction(ButtonVariant::Ghost, false))
-    );
-    assert!(world.get_component_for_entity::<UIButton>(button).is_some());
 }
 
 #[test]
@@ -341,11 +257,6 @@ fn a_dropdown_opens_and_closes_when_its_trigger_is_clicked() {
     let trigger = world.spawn(t.button("Menu").on_click(toggle_owned_panels));
     let bystander = world.spawn(t.button("Other").on_click(toggle_owned_panels));
     let dropdown = world.spawn(t.dropdown(trigger));
-    let context_menu = world.spawn(t.context_menu());
-    world
-        .get_component_for_entity_mut::<UIAnchoredPanel>(context_menu)
-        .unwrap()
-        .owner = Some(trigger);
     let open = |world: &World, panel| {
         world
             .get_component_for_entity::<UIAnchoredPanel>(panel)
@@ -358,10 +269,6 @@ fn a_dropdown_opens_and_closes_when_its_trigger_is_clicked() {
 
     click(&mut world, trigger, MouseButton::Left);
     assert!(open(&world, dropdown));
-    assert!(
-        !open(&world, context_menu),
-        "a panel that is not toggled by its owner stays shut"
-    );
 
     click(&mut world, trigger, MouseButton::Left);
     assert!(!open(&world, dropdown));

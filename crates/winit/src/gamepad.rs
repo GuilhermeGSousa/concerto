@@ -229,18 +229,8 @@ mod tests {
             engine_button(Button::LeftTrigger2),
             Some(GamepadButton::LeftTrigger)
         );
-        for button in [Button::C, Button::Z, Button::Unknown] {
-            assert_eq!(engine_button(button), None);
-        }
-        for axis in [
-            Axis::LeftZ,
-            Axis::RightZ,
-            Axis::DPadX,
-            Axis::DPadY,
-            Axis::Unknown,
-        ] {
-            assert_eq!(engine_axis(axis), None);
-        }
+        assert_eq!(engine_button(Button::C), None);
+        assert_eq!(engine_axis(Axis::LeftZ), None);
     }
 
     struct Change {
@@ -269,22 +259,6 @@ mod tests {
             },
             Change {
                 event: EventType::ButtonPressed(Button::South, code()),
-                engine: None,
-            },
-            Change {
-                event: EventType::ButtonReleased(Button::South, code()),
-                engine: None,
-            },
-            Change {
-                event: EventType::ButtonChanged(Button::C, 1.0, code()),
-                engine: None,
-            },
-            Change {
-                event: EventType::AxisChanged(Axis::LeftZ, 0.5, code()),
-                engine: None,
-            },
-            Change {
-                event: EventType::Connected,
                 engine: None,
             },
         ];

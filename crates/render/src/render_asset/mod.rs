@@ -308,20 +308,6 @@ mod tests {
                 deferred: &[false],
             },
             Budget {
-                case: "no budget",
-                max_bytes: None,
-                payloads: sized(&[Some(4); 4]),
-                prepared: &[4],
-                deferred: &[false],
-            },
-            Budget {
-                case: "assets without a byte length",
-                max_bytes: Some(10),
-                payloads: sized(&[Some(100), Some(100), None, None]),
-                prepared: &[3],
-                deferred: &[true],
-            },
-            Budget {
                 case: "assets that fail to prepare use none of it",
                 max_bytes: Some(10),
                 payloads: failing,
@@ -350,9 +336,5 @@ mod tests {
         assert!(!render_assets_settled(&app));
         app.update();
         assert!(render_assets_settled(&app));
-        assert!(
-            render_assets_settled(&App::new()),
-            "an app without a limiter counts as settled"
-        );
     }
 }

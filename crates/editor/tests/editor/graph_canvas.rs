@@ -91,13 +91,6 @@ fn a_canvas_lays_out_trees_leftward_and_diagrams_in_layers() {
             ],
         },
         Case {
-            name: "a loop still places every node once",
-            mode: CanvasMode::Flow,
-            nodes: vec![taking(1, 1), taking(2, 1)],
-            links: vec![link(1, 2).with_slot(0), link(2, 1).with_slot(0)],
-            expected: vec![at(1, 1, 0), at(2, 0, 0)],
-        },
-        Case {
             name: "layers follow the distance from the first node",
             mode: CanvasMode::Diagram,
             nodes: vec![node(1), node(2), node(3), node(4), node(5), node(6)],

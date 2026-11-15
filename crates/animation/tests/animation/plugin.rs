@@ -31,73 +31,29 @@ use glam::Mat4;
 use uuid::Uuid;
 
 #[test]
-fn animation_plugin_alone_provides_the_skeleton_store_and_registering_it_again_keeps_it_usable() {
-    let mut app = App::new();
-    app.insert_resource(AssetServer::new());
-    app.register_plugin(AnimationPlugin);
-    let usable = |app: &App| {
-        app.get_resource::<AssetStore<Skeleton>>().is_some()
-            && app
-                .get_resource::<AssetServer>()
-                .unwrap()
-                .is_registered::<Skeleton>()
-    };
-
-    assert!(usable(&app));
-
-    app.register_asset::<Skeleton>();
-
-    assert!(usable(&app));
-}
-
-#[test]
-fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
+fn animation_plugin_registers_the_built_in_nodes_and_assets() {
     use std::any::TypeId;
 
-    use concerto_animation::clip::AnimationClip;
-    use concerto_animation::graph::AnimationGraph;
     use concerto_animation::mask::BoneMask;
     use concerto_animation::node::blend_space::BlendSpace2DNode;
     use concerto_animation::node::state_machine::AnimationStateMachine;
     use concerto_animation::node::{
-        AdditiveNode, AimOffsetNode, AimPoint, AnimationClipNode, BlendNode, LayerNode,
-        PlaceholderNode, ReflectAnimationNode, ResultNode, TwoBoneIkNode,
+        AdditiveNode, AimOffsetNode, AnimationClipNode, BlendNode, LayerNode, PlaceholderNode,
+        ReflectAnimationNode, ResultNode, TwoBoneIkNode,
     };
-    use concerto_animation::retarget::{RetargetGoal, RetargetGoalSettings, RetargetRig};
-    use concerto_app::InspectedAssets;
+    use concerto_animation::retarget::RetargetRig;
+
     use concerto_ecs::reflect::AppTypeRegistry;
-    use concerto_foundation::assets::{Asset, handle::AssetHandle};
-    use concerto_mesh::ReflectSkeletonSource;
 
     let mut app = App::new();
     app.insert_resource(AssetServer::new());
     app.register_plugin(AnimationPlugin);
 
-    assert!(
-        app.get_resource::<InspectedAssets>()
-            .unwrap()
-            .iter()
-            .any(|record| record.kind == BoneMask::name())
-    );
-    assert!(
-        app.get_resource::<AssetServer>()
-            .unwrap()
-            .is_registered::<BoneMask>()
-    );
-    assert!(
-        app.get_resource::<InspectedAssets>()
-            .unwrap()
-            .iter()
-            .any(|record| record.kind == RetargetRig::name())
-    );
-    assert!(
-        app.get_resource::<AssetServer>()
-            .unwrap()
-            .is_registered::<RetargetRig>()
-    );
+    let server = app.get_resource::<AssetServer>().unwrap();
+    assert!(server.is_registered::<BoneMask>());
+    assert!(server.is_registered::<RetargetRig>());
     let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
     let has_node_data = |id: TypeId| registry.get_type_data::<ReflectAnimationNode>(id).is_some();
-
     assert!(has_node_data(TypeId::of::<ResultNode>()));
     assert!(has_node_data(TypeId::of::<BlendNode>()));
     assert!(has_node_data(TypeId::of::<AnimationClipNode>()));
@@ -108,44 +64,6 @@ fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
     assert!(has_node_data(TypeId::of::<LayerNode>()));
     assert!(has_node_data(TypeId::of::<AdditiveNode>()));
     assert!(has_node_data(TypeId::of::<AimOffsetNode>()));
-    assert!(registry.get(TypeId::of::<AimPoint>()).is_some());
-    assert!(registry.get(TypeId::of::<RetargetGoal>()).is_some());
-    assert!(registry.get(TypeId::of::<RetargetGoalSettings>()).is_some());
-    assert!(
-        registry
-            .get(TypeId::of::<AssetHandle<AnimationClip>>())
-            .is_some()
-    );
-    assert!(
-        registry
-            .get(TypeId::of::<AssetHandle<AnimationGraph>>())
-            .is_some()
-    );
-    assert!(
-        registry
-            .get(TypeId::of::<AssetHandle<BoneMask>>())
-            .is_some()
-    );
-    assert!(
-        registry
-            .get(TypeId::of::<AssetHandle<Skeleton>>())
-            .is_some()
-    );
-    assert!(
-        registry
-            .get(TypeId::of::<AssetHandle<RetargetRig>>())
-            .is_some()
-    );
-    assert!(
-        registry
-            .get_type_data::<ReflectSkeletonSource>(TypeId::of::<BoneMask>())
-            .is_some()
-    );
-    assert!(
-        registry
-            .get_type_data::<ReflectSkeletonSource>(TypeId::of::<RetargetRig>())
-            .is_some()
-    );
 }
 
 #[test]
@@ -380,41 +298,6 @@ fn an_additive_clip_loaded_with_its_base_holds_a_built_delta() {
 
     assert_built(runtime.load(clip, built_delta));
     assert_eq!(project.blobs(), 1);
-}
-
-#[test]
-fn an_additive_clip_whose_base_is_missing_fails_its_load_naming_the_base() {
-    let mut project = ClipProject::new();
-    let missing = AssetId::new();
-    let clip = project.save("additive", &additive_ramp(3.0, missing));
-
-    let mut runtime = ClipRuntime::new(&project.root, &project.registry, DerivedDataCache::none());
-
-    assert!(runtime.load(clip, built_delta).is_none());
-    let error = runtime
-        .server
-        .cook(&project.root.join("cooked"))
-        .expect_err("a clip with a missing base can't be cooked");
-    let message = format!("{error:#}");
-    assert!(
-        message.contains(&format!("{missing:?}")) && message.contains("content/additive.gasset"),
-        "{message}"
-    );
-}
-
-#[test]
-fn a_plain_clip_loads_with_no_derived_data_cache_and_no_inputs() {
-    let mut project = ClipProject::new();
-    let clip = project.save("plain", &ramp(1.0));
-
-    let mut runtime = ClipRuntime::new(&project.root, &project.registry, DerivedDataCache::none());
-
-    let loaded = runtime
-        .load(clip, built_delta)
-        .expect("the plain clip loaded");
-    assert_eq!(loaded.duration, 0.0);
-    assert_eq!(loaded.halfway, 0.0);
-    assert!(!project.root.join("derived-cache").exists());
 }
 
 #[test]

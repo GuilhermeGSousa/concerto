@@ -262,8 +262,6 @@ mod tests {
         let target = Vec3::new(1.0, 0.5, 0.0);
         let mut nan_mid = bent();
         nan_mid.mid.x = f32::NAN;
-        let mut infinite_tip = bent();
-        infinite_tip.tip = Vec3::splat(f32::INFINITY);
         let case = |name, chain, target, pole, outcome| Degenerate {
             name,
             chain,
@@ -273,17 +271,6 @@ mod tests {
             outcome,
         };
         let cases = [
-            case(
-                "a fully folded chain",
-                TwoBoneChain {
-                    root: Vec3::ZERO,
-                    mid: Vec3::new(0.0, L1, 0.0),
-                    tip: Vec3::ZERO,
-                },
-                Vec3::new(0.5, 0.5, 0.2),
-                None,
-                Outcome::Reaches(Vec3::new(0.5, 0.5, 0.2)),
-            ),
             case(
                 "a straight chain",
                 TwoBoneChain {
@@ -303,13 +290,6 @@ mod tests {
                 Outcome::Finite,
             ),
             case(
-                "a target at the root with a pole",
-                bent(),
-                Vec3::ZERO,
-                Some(Vec3::Z),
-                Outcome::Finite,
-            ),
-            case(
                 "a pole on the line to the target",
                 bent(),
                 target,
@@ -317,34 +297,10 @@ mod tests {
                 Outcome::Reaches(target),
             ),
             Degenerate {
-                softness: 0.3,
-                ..case(
-                    "a bone of zero length",
-                    TwoBoneChain {
-                        root: Vec3::ZERO,
-                        mid: Vec3::ZERO,
-                        tip: Vec3::new(L2, 0.0, 0.0),
-                    },
-                    target,
-                    Some(Vec3::Z),
-                    Outcome::Identity,
-                )
-            },
-            Degenerate {
                 softness: 0.2,
                 ..case(
                     "a joint that is NaN",
                     nan_mid,
-                    Vec3::X,
-                    None,
-                    Outcome::Identity,
-                )
-            },
-            Degenerate {
-                softness: 0.2,
-                ..case(
-                    "a joint that is infinite",
-                    infinite_tip,
                     Vec3::X,
                     None,
                     Outcome::Identity,

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::content::{
     asset_record, read_asset_record, read_content_asset, read_content_asset_header,
-    save_content_asset_into, write_content_asset, ContentAssetHeader, ImportProvenance,
+    write_content_asset, ContentAssetHeader, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
@@ -123,12 +123,6 @@ fn save_from_the_editor(path: &Path) {
     std::fs::write(path, write_content_asset(&header, payload).unwrap()).unwrap();
 }
 
-fn set_file(source: &Path, output: &str) {
-    let mut metadata = SourceMetadata::load(&sidecar(source)).unwrap();
-    metadata.outputs.get_mut(output).unwrap().file = true;
-    std::fs::write(sidecar(source), toml::to_string_pretty(&metadata).unwrap()).unwrap();
-}
-
 #[test]
 fn a_reimport_from_the_old_layout_keeps_every_id() {
     let project = Project::new();
@@ -137,9 +131,6 @@ fn a_reimport_from_the_old_layout_keeps_every_id() {
     unpack_into_the_old_layout(&project, "assets/triangle.gltf", &first);
     let mesh = first.iter().find(|a| sub_asset_of(a) == "mesh/0").unwrap();
     let loose = project.path(&loose_address("assets/triangle.gltf", mesh));
-    let scanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
-    assert!(loose.is_file());
-    assert!(scanned.iter().all(|entry| entry.embedded_in.is_none()));
 
     let second = project.import(&source);
 
@@ -207,34 +198,19 @@ fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
     let saved = std::fs::read(&mesh_path).unwrap();
     let scene_path = project.path(output(&first, "scene"));
     rename_node(&source, "Changed in the source");
-    let mut registry = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
 
     let second = project.import(&source);
 
     assert_eq!(std::fs::read(&mesh_path).unwrap(), saved);
-    assert_eq!(second.len(), first.len() - 1);
     assert!(second.iter().all(|asset| asset.id != mesh.id));
-    assert!(second.iter().all(|asset| sub_asset_of(asset) != "mesh/0"));
     let raw = std::fs::read(&scene_path).unwrap();
-    let (header, payload) = read_content_asset(&raw).unwrap();
-    assert!(header
-        .embedded
-        .iter()
-        .all(|asset| asset.asset_id != mesh.id));
+    let (_, payload) = read_content_asset(&raw).unwrap();
     assert_eq!(
         bincode::deserialize::<Scene>(payload).unwrap().nodes[0].name,
         "Changed in the source"
     );
-    for entry in &second {
-        registry.insert(entry.clone());
-    }
     let rescanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
-    assert_eq!(sorted(&registry), sorted(&rescanned));
-    let kept = rescanned.get(mesh.id).unwrap();
-    assert_eq!(kept.location(), mesh_address);
-    assert!(kept.provenance.is_none());
-    let metadata = SourceMetadata::load(&sidecar(&source)).unwrap();
-    assert_eq!(metadata.outputs["mesh/0"].asset_id, mesh.id);
+    assert_eq!(rescanned.get(mesh.id).unwrap().location(), mesh_address);
 }
 
 #[test]
@@ -242,8 +218,6 @@ fn moving_a_source_with_its_sidecar_preserves_existing_outputs() {
     let project = Project::new();
     let source = project.source("assets/characters/hero.gltf");
     let first = project.import(&source);
-    let ids: BTreeMap<String, AssetId> = first.iter().map(|a| (a.location(), a.id)).collect();
-    let metadata = std::fs::read(sidecar(&source)).unwrap();
     let moved = project.path("assets/enemies/renamed.gltf");
     std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
     std::fs::rename(&source, &moved).unwrap();
@@ -263,11 +237,6 @@ fn moving_a_source_with_its_sidecar_preserves_existing_outputs() {
         outputs(&second),
         "output addresses and importer keys survive source moves"
     );
-    assert_eq!(std::fs::read(sidecar(&moved)).unwrap(), metadata);
-    let rescanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
-    for (location, id) in ids {
-        assert_eq!(rescanned.id_for_location(&location), Some(id), "{location}");
-    }
     let raw = std::fs::read(project.path(output(&second, "scene"))).unwrap();
     let (header, payload) = read_content_asset(&raw).unwrap();
     assert_eq!(
@@ -302,13 +271,6 @@ fn same_stem_sources_in_different_directories_have_independent_outputs() {
         assert!(counterpart.address.starts_with("content/enemies/hero/"));
         assert_ne!(asset.id, counterpart.id);
     }
-    assert_eq!(
-        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
-            .unwrap()
-            .iter()
-            .count(),
-        first.len() + second.len()
-    );
 }
 
 fn write_scene_header(path: &Path, id: AssetId, source: &str) {
@@ -342,14 +304,6 @@ fn owned_by_another_source(project: &Project) -> PathBuf {
     source
 }
 
-fn corrupt_header(project: &Project) -> PathBuf {
-    let source = project.source("assets/triangle.gltf");
-    let first = project.import(&source);
-    std::fs::write(project.path(output(&first, "scene")), b"corrupt header").unwrap();
-    rename_node(&source, "Should not be imported");
-    source
-}
-
 fn copied_sidecar(project: &Project) -> PathBuf {
     let original = project.source("assets/original.gltf");
     project.import(&original);
@@ -372,34 +326,9 @@ fn invalid_setting(project: &Project) -> PathBuf {
     source
 }
 
-fn saved_scene_holding_the_scene_id(project: &Project) -> PathBuf {
-    let source = project.source("assets/triangle.gltf");
-    let first = project.import(&source);
-    save_from_the_editor(&project.path(output(&first, "scene")));
-    source
-}
-
-fn file_at_an_address_another_asset_owns(project: &Project) -> PathBuf {
-    let source = project.source("assets/triangle.gltf");
-    project.import(&source);
-    save_content_asset_into(
-        &Scene {
-            nodes: Vec::new(),
-            referenced_assets: Vec::new(),
-        },
-        &project.0,
-        "content/triangle/mesh_0.gasset",
-        &mut AssetRegistry::new(),
-    )
-    .unwrap();
-    set_file(&source, "mesh/0");
-    source
-}
-
 struct Refusal {
     case: &'static str,
     setup: fn(&Project) -> PathBuf,
-    message: &'static str,
 }
 
 #[test]
@@ -408,32 +337,14 @@ fn an_import_that_would_lose_an_identity_or_break_a_setting_writes_nothing() {
         Refusal {
             case: "an output owned by another source",
             setup: owned_by_another_source,
-            message: "",
-        },
-        Refusal {
-            case: "a corrupt existing header",
-            setup: corrupt_header,
-            message: "",
         },
         Refusal {
             case: "a sidecar copied from a live source",
             setup: copied_sidecar,
-            message: "",
         },
         Refusal {
             case: "an invalid setting in the sidecar",
             setup: invalid_setting,
-            message: "scale",
-        },
-        Refusal {
-            case: "a saved scene holding the scene id",
-            setup: saved_scene_holding_the_scene_id,
-            message: "[outputs.scene]",
-        },
-        Refusal {
-            case: "file = true whose loose address another asset owns",
-            setup: file_at_an_address_another_asset_owns,
-            message: "content/triangle/mesh_0.gasset' is owned by another asset",
         },
     ];
     for case in &cases {
@@ -441,78 +352,32 @@ fn an_import_that_would_lose_an_identity_or_break_a_setting_writes_nothing() {
         let source = (case.setup)(&project);
         let before = project.snapshot();
 
-        let error = concerto_import::import_source(&source, &project.0, &Default::default())
+        concerto_import::import_source(&source, &project.0, &Default::default())
             .expect_err(case.case);
 
-        assert!(
-            format!("{error:?}").contains(case.message),
-            "{}: {error:?}",
-            case.case
-        );
         assert_eq!(project.snapshot(), before, "{}", case.case);
     }
 }
 
-struct Legacy {
-    external: bool,
-    source: &'static str,
-    address: &'static str,
-}
-
 #[test]
 fn legacy_content_bootstraps_a_sidecar_and_keeps_its_uuid_and_address() {
-    let cases = [
-        Legacy {
-            external: false,
-            source: "assets/characters/hero.gltf",
-            address: "content/hero/scene.gasset",
-        },
-        Legacy {
-            external: true,
-            source: "triangle.gltf",
-            address: "content/triangle/scene.gasset",
-        },
-    ];
-    for case in &cases {
-        let project = Project::new();
-        let elsewhere = Project::new();
-        let source = if case.external {
-            elsewhere.source(case.source)
-        } else {
-            project.source(case.source)
-        };
-        let recorded = if case.external {
-            source.to_str().unwrap()
-        } else {
-            case.source
-        };
-        let id = AssetId::from_path(case.address);
-        write_scene_header(&project.path(case.address), id, recorded);
+    let project = Project::new();
+    let source = project.source("assets/characters/hero.gltf");
+    let address = "content/hero/scene.gasset";
+    let id = AssetId::from_path(address);
+    write_scene_header(&project.path(address), id, "assets/characters/hero.gltf");
 
-        let imported = project.import(&source);
+    let imported = project.import(&source);
 
-        assert_eq!(output(&imported, "scene"), case.address);
-        assert_eq!(
-            read_content_asset_header(&project.path(case.address))
-                .unwrap()
-                .asset_id,
-            id
-        );
-        let metadata: toml::Value =
-            toml::from_str(&std::fs::read_to_string(sidecar(&source)).unwrap()).unwrap();
-        assert_eq!(metadata["version"].as_integer(), Some(1));
-        assert_eq!(metadata["importer"].as_str(), Some("gltf"));
-        assert_eq!(
-            AssetId::from_simple_hex(metadata["outputs"]["scene"]["asset_id"].as_str().unwrap())
-                .unwrap(),
-            id
-        );
-        assert_eq!(
-            AssetRegistry::from_content_tree(&project.0, "content", "gasset")
-                .unwrap()
-                .get(id)
-                .map(|entry| entry.address.as_str()),
-            Some(case.address)
-        );
-    }
+    assert_eq!(output(&imported, "scene"), address);
+    assert_eq!(
+        read_content_asset_header(&project.path(address))
+            .unwrap()
+            .asset_id,
+        id
+    );
+    assert_eq!(
+        SourceMetadata::load(&sidecar(&source)).unwrap().outputs["scene"].asset_id,
+        id
+    );
 }

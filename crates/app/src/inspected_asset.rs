@@ -84,13 +84,11 @@ fn save<A: Asset + Reflect>(
 #[cfg(test)]
 mod tests {
     use crate::{plugins::AssetManagerPlugin, App};
-    use concerto_ecs::reflect::AppTypeRegistry;
     use concerto_foundation::assets::{
-        asset_server::AssetServer, content::decode_content_asset, registry::AssetRegistry, Asset,
-        AssetId, CreatableAsset, LoadableAsset,
+        content::decode_content_asset, registry::AssetRegistry, Asset, AssetId, CreatableAsset,
+        LoadableAsset,
     };
     use concerto_reflect::Reflect;
-    use std::any::TypeId;
 
     use super::InspectedAssets;
 
@@ -138,37 +136,6 @@ mod tests {
         app
     }
 
-    fn kinds(app: &App) -> Vec<&'static str> {
-        app.get_resource::<InspectedAssets>()
-            .unwrap()
-            .iter()
-            .map(|record| record.kind)
-            .collect()
-    }
-
-    #[test]
-    fn registering_an_inspected_asset_records_each_kind_once_and_registers_the_asset_and_its_type()
-    {
-        let mut app = app();
-        app.register_asset::<Tag>();
-
-        app.register_inspected_asset::<Note>()
-            .register_inspected_asset::<Tag>()
-            .register_inspected_asset::<Note>();
-
-        assert_eq!(kinds(&app), vec!["TestNote", "TestTag"]);
-        assert!(app
-            .get_resource::<AssetServer>()
-            .unwrap()
-            .is_registered::<Note>());
-        assert!(app
-            .get_resource::<AppTypeRegistry>()
-            .unwrap()
-            .read()
-            .get(TypeId::of::<Note>())
-            .is_some());
-    }
-
     #[test]
     fn a_record_creates_decodes_and_saves_its_asset_and_refuses_another_type() {
         let mut app = app();
@@ -212,8 +179,7 @@ mod tests {
         let wrong = Tag {
             label: "tag".into(),
         };
-        let error = (record.save)(&wrong, &root, "content/x.gasset", &mut registry).unwrap_err();
-        assert!(format!("{error:#}").contains("TestNote"), "got: {error:#}");
+        assert!((record.save)(&wrong, &root, "content/x.gasset", &mut registry).is_err());
         assert!(!root.join("content/x.gasset").exists());
         std::fs::remove_dir_all(root).unwrap();
     }

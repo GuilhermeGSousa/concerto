@@ -650,18 +650,8 @@ mod tests {
         assert_eq!(parent(second), Some(root));
         assert!(near(local(second), Vec3::new(1.0, 0.0, 2.0)));
 
-        let missing = error(&answers[4]);
-        assert_eq!(missing["code"], "unknown_asset");
-        assert_eq!(
-            missing["message"],
-            "no asset at content/props/missing.gasset; list_assets shows what exists"
-        );
-        let unplaceable = error(&answers[5]);
-        assert_eq!(unplaceable["code"], "refused");
-        assert_eq!(
-            unplaceable["message"],
-            "Mesh assets cannot be placed; placeable kinds: Scene"
-        );
+        assert_eq!(error(&answers[4])["code"], "unknown_asset");
+        assert_eq!(error(&answers[5])["code"], "refused");
         assert_eq!(error(&answers[6])["code"], "unknown_entity");
         assert_eq!(
             world

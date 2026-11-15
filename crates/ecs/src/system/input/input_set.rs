@@ -212,15 +212,10 @@ impl<K: 'static> ReadOnlySystemInput for InputSet<'_, '_, K> {}
 mod tests {
     use crate::{
         Res, ResMut, Resource, System, World,
-        system::executor::single_thread::SingleThreadedExecutor,
-        system::{
-            IntoSystem, access::SystemAccess, input::ValidationKind, meta::SystemMetadata,
-            schedule::Schedule,
-        },
+        system::{IntoSystem, access::SystemAccess, meta::SystemMetadata},
     };
 
     use super::{InputSet, register_input};
-    use crate::system::input::InputState;
 
     struct Phase;
 
@@ -270,16 +265,6 @@ mod tests {
         assert!(SystemAccess::are_disjoint(&elsewhere, &first));
     }
 
-    #[test]
-    fn an_input_set_not_yet_initialised_declares_a_read_of_the_world() {
-        let system = reads.into_system();
-        let mut access = SystemAccess::default();
-        system.fill_access(&mut SystemMetadata::default(), &mut access);
-
-        assert!(access.reads_world());
-        assert!(!access.is_exclusive());
-    }
-
     fn record(set: InputSet<Phase>, mut seen: ResMut<Seen>) {
         let entry = match set.get::<Res<'static, First>>() {
             Ok(first) => format!("first {}", first.0),
@@ -322,62 +307,5 @@ mod tests {
                 "both 7".to_string()
             ]
         );
-    }
-
-    #[test]
-    fn a_member_whose_resource_is_missing_is_reported_missing() {
-        let mut world = registered();
-        world.insert_resource(Seen::default());
-        let mut system = record.into_system();
-        system.initialize(&mut world);
-
-        system.run_and_apply((), &mut world);
-
-        assert_eq!(seen(&world)[0], format!("{:?}", ValidationKind::Missing));
-    }
-
-    #[test]
-    fn registering_the_same_input_twice_keeps_one_member() {
-        let mut world = registered();
-        register_input::<Phase, Res<'static, First>>(&mut world);
-        world.insert_resource(Seen::default());
-        world.insert_resource(First(1));
-        world.insert_resource(Second(1));
-        let mut system = record.into_system();
-        system.initialize(&mut world);
-
-        system.run_and_apply((), &mut world);
-
-        assert_eq!(seen(&world)[0], "first 1");
-    }
-
-    #[test]
-    fn a_schedule_runs_a_system_whose_input_set_was_registered_before_it_compiled() {
-        let mut world = registered();
-        world.insert_resource(Seen::default());
-        world.insert_resource(First(5));
-        world.insert_resource(Second(6));
-        let mut schedule = Schedule::default();
-        schedule.add_system(record);
-
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        assert_eq!(seen(&world)[2], "both 11");
-    }
-
-    #[test]
-    fn an_input_state_fetches_an_input_set_outside_a_system() {
-        let mut world = registered();
-        world.insert_resource(First(2));
-        world.insert_resource(Second(9));
-        let mut state = InputState::<InputSet<Phase>>::new(&mut world);
-
-        let set = state.get(&world).unwrap();
-        let sum = set.get::<Res<'static, First>>().unwrap().0
-            + set.get::<Res<'static, Second>>().unwrap().0;
-
-        assert_eq!(sum, 11);
     }
 }

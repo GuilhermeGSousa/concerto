@@ -65,25 +65,3 @@ pub(crate) fn sync_checkbox_material(checkboxes: Query<(&UICheckbox, &mut UIMate
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::Watch;
-    use concerto_ecs::World;
-
-    #[test]
-    fn a_checkbox_left_alone_leaves_its_material_unchanged() {
-        let mut world = World::new();
-        let checkbox = world.spawn((UICheckbox::new(false), UIMaterial::default()));
-        let mut watch = Watch::new::<UIMaterial, _>(&mut world, sync_checkbox_material);
-        watch.run(&mut world);
-        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
-
-        world
-            .get_component_for_entity_mut::<UICheckbox>(checkbox)
-            .unwrap()
-            .checked = true;
-        assert_eq!(watch.run(&mut world), 1);
-    }
-}

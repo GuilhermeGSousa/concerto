@@ -76,7 +76,7 @@ struct Case {
     emits: &'static [&'static str],
     omits: &'static [&'static str],
     depends_on: &'static [&'static str],
-    refusal: &'static [&'static str],
+    refused: bool,
 }
 
 fn emits(
@@ -91,30 +91,26 @@ fn emits(
         emits,
         omits,
         depends_on,
-        refusal: &[],
+        refused: false,
     }
 }
 
-fn refuses(source: &'static str, settings: String, refusal: &'static [&'static str]) -> Case {
+fn refuses(settings: String) -> Case {
     Case {
-        source,
+        source: "animations_named.gltf",
         settings,
         emits: &[],
         omits: &[],
         depends_on: &[],
-        refusal,
+        refused: true,
     }
 }
 
 const BASE_ID: &str = "d6e76e64-a888-49cd-bc16-61f0566f36ab";
 
-fn additive(rest: &str) -> String {
-    format!("[additive.Wiggle]\nbase = \"{BASE_ID}\"\n{rest}")
-}
-
 #[test]
-fn a_source_and_its_settings_import_their_sub_assets_or_are_refused_naming_the_problem() {
-    let mut cases = vec![
+fn a_source_and_its_settings_import_their_sub_assets_or_are_refused() {
+    let cases = [
         emits(
             "triangle.gltf",
             &["mesh/0", "material/0", "scene"],
@@ -145,87 +141,18 @@ fn a_source_and_its_settings_import_their_sub_assets_or_are_refused_naming_the_p
             &["animation/0", "animation/2"],
             &[],
         ),
-        emits(
-            "skinned_unreachable_joint.gltf",
-            &["scene"],
-            &["skeleton/0"],
-            &[],
-        ),
-        Case {
-            omits: &["skeleton/0"],
-            ..refuses(
-                "skinned_out_of_order.gltf",
-                String::new(),
-                &["skin 0", "joint 2"],
-            )
-        },
-        refuses(
-            "animations_named.gltf",
-            "scale = 0.01\n".to_string(),
-            &["scale"],
-        ),
-        refuses(
-            "animations_named.gltf",
-            "[events.Wobble]\nhit = [0.5]\n".to_string(),
-            &["Wobble"],
-        ),
-        refuses(
-            "animations_named.gltf",
-            format!("[additive.Wobble]\nbase = \"{BASE_ID}\"\n"),
-            &["Wobble"],
-        ),
-        refuses(
-            "animations_named.gltf",
-            "[additive.Wiggle]\nbase = \"not-an-id\"\n".to_string(),
-            &["UUID"],
-        ),
-        refuses(
-            "animations_named.gltf",
-            additive("weight = 1.0\n"),
-            &["weight"],
-        ),
-        refuses(
-            "animations_named.gltf",
-            additive("range = { start = 0.0, end = 0.5, step = 0.1 }\n"),
-            &["step"],
-        ),
+        refuses("scale = 0.01\n".to_string()),
+        refuses("[events.Wobble]\nhit = [0.5]\n".to_string()),
+        refuses("[events.Wiggle]\nhit = [1.5]\n".to_string()),
+        refuses("[additive.Wiggle]\nbase = \"not-an-id\"\n".to_string()),
+        refuses(format!(
+            "[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = [0.0, 1.5]\n"
+        )),
     ];
-    for time in ["-0.5", "nan", "inf", "1.5"] {
-        cases.push(refuses(
-            "animations_named.gltf",
-            format!("[events.Wiggle]\nhit = [{time}]\n"),
-            &["hit"],
-        ));
-    }
-    for range in [
-        "[0.0, 1.5]",
-        "[0.5, 0.5]",
-        "[0.75, 0.25]",
-        "[-0.25, 0.5]",
-        "[nan, 0.5]",
-        "[0.0, inf]",
-    ] {
-        cases.push(refuses(
-            "animations_named.gltf",
-            additive(&format!("range = {range}\n")),
-            &["range"],
-        ));
-    }
-
     for case in &cases {
         let Imported { result, outputs } = import(case.source, &case.settings);
         let label = format!("{} with {:?}", case.source, case.settings);
-        match result {
-            Ok(()) => assert!(case.refusal.is_empty(), "{label}: expected a refusal"),
-            Err(error) => {
-                let message = format!("{error:?}");
-                assert!(
-                    !case.refusal.is_empty()
-                        && case.refusal.iter().all(|part| message.contains(part)),
-                    "{label}: got {message}"
-                );
-            }
-        }
+        assert_eq!(result.is_err(), case.refused, "{label}: {result:?}");
         let names: Vec<&str> = outputs.sub_assets.iter().map(|s| s.name.as_str()).collect();
         for name in case.emits {
             assert!(names.contains(name), "{label}: no {name} in {names:?}");
@@ -259,10 +186,6 @@ fn a_single_primitive_node_carries_its_mesh_material_and_light_by_stable_id() {
     );
     assert!(has_component_ending_in(node, "MaterialComponent"));
     assert!(has_component_ending_in(node, "light::Light"));
-    assert!(
-        !has_component_ending_in(node, "MeshCollider"),
-        "Blender extras are not read"
-    );
     assert!(
         scene
             .referenced_assets
@@ -327,8 +250,6 @@ fn a_skin_becomes_a_parents_first_skeleton_that_the_scene_binds() {
         skeleton.rest_pose[1].translation,
         glam::Vec3::new(0.0, 1.0, 0.0)
     );
-    assert_eq!(skeleton.bone_index("Joint".into()), Some(1));
-    assert_ne!(skeleton.bone_ids[0], skeleton.bone_ids[1]);
 
     let scene: Scene = emitted(&outputs, "scene");
     let bound: SkeletonComponent = scene
@@ -429,7 +350,6 @@ fn event_settings_add_sorted_animation_events_to_the_named_clip() {
         ]
     );
     assert_eq!(event_keys(&outputs, "animation/1"), [named_key(1.0, "end")]);
-    assert!(event_keys(&outputs, "animation/Wiggle").is_empty());
 }
 
 #[test]

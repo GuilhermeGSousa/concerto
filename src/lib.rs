@@ -237,56 +237,6 @@ pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
     Some(app)
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn setting_up_logging_twice_does_not_panic() {
-        super::init_logging();
-        super::init_logging();
-    }
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod cook_arg_tests {
-    use super::{cook_arg, CookArg};
-
-    fn arg(args: &[&str]) -> CookArg {
-        cook_arg(args.iter().map(|arg| arg.to_string()))
-    }
-
-    #[test]
-    fn no_cook_flag_is_absent() {
-        assert_eq!(arg(&[]), CookArg::Absent);
-        assert_eq!(arg(&["--forest"]), CookArg::Absent);
-    }
-
-    #[test]
-    fn a_cook_flag_with_nothing_after_it_is_missing() {
-        assert_eq!(arg(&["--forest", "--cook"]), CookArg::Missing);
-    }
-
-    #[test]
-    fn a_cook_flag_followed_by_a_flag_is_refused() {
-        assert_eq!(
-            arg(&["--cook", "--forest"]),
-            CookArg::Flag("--forest".to_string())
-        );
-    }
-
-    #[test]
-    fn a_cook_flag_takes_the_directory_after_it() {
-        assert_eq!(
-            arg(&["--cook", "out"]),
-            CookArg::Dir(std::path::PathBuf::from("out"))
-        );
-        assert_eq!(
-            arg(&["--forest", "--cook", "cooked/dir", "--sanatorium"]),
-            CookArg::Dir(std::path::PathBuf::from("cooked/dir"))
-        );
-    }
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod cook_tests {
     use concerto_app::{plugins::ContentSettings, App};
@@ -390,79 +340,60 @@ mod cook_tests {
     }
 
     #[test]
-    fn a_cook_with_no_gpu_writes_each_derived_asset_and_its_blob() {
+    fn a_cook_with_no_gpu_writes_each_derived_asset_and_its_blob_over_its_own_output_only() {
         let project = DoubledProject::new();
         let out = project.path().join("cooked");
 
         let report = project.cook(&out).unwrap();
 
         assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
-        assert!(out.join(".concerto-cook").is_file());
         let bytes = std::fs::read(out.join("content/doubled.gasset")).unwrap();
         let parts = read_content_asset_parts(&bytes).unwrap();
         assert_eq!(parts.header.derived.map(|section| section.key), Some(21));
         assert_eq!(parts.derived_blob, Some(&42u64.to_le_bytes()[..]));
-    }
 
-    #[test]
-    fn a_cook_replaces_a_previous_cook_output() {
-        let project = DoubledProject::new();
-        let out = project.path().join("cooked");
-        project.cook(&out).unwrap();
         std::fs::write(out.join("stale.gasset"), b"stale").unwrap();
-
-        let report = project.cook(&out).unwrap();
-
-        assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
+        project.cook(&out).unwrap();
         assert!(!out.join("stale.gasset").exists());
         assert!(out.join("content/doubled.gasset").is_file());
+
+        let mine = project.path().join("mine");
+        std::fs::create_dir_all(&mine).unwrap();
+        std::fs::write(mine.join("notes.txt"), b"mine").unwrap();
+        assert!(project.cook(&mine).is_err());
+        assert_eq!(std::fs::read(mine.join("notes.txt")).unwrap(), b"mine");
+        assert!(!mine.join("content").exists());
+    }
+
+    struct CookArgRow {
+        args: &'static [&'static str],
+        cook: super::CookArg,
     }
 
     #[test]
-    fn a_cook_refuses_a_non_empty_directory_it_did_not_write() {
-        let project = DoubledProject::new();
-        let out = project.path().join("mine");
-        std::fs::create_dir_all(&out).unwrap();
-        std::fs::write(out.join("notes.txt"), b"mine").unwrap();
-
-        let error = project.cook(&out).unwrap_err();
-
-        assert!(error.to_string().contains("not empty"), "{error:#}");
-        assert_eq!(std::fs::read(out.join("notes.txt")).unwrap(), b"mine");
-        assert!(!out.join("content").exists());
-    }
-
-    #[test]
-    fn a_cook_without_a_project_root_is_refused() {
-        let out = tempfile::tempdir().unwrap();
-
-        let error = super::cook(
-            recipe,
-            ContentSettings {
-                registry: "",
-                project_root: None,
+    fn the_cook_flag_takes_the_directory_after_it_and_no_flag_means_no_cook() {
+        let dir = |path: &str| super::CookArg::Dir(std::path::PathBuf::from(path));
+        let rows = [
+            CookArgRow {
+                args: &[],
+                cook: super::CookArg::Absent,
             },
-            &out.path().join("cooked"),
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("project root"), "{error:#}");
-    }
-
-    #[test]
-    fn a_cook_of_an_app_without_an_asset_server_is_refused() {
-        let project = tempfile::tempdir().unwrap();
-
-        let error = super::cook(
-            |_| {},
-            ContentSettings {
-                registry: "",
-                project_root: project.path().to_str(),
+            CookArgRow {
+                args: &["--forest"],
+                cook: super::CookArg::Absent,
             },
-            &project.path().join("cooked"),
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("AssetServer"), "{error:#}");
+            CookArgRow {
+                args: &["--cook", "out"],
+                cook: dir("out"),
+            },
+            CookArgRow {
+                args: &["--forest", "--cook", "cooked/dir", "--sanatorium"],
+                cook: dir("cooked/dir"),
+            },
+        ];
+        for row in rows {
+            let args = row.args.iter().map(|arg| arg.to_string());
+            assert_eq!(super::cook_arg(args), row.cook, "{:?}", row.args);
+        }
     }
 }

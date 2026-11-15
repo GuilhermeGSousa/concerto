@@ -35,8 +35,8 @@ let the scene warm up ~10 s, then capture ~30 s.
 > waits — that's idle time, not a hotspot. Judge CPU cost by zone times in
 > Tracy rather than by frame rate until a present-mode override exists.
 
-Repeatable timings of engine work, such as building and stepping a headless
-app, are `criterion` benchmarks in `crates/benches`, run with
+Repeatable timings of engine work a game feels, such as a UI frame or a burst
+of asset loads, are `criterion` benchmarks in `crates/benches`, run with
 `cargo bench -p concerto-benches --features run`; see
 [testing.md](testing.md).
 

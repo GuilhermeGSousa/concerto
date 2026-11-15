@@ -15,7 +15,7 @@ use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
-use concerto_debug_gizmos::DebugGizmosPlugin;
+use concerto_debug_gizmos::{DebugGizmosPlugin, GizmoStorage};
 use concerto_ecs::{
     Entity, World,
     component::scene::SceneEntityRef,
@@ -202,8 +202,33 @@ struct Drawn {
     matched: Vec<Vec<FeatureShape>>,
 }
 
+struct Layer {
+    name: &'static str,
+    show: fn(&mut MotionMatchingGizmos),
+}
+
+const LAYERS: [Layer; 4] = [
+    Layer {
+        name: "simulation",
+        show: |shown| shown.simulation = true,
+    },
+    Layer {
+        name: "query",
+        show: |shown| shown.query = true,
+    },
+    Layer {
+        name: "matched",
+        show: |shown| shown.matched = true,
+    },
+    Layer {
+        name: "history",
+        show: |shown| shown.history = true,
+    },
+];
+
 struct Stage {
     app: App,
+    character: Entity,
     capsule: Entity,
     player: Entity,
     database: MotionDatabase,
@@ -249,7 +274,7 @@ impl Stage {
             SkeletonComponent::new(skeleton_handle, bones, None),
         ));
         let capsule = spawn_capsule(world);
-        world.spawn((
+        let character = world.spawn((
             MotionMatchingGizmos::default(),
             CharacterLink {
                 capsule: SceneEntityRef::Entity(capsule),
@@ -260,6 +285,7 @@ impl Stage {
 
         Self {
             app,
+            character,
             capsule,
             player,
             database,
@@ -272,6 +298,28 @@ impl Stage {
     fn frame(&mut self) {
         sleep(FRAME);
         self.app.main_mut().update();
+    }
+
+    fn segments_with(&mut self, layers: &[Layer]) -> usize {
+        let character = self.character;
+        let world = self.app.main_mut().world_mut();
+        let shown = world
+            .get_component_for_entity_mut::<MotionMatchingGizmos>(character)
+            .unwrap();
+        shown.simulation = false;
+        shown.query = false;
+        shown.matched = false;
+        shown.history = false;
+        for layer in layers {
+            (layer.show)(shown);
+        }
+        self.frame();
+        self.app
+            .main()
+            .world()
+            .get_resource::<GizmoStorage>()
+            .unwrap()
+            .segment_count()
     }
 
     fn bone(&self) -> Transform {
@@ -381,7 +429,7 @@ fn assert_read_from_the_capsule(last_query: &LastQuery, database: &MotionDatabas
 }
 
 #[test]
-fn a_real_search_on_a_moving_capsule_lines_up_its_shapes() {
+fn a_real_search_on_a_moving_capsule_lines_up_its_shapes_and_draws_each_layer_only_while_on() {
     let mut stage = Stage::new();
     let mut transitioned = false;
 
@@ -398,4 +446,13 @@ fn a_real_search_on_a_moving_capsule_lines_up_its_shapes() {
     }
 
     assert!(transitioned, "no search moved playback to the other clip");
+
+    for layer in &LAYERS {
+        assert!(
+            stage.segments_with(std::slice::from_ref(layer)) > 0,
+            "{} drew nothing",
+            layer.name
+        );
+    }
+    assert_eq!(stage.segments_with(&[]), 0);
 }

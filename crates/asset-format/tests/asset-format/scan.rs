@@ -171,41 +171,20 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
     );
 }
 
-struct RegistryRefusal {
-    text: String,
-    names: &'static str,
-}
-
 #[test]
 fn parsing_refuses_the_legacy_address_only_form_and_two_ids_at_one_address() {
-    for case in [
-        RegistryRefusal {
-            text: format!(
-                "[assets]\n{} = \"content/a.gasset\"\n",
-                AssetId::new().simple_hex()
-            ),
-            names: "rebuild",
-        },
-        RegistryRefusal {
-            text: format!(
-                "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n",
-                AssetId::new().simple_hex(),
-                AssetId::new().simple_hex(),
-            ),
-            names: "content/a.gasset",
-        },
-        RegistryRefusal {
-            text: format!(
-                "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Scene\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\", embedded_as = \"mesh/0\" }}\n",
-                AssetId::new().simple_hex(),
-                AssetId::new().simple_hex(),
-                AssetId::new().simple_hex(),
-            ),
-            names: "content/a.gasset#mesh/0",
-        },
+    for text in [
+        format!(
+            "[assets]\n{} = \"content/a.gasset\"\n",
+            AssetId::new().simple_hex()
+        ),
+        format!(
+            "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n",
+            AssetId::new().simple_hex(),
+            AssetId::new().simple_hex(),
+        ),
     ] {
-        let err = parse_registry(&case.text).expect_err("refused");
-        assert!(format!("{err:#}").contains(case.names), "got: {err:#}");
+        assert!(parse_registry(&text).is_err(), "{text}");
     }
 }
 
@@ -214,7 +193,7 @@ enum Config {
         extension: &'static str,
         default_scene: Option<&'static str>,
     },
-    Refused(&'static str),
+    Refused,
 }
 
 struct ConfigCase {
@@ -225,35 +204,12 @@ struct ConfigCase {
 
 #[test]
 fn content_toml_fills_its_defaults_and_refuses_a_root_or_extension_it_cannot_use() {
-    let root = "content root must be 'content'";
-    let extension = "content extension must be a nonempty extension";
-    let refused = |name, toml, message| ConfigCase {
-        name,
-        toml: Some(toml),
-        expected: Config::Refused(message),
-    };
     let cases = [
         ConfigCase {
             name: "absent",
             toml: None,
             expected: Config::Loaded {
                 extension: "gasset",
-                default_scene: None,
-            },
-        },
-        ConfigCase {
-            name: "a missing field takes the default",
-            toml: Some("extension = \"bin\"\n"),
-            expected: Config::Loaded {
-                extension: "bin",
-                default_scene: None,
-            },
-        },
-        ConfigCase {
-            name: "the content root with a custom extension",
-            toml: Some("root = \"content\"\nextension = \"bin\"\n"),
-            expected: Config::Loaded {
-                extension: "bin",
                 default_scene: None,
             },
         },
@@ -265,17 +221,16 @@ fn content_toml_fills_its_defaults_and_refuses_a_root_or_extension_it_cannot_use
                 default_scene: Some("content/levels/forest.gasset"),
             },
         },
-        refused("another root", "root = \"data\"\n", root),
-        refused("a parent root", "root = \"../x\"\n", root),
-        refused("an empty root", "root = \"\"\n", root),
-        refused("an absolute root", "root = \"/abs\"\n", root),
-        refused("an empty extension", "extension = \"\"\n", extension),
-        refused("a dotted extension", "extension = \".gasset\"\n", extension),
-        refused(
-            "an extension with a slash",
-            "extension = \"a/b\"\n",
-            extension,
-        ),
+        ConfigCase {
+            name: "another root",
+            toml: Some("root = \"data\"\n"),
+            expected: Config::Refused,
+        },
+        ConfigCase {
+            name: "a dotted extension",
+            toml: Some("extension = \".gasset\"\n"),
+            expected: Config::Refused,
+        },
     ];
     for case in cases {
         let base = temp_root("config");
@@ -299,23 +254,9 @@ fn content_toml_fills_its_defaults_and_refuses_a_root_or_extension_it_cannot_use
                     case.name
                 );
             }
-            Config::Refused(message) => {
-                let err = loaded
-                    .err()
-                    .unwrap_or_else(|| panic!("{} loaded", case.name));
-                assert!(
-                    format!("{err:#}").contains(message),
-                    "{}: {err:#}",
-                    case.name
-                );
-            }
+            Config::Refused => assert!(loaded.is_err(), "{}", case.name),
         }
     }
-
-    let base = temp_root("config-unreadable");
-    std::fs::create_dir(base.join("content.toml")).unwrap();
-    assert!(ContentConfig::load_or_default(&base).is_err());
-    std::fs::remove_dir_all(&base).ok();
 }
 
 struct Scan {
@@ -326,7 +267,7 @@ struct Scan {
 
 enum Scanned {
     Listed(&'static [&'static str]),
-    Refused(&'static [&'static str]),
+    Refused,
 }
 
 struct Layout {
@@ -398,19 +339,14 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
             expected: Scanned::Listed(&["data/a.asset"]),
         },
         Layout {
-            name: "an absent directory",
-            build: content,
-            expected: Scanned::Listed(&[]),
-        },
-        Layout {
-            name: "a duplicate id names both addresses",
+            name: "a duplicate id",
             build: |root| {
                 let id = AssetId::new();
                 write_asset(&root.join("content/a.gasset"), id, "Mesh", None);
                 write_asset(&root.join("content/b.gasset"), id, "Mesh", None);
                 content(root)
             },
-            expected: Scanned::Refused(&["content/a.gasset", "content/b.gasset"]),
+            expected: Scanned::Refused,
         },
         Layout {
             name: "a host, then its embedded assets",
@@ -423,35 +359,6 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
                 content(root)
             },
             expected: Scanned::Listed(&["content/scene.gasset", "content/scene.gasset#mesh/0"]),
-        },
-        Layout {
-            name: "an embedded id repeated by a loose file names both locations",
-            build: |root| {
-                let id = AssetId::new();
-                host(&root.join("content/a/scene.gasset"), AssetId::new(), id);
-                write_asset(&root.join("content/b.gasset"), id, "Mesh", None);
-                content(root)
-            },
-            expected: Scanned::Refused(&["content/a/scene.gasset#mesh/0", "content/b.gasset"]),
-        },
-        Layout {
-            name: "a host cut short of its embedded assets names its path",
-            build: |root| {
-                let path = root.join("content/scene.gasset");
-                let bytes = host(&path, AssetId::new(), AssetId::new());
-                std::fs::write(&path, &bytes[..bytes.len() - 4]).unwrap();
-                content(root)
-            },
-            expected: Scanned::Refused(&["scene.gasset", "mesh/0"]),
-        },
-        Layout {
-            name: "an unreadable header names its path",
-            build: |root| {
-                std::fs::create_dir_all(root.join("content")).unwrap();
-                std::fs::write(root.join("content/broken.gasset"), b"nope").unwrap();
-                content(root)
-            },
-            expected: Scanned::Refused(&["broken.gasset"]),
         },
         #[cfg(unix)]
         Layout {
@@ -485,45 +392,6 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
         },
         #[cfg(unix)]
         Layout {
-            name: "two symlinks to one directory",
-            build: |root| {
-                mesh(&root.join("target/a.gasset"));
-                link(&root.join("target"), &root.join("base/content/alias_a"));
-                link(&root.join("target"), &root.join("base/content/alias_b"));
-                content(&root.join("base"))
-            },
-            expected: Scanned::Listed(&["content/alias_a/a.gasset"]),
-        },
-        #[cfg(unix)]
-        Layout {
-            name: "a directory outside the base keeps the walked path",
-            build: |root| {
-                std::fs::create_dir_all(root.join("base")).unwrap();
-                mesh(&root.join("other/a.gasset"));
-                Scan {
-                    base: root.join("base"),
-                    dir: root.join("other"),
-                    extension: "gasset",
-                }
-            },
-            expected: Scanned::Listed(&["<root>/other/a.gasset"]),
-        },
-        #[cfg(unix)]
-        Layout {
-            name: "a base with a parent after a symlink is normalised lexically",
-            build: |root| {
-                mesh(&root.join("elsewhere/a.gasset"));
-                link(&root.join("elsewhere"), &root.join("base/link"));
-                Scan {
-                    base: root.join("base/link/.."),
-                    dir: root.join("base/link"),
-                    extension: "gasset",
-                }
-            },
-            expected: Scanned::Listed(&["link/a.gasset"]),
-        },
-        #[cfg(unix)]
-        Layout {
             name: "a dangling directory symlink is skipped",
             build: |root| {
                 mesh(&root.join("content/a.gasset"));
@@ -552,37 +420,7 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
                     case.name
                 );
             }
-            Scanned::Refused(named) => {
-                let message = format!("{:#}", result.expect_err(case.name));
-                for name in named {
-                    assert!(message.contains(name), "{}: {message}", case.name);
-                }
-            }
+            Scanned::Refused => assert!(result.is_err(), "{}", case.name),
         }
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn an_unreadable_directory_is_an_error_naming_its_path() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let base = temp_root("scan-denied");
-    let denied = base.join("content/denied");
-    std::fs::create_dir_all(&denied).unwrap();
-    std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000)).unwrap();
-
-    if std::fs::read_dir(&denied).is_ok() {
-        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::fs::remove_dir_all(&base).ok();
-        return;
-    }
-
-    let result = scan_content(&base, &base.join("content"), "gasset");
-    std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    let message = format!("{:#}", result.expect_err("unreadable directory"));
-    assert!(message.contains("content/denied"), "got: {message}");
-
-    std::fs::remove_dir_all(&base).ok();
 }

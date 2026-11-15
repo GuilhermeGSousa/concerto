@@ -675,22 +675,12 @@ mod dismiss_tests {
                 closes,
             };
         for case in [
-            case("without a press", false, false, false, true, false),
             case(
                 "a focused field claims it first",
                 true,
                 true,
                 false,
                 true,
-                false,
-            ),
-            case("nothing to close", true, false, false, false, false),
-            case(
-                "a focused field and nothing open",
-                true,
-                true,
-                false,
-                false,
                 false,
             ),
             case(

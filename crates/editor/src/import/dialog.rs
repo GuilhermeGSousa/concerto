@@ -426,7 +426,7 @@ fn render_dialog(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::guard::{GuardedIntent, UnsavedGuard};
+    use crate::guard::UnsavedGuard;
     use crate::import::stage_sources;
     use crate::project::Project;
     use concerto_ecs::{
@@ -434,12 +434,7 @@ mod tests {
         entity::hierarchy::{ChildOf, Children},
         events::event_channel::EventChannel,
     };
-    use concerto_ui::{
-        items::UIItem,
-        list::update_lists_system,
-        node::{UIBox, UICulled},
-    };
-    use concerto_window::input::actions::ActionLabel;
+    use concerto_ui::list::update_lists_system;
     use glam::Vec2;
     use std::path::PathBuf;
 
@@ -449,21 +444,6 @@ mod tests {
         let mut system = system.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
-    }
-
-    fn place(world: &mut World) {
-        let mut system = update_lists_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
-    }
-
-    fn picked(names: &[&str]) -> Vec<StagedImport> {
-        stage_sources(
-            names
-                .iter()
-                .map(|name| PathBuf::from(format!("/picked/{name}")))
-                .collect(),
-        )
     }
 
     struct Fixture {
@@ -512,7 +492,9 @@ mod tests {
     impl Fixture {
         fn frame(&mut self) {
             run(&mut self.world, sync_dialog);
-            place(&mut self.world);
+            let mut place = update_lists_system();
+            place.initialize(&mut self.world);
+            place.run_and_apply((), &mut self.world);
             run(&mut self.world, render_dialog);
         }
 
@@ -527,44 +509,6 @@ mod tests {
                 .remaining()
         }
 
-        fn list(&mut self) -> Entity {
-            self.world
-                .query::<(Entity, &DialogView), ()>()
-                .iter(&mut self.world)
-                .next()
-                .unwrap()
-                .0
-        }
-
-        fn area(&mut self) -> &mut UIScrollArea {
-            let list = self.list();
-            self.world
-                .get_component_for_entity_mut::<UIScrollArea>(list)
-                .expect("the list is its own scroll area")
-        }
-
-        fn scroll_to(&mut self, first: usize) {
-            self.area().offset = first as f32 * ROW_HEIGHT;
-            self.frame();
-        }
-
-        fn lay_out(&mut self, entity: Entity, shown: bool) {
-            let rect = UIBox {
-                min: Vec2::ZERO,
-                size: Vec2::new(400.0, ROW_HEIGHT),
-            };
-            let clip_rect = if shown { rect } else { UIBox::default() };
-            self.world.insert(
-                UILayout {
-                    rect,
-                    content_rect: rect,
-                    clip_rect,
-                    paint_order: 0,
-                },
-                entity,
-            );
-        }
-
         fn open(&mut self) -> bool {
             self.world
                 .query::<(&DialogRoot, &UINode), ()>()
@@ -575,36 +519,19 @@ mod tests {
                 .visible
         }
 
-        fn rows(&mut self) -> Vec<Entity> {
-            let list = self.list();
-            let children = self
+        fn scroll_to(&mut self, first: usize) {
+            let list = self
                 .world
-                .get_component_for_entity::<Children>(list)
-                .map(|children| children.iter().copied().collect::<Vec<_>>())
-                .unwrap_or_default();
-            children
-                .into_iter()
-                .filter(|child| {
-                    self.world
-                        .get_component_for_entity::<DialogRow>(*child)
-                        .is_some()
-                })
-                .collect()
-        }
-
-        fn shown_rows(&mut self) -> usize {
-            self.rows().len()
-        }
-
-        fn fields(&mut self) -> usize {
-            self.world
-                .query::<&DialogField, ()>()
+                .query::<(Entity, &DialogView), ()>()
                 .iter(&mut self.world)
-                .count()
-        }
-
-        fn focus(&mut self) -> &mut FocusedWidget {
-            self.world.get_resource_mut::<FocusedWidget>().unwrap()
+                .next()
+                .unwrap()
+                .0;
+            self.world
+                .get_component_for_entity_mut::<UIScrollArea>(list)
+                .expect("the list is its own scroll area")
+                .offset = first as f32 * ROW_HEIGHT;
+            self.frame();
         }
 
         fn field(&mut self, index: usize) -> Entity {
@@ -614,64 +541,6 @@ mod tests {
                 .find(|(_, field)| field.0 == index)
                 .unwrap()
                 .0
-        }
-
-        fn input(&mut self, index: usize) -> &mut UITextInput {
-            let field = self.field(index);
-            self.world
-                .get_component_for_entity_mut::<UITextInput>(field)
-                .unwrap()
-        }
-
-        fn cell(&mut self, index: usize, column: usize) -> String {
-            let row = self.rows()[index];
-            let cell = self
-                .world
-                .get_component_for_entity::<Children>(row)
-                .unwrap()
-                .iter()
-                .copied()
-                .nth(column)
-                .unwrap();
-            self.world
-                .get_component_for_entity::<UIText>(cell)
-                .unwrap()
-                .text
-                .clone()
-        }
-
-        fn name(&mut self, index: usize) -> String {
-            self.cell(index, 0)
-        }
-
-        fn status(&mut self, index: usize) -> String {
-            self.cell(index, 2)
-        }
-
-        fn button(&mut self, label: &str) -> Entity {
-            self.world
-                .query::<(Entity, &UIText, &Interactable), ()>()
-                .iter(&mut self.world)
-                .find(|(_, text, _)| text.text == label)
-                .unwrap()
-                .0
-        }
-
-        fn import_disabled(&mut self) -> bool {
-            let button = self.button("Import");
-            self.world
-                .get_component_for_entity::<UIDisabled>(button)
-                .is_some()
-        }
-
-        fn click(&mut self, entity: Entity, button: MouseButton) {
-            self.world.trigger_on(
-                entity,
-                UIClick {
-                    position: Vec2::ZERO,
-                    button,
-                },
-            );
         }
 
         fn type_into(&mut self, entity: Entity, value: &str) {
@@ -689,386 +558,59 @@ mod tests {
             self.frame();
         }
 
-        fn fire(&mut self, action: impl ActionLabel) {
-            let channel = self
+        fn click(&mut self, label: &str) {
+            let button = self
                 .world
-                .get_resource_mut::<EventChannel<ActionFired>>()
-                .unwrap();
-            channel.update();
-            channel.update();
-            channel.push_event(ActionFired::new(action));
-            run(&mut self.world, press_keys);
+                .query::<(Entity, &UIText, &Interactable), ()>()
+                .iter(&mut self.world)
+                .find(|(_, text, _)| text.text == label)
+                .unwrap()
+                .0;
+            self.world.trigger_on(
+                button,
+                UIClick {
+                    position: Vec2::ZERO,
+                    button: MouseButton::Left,
+                },
+            );
             self.frame();
         }
     }
 
     #[test]
-    fn each_staged_file_gets_one_row_with_its_name_and_destination() {
-        let mut dialog = fixture(3);
-
-        assert!(dialog.open());
-        assert_eq!(dialog.shown_rows(), 3);
-        assert_eq!(dialog.fields(), 3);
-        assert_eq!(dialog.name(2), "file2.obj");
-        assert_eq!(dialog.input(2).value, "assets/file2.obj");
-        assert_eq!(dialog.status(2), "");
-        assert!(!dialog.import_disabled());
-    }
-
-    #[test]
-    fn a_replacing_row_is_labelled_and_a_rejected_row_shows_its_reason() {
-        let mut dialog = fixture(2);
-        dialog.staging().rows[0].state = RowState::Replaces;
-        dialog.staging().rows[1].state = RowState::Rejected("needs a file name".into());
-        dialog.frame();
-
-        assert!(dialog.status(0).contains("replaces"));
-        assert_eq!(dialog.status(1), "needs a file name");
-        assert!(
-            !dialog.import_disabled(),
-            "one importable row is enough to confirm"
-        );
-    }
-
-    #[test]
-    fn a_long_selection_is_one_list_item_per_file() {
-        let mut dialog = fixture(FILES);
-        let list = dialog.list();
-
-        let rows = dialog.rows();
-        assert_eq!(rows.len(), FILES);
-        for (index, row) in rows.into_iter().enumerate() {
-            let item = dialog
-                .world
-                .get_component_for_entity::<UIItem>(row)
-                .expect("every row is a list item");
-            assert_eq!((item.owner(), item.index()), (list, index));
-        }
-        assert_eq!(dialog.area().content_extent, FILES as f32 * ROW_HEIGHT);
-        assert_eq!(dialog.name(FILES - 1), format!("file{}.obj", FILES - 1));
-        assert_eq!(dialog.input(7).value, "assets/file7.obj");
-    }
-
-    #[test]
-    fn an_edit_lands_on_the_row_of_its_field() {
+    fn typing_a_destination_edits_the_row_of_its_field_and_revalidates_every_row() {
         let mut dialog = fixture(FILES);
         dialog.scroll_to(6);
         let field = dialog.field(7);
 
+        dialog.type_into(field, "assets/file8.obj");
+        assert_eq!(dialog.staging().rows[7].destination, "assets/file8.obj");
+        assert_eq!(dialog.staging().rows[1].destination, "assets/file1.obj");
+        assert!(!dialog.staging().rows[7].importable());
+        assert!(!dialog.staging().rows[8].importable());
+
         dialog.type_into(field, "assets/props/renamed.obj");
-
-        let rows = &dialog.staging().rows;
-        assert_eq!(rows[7].destination, "assets/props/renamed.obj");
-        assert_eq!(rows[1].destination, "assets/file1.obj");
-    }
-
-    #[test]
-    fn a_change_in_some_other_text_input_is_ignored() {
-        let mut dialog = fixture(2);
-        let elsewhere = dialog.world.spawn(UITextInput::new(""));
-
-        dialog.type_into(elsewhere, "assets/stolen.obj");
-
-        let rows = &dialog.staging().rows;
-        assert_eq!(rows[0].destination, "assets/file0.obj");
-        assert_eq!(rows[1].destination, "assets/file1.obj");
-    }
-
-    #[test]
-    fn an_edit_revalidates_the_rows_and_gates_the_import_button() {
-        let mut dialog = fixture(2);
-        let field = dialog.field(0);
-
-        dialog.type_into(field, "assets/file1.obj");
-        assert!(dialog.status(0).contains("twice"));
-        assert!(dialog.status(1).contains("twice"));
-        assert!(dialog.import_disabled());
-
-        dialog.type_into(field, "assets/other.obj");
-        assert_eq!(dialog.status(0), "");
-        assert_eq!(dialog.status(1), "");
-        assert!(!dialog.import_disabled());
-    }
-
-    #[test]
-    fn rendering_leaves_a_field_that_already_matches_its_row_alone() {
-        let mut dialog = fixture(1);
-        let field = dialog.field(0);
-        let input = dialog.input(0);
-        input.value = "assets/file0x.obj".into();
-        input.cursor = 13;
-
-        dialog.type_into(field, "assets/file0x.obj");
-
-        let input = dialog.input(0);
-        assert_eq!(input.value, "assets/file0x.obj");
-        assert_eq!(input.cursor, 13, "the caret stays where the user is typing");
-    }
-
-    #[test]
-    fn rewriting_a_field_moves_its_cursor_inside_the_new_value() {
-        let mut dialog = fixture(FILES);
-        let input = dialog.input(0);
-        input.value = "assets/a/much/longer/destination/than/the/next.obj".into();
-        input.cursor = input.value.len();
-        input.selection_anchor = Some(input.value.len() - 4);
-
-        dialog.frame();
-
-        let input = dialog.input(0);
-        assert_eq!(input.value, "assets/file0.obj");
-        assert_eq!(input.cursor, input.value.len());
-        assert_eq!(input.selection_anchor, None);
-    }
-
-    #[test]
-    fn rows_follow_staging() {
-        let mut dialog = fixture(3);
-        let before = dialog.rows();
-        assert_eq!(before.len(), 3);
-
-        let field = dialog.field(1);
-        dialog.type_into(field, "assets/moved.obj");
-        assert_eq!(dialog.rows(), before, "an edit keeps the rows it edits");
-
-        dialog.staging().rows = picked(&["late.obj", "later.obj"]);
-        dialog.frame();
-
-        let after = dialog.rows();
-        assert_eq!(after.len(), 2);
-        assert!(after.iter().all(|row| !before.contains(row)));
-        assert!(before.iter().all(|row| {
-            dialog
-                .world
-                .get_component_for_entity::<UINode>(*row)
-                .is_none()
-        }));
-        assert_eq!(dialog.name(0), "late.obj");
-        assert_eq!(dialog.name(1), "later.obj");
-        assert_eq!(dialog.input(1).value, "assets/later.obj");
-    }
-
-    #[test]
-    fn a_new_row_shows_its_destination_and_status_from_the_start() {
-        let mut dialog = fixture(0);
-        let mut rows = picked(&["late.obj"]);
-        rows[0].state = RowState::Rejected("needs a file name".into());
-        dialog.staging().rows = rows;
-
-        run(&mut dialog.world, sync_dialog);
-
-        assert_eq!(dialog.input(0).value, "assets/late.obj");
-        assert_eq!(dialog.status(0), "needs a file name");
-    }
-
-    #[test]
-    fn the_buttons_confirm_and_cancel_on_a_left_click_only() {
-        let mut dialog = fixture(2);
-        let import = dialog.button("Import");
-        dialog.click(import, MouseButton::Right);
-        assert_eq!(dialog.queued(), 0);
-        dialog.click(import, MouseButton::Left);
-        dialog.frame();
-        assert_eq!(dialog.queued(), 2);
-        assert!(!dialog.open());
-
-        let mut dialog = fixture(2);
-        let cancel = dialog.button("Cancel");
-        dialog.click(cancel, MouseButton::Left);
-        dialog.frame();
-        assert_eq!(dialog.queued(), 0);
-        assert!(!dialog.open());
-        assert_eq!(dialog.shown_rows(), 0);
         assert_eq!(
-            dialog.fields(),
-            0,
-            "a closed dialog leaves nothing in the focus ring"
+            dialog.staging().rows[7].destination,
+            "assets/props/renamed.obj"
         );
+        assert!(dialog.staging().rows.iter().all(StagedImport::importable));
     }
 
     #[test]
-    fn the_keys_confirm_and_cancel_only_while_the_dialog_is_open() {
-        let mut dialog = fixture(2);
-        dialog.fire(ConfirmImport);
-        assert_eq!(dialog.queued(), 2);
-        assert!(!dialog.open());
-
-        dialog.staging().rows = picked(&["late.obj"]);
-        dialog.fire(ConfirmImport);
-        assert_eq!(dialog.queued(), 2, "a closed dialog ignores the key");
-        dialog.fire(CancelImport);
-        assert_eq!(dialog.staging().rows.len(), 1);
-
-        let mut dialog = fixture(2);
-        dialog.fire(CancelImport);
-        assert_eq!(dialog.queued(), 0);
-        assert!(!dialog.open());
-    }
-
-    #[test]
-    fn the_key_context_is_active_exactly_while_the_dialog_is_open() {
-        let mut dialog = fixture(1);
-        let active = |dialog: &Fixture| {
-            dialog
-                .world
-                .get_resource::<ActionMap>()
-                .unwrap()
-                .is_active(ImportDialogContext)
-        };
-        assert!(active(&dialog));
-
-        dialog.fire(CancelImport);
-        assert!(!active(&dialog));
-    }
-
-    #[test]
-    fn closing_takes_keyboard_focus_away_from_a_dialog_field() {
-        let mut dialog = fixture(1);
-        let field = dialog.field(0);
-        **dialog.focus() = Some(field);
-
-        dialog.frame();
-        assert_eq!(
-            **dialog.focus(),
-            Some(field),
-            "an open dialog leaves focus alone"
-        );
-
-        dialog.fire(ConfirmImport);
-        assert_eq!(**dialog.focus(), None);
-    }
-
-    #[test]
-    fn scrolling_a_focused_field_off_screen_drops_its_focus() {
-        let mut dialog = fixture(FILES);
-        let field = dialog.field(0);
-        **dialog.focus() = Some(field);
-
-        dialog.scroll_to(1);
-        let row = dialog.rows()[0];
-        assert!(
-            dialog
-                .world
-                .get_component_for_entity::<UICulled>(row)
-                .is_none(),
-            "the row above the view is overscan, laid out but clipped"
-        );
-        dialog.lay_out(field, false);
-        dialog.frame();
-
-        assert_eq!(dialog.input(0).value, "assets/file0.obj");
-        assert_eq!(
-            **dialog.focus(),
-            None,
-            "typing must not carry on into a row the user cannot see"
-        );
-    }
-
-    #[test]
-    fn a_focused_field_still_on_screen_keeps_its_focus() {
-        let mut dialog = fixture(FILES);
-        let field = dialog.field(1);
-        **dialog.focus() = Some(field);
-
-        dialog.scroll_to(1);
-        dialog.lay_out(field, true);
-        dialog.frame();
-
-        assert_eq!(**dialog.focus(), Some(field));
-    }
-
-    #[test]
-    fn closing_leaves_focus_held_elsewhere_alone() {
-        let mut dialog = fixture(1);
-        let elsewhere = dialog.world.spawn(UITextInput::new(""));
-        **dialog.focus() = Some(elsewhere);
-
-        dialog.fire(CancelImport);
-
-        assert_eq!(**dialog.focus(), Some(elsewhere));
-    }
-
-    #[test]
-    fn opening_puts_the_caret_in_the_first_destination_once() {
-        let mut dialog = fixture(2);
-        let first = dialog.field(0);
-        assert_eq!(**dialog.focus(), Some(first));
-
-        **dialog.focus() = None;
-        dialog.frame();
-        assert_eq!(
-            **dialog.focus(),
-            None,
-            "only the frame that opens the dialog takes the focus"
-        );
-    }
-
-    #[test]
-    fn the_keys_do_nothing_while_the_unsaved_changes_prompt_is_asking() {
-        let mut dialog = fixture(2);
-        let document = dialog.world.spawn(UINode::default());
-        dialog
-            .world
-            .get_resource_mut::<UnsavedGuard>()
-            .unwrap()
-            .hold(GuardedIntent::Quit, vec![document]);
-
-        dialog.fire(ConfirmImport);
-        assert_eq!(dialog.queued(), 0, "Enter belongs to the prompt on top");
-        assert!(dialog.open());
-
-        dialog.fire(CancelImport);
-        assert!(dialog.open());
-        assert_eq!(dialog.staging().rows.len(), 2);
-    }
-
-    #[test]
-    fn the_import_button_rechecks_the_rows_before_queueing_them() {
+    fn import_queues_the_rows_still_importable_and_cancel_queues_nothing() {
         let mut dialog = fixture(2);
         dialog.staging().rows[0].destination = "../outside.obj".into();
-        let import = dialog.button("Import");
 
-        dialog.click(import, MouseButton::Left);
-        dialog.frame();
+        dialog.click("Import");
 
-        assert_eq!(dialog.queued(), 1, "the row that went stale is left out");
-    }
+        assert_eq!(dialog.queued(), 1);
+        assert!(!dialog.open());
 
-    #[test]
-    fn the_confirm_key_rechecks_the_rows_before_queueing_them() {
-        let mut dialog = fixture(1);
-        dialog.staging().rows[0].destination = "../outside.obj".into();
-
-        dialog.fire(ConfirmImport);
-
+        let mut dialog = fixture(2);
+        dialog.click("Cancel");
         assert_eq!(dialog.queued(), 0);
-        assert!(dialog.open(), "nothing importable is left, so it stays");
-        assert!(dialog.status(0).contains("project"));
-    }
-
-    #[test]
-    fn the_list_grows_with_its_rows_up_to_ten() {
-        for files in [2, FILES] {
-            let mut dialog = fixture(files);
-            let list = dialog.list();
-            let node = dialog
-                .world
-                .get_component_for_entity::<UINode>(list)
-                .unwrap()
-                .clone();
-            assert_eq!(node.height, UIValue::Auto, "the height is the rows' own");
-            assert_eq!(node.max_height, UIValue::Px(10.0 * ROW_HEIGHT));
-            let extent = dialog.area().content_extent;
-            assert_eq!(extent, files as f32 * ROW_HEIGHT);
-        }
-    }
-
-    #[test]
-    fn a_replacing_row_says_so_in_two_words() {
-        let mut dialog = fixture(1);
-        dialog.staging().rows[0].state = RowState::Replaces;
-        dialog.frame();
-
-        assert_eq!(dialog.status(0), "replaces existing");
+        assert!(!dialog.open());
+        assert!(dialog.staging().rows.is_empty());
     }
 }

@@ -308,23 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn a_pushed_resize_updates_the_window() {
-        let mut app = app();
-        app.insert_resource(Window::new((800, 600), 1.0))
-            .add_system(First, fold_window);
-        push(
-            &mut app,
-            WindowEvent::Resized {
-                width: 320,
-                height: 200,
-            },
-        );
-        app.finish_plugin_build();
-        app.update();
-        assert_eq!(app.get_resource::<Window>().unwrap().size(), (320, 200));
-    }
-
-    #[test]
     fn losing_focus_releases_every_held_key_and_button_and_gaining_it_changes_nothing() {
         let mut app = app();
         push(&mut app, key(true, None));

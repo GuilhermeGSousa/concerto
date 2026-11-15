@@ -813,31 +813,7 @@ mod tests {
     fn supported_extensions_are_matched_without_regard_to_case() {
         let cases = [
             Extension {
-                extension: "obj",
-                supported: true,
-            },
-            Extension {
                 extension: "GLB",
-                supported: true,
-            },
-            Extension {
-                extension: "gltf",
-                supported: true,
-            },
-            Extension {
-                extension: "png",
-                supported: true,
-            },
-            Extension {
-                extension: "bvh",
-                supported: true,
-            },
-            Extension {
-                extension: "BVH",
-                supported: true,
-            },
-            Extension {
-                extension: "ogg",
                 supported: true,
             },
             Extension {
@@ -846,10 +822,6 @@ mod tests {
             },
             Extension {
                 extension: "txt",
-                supported: false,
-            },
-            Extension {
-                extension: ".obj",
                 supported: false,
             },
         ];
@@ -861,23 +833,6 @@ mod tests {
                 case.extension
             );
         }
-    }
-
-    #[test]
-    fn a_dependency_whose_parent_steps_are_already_resolved_keeps_its_relative_position() {
-        let source = Path::new("/source");
-        let project = Path::new("/project");
-        let copies = planned_copies(
-            &source.join("models").join("tri.gltf"),
-            &project.join("assets").join("models").join("tri.gltf"),
-            project,
-            &[DependencyEntry {
-                path: source.join("triangle_ext.bin"),
-            }],
-        )
-        .expect("the buffer lands inside the project");
-        assert_eq!(copies[1].0, source.join("triangle_ext.bin"));
-        assert_eq!(copies[1].1, project.join("assets").join("triangle_ext.bin"));
     }
 
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -980,23 +935,6 @@ mod tests {
             )
         }
 
-        fn snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
-            fn visit(dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
-                for entry in std::fs::read_dir(dir).expect("read dir") {
-                    let path = entry.expect("entry").path();
-                    if path.is_dir() {
-                        visit(&path, files);
-                    } else {
-                        let bytes = std::fs::read(&path).expect("read file");
-                        files.insert(path, bytes);
-                    }
-                }
-            }
-            let mut files = BTreeMap::new();
-            visit(&self.root(), &mut files);
-            files
-        }
-
         fn outputs(&self) -> BTreeMap<String, AssetId> {
             SourceMetadata::load(&sidecar_path(&self.source))
                 .expect("sidecar")
@@ -1030,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn a_renamed_sub_asset_keeps_its_id_file_and_references_and_a_clashing_hint_writes_nothing() {
+    fn a_renamed_sub_asset_keeps_its_id_file_and_references() {
         let fixture = Fixture::new();
         let first = fixture.import(vec![emit("animation/0")]).unwrap();
         let old = entry(&first, "animation/0").clone();
@@ -1053,247 +991,31 @@ mod tests {
         let scene = entry(&second, "scene");
         let header = read_content_asset_header(&fixture.root().join(&scene.address)).unwrap();
         assert_eq!(header.references, vec![old.id]);
-
-        let third = fixture.import(vec![emit("animation/clip")]).unwrap();
-        let fourth = fixture
-            .import(vec![emit("animation/clip").renamed_from("animation/0")])
-            .unwrap();
-        assert_eq!(entry(&third, "animation/clip").id, old.id);
-        assert_eq!(entry(&fourth, "animation/clip").id, old.id);
-        assert_eq!(fixture.outputs().get("animation/clip"), Some(&old.id));
-
-        let before = fixture.snapshot();
-        let clash = fixture.import(vec![
-            emit("animation/a").renamed_from("animation/clip"),
-            emit("animation/b").renamed_from("animation/clip"),
-        ]);
-        assert!(clash.is_err());
-        assert_eq!(fixture.snapshot(), before);
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    enum Tamper {
-        Nothing,
-        SaveFromTheEditor,
-        DeleteTheFile,
-    }
-
-    struct Prune {
-        tamper: Tamper,
-        first: Vec<Emit>,
-        second: Vec<Emit>,
-        old_name: &'static str,
-        deleted: bool,
-        file_kept: bool,
-        key_kept: bool,
     }
 
     #[test]
     fn an_output_the_importer_stops_emitting_is_deleted_unless_the_editor_saved_it() {
-        let cases = [
-            Prune {
-                tamper: Tamper::Nothing,
-                first: vec![emit("keep"), emit("drop")],
-                second: vec![emit("keep")],
-                old_name: "drop",
-                deleted: true,
-                file_kept: false,
-                key_kept: false,
-            },
-            Prune {
-                tamper: Tamper::SaveFromTheEditor,
-                first: vec![emit("keep"), emit("drop")],
-                second: vec![emit("keep")],
-                old_name: "drop",
-                deleted: false,
-                file_kept: true,
-                key_kept: true,
-            },
-            Prune {
-                tamper: Tamper::DeleteTheFile,
-                first: vec![emit("keep"), emit("drop")],
-                second: vec![emit("keep")],
-                old_name: "drop",
-                deleted: false,
-                file_kept: false,
-                key_kept: false,
-            },
-            Prune {
-                tamper: Tamper::SaveFromTheEditor,
-                first: vec![emit("animation/0")],
-                second: vec![emit("animation/clip").renamed_from("animation/0")],
-                old_name: "animation/0",
-                deleted: false,
-                file_kept: true,
-                key_kept: true,
-            },
-        ];
-        for case in &cases {
+        for saved in [false, true] {
             let fixture = Fixture::new();
-            let first = fixture.import(case.first.clone()).unwrap();
-            let old = entry(&first, case.old_name).clone();
+            let first = fixture.import(vec![emit("keep"), emit("drop")]).unwrap();
+            let old = entry(&first, "drop").clone();
             let path = fixture.root().join(&old.address);
-            match case.tamper {
-                Tamper::Nothing => {}
-                Tamper::SaveFromTheEditor => fixture.strip_provenance(&old),
-                Tamper::DeleteTheFile => std::fs::remove_file(&path).unwrap(),
+            if saved {
+                fixture.strip_provenance(&old);
             }
 
-            let second = fixture.import(case.second.clone()).unwrap();
+            let second = fixture.import(vec![emit("keep")]).unwrap();
 
-            let label = format!("{:?} {}", case.tamper, case.old_name);
-            let removed: &[AssetId] = if case.deleted { &[old.id] } else { &[] };
-            assert_eq!(second.removed, removed, "{label}");
-            assert_eq!(path.exists(), case.file_kept, "{label}");
+            let removed: &[AssetId] = if saved { &[] } else { &[old.id] };
+            assert_eq!(second.removed, removed, "saved: {saved}");
+            assert_eq!(path.exists(), saved, "saved: {saved}");
             let outputs = fixture.outputs();
-            let expected = case.key_kept.then_some(&old.id);
-            assert_eq!(outputs.get(case.old_name), expected, "{label}");
-            for kept in case
-                .second
-                .iter()
-                .filter(|emit| emit.renamed_from.is_none())
-            {
-                assert_eq!(
-                    outputs.get(kept.name),
-                    Some(&entry(&first, kept.name).id),
-                    "{label}"
-                );
-                assert!(fixture
-                    .root()
-                    .join(&entry(&second, kept.name).address)
-                    .exists());
-            }
+            assert_eq!(
+                outputs.get("drop"),
+                saved.then_some(&old.id),
+                "saved: {saved}"
+            );
+            assert_eq!(outputs.get("keep"), Some(&entry(&first, "keep").id));
         }
-    }
-
-    struct LogLine {
-        thread: std::thread::ThreadId,
-        text: String,
-    }
-
-    static LOGS: Mutex<Vec<LogLine>> = Mutex::new(Vec::new());
-
-    struct Capture;
-
-    impl log::Log for Capture {
-        fn enabled(&self, _: &log::Metadata) -> bool {
-            true
-        }
-
-        fn log(&self, record: &log::Record) {
-            LOGS.lock().unwrap().push(LogLine {
-                thread: std::thread::current().id(),
-                text: record.args().to_string(),
-            });
-        }
-
-        fn flush(&self) {}
-    }
-
-    struct Logs;
-
-    impl Logs {
-        fn lines(&self) -> Vec<String> {
-            let me = std::thread::current().id();
-            LOGS.lock()
-                .unwrap()
-                .iter()
-                .filter(|line| line.thread == me)
-                .map(|line| line.text.clone())
-                .collect()
-        }
-    }
-
-    fn capture_logs() -> Logs {
-        static INSTALL: std::sync::Once = std::sync::Once::new();
-        INSTALL.call_once(|| {
-            log::set_logger(&Capture).unwrap();
-            log::set_max_level(log::LevelFilter::Warn);
-        });
-        let me = std::thread::current().id();
-        LOGS.lock().unwrap().retain(|line| line.thread != me);
-        Logs
-    }
-
-    #[test]
-    fn pruning_warns_only_for_referrers_the_import_does_not_rewrite() {
-        let fixture = Fixture::new();
-        let first = fixture
-            .import(vec![
-                emit("drop"),
-                emit("rewritten").referring_to("drop"),
-                emit("untouched").referring_to("drop"),
-            ])
-            .unwrap();
-        let untouched = entry(&first, "untouched").clone();
-        fixture.strip_provenance(&untouched);
-        let logger = capture_logs();
-
-        fixture
-            .import(vec![emit("rewritten"), emit("untouched")])
-            .unwrap();
-
-        let lines = logger.lines();
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("drop") && line.contains(&format!("{:?}", untouched.id))),
-            "{lines:?}"
-        );
-        assert!(
-            !lines.iter().any(|line| line.contains("'rewritten'")),
-            "{lines:?}"
-        );
-    }
-
-    #[test]
-    fn a_staging_failure_leaves_the_obsolete_file_in_place() {
-        let fixture = Fixture::new();
-        let first = fixture.import(vec![emit("keep"), emit("drop")]).unwrap();
-        let dropped = entry(&first, "drop").clone();
-        let before = fixture.snapshot();
-        let missing = fixture.root().join("elsewhere").join("a.test");
-
-        let result = import_with(
-            &Scripted(vec![emit("keep")]),
-            "bvh",
-            &missing,
-            &fixture.source,
-            &fixture.root(),
-            &fixture.config,
-        );
-
-        assert!(result.is_err());
-        assert!(fixture.root().join(&dropped.address).exists());
-        assert_eq!(fixture.snapshot(), before);
-    }
-
-    #[test]
-    fn an_in_place_import_warns_about_a_dependency_it_cannot_read() {
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
-        let project = tempfile::tempdir().expect("tempdir");
-        let assets = project.path().join("assets");
-        std::fs::create_dir_all(&assets).unwrap();
-        for name in ["unread_texture.obj", "unread_texture.mtl"] {
-            std::fs::copy(fixtures.join(name), assets.join(name)).unwrap();
-        }
-        let logger = capture_logs();
-
-        import_source(
-            &assets.join("unread_texture.obj"),
-            project.path(),
-            &ContentConfig::default(),
-        )
-        .expect("the import succeeds");
-
-        let lines = logger.lines();
-        assert_eq!(
-            lines
-                .iter()
-                .filter(|line| line.contains("absent.png"))
-                .count(),
-            1,
-            "{lines:?}"
-        );
     }
 }

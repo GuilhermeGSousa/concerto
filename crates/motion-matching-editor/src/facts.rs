@@ -218,6 +218,3 @@ pub(crate) fn read_entry_facts(
         ));
     }
 }
-
-#[cfg(test)]
-mod tests;

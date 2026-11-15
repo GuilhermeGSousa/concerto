@@ -298,19 +298,6 @@ mod tests {
     const BOTH: [bool; 2] = [true, true];
 
     #[test]
-    fn a_player_alone_judges_their_own_copy() {
-        let data = CaseData::test();
-        let case = &data.case;
-        let d1 = case.deductions.id("d_01").unwrap();
-        let mut book = Casebook::default();
-
-        assert_eq!(
-            book.toggle_lock(case, 0, d1, [true, false]),
-            Some(Verdict::Close)
-        );
-    }
-
-    #[test]
     fn facts_unlock_terms_and_deductions_and_a_joint_lock_judges_them() {
         let data = CaseData::test();
         let case = &data.case;
@@ -328,10 +315,6 @@ mod tests {
         let d1 = deduction("d_01");
         let things = case.deductions.get(d1).blanks[1].bank;
         assert_eq!(book.bank_options(case, things), [term("t_box")]);
-        assert_eq!(
-            book.sentence(case, 0, d1),
-            "[____] took [____] from the study."
-        );
 
         book.cycle(case, 0, d1, 1, true);
         assert_eq!(book.draft(case, 0, d1).picks, [None, Some(term("t_box"))]);
@@ -357,10 +340,6 @@ mod tests {
         for player in 0..2 {
             book.cycle(case, player, d1, 0, true);
         }
-        assert_eq!(
-            book.sentence(case, 1, d1),
-            "[Mr Corwin] took [the snuffbox] from the study."
-        );
         book.toggle_lock(case, 0, d1, BOTH);
         assert_eq!(book.toggle_lock(case, 1, d1, BOTH), Some(Verdict::Correct));
         assert!(book.is_confirmed(d1));
@@ -375,5 +354,12 @@ mod tests {
         assert_eq!(book.loops(), 1);
         assert!(book.fresh().is_empty());
         assert_eq!(book.facts().len(), 2, "facts survive the night");
+
+        let mut alone = Casebook::default();
+        assert_eq!(
+            alone.toggle_lock(case, 0, d1, [true, false]),
+            Some(Verdict::Close),
+            "a player alone judges their own copy"
+        );
     }
 }

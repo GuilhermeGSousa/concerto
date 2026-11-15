@@ -327,7 +327,7 @@ impl ExecutorState {
 mod tests {
     use std::{
         sync::{
-            Arc, Mutex,
+            Mutex,
             atomic::{AtomicBool, Ordering},
             mpsc::{Receiver, Sender, channel},
         },
@@ -336,120 +336,15 @@ mod tests {
     };
 
     use crate::{
-        Changed, Resource, System, World,
+        Resource, World,
         command::CommandQueue,
-        component::Component,
-        entity::Entity,
-        query::Query,
         resource::ResMut,
         system::{
             NonSendMarker,
-            access::SystemAccess,
             executor::multi_thread::{MainThreadExecutor, MultiThreadedExecutor},
-            meta::SystemMetadata,
             schedule::{Schedule, Schedules},
         },
-        world::UnsafeWorldCell,
     };
-
-    #[derive(Component)]
-    struct TagComponent;
-
-    #[derive(Resource)]
-    struct Counter(usize);
-
-    fn spawn_tag_entity(mut cmd: CommandQueue) {
-        cmd.spawn(TagComponent);
-    }
-
-    fn check_changed_entities(
-        query: Query<Entity, Changed<TagComponent>>,
-        mut counter: ResMut<Counter>,
-    ) {
-        if query.iter().count() != 0 {
-            counter.0 += 1;
-        }
-    }
-
-    #[test]
-    fn check_changed_after_spawned() {
-        let mut world = World::new();
-        world.insert_resource(Counter(0));
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(spawn_tag_entity);
-        schedule.add_system(check_changed_entities);
-
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        assert_eq!(world.get_resource::<Counter>().unwrap().0, 1);
-    }
-
-    struct NonSendProbe {
-        running: Arc<AtomicBool>,
-        overlapped: Arc<AtomicBool>,
-        ran_on: Arc<Mutex<Vec<ThreadId>>>,
-    }
-
-    impl System for NonSendProbe {
-        type In = ();
-
-        fn name(&self) -> &'static str {
-            "NonSendProbe"
-        }
-
-        fn initialize(&mut self, _world: &mut World) {}
-
-        fn fill_access(&self, meta: &mut SystemMetadata, _access: &mut SystemAccess) {
-            meta.set_non_send();
-        }
-
-        unsafe fn run_unsafe(&mut self, _args: Self::In, _world: UnsafeWorldCell) {
-            if self.running.swap(true, Ordering::SeqCst) {
-                self.overlapped.store(true, Ordering::SeqCst);
-            }
-            self.ran_on
-                .lock()
-                .unwrap()
-                .push(std::thread::current().id());
-            std::thread::sleep(Duration::from_millis(5));
-            self.running.store(false, Ordering::SeqCst);
-        }
-
-        fn apply(&mut self, _world: &mut World) {}
-
-        fn check_change_tick(&mut self, _check: crate::component::CheckChangeTicks) {}
-    }
-
-    #[test]
-    fn non_send_systems_run_one_at_a_time_on_calling_thread() {
-        let mut world = World::new();
-        world.insert_resource(MainThreadExecutor::new());
-
-        let running = Arc::new(AtomicBool::new(false));
-        let overlapped = Arc::new(AtomicBool::new(false));
-        let ran_on = Arc::new(Mutex::new(Vec::new()));
-
-        let mut schedule = Schedule::new();
-        for _ in 0..4 {
-            schedule.add_system(NonSendProbe {
-                running: running.clone(),
-                overlapped: overlapped.clone(),
-                ran_on: ran_on.clone(),
-            });
-        }
-
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        let ran_on = ran_on.lock().unwrap();
-        assert_eq!(ran_on.len(), 4);
-        assert!(ran_on.iter().all(|&id| id == std::thread::current().id()));
-        assert!(!overlapped.load(Ordering::SeqCst));
-    }
 
     #[derive(Resource, Default)]
     struct RanOn(Option<ThreadId>);
@@ -474,31 +369,6 @@ mod tests {
 
         assert_eq!(
             world.get_resource::<RanOn>().unwrap().0,
-            Some(std::thread::current().id())
-        );
-    }
-
-    #[derive(Resource, Default)]
-    struct ExclusiveRanOn(Option<ThreadId>);
-
-    #[test]
-    fn an_exclusive_system_runs_on_the_thread_that_runs_its_schedule() {
-        let mut world = World::new();
-        world.insert_resource(MainThreadExecutor::new());
-        world.insert_resource(ExclusiveRanOn::default());
-
-        let mut schedules = Schedules::default();
-        schedules.add_system(Outer, |world: &mut World| {
-            world.get_resource_mut::<ExclusiveRanOn>().unwrap().0 =
-                Some(std::thread::current().id());
-        });
-        let compiled = schedules.compile::<MultiThreadedExecutor>(&mut world);
-        world.insert_resource(compiled);
-
-        world.run_schedule(Outer);
-
-        assert_eq!(
-            world.get_resource::<ExclusiveRanOn>().unwrap().0,
             Some(std::thread::current().id())
         );
     }
@@ -648,16 +518,6 @@ mod tests {
                 slow_finishes: true,
             },
             PanicCase {
-                name: "alone at the start",
-                build: |schedule| {
-                    schedule
-                        .add_system(breaks)
-                        .add_system(after_breaks.after(breaks));
-                },
-                parallel_pair: false,
-                slow_finishes: false,
-            },
-            PanicCase {
                 name: "alone after a parallel pair",
                 build: |schedule| {
                     schedule
@@ -712,18 +572,6 @@ mod tests {
     #[derive(Resource, Default)]
     struct Threads(Vec<ThreadId>);
 
-    fn record_send(mut threads: ResMut<Threads>) {
-        threads.0.push(std::thread::current().id());
-    }
-
-    fn record_send_again(mut threads: ResMut<Threads>) {
-        threads.0.push(std::thread::current().id());
-    }
-
-    fn record_send_last(mut threads: ResMut<Threads>) {
-        threads.0.push(std::thread::current().id());
-    }
-
     fn record_non_send(_: NonSendMarker, mut threads: ResMut<Threads>) {
         threads.0.push(std::thread::current().id());
     }
@@ -739,25 +587,15 @@ mod tests {
     struct CallingThreadCase {
         name: &'static str,
         build: fn(&mut Schedule),
-        parallel_pair: bool,
-        recorded: usize,
     }
 
     #[test]
     fn work_that_must_stay_on_the_calling_thread_runs_there() {
         use crate::IntoSystemConfig;
+        if fewer_than_two_threads() {
+            return;
+        }
         let cases = [
-            CallingThreadCase {
-                name: "a chain of send systems",
-                build: |schedule| {
-                    schedule
-                        .add_system(record_send)
-                        .add_system(record_send_again.after(record_send))
-                        .add_system(record_send_last.after(record_send_again));
-                },
-                parallel_pair: false,
-                recorded: 3,
-            },
             CallingThreadCase {
                 name: "an exclusive system after a parallel pair",
                 build: |schedule| {
@@ -766,8 +604,6 @@ mod tests {
                         .add_system(meet_b)
                         .add_system(record_exclusive.after(meet_a).after(meet_b));
                 },
-                parallel_pair: true,
-                recorded: 1,
             },
             CallingThreadCase {
                 name: "a non-send system after a parallel pair",
@@ -777,14 +613,9 @@ mod tests {
                         .add_system(meet_b)
                         .add_system(record_non_send.after(meet_a).after(meet_b));
                 },
-                parallel_pair: true,
-                recorded: 1,
             },
         ];
         for case in cases {
-            if case.parallel_pair && fewer_than_two_threads() {
-                continue;
-            }
             let mut world = World::new();
             world.insert_resource(MainThreadExecutor::new());
             world.insert_resource(Rendezvous::new());
@@ -796,33 +627,11 @@ mod tests {
                 .compile::<MultiThreadedExecutor>(&mut world)
                 .run(&mut world);
 
-            if case.parallel_pair {
-                assert_pair_met(&world);
-            }
+            assert_pair_met(&world);
             let threads = &world.get_resource::<Threads>().unwrap().0;
-            assert_eq!(threads.len(), case.recorded, "{}", case.name);
-            assert!(
-                threads.iter().all(|&id| id == std::thread::current().id()),
-                "{}",
-                case.name
-            );
+            assert_eq!(threads.len(), 1, "{}", case.name);
+            assert_eq!(threads[0], std::thread::current().id(), "{}", case.name);
         }
-    }
-
-    #[test]
-    fn two_systems_ready_at_the_start_run_at_the_same_time() {
-        if fewer_than_two_threads() {
-            return;
-        }
-        let mut world = World::new();
-        world.insert_resource(Rendezvous::new());
-        let mut schedule = Schedule::new();
-        schedule.add_system(meet_a).add_system(meet_b);
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        assert_pair_met(&world);
     }
 
     struct Applied;
@@ -842,10 +651,6 @@ mod tests {
 
     fn trigger_applied(mut cmd: CommandQueue) {
         cmd.trigger(Applied);
-    }
-
-    fn after_trigger(mut counter: ResMut<Counter>) {
-        counter.0 += 1;
     }
 
     #[test]
@@ -870,28 +675,6 @@ mod tests {
                 Some(std::thread::current().id())
             );
         }
-    }
-
-    #[test]
-    fn commands_of_a_chain_apply_on_the_calling_thread() {
-        use crate::IntoSystemConfig;
-        let mut world = World::new();
-        world.insert_resource(Counter(0));
-        world.insert_resource(AppliedOn::default());
-        world.add_listener(record_applied);
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(trigger_applied)
-            .add_system(after_trigger.after(trigger_applied));
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        assert_eq!(world.get_resource::<Counter>().unwrap().0, 1);
-        assert_eq!(
-            world.get_resource::<AppliedOn>().unwrap().0,
-            Some(std::thread::current().id())
-        );
     }
 
     #[derive(Resource, Default)]

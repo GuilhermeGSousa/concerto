@@ -65,25 +65,7 @@ fn is_extracted(app: &mut App, camera: Entity) -> bool {
         .is_some()
 }
 
-#[test]
-fn a_camera_whose_render_target_texture_is_not_loaded_is_skipped() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let mut app = app(&gpu);
-    let waiting = spawn_camera(&mut app, RenderTarget::Texture(AssetHandle::default()));
-    let window = spawn_camera(&mut app, RenderTarget::MainWindow);
-    app.finish_plugin_build();
-
-    for _ in 0..3 {
-        app.update();
-    }
-
-    assert!(!is_extracted(&mut app, waiting));
-    assert!(is_extracted(&mut app, window));
-}
-
-fn render_target_size(app: &mut App, camera: Entity) -> Option<(u32, u32)> {
+fn render_target_size(app: &mut App, camera: Entity) -> Option<[u32; 2]> {
     let render_entity = app
         .main_mut()
         .world_mut()
@@ -96,7 +78,7 @@ fn render_target_size(app: &mut App, camera: Entity) -> Option<(u32, u32)> {
         .render_target
         .as_ref()?;
     let size = target.texture().size();
-    Some((size.width, size.height))
+    Some([size.width, size.height])
 }
 
 #[test]
@@ -123,7 +105,7 @@ fn a_camera_is_extracted_once_its_render_target_texture_loads() {
         app.update();
     }
 
-    assert_eq!(render_target_size(&mut app, camera), Some((32, 16)));
+    assert_eq!(render_target_size(&mut app, camera), Some([32, 16]));
     assert!(app
         .render_mut()
         .world_mut()

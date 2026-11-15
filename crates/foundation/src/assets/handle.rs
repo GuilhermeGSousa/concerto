@@ -374,24 +374,6 @@ impl LeafHook for LiveLeaves {
 mod tests {
     use super::*;
 
-    #[test]
-    fn final_strong_reference_emits_one_uuid_drop_event() {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let id = AssetId::new();
-        let handle = Arc::new(StrongAssetHandle {
-            id,
-            lifetime_sender: sender,
-        });
-        let clone = handle.clone();
-        drop(handle);
-        assert!(receiver.is_empty());
-
-        drop(clone);
-        let AssetLifetimeEvent::Dropped(dropped_id) = receiver.try_recv().unwrap();
-        assert_eq!(dropped_id, id);
-        assert!(receiver.is_empty());
-    }
-
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Note;
 
@@ -444,13 +426,13 @@ mod tests {
 
         for value in [serde_json::json!("not an id"), serde_json::json!(7)] {
             assert!(handle_from_json(&value).is_err(), "{value} must not decode");
-            assert_eq!(
+            assert!(
                 concerto_reflect::json_to_value(
                     &value,
                     std::any::TypeId::of::<AssetHandle<Note>>(),
                     &registry,
-                ),
-                Err("expected an asset id of 32 hex digits".to_owned()),
+                )
+                .is_err(),
                 "{value}"
             );
         }

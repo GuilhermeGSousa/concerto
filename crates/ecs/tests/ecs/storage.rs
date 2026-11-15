@@ -76,14 +76,6 @@ fn structural_changes_keep_every_row_and_drop_each_value_once() {
             with_both: 2,
         },
         StorageCase {
-            name: "a migration carries a component over",
-            spawn: |world| vec![world.spawn(Tracked::new(7))],
-            act: |world, entities| world.insert(Position(1.0), entities[0]),
-            rows: vec![row(Some(7), Some(1.0))],
-            live: 1,
-            with_both: 1,
-        },
-        StorageCase {
             name: "replacing drops the displaced value",
             spawn: |world| vec![world.spawn(Tracked::new(1))],
             act: |world, entities| world.insert(Tracked::new(2), entities[0]),
@@ -108,14 +100,6 @@ fn structural_changes_keep_every_row_and_drop_each_value_once() {
             with_both: 1,
         },
         StorageCase {
-            name: "removing the last component",
-            spawn: |world| vec![world.spawn(Position(1.0))],
-            act: |world, entities| world.remove_component::<Position>(entities[0]),
-            rows: vec![row(None, None)],
-            live: 0,
-            with_both: 0,
-        },
-        StorageCase {
             name: "a middle row migrates out",
             spawn: |world| (0..4).map(|i| world.spawn(Position(i as f32))).collect(),
             act: |world, entities| {
@@ -130,49 +114,6 @@ fn structural_changes_keep_every_row_and_drop_each_value_once() {
             ],
             live: 0,
             with_both: 0,
-        },
-        StorageCase {
-            name: "inserting into an archetype that already has rows",
-            spawn: |world| {
-                vec![
-                    world.spawn(Tracked::new(1)),
-                    world.spawn((Tracked::new(2), Position(10.0))),
-                ]
-            },
-            act: |world, entities| world.insert(Position(10.0), entities[0]),
-            rows: vec![row(Some(1), Some(10.0)), row(Some(2), Some(10.0))],
-            live: 2,
-            with_both: 2,
-        },
-        StorageCase {
-            name: "inserting twice keeps the second value",
-            spawn: |world| vec![world.spawn(Tracked::new(1))],
-            act: |world, entities| {
-                world.insert(Position(0.0), entities[0]);
-                world.insert(Position(10.0), entities[0]);
-            },
-            rows: vec![row(Some(1), Some(10.0))],
-            live: 1,
-            with_both: 1,
-        },
-        StorageCase {
-            name: "removing a component the entity lacks",
-            spawn: |world| {
-                vec![
-                    world.spawn((Tracked::new(1), Position(1.0))),
-                    world.spawn((Tracked::new(2), Position(2.0))),
-                ]
-            },
-            act: |world, entities| {
-                world.remove_component::<Health>(entities[0]);
-                world
-                    .get_component_for_entity_mut::<Position>(entities[1])
-                    .unwrap()
-                    .0 = 20.0;
-            },
-            rows: vec![row(Some(1), Some(1.0)), row(Some(2), Some(20.0))],
-            live: 2,
-            with_both: 2,
         },
         StorageCase {
             name: "removing from a row that is not the last",

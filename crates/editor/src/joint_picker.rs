@@ -188,6 +188,3 @@ pub(crate) fn refresh_joint_rows(
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

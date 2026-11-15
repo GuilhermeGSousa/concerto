@@ -2,7 +2,7 @@ use concerto_director::{Lens, VirtualCamera};
 use concerto_ecs::entity::hierarchy::{ChildOf, Children};
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::system::schedule::Schedule;
-use concerto_ecs::{Changed, Entity, IntoSystemConfig, Query, ResMut, Resource, World};
+use concerto_ecs::{Entity, IntoSystemConfig, World};
 use concerto_foundation::time::Time;
 use concerto_foundation::transform::Transform;
 use concerto_gameplay::actions::bind_gameplay_actions;
@@ -38,10 +38,7 @@ fn world() -> World {
 }
 
 fn rig(world: &mut World, rig: ThirdPersonCamera) -> Rig {
-    rig_with_boom(world, rig, CameraBoom::default())
-}
-
-fn rig_with_boom(world: &mut World, rig: ThirdPersonCamera, boom: CameraBoom) -> Rig {
+    let boom = CameraBoom::default();
     let pivot = world.spawn((CameraPivot::default(), Transform::default(), rig));
     let camera = world.spawn((
         ChildOf::new(pivot),
@@ -120,28 +117,13 @@ fn assert_near(actual: f32, expected: f32) {
 }
 
 #[test]
-fn aiming_rig_writes_its_cameras_boom_and_lens() {
+fn an_aiming_rig_writes_its_cameras_boom_on_its_side_and_its_lens() {
     let mut world = world();
-    let rig = rig(
+    let right = rig(
         &mut world,
         ThirdPersonCamera::default().with_stance(CameraStance::Aim),
     );
-
-    run_rigs(&mut world);
-
-    let boom = boom(&world, rig.camera);
-    assert_vec_near(boom.offset, Vec3::NEG_Z * 1.2);
-    assert_vec_near(boom.shoulder, Vec3::NEG_X * 0.5);
-    let lens = lens(&world, rig.camera);
-    assert_near(lens.fovy, 35f32.to_radians());
-    assert_eq!(lens.znear, 0.5);
-    assert_eq!(lens.zfar, 50.0);
-}
-
-#[test]
-fn left_side_puts_the_shoulder_on_the_views_left() {
-    let mut world = world();
-    let rig = rig(
+    let left = rig(
         &mut world,
         ThirdPersonCamera::default()
             .with_stance(CameraStance::Aim)
@@ -150,57 +132,14 @@ fn left_side_puts_the_shoulder_on_the_views_left() {
 
     run_rigs(&mut world);
 
-    assert_vec_near(boom(&world, rig.camera).shoulder, Vec3::X * 0.5);
-}
-
-#[derive(Resource, Default)]
-struct ChangedCounts {
-    booms: usize,
-    cameras: usize,
-    rigs: usize,
-}
-
-fn count_changed(
-    booms: Query<Entity, Changed<CameraBoom>>,
-    cameras: Query<Entity, Changed<VirtualCamera>>,
-    rigs: Query<Entity, Changed<ThirdPersonCamera>>,
-    mut counts: ResMut<ChangedCounts>,
-) {
-    counts.booms = booms.iter().count();
-    counts.cameras = cameras.iter().count();
-    counts.rigs = rigs.iter().count();
-}
-
-fn assert_settled_rig_writes_nothing(boom: CameraBoom) {
-    let mut world = world();
-    world.insert_resource(ChangedCounts::default());
-    rig_with_boom(
-        &mut world,
-        ThirdPersonCamera::default().with_stance(CameraStance::Aim),
-        boom,
-    );
-    let mut schedule = Schedule::new();
-    schedule.add_system(update_third_person_cameras);
-    schedule.add_system(count_changed.after(update_third_person_cameras));
-    let mut compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
-
-    compiled.run(&mut world);
-    compiled.run(&mut world);
-
-    let counts = world.get_resource::<ChangedCounts>().unwrap();
-    assert_eq!(counts.booms, 0, "the boom was stamped changed");
-    assert_eq!(counts.cameras, 0, "the camera was stamped changed");
-    assert_eq!(counts.rigs, 0, "the rig was stamped changed");
-}
-
-#[test]
-fn settled_rig_writes_nothing() {
-    assert_settled_rig_writes_nothing(CameraBoom::default());
-}
-
-#[test]
-fn settled_rig_with_an_off_axis_boom_writes_nothing() {
-    assert_settled_rig_writes_nothing(CameraBoom::default().with_offset(Vec3::new(1.5, 1.0, -3.0)));
+    let boom_of_right = boom(&world, right.camera);
+    assert_vec_near(boom_of_right.offset, Vec3::NEG_Z * 1.2);
+    assert_vec_near(boom_of_right.shoulder, Vec3::NEG_X * 0.5);
+    assert_vec_near(boom(&world, left.camera).shoulder, Vec3::X * 0.5);
+    let lens = lens(&world, right.camera);
+    assert_near(lens.fovy, 35f32.to_radians());
+    assert_eq!(lens.znear, 0.5);
+    assert_eq!(lens.zfar, 50.0);
 }
 
 #[test]

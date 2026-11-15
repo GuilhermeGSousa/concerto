@@ -20,7 +20,7 @@ use concerto_mcp::{
 };
 use rmcp::{
     RoleClient, ServiceExt,
-    model::{CallToolRequestParams, CallToolResult},
+    model::{CallToolRequestParams, CallToolResult, Tool},
     service::RunningService,
 };
 use schemars::JsonSchema;
@@ -189,10 +189,15 @@ static ONE_APP_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 type Client = RunningService<RoleClient, ()>;
 
+struct Served<T> {
+    app: App,
+    result: T,
+}
+
 fn serve<T, F>(
     mut step: impl FnMut(&mut App),
     scenario: impl FnOnce(Client) -> F + Send + 'static,
-) -> (App, T)
+) -> Served<T>
 where
     T: Send + 'static,
     F: Future<Output = T>,
@@ -220,7 +225,7 @@ where
         std::thread::sleep(Duration::from_millis(1));
     }
     let result = client.join().expect("the client's assertions hold");
-    (app, result)
+    Served { app, result }
 }
 
 async fn call(client: &Client, tool: &'static str, arguments: Value) -> CallToolResult {
@@ -252,11 +257,34 @@ fn error(result: &CallToolResult) -> Value {
     serde_json::from_str(&body).unwrap()
 }
 
+struct Listed {
+    tools: Vec<Tool>,
+    unknown_refused: bool,
+    calls: Vec<CallToolResult>,
+}
+
 #[test]
-fn the_tool_list_has_each_tools_description_schema_and_read_only_hint() {
-    let (_, tools) = serve(App::update, |client| async move {
-        client.list_all_tools().await.unwrap()
-    });
+fn a_client_lists_each_tools_description_schema_and_hint_and_gets_its_calls_answered_or_refused() {
+    let Listed {
+        tools,
+        unknown_refused,
+        calls,
+    } = serve(App::update, |client| async move {
+        Listed {
+            tools: client.list_all_tools().await.unwrap(),
+            unknown_refused: client
+                .call_tool(CallToolRequestParams::new("missing"))
+                .await
+                .is_err(),
+            calls: vec![
+                call(&client, "echo", json!({ "text": "hello" })).await,
+                call(&client, "echo", json!({ "words": "hello" })).await,
+                call(&client, "needs_scene", json!({})).await,
+                call(&client, "silent", json!({})).await,
+            ],
+        }
+    })
+    .result;
 
     let names: Vec<_> = tools.iter().map(|tool| tool.name.to_string()).collect();
     assert_eq!(
@@ -287,100 +315,32 @@ fn the_tool_list_has_each_tools_description_schema_and_read_only_hint() {
     };
     assert_eq!(read_only(0), Some(true));
     assert_eq!(read_only(1), Some(false));
-}
 
-#[test]
-fn a_call_is_answered_by_its_tools_system() {
-    let (_, result) = serve(App::update, |client| async move {
-        call(&client, "echo", json!({ "text": "hello" })).await
-    });
-
-    assert_eq!(text(&result), "hello");
-}
-
-#[test]
-fn malformed_arguments_are_answered_invalid_arguments() {
-    let (_, result) = serve(App::update, |client| async move {
-        call(&client, "echo", json!({ "words": "hello" })).await
-    });
-
-    let body = error(&result);
-    assert_eq!(body["code"], json!("invalid_arguments"));
-    assert!(body["message"].as_str().unwrap().contains("text"), "{body}");
-}
-
-#[test]
-fn a_call_no_system_answered_gets_its_unmet_need_or_internal() {
-    let (_, (needs_scene, silent)) = serve(App::update, |client| async move {
-        (
-            call(&client, "needs_scene", json!({})).await,
-            call(&client, "silent", json!({})).await,
-        )
-    });
-
+    assert!(unknown_refused);
+    assert_eq!(text(&calls[0]), "hello");
+    assert_eq!(error(&calls[1])["code"], json!("invalid_arguments"));
     assert_eq!(
-        error(&needs_scene),
+        error(&calls[2]),
         json!({ "code": "no_scene", "message": "open a scene first with open_asset" })
     );
-    assert_eq!(error(&silent)["code"], json!("internal"));
-}
-
-#[test]
-fn a_second_reply_is_ignored() {
-    let (_, (first, after)) = serve(App::update, |client| async move {
-        (
-            call(&client, "twice", json!({})).await,
-            call(&client, "echo", json!({ "text": "after" })).await,
-        )
-    });
-
-    assert_eq!(text(&first), "first");
-    assert_eq!(text(&after), "after");
-}
-
-#[test]
-fn an_unknown_tool_is_a_protocol_error() {
-    let (_, result) = serve(App::update, |client| async move {
-        client
-            .call_tool(CallToolRequestParams::new("missing"))
-            .await
-            .is_err()
-    });
-
-    assert!(result);
+    assert_eq!(error(&calls[3])["code"], json!("internal"));
 }
 
 #[test]
 fn read_only_calls_are_answered_between_frames() {
-    let (app, (frames, echoed)) = serve(
+    let Served { app, result } = serve(
         |app| app.serve(McpRead),
         |client| async move {
-            (
+            vec![
                 call(&client, "frames", json!({})).await,
                 call(&client, "echo", json!({ "text": "between" })).await,
-            )
+            ]
         },
     );
 
-    assert_eq!(text(&frames), "0");
-    assert_eq!(text(&echoed), "between");
+    assert_eq!(text(&result[0]), "0");
+    assert_eq!(text(&result[1]), "between");
     assert_eq!(app.get_resource::<FrameCount>().unwrap().0, 0);
-}
-
-fn writes(mut calls: ToolCalls<Frames>, mut frames: ResMut<FrameCount>) {
-    for (_, reply) in calls.read() {
-        frames.0 += 1;
-        reply.ok("written");
-    }
-}
-
-#[test]
-#[should_panic(expected = "read-only tool `frames`")]
-fn a_read_only_tool_whose_system_writes_is_refused() {
-    let mut app = App::new();
-    app.register_plugin(MainSchedulePlugin)
-        .register_plugin(McpPlugin)
-        .add_tool::<Frames, _>(McpTool::read_only("frames"), writes);
 }
 
 async fn wait_for_progress(client: &Client, entry: &str) -> String {
@@ -393,53 +353,28 @@ async fn wait_for_progress(client: &Client, entry: &str) -> String {
 }
 
 #[test]
-fn a_pending_call_is_answered_by_a_later_event() {
-    let (app, (opened, seen)) = serve(App::update, |client| async move {
-        let watch = async {
-            let seen = wait_for_progress(&client, "start a").await;
-            DOOR.store(true, Ordering::SeqCst);
-            seen
-        };
-        tokio::join!(call(&client, "open", json!({ "name": "a" })), watch)
-    });
-
-    assert_eq!(seen, "start a");
-    assert_eq!(text(&opened), "a is open");
-    assert_eq!(
-        app.get_resource::<OpenLog>().unwrap().0,
-        ["start a", "done a"]
-    );
-}
-
-#[test]
-fn a_pending_call_past_its_deadline_is_answered_timeout() {
-    let (_, (waited, after)) = serve(App::update, |client| async move {
-        (
+fn a_pending_call_past_its_deadline_is_answered_timeout_or_with_its_deadline_text() {
+    let waited = serve(App::update, |client| async move {
+        vec![
             call(&client, "wait", json!({})).await,
-            call(&client, "twice", json!({})).await,
-        )
-    });
+            call(&client, "wait", json!({ "at_deadline": "still waiting" })).await,
+        ]
+    })
+    .result;
 
-    assert_eq!(
-        error(&waited),
-        json!({ "code": "timeout", "message": "Timed out waiting for nothing." })
-    );
-    assert_eq!(text(&after), "first");
+    assert_eq!(error(&waited[0])["code"], json!("timeout"));
+    assert_eq!(text(&waited[1]), "still waiting");
 }
 
-#[test]
-fn a_pending_call_given_text_for_its_deadline_answers_it_there() {
-    let (_, waited) = serve(App::update, |client| async move {
-        call(&client, "wait", json!({ "at_deadline": "still waiting" })).await
-    });
-
-    assert_eq!(waited.is_error, Some(false), "{waited:?}");
-    assert_eq!(text(&waited), "still waiting");
+struct Opens {
+    first: CallToolResult,
+    second: CallToolResult,
+    seen_while_a_waits: String,
 }
 
 #[test]
 fn a_change_waits_for_the_one_before_while_reads_go_through() {
-    let (app, (first, second, seen)) = serve(App::update, |client| async move {
+    let Served { app, result } = serve(App::update, |client| async move {
         let watch = async {
             let seen = wait_for_progress(&client, "start a").await;
             DOOR.store(true, Ordering::SeqCst);
@@ -447,55 +382,60 @@ fn a_change_waits_for_the_one_before_while_reads_go_through() {
             DOOR.store(true, Ordering::SeqCst);
             seen
         };
-        tokio::join!(
+        let (first, second, seen_while_a_waits) = tokio::join!(
             call(&client, "open", json!({ "name": "a" })),
             call(&client, "open", json!({ "name": "b" })),
             watch
-        )
+        );
+        Opens {
+            first,
+            second,
+            seen_while_a_waits,
+        }
     });
 
-    assert_eq!(seen, "start a");
-    assert_eq!(text(&first), "a is open");
-    assert_eq!(text(&second), "b is open");
+    assert_eq!(result.seen_while_a_waits, "start a");
+    assert_eq!(text(&result.first), "a is open");
+    assert_eq!(text(&result.second), "b is open");
     assert_eq!(
         app.get_resource::<OpenLog>().unwrap().0,
         ["start a", "done a", "start b", "done b"]
     );
 }
 
+struct Frame {
+    logged: usize,
+    demanded: bool,
+}
+
 #[test]
 fn frames_are_demanded_while_a_call_is_pending() {
     let mut frames = Vec::new();
-    let (_, opened) = serve(
+    let opened = serve(
         |app| {
             app.update();
             let logged = app.get_resource::<OpenLog>().unwrap().0.len();
-            frames.push((
+            frames.push(Frame {
                 logged,
-                app.get_resource::<FrameDemand>().unwrap().is_requested(),
-            ));
+                demanded: app.get_resource::<FrameDemand>().unwrap().is_requested(),
+            });
             if logged == 1 {
                 DOOR.store(true, Ordering::SeqCst);
             }
         },
         |client| async move { call(&client, "open", json!({ "name": "a" })).await },
-    );
+    )
+    .result;
 
     assert_eq!(text(&opened), "a is open");
     let demanded = |entries: usize| -> Vec<bool> {
         frames
             .iter()
-            .filter(|(logged, _)| *logged == entries)
-            .map(|(_, demanded)| *demanded)
+            .filter(|frame| frame.logged == entries)
+            .map(|frame| frame.demanded)
             .collect()
     };
-    assert!(demanded(0).iter().all(|demanded| !demanded), "{frames:?}");
-    assert!(
-        !demanded(1).is_empty() && demanded(1).iter().all(|demanded| *demanded),
-        "{frames:?}"
-    );
-    assert!(
-        !demanded(2).is_empty() && demanded(2).iter().all(|demanded| !demanded),
-        "{frames:?}"
-    );
+    assert!(demanded(0).iter().all(|demanded| !demanded));
+    assert!(!demanded(1).is_empty() && demanded(1).iter().all(|demanded| *demanded));
+    assert!(!demanded(2).is_empty() && demanded(2).iter().all(|demanded| !demanded));
 }

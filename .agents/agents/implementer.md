@@ -19,8 +19,8 @@ Work in this order:
    it without running it.
 2. Write the least code that makes it pass.
 3. Run the per-task gate from `AGENTS.md`, scoped to the crates you
-   touched. In a cloud pipeline session run only
-   `cargo fmt --all -- --check`, plus
+   touched, and the test budget. In a cloud pipeline session run only
+   `cargo fmt --all -- --check` and `python3 .github/scripts/test_budget.py`, plus
    `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml`
    changed, and report the others as `not run (CI)`.
 4. Stage the paths you changed by name and commit with an imperative subject
@@ -50,6 +50,8 @@ Your reply is the report and nothing else:
 - `GATE:` each command with `pass`, `fail`, or `not run`. Paste the
   failing output for any failure.
 - `CHANGED:` the files, one line each on what changed.
+- `TESTS:` `+added −deleted, net n`. When net is above zero, say why no
+  existing scenario, table or property could take the cases.
 - `NOT VERIFIED:` anything that needs eyes on the running program, since you
   may have no display.
 - `CONCERNS:` what the reviewer or the owner should look at, or `none`.

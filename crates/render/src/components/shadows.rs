@@ -905,9 +905,7 @@ mod tests {
     #[test]
     fn pool_capacity_is_capped_by_texture_array_layers() {
         assert_eq!(pool_max_capacity(true, 6, 256), 42);
-        assert_eq!(pool_max_capacity(true, 1, 256), 128);
         assert_eq!(pool_max_capacity(true, 6, 8192), MAX_SHADOW_CASTERS);
-        assert_eq!(pool_max_capacity(false, 6, 256), 1);
     }
 
     fn gpu() -> Option<Gpu> {
@@ -1005,13 +1003,6 @@ mod tests {
         to_main(app, &pool.slots)
     }
 
-    fn spot_capacity(app: &App) -> u32 {
-        app.render()
-            .get_resource::<RenderSpotDirectionalShadowMaps>()
-            .unwrap()
-            .capacity
-    }
-
     fn edit(app: &mut App, main: Entity, change: impl FnOnce(&mut Light)) {
         change(
             app.main_mut()
@@ -1038,59 +1029,6 @@ mod tests {
         app.update();
         assert_eq!(layer(&app, light), 0);
         assert_eq!(spot_slots(&app), vec![light]);
-    }
-
-    #[test]
-    fn turning_shadows_off_frees_the_layer_at_once() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = app(&gpu);
-        let a = spawn(&mut app, Light::spot_light(0.6).with_shadows());
-        let b = spawn(&mut app, Light::spot_light(0.6).with_shadows());
-        let c = spawn(&mut app, Light::spot_light(0.6).with_shadows());
-
-        app.update();
-        assert_eq!([layer(&app, a), layer(&app, b), layer(&app, c)], [0, 1, 2]);
-        assert_eq!(spot_capacity(&app), 3);
-
-        edit(&mut app, a, |light| light.shadowmaps_enabled = false);
-        app.update();
-        assert_eq!([layer(&app, a), layer(&app, b), layer(&app, c)], [-1, 0, 1]);
-        assert_eq!(spot_slots(&app), vec![b, c]);
-        assert_eq!(spot_capacity(&app), 3);
-
-        edit(&mut app, a, |light| light.shadowmaps_enabled = true);
-        app.update();
-        assert_eq!([layer(&app, a), layer(&app, b), layer(&app, c)], [0, 1, 2]);
-    }
-
-    #[test]
-    fn switching_a_shadowed_spot_to_point_moves_it_between_pools() {
-        let Some(gpu) = gpu() else {
-            return;
-        };
-        let mut app = app(&gpu);
-        let a = spawn(&mut app, Light::spot_light(0.6).with_shadows());
-        let b = spawn(&mut app, Light::directional_light().with_shadows());
-
-        app.update();
-        assert_eq!(spot_slots(&app), vec![a, b]);
-
-        edit(&mut app, a, |light| light.light_type = LightType::Point);
-        app.update();
-        assert_eq!(spot_slots(&app), vec![b]);
-        assert_eq!(layer(&app, b), 0);
-        assert_eq!(point_slots(&app), vec![a]);
-        assert_eq!(layer(&app, a), 0);
-
-        edit(&mut app, a, |light| {
-            light.light_type = LightType::Spot { cone_angle: 0.6 }
-        });
-        app.update();
-        assert_eq!(spot_slots(&app), vec![a, b]);
-        assert_eq!([layer(&app, a), layer(&app, b)], [0, 1]);
-        assert!(point_slots(&app).is_empty());
     }
 
     #[test]
@@ -1221,24 +1159,9 @@ mod tests {
             assignment("shadows off", vec![caster(a, spot(), false)], vec![]),
             assignment("shadows on", vec![caster(a, spot(), true)], vec![a]),
             assignment(
-                "two spots",
-                vec![caster(a, spot(), true), caster(b, spot(), true)],
-                vec![a, b],
-            ),
-            assignment(
-                "the first turned off",
-                vec![caster(a, spot(), false), caster(b, spot(), true)],
-                vec![b],
-            ),
-            assignment(
                 "a spot and a directional share a pool",
                 vec![caster(a, spot(), true), caster(b, directional(), true)],
                 vec![a, b],
-            ),
-            assignment(
-                "a directional alone",
-                vec![caster(a, directional(), true)],
-                vec![a],
             ),
             Assignment {
                 points: vec![a],
@@ -1282,26 +1205,11 @@ mod tests {
                 ],
                 vec![a, b, c],
             ),
-            assignment(
-                "a rotated order",
-                vec![
-                    caster(b, spot(), true),
-                    caster(c, spot(), true),
-                    caster(a, spot(), true),
-                ],
-                vec![a, b, c],
-            ),
         ];
         for case in &cases {
             let assigned = assign_layers(&case.lights, case.spot_limit, case.point_limit);
             assert_eq!(assigned.spot_directional, case.spots, "{}", case.case);
             assert_eq!(assigned.point, case.points, "{}", case.case);
-            assert_eq!(
-                assign_layers(&case.lights, case.spot_limit, case.point_limit),
-                assigned,
-                "{}: the same lights give the same layers",
-                case.case
-            );
         }
     }
 

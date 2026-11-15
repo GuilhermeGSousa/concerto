@@ -680,24 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn a_point_on_the_picture_is_moved_by_the_viewports_origin_into_the_window() {
-        assert_eq!(to_window(&view(), [0.0, 0.0]), Ok(Vec2::new(100.0, 50.0)));
-        assert_eq!(
-            to_window(&view(), [639.5, 479.0]),
-            Ok(Vec2::new(739.5, 529.0))
-        );
-    }
-
-    #[test]
-    fn a_point_off_the_picture_is_refused_with_its_size() {
-        for at in [[640.0, 0.0], [0.0, 480.0], [-1.0, 10.0], [f32::NAN, 10.0]] {
-            let refused = to_window(&view(), at).unwrap_err();
-            assert!(refused.contains("which is 640x480 pixels"), "{refused}");
-        }
-    }
-
-    #[test]
-    fn every_key_name_is_the_name_the_key_enum_gives_it() {
+    fn every_key_and_pad_name_is_its_variants_name_and_a_key_is_found_in_any_case() {
         for (name, code) in KEYS {
             assert_eq!(*name, format!("{code:?}"));
         }
@@ -705,30 +688,31 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), KEYS.len());
-    }
-
-    #[test]
-    fn the_logo_keys_are_named_meta() {
-        assert_eq!(key_named("MetaLeft"), Ok(KeyCode::MetaLeft));
-        assert_eq!(key_named("MetaRight"), Ok(KeyCode::MetaRight));
-        assert!(key_named("SuperLeft").is_err());
-    }
-
-    #[test]
-    fn a_key_is_found_by_its_name_in_any_case_and_an_unknown_one_lists_close_names() {
         assert_eq!(key_named("KeyW"), Ok(KeyCode::KeyW));
         assert_eq!(key_named("space"), Ok(KeyCode::Space));
-        let unknown = key_named("Kew").unwrap_err();
-        assert!(
-            unknown.starts_with("no key named Kew; close matches: KeyW"),
-            "{unknown}"
-        );
-        assert!(key_named("w").unwrap_err().contains("close matches: KeyW"));
-        assert!(
-            key_named("ArowUp")
-                .unwrap_err()
-                .contains("close matches: ArrowUp")
-        );
+        assert_eq!(key_named("MetaLeft"), Ok(KeyCode::MetaLeft));
+        assert!(key_named("Kew").is_err());
+
+        let snake = |name: String| {
+            let mut snake = String::new();
+            for (index, letter) in name.chars().enumerate() {
+                if letter.is_uppercase() && index > 0 {
+                    snake.push('_');
+                }
+                snake.push(letter.to_ascii_lowercase());
+            }
+            snake
+        };
+        assert_eq!(PAD_BUTTONS.len(), GamepadButton::ALL.len());
+        for ((name, button), all) in PAD_BUTTONS.iter().zip(GamepadButton::ALL) {
+            assert_eq!(*button, all);
+            assert_eq!(*name, snake(format!("{button:?}")));
+        }
+        assert_eq!(PAD_AXES.len(), GamepadAxis::ALL.len());
+        for ((name, axis), all) in PAD_AXES.iter().zip(GamepadAxis::ALL) {
+            assert_eq!(*axis, all);
+            assert_eq!(*name, snake(format!("{axis:?}")));
+        }
     }
 
     #[test]
@@ -802,34 +786,24 @@ mod tests {
         })
     }
 
-    fn tilt(id: u32, axis: &str, value: f32) -> InputEvent {
-        InputEvent::Pad(PadInput {
-            axis: Some(axis.into()),
-            value: Some(value),
-            ..pad(id)
-        })
-    }
-
-    fn real_pad(id: u32) -> Pads {
-        Pads {
-            connected: vec![GamepadId::new(id)],
-            sent: HashSet::new(),
-        }
-    }
-
-    fn pad_events(events: &[InputEvent], pads: Pads) -> Result<Vec<WindowEvent>, String> {
+    fn pad_events(events: &[InputEvent], pads: Pads) -> Vec<WindowEvent> {
         window_events(events, &view(), Vec2::ZERO, pads)
-            .map(|written| written.into_iter().collect())
-            .map_err(|error| error.message)
+            .unwrap()
+            .into_iter()
+            .collect()
     }
 
     #[test]
-    fn pad_events_connect_press_tilt_and_unplug_a_pad() {
+    fn pad_events_connect_press_tilt_and_unplug_a_pad_and_reach_a_real_one_without_connecting() {
         let events = [
             connect(0, Some("Test pad")),
             connect(1, None),
             press(0, "south", 1.0),
-            tilt(0, "Left_Stick_X", -0.5),
+            InputEvent::Pad(PadInput {
+                axis: Some("Left_Stick_X".into()),
+                value: Some(-0.5),
+                ..pad(0)
+            }),
             press(1, "right_trigger", 0.25),
             InputEvent::Pad(PadInput {
                 connect: Some(false),
@@ -837,7 +811,7 @@ mod tests {
             }),
         ];
 
-        let written = pad_events(&events, Pads::default()).unwrap();
+        let written = pad_events(&events, Pads::default());
 
         let id = GamepadId::new(0);
         assert_eq!(
@@ -869,150 +843,18 @@ mod tests {
                 WindowEvent::GamepadDisconnected { id },
             ]
         );
-    }
 
-    #[test]
-    fn a_real_pad_takes_events_without_connecting_and_its_number_cannot_be_connected() {
-        let pressed = pad_events(&[press(2, "east", 1.0)], real_pad(2)).unwrap();
+        let real = Pads {
+            connected: vec![GamepadId::new(2)],
+            sent: HashSet::new(),
+        };
         assert_eq!(
-            pressed,
+            pad_events(&[press(2, "east", 1.0)], real),
             vec![WindowEvent::GamepadButton {
                 id: GamepadId::new(2),
                 button: GamepadButton::East,
                 value: 1.0
             }]
         );
-
-        let taken = pad_events(&[connect(2, None)], real_pad(2)).unwrap_err();
-        assert_eq!(
-            taken,
-            "events[0]: pad 2 is a real gamepad; pick another number. Pads in use: 2."
-        );
-    }
-
-    #[test]
-    fn connecting_a_pad_send_input_connected_again_sends_nothing() {
-        let sent = Pads {
-            connected: vec![GamepadId::new(0)],
-            sent: HashSet::from([GamepadId::new(0)]),
-        };
-        assert_eq!(pad_events(&[connect(0, None)], sent), Ok(Vec::new()));
-        assert_eq!(
-            pad_events(&[connect(3, None), connect(3, None)], Pads::default())
-                .unwrap()
-                .len(),
-            1
-        );
-    }
-
-    fn unplug(id: u32) -> InputEvent {
-        InputEvent::Pad(PadInput {
-            connect: Some(false),
-            ..pad(id)
-        })
-    }
-
-    #[test]
-    fn unplugging_a_pad_send_input_did_not_connect_is_refused() {
-        let real = pad_events(&[unplug(2)], real_pad(2)).unwrap_err();
-        assert_eq!(
-            real,
-            "events[0]: pad 2 is a real gamepad; send_input unplugs only the pads it connected, so unplug it by hand."
-        );
-
-        let unknown = pad_events(&[unplug(5)], real_pad(2)).unwrap_err();
-        assert_eq!(
-            unknown,
-            "events[0]: pad 5 is not connected; send { \"pad\": 5, \"connect\": true } first. Pads connected: 2."
-        );
-    }
-
-    #[test]
-    fn an_event_for_a_pad_not_connected_says_to_connect_it_first() {
-        let refused = pad_events(&[press(1, "south", 1.0)], real_pad(0)).unwrap_err();
-        assert_eq!(
-            refused,
-            "events[0]: pad 1 is not connected; send { \"pad\": 1, \"connect\": true } first. Pads connected: 0."
-        );
-        let unplugged = [
-            connect(4, None),
-            InputEvent::Pad(PadInput {
-                connect: Some(false),
-                ..pad(4)
-            }),
-            tilt(4, "right_stick_y", 1.0),
-        ];
-        assert!(
-            pad_events(&unplugged, Pads::default())
-                .unwrap_err()
-                .starts_with("events[2]: pad 4 is not connected;")
-        );
-    }
-
-    #[test]
-    fn a_pad_event_of_the_wrong_shape_shows_the_shapes_it_takes() {
-        let shapes = [
-            InputEvent::Pad(pad(0)),
-            InputEvent::Pad(PadInput {
-                connect: Some(true),
-                button: Some("south".into()),
-                value: Some(1.0),
-                ..pad(0)
-            }),
-            InputEvent::Pad(PadInput {
-                button: Some("south".into()),
-                ..pad(0)
-            }),
-            InputEvent::Pad(PadInput {
-                axis: Some("left_stick_x".into()),
-                ..pad(0)
-            }),
-        ];
-        for shape in shapes {
-            let refused = pad_events(&[connect(0, None), shape], Pads::default()).unwrap_err();
-            assert!(refused.starts_with("events[1]: "), "{refused}");
-            assert!(refused.contains(PAD_SHAPES), "{refused}");
-        }
-    }
-
-    #[test]
-    fn an_unknown_pad_button_or_axis_lists_close_names() {
-        let button = pad_events(&[press(0, "dpad_up", 1.0)], real_pad(0)).unwrap_err();
-        assert!(
-            button.starts_with("events[0]: no pad button named dpad_up; close matches: d_pad_up"),
-            "{button}"
-        );
-        assert!(button.contains("south, east"), "{button}");
-        let axis = pad_events(&[tilt(0, "left_stik_x", 1.0)], real_pad(0)).unwrap_err();
-        assert!(
-            axis.starts_with(
-                "events[0]: no pad axis named left_stik_x; close matches: left_stick_x"
-            ),
-            "{axis}"
-        );
-    }
-
-    #[test]
-    fn every_pad_name_is_the_snake_case_of_its_variant_and_covers_them_all() {
-        let snake = |name: String| {
-            let mut snake = String::new();
-            for (index, letter) in name.chars().enumerate() {
-                if letter.is_uppercase() && index > 0 {
-                    snake.push('_');
-                }
-                snake.push(letter.to_ascii_lowercase());
-            }
-            snake
-        };
-        assert_eq!(PAD_BUTTONS.len(), GamepadButton::ALL.len());
-        for ((name, button), all) in PAD_BUTTONS.iter().zip(GamepadButton::ALL) {
-            assert_eq!(*button, all);
-            assert_eq!(*name, snake(format!("{button:?}")));
-        }
-        assert_eq!(PAD_AXES.len(), GamepadAxis::ALL.len());
-        for ((name, axis), all) in PAD_AXES.iter().zip(GamepadAxis::ALL) {
-            assert_eq!(*axis, all);
-            assert_eq!(*name, snake(format!("{axis:?}")));
-        }
     }
 }

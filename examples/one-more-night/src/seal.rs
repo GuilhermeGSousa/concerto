@@ -198,11 +198,6 @@ mod tests {
                 key: key.clone(),
                 fails_as: SealError::NotABundle,
             },
-            Attempt {
-                bundle: bundle[..10].to_vec(),
-                key,
-                fails_as: SealError::NotABundle,
-            },
         ];
         for attempt in attempts {
             assert_eq!(

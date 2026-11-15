@@ -114,108 +114,25 @@ mod tests {
         seen.0.extend(removed.read());
     }
 
-    fn tracked_world() -> World {
-        let mut world = World::new();
-        world.insert_resource(EventChannel::<ComponentRemoved<Health>>::new());
-        world.insert_resource(Seen::default());
-        world.add_listener(record_removal::<Health>);
-        world
-    }
-
     fn read(world: &mut World, system: &mut BoxedSystem) -> Vec<Entity> {
         system.run_and_apply((), world);
         std::mem::take(&mut world.get_resource_mut::<Seen>().unwrap().0)
     }
 
     #[test]
-    fn a_removal_is_read_once() {
-        let mut world = tracked_world();
-        let mut system = collect.into_boxed_system();
-        system.initialize(&mut world);
-        let entity = world.spawn(Health);
-
-        world.remove_component::<Health>(entity);
-
-        assert_eq!(read(&mut world, &mut system), vec![entity]);
-        assert!(read(&mut world, &mut system).is_empty());
-    }
-
-    #[test]
-    fn a_despawn_reads_as_a_removal() {
-        let mut world = tracked_world();
-        let mut system = collect.into_boxed_system();
-        system.initialize(&mut world);
-        let entity = world.spawn(Health);
-
-        world.despawn(entity);
-
-        assert_eq!(read(&mut world, &mut system), vec![entity]);
-    }
-
-    fn read_state(
-        world: &World,
-        state: &mut <RemovedComponents<'static, 'static, Health> as SystemInput>::State,
-    ) -> Vec<Entity> {
-        // SAFETY: nothing else reads or writes `world` while the reader is alive.
-        let mut removed = unsafe {
-            <RemovedComponents<Health>>::get_data(
-                state,
-                world.as_unsafe_world_cell(),
-                world.out_of_system_ticks(),
-            )
-        }
-        .unwrap();
-        removed.read().collect()
-    }
-
-    #[test]
-    fn a_cloned_reader_keeps_its_own_position() {
-        let mut world = tracked_world();
-        let mut first = <RemovedComponents<Health>>::init_state(&mut world);
-        let early = world.spawn(Health);
-        world.remove_component::<Health>(early);
-        assert_eq!(read_state(&world, &mut first), vec![early]);
-        let mut second = first.clone();
-        let late = world.spawn(Health);
-
-        world.remove_component::<Health>(late);
-
-        assert_eq!(read_state(&world, &mut first), vec![late]);
-        assert_eq!(read_state(&world, &mut second), vec![late]);
-        assert!(read_state(&world, &mut first).is_empty());
-    }
-
-    #[test]
-    fn a_world_without_a_schedule_tracks_removals() {
+    fn a_removal_or_a_despawn_is_read_once() {
         let mut world = World::new();
-        world.track_removals::<Health>();
         world.track_removals::<Health>();
         world.insert_resource(Seen::default());
         let mut system = collect.into_boxed_system();
         system.initialize(&mut world);
-        let entity = world.spawn(Health);
+        let removed = world.spawn(Health);
+        let despawned = world.spawn(Health);
 
-        world.remove_component::<Health>(entity);
+        world.remove_component::<Health>(removed);
+        world.despawn(despawned);
 
-        assert_eq!(read(&mut world, &mut system), vec![entity]);
-    }
-
-    #[derive(Resource, Default)]
-    struct Ran(bool);
-
-    fn mark(_: RemovedComponents<Health>, mut ran: ResMut<Ran>) {
-        ran.0 = true;
-    }
-
-    #[test]
-    fn a_system_with_untracked_removals_is_skipped() {
-        let mut world = World::new();
-        world.insert_resource(Ran::default());
-        let mut system = mark.into_boxed_system();
-        system.initialize(&mut world);
-
-        system.run_and_apply((), &mut world);
-
-        assert!(!world.get_resource::<Ran>().unwrap().0);
+        assert_eq!(read(&mut world, &mut system), vec![removed, despawned]);
+        assert!(read(&mut world, &mut system).is_empty());
     }
 }

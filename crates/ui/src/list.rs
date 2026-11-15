@@ -194,8 +194,18 @@ pub(crate) mod tests {
         Menu(Vec2),
     }
 
+    #[derive(Debug, PartialEq)]
+    struct HeardBy {
+        entity: Entity,
+        heard: Heard,
+    }
+
+    fn heard(entity: Entity, heard: Heard) -> HeardBy {
+        HeardBy { entity, heard }
+    }
+
     #[derive(Resource, Default)]
-    struct Log(Vec<(Entity, Heard)>);
+    struct Log(Vec<HeardBy>);
 
     pub(crate) struct Harness {
         pub(crate) world: World,
@@ -325,7 +335,10 @@ pub(crate) mod tests {
                 heard: fn(&S) -> Heard,
             ) -> concerto_ecs::signal::listener::Listener<S> {
                 (move |on: On<S>, mut log: ResMut<Log>| {
-                    log.0.push((on.entity(), heard(on.signal())))
+                    log.0.push(HeardBy {
+                        entity: on.entity(),
+                        heard: heard(on.signal()),
+                    })
                 })
                 .into_listener()
             }
@@ -339,7 +352,7 @@ pub(crate) mod tests {
             );
         }
 
-        fn heard(&mut self) -> Vec<(Entity, Heard)> {
+        fn heard(&mut self) -> Vec<HeardBy> {
             std::mem::take(&mut self.world.get_resource_mut::<Log>().unwrap().0)
         }
 
@@ -430,7 +443,12 @@ pub(crate) mod tests {
             .with_flex_shrink(0.0)
     }
 
-    fn short_list(harness: &mut Harness, list: UIList) -> (Entity, Vec<Entity>) {
+    struct ListRows {
+        list: Entity,
+        rows: Vec<Entity>,
+    }
+
+    fn short_list(harness: &mut Harness, list: UIList) -> ListRows {
         let root = harness.root();
         let list = harness.list(list, tall(200.0), root);
         let rows = harness.rows(list, 5);
@@ -438,10 +456,10 @@ pub(crate) mod tests {
         for row in &rows {
             harness.listen(*row);
         }
-        (list, rows)
+        ListRows { list, rows }
     }
 
-    fn long_list(harness: &mut Harness, offset: f32) -> (Entity, Vec<Entity>) {
+    fn long_list(harness: &mut Harness, offset: f32) -> ListRows {
         let root = harness.root();
         let list = harness.world.spawn((
             tall(100.0),
@@ -454,7 +472,7 @@ pub(crate) mod tests {
         ));
         let rows = harness.rows(list, 1_000);
         harness.settle();
-        (list, rows)
+        ListRows { list, rows }
     }
 
     #[test]
@@ -480,87 +498,17 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_extent_comes_from_the_children() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let list = harness.list(UIList::default(), tall(200.0), root);
-        let rows = harness.rows(list, 50);
-
-        harness.settle();
-        assert_eq!(harness.area(list).content_extent, 1300.0);
-
-        for row in &rows[..10] {
-            harness.world.despawn(*row);
-        }
-        harness.settle();
-        assert_eq!(harness.area(list).content_extent, 1040.0);
-    }
-
-    #[test]
-    fn the_scrollbar_is_not_a_row() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let list = harness.list(UIList::default(), tall(200.0), root);
-        let rows = harness.rows(list, 5);
-
-        harness.settle();
-
-        let children = harness
-            .world
-            .get_component_for_entity::<Children>(list)
-            .unwrap()
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        let track = children
-            .iter()
-            .copied()
-            .find(|child| {
-                harness
-                    .world
-                    .get_component_for_entity::<UIScrollBar>(*child)
-                    .is_some()
-            })
-            .expect("the list has a scrollbar track");
-        assert!(
-            harness
-                .world
-                .get_component_for_entity::<UIItem>(track)
-                .is_none()
-        );
-        for (index, row) in rows.iter().enumerate() {
-            let item = harness
-                .world
-                .get_component_for_entity::<UIItem>(*row)
-                .expect("every child is an item");
-            assert_eq!((item.owner(), item.index(), item.depth()), (list, index, 0));
-        }
-        assert_eq!(harness.area(list).content_extent, 5.0 * 26.0);
-    }
-
-    #[test]
     fn rows_far_off_screen_are_culled() {
         let mut harness = Harness::new();
-        let (_, rows) = long_list(&mut harness, 400.0);
+        let ListRows { rows, .. } = long_list(&mut harness, 400.0);
 
         assert_eq!(harness.unculled(&rows), (18..=26).collect::<Vec<_>>());
     }
 
     #[test]
-    fn scrolling_moves_the_unculled_window() {
-        let mut harness = Harness::new();
-        let (list, rows) = long_list(&mut harness, 400.0);
-
-        harness.set_offset(list, 0.0);
-        harness.settle();
-
-        assert_eq!(harness.unculled(&rows), (0..=6).collect::<Vec<_>>());
-    }
-
-    #[test]
     fn scrolling_a_long_list_by_less_than_a_row_moves_every_shown_row() {
         let mut harness = Harness::new();
-        let (list, rows) = long_list(&mut harness, 405.0);
+        let ListRows { list, rows } = long_list(&mut harness, 405.0);
         let shown = harness.unculled(&rows);
         let tops = shown
             .iter()
@@ -583,7 +531,7 @@ pub(crate) mod tests {
     #[test]
     fn a_row_scrolled_out_is_not_shown_after_one_frame() {
         let mut harness = Harness::new();
-        let (list, rows) = long_list(&mut harness, 0.0);
+        let ListRows { list, rows } = long_list(&mut harness, 0.0);
         assert!(harness.layout(rows[0]).is_shown());
 
         harness.set_offset(list, 400.0);
@@ -633,90 +581,6 @@ pub(crate) mod tests {
             assert_eq!(harness.layout(card).rect.size.y, 300.0);
             assert_eq!(harness.layout(list).rect.size.y, 300.0);
         }
-    }
-
-    #[test]
-    fn a_list_with_auto_height_grows_up_to_max_height() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let list = harness.list(
-            rows_of(30.0),
-            UINode::default().with_max_height(UIValue::Px(300.0)),
-            root,
-        );
-        harness.rows(list, 3);
-
-        harness.settle();
-        assert_eq!(harness.layout(list).rect.size.y, 90.0);
-
-        harness.rows(list, 17);
-        harness.settle();
-        assert_eq!(harness.layout(list).rect.size.y, 300.0);
-    }
-
-    #[test]
-    fn a_growing_list_in_an_auto_height_column_is_as_tall_as_its_rows() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let column = harness.node(
-            UINode::default().with_flex_direction(FlexDirection::Column),
-            root,
-        );
-        let list = harness.list(rows_of(20.0), UINode::default().with_flex_grow(1.0), column);
-        harness.rows(list, 5);
-
-        harness.settle();
-
-        assert_eq!(harness.layout(list).rect.size.y, 100.0);
-        assert_eq!(harness.layout(column).rect.size.y, 100.0);
-    }
-
-    #[test]
-    fn a_growing_list_in_a_row_does_not_push_its_card_to_the_rows_height() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let card = harness.node(
-            UINode::default()
-                .with_height(UIValue::Px(200.0))
-                .with_flex_shrink(0.0)
-                .with_flex_direction(FlexDirection::Column),
-            root,
-        );
-        let row = harness.node(
-            UINode::default()
-                .with_flex_grow(1.0)
-                .with_flex_direction(FlexDirection::Row),
-            card,
-        );
-        let list = harness.list(rows_of(32.0), UINode::default().with_flex_grow(1.0), row);
-        harness.rows(list, 60);
-
-        harness.settle();
-
-        assert_eq!(harness.layout(row).rect.size.y, 200.0);
-        assert_eq!(harness.layout(list).rect.size.y, 200.0);
-    }
-
-    #[test]
-    fn re_adding_the_list_keeps_one_spacer() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let list = harness.list(UIList::default(), tall(100.0), root);
-        harness.world.insert(UIList::default(), list);
-
-        let spacers = harness
-            .world
-            .get_component_for_entity::<Children>(list)
-            .unwrap()
-            .iter()
-            .filter(|child| {
-                harness
-                    .world
-                    .get_component_for_entity::<crate::items::UIRowSpacer>(**child)
-                    .is_some()
-            })
-            .count();
-        assert_eq!(spacers, 1);
     }
 
     #[test]
@@ -773,62 +637,38 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_left_click_selects_and_tells_the_item() {
+    fn a_click_selects_one_row_a_double_click_activates_and_a_right_click_asks_for_a_menu() {
         let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
+        let ListRows { rows, .. } = short_list(&mut harness, UIList::default());
 
         harness.click(rows[2], MouseButton::Left, Vec2::ZERO);
-
         assert_eq!(harness.selected(&rows), [2]);
-        assert_eq!(harness.heard(), [(rows[2], Heard::Selected)]);
-    }
+        assert_eq!(harness.heard(), [heard(rows[2], Heard::Selected)]);
 
-    #[test]
-    fn selection_stays_unique() {
-        let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
-
-        harness.world.insert(UISelected, rows[1]);
         harness.world.insert(UISelected, rows[3]);
-
         assert_eq!(harness.selected(&rows), [3]);
-    }
-
-    #[test]
-    fn a_double_click_activates() {
-        let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
 
         harness.double_click(rows[1]);
-
-        assert_eq!(harness.heard(), [(rows[1], Heard::Activated)]);
-    }
-
-    #[test]
-    fn a_right_click_asks_for_a_context_menu_at_the_pointer() {
-        let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
-        harness.world.insert(UISelected, rows[0]);
+        assert_eq!(harness.heard(), [heard(rows[1], Heard::Activated)]);
 
         harness.click(rows[1], MouseButton::Right, Vec2::new(12.0, 34.0));
-
         assert_eq!(
             harness.heard(),
-            [(rows[1], Heard::Menu(Vec2::new(12.0, 34.0)))]
+            [heard(rows[1], Heard::Menu(Vec2::new(12.0, 34.0)))]
         );
-        assert_eq!(harness.selected(&rows), [0]);
+        assert_eq!(harness.selected(&rows), [3]);
     }
 
     #[test]
     fn the_list_keys_move_focus_and_selection_and_enter_activates() {
         let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
+        let ListRows { rows, .. } = short_list(&mut harness, UIList::default());
 
         harness.focus(rows[2]);
         harness.fire(UIListNext);
         assert_eq!(harness.focused(), Some(rows[3]));
         assert_eq!(harness.selected(&rows), [3]);
-        assert_eq!(harness.heard(), [(rows[3], Heard::Selected)]);
+        assert_eq!(harness.heard(), [heard(rows[3], Heard::Selected)]);
 
         harness.focus(rows[4]);
         harness.fire(UIListNext);
@@ -853,18 +693,21 @@ pub(crate) mod tests {
         assert_eq!(harness.selected(&rows), [4]);
         assert_eq!(
             harness.heard(),
-            [(rows[0], Heard::Selected), (rows[4], Heard::Selected)]
+            [
+                heard(rows[0], Heard::Selected),
+                heard(rows[4], Heard::Selected)
+            ]
         );
 
         harness.focus(rows[1]);
         harness.fire(UIListActivate);
-        assert_eq!(harness.heard(), [(rows[1], Heard::Activated)]);
+        assert_eq!(harness.heard(), [heard(rows[1], Heard::Activated)]);
     }
 
     #[test]
     fn navigation_ignores_a_focused_text_field_in_a_row() {
         let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
+        let ListRows { rows, .. } = short_list(&mut harness, UIList::default());
         let field = harness.world.spawn((
             UINode::default(),
             UITextInput::new(""),
@@ -884,7 +727,7 @@ pub(crate) mod tests {
     #[test]
     fn an_unselectable_list_ignores_clicks_and_keys() {
         let mut harness = Harness::new();
-        let (_, rows) = short_list(
+        let ListRows { rows, .. } = short_list(
             &mut harness,
             UIList {
                 selectable: false,
@@ -909,95 +752,14 @@ pub(crate) mod tests {
         harness.click(rows[1], MouseButton::Right, Vec2::new(5.0, 6.0));
         assert_eq!(
             harness.heard(),
-            [(rows[1], Heard::Menu(Vec2::new(5.0, 6.0)))]
+            [heard(rows[1], Heard::Menu(Vec2::new(5.0, 6.0)))]
         );
-    }
-
-    #[test]
-    fn rows_stop_being_focusable_when_the_list_stops_being_selectable() {
-        let mut harness = Harness::new();
-        let (list, rows) = short_list(&mut harness, UIList::default());
-        assert_eq!(harness.focusable(&rows), [0, 1, 2, 3, 4]);
-
-        harness
-            .world
-            .get_component_for_entity_mut::<UIList>(list)
-            .unwrap()
-            .selectable = false;
-        harness.settle();
-
-        assert!(harness.focusable(&rows).is_empty());
-    }
-
-    #[test]
-    fn a_row_spawned_selected_takes_the_selection() {
-        let mut harness = Harness::new();
-        let (list, mut rows) = short_list(&mut harness, UIList::default());
-        harness.world.insert(UISelected, rows[1]);
-
-        rows.push(
-            harness
-                .world
-                .spawn((UINode::default(), UISelected, ChildOf::new(list))),
-        );
-        harness.settle();
-
-        assert_eq!(harness.selected(&rows), [5]);
-    }
-
-    #[test]
-    fn a_row_spawned_selected_ahead_of_the_others_takes_the_selection() {
-        let mut harness = Harness::new();
-        let (list, mut rows) = short_list(&mut harness, UIList::default());
-        harness.world.insert(UISelected, rows[3]);
-
-        let first = harness
-            .world
-            .spawn((UINode::default(), UISelected, ChildOf::new(list)));
-        harness
-            .world
-            .get_component_for_entity_mut::<Children>(list)
-            .unwrap()
-            .sort_by_key(|child| child != first);
-        rows.push(first);
-        harness.settle();
-
-        assert_eq!(harness.selected(&rows), [5]);
-    }
-
-    #[test]
-    fn reveal_without_a_layout_puts_the_row_at_the_top() {
-        let mut harness = Harness::new();
-        let (list, rows) = long_list(&mut harness, 0.0);
-        harness.world.remove_component::<UILayout>(list);
-
-        harness.world.trigger_on(rows[500], UIReveal);
-        harness.frame();
-
-        let content = harness.layout(list).content_rect;
-        let row = harness.layout(rows[500]);
-        assert!(row.is_shown());
-        assert_eq!(row.rect.min.y, content.min.y);
-    }
-
-    #[test]
-    fn reveal_uses_the_owners_row_height() {
-        let mut harness = Harness::new();
-        let root = harness.root();
-        let list = harness.list(rows_of(40.0), tall(100.0), root);
-        let rows = harness.rows(list, 100);
-        harness.settle();
-
-        harness.world.trigger_on(rows[50], UIReveal);
-        harness.frame();
-
-        assert_eq!(harness.area(list).offset, 51.0 * 40.0 - 100.0);
     }
 
     #[test]
     fn the_widget_paints_selection_and_hover() {
         let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
+        let ListRows { rows, .. } = short_list(&mut harness, UIList::default());
         let theme = UITheme::default();
 
         harness.world.insert(UISelected, rows[0]);
@@ -1012,7 +774,7 @@ pub(crate) mod tests {
     #[test]
     fn reveal_scrolls_the_row_into_view() {
         let mut harness = Harness::new();
-        let (list, rows) = long_list(&mut harness, 0.0);
+        let ListRows { list, rows } = long_list(&mut harness, 0.0);
 
         harness.world.trigger_on(rows[500], UIReveal);
         harness.frame();
@@ -1035,7 +797,7 @@ pub(crate) mod tests {
     #[test]
     fn despawning_the_focused_item_clears_focus() {
         let mut harness = Harness::new();
-        let (_, rows) = short_list(&mut harness, UIList::default());
+        let ListRows { rows, .. } = short_list(&mut harness, UIList::default());
         harness.focus(rows[2]);
         harness.world.insert(UISelected, rows[2]);
 

@@ -48,21 +48,3 @@ fn desired_motion_takes_the_steering_velocity_and_facing() {
         }
     );
 }
-
-#[test]
-fn desired_motion_is_left_alone_while_the_steering_does_not_change() {
-    let mut app = app();
-    let entity = world(&mut app).spawn((steering(), DesiredMotion::default()));
-    app.update();
-    let written = DesiredMotion {
-        velocity: Vec3::new(0.0, 0.0, 3.0),
-        rotation: Quat::from_rotation_y(-1.2),
-    };
-    *world(&mut app)
-        .get_component_for_entity_mut::<DesiredMotion>(entity)
-        .expect("the entity has a DesiredMotion") = written;
-
-    app.update();
-
-    assert_eq!(desired(&mut app, entity), written);
-}

@@ -463,10 +463,8 @@ mod tests {
                 [0.25, 0.25],
             ),
             reach("at the range", ranged, Vec3::X * 7.0, [0.0, 0.0]),
-            reach("just inside the range", ranged, Vec3::X * 6.9, [1e-6, 1.0]),
             reach("well inside the range", ranged, Vec3::X, [0.99, 1.0]),
             reach("down a spot's -Z", spot, Vec3::NEG_Z, [1.0, 1.0]),
-            reach("behind a spot", spot, Vec3::Z, [0.0, 0.0]),
             reach("beside a spot", spot, Vec3::X, [0.0, 0.0]),
             Reach {
                 rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),

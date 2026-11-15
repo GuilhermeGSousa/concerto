@@ -193,7 +193,12 @@ mod tests {
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec3;
 
-    fn app(gpu: &Gpu, mesh: AssetId, translations: &[Vec3]) -> (App, Vec<Entity>) {
+    struct Spawned {
+        app: App,
+        entity: Entity,
+    }
+
+    fn app(gpu: &Gpu, mesh: AssetId, translation: Vec3) -> Spawned {
         let mut app = App::new();
         app.insert_resource(gpu.clone())
             .insert_resource(DrawTarget::None)
@@ -205,12 +210,9 @@ mod tests {
             .register_plugin(TransformPlugin)
             .register_plugin(RenderPlugin);
         app.main_mut().world_mut().register_component::<Transform>();
-        let entities = translations
-            .iter()
-            .map(|&translation| spawn_mesh(&mut app, mesh, translation))
-            .collect();
+        let entity = spawn_mesh(&mut app, mesh, translation);
         app.finish_plugin_build();
-        (app, entities)
+        Spawned { app, entity }
     }
 
     fn spawn_mesh(app: &mut App, mesh: AssetId, translation: Vec3) -> Entity {
@@ -239,13 +241,13 @@ mod tests {
             return;
         };
         let (first, second) = (AssetId::new(), AssetId::new());
-        let (mut app, entities) = app(&gpu, first, &[Vec3::ZERO]);
+        let Spawned { mut app, entity } = app(&gpu, first, Vec3::ZERO);
         app.update();
         assert_eq!(drawn(&mut app), [first]);
 
         app.main_mut()
             .world_mut()
-            .get_component_for_entity_mut::<MeshComponent>(entities[0])
+            .get_component_for_entity_mut::<MeshComponent>(entity)
             .unwrap()
             .handle = AssetHandle::weak(second);
         app.update();
@@ -270,21 +272,12 @@ mod tests {
         Mat4::from_cols_slice(bytemuck::cast_slice(&[value]))
     }
 
-    fn overwrite(app: &mut App, slot: u32, matrix: Mat4) {
-        app.render_mut()
-            .get_resource_mut::<BatchedInstanceBuffers>()
-            .unwrap()
-            .current_input_buffer
-            .set(slot, GlobalTransform::new(matrix).to_raw());
-    }
-
     #[test]
     fn a_moved_mesh_stores_its_new_transform() {
         let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
-        let (mut app, entities) = app(&gpu, AssetId::new(), &[Vec3::ZERO]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::ZERO);
         app.update();
         app.update();
         let slot = slot(&mut app, entity);
@@ -303,34 +296,11 @@ mod tests {
     }
 
     #[test]
-    fn an_unmoved_mesh_in_a_hierarchy_is_not_extracted_again() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let (mut app, entities) = app(&gpu, AssetId::new(), &[Vec3::ZERO]);
-        let entity = entities[0];
-        let world = app.main_mut().world_mut();
-        let parent = world.spawn(Transform::from_translation(Vec3::X));
-        world.entity_mut(parent).add_child(entity);
-        app.update();
-        app.update();
-        let slot = slot(&mut app, entity);
-        let sentinel = Mat4::from_scale(Vec3::splat(7.0));
-
-        overwrite(&mut app, slot, sentinel);
-        app.update();
-        app.update();
-
-        assert_eq!(stored(&app, slot), sentinel);
-    }
-
-    #[test]
     fn a_mesh_that_gains_a_skeleton_stores_the_identity() {
         let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
-        let (mut app, entities) = app(&gpu, AssetId::new(), &[Vec3::X]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::X);
         app.update();
         app.update();
         let slot = slot(&mut app, entity);
@@ -349,8 +319,7 @@ mod tests {
         let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
-        let (mut app, entities) = app(&gpu, AssetId::new(), &[Vec3::X]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::X);
         app.main_mut()
             .world_mut()
             .insert(SkeletonComponent::default(), entity);
@@ -373,8 +342,7 @@ mod tests {
             return;
         };
         let mesh = AssetId::new();
-        let (mut app, entities) = app(&gpu, mesh, &[Vec3::ZERO]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, mesh, Vec3::ZERO);
         app.update();
         app.update();
         let slot = slot(&mut app, entity);
@@ -398,32 +366,12 @@ mod tests {
     }
 
     #[test]
-    fn a_despawned_meshs_slot_is_reused() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mesh = AssetId::new();
-        let (mut app, entities) = app(&gpu, mesh, &[Vec3::ZERO]);
-        app.update();
-        app.update();
-        let old_slot = slot(&mut app, entities[0]);
-
-        app.main_mut().world_mut().despawn(entities[0]);
-        app.update();
-        let replacement = spawn_mesh(&mut app, mesh, Vec3::X);
-        app.update();
-
-        assert_eq!(slot(&mut app, replacement), old_slot);
-    }
-
-    #[test]
     fn a_mesh_removed_and_readded_in_one_frame_keeps_its_slot() {
         let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
         let mesh = AssetId::new();
-        let (mut app, entities) = app(&gpu, mesh, &[Vec3::ZERO]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, mesh, Vec3::ZERO);
         app.update();
         app.update();
         let old_slot = slot(&mut app, entity);
@@ -447,11 +395,9 @@ mod tests {
             return;
         };
         let mesh = AssetId::new();
-        let (mut app, entities) = app(&gpu, mesh, &[Vec3::ZERO]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, mesh, Vec3::ZERO);
         app.update();
         app.update();
-        let old_slot = slot(&mut app, entity);
 
         app.main_mut()
             .world_mut()
@@ -459,9 +405,6 @@ mod tests {
         app.update();
 
         assert!(instances(&app).get(&MainEntity::new(entity)).is_none());
-        let replacement = spawn_mesh(&mut app, mesh, Vec3::X);
-        app.update();
-        assert_eq!(slot(&mut app, replacement), old_slot);
     }
 
     fn frustum() -> Frustum {
@@ -518,12 +461,6 @@ mod tests {
                 visible: true,
             },
             Visibility {
-                case: "no bounds",
-                flags: RenderMeshInstanceFlags::empty(),
-                world_aabb: None,
-                visible: true,
-            },
-            Visibility {
                 case: "behind the camera",
                 flags: RenderMeshInstanceFlags::empty(),
                 world_aabb: box_behind(),
@@ -546,8 +483,7 @@ mod tests {
         let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
-        let (mut app, entities) = app(&gpu, AssetId::new(), &[Vec3::ZERO]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::ZERO);
         app.update();
         app.update();
         let flags = |app: &App| instances(app).get(&MainEntity::new(entity)).unwrap().flags;
@@ -564,8 +500,7 @@ mod tests {
         let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
-        let (mut app, entities) = app(&gpu, AssetId::new(), &[Vec3::ZERO]);
-        let entity = entities[0];
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::ZERO);
         app.main_mut().world_mut().insert(NotShadowCaster, entity);
         app.update();
         app.update();

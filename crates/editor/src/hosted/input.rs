@@ -686,157 +686,19 @@ mod tests {
     }
 
     #[test]
-    fn a_pointer_position_is_made_relative_to_the_viewport() {
-        let mut routing = Routing::default();
-        let routed = route(
-            &WindowEvent::CursorMoved {
-                position: Vec2::new(130.0, 70.0),
-            },
-            &view(true),
-            &mut routing,
-        );
-
-        assert!(matches!(
-            routed,
-            Some(WindowEvent::CursorMoved { position }) if position == Vec2::new(30.0, 20.0)
-        ));
-    }
-
-    #[test]
-    fn a_press_outside_the_viewport_is_not_forwarded() {
-        let mut routing = Routing::default();
-
-        assert!(route(&press(MouseButton::Left), &view(false), &mut routing).is_none());
-    }
-
-    #[test]
-    fn a_release_is_forwarded_wherever_the_pointer_is() {
+    fn a_release_reaches_the_viewport_wherever_the_pointer_is_and_typing_sends_it_no_keys() {
         let mut routing = Routing::default();
         assert!(route(&press(MouseButton::Right), &view(true), &mut routing).is_some());
         assert!(route(&key(true), &view(true), &mut routing).is_some());
 
         assert!(route(&release(MouseButton::Right), &view(false), &mut routing).is_some());
         assert!(route(&key(false), &view(false), &mut routing).is_some());
-    }
 
-    #[test]
-    fn a_drag_that_leaves_the_viewport_keeps_receiving_moves_and_keys() {
-        let mut routing = Routing::default();
-        route(&press(MouseButton::Right), &view(true), &mut routing);
-
-        assert!(
-            route(
-                &WindowEvent::CursorMoved {
-                    position: Vec2::ZERO
-                },
-                &view(false),
-                &mut routing
-            )
-            .is_some()
-        );
-        assert!(route(&key(true), &view(false), &mut routing).is_some());
-
-        route(&release(MouseButton::Right), &view(false), &mut routing);
-        assert!(
-            route(
-                &WindowEvent::CursorMoved {
-                    position: Vec2::ZERO
-                },
-                &view(false),
-                &mut routing
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn a_key_press_is_not_forwarded_while_a_text_field_has_focus() {
-        let mut routing = Routing::default();
         let typing = ViewportView {
             typing: true,
             ..view(true)
         };
-
         assert!(route(&key(true), &typing, &mut routing).is_none());
-    }
-
-    #[test]
-    fn a_key_press_is_forwarded_to_a_drag_while_a_text_field_has_focus() {
-        let mut routing = Routing::default();
-        let typing = ViewportView {
-            typing: true,
-            ..view(true)
-        };
-        route(&press(MouseButton::Right), &typing, &mut routing);
-
-        assert!(route(&key(true), &typing, &mut routing).is_some());
-    }
-
-    #[test]
-    fn the_editor_windows_focus_is_forwarded_and_losing_it_ends_a_drag() {
-        let mut routing = Routing::default();
-        route(&press(MouseButton::Right), &view(true), &mut routing);
-
-        assert_eq!(
-            route(&WindowEvent::Focused(false), &view(false), &mut routing),
-            Some(WindowEvent::Focused(false))
-        );
-        assert!(
-            route(
-                &WindowEvent::CursorMoved {
-                    position: Vec2::ZERO
-                },
-                &view(false),
-                &mut routing
-            )
-            .is_none()
-        );
-        assert_eq!(
-            route(&WindowEvent::Focused(true), &view(false), &mut routing),
-            Some(WindowEvent::Focused(true))
-        );
-    }
-
-    #[test]
-    fn window_level_events_are_not_routed() {
-        let mut routing = Routing::default();
-        for event in [
-            WindowEvent::Resized {
-                width: 10,
-                height: 10,
-            },
-            WindowEvent::ScaleFactorChanged(2.0),
-            WindowEvent::Maximised(true),
-            WindowEvent::CloseRequested,
-        ] {
-            assert!(route(&event, &view(true), &mut routing).is_none());
-        }
-    }
-
-    #[test]
-    fn a_size_correction_is_sent_only_when_the_sizes_differ_and_the_viewport_has_area() {
-        assert!(matches!(
-            size_correction(&view(true), (320, 240)),
-            Some(WindowEvent::Resized {
-                width: 640,
-                height: 480
-            })
-        ));
-        assert!(size_correction(&view(true), (640, 480)).is_none());
-        let flat = ViewportView {
-            size: (0, 480),
-            ..view(true)
-        };
-        assert!(size_correction(&flat, (320, 240)).is_none());
-    }
-
-    #[test]
-    fn a_scale_correction_is_sent_only_when_the_scales_differ() {
-        assert_eq!(
-            scale_correction(2.0, 1.0),
-            Some(WindowEvent::ScaleFactorChanged(2.0))
-        );
-        assert!(scale_correction(1.5, 1.5).is_none());
     }
 
     mod playing {
@@ -1028,48 +890,60 @@ mod tests {
         }
 
         #[test]
-        fn playing_gives_the_game_input_and_closes_the_editors_gate() {
-            let (app, document) = editor_playing(plain_recipe);
-
+        fn the_game_keeps_input_until_the_editor_takes_it_and_gets_it_back_from_a_press_inside() {
+            let (mut app, document) = editor_playing(plain_recipe);
             assert_eq!(owner(&app, document), Some(InputOwner::Game));
             assert!(!gate_open(&app));
-        }
-
-        #[test]
-        fn while_the_game_has_input_a_key_reaches_it_wherever_the_pointer_is_and_the_editor_sees_none()
-         {
-            let (mut app, document) = editor_playing(plain_recipe);
             point(&mut app, OUTSIDE);
             press_key(&mut app, KeyCode::KeyW);
             app.update();
-
             assert!(game_input(&app, document).is_held(KEY));
             assert_eq!(
                 game_input(&app, document).mouse_position(),
                 OUTSIDE - ORIGIN
             );
             assert!(!editor_input(&app).is_held(KEY));
-            assert_eq!(owner(&app, document), Some(InputOwner::Game));
-        }
 
-        #[test]
-        fn a_press_outside_the_viewport_gives_the_editor_input_and_reaches_its_panel() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            point(&mut app, INSIDE);
-            press_key(&mut app, KeyCode::KeyW);
-            app.update();
-            assert!(game_input(&app, document).is_held(KEY));
-
-            point(&mut app, OUTSIDE);
             send(&mut app, press(MouseButton::Left));
             app.update();
-
             assert_eq!(owner(&app, document), Some(InputOwner::Editor));
             assert!(gate_open(&app));
             assert!(editor_input(&app).is_mouse_button_held(MouseButton::Left));
             assert!(!game_input(&app, document).is_held(KEY));
-            assert!(!game_input(&app, document).is_mouse_button_held(MouseButton::Left));
             assert!(!game_focused(&app, document));
+            send(&mut app, release(MouseButton::Left));
+            release_key(&mut app, KeyCode::KeyW);
+            app.update();
+
+            point(&mut app, INSIDE);
+            send(&mut app, press(MouseButton::Left));
+            app.update();
+            assert_eq!(owner(&app, document), Some(InputOwner::Game));
+            assert!(!gate_open(&app));
+            assert!(game_focused(&app, document));
+            assert!(!game_input(&app, document).is_mouse_button_held(MouseButton::Left));
+            send(&mut app, release(MouseButton::Left));
+            app.update();
+            send(&mut app, press(MouseButton::Left));
+            app.update();
+            assert!(game_input(&app, document).is_mouse_button_held(MouseButton::Left));
+            send(&mut app, release(MouseButton::Left));
+            app.update();
+
+            release_with_shift_f1(&mut app);
+            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
+            press_key(&mut app, KeyCode::KeyW);
+            app.update();
+            assert!(!game_input(&app, document).is_held(KEY));
+            release_key(&mut app, KeyCode::KeyW);
+            send(&mut app, press(MouseButton::Left));
+            app.update();
+            assert_eq!(owner(&app, document), Some(InputOwner::Game));
+
+            app.main_mut().world_mut().trigger(ReleaseInput(document));
+            app.update();
+            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
+            assert!(gate_open(&app));
         }
 
         fn point_under(app: &mut App, position: Vec2) {
@@ -1077,28 +951,6 @@ mod tests {
                 view.over = false;
             }
             send(app, WindowEvent::CursorMoved { position });
-        }
-
-        #[test]
-        fn a_press_on_a_node_drawn_above_the_viewport_gives_the_editor_input_and_reaches_it() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            point_under(&mut app, INSIDE);
-            app.update();
-
-            send(&mut app, press(MouseButton::Left));
-            app.update();
-
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
-            assert!(gate_open(&app));
-            assert!(editor_input(&app).is_mouse_button_held(MouseButton::Left));
-            assert!(!game_input(&app, document).is_mouse_button_held(MouseButton::Left));
-            assert!(!game_focused(&app, document));
-
-            send(&mut app, release(MouseButton::Left));
-            app.update();
-
-            assert!(!editor_input(&app).is_mouse_button_held(MouseButton::Left));
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
         }
 
         fn click_the_hovered_node(
@@ -1152,86 +1004,10 @@ mod tests {
         }
 
         #[test]
-        fn a_press_on_the_bare_viewport_keeps_input_with_the_game() {
+        fn ctrl_p_while_the_game_has_input_stops_once_and_leaves_no_key_held() {
             let (mut app, document) = editor_playing(plain_recipe);
-            point(&mut app, INSIDE);
-            app.update();
-
-            send(&mut app, press(MouseButton::Left));
-            app.update();
-
-            assert_eq!(owner(&app, document), Some(InputOwner::Game));
-            assert!(!gate_open(&app));
-            assert!(game_input(&app, document).is_mouse_button_held(MouseButton::Left));
-            assert!(!editor_input(&app).is_mouse_button_held(MouseButton::Left));
-        }
-
-        #[test]
-        fn shift_f1_gives_the_editor_input_without_a_press() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            press_key(&mut app, KeyCode::KeyW);
-            app.update();
-
-            press_key(&mut app, KeyCode::ShiftLeft);
-            press_key(&mut app, KeyCode::F1);
-            app.update();
-
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
-            assert!(gate_open(&app));
-            assert!(!game_input(&app, document).is_held(KEY));
-            assert!(!game_focused(&app, document));
-        }
-
-        #[test]
-        fn while_the_editor_has_input_the_game_gets_none() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            release_with_shift_f1(&mut app);
-
             point(&mut app, INSIDE);
             press_key(&mut app, KeyCode::KeyW);
-            app.update();
-
-            assert!(!game_input(&app, document).is_held(KEY));
-            assert!(editor_input(&app).is_held(KEY));
-        }
-
-        #[test]
-        fn a_press_in_the_viewport_gives_the_game_input_back_without_pressing_in_it() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            release_with_shift_f1(&mut app);
-
-            point(&mut app, INSIDE);
-            send(&mut app, press(MouseButton::Left));
-            app.update();
-
-            assert_eq!(owner(&app, document), Some(InputOwner::Game));
-            assert!(!gate_open(&app));
-            assert!(game_focused(&app, document));
-            assert!(!game_input(&app, document).is_mouse_button_held(MouseButton::Left));
-            assert_eq!(game_input(&app, document).mouse_position(), INSIDE - ORIGIN);
-            assert!(!editor_input(&app).is_mouse_button_held(MouseButton::Left));
-        }
-
-        #[test]
-        fn losing_the_windows_focus_gives_the_editor_input_and_regaining_it_does_not_give_it_back()
-        {
-            let (mut app, document) = editor_playing(plain_recipe);
-
-            send(&mut app, WindowEvent::Focused(false));
-            app.update();
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
-            assert!(gate_open(&app));
-            assert!(!game_focused(&app, document));
-
-            send(&mut app, WindowEvent::Focused(true));
-            app.update();
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
-        }
-
-        #[test]
-        fn ctrl_p_while_the_game_has_input_stops_once_and_is_no_action() {
-            let (mut app, document) = editor_playing(plain_recipe);
-
             press_key(&mut app, KeyCode::ControlLeft);
             press_key(&mut app, KeyCode::KeyP);
             app.update();
@@ -1244,6 +1020,8 @@ mod tests {
                 Some(PlayState::Editing)
             );
             assert!(gate_open(&app));
+            assert!(!editor_input(&app).is_held(KEY));
+            assert!(!game_input(&app, document).is_held(KEY));
         }
 
         #[test]
@@ -1257,43 +1035,6 @@ mod tests {
 
             assert_eq!(stops(&app), 0);
             assert_eq!(toggles_fired(&app), 1);
-        }
-
-        #[test]
-        fn a_repeated_ctrl_p_press_does_not_stop_the_game() {
-            let (mut app, _) = editor_playing(plain_recipe);
-            release_with_shift_f1(&mut app);
-            press_key(&mut app, KeyCode::ControlLeft);
-            press_key(&mut app, KeyCode::KeyP);
-            app.update();
-            point(&mut app, INSIDE);
-            send(&mut app, press(MouseButton::Left));
-            app.update();
-
-            press_key(&mut app, KeyCode::KeyP);
-            app.update();
-
-            assert_eq!(stops(&app), 0);
-        }
-
-        #[test]
-        fn a_key_held_in_the_game_at_stop_is_held_on_neither_side_afterwards() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            point(&mut app, INSIDE);
-            press_key(&mut app, KeyCode::KeyW);
-            press_key(&mut app, KeyCode::ControlLeft);
-            press_key(&mut app, KeyCode::KeyP);
-            app.update();
-            app.update();
-
-            assert_eq!(
-                play_state(app.main().world(), document),
-                Some(PlayState::Editing)
-            );
-            assert_eq!(owner(&app, document), None);
-            assert!(gate_open(&app));
-            assert!(!editor_input(&app).is_held(KEY));
-            assert!(!game_input(&app, document).is_held(KEY));
         }
 
         #[test]
@@ -1331,15 +1072,6 @@ mod tests {
 
         fn game_pad(app: &App, document: Entity) -> Option<&Gamepad> {
             game_input(app, document).gamepad(PAD)
-        }
-
-        fn show(app: &mut App, shown: bool) {
-            app.get_resource_mut::<ViewportShown>().unwrap().0 = shown.then_some(ViewportView {
-                origin: ORIGIN,
-                size: (640, 480),
-                over: true,
-                typing: false,
-            });
         }
 
         #[test]
@@ -1397,114 +1129,6 @@ mod tests {
                 editor_pad.axis(GamepadAxis::LeftStickX)
             );
             assert!(pad.axis(GamepadAxis::LeftStickX) > 0.0);
-        }
-
-        #[test]
-        fn a_pad_that_left_while_the_viewport_was_hidden_is_disconnected_when_it_is_shown() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            connect_pad(&mut app);
-            app.update();
-            assert!(game_pad(&app, document).is_some());
-
-            show(&mut app, false);
-            app.update();
-            send(&mut app, WindowEvent::GamepadDisconnected { id: PAD });
-            app.update();
-            assert!(editor_input(&app).gamepad(PAD).is_none());
-
-            show(&mut app, true);
-            app.update();
-            app.update();
-
-            assert!(game_pad(&app, document).is_none());
-        }
-
-        fn hold_stick(app: &mut App, value: f32) {
-            send(
-                app,
-                WindowEvent::GamepadAxis {
-                    id: PAD,
-                    axis: GamepadAxis::LeftStickX,
-                    value,
-                },
-            );
-        }
-
-        fn game_stick(app: &App, document: Entity) -> f32 {
-            game_pad(app, document).map_or(0.0, |pad| pad.axis(GamepadAxis::LeftStickX))
-        }
-
-        #[test]
-        fn losing_the_windows_focus_while_the_editor_has_input_zeroes_the_games_pads() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            release_with_shift_f1(&mut app);
-            connect_pad(&mut app);
-            hold_stick(&mut app, 1.0);
-            app.update();
-            assert!(game_stick(&app, document) > 0.0);
-
-            send(&mut app, WindowEvent::Focused(false));
-            app.update();
-            assert_eq!(game_stick(&app, document), 0.0);
-
-            send(&mut app, WindowEvent::Focused(true));
-            hold_stick(&mut app, 1.0);
-            app.update();
-            assert!(game_stick(&app, document) > 0.0);
-            assert!(!game_focused(&app, document));
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
-        }
-
-        #[test]
-        fn a_stick_held_when_the_editor_takes_input_keeps_driving_the_game() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            connect_pad(&mut app);
-            hold_stick(&mut app, 1.0);
-            app.update();
-            assert!(game_stick(&app, document) > 0.0);
-
-            release_with_shift_f1(&mut app);
-
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
-            assert!(!game_focused(&app, document));
-            assert!(game_stick(&app, document) > 0.0);
-            assert_eq!(
-                game_stick(&app, document),
-                editor_input(&app)
-                    .gamepad(PAD)
-                    .unwrap()
-                    .axis(GamepadAxis::LeftStickX)
-            );
-        }
-
-        #[test]
-        fn a_stick_held_while_the_viewport_was_hidden_reads_in_the_game_when_it_is_shown() {
-            let (mut app, document) = editor_playing(plain_recipe);
-            connect_pad(&mut app);
-            hold_stick(&mut app, 1.0);
-            app.update();
-
-            show(&mut app, false);
-            app.update();
-            assert_eq!(game_stick(&app, document), 0.0);
-
-            show(&mut app, true);
-            app.update();
-            app.update();
-
-            assert!(game_stick(&app, document) > 0.0);
-        }
-
-        #[test]
-        fn the_release_signal_gives_the_editor_input() {
-            let (mut app, document) = editor_playing(plain_recipe);
-
-            app.main_mut().world_mut().trigger(ReleaseInput(document));
-            app.update();
-
-            assert_eq!(owner(&app, document), Some(InputOwner::Editor));
-            assert!(gate_open(&app));
-            assert!(!game_focused(&app, document));
         }
     }
 }

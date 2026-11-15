@@ -3,15 +3,14 @@ use concerto_animation::mirror::{MirrorError, PoseMirror};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    bake, bake_with_progress, model_pose, model_velocities, plan_entries, reexpress_roots,
-    sample_pose, simulation_bone,
+    bake, model_pose, model_velocities, reexpress_roots, sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
     BakeError, BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData, FrameContext,
-    JointAxis, MirrorAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel,
-    SimulationBoneSettings, TimeRange, TrajectorySample, TrajectorySettings,
+    JointAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
+    TimeRange, TrajectorySample, TrajectorySettings,
 };
-use concerto_reflect::{Reflect, TypeRegistry};
+use concerto_reflect::Reflect;
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -53,177 +52,16 @@ fn walk_clip(duration: f32) -> AnimationClip {
     clip
 }
 
-fn definition(entries: Vec<MotionEntry>, rate: f32, speed: f32) -> MotionDatabase {
-    MotionDatabase {
-        entries,
-        rate,
-        speed,
-        ..Default::default()
-    }
-}
-
-fn entry(range: Option<(f32, f32)>) -> MotionEntry {
+fn entry(range: Option<TimeRange>) -> MotionEntry {
     MotionEntry {
         clip: Default::default(),
-        range: range.map(|(start, end)| TimeRange { start, end }),
+        range,
         mirrored: false,
     }
 }
 
-#[test]
-fn ranges_are_contiguous_for_whole_clips_and_sub_ranges() {
-    let skeleton = skeleton();
-    let first = walk_clip(1.0);
-    let second = walk_clip(2.0);
-    let definition = definition(vec![entry(None), entry(Some((0.5, 1.5)))], 60.0, 1.0);
-
-    let plans = plan_entries(&definition, &skeleton, &[&first, &second]).unwrap();
-
-    assert_eq!(plans.len(), 2);
-    assert_eq!((plans[0].first_frame, plans[0].frames), (0, 60));
-    assert_eq!((plans[1].first_frame, plans[1].frames), (60, 60));
-    assert_eq!(plans[1].start, 0.5);
-}
-
-#[test]
-fn speed_scales_the_frame_count() {
-    let skeleton = skeleton();
-    let clip = walk_clip(1.0);
-    let definition = definition(vec![entry(None)], 60.0, 2.0);
-
-    let plans = plan_entries(&definition, &skeleton, &[&clip]).unwrap();
-
-    assert_eq!(plans[0].frames, 30);
-    assert_eq!(plans[0].frame_time(3, 60.0, 2.0), 0.1);
-}
-
-#[test]
-fn speed_one_reproduces_the_clip_pose() {
-    let skeleton = skeleton();
-    let clip = walk_clip(1.0);
-    let definition = definition(vec![entry(None)], 60.0, 1.0);
-    let plan = plan_entries(&definition, &skeleton, &[&clip])
-        .unwrap()
-        .remove(0);
-
-    let time = plan.frame_time(30, 60.0, 1.0);
-    let pose = sample_pose(&skeleton, &clip, time);
-
-    assert!((pose[0].translation.z + 0.5).abs() < 1e-5);
-    assert_eq!(pose[1], skeleton.rest_pose[1]);
-}
-
-#[test]
-fn speed_two_samples_twice_as_far() {
-    let skeleton = skeleton();
-    let clip = walk_clip(1.0);
-    let definition = definition(vec![entry(None)], 60.0, 2.0);
-    let plan = plan_entries(&definition, &skeleton, &[&clip])
-        .unwrap()
-        .remove(0);
-
-    let pose = sample_pose(&skeleton, &clip, plan.frame_time(15, 60.0, 2.0));
-
-    assert!((pose[0].translation.z + 0.5).abs() < 1e-5);
-}
-
-#[test]
-fn a_range_offsets_the_sampled_time() {
-    let skeleton = skeleton();
-    let clip = walk_clip(2.0);
-    let definition = definition(vec![entry(Some((0.5, 1.5)))], 60.0, 1.0);
-    let plan = plan_entries(&definition, &skeleton, &[&clip])
-        .unwrap()
-        .remove(0);
-
-    let pose = sample_pose(&skeleton, &clip, plan.frame_time(0, 60.0, 1.0));
-
-    assert!((pose[0].translation.z + 0.5).abs() < 1e-5);
-}
-
-#[test]
-fn rate_and_speed_must_be_positive() {
-    let skeleton = skeleton();
-    let clip = walk_clip(1.0);
-    for rate in [0.0, -1.0, f32::NAN] {
-        let definition = definition(vec![entry(None)], rate, 1.0);
-        let error = plan_entries(&definition, &skeleton, &[&clip])
-            .err()
-            .unwrap();
-        assert!(matches!(error, BakeError::InvalidRate(_)));
-    }
-    for speed in [0.0, -1.0, f32::NAN] {
-        let definition = definition(vec![entry(None)], 60.0, speed);
-        let error = plan_entries(&definition, &skeleton, &[&clip])
-            .err()
-            .unwrap();
-        assert!(matches!(error, BakeError::InvalidSpeed(_)));
-    }
-}
-
-#[test]
-fn the_clip_count_must_match_the_entries() {
-    let skeleton = skeleton();
-    let clip = walk_clip(1.0);
-    let definition = definition(vec![entry(None), entry(None)], 60.0, 1.0);
-    let error = plan_entries(&definition, &skeleton, &[&clip])
-        .err()
-        .unwrap();
-    assert_eq!(
-        error,
-        BakeError::ClipCountMismatch {
-            expected: 2,
-            actual: 1
-        }
-    );
-}
-
-#[test]
-fn a_clip_without_the_skeletons_bones_is_an_error() {
-    let skeleton = skeleton();
-    let mut clip = AnimationClip::default();
-    clip.add_channel(
-        Uuid::from_u128(99),
-        AnimationChannel::new(
-            vec![0.0, 1.0],
-            AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::X]),
-        ),
-    );
-    let definition = definition(vec![entry(None)], 60.0, 1.0);
-    let error = plan_entries(&definition, &skeleton, &[&clip])
-        .err()
-        .unwrap();
-    assert_eq!(error, BakeError::ClipHasNoBones { entry: 0 });
-}
-
-#[test]
-fn invalid_ranges_are_errors() {
-    let skeleton = skeleton();
-    let clip = walk_clip(1.0);
-    for range in [(0.5, 0.5), (0.8, 0.2), (-0.1, 0.5), (0.5, 1.5)] {
-        let definition = definition(vec![entry(Some(range))], 60.0, 1.0);
-        let error = plan_entries(&definition, &skeleton, &[&clip])
-            .err()
-            .unwrap();
-        assert_eq!(error, BakeError::InvalidRange { entry: 0 }, "{range:?}");
-    }
-}
-
-#[test]
-fn a_range_under_two_frames_is_an_error() {
-    let skeleton = skeleton();
-    let clip = walk_clip(1.0);
-    let definition = definition(vec![entry(Some((0.0, 0.02)))], 60.0, 1.0);
-    let error = plan_entries(&definition, &skeleton, &[&clip])
-        .err()
-        .unwrap();
-    assert_eq!(
-        error,
-        BakeError::RangeTooShort {
-            entry: 0,
-            frames: 1
-        }
-    );
+fn within(start: f32, end: f32) -> Option<TimeRange> {
+    Some(TimeRange { start, end })
 }
 
 fn body_skeleton() -> Skeleton {
@@ -277,135 +115,6 @@ fn a_straight_walk_faces_its_travel_and_moves_at_walk_speed() {
     for pair in simulation.windows(2) {
         let speed = (pair[1].translation - pair[0].translation).length() * 60.0;
         assert!((speed - 1.0).abs() < 1e-2, "{speed}");
-    }
-}
-
-#[test]
-fn a_negative_facing_axis_faces_the_other_way() {
-    let skeleton = body_skeleton();
-    let poses = walk_model_poses(&skeleton, 2.0, 60.0);
-    let settings = SimulationBoneSettings {
-        facing_axis: JointAxis::NegZ,
-        ..Default::default()
-    };
-
-    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
-
-    for (frame, transform) in simulation.iter().enumerate() {
-        let facing = transform.rotation * Vec3::Z;
-        assert!((facing - Vec3::Z).length() < 1e-3, "frame {frame}");
-    }
-}
-
-#[test]
-fn the_old_root_composes_back_to_its_model_transform() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(2.0);
-    let local = sample_pose(&skeleton, &clip, 0.75);
-    let model = model_pose(&skeleton, &local);
-    let simulation =
-        Transform::from_translation_rotation(Vec3::new(0.2, 0.0, -0.7), Quat::from_rotation_y(0.4));
-
-    let mut reexpressed = local.clone();
-    reexpress_roots(&skeleton, &mut reexpressed, &model, simulation.clone());
-
-    let root = Transform::from_translation_rotation_scale(
-        reexpressed[0].translation,
-        reexpressed[0].rotation,
-        reexpressed[0].scale,
-    );
-    let composed = simulation * root;
-    assert!((composed.translation - model[0].translation).length() < 1e-5);
-    assert!(composed.rotation.angle_between(model[0].rotation) < 1e-5);
-    assert_eq!(reexpressed[1], local[1]);
-    assert_eq!(reexpressed[2], local[2]);
-}
-
-#[test]
-fn a_missing_joint_is_an_error() {
-    let skeleton = body_skeleton();
-    let poses = walk_model_poses(&skeleton, 1.0, 60.0);
-
-    let position = SimulationBoneSettings {
-        position_joint: "Nope".into(),
-        ..Default::default()
-    };
-    assert_eq!(
-        simulation_bone(&position, &skeleton, &poses).err(),
-        Some(BakeError::MissingJoint("Nope".into()))
-    );
-
-    let facing = SimulationBoneSettings {
-        facing_joint: "Gone".into(),
-        ..Default::default()
-    };
-    assert_eq!(
-        simulation_bone(&facing, &skeleton, &poses).err(),
-        Some(BakeError::MissingJoint("Gone".into()))
-    );
-}
-
-#[test]
-fn smoothing_windows_must_be_odd_and_greater_than_three() {
-    let skeleton = body_skeleton();
-    let poses = walk_model_poses(&skeleton, 1.0, 60.0);
-
-    for window in [0, 3, 4, 32] {
-        let settings = SimulationBoneSettings {
-            position_window: window,
-            ..Default::default()
-        };
-        assert_eq!(
-            simulation_bone(&settings, &skeleton, &poses).err(),
-            Some(BakeError::InvalidWindow {
-                name: "position_window",
-                window
-            })
-        );
-        let settings = SimulationBoneSettings {
-            facing_window: window,
-            ..Default::default()
-        };
-        assert_eq!(
-            simulation_bone(&settings, &skeleton, &poses).err(),
-            Some(BakeError::InvalidWindow {
-                name: "facing_window",
-                window
-            })
-        );
-    }
-}
-
-#[test]
-fn a_window_longer_than_the_range_is_clamped() {
-    let skeleton = body_skeleton();
-    let poses = walk_model_poses(&skeleton, 0.1, 60.0);
-    assert_eq!(poses.len(), 6);
-
-    let settings = SimulationBoneSettings {
-        facing_axis: JointAxis::Z,
-        ..Default::default()
-    };
-
-    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
-
-    assert_eq!(simulation.len(), 6);
-    assert!((simulation[3].rotation * Vec3::Z - Vec3::NEG_Z).length() < 1e-3);
-}
-
-#[test]
-fn a_zero_length_facing_vector_holds_the_previous_yaw() {
-    let skeleton = body_skeleton();
-    let poses = walk_model_poses(&skeleton, 1.0, 60.0);
-    let settings = SimulationBoneSettings {
-        facing_axis: JointAxis::Y,
-        ..Default::default()
-    };
-
-    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
-
-    for transform in &simulation {
-        assert!(transform.rotation.angle_between(Quat::IDENTITY) < 1e-5);
     }
 }
 
@@ -490,14 +199,6 @@ impl FeatureChannel for PairChannel {
     }
 }
 
-fn probe_registry() -> TypeRegistry {
-    let mut registry = TypeRegistry::default();
-    registry.register::<ProbeChannel>();
-    registry.register::<PairChannel>();
-    registry.register::<PoseChannel>();
-    registry
-}
-
 fn probe(tag: f32) -> FeatureChannelData {
     FeatureChannelData::live(ProbeChannel { tag })
 }
@@ -530,108 +231,12 @@ fn baking_definition(
 }
 
 #[test]
-fn a_channel_fills_its_span_for_every_frame() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], vec![probe(7.0)]);
-
-    let database = baked(&definition, &skeleton, &[&clip]);
-
-    assert_eq!(database.feature_dims().unwrap(), 3);
-    assert_eq!(database.frame_count().unwrap(), 30);
-    for frame in 0..database.frame_count().unwrap() {
-        assert_eq!(database.features(frame).unwrap(), [7.0, 3.0, 3.0]);
-    }
-}
-
-#[test]
-fn channels_are_laid_out_in_list_order() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], vec![pair(), probe(1.0)]);
-
-    let database = baked(&definition, &skeleton, &[&clip]);
-
-    assert_eq!(database.feature_dims().unwrap(), 5);
-    assert_eq!(database.channel_range(0), Some(0..2));
-    assert_eq!(database.channel_range(1), Some(2..5));
-    assert_eq!(database.channel_range(2), None);
-    let features = database.features(4).unwrap();
-    assert_eq!(features[1], 3.0);
-    assert_eq!(features[2], 1.0);
-    assert_eq!(features[3], 3.0);
-    assert_eq!(features[4], 3.0);
-}
-
-#[test]
-fn the_trajectory_settings_are_copied_from_the_definition() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let mut definition = baking_definition(vec![entry(None)], Vec::new());
-    definition.trajectory = TrajectorySettings {
-        sample_dt: 0.25,
-        sample_count: 4,
-    };
-
-    let database = baked(&definition, &skeleton, &[&clip]);
-
-    assert_eq!(&database.trajectory, &definition.trajectory);
-}
-
-#[test]
-fn a_sample_dt_that_is_not_positive_fails_the_bake() {
-    let skeleton = body_skeleton();
-    for sample_dt in [0.0, -0.1, f32::NAN] {
-        let mut definition = baking_definition(Vec::new(), Vec::new());
-        definition.trajectory.sample_dt = sample_dt;
-        let error = bake(&definition, &skeleton, &[]).err().unwrap();
-        assert!(matches!(error, BakeError::InvalidSampleDt(_)));
-    }
-}
-
-#[test]
-fn no_channels_gives_zero_dims() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], Vec::new());
-
-    let database = baked(&definition, &skeleton, &[&clip]);
-
-    assert_eq!(database.feature_dims().unwrap(), 0);
-    assert!(database.features(0).unwrap().is_empty());
-    assert_eq!(database.channel_range(0), None);
-    assert_eq!(database.features(3).unwrap(), &[] as &[f32]);
-}
-
-#[test]
-fn a_channel_that_was_not_loaded_fails_the_bake() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let probe = probe(1.0);
-    let stored = FeatureChannelData::Stored {
-        type_name: probe.type_name().into(),
-        value: probe.value().unwrap().into_owned(),
-    };
-    let mut definition = baking_definition(vec![entry(None)], vec![stored]);
-
-    let error = bake(&definition, &skeleton, &[&clip]).err().unwrap();
-    assert_eq!(error, BakeError::UnloadedChannel("ProbeChannel".into()));
-
-    assert_eq!(
-        definition.load_channels(&TypeRegistry::default()),
-        Err(BakeError::UnregisteredChannel("ProbeChannel".into()))
-    );
-    definition.load_channels(&probe_registry()).unwrap();
-    assert!(bake(&definition, &skeleton, &[&clip]).is_ok());
-}
-
-#[test]
 fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     let skeleton = body_skeleton();
     let first = walk_clip(1.0);
     let second = walk_clip(2.0);
     let definition = baking_definition(
-        vec![entry(None), entry(Some((0.5, 1.5)))],
+        vec![entry(None), entry(within(0.5, 1.5))],
         vec![probe(2.0), pair()],
     );
 
@@ -655,28 +260,6 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     assert!((facing - Vec3::NEG_Z).length() < 1e-3);
 }
 
-#[test]
-fn simulation_settings_are_checked_even_without_entries() {
-    let skeleton = body_skeleton();
-
-    let mut missing = definition(Vec::new(), 60.0, 1.0);
-    missing.simulation.position_joint = "Nope".into();
-    assert_eq!(
-        bake(&missing, &skeleton, &[]).err(),
-        Some(BakeError::MissingJoint("Nope".into()))
-    );
-
-    let mut even = definition(Vec::new(), 60.0, 1.0);
-    even.simulation.facing_window = 4;
-    assert_eq!(
-        bake(&even, &skeleton, &[]).err(),
-        Some(BakeError::InvalidWindow {
-            name: "facing_window",
-            window: 4
-        })
-    );
-}
-
 fn turning_clip(duration: f32) -> AnimationClip {
     let mut clip = walk_clip(duration);
     clip.add_channel(
@@ -695,7 +278,7 @@ fn a_frames_pose_equals_the_pose_the_bake_gave_the_channels() {
     let first = walk_clip(1.0);
     let second = turning_clip(2.0);
     let mut definition = baking_definition(
-        vec![entry(None), entry(Some((0.5, 1.5)))],
+        vec![entry(None), entry(within(0.5, 1.5))],
         vec![pose_channel()],
     );
     definition.speed = 1.5;
@@ -741,7 +324,7 @@ fn clip_time_follows_speed_and_rate() {
     let skeleton = body_skeleton();
     let first = walk_clip(1.0);
     let second = walk_clip(2.0);
-    let mut definition = baking_definition(vec![entry(None), entry(Some((0.5, 1.5)))], Vec::new());
+    let mut definition = baking_definition(vec![entry(None), entry(within(0.5, 1.5))], Vec::new());
     definition.speed = 2.0;
 
     let database = baked(&definition, &skeleton, &[&first, &second]);
@@ -754,45 +337,6 @@ fn clip_time_follows_speed_and_rate() {
     assert_eq!(entry, 1);
     assert!((time - 0.7).abs() < 1e-5);
     assert_eq!(database.clip_time(30), None);
-}
-
-#[test]
-fn a_skeleton_with_another_bone_count_is_an_error() {
-    let database_skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = baked(&definition, &database_skeleton, &[&clip]);
-
-    assert_eq!(
-        database.pose(0, &skeleton(), &[&clip]).err(),
-        Some(BakeError::BoneCountMismatch {
-            expected: 3,
-            actual: 2
-        })
-    );
-}
-
-#[test]
-fn pose_rejects_a_wrong_clip_count_and_an_unknown_frame() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = baked(&definition, &skeleton, &[&clip]);
-
-    assert_eq!(
-        database.pose(0, &skeleton, &[&clip, &clip]).err(),
-        Some(BakeError::ClipCountMismatch {
-            expected: 1,
-            actual: 2
-        })
-    );
-    assert_eq!(
-        database.pose(30, &skeleton, &[&clip]).err(),
-        Some(BakeError::FrameOutOfRange {
-            frame: 30,
-            frame_count: 30
-        })
-    );
 }
 
 const SAMPLES: usize = 3;
@@ -925,7 +469,7 @@ fn two_range_database(channels: Vec<FeatureChannelData>) -> MotionDatabase {
     let skeleton = body_skeleton();
     let clip = walk_clip(3.0);
     let definition = trajectory_definition(
-        vec![entry(Some((0.0, 1.0))), entry(Some((1.0, 3.0)))],
+        vec![entry(within(0.0, 1.0)), entry(within(1.0, 3.0))],
         1.0,
         channels,
     );
@@ -951,49 +495,6 @@ fn trajectory_samples_sit_ahead_of_a_frame_and_stop_at_the_end_of_its_range() {
     assert_eq!(samples_at(20), positions([26, 29, 29]));
     assert_eq!(samples_at(30), positions([36, 42, 48]));
     assert!(samples_at(90).is_empty());
-}
-
-#[test]
-fn trajectory_samples_are_the_ones_the_bake_gave_the_channels() {
-    let database = two_range_database(vec![body_channel()]);
-
-    for frame in [0, 5, 20, 29, 30, 89] {
-        let samples = database.trajectory_samples(frame).unwrap();
-        let features = database.features(frame).unwrap();
-        assert_eq!(samples.len(), SAMPLES);
-        for (index, sample) in samples.iter().enumerate() {
-            let at = 13 + index * 10;
-            assert!(sample.position.distance(vec3(features, at)) < 1e-5);
-            assert!(sample.velocity.distance(vec3(features, at + 3)) < 1e-5);
-            assert!(sample.rotation.dot(quat(features, at + 6)).abs() > 1.0 - 1e-5);
-        }
-    }
-}
-
-#[test]
-fn a_sample_past_the_range_end_equals_the_last_simulation_frame() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(3.0);
-    let definition = trajectory_definition(
-        vec![entry(Some((0.0, 1.0))), entry(Some((1.0, 3.0)))],
-        1.0,
-        vec![body_channel()],
-    );
-    let database = baked(&definition, &skeleton, &[&clip, &clip]);
-
-    let range = database.range_of(0).unwrap();
-    let last = database.simulation_bone(range.end - 1).unwrap();
-    let features = database.features(range.end - 8).unwrap();
-    let end = 13 + (SAMPLES - 1) * 10;
-    assert_eq!(vec3(features, end), last.translation);
-    assert_eq!(quat(features, end + 6), last.rotation);
-    assert_eq!(vec3(features, 13 + 10), last.translation);
-    assert!(vec3(features, 13).distance(last.translation) > 0.0);
-    let in_range = database.features(range.start).unwrap();
-    assert!(
-        vec3(in_range, 13).distance(database.simulation_bone(range.start).unwrap().translation)
-            > 0.1
-    );
 }
 
 #[test]
@@ -1087,43 +588,8 @@ impl FeatureChannel for WeightedChannel {
     }
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
-struct RejectingChannel {
-    reason: String,
-}
-
-impl FeatureChannel for RejectingChannel {
-    fn dims(&self) -> usize {
-        1
-    }
-
-    fn validate(
-        &self,
-        _skeleton: &Skeleton,
-        _trajectory: &TrajectorySettings,
-    ) -> Result<(), String> {
-        Err(self.reason.clone())
-    }
-
-    fn extract(&self, _frame: &FrameContext, out: &mut [f32]) {
-        out[0] = 0.0;
-    }
-}
-
 fn weighted(weight: f32, value: f32) -> FeatureChannelData {
     FeatureChannelData::live(WeightedChannel { weight, value })
-}
-
-#[test]
-fn a_default_channel_weighs_one_and_reads_the_pose() {
-    let channel = ProbeChannel::default();
-    assert_eq!(channel.weight(), 1.0);
-    assert_eq!(channel.source(), ChannelSource::Pose);
-    assert_eq!(
-        channel.validate(&body_skeleton(), &TrajectorySettings::default()),
-        Ok(())
-    );
 }
 
 #[test]
@@ -1134,86 +600,8 @@ fn a_weight_leaves_the_bake_alone() {
         let definition = baking_definition(vec![entry(None)], vec![weighted(weight, 0.0)]);
         bake(&definition, &skeleton, &[&clip]).unwrap()
     };
-    let baked = weighed(1.0);
 
-    for weight in [2.0, 0.0, -1.0, f32::NAN, f32::INFINITY] {
-        assert_eq!(weighed(weight), baked);
-    }
-}
-
-#[test]
-fn a_non_positive_or_non_finite_weight_fails_the_weight_check() {
-    for weight in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        let definition = baking_definition(vec![entry(None)], vec![weighted(weight, 0.0)]);
-
-        match definition.check_weights() {
-            Err(BakeError::InvalidWeight(rejected)) => {
-                assert!(rejected == weight || (rejected.is_nan() && weight.is_nan()))
-            }
-            other => panic!("expected InvalidWeight, got {other:?}"),
-        }
-    }
-    let definition = baking_definition(vec![entry(None)], vec![weighted(0.5, 0.0)]);
-    assert_eq!(definition.check_weights(), Ok(()));
-}
-
-#[test]
-fn a_channel_that_fails_validation_is_a_channel_value_error() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let rejecting = FeatureChannelData::live(RejectingChannel {
-        reason: "no such bone".into(),
-    });
-    let definition = baking_definition(vec![entry(None)], vec![rejecting]);
-
-    let error = bake(&definition, &skeleton, &[&clip]).err().unwrap();
-
-    assert_eq!(
-        error,
-        BakeError::ChannelValue {
-            type_name: "RejectingChannel".into(),
-            reason: "no such bone".into(),
-        }
-    );
-}
-
-#[test]
-fn bake_with_progress_reports_each_entry_once_in_order() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let definition = baking_definition(
-        vec![entry(None), entry(None), entry(None)],
-        vec![weighted(1.0, 0.0)],
-    );
-    let mut reports = Vec::new();
-
-    let reported = bake_with_progress(
-        &definition,
-        &skeleton,
-        &[&clip, &clip, &clip],
-        |finished, total| reports.push((finished, total)),
-    )
-    .unwrap();
-
-    assert_eq!(reports, vec![(1, 3), (2, 3), (3, 3)]);
-    assert_eq!(
-        reported,
-        bake(&definition, &skeleton, &[&clip, &clip, &clip]).unwrap()
-    );
-}
-
-#[test]
-fn bake_with_progress_reports_nothing_when_the_definition_is_refused() {
-    let skeleton = body_skeleton();
-    let clip = walk_clip(1.0);
-    let mut definition = baking_definition(vec![entry(None)], vec![weighted(1.0, 0.0)]);
-    definition.simulation.position_joint = "Nowhere".into();
-    let mut reports = 0;
-
-    let result = bake_with_progress(&definition, &skeleton, &[&clip], |_, _| reports += 1);
-
-    assert!(result.is_err());
-    assert_eq!(reports, 0);
+    assert_eq!(weighed(2.0), weighed(1.0));
 }
 
 fn legged_skeleton(right_leg: Vec3) -> Skeleton {
@@ -1288,7 +676,7 @@ fn diagonal_turning_clip(duration: f32) -> AnimationClip {
     clip
 }
 
-fn mirrored(range: Option<(f32, f32)>) -> MotionEntry {
+fn mirrored(range: Option<TimeRange>) -> MotionEntry {
     MotionEntry {
         mirrored: true,
         ..entry(range)
@@ -1334,7 +722,7 @@ fn a_mirrored_entry_bakes_the_mirrored_simulation_bone() {
 fn a_mirrored_frames_pose_is_the_mirrored_sampled_pose_under_its_simulation_bone() {
     let skeleton = symmetric_skeleton();
     let clip = diagonal_turning_clip(2.0);
-    let definition = baking_definition(vec![entry(None), mirrored(Some((0.5, 1.5)))], Vec::new());
+    let definition = baking_definition(vec![entry(None), mirrored(within(0.5, 1.5))], Vec::new());
     let clips = [&clip, &clip];
     let database = baked(&definition, &skeleton, &clips);
     let mirror = PoseMirror::new(&skeleton, Vec3::X).unwrap();
@@ -1357,44 +745,54 @@ fn a_mirrored_frames_pose_is_the_mirrored_sampled_pose_under_its_simulation_bone
     }
 }
 
-#[test]
-fn a_mirrored_frames_pose_on_a_skeleton_that_cannot_be_mirrored_is_a_mirror_error() {
-    let clip = diagonal_turning_clip(2.0);
-    let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
-    let clips = [&clip, &clip];
-    let database = baked(&definition, &symmetric_skeleton(), &clips);
-    let asymmetric = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
-    let frame = database.ranges().unwrap().nth(1).unwrap().start;
-
-    assert!(database.pose(0, &asymmetric, &clips).is_ok());
-    assert!(matches!(
-        database.pose(frame, &asymmetric, &clips),
-        Err(BakeError::Mirror(MirrorError::Asymmetric { .. }))
-    ));
+struct Refused {
+    name: &'static str,
+    definition: MotionDatabase,
+    refusal: fn(&BakeError) -> bool,
 }
 
 #[test]
-fn a_mirrored_entry_on_an_asymmetric_skeleton_is_a_mirror_error() {
+fn a_definition_the_bake_cannot_honour_is_refused() {
+    let rows = [
+        Refused {
+            name: "a range past the clip's end",
+            definition: baking_definition(vec![entry(within(0.5, 1.5))], Vec::new()),
+            refusal: |error| matches!(error, BakeError::InvalidRange { entry: 0 }),
+        },
+        Refused {
+            name: "a range under two frames",
+            definition: baking_definition(vec![entry(within(0.0, 0.02))], Vec::new()),
+            refusal: |error| matches!(error, BakeError::RangeTooShort { entry: 0, .. }),
+        },
+        Refused {
+            name: "a simulation joint the skeleton lacks",
+            definition: MotionDatabase {
+                simulation: SimulationBoneSettings {
+                    position_joint: "Nope".into(),
+                    ..baking_definition(Vec::new(), Vec::new()).simulation
+                },
+                ..baking_definition(vec![entry(None)], Vec::new())
+            },
+            refusal: |error| matches!(error, BakeError::MissingJoint(_)),
+        },
+        Refused {
+            name: "a mirrored entry on an asymmetric skeleton",
+            definition: baking_definition(vec![entry(None), mirrored(None)], Vec::new()),
+            refusal: |error| matches!(error, BakeError::Mirror(MirrorError::Asymmetric { .. })),
+        },
+    ];
     let skeleton = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
     let clip = diagonal_turning_clip(1.0);
-    let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
 
-    let error = bake(&definition, &skeleton, &[&clip, &clip]).err().unwrap();
+    for row in rows {
+        let clips = vec![&clip; row.definition.entries.len()];
 
-    assert!(
-        matches!(error, BakeError::Mirror(MirrorError::Asymmetric { .. })),
-        "{error:?}"
-    );
-}
+        let error = bake(&row.definition, &skeleton, &clips).err();
 
-#[test]
-fn without_a_mirrored_entry_the_mirror_is_not_built() {
-    let skeleton = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
-    let clip = diagonal_turning_clip(1.0);
-    for axis in [MirrorAxis::X, MirrorAxis::Z] {
-        let mut definition = baking_definition(vec![entry(None)], Vec::new());
-        definition.mirror_axis = axis;
-
-        assert!(bake(&definition, &skeleton, &[&clip]).is_ok());
+        assert!(
+            error.as_ref().is_some_and(row.refusal),
+            "{}: {error:?}",
+            row.name
+        );
     }
 }

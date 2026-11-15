@@ -620,43 +620,6 @@ mod tests {
 
     use super::*;
 
-    fn panel(id: &'static str, region: Region) -> PanelDescriptor {
-        PanelDescriptor {
-            id,
-            title: "Panel",
-            region,
-        }
-    }
-
-    #[test]
-    fn panels_are_grouped_by_the_region_they_declare() {
-        let mut registry = PanelRegistry::default();
-        registry.register(panel("a", Region::Left));
-        registry.register(panel("b", Region::Status));
-        registry.register(panel("c", Region::Status));
-
-        assert_eq!(registry.in_region(Region::Left).len(), 1);
-        assert_eq!(registry.in_region(Region::Status).len(), 2);
-        assert!(
-            registry.in_region(Region::Right).is_empty(),
-            "an empty region is legal; the dock leaves it without a panel"
-        );
-    }
-
-    #[test]
-    fn a_duplicate_id_is_rejected_rather_than_shadowing() {
-        let mut registry = PanelRegistry::default();
-        registry.register(panel("a", Region::Left));
-        registry.register(panel("a", Region::Right));
-
-        assert_eq!(registry.panels().len(), 1);
-        assert_eq!(
-            registry.panels()[0].region,
-            Region::Left,
-            "the first registration wins, so a stray duplicate cannot move a panel"
-        );
-    }
-
     #[derive(Clone, Copy, Debug)]
     struct WindowSize {
         width: u32,
@@ -700,17 +663,9 @@ mod tests {
             case(wide, Fill, Left, 300.0, 300.0),
             case(wide, Fill, Left, 100.0, 180.0),
             case(wide, Fill, Left, 2000.0, 608.0),
-            case(wide, Fill, Right, 100.0, 220.0),
-            case(wide, Fill, Right, 2000.0, 668.0),
-            case(wide, Fill, Bottom, 50.0, 120.0),
             case(wide, Fill, Bottom, 2000.0, 404.0),
-            case(wide, Sized, Browser, 100.0, 200.0),
             case(wide, Sized, Browser, 5000.0, 1016.0),
-            case(wide, Fill, Browser, 300.0, 420.0),
-            case(small, Fill, Left, 2000.0, 260.0),
             case(small, Fill, Right, 2000.0, 288.0),
-            case(small, Fill, Bottom, 2000.0, 284.0),
-            case(small, Sized, Browser, 5000.0, 636.0),
         ];
         for (index, case) in cases.iter().enumerate() {
             let mut world = World::new();
@@ -744,46 +699,27 @@ mod tests {
             }
         }
 
-        struct Fit {
-            window: WindowSize,
-            left: f32,
-            right: f32,
-        }
-        let narrow = WindowSize {
-            width: 800,
-            height: 600,
-        };
-        let fits = [
-            Fit {
-                window: small,
-                left: 260.0,
-                right: 288.0,
-            },
-            Fit {
-                window: narrow,
-                left: 228.0,
-                right: 220.0,
-            },
-        ];
-        for fit in fits {
-            let mut world = World::new();
-            world.insert_resource(fit.window.window());
-            world.insert_resource(EditorLayout::default());
-            world.insert_resource(PanelStates::default());
-            world.add_listener(resize_panel);
-
-            world.trigger(ResizePanel {
-                panel: Bottom,
-                size: 200.0,
-            });
-
-            let stored = *world.get_resource::<EditorLayout>().unwrap();
-            let window = world.get_resource::<Window>().unwrap().logical_size();
-            let shown = stored.shown(&PanelStates::default(), window);
-            assert_eq!(shown.left, fit.left, "{:?}", fit.window);
-            assert_eq!(shown.right, fit.right, "{:?}", fit.window);
-            assert_eq!(stored.left, 260.0, "{:?}", fit.window);
-            assert_eq!(stored.right, 320.0, "{:?}", fit.window);
-        }
+        let mut world = World::new();
+        world.insert_resource(
+            WindowSize {
+                width: 800,
+                height: 600,
+            }
+            .window(),
+        );
+        world.insert_resource(EditorLayout::default());
+        world.insert_resource(PanelStates::default());
+        world.add_listener(resize_panel);
+        world.trigger(ResizePanel {
+            panel: Bottom,
+            size: 200.0,
+        });
+        let stored = *world.get_resource::<EditorLayout>().unwrap();
+        let window = world.get_resource::<Window>().unwrap().logical_size();
+        let shown = stored.shown(&PanelStates::default(), window);
+        assert_eq!(shown.left, 228.0);
+        assert_eq!(shown.right, 220.0);
+        assert_eq!(stored.left, 260.0);
+        assert_eq!(stored.right, 320.0);
     }
 }

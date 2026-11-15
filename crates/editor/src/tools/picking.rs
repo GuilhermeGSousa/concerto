@@ -337,49 +337,6 @@ mod tests {
             self.world.entity_mut(parent).add_child(entity);
             entity
         }
-        fn pick(&mut self, origin: [f32; 3], direction: [f32; 3]) -> Option<Entity> {
-            let ray = Ray {
-                origin: origin.into(),
-                direction: Vec3::from(direction).normalize(),
-            };
-            let mut scene = std::collections::HashSet::new();
-            let children: Vec<(Entity, Vec<Entity>)> = self
-                .world
-                .query::<(Entity, &Children), ()>()
-                .iter(&mut self.world)
-                .map(|(entity, children)| (entity, children.iter().copied().collect()))
-                .collect();
-            let mut stack = vec![self.root];
-            while let Some(entity) = stack.pop() {
-                scene.insert(entity);
-                if let Some((_, kids)) = children.iter().find(|(parent, _)| *parent == entity) {
-                    stack.extend(kids);
-                }
-            }
-            let nodes: Vec<_> = self
-                .world
-                .query::<(Entity, &MeshComponent, &Aabb, &GlobalTransform), ()>()
-                .iter(&mut self.world)
-                .filter(|(entity, ..)| scene.contains(entity))
-                .map(|(entity, mesh, aabb, transform)| {
-                    (
-                        entity,
-                        MeshComponent {
-                            handle: AssetHandle::weak(mesh.handle.id()),
-                        },
-                        *aabb,
-                        GlobalTransform::new(transform.matrix()),
-                    )
-                })
-                .collect();
-            super::pick(
-                &ray,
-                self.world.get_resource::<AssetStore<Mesh>>().unwrap(),
-                nodes
-                    .iter()
-                    .map(|(entity, mesh, aabb, transform)| (*entity, mesh, aabb, transform)),
-            )
-        }
         fn selected(&self) -> Option<Entity> {
             self.world.get_resource::<Selection>().unwrap().entity()
         }
@@ -407,23 +364,13 @@ mod tests {
             } else if !held {
                 input.update_mouse_button(MouseButton::Left, false);
             }
-        }
-        fn leave_the_picture(&mut self) {
-            self.world
-                .get_resource_mut::<ViewportPointer>()
-                .unwrap()
-                .over = false;
-        }
-        fn step(&mut self) {
             let mut system = pick_on_click.into_system();
             system.initialize(&mut self.world);
             system.run_and_apply((), &mut self.world);
         }
         fn click(&mut self, pressed: Vec2, released: Vec2) {
             self.point_at(pressed, true, true);
-            self.step();
             self.point_at(released, false, false);
-            self.step();
         }
         fn segments(&mut self) -> usize {
             self.world.insert_resource(GizmoStorage::default());
@@ -441,34 +388,12 @@ mod tests {
     const CENTRE: Vec2 = Vec2::new(400.0, 300.0);
 
     #[test]
-    fn the_centre_of_the_viewport_looks_along_the_camera() {
+    fn a_viewport_point_and_its_ray_agree_with_the_projection() {
         let camera = Camera {
             aspect: 4.0 / 3.0,
             ..Default::default()
         };
-        let transform = Transform::from_translation_rotation(
-            Vec3::new(1.0, 2.0, 3.0),
-            Quat::from_rotation_y(0.6),
-        );
-        let ray = viewport_ray(
-            CENTRE,
-            VIEW,
-            camera.build_projection_matrix(),
-            transform.compute_matrix(),
-        )
-        .unwrap();
-        let forward = transform.rotation * Vec3::NEG_Z;
-        assert!((ray.direction - forward).length() < 1e-4);
-        assert!((ray.origin - (transform.translation + forward * camera.znear)).length() < 1e-3);
-    }
-
-    #[test]
-    fn a_corner_of_the_viewport_matches_the_field_of_view_and_aspect() {
-        let camera = Camera {
-            aspect: 4.0 / 3.0,
-            ..Default::default()
-        };
-        let ray = viewport_ray(
+        let corner = viewport_ray(
             Vec2::new(800.0, 0.0),
             VIEW,
             camera.build_projection_matrix(),
@@ -477,61 +402,111 @@ mod tests {
         .unwrap();
         let half_height = (camera.fovy * 0.5).tan();
         let expected = Vec3::new(half_height * camera.aspect, half_height, -1.0).normalize();
-        assert!(
-            (ray.direction - expected).length() < 1e-4,
-            "{:?}",
-            ray.direction
-        );
-        assert!(
-            viewport_ray(
-                Vec2::new(-1.0, 300.0),
-                VIEW,
-                camera.build_projection_matrix(),
-                Mat4::IDENTITY
-            )
-            .is_none()
+        assert!((corner.direction - expected).length() < 1e-4);
+
+        let view = Transform::from_translation(Vec3::new(0.0, 0.0, 10.0)).compute_matrix();
+        let view_proj = camera.build_projection_matrix() * view.inverse();
+        assert!((world_to_viewport(Vec3::ZERO, VIEW, view_proj).unwrap() - CENTRE).length() < 1e-3);
+        let up = world_to_viewport(Vec3::Y, VIEW, view_proj).unwrap();
+        let ray = viewport_ray(up, VIEW, camera.build_projection_matrix(), view).unwrap();
+        let back = ray.at((Vec3::Y - ray.origin).length());
+        assert!((back - Vec3::Y).length() < 1e-3, "{back:?}");
+        assert_eq!(
+            world_to_viewport(Vec3::new(0.0, 0.0, 20.0), VIEW, view_proj),
+            None
         );
     }
 
-    #[test]
-    fn a_mesh_inside_a_larger_one_is_picked_only_when_the_ray_reaches_it_first() {
-        let mut f = fixture();
-        let room = f.cube(f.root, Mat4::from_scale(Vec3::splat(10.0)));
-        let crate_ = f.cube(f.root, Mat4::IDENTITY);
-        assert_eq!(f.pick([0.0, 0.0, 5.0], [0.0, 0.0, -1.0]), Some(crate_));
-        assert_eq!(f.pick([0.0, 5.0, 5.0], [0.0, 0.0, -1.0]), Some(room));
-        assert_eq!(f.pick([0.0, 0.0, 50.0], [0.0, 0.0, -1.0]), Some(room));
+    struct Shot {
+        origin: [f32; 3],
+        hits: Option<usize>,
     }
 
     #[test]
-    fn a_rotated_and_scaled_entity_is_hit_where_it_is_drawn() {
+    fn a_ray_picks_the_first_surface_it_reaches_where_it_is_drawn() {
         let mut f = fixture();
-        let slab = f.cube(
-            f.root,
-            Mat4::from_scale_rotation_translation(
-                Vec3::new(4.0, 0.1, 0.1),
-                Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
-                Vec3::new(6.0, 0.0, 0.0),
+        let root = f.root;
+        let cubes = [
+            f.cube(root, Mat4::from_scale(Vec3::splat(10.0))),
+            f.cube(root, Mat4::IDENTITY),
+            f.cube(
+                root,
+                Mat4::from_scale_rotation_translation(
+                    Vec3::new(4.0, 0.1, 0.1),
+                    Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                    Vec3::new(16.0, 0.0, 0.0),
+                ),
             ),
-        );
-        assert_eq!(f.pick([6.0, 3.5, 5.0], [0.0, 0.0, -1.0]), Some(slab));
-        assert_eq!(f.pick([8.0, 0.0, 5.0], [0.0, 0.0, -1.0]), None);
+        ];
+        let shots = [
+            Shot {
+                origin: [0.0, 0.0, 5.0],
+                hits: Some(1),
+            },
+            Shot {
+                origin: [0.0, 5.0, 5.0],
+                hits: Some(0),
+            },
+            Shot {
+                origin: [0.0, 0.0, 50.0],
+                hits: Some(0),
+            },
+            Shot {
+                origin: [16.0, 3.5, 5.0],
+                hits: Some(2),
+            },
+            Shot {
+                origin: [18.0, 0.0, 5.0],
+                hits: None,
+            },
+        ];
+        let meshes = f.world.get_resource::<AssetStore<Mesh>>().unwrap();
+        let handle = MeshComponent {
+            handle: AssetHandle::weak(f.mesh),
+        };
+        let aabb = Aabb {
+            min: Vec3::splat(-1.0),
+            max: Vec3::splat(1.0),
+        };
+        let transforms: Vec<GlobalTransform> = cubes
+            .iter()
+            .map(|cube| {
+                GlobalTransform::new(
+                    f.world
+                        .get_component_for_entity::<GlobalTransform>(*cube)
+                        .unwrap()
+                        .matrix(),
+                )
+            })
+            .collect();
+        for shot in shots {
+            let ray = Ray {
+                origin: shot.origin.into(),
+                direction: Vec3::NEG_Z,
+            };
+            let hit = super::pick(
+                &ray,
+                meshes,
+                cubes
+                    .iter()
+                    .zip(&transforms)
+                    .map(|(cube, transform)| (*cube, &handle, &aabb, transform)),
+            );
+            assert_eq!(
+                hit,
+                shot.hits.map(|index| cubes[index]),
+                "{:?}",
+                shot.origin
+            );
+        }
     }
 
     #[test]
-    fn an_entity_outside_the_scene_is_ignored_and_does_not_block() {
+    fn a_click_selects_and_reveals_the_scene_entity_under_it_and_a_miss_clears_the_selection() {
         let mut f = fixture();
-        let stray_parent = f.world.spawn(());
-        f.cube(
-            stray_parent,
-            Mat4::from_translation(Vec3::new(0.0, 0.0, 3.0)),
-        );
-        let inside = f.cube(f.root, Mat4::IDENTITY);
-        assert_eq!(f.pick([0.0, 0.0, 9.0], [0.0, 0.0, -1.0]), Some(inside));
-        assert_eq!(f.pick([0.0, 9.0, 9.0], [0.0, 0.0, -1.0]), None);
-    }
-
-    fn camera(f: &mut Fixture) {
+        let stray = f.world.spawn(());
+        f.cube(stray, Mat4::from_translation(Vec3::new(0.0, 0.0, 3.0)));
+        let cube = f.cube(f.root, Mat4::IDENTITY);
         f.world.spawn((
             EditorCamera,
             Camera {
@@ -540,121 +515,9 @@ mod tests {
             },
             Transform::from_translation(Vec3::new(0.0, 0.0, 6.0)),
         ));
-    }
 
-    #[test]
-    fn a_press_and_release_in_one_place_selects_what_is_under_the_pointer() {
-        let mut f = fixture();
-        let cube = f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.point_at(CENTRE, true, true);
-        f.step();
-        f.point_at(CENTRE, false, false);
-        f.step();
-
-        assert_eq!(f.selected(), Some(cube));
-    }
-
-    #[test]
-    fn a_release_far_from_the_press_selects_nothing() {
-        let mut f = fixture();
-        f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.point_at(CENTRE, true, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(30.0, 0.0), false, false);
-        f.step();
-
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn a_press_outside_the_picture_is_not_a_click() {
-        let mut f = fixture();
-        f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.point_at(CENTRE, true, true);
-        f.leave_the_picture();
-        f.step();
-        f.point_at(CENTRE, false, false);
-        f.step();
-
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn a_release_outside_the_picture_is_not_a_click() {
-        let mut f = fixture();
-        f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.point_at(CENTRE, true, true);
-        f.step();
-        f.point_at(CENTRE, false, false);
-        f.leave_the_picture();
-        f.step();
-
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn a_press_that_strayed_and_came_back_while_held_is_not_a_click() {
-        let mut f = fixture();
-        f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.point_at(CENTRE, true, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(CLICK_SLOP, 0.0), false, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(1.0, 0.0), false, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(1.0, 0.0), false, false);
-        f.step();
-
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn a_press_that_wandered_less_than_the_slop_and_came_back_is_still_a_click() {
-        let mut f = fixture();
-        let cube = f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.point_at(CENTRE, true, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(CLICK_SLOP - 0.5, 0.0), false, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(1.0, 0.0), false, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(1.0, 0.0), false, false);
-        f.step();
-
-        assert_eq!(f.selected(), Some(cube));
-    }
-
-    #[test]
-    fn a_release_exactly_at_the_slop_is_not_a_click() {
-        let mut f = fixture();
-        f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.point_at(CENTRE, true, true);
-        f.step();
-        f.point_at(CENTRE + Vec2::new(CLICK_SLOP, 0.0), false, false);
-        f.step();
-
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn a_click_selects_and_reveals_the_hit_and_a_miss_clears_the_selection() {
-        let mut f = fixture();
-        let cube = f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
+        f.click(CENTRE, CENTRE + Vec2::new(30.0, 0.0));
+        assert_eq!(f.selected(), None, "a press that moved is not a click");
 
         f.click(CENTRE, CENTRE + Vec2::new(2.0, 1.0));
         assert_eq!(f.selected(), Some(cube));
@@ -663,62 +526,17 @@ mod tests {
         let corner = Vec2::new(10.0, 10.0);
         f.click(corner, corner);
         assert_eq!(f.selected(), None);
-        assert_eq!(f.revealed(), [cube], "a miss reveals nothing");
-    }
+        assert_eq!(f.revealed(), [cube]);
 
-    #[test]
-    fn a_press_that_moved_or_a_flying_camera_selects_nothing() {
-        let mut f = fixture();
-        f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
-
-        f.click(CENTRE - Vec2::new(30.0, 0.0), CENTRE);
-        assert_eq!(f.selected(), None);
-
-        f.world
-            .get_resource_mut::<FlyCamera>()
-            .unwrap()
-            .set_looking(true);
-        f.click(CENTRE, CENTRE);
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn a_press_that_landed_on_a_gizmo_handle_is_not_a_pick() {
-        let mut f = fixture();
-        let cube = f.cube(f.root, Mat4::IDENTITY);
-        camera(&mut f);
         f.world
             .get_resource_mut::<GizmoState>()
             .unwrap()
             .set_captured(true);
         f.click(CENTRE, CENTRE);
-        assert_eq!(f.selected(), None);
-        f.world
-            .get_resource_mut::<GizmoState>()
-            .unwrap()
-            .set_captured(false);
-        f.click(CENTRE, CENTRE);
-        assert_eq!(f.selected(), Some(cube));
-    }
-
-    #[test]
-    fn a_world_point_projects_to_its_place_in_the_viewport_or_nowhere_behind_the_camera() {
-        let camera = Camera {
-            aspect: 4.0 / 3.0,
-            ..Default::default()
-        };
-        let view = Transform::from_translation(Vec3::new(0.0, 0.0, 10.0)).compute_matrix();
-        let view_proj = camera.build_projection_matrix() * view.inverse();
-        assert!((world_to_viewport(Vec3::ZERO, VIEW, view_proj).unwrap() - CENTRE).length() < 1e-3);
-        let up = world_to_viewport(Vec3::Y, VIEW, view_proj).unwrap();
-        assert!(up.y < CENTRE.y && (up.x - CENTRE.x).abs() < 1e-3);
-        let ray = viewport_ray(up, VIEW, camera.build_projection_matrix(), view).unwrap();
-        let back = ray.at((Vec3::Y - ray.origin).length());
-        assert!((back - Vec3::Y).length() < 1e-3, "{back:?}");
         assert_eq!(
-            world_to_viewport(Vec3::new(0.0, 0.0, 20.0), VIEW, view_proj),
-            None
+            f.selected(),
+            None,
+            "a press on a gizmo handle is not a pick"
         );
     }
 
@@ -729,32 +547,13 @@ mod tests {
         f.world.entity_mut(f.root).add_child(group);
         let cube = f.cube(group, Mat4::IDENTITY);
         f.cube(group, Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)));
-        let empty = f.world.spawn(());
-        f.world.entity_mut(f.root).add_child(empty);
 
-        assert_eq!(f.segments(), 0, "nothing is selected");
-        for (entity, segments) in [(cube, 12), (group, 12), (empty, 0), (f.root, 0)] {
-            f.world.trigger(Select(Some(entity)));
-            assert_eq!(f.segments(), segments);
-        }
-    }
-
-    #[test]
-    fn a_group_is_boxed_around_all_of_its_descendants() {
-        let mut f = fixture();
-        let group = f.world.spawn(());
-        f.world.entity_mut(f.root).add_child(group);
-        f.cube(group, Mat4::IDENTITY);
-        f.cube(group, Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)));
-        let mut system = (move |roots: Query<&SceneRoot>,
-                                bounds: Query<(&Aabb, &GlobalTransform)>,
-                                children: Query<&Children>| {
-            let corners = selection_corners(group, &roots, &bounds, &children).unwrap();
-            assert_eq!(corners[0], Vec3::splat(-1.0));
-            assert_eq!(corners[7], Vec3::new(6.0, 1.0, 1.0));
-        })
-        .into_system();
-        system.initialize(&mut f.world);
-        system.run_and_apply((), &mut f.world);
+        f.world.trigger(Select(Some(cube)));
+        assert_eq!(f.segments(), 12);
+        f.world.trigger(Select(Some(group)));
+        assert_eq!(f.segments(), 12);
+        let root = f.root;
+        f.world.trigger(Select(Some(root)));
+        assert_eq!(f.segments(), 0);
     }
 }

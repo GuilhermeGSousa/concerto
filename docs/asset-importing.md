@@ -516,11 +516,12 @@ When you change one:
    Without a migration, older files fail to load with an error that says to
    re-import their source or re-create them in the editor.
 3. Bless the new fixture with
-   `CONCERTO_BLESS_ENCODING=1 cargo test -p <crate> --test <file>`, run the
-   test again without the variable, and commit the new `.bin` file. Keep the
-   old version's fixture while its `migrate` arm exists, with a test that
-   passes it through `decode_content_asset` and checks the converted value;
-   delete it when you choose rejection.
+   `CONCERTO_BLESS_ENCODING=1 cargo test -p <crate> --test <dir>`, where
+   `<dir>` is the directory under the crate's `tests/` that holds its
+   `main.rs`, run the test again without the variable, and commit the new
+   `.bin` file. Keep the old version's fixture while its `migrate` arm
+   exists, with a test that passes it through `decode_content_asset` and
+   checks the converted value; delete it when you choose rejection.
 4. Migration happens in memory: the file keeps its old version until it is
    saved, and a save writes the current `FORMAT_VERSION`. Re-import the
    affected sources, or re-save editor-authored assets, and commit the

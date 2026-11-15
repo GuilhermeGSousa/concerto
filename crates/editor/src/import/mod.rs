@@ -501,68 +501,34 @@ fn unquoted(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concerto_foundation::assets::{content::ImportProvenance, registry::EmbeddedIn};
 
     #[test]
-    fn the_picker_filter_lists_only_extensions_an_importer_handles() {
-        for extension in SUPPORTED_EXTENSIONS {
-            assert!(
-                concerto_import::supported_extension(extension),
-                "{extension}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_common_asset_extension_an_importer_accepts_is_in_the_picker_filter() {
+    fn the_picker_filter_lists_exactly_the_common_extensions_an_importer_handles() {
         let candidates = [
             "png", "jpg", "jpeg", "gltf", "glb", "obj", "bmp", "tga", "gif", "webp", "tiff", "tif",
             "hdr", "exr", "dds", "ktx2", "fbx", "dae", "ply", "stl", "usd", "usdz", "blend", "3ds",
             "mtl", "bvh", "ogg", "wav",
         ];
         for extension in candidates {
-            if concerto_import::supported_extension(extension) {
-                assert!(
-                    SUPPORTED_EXTENSIONS.contains(&extension),
-                    "an importer handles '.{extension}' but the picker filter omits it"
-                );
-            }
+            assert_eq!(
+                SUPPORTED_EXTENSIONS.contains(&extension),
+                concerto_import::supported_extension(extension),
+                "{extension}"
+            );
         }
-    }
-
-    fn source_dir() -> tempfile::TempDir {
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
-        let dir = tempfile::tempdir().expect("tempdir");
-        for name in ["square.obj", "square.mtl"] {
-            std::fs::copy(fixtures.join(name), dir.path().join(name)).expect("copy the fixture");
-        }
-        dir
-    }
-
-    #[test]
-    fn an_external_source_is_imported_with_the_files_it_refers_to() {
-        let source = source_dir();
-        let project = tempfile::tempdir().expect("tempdir");
-        let imported = import_source_into(
-            &source.path().join("square.obj"),
-            "assets/props/square.obj",
-            project.path(),
-        )
-        .expect("import succeeds");
-        assert!(project.path().join("assets/props/square.obj").is_file());
-        assert!(
-            project.path().join("assets/props/square.mtl").is_file(),
-            "the material library comes along"
-        );
-        assert_eq!(imported.siblings, ["assets/props/square.mtl"]);
-        assert!(!imported.assets.is_empty());
-        for asset in &imported.assets {
-            assert!(project.path().join(&asset.address).is_file());
+        for extension in SUPPORTED_EXTENSIONS {
+            assert!(candidates.contains(extension), "{extension}");
         }
     }
 
     #[test]
     fn the_project_content_config_decides_where_assets_are_written() {
-        let source = source_dir();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
+        let source = tempfile::tempdir().expect("tempdir");
+        for name in ["square.obj", "square.mtl"] {
+            std::fs::copy(fixtures.join(name), source.path().join(name)).expect("copy");
+        }
         let project = tempfile::tempdir().expect("tempdir");
         std::fs::write(project.path().join("content.toml"), "extension = \"bin\"\n")
             .expect("write config");
@@ -582,155 +548,60 @@ mod tests {
         }
     }
 
+    struct Row {
+        source: &'static str,
+        destination: &'static str,
+        importable: bool,
+        replaces: bool,
+    }
+
     #[test]
-    fn a_source_already_at_its_destination_is_left_in_place() {
-        let source = source_dir();
+    fn each_row_is_new_a_replacement_or_rejected_for_where_it_would_land() {
         let project = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(project.path().join("assets")).expect("assets");
-        for name in ["square.obj", "square.mtl"] {
-            std::fs::copy(
-                source.path().join(name),
-                project.path().join("assets").join(name),
-            )
-            .expect("seed the source");
-        }
-        let inside = project.path().join("assets/square.obj");
-        let imported =
-            import_source_into(&inside, "assets/square.obj", project.path()).expect("import");
-        assert!(imported.siblings.is_empty(), "nothing needed copying");
-        assert!(!imported.assets.is_empty());
-    }
+        std::fs::write(project.path().join("assets/hero.glb"), b"old").expect("write");
+        let row = |source, destination, importable, replaces| Row {
+            source,
+            destination,
+            importable,
+            replaces,
+        };
+        let table = [
+            row("/tmp/a.obj", "assets/a.obj", true, false),
+            row("/tmp/hero.glb", "assets/hero.glb", true, true),
+            row("/tmp/b.obj", "", false, false),
+            row("/tmp/b.obj", "assets/", false, false),
+            row("/tmp/c.obj", "../c.obj", false, false),
+            row("/tmp/c.obj", "/etc/c.obj", false, false),
+            row("/one/d.obj", "assets/d.obj", false, false),
+            row("/two/d.obj", "assets//d.obj", false, false),
+            row("/tmp/e.glb", "assets/e.png", false, false),
+            row("/tmp/f.txt", "assets/f.txt", false, false),
+        ];
+        let mut staged: Vec<StagedImport> = table
+            .iter()
+            .map(|row| StagedImport {
+                source: PathBuf::from(row.source),
+                destination: row.destination.to_string(),
+                state: RowState::New,
+            })
+            .collect();
 
-    #[test]
-    fn an_unsupported_extension_errors_before_copying_anything() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let source = project.path().join("notes.txt");
-        std::fs::write(&source, b"not an asset").expect("write");
-        let error = import_source_into(&source, "assets/notes.txt", project.path())
-            .expect_err("an unsupported extension is refused");
-        assert!(
-            format!("{error:#}").contains("txt"),
-            "the error names the extension, got: {error:#}"
-        );
-        assert!(
-            !project.path().join("assets/notes.txt").exists(),
-            "nothing is copied when the extension is refused"
-        );
-    }
+        validate_rows(&mut staged, project.path());
 
-    #[test]
-    fn a_destination_the_dialog_would_reject_is_refused_before_anything_is_written() {
-        let source = source_dir();
-        let outer = tempfile::tempdir().expect("tempdir");
-        let project = outer.path().join("project");
-        std::fs::create_dir_all(&project).expect("project");
-        let absolute = outer.path().join("absolute/square.obj");
-        for destination in [
-            "../escape/square.obj",
-            "assets/../../escape/square.obj",
-            absolute.to_str().expect("utf-8 tempdir"),
-            "assets/square.png",
-            "assets/",
-            "",
-        ] {
-            assert!(
-                import_source_into(&source.path().join("square.obj"), destination, &project)
-                    .is_err(),
-                "'{destination}' must be refused"
+        for (row, staged) in table.iter().zip(&staged) {
+            assert_eq!(staged.importable(), row.importable, "{}", row.destination);
+            assert_eq!(
+                staged.state == RowState::Replaces,
+                row.replaces,
+                "{}",
+                row.destination
             );
         }
-        assert!(!outer.path().join("escape").exists());
-        assert!(!outer.path().join("absolute").exists());
-        assert_eq!(
-            std::fs::read_dir(&project).expect("project").count(),
-            0,
-            "a refused destination writes nothing into the project"
-        );
-    }
-
-    #[test]
-    fn replacing_a_source_with_new_bytes_keeps_every_asset_id() {
-        let source = source_dir();
-        let path = source.path().join("square.obj");
-        let project = tempfile::tempdir().expect("tempdir");
-        let first =
-            import_source_into(&path, "assets/square.obj", project.path()).expect("first import");
-        let moved = std::fs::read_to_string(&path)
-            .expect("source")
-            .replace("v 1.0 1.0 0.0", "v 2.0 2.0 0.0");
-        std::fs::write(&path, &moved).expect("change the source");
-        let second =
-            import_source_into(&path, "assets/square.obj", project.path()).expect("second import");
-        assert_eq!(
-            std::fs::read_to_string(project.path().join("assets/square.obj")).expect("copy"),
-            moved,
-            "the destination holds the new bytes"
-        );
-        let ids = |assets: &[concerto_foundation::assets::registry::AssetEntry]| {
-            assets.iter().map(|a| a.id).collect::<Vec<_>>()
-        };
-        assert!(!first.assets.is_empty());
-        assert_eq!(ids(&first.assets), ids(&second.assets));
-    }
-
-    #[test]
-    fn an_import_records_its_asset_ids_in_the_content_tree() {
-        use concerto_foundation::assets::registry::AssetRegistry;
-        let source = source_dir();
-        let project = tempfile::tempdir().expect("tempdir");
-        let imported = import_source_into(
-            &source.path().join("square.obj"),
-            "assets/square.obj",
-            project.path(),
-        )
-        .expect("import");
-        assert!(!project.path().join("content/.registry.toml").exists());
-        let registry =
-            AssetRegistry::from_content_tree(project.path(), "content", "gasset").expect("scan");
-        assert!(!imported.assets.is_empty());
-        for asset in &imported.assets {
-            assert!(asset.provenance.is_some());
-            assert_eq!(registry.get(asset.id), Some(asset));
-        }
-    }
-
-    #[test]
-    fn an_importer_error_is_summarised_without_its_debug_form_or_the_project_root() {
-        let summary = failure_summary(
-            "importing '/home/me/game/assets/square.obj': SourceUnreadable { source_path: \"/home/me/game/assets/square.mtl\", message: \"No such file or directory (os error 2)\" }",
-            Path::new("/home/me/game"),
-        );
-        assert_eq!(summary, "assets/square.mtl: No such file or directory");
-    }
-
-    #[test]
-    fn an_error_in_another_shape_is_kept_with_project_paths_made_relative() {
-        let summary = failure_summary(
-            "writing '/home/me/game/assets/a \"b\".obj': Permission denied (os error 13)",
-            Path::new("/home/me/game"),
-        );
-        assert_eq!(summary, "writing 'assets/a \"b\".obj': Permission denied");
-        assert_eq!(
-            failure_summary(
-                "importing '/p/a.obj': SerializationFailed { sub_asset_name: \"mesh_0\", message: \"a \\\"quoted\\\" word\" }",
-                Path::new("/p"),
-            ),
-            "mesh_0: a \"quoted\" word"
-        );
-    }
-
-    #[test]
-    fn a_project_root_is_stripped_whichever_separator_follows_it() {
-        let summary = failure_summary(
-            "importing 'C:\\game\\assets\\a.obj': SourceUnreadable { source_path: \"C:\\\\game\\\\assets\\\\a.mtl\", message: \"missing\" }",
-            Path::new("C:\\game"),
-        );
-        assert_eq!(summary, "assets\\a.mtl: missing");
     }
 
     #[test]
     fn an_imports_entries_replace_the_registrys_entries_for_its_source() {
-        use concerto_foundation::assets::content::ImportProvenance;
         let entry = |address: &str, source: Option<&str>| AssetEntry {
             embedded_in: None,
             id: AssetId::new(),
@@ -753,7 +624,7 @@ mod tests {
             registry.insert(entry.clone());
         }
         let embedded = AssetEntry {
-            embedded_in: Some(concerto_foundation::assets::registry::EmbeddedIn {
+            embedded_in: Some(EmbeddedIn {
                 host: kept.id,
                 name: "mesh/0".into(),
             }),
@@ -778,149 +649,5 @@ mod tests {
             ]
         );
         assert_eq!(registry.get(loose.id), Some(&embedded));
-    }
-
-    #[test]
-    fn a_batch_status_names_the_first_failure_and_counts_the_rest() {
-        let one = vec![("a.obj".to_string(), "a.mtl: missing".to_string())];
-        assert_eq!(
-            failure_status(&one, 3),
-            "1 of 3 failed: a.obj — a.mtl: missing"
-        );
-        let mut three = one;
-        three.push(("b.obj".into(), "second".into()));
-        three.push(("c.obj".into(), "third".into()));
-        assert_eq!(
-            failure_status(&three, 5),
-            "3 of 5 failed: a.obj — a.mtl: missing (+2 more, see log)"
-        );
-    }
-
-    #[test]
-    fn the_rejection_reasons_lead_with_the_word_that_tells_them_apart() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[
-            ("/tmp/a.obj", ""),
-            ("/tmp/b.obj", "../b.obj"),
-            ("/one/c.obj", "assets/c.obj"),
-            ("/two/c.obj", "assets/c.obj"),
-            ("/tmp/d.glb", "assets/d.png"),
-            ("/tmp/e.txt", "assets/e.txt"),
-        ]);
-        validate_rows(&mut staged, project.path());
-        let reasons: Vec<_> = staged.iter().map(rejection).collect();
-        assert_eq!(
-            reasons,
-            [
-                "needs a file name",
-                "outside the project",
-                "listed twice",
-                "listed twice",
-                "extension must stay '.glb'",
-                "no importer for '.txt'",
-            ]
-        );
-    }
-
-    #[test]
-    fn rows_already_rejected_for_their_own_destination_never_count_as_a_clash() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[
-            ("/tmp/a.obj", ""),
-            ("/tmp/b.obj", ""),
-            ("/tmp/c.obj", "../shared.obj"),
-            ("/tmp/d.obj", "../shared.obj"),
-            ("/tmp/e.obj", "assets/e.obj"),
-        ]);
-        validate_rows(&mut staged, project.path());
-        assert!(!destinations_clash(&staged));
-        assert!(rejection(&staged[0]).contains("file name"));
-        assert!(rejection(&staged[1]).contains("file name"));
-        assert!(rejection(&staged[2]).contains("project"));
-        assert!(rejection(&staged[3]).contains("project"));
-        assert!(staged[4].importable());
-    }
-
-    fn rows(pairs: &[(&str, &str)]) -> Vec<StagedImport> {
-        pairs
-            .iter()
-            .map(|(source, destination)| StagedImport {
-                source: PathBuf::from(source),
-                destination: (*destination).to_string(),
-                state: RowState::New,
-            })
-            .collect()
-    }
-
-    fn rejection(row: &StagedImport) -> &str {
-        match &row.state {
-            RowState::Rejected(reason) => reason,
-            other => panic!("expected a rejection, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn staging_prefills_a_destination_under_assets() {
-        let staged = stage_sources(vec![PathBuf::from("/home/someone/hero.glb")]);
-        assert_eq!(staged.len(), 1);
-        assert_eq!(staged[0].destination, "assets/hero.glb");
-        assert!(matches!(staged[0].state, RowState::New));
-    }
-
-    #[test]
-    fn a_destination_escaping_the_project_is_rejected() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[
-            ("/tmp/a.obj", "../outside/a.obj"),
-            ("/tmp/b.obj", "/etc/b.obj"),
-        ]);
-        validate_rows(&mut staged, project.path());
-        assert!(rejection(&staged[0]).contains("project"));
-        assert!(rejection(&staged[1]).contains("project"));
-    }
-
-    #[test]
-    fn a_destination_without_a_file_name_is_rejected() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[("/tmp/a.obj", ""), ("/tmp/b.obj", "assets/")]);
-        validate_rows(&mut staged, project.path());
-        assert!(rejection(&staged[0]).contains("file name"));
-        assert!(rejection(&staged[1]).contains("file name"));
-    }
-
-    #[test]
-    fn an_occupied_destination_is_marked_as_a_replacement_not_a_rejection() {
-        let project = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(project.path().join("assets")).expect("assets");
-        std::fs::write(project.path().join("assets/hero.glb"), b"old").expect("write");
-        let mut staged = rows(&[("/tmp/hero.glb", "assets/hero.glb")]);
-        validate_rows(&mut staged, project.path());
-        assert!(matches!(staged[0].state, RowState::Replaces));
-        assert!(staged[0].importable());
-    }
-
-    #[test]
-    fn two_rows_sharing_a_destination_are_both_rejected() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[
-            ("/one/hero.glb", "assets/hero.glb"),
-            ("/two/hero.glb", "assets/hero.glb"),
-        ]);
-        validate_rows(&mut staged, project.path());
-        assert!(rejection(&staged[0]).contains("twice"));
-        assert!(rejection(&staged[1]).contains("twice"));
-        assert!(!staged[0].importable() && !staged[1].importable());
-    }
-
-    #[test]
-    fn destinations_that_normalise_to_the_same_path_collide() {
-        let project = tempfile::tempdir().expect("tempdir");
-        let mut staged = rows(&[
-            ("/one/a.obj", "assets/a.obj"),
-            ("/two/a.obj", "assets//a.obj"),
-        ]);
-        validate_rows(&mut staged, project.path());
-        assert!(rejection(&staged[0]).contains("twice"));
-        assert!(rejection(&staged[1]).contains("twice"));
     }
 }

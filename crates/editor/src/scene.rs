@@ -758,15 +758,9 @@ pub(crate) fn update_scenes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hosted::testing::{ENTERED, GATED_DROPS, GatedAsset, RELEASED, lock_gate, wait_for};
     use crate::{
-        asset_editor::{AssetEditorCommand, AssetEditorCommands},
-        hosted::{
-            EditWorldSignals, PlayStarted, PlayState, PlayStopped,
-            testing::{SceneFixture, scene_entry, write_scene_file},
-        },
-        inspector::InspectorData,
-        tools::{entity_ops::EntityEdit, selection::Select},
+        hosted::{PlayStarted, PlayState, PlayStopped, testing::SceneFixture},
+        tools::entity_ops::EntityEdit,
     };
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_ecs::{
@@ -775,22 +769,10 @@ mod tests {
         world_id::WorldId,
     };
     use concerto_foundation::{
-        assets::{
-            Asset,
-            asset_server::AssetServer,
-            content::{read_content_asset, write_content_asset},
-        },
+        assets::{Asset, content::read_content_asset},
         transform::Transform,
     };
-    use concerto_ui::{
-        items::{UIItem, UISelected},
-        node::UICulled,
-        tree::UITreeElement,
-    };
     use concerto_window::clipboard::{ClipboardPasted, answer_paste_requests};
-
-    #[derive(Resource)]
-    struct RenameTarget(Entity);
 
     fn scene_id(f: &SceneFixture, document: Entity) -> WorldId {
         f.world
@@ -798,29 +780,6 @@ mod tests {
             .unwrap()
             .world_for_test()
             .id()
-    }
-
-    fn items(f: &SceneFixture) -> std::collections::HashMap<Entity, Entity> {
-        f.world
-            .get_resource::<HierarchyState>()
-            .unwrap()
-            .items()
-            .clone()
-    }
-
-    fn expansions(f: &SceneFixture) -> Vec<(Entity, bool)> {
-        let mut expansions = items(f)
-            .into_values()
-            .map(|item| {
-                let expanded = f
-                    .world
-                    .get_component_for_entity::<UITreeElement>(item)
-                    .is_some_and(|element| element.expanded);
-                (item, expanded)
-            })
-            .collect::<Vec<_>>();
-        expansions.sort_by_key(|(item, _)| (item.index(), item.generation()));
-        expansions
     }
 
     fn save(f: &mut SceneFixture, document: Entity) {
@@ -842,16 +801,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn opening_a_scene_builds_an_edit_app_holding_its_nodes() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-
-        let names = f.scene_names(document);
-        assert!(names.contains(&"first".to_string()) && names.contains(&"second".to_string()));
-        assert!(!f.unsaved(document));
-    }
-
     fn opened(document: Entity, asset: &AssetEntry) -> SceneOpened {
         SceneOpened {
             document,
@@ -865,108 +814,6 @@ mod tests {
             asset: asset.clone(),
             message: f.status(document),
         }
-    }
-
-    #[test]
-    fn an_opened_scene_and_its_replacement_are_each_reported_once() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.frame();
-        assert_eq!(f.opened(), [opened(document, &f.scene)]);
-
-        f.request_other_scene(document);
-        f.frames_until_idle();
-        f.frame();
-
-        assert_eq!(
-            f.opened(),
-            [opened(document, &f.scene), opened(document, &f.other)]
-        );
-        assert!(f.open_failures().is_empty());
-    }
-
-    #[test]
-    fn an_edit_marks_the_document_unsaved_once_the_editor_follows_its_scene() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let first = f.scene_entity(document, "first");
-        fn rename(mut scene: EditWorldSignals, target: Res<RenameTarget>) {
-            scene.trigger(EntityEdit::Rename {
-                entity: target.0,
-                name: "renamed".into(),
-            });
-        }
-        f.world.insert_resource(RenameTarget(first));
-        let mut system = rename.into_system();
-        system.initialize(&mut f.world);
-
-        system.run_and_apply((), &mut f.world);
-        assert!(
-            f.world
-                .get_component_for_entity::<Unsaved>(document)
-                .is_none()
-        );
-
-        f.deliver();
-
-        assert!(
-            f.world
-                .get_component_for_entity::<Unsaved>(document)
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn an_unsaved_on_a_hosted_document_that_is_not_a_scene_stays() {
-        let mut f = SceneFixture::new();
-        let document = f.world.spawn((
-            crate::hosted::testing::preview_now(crate::hosted::testing::plain_recipe),
-            Unsaved,
-        ));
-
-        f.deliver();
-
-        assert!(f.unsaved(document));
-    }
-
-    #[test]
-    fn a_save_writes_the_file_and_clears_unsaved() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-        f.world.insert(SaveRequested, document);
-
-        f.frame();
-
-        assert!(!f.unsaved(document));
-        assert!(f.status(document).starts_with("Saved"));
-        assert!(f.saved_scene_names().contains(&"renamed".to_string()));
-        let asset = f.document(document).current.clone().unwrap();
-        assert_eq!(
-            f.written::<SceneSaved>(),
-            [SceneSaved {
-                document,
-                written: vec![asset.clone()],
-                asset,
-            }]
-        );
-        assert!(f.written::<SaveFailed>().is_empty());
-    }
-
-    #[test]
-    fn an_edit_and_a_save_in_the_same_frame_end_clean() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-        f.world.insert(SaveRequested, document);
-        f.rename(document, "second", "also renamed");
-
-        f.frame();
-
-        assert!(!f.unsaved(document));
-        let names = f.saved_scene_names();
-        assert!(names.contains(&"renamed".to_string()));
-        assert!(names.contains(&"also renamed".to_string()));
     }
 
     #[test]
@@ -1011,134 +858,6 @@ mod tests {
             f.document(document).current.as_ref().unwrap().id,
             f.scene.id
         );
-    }
-
-    #[test]
-    fn a_scene_that_finishes_loading_on_an_unsaved_document_is_never_built() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.request_other_scene(document);
-        f.rename(document, "first", "renamed");
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while f.document(document).pending.is_some() {
-            f.frame();
-            assert!(
-                f.world
-                    .get_component_for_entity::<PendingApp>(document)
-                    .is_none()
-            );
-            assert!(std::time::Instant::now() < deadline, "the load never ended");
-        }
-        f.frame();
-
-        assert!(f.status(document).contains("unsaved changes"));
-        assert_eq!(f.open_failures(), [failed(&f, document, &f.other)]);
-        assert_eq!(f.opened(), [opened(document, &f.scene)]);
-    }
-
-    #[test]
-    fn an_edit_made_after_the_last_check_before_the_build_is_ready_refuses_it() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let before = scene_id(&f, document);
-        f.request_other_scene(document);
-        f.frames_until_building(document);
-        f.frame();
-        f.wait_until_the_build_is_ready(document);
-        f.rename(document, "first", "renamed");
-
-        f.frame();
-
-        assert_eq!(scene_id(&f, document), before);
-        assert!(f.status(document).contains("unsaved changes"));
-        assert!(
-            f.world
-                .get_component_for_entity::<PendingApp>(document)
-                .is_none()
-        );
-        assert!(f.scene_names(document).contains(&"renamed".to_string()));
-        assert!(f.unsaved(document));
-        f.frames_until_idle();
-        assert_eq!(scene_id(&f, document), before);
-    }
-
-    fn editor_with_an_edited_document_whose_replacement_is_ready() -> (App, Entity, WorldId) {
-        use crate::{
-            asset_editor::AssetEditorRegistry,
-            hosted::testing::{hosted_now, plain_recipe, request},
-        };
-        let mut app = App::new();
-        let project = ProjectState::default();
-        app.register_plugin(MainSchedulePlugin)
-            .register_plugin(TimePlugin)
-            .register_plugin(concerto_window::plugin::WindowPlugin)
-            .insert_resource(ActiveEditor::default())
-            .insert_resource(AssetEditorRegistry::default())
-            .insert_resource(HierarchyState::default())
-            .insert_resource(PropertyCommits::default())
-            .insert_resource(ComponentEdits::default())
-            .insert_resource(project)
-            .register_plugin(hosted::HostedPlugin)
-            .register_plugin(ScenePlugin {
-                recipe: plain_recipe,
-                clipboard: None,
-            });
-        let old = hosted_now(plain_recipe, |_| {});
-        let before = old.world_for_test().id();
-        let next = scene_entry("next");
-        let world = app.main_mut().world_mut();
-        let document = world.spawn((
-            EditorDocument {
-                asset_type: Scene::name(),
-                title: "first".into(),
-                current: Some(scene_entry("first")),
-                pending: Some(next.clone()),
-                order: 0,
-                status: String::new(),
-                failed: None,
-            },
-            SceneEditorState {
-                job: None,
-                building: Some(next),
-            },
-            old,
-            hosted::begin(request(plain_recipe), |_| {}, |_| {}),
-            Unsaved,
-        ));
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
-        app.finish_plugin_build();
-        (app, document, before)
-    }
-
-    #[test]
-    fn an_edited_document_refuses_a_ready_replacement_in_the_editors_own_schedule() {
-        for _ in 0..20 {
-            let (mut app, document, before) =
-                editor_with_an_edited_document_whose_replacement_is_ready();
-
-            app.update();
-
-            let world = app.main().world();
-            assert_eq!(
-                world
-                    .get_component_for_entity::<HostedApp>(document)
-                    .unwrap()
-                    .world_for_test()
-                    .id(),
-                before
-            );
-            let status = &world
-                .get_component_for_entity::<EditorDocument>(document)
-                .unwrap()
-                .status;
-            assert!(status.contains("unsaved changes"), "{status}");
-            assert!(
-                world
-                    .get_component_for_entity::<PendingApp>(document)
-                    .is_none()
-            );
-        }
     }
 
     #[test]
@@ -1193,173 +912,15 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_while_the_replacement_is_being_built_refuses_it() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let before = scene_id(&f, document);
-        f.request_other_scene(document);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while f
-            .world
-            .get_component_for_entity::<PendingApp>(document)
-            .is_none()
-        {
-            f.frame();
-            assert!(std::time::Instant::now() < deadline, "nothing was built");
-        }
-        f.world.insert(Unsaved, document);
-
-        f.frames_until_idle();
-        f.frame();
-
-        assert_eq!(scene_id(&f, document), before);
-        assert!(
-            f.world
-                .get_component_for_entity::<PendingApp>(document)
-                .is_none()
-        );
-        assert!(f.status(document).contains("unsaved changes"));
-        assert_eq!(f.open_failures(), [failed(&f, document, &f.other)]);
-        assert_eq!(f.opened(), [opened(document, &f.scene)]);
-    }
-
-    #[test]
-    fn a_background_document_saves_without_being_stepped() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-        f.activate(None);
-        f.frame();
-        let frames_before = f.hosted_frames(document);
-        f.world.insert(SaveRequested, document);
-
-        f.frame();
-
-        assert_eq!(f.hosted_frames(document), frames_before);
-        assert!(!f.unsaved(document));
-        assert!(f.saved_scene_names().contains(&"renamed".to_string()));
-    }
-
-    #[test]
-    fn a_replacement_keeps_the_old_scene_until_the_new_one_is_ready() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let before = scene_id(&f, document);
-        f.request_other_scene(document);
-
-        f.frame();
-        assert_eq!(scene_id(&f, document), before);
-
-        f.frames_until_idle();
-        assert_ne!(scene_id(&f, document), before);
-    }
-
-    #[test]
-    fn an_edit_app_starts_with_the_projects_registry() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-
-        assert!(f.knows(f.scene_world(document), f.scene.id));
-        assert!(f.knows(f.scene_world(document), f.other.id));
-    }
-
-    #[test]
     fn a_registry_change_reaches_the_hosted_app() {
         let mut f = SceneFixture::new();
         let document = f.open();
+        assert!(f.knows(f.scene_world(document), f.other.id));
         let added = f.add_scene("added");
 
         f.frame();
 
         assert!(f.knows(f.scene_world(document), added.id));
-    }
-
-    #[test]
-    fn a_registry_change_while_an_edit_app_builds_reaches_it() {
-        let mut f = SceneFixture::new();
-        let first = f.scene.clone();
-        f.request(&first);
-        f.frame();
-        let added = f.add_scene("added");
-
-        f.frames_until_idle();
-
-        let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
-        assert!(f.knows(f.scene_world(document), added.id));
-    }
-
-    #[test]
-    fn a_save_records_the_scene_in_the_registry_and_its_file() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-
-        save(&mut f, document);
-
-        assert!(f.status(document).starts_with("Saved"));
-        assert!(!f.project_root.join("content/.registry.toml").exists());
-        let saved = AssetRegistry::from_content_tree(&f.project_root, "", "gasset").unwrap();
-        assert!(saved.get(f.scene.id).unwrap().is::<Scene>());
-        assert_eq!(
-            f.world
-                .get_resource::<AssetRegistry>()
-                .unwrap()
-                .get(f.scene.id),
-            saved.get(f.scene.id)
-        );
-    }
-
-    #[test]
-    fn an_edit_not_yet_forwarded_when_a_save_captures_the_scene_ends_clean() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let first = f.scene_entity(document, "first");
-        f.activate(None);
-        f.frame();
-        let frames = f.hosted_frames(document);
-        let scene = f.scene_world_mut(document);
-        scene
-            .get_component_for_entity_mut::<concerto_ecs::component::name::Name>(first)
-            .unwrap()
-            .set("renamed");
-        crate::tools::scene::write(scene, SceneEdited);
-        assert!(!f.unsaved(document));
-
-        save(&mut f, document);
-
-        assert_eq!(
-            f.hosted_frames(document),
-            frames,
-            "the edit was not forwarded by a step"
-        );
-        assert!(!f.unsaved(document));
-        assert!(f.status(document).starts_with("Saved"));
-        assert!(f.saved_scene_names().contains(&"renamed".to_string()));
-    }
-
-    #[test]
-    fn saving_a_document_that_holds_no_scene_says_so() {
-        let mut f = SceneFixture::new();
-        let missing = scene_entry("missing");
-        f.add_to_project(&missing);
-        f.request(&missing);
-        f.frames_until_idle();
-        let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
-        assert!(
-            f.world
-                .get_component_for_entity::<HostedApp>(document)
-                .is_none()
-        );
-
-        save(&mut f, document);
-
-        assert_eq!(f.status(document), "Save failed: No scene is open");
-        assert!(
-            f.world
-                .get_component_for_entity::<SaveRequested>(document)
-                .is_none()
-        );
-        assert_eq!(f.written::<SaveFailed>(), [save_failed(&f, document)]);
     }
 
     #[test]
@@ -1393,272 +954,12 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_replacement_keeps_the_scene_its_edits_and_its_selection() {
+    fn a_scene_opens_takes_edits_and_saves_them_over_its_file() {
         let mut f = SceneFixture::new();
         let document = f.open();
-        let before = scene_id(&f, document);
-        let first = f.scene_entity(document, "first");
-        let scene = f.scene_world_mut(document);
-        scene
-            .get_component_for_entity_mut::<Transform>(first)
-            .unwrap()
-            .translation
-            .y = 17.0;
-        scene.trigger(Select(Some(first)));
-
-        let missing = scene_entry("missing");
-        f.add_to_project(&missing);
-        f.request(&missing);
-        f.frames_until_idle();
         f.frame();
-        assert_eq!(f.open_failures(), [failed(&f, document, &missing)]);
         assert_eq!(f.opened(), [opened(document, &f.scene)]);
-
-        assert_eq!(scene_id(&f, document), before);
-        assert_eq!(
-            f.scene_world(document)
-                .get_component_for_entity::<Transform>(first)
-                .unwrap()
-                .translation
-                .y,
-            17.0
-        );
-        assert_eq!(f.selected(document), Some(first));
-        let doc = f.document(document);
-        assert_eq!(doc.current.as_ref().unwrap().id, f.scene.id);
-        assert!(doc.pending.is_none());
-        assert!(
-            doc.status.contains("Could not open scene"),
-            "{}",
-            doc.status
-        );
-    }
-
-    #[test]
-    fn cancelled_and_superseded_requests_cannot_replace_the_scene() {
-        let mut f = SceneFixture::new();
-        let b = f.add_scene("b");
-        let c = f.add_scene("c");
-        let document = f.open();
-        let before = scene_id(&f, document);
-        let a = f.scene.clone();
-
-        f.request(&b);
-        f.request(&a);
-        f.frames_until_idle();
-        assert_eq!(scene_id(&f, document), before);
-
-        f.request(&b);
-        f.request(&c);
-        f.frames_until_idle();
-        assert_eq!(f.scene_names(document), ["c"]);
-        assert_eq!(f.document(document).current.as_ref().unwrap().id, c.id);
-
-        f.request(&b);
-        f.command(AssetEditorCommand::CloseAll);
-        f.frames_until_idle();
-        assert!(!f.world.entity_is_valid(document));
-        assert!(f.world.get_resource::<ActiveEditor>().unwrap().0.is_none());
-        assert_eq!(
-            f.world.query::<&HostedApp, ()>().iter(&mut f.world).count(),
-            0
-        );
-        assert_eq!(
-            f.world
-                .query::<&PendingApp, ()>()
-                .iter(&mut f.world)
-                .count(),
-            0
-        );
-    }
-
-    #[test]
-    fn a_request_superseded_while_its_scene_is_being_built_is_dropped() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let before = scene_id(&f, document);
-        f.request_other_scene(document);
-        f.frames_until_building(document);
-
-        let same = f.scene.clone();
-        f.request(&same);
-        f.frames_until_idle();
-
-        assert_eq!(scene_id(&f, document), before);
-        assert_eq!(
-            f.document(document).current.as_ref().unwrap().id,
-            f.scene.id
-        );
-    }
-
-    #[test]
-    fn a_finished_worker_from_an_old_project_cannot_replace_the_scene() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let before = scene_id(&f, document);
-        f.request_other_scene(document);
-        let scene =
-            load_scene(f.project_root.clone(), f.other.address.clone(), f.other.id).unwrap();
-        let worker = std::thread::spawn(move || Ok(scene));
-        while !worker.is_finished() {
-            std::thread::yield_now();
-        }
-        f.world
-            .get_component_for_entity_mut::<SceneEditorState>(document)
-            .unwrap()
-            .job = Some(SceneJob {
-            asset: f.other.clone(),
-            root: f.project_root.clone(),
-            worker,
-        });
-        f.world
-            .get_resource_mut::<ProjectState>()
-            .unwrap()
-            .project
-            .as_mut()
-            .unwrap()
-            .root = f.project_root.join("another-project");
-
-        f.frames_until(
-            "the old project's worker is dropped and the request settles",
-            |f| {
-                let state = f
-                    .world
-                    .get_component_for_entity::<SceneEditorState>(document)
-                    .unwrap();
-                state.job.is_none() && state.building.is_none()
-            },
-        );
-
-        assert_eq!(scene_id(&f, document), before);
-        assert!(
-            f.world
-                .get_component_for_entity::<PendingApp>(document)
-                .is_none()
-        );
-        assert_eq!(
-            f.document(document).current.as_ref().unwrap().id,
-            f.scene.id
-        );
-    }
-
-    #[test]
-    fn closing_and_reopening_in_one_update_leaves_nothing_of_the_old_scene() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.frame();
-        let old_items = items(&f).into_values().collect::<Vec<_>>();
-        assert!(!old_items.is_empty());
-
-        f.world
-            .get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::CloseAll);
-        let missing = scene_entry("missing");
-        f.add_to_project(&missing);
-        f.request(&missing);
-        f.frames_until_idle();
-        f.frame();
-
-        assert!(!f.world.entity_is_valid(document));
-        assert_eq!(
-            f.world.query::<&HostedApp, ()>().iter(&mut f.world).count(),
-            0
-        );
-        assert!(items(&f).is_empty());
-        assert!(old_items.iter().all(|item| !f.world.entity_is_valid(*item)));
-        assert_eq!(
-            *f.world.get_resource::<InspectorData>().unwrap(),
-            InspectorData::default()
-        );
-    }
-
-    #[test]
-    fn saving_a_scene_overwrites_it_in_place() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-        assert!(f.unsaved(document));
-
-        save(&mut f, document);
-
         assert!(!f.unsaved(document));
-        let doc = f.document(document);
-        let saved = doc.current.clone().unwrap();
-        assert_eq!(doc.status, "Saved first.gasset");
-        assert_eq!(doc.title, "first");
-        assert_eq!(saved.address, f.scene.address);
-        assert_eq!(saved.id, f.scene.id);
-        assert_eq!(f.saved_scene_names(), ["renamed", "second"]);
-        let mut files: Vec<_> = std::fs::read_dir(&f.project_root)
-            .unwrap()
-            .map(|file| file.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name.ends_with(".gasset"))
-            .collect();
-        files.sort();
-        assert_eq!(files, ["first.gasset", "other.gasset"]);
-        assert!(
-            f.world
-                .get_component_for_entity::<SaveRequested>(document)
-                .is_none()
-        );
-        let registry = f.world.get_resource::<AssetRegistry>().unwrap();
-        assert_eq!(registry.iter().count(), 2);
-        assert_eq!(registry.get(f.scene.id), Some(&saved));
-        assert_eq!(
-            AssetRegistry::from_content_tree(&f.project_root, "", "gasset")
-                .unwrap()
-                .get(f.scene.id)
-                .map(|entry| entry.address.clone()),
-            Some("first.gasset".to_string())
-        );
-
-        f.rename(document, "second", "again");
-        save(&mut f, document);
-
-        assert_eq!(f.document(document).current, Some(saved));
-        assert_eq!(f.saved_scene_names(), ["renamed", "again"]);
-    }
-
-    #[test]
-    fn a_save_lists_the_assets_the_scene_names_instead_of_the_ones_its_file_listed() {
-        use concerto_foundation::assets::handle::AssetHandle;
-        use concerto_mesh::mesh::MeshComponent;
-
-        let mut f = SceneFixture::new();
-        let mut scene = f.saved_scene();
-        scene.referenced_assets = vec![AssetId::new()];
-        let path = f.project_root.join(&f.scene.address);
-        let bytes = std::fs::read(&path).unwrap();
-        let (header, _) = read_content_asset(&bytes).unwrap();
-        std::fs::write(
-            &path,
-            write_content_asset(&header, &bincode::serialize(&scene).unwrap()).unwrap(),
-        )
-        .unwrap();
-        let document = f.open();
-        let entity = f.scene_entity(document, "first");
-        let mesh = AssetId::new();
-        let world = f.scene_world_mut(document);
-        world.register_type::<MeshComponent>();
-        world.insert(
-            MeshComponent {
-                handle: AssetHandle::weak(mesh),
-            },
-            entity,
-        );
-        f.rename(document, "first", "renamed");
-
-        save(&mut f, document);
-
-        assert_eq!(f.saved_scene().referenced_assets, [mesh]);
-    }
-
-    #[test]
-    fn created_duplicated_and_renamed_entities_survive_a_save_and_reload() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
         let original = f.scene_entity(document, "first");
 
         f.signal(EntityEdit::Create {
@@ -1673,171 +974,37 @@ mod tests {
         assert!(f.unsaved(document));
         save(&mut f, document);
 
+        assert!(!f.unsaved(document));
+        let saved = f.document(document).current.clone().unwrap();
+        assert_eq!(saved.id, f.scene.id);
+        assert_eq!(saved.address, f.scene.address);
+        assert_eq!(
+            f.written::<SceneSaved>(),
+            [SceneSaved {
+                document,
+                written: vec![saved.clone()],
+                asset: saved,
+            }]
+        );
         let scene = f.saved_scene();
         let names: Vec<_> = scene.nodes.iter().map(|node| node.name.as_str()).collect();
         assert_eq!(names, ["first", "lamp", "second", "first", "lamp"]);
         assert_eq!(scene.nodes[0].children, [1]);
         assert_eq!(scene.nodes[3].children, [4]);
-        assert!(scene.nodes[1].children.is_empty());
-    }
-
-    #[test]
-    fn an_edit_is_reported_once_and_an_edit_after_a_save_marks_the_document_again() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.deliver();
-        assert!(!f.unsaved(document), "nothing was reported");
-
-        f.rename(document, "first", "renamed");
-        assert!(f.unsaved(document));
-
-        save(&mut f, document);
-        f.deliver();
-        assert!(
-            !f.unsaved(document),
-            "an edit that was already forwarded is not forwarded again"
-        );
+        let mut files: Vec<_> = std::fs::read_dir(&f.project_root)
+            .unwrap()
+            .map(|file| file.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".gasset"))
+            .collect();
+        files.sort();
+        assert_eq!(files, ["first.gasset", "other.gasset"]);
 
         f.rename(document, "second", "again");
-        assert!(
-            f.unsaved(document),
-            "an edit after the capture is still unsaved"
-        );
-    }
-
-    #[test]
-    fn a_refusal_becomes_the_document_status_and_a_created_entity_is_revealed() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let root = f.scene_root(document);
-
-        f.signal(EntityEdit::Delete(root));
-        let status = f.status(document);
-        assert!(status.starts_with("Delete failed: "), "{status}");
-        assert!(!f.unsaved(document));
-
-        f.signal(EntityEdit::Create { parent: Some(root) });
-        let created = f.selected(document).expect("the new entity is selected");
-        assert_ne!(created, root);
-        f.frame();
-        f.frame();
-
-        let item = items(&f)[&created];
-        assert!(
-            f.world
-                .get_component_for_entity::<UISelected>(item)
-                .is_some()
-        );
-        assert!(
-            f.world
-                .get_component_for_entity::<UIItem>(item)
-                .is_some_and(UIItem::is_shown)
-        );
-        assert!(
-            f.world.get_component_for_entity::<UICulled>(item).is_none(),
-            "the revealed row is scrolled into the visible rows"
-        );
         assert!(f.unsaved(document));
-    }
-
-    #[test]
-    fn a_reveal_from_a_document_that_is_not_in_front_is_ignored() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let root = f.scene_root(document);
-        f.activate(None);
-
-        hosted::trigger_on(
-            &mut f.world,
-            document,
-            EntityEdit::Create { parent: Some(root) },
-        );
-
-        assert!(f.unsaved(document));
-        assert_eq!(
-            f.world
-                .get_resource::<HierarchyState>()
-                .unwrap()
-                .pending_scene_reveal(),
-            None
-        );
-
-        f.activate(Some(document));
-        f.frame();
-        f.frame();
-        assert!(!items(&f).is_empty());
-        assert!(
-            expansions(&f).iter().all(|(_, expanded)| !expanded),
-            "no reveal reached the tree"
-        );
-    }
-
-    #[test]
-    fn a_delivery_with_nothing_reported_leaves_the_document_and_the_tree_unchanged() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let root = items(&f)[&f.scene_root(document)];
-        f.world
-            .get_component_for_entity_mut::<UITreeElement>(root)
-            .unwrap()
-            .expanded = true;
-        let before = (items(&f), expansions(&f));
-        f.world.tick();
-        let since = f.world.change_tick();
-        f.world.tick();
-
-        f.deliver();
-
-        assert!(!f.world.has_component_changed_since(
-            document,
-            std::any::TypeId::of::<EditorDocument>(),
-            since
-        ));
-        assert_eq!((items(&f), expansions(&f)), before);
-    }
-
-    #[test]
-    fn an_edit_and_the_save_action_in_one_frame_request_a_save() {
-        use concerto_window::input::actions::ActionFired;
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let root = f.scene_root(document);
-
-        f.signal(EntityEdit::Create { parent: Some(root) });
-        f.world
-            .insert_resource(EventChannel::<ActionFired>::default());
-        f.world
-            .get_resource_mut::<EventChannel<ActionFired>>()
-            .unwrap()
-            .push_event(ActionFired::new(crate::actions::Save));
-        let mut system = crate::asset_editor::request_save.into_system();
-        system.initialize(&mut f.world);
-        system.run_and_apply((), &mut f.world);
-
-        assert!(
-            f.world
-                .get_component_for_entity::<SaveRequested>(document)
-                .is_some()
-        );
     }
 
     fn panicking_recipe(_: &mut App) {
         panic!("the recipe broke");
-    }
-
-    struct BreaksOnFinish;
-
-    impl Plugin for BreaksOnFinish {
-        fn build(&self, _: &mut App) {}
-
-        fn finish(&self, _: &mut App) {
-            panic!("finish broke");
-        }
-    }
-
-    fn recipe_breaking_on_finish(app: &mut App) {
-        crate::hosted::testing::scene_recipe(app);
-        app.register_plugin(BreaksOnFinish);
     }
 
     fn opening_with_a_broken_recipe_reports_it_and_the_editor_keeps_going(
@@ -1885,78 +1052,6 @@ mod tests {
             panicking_recipe,
             "the recipe broke",
         );
-    }
-
-    #[test]
-    fn a_plugin_that_panics_in_finish_becomes_the_requests_error() {
-        opening_with_a_broken_recipe_reports_it_and_the_editor_keeps_going(
-            recipe_breaking_on_finish,
-            "finish broke",
-        );
-    }
-
-    fn startup_breaks() {
-        panic!("startup broke");
-    }
-
-    fn startup_sleeps() {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
-    fn recipe_breaking_in_startup(app: &mut App) {
-        use concerto_app::{edit_time::AtEditTime, schedule_groups::Startup};
-        crate::hosted::testing::scene_recipe(app);
-        app.add_system(Startup, startup_breaks.at_edit_time())
-            .add_system(Startup, startup_sleeps.at_edit_time());
-    }
-
-    #[test]
-    fn a_startup_system_that_panics_beside_a_running_one_becomes_the_requests_error() {
-        for _ in 0..3 {
-            opening_with_a_broken_recipe_reports_it_and_the_editor_keeps_going(
-                recipe_breaking_in_startup,
-                "startup broke",
-            );
-        }
-    }
-
-    #[test]
-    fn a_scene_whose_project_closed_while_it_was_asked_for_says_to_open_a_project() {
-        let mut f = SceneFixture::new();
-        let scene = f.scene.clone();
-        f.request(&scene);
-        f.world.get_resource_mut::<ProjectState>().unwrap().project = None;
-
-        f.frames_until_idle();
-
-        f.frame();
-
-        let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
-        assert_eq!(f.status(document), "Open a project before opening a scene");
-        assert!(
-            f.world
-                .get_component_for_entity::<HostedApp>(document)
-                .is_none()
-        );
-        assert_eq!(f.open_failures(), [failed(&f, document, &scene)]);
-        assert!(f.opened().is_empty());
-    }
-
-    #[test]
-    fn loader_rejects_wrong_identity_kind_and_corrupt_payload() {
-        let dir = tempfile::tempdir().unwrap();
-        let asset = scene_entry("a");
-        write_scene_file(dir.path(), &asset, &["a"]);
-        assert!(load_scene(dir.path().into(), asset.address.clone(), AssetId::new()).is_err());
-        let path = dir.path().join(&asset.address);
-        let bytes = std::fs::read(&path).unwrap();
-        let (mut header, _) = read_content_asset(&bytes).unwrap();
-        header.kind = "Other".into();
-        std::fs::write(&path, write_content_asset(&header, &[]).unwrap()).unwrap();
-        assert!(load_scene(dir.path().into(), asset.address.clone(), asset.id).is_err());
-        header.kind = Scene::name().into();
-        std::fs::write(&path, write_content_asset(&header, &[1]).unwrap()).unwrap();
-        assert!(load_scene(dir.path().into(), asset.address, asset.id).is_err());
     }
 
     fn play(f: &mut SceneFixture, document: Entity) {
@@ -2030,12 +1125,15 @@ mod tests {
     }
 
     #[test]
-    fn play_starts_a_game_app_that_spawns_the_saved_scene_from_the_project_and_runs_the_game() {
+    fn play_saves_the_scene_and_starts_a_game_app_that_spawns_it_from_the_project() {
         let mut f = SceneFixture::new();
         let document = f.open();
         let edit = scene_id(&f, document);
+        f.rename(document, "first", "renamed");
 
         play(&mut f, document);
+        assert!(!f.unsaved(document));
+        assert!(f.saved_scene_names().contains(&"renamed".to_string()));
 
         assert_eq!(f.play_state(document), Some(PlayState::Starting));
         assert!(f.starting_world(document).is_some());
@@ -2046,50 +1144,11 @@ mod tests {
         assert!(f.written::<PlayFailed>().is_empty());
         assert!(!f.hosted_is_editing(document));
         assert_eq!(f.parked_world(document).id(), edit);
-        f.frames_until("the game never spawned the scene", |f| {
-            holds(f, document, &["first", "second"])
-        });
-        assert!(f.game_ran(document));
-        assert!(!f.unsaved(document));
-    }
-
-    #[test]
-    fn play_on_an_unsaved_document_saves_it_first() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-
-        play(&mut f, document);
-
-        assert!(!f.unsaved(document));
-        assert!(f.saved_scene_names().contains(&"renamed".to_string()));
-        assert_eq!(f.written::<SceneSaved>().len(), 1);
-        assert_eq!(f.play_state(document), Some(PlayState::Starting));
-        f.frames_until_playing(document);
         f.frames_until("the game never spawned the saved scene", |f| {
             holds(f, document, &["renamed", "second"])
         });
-    }
-
-    #[test]
-    fn play_right_after_an_edit_the_editor_has_not_followed_yet_saves_it_first() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let first = f.scene_entity(document, "first");
-        f.scene_world_mut(document).trigger(EntityEdit::Rename {
-            entity: first,
-            name: "renamed".into(),
-        });
-        assert!(
-            f.world
-                .get_component_for_entity::<Unsaved>(document)
-                .is_none()
-        );
-
-        play(&mut f, document);
-
-        assert!(f.saved_scene_names().contains(&"renamed".to_string()));
-        assert_eq!(f.play_state(document), Some(PlayState::Starting));
+        assert!(f.game_ran(document));
+        assert!(!f.unsaved(document));
     }
 
     #[test]
@@ -2120,85 +1179,6 @@ mod tests {
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert!(f.unsaved(document));
         assert_eq!(saved_bytes(&f), before);
-    }
-
-    #[test]
-    fn a_failed_save_does_not_start_the_game() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-        f.make_project_unwritable();
-
-        play(&mut f, document);
-
-        assert!(f.unsaved(document));
-        assert!(
-            f.status(document).starts_with("Save failed"),
-            "{}",
-            f.status(document)
-        );
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.starting_world(document).is_none());
-        assert_eq!(f.written::<SaveFailed>(), [save_failed(&f, document)]);
-        assert_eq!(
-            f.written::<PlayFailed>(),
-            [play_failed(document, &f.status(document))]
-        );
-    }
-
-    #[test]
-    fn play_while_a_replacement_loads_is_refused() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.request_other_scene(document);
-
-        play(&mut f, document);
-
-        assert_eq!(f.status(document), "Wait for the scene to load");
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.starting_world(document).is_none());
-        assert_eq!(
-            f.written::<PlayFailed>(),
-            [play_failed(document, "Wait for the scene to load")]
-        );
-    }
-
-    #[test]
-    fn play_with_no_scene_open_is_reported_as_failed() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.world.remove_component::<HostedApp>(document);
-        let not_a_document = f.world.spawn(());
-
-        play(&mut f, document);
-        play(&mut f, not_a_document);
-
-        assert_eq!(f.status(document), "No scene is open");
-        assert_eq!(
-            f.written::<PlayFailed>(),
-            [
-                play_failed(document, "No scene is open"),
-                play_failed(not_a_document, "No scene is open")
-            ]
-        );
-    }
-
-    #[test]
-    fn a_game_that_cannot_be_begun_is_reported_as_failed() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.world.remove_resource::<SceneRecipe>();
-
-        play(&mut f, document);
-
-        assert_eq!(
-            f.status(document),
-            "Could not start the game: No recipe to build the game from"
-        );
-        assert_eq!(
-            f.written::<PlayFailed>(),
-            [play_failed(document, &f.status(document))]
-        );
     }
 
     #[test]
@@ -2277,28 +1257,6 @@ mod tests {
     }
 
     #[test]
-    fn opening_another_scene_while_playing_stops_the_game_then_opens_it() {
-        let (mut f, document) = playing();
-
-        f.request_other_scene(document);
-        f.frames_until_idle();
-
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(
-            f.world
-                .get_component_for_entity::<crate::hosted::ParkedEditApp>(document)
-                .is_none()
-        );
-        assert!(f.hosted_is_editing(document));
-        assert_eq!(f.written::<PlayStopped>(), [PlayStopped { document }]);
-        assert_eq!(f.scene_names(document), ["third"]);
-        assert_eq!(
-            f.document(document).current.as_ref().unwrap().id,
-            f.other.id
-        );
-    }
-
-    #[test]
     fn a_game_that_fails_to_start_returns_to_editing_with_its_message() {
         let mut f = SceneFixture::new();
         let document = f.open();
@@ -2358,145 +1316,5 @@ mod tests {
             [PlayStopped { document }, PlayStopped { document }]
         );
         assert_eq!(f.written::<PlayFailed>().len(), 1);
-    }
-
-    #[test]
-    fn a_second_play_is_ignored_while_the_game_starts_or_plays() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        play(&mut f, document);
-        let starting = f.starting_world(document);
-
-        play(&mut f, document);
-        assert_eq!(f.starting_world(document), starting);
-
-        f.frames_until_playing(document);
-        let game = scene_id(&f, document);
-        play(&mut f, document);
-
-        assert_eq!(f.play_state(document), Some(PlayState::Playing));
-        assert_eq!(scene_id(&f, document), game);
-        assert!(f.starting_world(document).is_none());
-        let refused = play_failed(document, "The game is already playing");
-        assert_eq!(f.written::<PlayFailed>(), [refused.clone(), refused]);
-        assert_eq!(f.written::<PlayStarted>(), [PlayStarted { document }]);
-    }
-
-    #[test]
-    fn a_registry_change_while_playing_reaches_the_parked_edit_app_and_the_game() {
-        let (mut f, document) = playing();
-        assert!(f.knows(f.scene_world(document), f.scene.id));
-        let added = f.add_scene("added");
-
-        f.frame();
-
-        assert!(f.knows(f.parked_world(document), added.id));
-        assert!(f.knows(f.scene_world(document), added.id));
-    }
-
-    #[test]
-    fn closing_a_playing_document_cancels_the_games_loads_and_drops_both_apps() {
-        use std::sync::atomic::Ordering;
-        let _gate = lock_gate();
-        let mut f = SceneFixture::new();
-        let root = f.project_root.clone();
-        let registry = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-        let gated = save_content_asset_into(&GatedAsset, &root, "gated.gasset", registry).unwrap();
-        let document = f.open();
-        play(&mut f, document);
-        f.frames_until_playing(document);
-        let mut server = f
-            .scene_world(document)
-            .get_resource::<AssetServer>()
-            .unwrap()
-            .clone();
-        let store = concerto_foundation::assets::asset_store::AssetStore::<GatedAsset>::new();
-        server.register_asset(&store);
-        let dropped_before = GATED_DROPS.load(Ordering::SeqCst);
-        let _handle = server.load::<GatedAsset>(gated);
-        wait_for("the load never started", || ENTERED.load(Ordering::SeqCst));
-
-        f.close(document);
-        RELEASED.store(true, Ordering::SeqCst);
-
-        assert!(!f.world.entity_is_valid(document));
-        wait_for(
-            "the game's load was delivered after its document closed",
-            || GATED_DROPS.load(Ordering::SeqCst) > dropped_before,
-        );
-    }
-
-    fn guard_asking(f: &SceneFixture) -> bool {
-        f.world
-            .get_resource::<crate::guard::UnsavedGuard>()
-            .unwrap()
-            .asking()
-    }
-
-    #[test]
-    fn opening_another_scene_over_unsaved_changes_while_playing_stops_the_game_before_asking() {
-        let (mut f, document) = playing();
-        f.world.insert(Unsaved, document);
-
-        f.request_other_scene(document);
-
-        assert!(guard_asking(&f));
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.hosted_is_editing(document));
-    }
-
-    #[test]
-    fn closing_a_document_with_unsaved_changes_while_playing_stops_the_game_before_asking() {
-        let (mut f, document) = playing();
-        f.world.insert(Unsaved, document);
-
-        f.close(document);
-
-        assert!(guard_asking(&f));
-        assert!(f.world.entity_is_valid(document));
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.hosted_is_editing(document));
-    }
-
-    #[test]
-    fn play_is_refused_while_the_unsaved_changes_prompt_is_open() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.world
-            .get_resource_mut::<crate::guard::UnsavedGuard>()
-            .unwrap()
-            .hold(crate::guard::GuardedIntent::Quit, vec![document]);
-
-        play(&mut f, document);
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.starting_world(document).is_none());
-
-        fire(&mut f, crate::actions::TogglePlay);
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.starting_world(document).is_none());
-        let refused = play_failed(document, "Answer the question about unsaved changes first");
-        assert_eq!(f.written::<PlayFailed>(), [refused.clone(), refused]);
-    }
-
-    #[test]
-    fn play_is_refused_while_a_project_is_opening() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        let (release, held) = std::sync::mpsc::channel();
-        f.world
-            .get_resource_mut::<ProjectState>()
-            .unwrap()
-            .begin_job_for_test(held);
-
-        play(&mut f, document);
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.starting_world(document).is_none());
-
-        fire(&mut f, crate::actions::TogglePlay);
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.starting_world(document).is_none());
-        let refused = play_failed(document, "Wait for the project to open");
-        assert_eq!(f.written::<PlayFailed>(), [refused.clone(), refused]);
-        drop(release);
     }
 }

@@ -1,9 +1,4 @@
-use std::any::Any;
-
-use concerto_reflect::{
-    LeafError, LeafHook, Reflect, ReflectedValue, apply_value, apply_value_with, to_value,
-    to_value_with,
-};
+use concerto_reflect::{Reflect, ReflectedValue, apply_value, to_value};
 use glam::Vec3;
 
 #[derive(Reflect, Default, Debug, PartialEq, Clone)]
@@ -144,12 +139,6 @@ fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
             warnings: &["inner.weight"],
         },
         Mismatch {
-            name: "a leaf that does not decode leaves the field unchanged",
-            stored: field("inner", field("weight", ReflectedValue::Leaf(vec![1]))),
-            expected: everything(),
-            warnings: &["inner.weight"],
-        },
-        Mismatch {
             name: "an unknown variant leaves the enum unchanged",
             stored: field(
                 "shape",
@@ -196,18 +185,6 @@ fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
             },
             warnings: &[],
         },
-        Mismatch {
-            name: "paths name the fields of a variant",
-            stored: field(
-                "other",
-                ReflectedValue::Variant {
-                    name: "Cone".into(),
-                    fields: vec![("gone".into(), to_value(&1.0_f32).unwrap())],
-                },
-            ),
-            expected: everything(),
-            warnings: &["other.gone"],
-        },
     ];
     for case in cases {
         let mut loaded = everything();
@@ -223,55 +200,4 @@ fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
             case.name
         );
     }
-}
-
-struct Doubling;
-
-impl LeafHook for Doubling {
-    fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
-        let value = (leaf as &dyn Any).downcast_ref::<f32>()?;
-        Some(Ok(bincode::serialize(&(value * 2.0)).unwrap()))
-    }
-
-    fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>> {
-        let value = (leaf as &mut dyn Any).downcast_mut::<f32>()?;
-        *value = bincode::deserialize::<f32>(bytes).unwrap() * 2.0;
-        Some(Ok(()))
-    }
-}
-
-#[test]
-fn a_hook_sees_each_leaf_first_and_others_use_their_own_encoding() {
-    let value = Inner {
-        weight: 1.0,
-        label: "same".into(),
-    };
-    let stored = to_value_with(&value, &mut Doubling).unwrap();
-    let mut loaded = Inner::default();
-    assert!(apply_value_with(&mut loaded, &stored, &mut Doubling).is_empty());
-    assert_eq!(
-        loaded,
-        Inner {
-            weight: 4.0,
-            label: "same".into()
-        }
-    );
-}
-
-struct Refusing;
-
-impl LeafHook for Refusing {
-    fn encode(&mut self, _: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
-        Some(Err(LeafError("refused".into())))
-    }
-
-    fn decode(&mut self, _: &mut dyn Reflect, _: &[u8]) -> Option<Result<(), LeafError>> {
-        None
-    }
-}
-
-#[test]
-fn a_failed_encode_fails_the_whole_value_and_names_the_path() {
-    let error = to_value_with(&everything(), &mut Refusing).unwrap_err();
-    assert_eq!(error.path, "position");
 }

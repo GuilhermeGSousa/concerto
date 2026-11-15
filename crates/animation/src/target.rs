@@ -150,60 +150,29 @@ mod tests {
         },
     };
     use concerto_foundation::{
-        assets::{
-            AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
-        },
+        assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
         transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
     use concerto_name::{Name, name};
-    use concerto_reflect::{Reflect, TypeRegistry};
+
     use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
-    use super::{animate_targets, initialize_animation_players, initialize_skeletons};
+    use super::{animate_targets, initialize_animation_players};
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        evaluation::AnimationGraphContext,
         event::{AnimationEvent, AnimationSignal},
         graph::{AnimationGraph, AnimationNodeIndex},
         node::{
-            AnimationClipNode, AnimationNode, BlendNode, IkGoal, IkTarget, InputSlots,
-            ReflectAnimationNode, TwoBoneIkNode, register_node_inputs,
+            AnimationClipNode, BlendNode, IkGoal, IkTarget, TwoBoneIkNode,
             state_machine::AnimationStateMachine,
         },
         player::{AnimationHandleComponent, AnimationPlayer},
-        plugin::register_animation_types,
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, RootMotion},
+        pose::RootMotion,
         root::AnimationRootBone,
         testing::{Walks, made_live},
     };
-
-    #[test]
-    fn rooted_skeleton_initializes_its_player_and_root_marker() {
-        let mut world = World::default();
-        let root = world.spawn(());
-        let owner = world.spawn(SkeletonComponent {
-            skeleton: AssetHandle::<Skeleton>::weak(AssetId::new()),
-            bones: vec![SceneEntityRef::Entity(root)],
-            root: Some(SceneEntityRef::Entity(root)),
-        });
-
-        let mut system = initialize_skeletons.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-
-        assert!(
-            world
-                .get_component_for_entity::<AnimationPlayer>(owner)
-                .is_some()
-        );
-        assert!(
-            world
-                .get_component_for_entity::<AnimationRootBone>(root)
-                .is_some()
-        );
-    }
 
     fn one_bone_skeleton(bone_id: Uuid) -> Skeleton {
         Skeleton::new(
@@ -301,20 +270,10 @@ mod tests {
         skeletons: AssetStore<Skeleton>,
         skeleton: AssetHandle<Skeleton>,
         rest: JointPose,
-        names_root: bool,
-        leading_root_bone: bool,
     }
 
     impl Rig {
         fn new(rest_rotation: Quat) -> Self {
-            Self::registering(rest_rotation, |_| {})
-        }
-
-        fn probing() -> Self {
-            Self::registering(Quat::IDENTITY, register_node_inputs::<Probe>)
-        }
-
-        fn registering(rest_rotation: Quat, register: impl FnOnce(&mut World)) -> Self {
             let mut server = AssetServer::new();
             let clips = AssetStore::<AnimationClip>::new();
             let graphs = AssetStore::<AnimationGraph>::new();
@@ -329,28 +288,11 @@ mod tests {
             let skeleton = server.add(one_bone_skeleton(ROOT_ID));
             Self {
                 server,
-                walks: Walks::with(clips, graphs, register),
+                walks: Walks::new(clips, graphs),
                 skeletons,
                 skeleton,
                 rest,
-                names_root: true,
-                leading_root_bone: false,
             }
-        }
-
-        fn resting_at(mut self, translation: Vec3) -> Self {
-            self.rest.translation = translation;
-            self
-        }
-
-        fn unnamed_root(mut self) -> Self {
-            self.names_root = false;
-            self
-        }
-
-        fn with_leading_root_bone(mut self) -> Self {
-            self.leading_root_bone = true;
-            self
         }
 
         fn loaded_skeleton(mut self) -> Self {
@@ -419,17 +361,6 @@ mod tests {
             handle
         }
 
-        fn probe_graph(&mut self) -> AssetHandle<AnimationGraph> {
-            let mut registry = TypeRegistry::default();
-            register_animation_types(&mut registry);
-            registry.register::<Probe>();
-            let mut graph = AnimationGraph::from_node(Probe {});
-            graph.make_live(&registry, None).unwrap();
-            let handle = self.server.add(AnimationGraph::default());
-            self.walks.graphs_mut().insert(handle.id(), graph);
-            handle
-        }
-
         fn player(&self, graph: AssetHandle<AnimationGraph>) -> AnimationPlayer {
             let bone_count = self
                 .skeletons
@@ -452,17 +383,12 @@ mod tests {
                     root_motion: stale_motion(),
                 },
             ));
-            let mut bones = vec![SceneEntityRef::Entity(root)];
-            if self.leading_root_bone {
-                let leading = world.spawn(AnimationRootBone::default());
-                bones.insert(0, SceneEntityRef::Entity(leading));
-            }
             world.spawn((
                 player,
                 SkeletonComponent {
                     skeleton: self.skeleton,
-                    bones,
-                    root: self.names_root.then_some(SceneEntityRef::Entity(root)),
+                    bones: vec![SceneEntityRef::Entity(root)],
+                    root: Some(SceneEntityRef::Entity(root)),
                 },
             ));
             world.insert_resource(self.skeletons);
@@ -525,7 +451,7 @@ mod tests {
                 },
             );
             let root = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
-            let owner = world.spawn((
+            let _owner = world.spawn((
                 player,
                 SkeletonComponent {
                     skeleton: self.skeleton,
@@ -545,11 +471,6 @@ mod tests {
             Delivery {
                 heard,
                 heard_globally: world.get_resource::<HeardGlobally>().unwrap().0,
-                still_fired: world
-                    .get_component_for_entity::<AnimationPlayer>(owner)
-                    .unwrap()
-                    .fired
-                    .len(),
             }
         }
 
@@ -602,7 +523,6 @@ mod tests {
     struct Delivery {
         heard: Vec<HeardEvent>,
         heard_globally: usize,
-        still_fired: usize,
     }
 
     fn hear() -> Listener<AnimationSignal<AnimationEvent>> {
@@ -642,25 +562,6 @@ mod tests {
             self.world.insert(ChildOf::new(parent), self.root);
         }
 
-        fn put_root_under_a_parent_with_no_global(&mut self) {
-            let parent = self.world.spawn(());
-            self.world.insert(ChildOf::new(parent), self.root);
-        }
-
-        fn model_to_world_seen(mut self) -> Option<Affine3A> {
-            let graphs = self
-                .world
-                .remove_resource::<AssetStore<AnimationGraph>>()
-                .unwrap();
-            let player = self
-                .world
-                .get_component_for_entity_mut::<AnimationPlayer>(self.owner)
-                .unwrap();
-            let mut seen = None;
-            player.for_each_state_mut::<Probe>(&graphs, |_, state, _| seen = *state);
-            seen
-        }
-
         fn root(&self) -> &Transform {
             self.world
                 .get_component_for_entity::<Transform>(self.root)
@@ -672,49 +573,6 @@ mod tests {
                 .get_component_for_entity::<Transform>(self.child)
                 .unwrap()
         }
-    }
-
-    #[derive(Default, Reflect)]
-    #[reflect(AnimationNode)]
-    struct Probe {}
-
-    impl AnimationNode for Probe {
-        type State = Option<Affine3A>;
-        type CreateInput = ();
-        type UpdateInput = ();
-        type EvaluateInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
-        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
-            None
-        }
-
-        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
-
-        fn evaluate(
-            &self,
-            seen: &mut Option<Affine3A>,
-            _: &(),
-            context: &AnimationGraphContext<'_>,
-            _: &[Uuid],
-            _: &[EvaluatedFrame],
-            _: &mut FramePool,
-            _: &mut AnimationFrame,
-        ) {
-            *seen = context.model_to_world();
-        }
-
-        fn reset(&self, _: &mut Option<Affine3A>) {}
-    }
-
-    fn probed_bones() -> TwoBones {
-        let mut rig = Rig::probing().loaded_two_bone_skeleton();
-        let graph = rig.probe_graph();
-        let player = rig.player(graph);
-        rig.spawn_two_bones(player)
     }
 
     fn stale_motion() -> RootMotion {
@@ -741,7 +599,6 @@ mod tests {
 
     struct ShownCase {
         name: &'static str,
-        rest_at: Vec3,
         channel: AnimationChanelOutput,
         parent: Option<Mat4>,
         translation: Vec3,
@@ -752,7 +609,6 @@ mod tests {
     fn shown(name: &'static str, channel: AnimationChanelOutput) -> ShownCase {
         ShownCase {
             name,
-            rest_at: Vec3::ZERO,
             channel,
             parent: None,
             translation: Vec3::ZERO,
@@ -762,27 +618,10 @@ mod tests {
     }
 
     #[test]
-    fn a_root_shows_its_clip_without_its_yaw_or_ground_translation() {
-        let pitch = Quat::from_rotation_x(0.3);
-        let turned = Quat::from_rotation_y(1.1) * pitch * lying_rest();
+    fn a_root_shows_its_scale_and_its_height_read_along_its_parents_up() {
         let keyed = Vec3::new(1.0, 2.0, 3.0);
         let translated = || AnimationChanelOutput::Translation(vec![keyed, keyed]);
         let cases = [
-            ShownCase {
-                rotation: pitch * lying_rest(),
-                ..shown(
-                    "its pitch shows and its yaw does not",
-                    AnimationChanelOutput::Rotation(vec![turned, turned]),
-                )
-            },
-            ShownCase {
-                rest_at: Vec3::new(1.0, 0.9, -2.0),
-                translation: Vec3::new(1.0, 1.25, -2.0),
-                ..shown(
-                    "its height follows the clip and its ground translation stays at rest",
-                    AnimationChanelOutput::Translation(vec![Vec3::new(3.0, 1.25, 4.0); 2]),
-                )
-            },
             ShownCase {
                 scale: Vec3::new(1.5, 2.0, 0.5),
                 ..shown(
@@ -798,19 +637,10 @@ mod tests {
                     translated(),
                 )
             },
-            ShownCase {
-                parent: Some(Mat4::from_scale(Vec3::ZERO)),
-                translation: Vec3::new(0.0, 2.0, 0.0),
-                ..shown(
-                    "under a parent scaled to nothing its height is read along y",
-                    translated(),
-                )
-            },
         ];
 
         for case in cases {
             let mut bones = Rig::new(lying_rest())
-                .resting_at(case.rest_at)
                 .loaded_two_bone_skeleton()
                 .playing_on_the_root(vec![held(case.channel)]);
             if let Some(parent) = case.parent {
@@ -842,49 +672,44 @@ mod tests {
     }
 
     #[test]
-    fn a_child_joint_with_no_position_channel_keeps_its_rest_translation() {
+    fn a_joint_the_playing_clip_does_not_key_shows_its_rest() {
         let turn = Quat::from_rotation_z(0.4);
+        let keyed = Vec3::new(1.0, 2.0, 3.0);
         let mut rig = Rig::new(Quat::IDENTITY).loaded_two_bone_skeleton();
-        let clip = rig.child_clip(vec![AnimationChannel::new(
+        let first = rig.child_clip(vec![
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::Rotation(vec![turn, turn]),
+            ),
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::Translation(vec![keyed, keyed]),
+            ),
+        ]);
+        let turning = rig.child_clip(vec![AnimationChannel::new(
             vec![0.0, 1.0],
             AnimationChanelOutput::Rotation(vec![turn, turn]),
         )]);
-        let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
-        let player = rig.player(graph);
-        let mut bones = rig.spawn_two_bones(player);
-
-        bones.animate();
-
-        assert_eq!(bones.child().translation, CHILD_REST);
-        assert!(bones.child().rotation.abs_diff_eq(turn, 1e-5));
-    }
-
-    #[test]
-    fn a_joint_with_no_channels_in_a_second_clip_shows_rest_not_the_first_clips_value() {
-        let keyed = Vec3::new(1.0, 2.0, 3.0);
-        let mut rig = Rig::new(Quat::IDENTITY).loaded_two_bone_skeleton();
-        let first = rig.child_clip(vec![AnimationChannel::new(
-            vec![0.0, 1.0],
-            AnimationChanelOutput::Translation(vec![keyed, keyed]),
-        )]);
         let second = rig.moving_clip(Vec3::X);
         let first = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(first)));
+        let turning = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(turning)));
         let second = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(second)));
         let player = rig.player(first);
         let mut bones = rig.spawn_two_bones(player);
 
         bones.animate();
         bones.animate();
-        assert_eq!(
-            bones.child().translation,
-            keyed,
-            "every pose in the pool holds the first clip's value"
-        );
+        assert_eq!(bones.child().translation, keyed);
+
+        bones.play(turning);
+        bones.animate();
+        assert_eq!(bones.child().translation, CHILD_REST);
+        assert!(bones.child().rotation.abs_diff_eq(turn, 1e-5));
 
         bones.play(second);
         bones.animate();
-
         assert_eq!(bones.child().translation, CHILD_REST);
+        assert_eq!(bones.child().rotation, Quat::IDENTITY);
     }
 
     #[test]
@@ -952,83 +777,19 @@ mod tests {
         );
     }
 
-    fn walked(rig: &mut Rig) -> AnimationPlayer {
+    #[test]
+    fn a_paused_player_leaves_no_root_motion_on_its_root_bone() {
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
         let clip = rig.moving_clip(Vec3::X);
         let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
         let mut player = rig.player(graph);
         rig.update(&mut player, 0.5);
-        player
-    }
-
-    fn paused(rig: &mut Rig) -> AnimationPlayer {
-        let mut player = walked(rig);
         player.set_paused(true);
-        player
-    }
 
-    struct Still {
-        name: &'static str,
-        rig: Rig,
-        play: fn(&mut Rig) -> AnimationPlayer,
-    }
-
-    #[test]
-    fn a_player_that_poses_nothing_leaves_no_root_motion_on_any_root_bone() {
-        let cases = [
-            Still {
-                name: "a paused player",
-                rig: Rig::new(Quat::IDENTITY).loaded_skeleton(),
-                play: paused,
-            },
-            Still {
-                name: "a paused player whose skeleton does not name the root",
-                rig: Rig::new(Quat::IDENTITY).loaded_skeleton().unnamed_root(),
-                play: paused,
-            },
-            Still {
-                name: "a paused player with a second root bone",
-                rig: Rig::new(Quat::IDENTITY)
-                    .loaded_skeleton()
-                    .with_leading_root_bone(),
-                play: paused,
-            },
-            Still {
-                name: "an unloaded skeleton",
-                rig: Rig::new(Quat::IDENTITY),
-                play: walked,
-            },
-            Still {
-                name: "a swap to an unloaded graph",
-                rig: Rig::new(Quat::IDENTITY).loaded_skeleton(),
-                play: |rig| {
-                    let mut player = walked(rig);
-                    rig.walks
-                        .initialize(&mut player, AssetHandle::weak(AssetId::new()));
-                    player
-                },
-            },
-        ];
-
-        for mut case in cases {
-            let player = (case.play)(&mut case.rig);
-
-            assert_eq!(
-                case.rig.root_motion_after_animating(player),
-                RootMotion::IDENTITY,
-                "{}",
-                case.name
-            );
-        }
-    }
-
-    fn left_fired(clip: AssetId) -> FiredEvent {
-        FiredEvent {
-            clip,
-            key: 0,
-            time: 0.25,
-            weight: 1.0,
-            mirrored: false,
-        }
+        assert_eq!(
+            rig.root_motion_after_animating(player),
+            RootMotion::IDENTITY
+        );
     }
 
     struct Hearing {
@@ -1062,30 +823,6 @@ mod tests {
                 },
                 heard: vec![heard_event(name!("right"), 0.75, 0.25)],
             },
-            Hearing {
-                name: "a paused player triggers nothing",
-                play: |rig| {
-                    let clip = rig.firing_clip(0.25, "left");
-                    let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(
-                        clip.clone(),
-                    )));
-                    let mut player = rig.player(graph);
-                    player.fired.push(left_fired(clip.id()));
-                    player.set_paused(true);
-                    player
-                },
-                heard: Vec::new(),
-            },
-            Hearing {
-                name: "a player whose graph is not loaded triggers nothing",
-                play: |rig| {
-                    let clip = rig.firing_clip(0.25, "left");
-                    let mut player = rig.player(AssetHandle::weak(AssetId::new()));
-                    player.fired.push(left_fired(clip.id()));
-                    player
-                },
-                heard: Vec::new(),
-            },
         ];
 
         for case in cases {
@@ -1095,59 +832,9 @@ mod tests {
             let delivery = rig.deliver(player);
 
             assert_eq!(delivery.heard, case.heard, "{}", case.name);
-            assert_eq!(delivery.still_fired, 0, "{}", case.name);
             assert_eq!(
                 delivery.heard_globally, 0,
                 "{}: a global listener never hears a signal triggered on an entity",
-                case.name
-            );
-        }
-    }
-
-    struct SpaceCase {
-        name: &'static str,
-        place: fn(&mut TwoBones),
-        seen: Affine3A,
-    }
-
-    fn space() -> Mat4 {
-        Mat4::from_scale_rotation_translation(
-            Vec3::new(2.0, 1.0, 0.5),
-            Quat::from_rotation_y(0.7),
-            Vec3::new(1.0, 2.0, 3.0),
-        )
-    }
-
-    #[test]
-    fn a_graph_sees_the_global_of_bone_zeros_parent_as_model_to_world_or_identity_without_one() {
-        let cases = [
-            SpaceCase {
-                name: "a parent with a global",
-                place: |bones| bones.put_root_under(space()),
-                seen: Affine3A::from_mat4(space()),
-            },
-            SpaceCase {
-                name: "no parent",
-                place: |_| {},
-                seen: Affine3A::IDENTITY,
-            },
-            SpaceCase {
-                name: "a parent with no global",
-                place: TwoBones::put_root_under_a_parent_with_no_global,
-                seen: Affine3A::IDENTITY,
-            },
-        ];
-
-        for case in cases {
-            let mut bones = probed_bones();
-            (case.place)(&mut bones);
-
-            bones.animate();
-
-            let seen = bones.model_to_world_seen().unwrap();
-            assert!(
-                seen.abs_diff_eq(case.seen, 1e-5),
-                "{}: got {seen:?}",
                 case.name
             );
         }

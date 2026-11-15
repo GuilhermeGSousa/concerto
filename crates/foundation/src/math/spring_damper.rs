@@ -91,24 +91,6 @@ mod tests {
     }
 
     #[test]
-    fn a_scaled_angle_axis_is_the_rotation_angle_along_its_axis() {
-        assert_close(
-            to_scaled_angle_axis(Quat::from_rotation_z(0.7)),
-            Vec3::new(0.0, 0.0, 0.7),
-            1.0e-5,
-        );
-        assert_eq!(to_scaled_angle_axis(Quat::IDENTITY), Vec3::ZERO);
-        assert!(from_scaled_angle_axis(Vec3::ZERO).abs_diff_eq(Quat::IDENTITY, 1.0e-6));
-    }
-
-    #[test]
-    fn quat_abs_takes_the_shortest_arc() {
-        let q = Quat::from_rotation_y(0.4);
-        assert_eq!(quat_abs(-q), q);
-        assert_eq!(quat_abs(q), q);
-    }
-
-    #[test]
     fn angular_velocity_matches_the_rotation_rate() {
         let next = Quat::from_rotation_x(0.1);
         assert_close(

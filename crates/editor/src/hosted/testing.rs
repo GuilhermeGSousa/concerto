@@ -84,10 +84,20 @@ fn count_frame(mut frames: ResMut<Frames>) {
 }
 
 #[derive(Resource, Default)]
-pub struct Said(pub Vec<(u32, usize)>);
+pub struct Said(pub Vec<Heard>);
+
+/// A `Say` value and the number of frames its `App` had run when it arrived.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Heard {
+    pub value: u32,
+    pub at_frame: usize,
+}
 
 pub fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
-    said.0.push((on.signal().0, frames.0));
+    said.0.push(Heard {
+        value: on.signal().0,
+        at_frame: frames.0,
+    });
 }
 
 fn previewed_build(app: &mut App) {
@@ -165,13 +175,6 @@ pub fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     }
 }
 
-pub fn preview_request(recipe: fn(&mut App)) -> HostRequest<'static> {
-    HostRequest {
-        role: HostRole::Preview,
-        ..request(recipe)
-    }
-}
-
 pub fn start_play(
     world: &mut World,
     document: Entity,
@@ -212,19 +215,18 @@ pub fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> HostedA
         .expect("a recipe without asynchronous plugins is ready at once")
 }
 
-pub fn preview_now(recipe: fn(&mut App)) -> HostedApp {
-    super::begin(preview_request(recipe), |_| {}, |_| {})
-        .finish_now()
-        .expect("a recipe without asynchronous plugins is ready at once")
-}
-
 fn insert_play_outcomes(world: &mut World) {
     world.insert_resource(EventChannel::<PlayStarted>::new());
     world.insert_resource(EventChannel::<PlayFailed>::new());
     world.insert_resource(EventChannel::<PlayStopped>::new());
 }
 
-pub fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
+pub struct HostWorld {
+    pub world: World,
+    pub document: Entity,
+}
+
+pub fn host_world(recipe: fn(&mut App)) -> HostWorld {
     let mut world = World::new();
     world.insert_resource(ActiveEditor::default());
     world.insert_resource(Routing::default());
@@ -233,7 +235,7 @@ pub fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
     let document = world.spawn(hosted_now(recipe, |_| {}));
     world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
     world.trigger(SetEditTarget(Some(document)));
-    (world, document)
+    HostWorld { world, document }
 }
 
 pub fn scene_recipe(app: &mut App) {
@@ -252,22 +254,8 @@ fn note_game_ran(mut ran: ResMut<GameRan>) {
     ran.0 = true;
 }
 
-#[derive(Resource)]
-struct HoldReady;
-
-struct ReadyUnlessHeld;
-
-impl concerto_app::Plugin for ReadyUnlessHeld {
-    fn build(&self, _: &mut App) {}
-
-    fn ready(&self, app: &App) -> bool {
-        app.get_resource::<HoldReady>().is_none()
-    }
-}
-
 fn fixture_recipe(app: &mut App) {
     scene_recipe(app);
-    app.register_plugin(ReadyUnlessHeld);
     app.insert_resource(Frames::default())
         .insert_resource(GameRan::default())
         .add_system(Update, note_game_ran)
@@ -580,54 +568,6 @@ impl SceneFixture {
                 .all(|(document, state)| document.pending.is_none() && state.idle())
     }
 
-    pub fn frames_until_building(&mut self, document: Entity) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while self
-            .world
-            .get_component_for_entity::<PendingApp>(document)
-            .is_none()
-        {
-            self.frame();
-            assert!(Instant::now() < deadline, "nothing was built");
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        self.world
-            .get_component_for_entity_mut::<PendingApp>(document)
-            .and_then(|pending| pending.building_mut())
-            .expect("the build is held before it is first asked if it is ready")
-            .app
-            .insert_resource(HoldReady);
-    }
-
-    pub fn wait_until_the_build_is_ready(&mut self, document: Entity) {
-        if let Some(hosted) = self
-            .world
-            .get_component_for_entity_mut::<PendingApp>(document)
-            .and_then(|pending| pending.building_mut())
-        {
-            hosted
-                .app
-                .main_mut()
-                .world_mut()
-                .remove_resource::<HoldReady>();
-        }
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            let ready = self
-                .world
-                .get_component_for_entity_mut::<PendingApp>(document)
-                .and_then(|pending| pending.building_mut())
-                .is_some_and(|hosted| {
-                    hosted.app.plugin_state() == concerto_app::plugins::PluginsState::Ready
-                });
-            if ready {
-                return;
-            }
-            assert!(Instant::now() < deadline, "the build never became ready");
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-
     pub fn add_scene(&mut self, name: &str) -> AssetEntry {
         let asset = scene_entry(name);
         write_scene_file(&self.project_root, &asset, &[name]);
@@ -881,41 +821,4 @@ impl concerto_foundation::assets::Asset for GatedAsset {
     }
 }
 
-pub static ENTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub static RELEASED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub static GATED_DROPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-pub fn lock_gate() -> std::sync::MutexGuard<'static, ()> {
-    let guard = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    ENTERED.store(false, std::sync::atomic::Ordering::SeqCst);
-    RELEASED.store(false, std::sync::atomic::Ordering::SeqCst);
-    guard
-}
-
-pub fn wait_for(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !done() {
-        assert!(Instant::now() < deadline, "{what}");
-        std::thread::yield_now();
-    }
-}
-
-impl concerto_foundation::assets::LoadableAsset for GatedAsset {
-    fn on_load(
-        &mut self,
-        _: &concerto_foundation::assets::asset_server::AssetLoadContext,
-    ) -> anyhow::Result<()> {
-        ENTERED.store(true, std::sync::atomic::Ordering::SeqCst);
-        wait_for("the test never released the load", || {
-            RELEASED.load(std::sync::atomic::Ordering::SeqCst)
-        });
-        Ok(())
-    }
-}
-
-impl Drop for GatedAsset {
-    fn drop(&mut self) {
-        GATED_DROPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
+impl concerto_foundation::assets::LoadableAsset for GatedAsset {}

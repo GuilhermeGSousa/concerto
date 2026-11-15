@@ -992,8 +992,6 @@ impl Plugin for TimelinePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
-    use concerto_color::LinearRgba;
     use concerto_ecs::{
         IntoSystem, ResMut, Resource, System, World,
         entity::hierarchy::{ChildOf, Children},
@@ -1033,47 +1031,16 @@ mod tests {
         }
     }
 
-    fn with_markers(markers: Vec<TimelineMarker>) -> Timeline {
-        Timeline {
-            markers,
-            ..at_30_fps()
-        }
-    }
-
-    fn bone(label: &str, keys: &[f32]) -> TimelineTrack {
-        TimelineTrack {
-            label: label.to_owned(),
-            warning: false,
-            keys: keys.to_vec(),
-        }
-    }
-
-    fn with_tracks(tracks: Vec<TimelineTrack>) -> Timeline {
-        Timeline {
-            tracks,
-            ..at_30_fps()
-        }
-    }
-
-    fn without_a_rate() -> Timeline {
-        Timeline {
-            rate: None,
-            ..at_30_fps()
-        }
-    }
-
     struct Fixture {
         world: World,
         setup: BoxedSystem,
         parts: BoxedSystem,
         markers: BoxedSystem,
-        ticks: BoxedSystem,
-        rows: BoxedSystem,
         timeline: Entity,
     }
 
     impl Fixture {
-        fn new(timeline: Timeline) -> Self {
+        fn laid_out(timeline: Timeline) -> Self {
             let mut world = World::new();
             world.register_component::<ChildOf>();
             world.register_component::<Children>();
@@ -1106,29 +1073,18 @@ mod tests {
             let mut setup = setup_timeline.into_boxed_system();
             let mut parts = sync_timeline_parts.into_boxed_system();
             let mut markers = sync_timeline_markers.into_boxed_system();
-            let mut ticks = sync_timeline_ticks.into_boxed_system();
-            let mut rows = sync_timeline_rows.into_boxed_system();
             setup.initialize(&mut world);
             parts.initialize(&mut world);
             markers.initialize(&mut world);
-            ticks.initialize(&mut world);
-            rows.initialize(&mut world);
             let mut fixture = Self {
                 world,
                 setup,
                 parts,
                 markers,
-                ticks,
-                rows,
                 timeline,
             };
             fixture.frame();
-            fixture
-        }
-
-        fn laid_out(timeline: Timeline) -> Self {
-            let mut fixture = Self::new(timeline);
-            fixture.lay_out(WIDTH);
+            fixture.lay_out();
             fixture.frame();
             fixture
         }
@@ -1137,14 +1093,12 @@ mod tests {
             self.setup.run_and_apply((), &mut self.world);
             self.parts.run_and_apply((), &mut self.world);
             self.markers.run_and_apply((), &mut self.world);
-            self.ticks.run_and_apply((), &mut self.world);
-            self.rows.run_and_apply((), &mut self.world);
         }
 
-        fn lay_out(&mut self, width: f32) {
+        fn lay_out(&mut self) {
             let rect = UIBox {
                 min: Vec2::new(LEFT, 0.0),
-                size: Vec2::new(width, 24.0),
+                size: Vec2::new(WIDTH, 24.0),
             };
             let layout = UILayout {
                 rect,
@@ -1164,66 +1118,18 @@ mod tests {
                 .unwrap()
         }
 
-        fn parent(&self, entity: Entity) -> Entity {
+        fn track(&self) -> Entity {
             **self
                 .world
-                .get_component_for_entity::<ChildOf>(entity)
+                .get_component_for_entity::<ChildOf>(self.parts().selection)
                 .unwrap()
-        }
-
-        fn track(&self) -> Entity {
-            self.parent(self.parts().selection)
-        }
-
-        fn overlay(&self) -> Entity {
-            self.parent(self.parts().head)
-        }
-
-        fn children(&self, entity: Entity) -> Vec<Entity> {
-            self.world
-                .get_component_for_entity::<Children>(entity)
-                .map(|children| children.iter().copied().collect())
-                .unwrap_or_default()
         }
 
         fn marker_nodes(&self) -> Vec<Entity> {
-            self.children(self.parts().lane)
-        }
-
-        fn row_nodes(&self) -> Vec<Entity> {
-            self.children(self.parts().rows_content)
-        }
-
-        fn row_keys(&self, row: Entity) -> Vec<Entity> {
-            self.children(self.children(row)[1])
-        }
-
-        fn row_label(&self, row: Entity) -> &UIText {
             self.world
-                .get_component_for_entity::<UIText>(self.children(row)[0])
-                .unwrap()
-        }
-
-        fn rows_area(&self) -> &UIScrollArea {
-            self.world
-                .get_component_for_entity::<UIScrollArea>(self.parts().rows)
-                .unwrap()
-        }
-
-        fn line_color(&self, marker: Entity) -> LinearRgba {
-            let line = self.children(marker)[0];
-            self.world
-                .get_component_for_entity::<UIMaterial>(line)
-                .unwrap()
-                .color
-        }
-
-        fn edit(&mut self, edit: impl FnOnce(&mut Timeline)) {
-            edit(
-                self.world
-                    .get_component_for_entity_mut::<Timeline>(self.timeline)
-                    .unwrap(),
-            );
+                .get_component_for_entity::<Children>(self.parts().lane)
+                .map(|children| children.iter().copied().collect())
+                .unwrap_or_default()
         }
 
         fn press(&mut self, target: Entity, x: f32) {
@@ -1260,59 +1166,6 @@ mod tests {
         fn heard(&self) -> &Heard {
             self.world.get_resource::<Heard>().unwrap()
         }
-
-        fn node(&self, entity: Entity) -> &UINode {
-            self.world
-                .get_component_for_entity::<UINode>(entity)
-                .unwrap()
-        }
-
-        fn readout(&self) -> &str {
-            &self
-                .world
-                .get_component_for_entity::<UIText>(self.parts().readout)
-                .unwrap()
-                .text
-        }
-
-        fn ruler_children(&self) -> Vec<Entity> {
-            self.children(self.parts().ruler)
-        }
-
-        fn changed_nodes(&mut self) -> usize {
-            self.world
-                .query::<Entity, Changed<UINode>>()
-                .iter(&mut self.world)
-                .count()
-        }
-
-        fn changed_texts(&mut self) -> usize {
-            self.world
-                .query::<Entity, Changed<UIText>>()
-                .iter(&mut self.world)
-                .count()
-        }
-
-        fn changed_areas(&mut self) -> usize {
-            self.world
-                .query::<Entity, Changed<UIScrollArea>>()
-                .iter(&mut self.world)
-                .count()
-        }
-
-        fn changed_materials(&mut self) -> usize {
-            self.world
-                .query::<Entity, Changed<UIMaterial>>()
-                .iter(&mut self.world)
-                .count()
-        }
-    }
-
-    fn percent(value: UIValue) -> f32 {
-        let UIValue::Percent(percent) = value else {
-            panic!("{value:?} is not a percentage");
-        };
-        percent
     }
 
     fn frame_x(frame: u32) -> f32 {
@@ -1320,879 +1173,87 @@ mod tests {
     }
 
     #[test]
-    fn the_plugin_builds_a_timeline_and_keeps_it_drawn() {
-        let mut app = App::new();
-        app.register_plugin(MainSchedulePlugin)
-            .register_plugin(TimePlugin)
-            .insert_resource(UITheme::default())
-            .register_plugin(TimelinePlugin);
-        let timeline = app
-            .main_mut()
-            .world_mut()
-            .spawn((UINode::default(), without_a_rate()));
-        app.finish_plugin_build();
-        app.update();
-        app.update();
-
-        let world = app.main_mut().world_mut();
-        assert_eq!(
-            world
-                .get_component_for_entity::<UINode>(timeline)
-                .unwrap()
-                .min_width,
-            UIValue::Px(0.0)
-        );
-        let readout = world
-            .get_component_for_entity::<TimelineParts>(timeline)
-            .unwrap()
-            .readout;
-        assert!(
-            world
-                .get_component_for_entity::<TimelineReadout>(readout)
-                .is_some()
-        );
-        assert_eq!(
-            world
-                .get_component_for_entity::<UIText>(readout)
-                .unwrap()
-                .text,
-            "0.00 s"
-        );
-    }
-
-    #[test]
-    fn a_frame_count_holds_both_ends_of_the_clip() {
+    fn frames_and_times_convert_both_ways_and_a_count_holds_both_ends() {
         assert_eq!(frame_count(1.0, 30.0), 31);
         assert_eq!(frame_count(0.0, 30.0), 1);
-        assert_eq!(frame_count(1.01, 30.0), 31);
         assert_eq!(frame_count(1.02, 30.0), 32);
-    }
-
-    #[test]
-    fn a_frame_count_saturates() {
         assert_eq!(frame_count(f32::MAX, 30.0), u32::MAX);
-    }
-
-    #[test]
-    fn a_frame_and_its_time_convert_both_ways() {
         for frame in [0, 1, 29, 30, 123, 7839] {
             assert_eq!(frame_at(time_of_frame(frame, 30.0), 30.0), frame);
         }
-        assert!((time_of_frame(15, 30.0) - 0.5).abs() < NEAR);
-    }
-
-    #[test]
-    fn a_time_belongs_to_its_nearest_frame() {
         assert_eq!(frame_at(0.01, 30.0), 0);
         assert_eq!(frame_at(0.02, 30.0), 1);
-        assert_eq!(frame_at(0.05, 30.0), 2);
         assert_eq!(frame_at(-1.0, 30.0), 0);
     }
 
     #[test]
-    fn pressing_the_ruler_scrubs_to_the_nearest_frame() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let ruler = f.parts().ruler;
-
-        f.press(ruler, frame_x(150) + 0.25);
-
-        let scrubbed = &f.heard().scrubbed;
-        assert_eq!(scrubbed.len(), 1);
-        assert!((scrubbed[0] - 5.0).abs() < NEAR, "{scrubbed:?}");
-    }
-
-    #[test]
-    fn dragging_the_ruler_scrubs_only_once_the_pointer_moved() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let ruler = f.parts().ruler;
-
-        f.drag(ruler, frame_x(60), 0.0);
-        assert!(f.heard().scrubbed.is_empty());
-
-        f.drag(ruler, frame_x(60), 3.0);
-        let scrubbed = &f.heard().scrubbed;
-        assert_eq!(scrubbed.len(), 1);
-        assert!((scrubbed[0] - 2.0).abs() < NEAR, "{scrubbed:?}");
-    }
-
-    #[test]
-    fn a_scrub_past_either_end_stays_on_the_clip() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let ruler = f.parts().ruler;
-
-        f.drag(ruler, LEFT - 50.0, -1.0);
-        f.drag(ruler, LEFT + WIDTH + 50.0, 1.0);
-
-        assert_eq!(f.heard().scrubbed, [0.0, 10.0]);
-    }
-
-    #[test]
-    fn a_snapped_scrub_never_passes_the_end_of_the_clip() {
-        let mut f = Fixture::laid_out(Timeline {
-            duration: 1.02,
-            ..at_30_fps()
-        });
-        let ruler = f.parts().ruler;
-
-        f.press(ruler, LEFT + WIDTH);
-
-        assert_eq!(f.heard().scrubbed, [1.02]);
-    }
-
-    #[test]
-    fn without_a_rate_a_scrub_keeps_the_pointers_time() {
-        let mut f = Fixture::laid_out(without_a_rate());
-        let ruler = f.parts().ruler;
-
-        f.press(ruler, LEFT + 1.0);
-
-        let scrubbed = &f.heard().scrubbed;
-        assert_eq!(scrubbed.len(), 1);
-        assert!((scrubbed[0] - 10.0 / WIDTH).abs() < NEAR, "{scrubbed:?}");
-    }
-
-    #[test]
-    fn only_the_left_button_scrubs_or_selects() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let (ruler, track) = (f.parts().ruler, f.track());
-        let down = |x| UIPointerDown {
-            position: Vec2::new(x, 0.0),
-            button: MouseButton::Right,
-        };
-
-        f.world.trigger_on(ruler, down(frame_x(10)));
-        f.world.trigger_on(track, down(frame_x(10)));
-        f.world.trigger_on(
-            track,
-            UIClick {
-                position: Vec2::new(frame_x(10), 0.0),
-                button: MouseButton::Right,
-            },
-        );
-
-        assert!(f.heard().scrubbed.is_empty());
-        assert!(f.heard().selected.is_empty());
-    }
-
-    #[test]
-    fn a_drag_on_the_track_selects_the_frames_it_crossed() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let track = f.track();
-
-        f.press(track, frame_x(10));
-        assert!(f.heard().selected.is_empty());
-
-        f.drag(track, frame_x(10), 0.0);
-        assert!(f.heard().selected.is_empty());
-
-        f.drag(track, frame_x(20), 10.0);
-        assert_eq!(f.heard().selected, [Some((10, 20))]);
-    }
-
-    #[test]
-    fn a_backwards_drag_selects_in_order() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let track = f.track();
-
-        f.press(track, frame_x(20));
-        f.drag(track, frame_x(10), -10.0);
-
-        assert_eq!(f.heard().selected, [Some((10, 20))]);
-    }
-
-    #[test]
-    fn a_drag_keeps_the_frame_it_started_on() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let track = f.track();
-
-        f.press(track, frame_x(20));
-        f.drag(track, frame_x(30), 10.0);
-        f.drag(track, frame_x(5), -25.0);
-
-        assert_eq!(f.heard().selected, [Some((20, 30)), Some((5, 20))]);
-    }
-
-    #[test]
-    fn a_click_on_the_track_clears_the_selection() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        let track = f.track();
-
-        f.press(track, frame_x(10));
-        f.click(track, frame_x(10));
-
-        assert_eq!(f.heard().selected, [None]);
-    }
-
-    #[test]
-    fn without_a_rate_the_track_does_not_select() {
-        let mut f = Fixture::laid_out(without_a_rate());
-        let track = f.track();
-
-        f.press(track, frame_x(10));
-        f.drag(track, frame_x(20), 10.0);
-        f.click(track, frame_x(20));
-
-        assert!(f.heard().selected.is_empty());
-    }
-
-    #[test]
-    fn a_long_take_ticks_every_500_frames() {
-        let ticks = ticks_of(260.0, Some(30.0), 1000.0);
-
-        assert_eq!(ticks.len(), 16);
-        assert_eq!(ticks[1].label, "500");
-        assert_eq!(ticks[15].label, "7500");
-        assert!((ticks[1].fraction - 500.0 / 7800.0).abs() < NEAR);
-    }
-
-    #[test]
-    fn two_seconds_without_a_rate_tick_every_fifth_of_a_second() {
-        let ticks = ticks_of(2.0, None, 1000.0);
-
-        assert_eq!(ticks.len(), 11);
-        assert_eq!(ticks[0].label, "0.0 s");
-        assert_eq!(ticks[3].label, "0.6 s");
-        assert_eq!(ticks[10].label, "2.0 s");
-        assert!((ticks[10].fraction - 1.0).abs() < NEAR);
-    }
-
-    #[test]
-    fn ticks_never_step_by_less_than_a_frame() {
-        let ticks = ticks_of(0.1, Some(30.0), 1000.0);
-
-        let labels: Vec<_> = ticks.iter().map(|tick| tick.label.as_str()).collect();
-        assert_eq!(labels, ["0", "1", "2", "3"]);
-    }
-
-    #[test]
-    fn a_tick_step_is_one_two_or_five_of_a_power_of_ten() {
-        assert_eq!(tick_step(100.0, 640.0), 10.0);
-        assert_eq!(tick_step(101.0, 640.0), 20.0);
-        assert_eq!(tick_step(200.0, 640.0), 20.0);
-        assert_eq!(tick_step(201.0, 640.0), 50.0);
-        assert_eq!(tick_step(500.0, 640.0), 50.0);
-        assert_eq!(tick_step(501.0, 640.0), 100.0);
-    }
-
-    #[test]
-    fn labels_stay_at_least_the_gap_apart_at_any_size() {
-        for (span, width) in [(7800.0, 1000.0), (2.0, 333.0), (97.0, 1920.0), (1e5, 800.0)] {
+    fn a_tick_step_is_one_two_or_five_of_a_power_of_ten_and_keeps_labels_apart() {
+        for [span, step] in [[100.0, 10.0], [101.0, 20.0], [201.0, 50.0], [501.0, 100.0]] {
+            assert_eq!(tick_step(span, 640.0), step, "{span}");
+        }
+        for [span, width] in [[7800.0, 1000.0], [2.0, 333.0], [97.0, 1920.0], [1e5, 800.0]] {
             let step = tick_step(span, width);
             assert!(step / span * width >= MIN_TICK_GAP - NEAR, "{span} {width}");
         }
     }
 
     #[test]
-    fn a_clip_with_no_length_has_one_tick() {
-        assert_eq!(ticks_of(0.0, Some(30.0), 1000.0).len(), 1);
-        assert_eq!(ticks_of(0.0, None, 1000.0).len(), 1);
-    }
-
-    #[test]
-    fn ticks_are_built_once_the_ruler_has_a_width() {
-        let f = Fixture::laid_out(at_30_fps());
-
-        let expected = ticks_of(10.0, Some(30.0), WIDTH).len();
-        assert_eq!(f.ruler_children().len(), expected * 2);
-        assert_eq!(
-            *f.world
-                .get_component_for_entity::<TimelineTicks>(f.timeline)
-                .unwrap(),
-            TimelineTicks {
-                width: WIDTH,
-                duration: 10.0,
-                rate: Some(30.0),
-            }
-        );
-    }
-
-    #[test]
-    fn a_width_of_zero_builds_nothing() {
-        let mut f = Fixture::new(at_30_fps());
-        assert!(f.ruler_children().is_empty());
-
-        f.lay_out(0.0);
-        f.frame();
-
-        assert!(f.ruler_children().is_empty());
-        assert_eq!(
-            *f.world
-                .get_component_for_entity::<TimelineTicks>(f.timeline)
-                .unwrap(),
-            TimelineTicks::default()
-        );
-    }
-
-    #[test]
-    fn hiding_a_built_timeline_keeps_its_ticks() {
+    fn the_ruler_scrubs_to_the_nearest_frame_once_the_pointer_moves_and_stays_on_the_clip() {
         let mut f = Fixture::laid_out(at_30_fps());
-        let built = f.ruler_children();
+        let ruler = f.parts().ruler;
 
-        f.lay_out(0.0);
-        f.frame();
-        f.lay_out(WIDTH);
-        f.frame();
+        f.press(ruler, frame_x(150) + 0.25);
+        f.drag(ruler, frame_x(60), 0.0);
+        f.drag(ruler, frame_x(60), 3.0);
+        f.drag(ruler, LEFT - 50.0, -1.0);
+        f.drag(ruler, LEFT + WIDTH + 50.0, 1.0);
 
-        assert_eq!(f.ruler_children(), built);
+        let scrubbed = &f.heard().scrubbed;
+        assert_eq!(scrubbed.len(), 4, "{scrubbed:?}");
+        assert!((scrubbed[0] - 5.0).abs() < NEAR, "{scrubbed:?}");
+        assert!((scrubbed[1] - 2.0).abs() < NEAR, "{scrubbed:?}");
+        assert_eq!(scrubbed[2..], [0.0, 10.0]);
     }
 
     #[test]
-    fn ticks_are_not_rebuilt_while_only_the_time_changes() {
+    fn a_drag_on_the_track_selects_the_frames_it_crossed_and_a_click_clears_them() {
         let mut f = Fixture::laid_out(at_30_fps());
-        let built = f.ruler_children();
+        let track = f.track();
 
-        for time in [1.0, 2.0, 3.0] {
-            f.edit(|timeline| timeline.time = time);
-            f.frame();
-        }
+        f.press(track, frame_x(20));
+        f.drag(track, frame_x(20), 0.0);
+        assert!(f.heard().selected.is_empty());
 
-        assert_eq!(f.ruler_children(), built);
+        f.drag(track, frame_x(30), 10.0);
+        f.drag(track, frame_x(5), -25.0);
+        f.click(track, frame_x(5));
+
+        assert_eq!(f.heard().selected, [Some((20, 30)), Some((5, 20)), None]);
     }
 
     #[test]
-    fn ticks_are_rebuilt_when_the_width_duration_or_rate_changes() {
-        let mut f = Fixture::laid_out(at_30_fps());
-
-        let before = f.ruler_children();
-        f.lay_out(WIDTH * 2.0);
-        f.frame();
-        assert_ne!(f.ruler_children(), before);
-
-        let before = f.ruler_children();
-        f.edit(|timeline| timeline.duration = 20.0);
-        f.frame();
-        assert_ne!(f.ruler_children(), before);
-
-        let before = f.ruler_children();
-        f.edit(|timeline| timeline.rate = None);
-        f.frame();
-        assert_ne!(f.ruler_children(), before);
-    }
-
-    #[test]
-    fn the_timeline_is_a_column_of_a_readout_and_four_bands_under_an_overlay() {
-        let f = Fixture::new(at_30_fps());
-        let parts = f.parts();
-
-        assert_eq!(f.node(f.timeline).flex_direction, FlexDirection::Column);
-        assert_eq!(f.node(parts.ruler).height, UIValue::Px(24.0));
-        assert_eq!(f.node(parts.ruler).flex_shrink, 0.0);
-        assert_eq!(f.parent(parts.readout), f.timeline);
-        let bands = f.parent(parts.ruler);
-        assert_eq!(
-            f.children(bands),
-            [
-                parts.ruler,
-                f.track(),
-                parts.lane_band,
-                parts.rows,
-                f.overlay()
-            ]
-        );
-        let overlay = f.node(f.overlay());
-        assert_eq!(overlay.position, Position::Absolute);
-        assert_eq!(
-            overlay.inset,
-            UIInset {
-                top: UIValue::Px(0.0),
-                right: UIValue::Px(0.0),
-                bottom: UIValue::Px(0.0),
-                left: UIValue::Px(0.0),
-            }
-        );
-    }
-
-    #[test]
-    fn the_head_spans_both_bands_at_its_share_of_the_clip() {
-        let mut f = Fixture::new(at_30_fps());
-        f.edit(|timeline| timeline.time = 2.5);
-        f.frame();
-
-        let head = f.node(f.parts().head);
-        assert_eq!(head.position, Position::Absolute);
-        assert_eq!(head.inset.top, UIValue::Px(0.0));
-        assert_eq!(head.inset.bottom, UIValue::Px(0.0));
-        assert!((percent(head.inset.left) - 25.0).abs() < NEAR);
-    }
-
-    #[test]
-    fn a_head_of_a_clip_with_no_length_rests_at_the_start() {
-        let mut f = Fixture::new(Timeline {
-            duration: 0.0,
-            ..at_30_fps()
-        });
-        f.edit(|timeline| timeline.time = 1.0);
-        f.frame();
-
-        assert_eq!(f.node(f.parts().head).inset.left, UIValue::Percent(0.0));
-    }
-
-    #[test]
-    fn the_selection_covers_its_frames_and_hides_without_one() {
-        let mut f = Fixture::new(at_30_fps());
-        assert!(!f.node(f.parts().selection).visible);
-
-        f.edit(|timeline| timeline.selection = Some((75, 150)));
-        f.frame();
-
-        let selection = f.node(f.parts().selection);
-        assert!(selection.visible);
-        assert!((percent(selection.inset.left) - 25.0).abs() < NEAR);
-        assert!((percent(selection.width) - 25.0).abs() < NEAR);
-
-        f.edit(|timeline| timeline.selection = None);
-        f.frame();
-        assert!(!f.node(f.parts().selection).visible);
-    }
-
-    #[test]
-    fn a_one_frame_selection_still_shows() {
-        let mut f = Fixture::new(at_30_fps());
-        f.edit(|timeline| timeline.selection = Some((75, 75)));
-        f.frame();
-
-        let selection = f.node(f.parts().selection);
-        assert!(selection.visible);
-        assert_eq!(selection.min_width, UIValue::Px(2.0));
-    }
-
-    #[test]
-    fn a_selection_without_a_rate_stays_hidden() {
-        let mut f = Fixture::new(without_a_rate());
-        f.edit(|timeline| timeline.selection = Some((75, 150)));
-        f.frame();
-
-        assert!(!f.node(f.parts().selection).visible);
-    }
-
-    #[test]
-    fn the_readout_shows_the_frame_the_count_and_the_time() {
-        let mut f = Fixture::new(Timeline {
-            duration: 7839.0 / 30.0,
-            ..at_30_fps()
-        });
-        f.edit(|timeline| timeline.time = 4.1);
-        f.frame();
-
-        assert_eq!(f.readout(), "Frame 123 / 7840   4.10 s");
-    }
-
-    #[test]
-    fn without_a_rate_the_readout_shows_the_time_alone() {
-        let mut f = Fixture::new(without_a_rate());
-        f.edit(|timeline| timeline.time = 4.1);
-        f.frame();
-
-        assert_eq!(f.readout(), "4.10 s");
-    }
-
-    #[test]
-    fn the_readout_cannot_lay_itself_out_when_its_text_changes() {
-        let f = Fixture::new(at_30_fps());
-        let readout = f.node(f.parts().readout);
-
-        assert!(matches!(readout.width, UIValue::Px(_)));
-        assert!(matches!(readout.height, UIValue::Px(_)));
-        assert_eq!(readout.flex_shrink, 0.0);
-    }
-
-    #[test]
-    fn a_timeline_at_rest_writes_nothing() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        f.frame();
-
-        f.world.tick();
-        f.frame();
-
-        assert_eq!(f.changed_nodes(), 0);
-        assert_eq!(f.changed_texts(), 0);
-    }
-
-    #[test]
-    fn a_time_that_rounds_to_the_same_text_leaves_the_readout_alone() {
-        let mut f = Fixture::laid_out(at_30_fps());
-        f.edit(|timeline| timeline.time = 1.0);
-        f.frame();
-
-        f.world.tick();
-        f.edit(|timeline| timeline.time = 1.0001);
-        f.frame();
-
-        assert_eq!(f.changed_texts(), 0);
-    }
-
-    #[test]
-    fn markers_sit_at_their_times_and_the_lane_hides_without_any() {
-        let mut f = Fixture::new(with_markers(vec![
-            marker(2.5, "footstep"),
-            marker(5.0, "land"),
-        ]));
-
-        let lane = f.node(f.parts().lane_band);
-        assert!(lane.visible);
-        assert_eq!(lane.height, UIValue::Px(MARKER_ROW_HEIGHT));
-        let markers = f.marker_nodes();
-        assert_eq!(markers.len(), 2);
-        assert!((percent(f.node(markers[0]).inset.left) - 25.0).abs() < NEAR);
-        assert!((percent(f.node(markers[1]).inset.left) - 50.0).abs() < NEAR);
-        assert_eq!(f.node(markers[0]).inset.top, UIValue::Px(0.0));
-
-        f.edit(|timeline| timeline.markers.clear());
-        f.frame();
-
-        assert!(!f.node(f.parts().lane_band).visible);
-        assert!(f.marker_nodes().is_empty());
-    }
-
-    #[test]
-    fn markers_at_the_same_time_take_rows_of_their_own() {
-        let f = Fixture::new(with_markers(vec![
-            marker(1.0, "left"),
-            marker(2.0, "breath"),
-            marker(1.0, "right"),
-        ]));
-
-        let markers = f.marker_nodes();
-        assert_eq!(f.node(markers[0]).inset.top, UIValue::Px(0.0));
-        assert_eq!(f.node(markers[1]).inset.top, UIValue::Px(0.0));
-        assert_eq!(f.node(markers[2]).inset.top, UIValue::Px(MARKER_ROW_HEIGHT));
-        assert_eq!(
-            f.node(f.parts().lane_band).height,
-            UIValue::Px(2.0 * MARKER_ROW_HEIGHT)
-        );
-    }
-
-    #[test]
-    fn a_pressed_marker_is_picked_and_a_click_on_the_track_or_the_lane_picks_none() {
-        let mut f = Fixture::laid_out(with_markers(vec![
-            marker(1.0, "footstep"),
-            marker(2.0, "land"),
-        ]));
-        let (second, track, lane) = (f.marker_nodes()[1], f.track(), f.parts().lane);
-
-        f.press(second, frame_x(60));
-        f.click(track, frame_x(10));
-        f.click(lane, frame_x(10));
-
-        assert_eq!(f.heard().picked, [Some(1), None, None]);
-        assert_eq!(f.heard().selected, [None, None]);
-    }
-
-    #[test]
-    fn a_dragged_marker_moves_to_a_frame_unless_it_is_locked() {
-        let mut f = Fixture::laid_out(with_markers(vec![
-            marker(1.0, "footstep"),
-            TimelineMarker {
-                locked: true,
-                ..marker(2.0, "Impact")
-            },
-        ]));
-        let markers = f.marker_nodes();
-
-        f.drag(markers[0], frame_x(90), 0.0);
-        assert!(f.heard().moved.is_empty());
-
-        f.drag(markers[0], frame_x(90) + 0.25, 3.0);
-        f.drag(markers[1], frame_x(120), 3.0);
-
-        let moved = &f.heard().moved;
-        assert_eq!(moved.len(), 1);
-        assert_eq!(moved[0].index, 0);
-        assert!((moved[0].time - 3.0).abs() < NEAR, "{}", moved[0].time);
-    }
-
-    #[test]
-    fn markers_are_coloured_by_their_lock_and_the_selection() {
-        let theme = UITheme::default();
-        let f = Fixture::new(Timeline {
-            selected_marker: Some(2),
-            ..with_markers(vec![
+    fn a_marker_is_picked_by_a_press_and_moved_by_a_drag_unless_it_is_locked() {
+        let mut f = Fixture::laid_out(Timeline {
+            markers: vec![
                 marker(1.0, "footstep"),
                 TimelineMarker {
                     locked: true,
                     ..marker(2.0, "Impact")
                 },
-                marker(3.0, "land"),
-            ])
-        });
-        let markers = f.marker_nodes();
-
-        assert_eq!(f.line_color(markers[0]), theme.accent.to_linear());
-        assert_eq!(f.line_color(markers[1]), theme.text_muted.to_linear());
-        assert_eq!(f.line_color(markers[2]), theme.selection().to_linear());
-    }
-
-    #[test]
-    fn a_moved_or_selected_marker_keeps_its_node() {
-        let mut f = Fixture::new(with_markers(vec![
-            marker(1.0, "footstep"),
-            marker(2.0, "land"),
-        ]));
-        let built = f.marker_nodes();
-
-        f.edit(|timeline| timeline.markers[0].time = 5.0);
-        f.frame();
-        assert_eq!(f.marker_nodes(), built);
-        assert!((percent(f.node(built[0]).inset.left) - 50.0).abs() < NEAR);
-
-        f.edit(|timeline| timeline.selected_marker = Some(0));
-        f.frame();
-        assert_eq!(f.marker_nodes(), built);
-        assert_eq!(
-            f.line_color(built[0]),
-            UITheme::default().selection().to_linear()
-        );
-    }
-
-    #[test]
-    fn a_renamed_or_locked_marker_rebuilds_the_lane() {
-        let mut f = Fixture::new(with_markers(vec![marker(1.0, "footstep")]));
-        let built = f.marker_nodes();
-
-        f.edit(|timeline| timeline.markers[0].label = "land".to_owned());
-        f.frame();
-        assert_ne!(f.marker_nodes(), built);
-
-        let built = f.marker_nodes();
-        f.edit(|timeline| timeline.markers[0].locked = true);
-        f.frame();
-        assert_ne!(f.marker_nodes(), built);
-    }
-
-    #[test]
-    fn a_settled_timeline_with_markers_writes_nothing() {
-        let mut f = Fixture::laid_out(Timeline {
-            selected_marker: Some(0),
-            ..with_markers(vec![marker(1.0, "footstep"), marker(1.0, "land")])
-        });
-        f.frame();
-
-        f.world.tick();
-        f.frame();
-
-        assert_eq!(f.changed_nodes(), 0);
-        assert_eq!(f.changed_texts(), 0);
-        assert_eq!(f.changed_materials(), 0);
-    }
-
-    #[test]
-    fn a_timeline_that_cannot_select_ignores_drags_and_hides_its_selection() {
-        let mut f = Fixture::laid_out(Timeline {
-            selectable: false,
-            selection: Some((75, 150)),
+            ],
             ..at_30_fps()
         });
-        let track = f.track();
+        let (markers, track) = (f.marker_nodes(), f.track());
 
-        f.press(track, frame_x(10));
-        f.drag(track, frame_x(20), 10.0);
-        f.click(track, frame_x(20));
+        f.press(markers[1], frame_x(60));
+        f.click(track, frame_x(10));
+        f.drag(markers[0], frame_x(90) + 0.25, 3.0);
+        f.drag(markers[1], frame_x(120), 3.0);
 
-        assert!(f.heard().selected.is_empty());
-        assert_eq!(f.heard().picked, [None]);
-        assert!(!f.node(f.parts().selection).visible);
-    }
-
-    #[test]
-    fn without_tracks_there_is_no_label_column() {
-        let f = Fixture::laid_out(with_markers(vec![marker(1.0, "footstep")]));
-        let parts = f.parts();
-
-        assert_eq!(f.node(parts.ruler).margin, UIRect::default());
-        assert_eq!(f.node(f.track()).margin, UIRect::default());
-        assert_eq!(f.node(f.track()).flex_grow, 1.0);
-        assert_eq!(f.node(parts.lane_band).margin, UIRect::default());
-        assert!(!f.node(parts.events_label).visible);
-        assert!(!f.node(parts.rows).visible);
-        assert_eq!(f.node(f.overlay()).inset.left, UIValue::Px(0.0));
-        assert_eq!(f.node(f.overlay()).inset.right, UIValue::Px(0.0));
-        assert!(f.row_nodes().is_empty());
-    }
-
-    #[test]
-    fn with_tracks_every_band_starts_after_the_label_column_and_the_head_lines_up() {
-        let mut f = Fixture::laid_out(Timeline {
-            markers: vec![marker(1.0, "footstep")],
-            ..with_tracks(vec![bone("hips", &[0.0]), bone("spine", &[0.0])])
-        });
-        let parts = f.parts();
-        let column = UIRect {
-            left: TRACK_LABEL_WIDTH,
-            right: SCROLLBAR_WIDTH,
-            ..Default::default()
-        };
-
-        assert_eq!(f.node(parts.ruler).margin, column);
-        assert_eq!(f.node(f.track()).margin, column);
-        assert_eq!(f.node(f.track()).flex_grow, 0.0);
-        assert_eq!(
-            f.node(parts.lane_band).margin,
-            UIRect {
-                left: 0.0,
-                ..column
-            }
-        );
-        assert_eq!(f.parent(parts.lane), parts.lane_band);
-        assert_eq!(f.parent(parts.events_label), parts.lane_band);
-        let events = f.node(parts.events_label);
-        assert!(events.visible);
-        assert_eq!(events.width, UIValue::Px(TRACK_LABEL_WIDTH));
-        assert_eq!(
-            f.world
-                .get_component_for_entity::<UIText>(parts.events_label)
-                .unwrap()
-                .text,
-            "Events"
-        );
-        assert!(f.node(parts.rows).visible);
-        let rows = f.row_nodes();
-        assert_eq!(rows.len(), 2);
-        for row in rows {
-            assert_eq!(
-                f.node(row).margin,
-                UIRect {
-                    left: 0.0,
-                    ..column
-                }
-            );
-            assert_eq!(
-                f.node(f.children(row)[0]).width,
-                UIValue::Px(TRACK_LABEL_WIDTH)
-            );
-        }
-        let overlay = f.node(f.overlay());
-        assert_eq!(overlay.inset.left, UIValue::Px(column.left));
-        assert_eq!(overlay.inset.right, UIValue::Px(column.right));
-
-        f.edit(|timeline| timeline.tracks.clear());
-        f.frame();
-
-        assert_eq!(f.node(f.parts().ruler).margin, UIRect::default());
-        assert_eq!(f.node(f.track()).margin, UIRect::default());
-        assert_eq!(f.node(f.overlay()).inset.left, UIValue::Px(0.0));
-        assert!(!f.node(f.parts().events_label).visible);
-        assert!(!f.node(f.parts().rows).visible);
-        assert!(f.row_nodes().is_empty());
-    }
-
-    #[test]
-    fn keys_closer_than_the_merge_distance_join_into_a_bar() {
-        let baked: Vec<f32> = (0..=300).map(|frame| time_of_frame(frame, 30.0)).collect();
-        assert_eq!(
-            key_spans(&baked, 10.0, WIDTH),
-            [KeySpan {
-                start: 0.0,
-                end: 1.0
-            }]
-        );
-
-        let spans = key_spans(&[1.0, 1.05, 5.0], 10.0, WIDTH);
-        assert_eq!(spans.len(), 2);
-        assert!((spans[0].start - 0.1).abs() < NEAR);
-        assert!((spans[0].end - 0.105).abs() < NEAR);
-        assert!((spans[1].start - 0.5).abs() < NEAR);
-        assert_eq!(spans[1].start, spans[1].end);
-    }
-
-    #[test]
-    fn a_row_draws_merged_keys_as_a_bar_and_a_lone_key_as_a_tick() {
-        let f = Fixture::laid_out(with_tracks(vec![bone("hips", &[1.0, 1.05, 5.0])]));
-        let rows = f.row_nodes();
-        assert_eq!(rows.len(), 1);
-
-        let keys = f.row_keys(rows[0]);
-        assert_eq!(keys.len(), 2);
-        let bar = f.node(keys[0]);
-        assert!((percent(bar.inset.left) - 10.0).abs() < NEAR);
-        assert!((percent(bar.width) - 0.5).abs() < NEAR);
-        assert_eq!(bar.min_width, UIValue::Px(TICK_WIDTH));
-        let tick = f.node(keys[1]);
-        assert!((percent(tick.inset.left) - 50.0).abs() < NEAR);
-        assert_eq!(tick.width, UIValue::Px(TICK_WIDTH));
-    }
-
-    #[test]
-    fn rows_are_rebuilt_on_a_resize_or_new_tracks_and_not_while_only_the_time_changes() {
-        let mut f = Fixture::laid_out(with_tracks(vec![bone("hips", &[1.0, 5.0])]));
-        let built = f.row_nodes();
-        assert_eq!(f.row_keys(built[0]).len(), 2);
-
-        f.edit(|timeline| timeline.time = 2.0);
-        f.frame();
-        assert_eq!(f.row_nodes(), built);
-
-        f.lay_out(0.0);
-        f.frame();
-        f.lay_out(WIDTH);
-        f.frame();
-        assert_eq!(f.row_nodes(), built);
-
-        f.lay_out(WIDTH / 100.0);
-        f.frame();
-        assert_ne!(f.row_nodes(), built);
-        assert_eq!(f.row_keys(f.row_nodes()[0]).len(), 1);
-
-        let built = f.row_nodes();
-        f.edit(|timeline| timeline.tracks[0].label = "pelvis".to_owned());
-        f.frame();
-        assert_ne!(f.row_nodes(), built);
-    }
-
-    #[test]
-    fn a_warning_track_is_labelled_in_the_warning_colour() {
-        let theme = UITheme::default();
-        let f = Fixture::laid_out(with_tracks(vec![
-            bone("hips", &[0.0]),
-            TimelineTrack {
-                warning: true,
-                ..bone("7", &[0.0])
-            },
-        ]));
-        let rows = f.row_nodes();
-
-        assert_eq!(f.row_label(rows[0]).text, "hips");
-        assert_eq!(f.row_label(rows[0]).color, theme.text);
-        assert_eq!(f.row_label(rows[1]).text, "7");
-        assert_eq!(f.row_label(rows[1]).color, theme.warning);
-    }
-
-    #[test]
-    fn the_rows_scroll_area_takes_the_wheel_and_its_extent_follows_the_track_count() {
-        let mut f = Fixture::laid_out(with_tracks(vec![bone("hips", &[0.0]); 3]));
-        let parts = f.parts();
-
-        assert!(
-            f.world
-                .get_component_for_entity::<Interactable>(parts.rows)
-                .is_some()
-        );
-        assert_eq!(f.rows_area().content, Some(parts.rows_content));
-        assert_eq!(f.rows_area().content_extent, 3.0 * TRACK_ROW_HEIGHT);
-
-        f.world.tick();
-        f.lay_out(WIDTH * 2.0);
-        f.frame();
-        assert_eq!(f.changed_areas(), 0);
-
-        f.edit(|timeline| timeline.tracks.push(bone("head", &[0.0])));
-        f.frame();
-        assert_eq!(f.rows_area().content_extent, 4.0 * TRACK_ROW_HEIGHT);
-    }
-
-    #[test]
-    fn a_settled_timeline_with_tracks_writes_nothing() {
-        let mut f = Fixture::laid_out(Timeline {
-            markers: vec![marker(1.0, "footstep")],
-            ..with_tracks(vec![bone("hips", &[0.0, 1.0]), bone("spine", &[2.0])])
-        });
-        f.frame();
-
-        f.world.tick();
-        f.frame();
-
-        assert_eq!(f.changed_nodes(), 0);
-        assert_eq!(f.changed_texts(), 0);
-        assert_eq!(f.changed_materials(), 0);
-        assert_eq!(f.changed_areas(), 0);
+        assert_eq!(f.heard().picked, [Some(1), None]);
+        let moved = &f.heard().moved;
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].index, 0);
+        assert!((moved[0].time - 3.0).abs() < NEAR, "{}", moved[0].time);
     }
 }

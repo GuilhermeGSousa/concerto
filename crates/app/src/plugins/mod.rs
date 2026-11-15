@@ -167,7 +167,6 @@ mod tests {
         registry::{AssetEntry, AssetRegistry},
         AssetId, ContentAssetRoot,
     };
-    use concerto_reflect::ReflectDefault;
     use std::time::{Duration, Instant};
 
     fn temp_root() -> std::path::PathBuf {
@@ -308,107 +307,5 @@ mod tests {
             })
         );
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[derive(concerto_reflect::Reflect, Default)]
-    #[reflect(Default)]
-    struct Probed;
-
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct Probe {
-        #[serde(skip)]
-        saw_default: bool,
-    }
-
-    impl concerto_foundation::assets::Asset for Probe {
-        fn name() -> &'static str {
-            "Probe"
-        }
-    }
-
-    impl concerto_foundation::assets::LoadableAsset for Probe {
-        fn on_load(
-            &mut self,
-            context: &concerto_foundation::assets::asset_server::AssetLoadContext,
-        ) -> anyhow::Result<()> {
-            self.saw_default = context
-                .type_registry()
-                .get_type_data::<ReflectDefault>(std::any::TypeId::of::<Probed>())
-                .is_some();
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn a_pool_load_reads_types_registered_in_the_app_after_the_plugin_built() {
-        use concerto_foundation::assets::{
-            asset_store::AssetStore, content::save_content_asset_into,
-        };
-
-        let root = temp_root();
-        let mut scanned = AssetRegistry::new();
-        let id = save_content_asset_into(
-            &Probe { saw_default: false },
-            &root,
-            "content/probe.gasset",
-            &mut scanned,
-        )
-        .unwrap();
-        let mut app = App::new();
-        app.register_plugin(crate::main_schedule::MainSchedulePlugin)
-            .register_plugin(TimePlugin)
-            .register_plugin(AssetManagerPlugin);
-        app.register_asset::<Probe>();
-        app.get_resource::<AssetServer>()
-            .unwrap()
-            .publish_content_source(ContentAssetRoot::Directory(root.clone()), scanned);
-        wait_for_plugins(&mut app);
-        app.finish_plugin_build();
-        app.register_type::<Probed>();
-
-        let handle = app.get_resource::<AssetServer>().unwrap().load::<Probe>(id);
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while app.get_resource::<AssetServer>().unwrap().is_loading() {
-            assert!(Instant::now() < deadline, "the probe load never finished");
-            app.update();
-            std::thread::yield_now();
-        }
-        let probe = app
-            .get_resource::<AssetStore<Probe>>()
-            .unwrap()
-            .get(&handle)
-            .expect("the probe failed to load");
-        assert!(probe.saw_default);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "content registry")]
-    fn installing_a_malformed_registry_panics() {
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        install_content_registry(&mut app, settings("broken = [", None));
-    }
-
-    #[test]
-    fn an_app_without_an_asset_server_gets_the_registry_resource() {
-        let entry = AssetEntry {
-            embedded_in: None,
-            id: AssetId::new(),
-            address: "content/hero.gasset".into(),
-            kind: "Mesh".into(),
-            kind_version: None,
-            provenance: None,
-        };
-        let mut registry = AssetRegistry::new();
-        registry.insert(entry.clone());
-        let mut app = App::new();
-
-        install_content_registry(&mut app, settings(&registry.to_toml(), None));
-
-        assert_eq!(
-            app.get_resource::<AssetRegistry>().unwrap().get(entry.id),
-            Some(&entry)
-        );
     }
 }

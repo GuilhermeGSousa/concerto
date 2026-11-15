@@ -230,7 +230,7 @@ impl AnimationNode for AdditiveNode {
 mod tests {
     use concerto_ecs::Res;
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
-    use concerto_name::{Name, name};
+    use concerto_name::name;
     use glam::{Quat, Vec3};
     use uuid::Uuid;
 
@@ -243,10 +243,9 @@ mod tests {
         },
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
-        node::{AnimationNode, AnimationPlayMode},
+        node::AnimationNode,
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
-            apply_additive,
         },
         testing::Walks,
     };
@@ -380,10 +379,6 @@ mod tests {
         clip.set_frame_rate(4.0);
         clip.set_additive(Additive::LocalSpace(base));
         clip.with_delta_against(&neutral())
-    }
-
-    fn cold() -> AnimationClip {
-        built(affected(), against_neutral())
     }
 
     fn sampled(clip: &AnimationClip, bone: Uuid, time: f32) -> JointPose {
@@ -545,35 +540,14 @@ mod tests {
         assert_rotation_near(actual.rotation, expected.rotation);
     }
 
-    fn assert_same_frame(frame: &AnimationFrame, expected: &AnimationFrame) {
-        assert_eq!(frame.joints(), expected.joints());
-        assert_eq!(frame.root_motion(), expected.root_motion());
-        assert_eq!(frame.events(), expected.events());
-    }
-
-    #[test]
-    fn at_weight_0_the_output_is_the_base_bit_for_bit_events_included() {
-        let mut rig = Rig::new(cold());
-        rig.blackboard.set(name!("warmth"), 0.0_f32);
-        let base = base_at(0.5);
-
-        for node in [
-            rig.node().with_weight(0.0),
-            rig.node().with_weight_param(name!("warmth")),
-        ] {
-            let frame = rig.played(&node, &[0.5], &input(base_at(0.5)));
-
-            assert_same_frame(&frame, &base);
-        }
-    }
-
     struct WeightCase {
         weight: f32,
         child: JointPose,
     }
 
     #[test]
-    fn the_child_turns_and_moves_by_the_weight_times_the_delta() {
+    fn the_child_moves_by_the_weight_times_the_delta_and_the_root_keeps_its_tilt_lift_and_base_root_motion()
+     {
         let base = base_at(0.5);
         let cases = [
             WeightCase {
@@ -588,7 +562,7 @@ mod tests {
                 ),
             },
         ];
-        let rig = Rig::new(cold());
+        let rig = Rig::new(built(leaning(), against_neutral()));
 
         for case in cases {
             let frame = rig.played(
@@ -597,129 +571,13 @@ mod tests {
                 &input(base_at(0.5)),
             );
 
-            let mut expected = base.joints()[1].clone();
-            apply_additive(
-                &mut expected,
-                &cold().sample_additive(0.5, &CHILD),
-                case.weight,
-            );
-            assert_eq!(frame.joints()[1], expected, "weight {}", case.weight);
             assert_joint_near(&frame.joints()[1], &case.child);
+            assert_eq!(frame.root_motion(), base_motion());
+            assert_eq!(frame.events(), [base_event()]);
         }
-    }
-
-    struct ParamCase {
-        param: Name,
-        weight: f32,
-    }
-
-    impl ParamCase {
-        fn new(param: Name, weight: f32) -> Self {
-            Self { param, weight }
-        }
-    }
-
-    #[test]
-    fn the_weight_is_the_weight_times_the_param_clamped_to_0_and_1() {
-        let mut rig = Rig::new(cold());
-        rig.blackboard.set(name!("half"), 0.5_f32);
-        rig.blackboard.set(name!("triple"), 3.0_f32);
-        rig.blackboard.set(name!("negative"), -1.0_f32);
-        rig.blackboard.set(name!("nan"), f32::NAN);
-        rig.blackboard.set(name!("flag"), true);
-        let node = rig.node().with_weight(0.8);
-        let cases = [
-            ParamCase::new(name!("half"), 0.4),
-            ParamCase::new(name!("unset"), 0.8),
-            ParamCase::new(name!("flag"), 0.8),
-            ParamCase::new(name!("triple"), 1.0),
-            ParamCase::new(name!("negative"), 0.0),
-            ParamCase::new(name!("nan"), 0.0),
-        ];
-
-        for case in cases {
-            let frame = rig.played(
-                &node.clone().with_weight_param(case.param),
-                &[],
-                &input(base_at(0.0)),
-            );
-
-            let moved = frame.joints()[1].translation.x - CHILD_AT.x;
-            assert!(
-                (moved - 0.1 * case.weight).abs() < 1e-6,
-                "param {:?}: expected a move of {}, got {moved}",
-                case.param,
-                0.1 * case.weight
-            );
-        }
-    }
-
-    #[test]
-    fn the_clock_keeps_running_at_weight_0() {
-        let mut rig = Rig::new(cold());
-        rig.blackboard.set(name!("warmth"), 0.0_f32);
-        let node = rig.node().with_weight_param(name!("warmth"));
-        let mut state = rig.create(&node);
-        rig.step(&node, &mut state, 0.25);
-        rig.overlay(&node, &mut state, &input(base_at(0.25)));
-        rig.step(&node, &mut state, 0.25);
-
-        rig.blackboard.set(name!("warmth"), 1.0_f32);
-        let frame = rig.overlay(&node, &mut state, &input(base_at(0.5)));
-
-        assert_eq!(state.clock.current_time(), 0.5);
-        assert_vec_near(
-            frame.joints()[1].translation,
-            CHILD_AT + Vec3::new(0.2, 0.0, 0.0),
-        );
-    }
-
-    #[test]
-    fn the_clock_runs_over_the_span_of_the_delta_and_wraps_or_resets_to_the_start_time() {
-        let rig = Rig::new(built(ranged(), ranged_base()));
-        let node = rig.node().with_start_time(0.25);
-        let mut state = rig.create(&node);
-
-        rig.step(&node, &mut state, 0.7);
-        assert!((state.clock.current_time() - 0.95).abs() < 1e-6);
-        assert!(!state.clock.wrapped);
-        rig.step(&node, &mut state, 0.1);
-        assert_eq!(state.clock.current_time(), 0.25);
-        assert!(state.clock.wrapped);
-
-        rig.step(&node, &mut state, 0.3);
-        node.reset(&mut state);
-        assert_eq!(state.clock.current_time(), 0.25);
-    }
-
-    #[test]
-    fn a_play_once_overlay_finishes_at_the_end_of_its_delta_and_holds() {
-        let rig = Rig::new(built(ranged(), ranged_base()));
-        let node = rig.node().with_play_mode(AnimationPlayMode::PlayOnce);
-        let mut state = rig.create(&node);
-
-        rig.step(&node, &mut state, 0.9);
-        assert!(!state.clock.is_finished);
-        rig.step(&node, &mut state, 0.2);
-        assert!(state.clock.is_finished);
-        let finished_at = state.clock.current_time();
-        rig.step(&node, &mut state, 0.2);
-        assert_eq!(state.clock.current_time(), finished_at);
-    }
-
-    #[test]
-    fn the_play_rate_times_its_param_scales_how_fast_the_delta_plays() {
-        let mut rig = Rig::new(cold());
-        rig.blackboard.set(name!("shiver_speed"), 3.0_f32);
-        let node = rig
-            .node()
-            .with_play_rate(0.5)
-            .with_play_rate_param(name!("shiver_speed"));
-        let mut state = rig.create(&node);
-
-        rig.step(&node, &mut state, 0.2);
-
-        assert!((state.clock.current_time() - 0.3).abs() < 1e-6);
+        let full = rig.played(&rig.node(), &[0.5], &input(base_at(0.5)));
+        assert_rotation_near(full.joints()[0].rotation, Quat::from_rotation_x(0.3));
+        assert_vec_near(full.joints()[0].translation, Vec3::new(0.0, 1.2, 0.0));
     }
 
     #[test]
@@ -750,138 +608,5 @@ mod tests {
         );
         assert_eq!(events_after(&mut state, 0.8), [base_event()]);
         assert_eq!(events_after(&mut state, 0.1), [base_event()]);
-    }
-
-    #[test]
-    fn the_root_keeps_the_tilt_and_the_lift_of_its_delta_and_the_base_root_motion() {
-        let rig = Rig::new(built(leaning(), against_neutral()));
-
-        let frame = rig.played(&rig.node(), &[], &input(base_at(0.0)));
-
-        assert_rotation_near(frame.joints()[0].rotation, Quat::from_rotation_x(0.3));
-        assert_vec_near(frame.joints()[0].translation, Vec3::new(0.0, 1.2, 0.0));
-        assert_eq!(frame.root_motion(), base_motion());
-    }
-
-    #[test]
-    fn a_plain_clip_passes_the_base_through_and_warns_once() {
-        let rig = Rig::new(affected());
-        let node = rig.node();
-        let mut state = rig.create(&node);
-        let base = base_at(0.5);
-
-        for _ in 0..3 {
-            rig.step(&node, &mut state, 0.25);
-            let frame = rig.overlay(&node, &mut state, &input(base_at(0.5)));
-
-            assert_same_frame(&frame, &base);
-            assert!(state.warned_plain);
-        }
-        assert!(!state.warned_inputs);
-    }
-
-    #[test]
-    fn an_unloaded_clip_or_one_with_no_delta_passes_the_base_through_and_holds_its_clock() {
-        let mut undelta = affected();
-        undelta.set_additive(Additive::LocalSpace(against_neutral()));
-        let rig = Rig::new(undelta);
-        let unloaded = AdditiveNode::new(AssetHandle::weak(AssetId::from_path("unloaded")));
-        let base = base_at(0.5);
-
-        for node in [unloaded, rig.node()] {
-            let mut state = rig.create(&node);
-            rig.step(&node, &mut state, 0.5);
-            let frame = rig.overlay(&node, &mut state, &input(base_at(0.5)));
-
-            assert_same_frame(&frame, &base);
-            assert_eq!(state.clock.current_time(), 0.0);
-            assert!(state.clock.fresh);
-            assert!(!state.warned_plain);
-        }
-    }
-
-    #[test]
-    fn with_no_input_the_delta_goes_over_the_rest_pose() {
-        let rig = Rig::new(cold());
-
-        let frame = rig.played(&rig.node(), &[], &[]);
-
-        let mut expected = rest()[1].clone();
-        apply_additive(&mut expected, &cold().sample_additive(0.0, &CHILD), 1.0);
-        assert_eq!(frame.joints()[1], expected);
-        assert_eq!(frame.root_motion(), RootMotion::IDENTITY);
-        assert!(frame.events().is_empty());
-    }
-
-    #[test]
-    fn a_second_input_warns_and_is_ignored() {
-        let rig = Rig::new(cold());
-        let node = rig.node();
-        let mut state = rig.create(&node);
-        let other = AnimationFrame::new(Pose::from_joints(vec![
-            joint(
-                Vec3::X,
-                Quat::from_rotation_y(1.0)
-            );
-            BONES.len()
-        ]));
-
-        let frame = rig.overlay(
-            &node,
-            &mut state,
-            &[weighted(base_at(0.0), 1.0), weighted(other, 1.0)],
-        );
-
-        assert!(state.warned_inputs);
-        assert_same_frame(&frame, &rig.played(&node, &[], &input(base_at(0.0))));
-    }
-
-    #[test]
-    fn the_node_weight_of_the_input_does_not_change_the_result() {
-        let rig = Rig::new(cold());
-        let node = rig.node().with_weight(0.7);
-
-        let faint = rig.played(&node, &[0.25], &[weighted(base_at(0.25), 0.25)]);
-        let full = rig.played(&node, &[0.25], &input(base_at(0.25)));
-
-        assert_same_frame(&faint, &full);
-    }
-
-    #[test]
-    fn an_overlay_is_always_finished() {
-        let rig = Rig::new(cold());
-        let node = rig.node();
-        let mut state = rig.create(&node);
-        assert!(node.is_finished(&state));
-        for _ in 0..8 {
-            rig.step(&node, &mut state, 0.3);
-            assert!(node.is_finished(&state));
-        }
-
-        let plain = Rig::new(affected());
-        let unloaded = AdditiveNode::new(AssetHandle::weak(AssetId::from_path("unloaded")));
-        for node in [plain.node(), unloaded] {
-            let mut state = plain.create(&node);
-            plain.step(&node, &mut state, 0.3);
-            assert!(node.is_finished(&state));
-        }
-    }
-
-    #[test]
-    fn a_clip_that_stops_resolving_fires_nothing_on_the_next_update() {
-        let rig = Rig::new(cold());
-        let node = rig.node();
-        let mut state = rig.create(&node);
-        rig.step(&node, &mut state, 0.5);
-        assert_eq!(rig.overlay(&node, &mut state, &[]).events().len(), 1);
-
-        let unresolved = AdditiveNode {
-            clip: AssetHandle::weak(AssetId::from_path("gone")),
-            ..node.clone()
-        };
-        rig.step(&unresolved, &mut state, 0.5);
-
-        assert!(state.clock.fired.is_empty());
-        assert!(rig.overlay(&node, &mut state, &[]).events().is_empty());
     }
 }

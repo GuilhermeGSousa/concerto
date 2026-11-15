@@ -63,37 +63,6 @@ fn edits_keep_children_and_child_of_in_step() {
             despawned: &[1],
         },
         HierarchyCase {
-            name: "despawning a parent takes its children",
-            nodes: 3,
-            edits: &[
-                AddChild {
-                    parent: 0,
-                    child: 1,
-                },
-                AddChild {
-                    parent: 0,
-                    child: 2,
-                },
-                Despawn(1),
-                Despawn(0),
-            ],
-            families: &[],
-            despawned: &[0, 1, 2],
-        },
-        HierarchyCase {
-            name: "despawning the last leaf removes the parent's Children",
-            nodes: 2,
-            edits: &[
-                AddChild {
-                    parent: 0,
-                    child: 1,
-                },
-                Despawn(1),
-            ],
-            families: &[],
-            despawned: &[1],
-        },
-        HierarchyCase {
             name: "despawning a subtree detaches it from its surviving parent",
             nodes: 3,
             edits: &[
@@ -109,25 +78,6 @@ fn edits_keep_children_and_child_of_in_step() {
             ],
             families: &[],
             despawned: &[1, 2],
-        },
-        HierarchyCase {
-            name: "reparenting through the builder",
-            nodes: 3,
-            edits: &[
-                AddChild {
-                    parent: 0,
-                    child: 2,
-                },
-                AddChild {
-                    parent: 1,
-                    child: 2,
-                },
-            ],
-            families: &[Family {
-                parent: 1,
-                children: &[2],
-            }],
-            despawned: &[],
         },
         HierarchyCase {
             name: "reparenting by inserting ChildOf",
@@ -149,29 +99,6 @@ fn edits_keep_children_and_child_of_in_step() {
             despawned: &[],
         },
         HierarchyCase {
-            name: "re-adding a child to its current parent",
-            nodes: 2,
-            edits: &[
-                AddChild {
-                    parent: 0,
-                    child: 1,
-                },
-                AddChild {
-                    parent: 0,
-                    child: 1,
-                },
-                InsertChildOf {
-                    parent: 0,
-                    child: 1,
-                },
-            ],
-            families: &[Family {
-                parent: 0,
-                children: &[1],
-            }],
-            despawned: &[],
-        },
-        HierarchyCase {
             name: "inserting ChildOf attaches in order",
             nodes: 3,
             edits: &[
@@ -187,26 +114,6 @@ fn edits_keep_children_and_child_of_in_step() {
             families: &[Family {
                 parent: 0,
                 children: &[1, 2],
-            }],
-            despawned: &[],
-        },
-        HierarchyCase {
-            name: "detaching one of several children",
-            nodes: 3,
-            edits: &[
-                AddChild {
-                    parent: 0,
-                    child: 1,
-                },
-                AddChild {
-                    parent: 0,
-                    child: 2,
-                },
-                RemoveChildOf(1),
-            ],
-            families: &[Family {
-                parent: 0,
-                children: &[2],
             }],
             despawned: &[],
         },

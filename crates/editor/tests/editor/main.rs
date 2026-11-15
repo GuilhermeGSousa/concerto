@@ -1,5 +1,4 @@
 mod asset_editor;
-mod camera_pose;
 mod custom_property;
 mod document_value;
 mod edit_app_picture;

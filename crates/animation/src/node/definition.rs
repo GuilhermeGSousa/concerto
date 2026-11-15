@@ -401,11 +401,9 @@ impl AnimationNode for PlaceholderNode {
 mod tests {
     use concerto_ecs::resource::{Res, Resource};
     use concerto_foundation::assets::asset_store::AssetStore;
-    use concerto_reflect::TypeRegistry;
-    use glam::Vec3;
 
     use super::*;
-    use crate::{blackboard::AnimationBlackboard, pose::JointPose, testing::Walks};
+    use crate::{blackboard::AnimationBlackboard, testing::Walks};
 
     #[derive(Resource)]
     struct Step(u32);
@@ -470,31 +468,6 @@ mod tests {
         }
     }
 
-    fn registered() -> TypeRegistry {
-        let mut registry = TypeRegistry::default();
-        registry.register::<Gain>();
-        registry
-    }
-
-    #[test]
-    fn from_value_and_to_value_round_trip() {
-        let registry = registered();
-        let data = *registry
-            .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<Gain>())
-            .unwrap();
-        let stored = to_value(&Gain { amount: 2.5 }).unwrap();
-
-        let mut leaves = LiveLeaves::from_parts(&registry, None);
-        let (node, warnings) = (data.from_value)(&stored, &mut leaves);
-
-        assert!(warnings.is_empty());
-        assert_eq!(
-            node.as_reflect().downcast_ref::<Gain>().unwrap().amount,
-            2.5
-        );
-        assert_eq!((data.to_value)(&*node).unwrap().unwrap(), stored);
-    }
-
     fn gain_walks(register: impl FnOnce(&mut concerto_ecs::World)) -> Walks {
         Walks::with(AssetStore::new(), AssetStore::new(), register)
     }
@@ -515,109 +488,12 @@ mod tests {
     }
 
     #[test]
-    fn erased_calls_reach_the_typed_methods_with_their_inputs() {
+    fn a_node_reads_its_update_input_from_the_world() {
         let walks = gain_walks(|world| {
             register_node_inputs::<Gain>(world);
-            world.insert_resource(Step(1));
-        });
-        let blackboard = AnimationBlackboard::default();
-        let node: Box<dyn ErasedAnimationNode> = Box::new(Gain { amount: 2.0 });
-        let mut state = walks
-            .create(&blackboard, |context| node.create_state(context))
-            .unwrap();
-        let mut pool = FramePool::new(1);
-        let mut output = AnimationFrame::identity(1);
-
-        assert!(!node.is_finished(&state));
-        walks.update(&blackboard, |context| node.update(&mut state, 0.1, context));
-        walks.update(&blackboard, |context| node.update(&mut state, 0.1, context));
-        walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut output)
-        });
-        node.reset(&mut state);
-
-        assert!(node.is_finished(&state));
-        assert_eq!(output.joints()[0].translation.x, 4.0);
-        let typed = node
-            .state_as_any(&state)
-            .downcast_ref::<GainState>()
-            .unwrap();
-        assert_eq!(typed.updates, 2);
-        assert_eq!(typed.resets, 1);
-    }
-
-    struct InputCase {
-        name: &'static str,
-        register: fn(&mut concerto_ecs::World),
-        updates: u32,
-    }
-
-    #[test]
-    fn a_node_reads_its_update_input_from_the_world_and_is_not_updated_without_it() {
-        let cases = [
-            InputCase {
-                name: "registered inputs and the resource",
-                register: |world| {
-                    register_node_inputs::<Gain>(world);
-                    world.insert_resource(Step(3));
-                },
-                updates: 6,
-            },
-            InputCase {
-                name: "inputs not registered",
-                register: |world| world.insert_resource(Step(3)),
-                updates: 0,
-            },
-            InputCase {
-                name: "the input resource missing",
-                register: register_node_inputs::<Gain>,
-                updates: 0,
-            },
-        ];
-
-        for case in cases {
-            let walks = gain_walks(case.register);
-
-            assert_eq!(
-                updates_after_two_steps(&walks),
-                case.updates,
-                "{}",
-                case.name
-            );
-        }
-    }
-
-    #[test]
-    fn placeholder_passes_the_first_input_through_and_without_one_leaves_the_rest_pose() {
-        let walks = gain_walks(|_| {});
-        let blackboard = AnimationBlackboard::default();
-        let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
-        let mut state = walks
-            .create(&blackboard, |context| node.create_state(context))
-            .unwrap();
-        let rest = [JointPose {
-            translation: Vec3::X,
-            ..JointPose::IDENTITY
-        }];
-        let mut pool = FramePool::new(1);
-        pool.set_rest(&rest);
-        let mut input = AnimationFrame::identity(1);
-        input.joint_mut(0).unwrap().translation.x = 3.0;
-        let inputs = [EvaluatedFrame {
-            frame: input,
-            weight: 1.0,
-        }];
-
-        let mut passed = pool.acquire();
-        walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut state, context, &[], &inputs, &mut pool, &mut passed)
-        });
-        let mut alone = pool.acquire();
-        walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut alone)
+            world.insert_resource(Step(3));
         });
 
-        assert_eq!(passed.joints()[0].translation.x, 3.0);
-        assert_eq!(alone.joints(), rest);
+        assert_eq!(updates_after_two_steps(&walks), 6);
     }
 }

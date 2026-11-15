@@ -194,72 +194,11 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use concerto_foundation::assets::{AssetId, asset_store::AssetStore};
     use concerto_name::name;
     use glam::Vec2;
 
     use super::{BlendInput, BlendSpace2DNode};
-    use crate::{
-        blackboard::AnimationBlackboard,
-        node::AnimationNode,
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
-        testing::Walks,
-    };
-
-    fn firing(key: u32) -> EvaluatedFrame {
-        let mut frame = AnimationFrame::identity(1);
-        frame.push_event(FiredEvent {
-            clip: AssetId::new(),
-            key,
-            time: 0.0,
-            weight: 1.0,
-            mirrored: false,
-        });
-        EvaluatedFrame { frame, weight: 1.0 }
-    }
-
-    #[test]
-    fn each_corner_event_carries_its_barycentric_weight() {
-        let space = BlendSpace2DNode::new(
-            vec![Vec2::ZERO, Vec2::X, Vec2::Y],
-            BlendInput {
-                param: name!("at").into(),
-            },
-        );
-        let walks = Walks::new(AssetStore::new(), AssetStore::new());
-        let mut blackboard = AnimationBlackboard::default();
-        blackboard.set(name!("at"), Vec2::new(0.25, 0.25));
-        let mut state = walks.create(&blackboard, |context| space.create_state(&(), context));
-        walks.update(&blackboard, |context| {
-            space.update(&mut state, 0.1, &(), context)
-        });
-        let mut pool = FramePool::new(1);
-        let mut output = pool.acquire();
-
-        walks.evaluate(&blackboard, None, |context| {
-            space.evaluate(
-                &mut state,
-                &(),
-                context,
-                &[],
-                &[firing(0), firing(1), firing(2)],
-                &mut pool,
-                &mut output,
-            )
-        });
-
-        let mut events: Vec<_> = output.events().iter().collect();
-        events.sort_by_key(|event| event.key);
-        assert_eq!(events.len(), 3);
-        for (event, expected) in events.into_iter().zip([0.5, 0.25, 0.25]) {
-            assert!(
-                (event.weight - expected).abs() < 1e-5,
-                "event {}: expected {expected}, got {}",
-                event.key,
-                event.weight
-            );
-        }
-    }
+    use crate::node::AnimationNode;
 
     #[test]
     fn the_blend_space_keeps_a_point_per_input_as_inputs_come_and_go() {

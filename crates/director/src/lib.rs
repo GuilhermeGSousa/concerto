@@ -71,21 +71,35 @@ impl Plugin for CameraDirectorPlugin {
 
 #[cfg(test)]
 mod tests {
-    use concerto_app::{App, main_schedule::MainSchedulePlugin};
+    use concerto_app::{App, main_schedule::MainSchedulePlugin, plugins::TimePlugin};
 
-    use super::{CameraDirector, CameraDirectorPlugin};
+    use super::{CameraDirector, CameraDirectorPlugin, MainCamera};
 
     #[test]
-    fn the_plugin_keeps_a_director_the_game_inserted_first() {
-        let mut app = App::new();
-        app.register_plugin(MainSchedulePlugin);
-        app.insert_resource(CameraDirector::default().with_main_camera(false));
-        app.register_plugin(CameraDirectorPlugin);
+    fn the_plugin_spawns_one_main_camera_unless_the_game_turned_it_off_first() {
+        for spawns in [true, false] {
+            let mut app = App::new();
+            app.register_plugin(MainSchedulePlugin)
+                .register_plugin(TimePlugin);
+            if !spawns {
+                app.insert_resource(CameraDirector::default().with_main_camera(false));
+            }
+            app.register_plugin(CameraDirectorPlugin);
+            app.finish_plugin_build();
 
-        assert!(
-            !app.get_resource::<CameraDirector>()
-                .unwrap()
-                .spawns_main_camera()
-        );
+            app.update();
+
+            let world = app.main_mut().world_mut();
+            let main_cameras: Vec<_> = world
+                .query::<concerto_ecs::Entity, concerto_ecs::With<MainCamera>>()
+                .iter(world)
+                .collect();
+            assert_eq!(main_cameras.len(), usize::from(spawns), "spawns {spawns}");
+            assert_eq!(
+                app.get_resource::<CameraDirector>().unwrap().main_camera(),
+                main_cameras.first().copied(),
+                "spawns {spawns}"
+            );
+        }
     }
 }

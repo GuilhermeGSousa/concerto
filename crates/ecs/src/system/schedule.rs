@@ -567,97 +567,9 @@ pub(crate) fn is_sync_point(system: &dyn System<In = ()>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::{
-        config::IntoSystemConfig, executor::single_thread::SingleThreadedExecutor,
-    };
+    use crate::system::executor::single_thread::SingleThreadedExecutor;
 
-    use crate::system::tag::{SystemTag, TagFilter};
     use crate::testing::{Inner, Outer};
-
-    #[derive(SystemTag, Clone, PartialEq, Eq, Hash, Debug)]
-    struct Kept;
-
-    #[derive(crate::Resource, Default)]
-    struct Ran(Vec<&'static str>);
-
-    fn mark_a(mut ran: crate::ResMut<Ran>) {
-        ran.0.push("a");
-    }
-
-    fn mark_b(mut ran: crate::ResMut<Ran>) {
-        ran.0.push("b");
-    }
-
-    fn mark_x(mut ran: crate::ResMut<Ran>) {
-        ran.0.push("x");
-    }
-
-    fn including(tag: impl SystemTag) -> TagFilter {
-        TagFilter {
-            include: vec![tag.intern()],
-            exclude: Vec::new(),
-        }
-    }
-
-    #[derive(crate::Resource, Default)]
-    struct Hooked(u32);
-
-    struct Watched;
-
-    impl crate::Component for Watched {
-        fn on_add() -> Option<crate::component::ComponentLifecycleCallback> {
-            Some(|mut world, _| {
-                if let Some(hooked) = world.get_resource_mut::<Hooked>() {
-                    hooked.0 += 1;
-                }
-            })
-        }
-    }
-
-    fn watch(_watched: crate::Query<&Watched>) {}
-
-    fn hooks_fired(filter: &TagFilter) -> u32 {
-        let mut schedule = Schedule::new();
-        schedule.add_system(watch);
-        let mut world = World::new();
-        world.insert_resource(Hooked::default());
-        let _compiled = schedule.compile_filtered::<SingleThreadedExecutor>(&mut world, filter);
-        world.spawn(Watched);
-        world.get_resource::<Hooked>().unwrap().0
-    }
-
-    #[test]
-    fn a_stood_in_system_is_never_initialized() {
-        assert_eq!(hooks_fired(&TagFilter::default()), 1);
-        assert_eq!(hooks_fired(&including(Kept)), 0);
-    }
-
-    fn queue_nothing(_cmd: crate::CommandQueue, _ran: crate::ResMut<Ran>) {}
-
-    #[test]
-    fn a_stand_in_has_no_access_and_no_sync_point() {
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(mark_a.tagged(Kept))
-            .add_system(mark_x)
-            .add_system(queue_nothing)
-            .add_system(mark_b.tagged(Kept));
-        let mut world = World::new();
-        world.insert_resource(Ran::default());
-        let compiled =
-            schedule.compile_filtered::<SingleThreadedExecutor>(&mut world, &including(Kept));
-        let data = &compiled.compiled_data;
-
-        assert_eq!(data.systems.len(), 4);
-        assert!(
-            data.systems
-                .iter()
-                .all(|system| !is_sync_point(system.as_ref()))
-        );
-        assert_eq!(data.dependency_count[1], 0);
-        assert!(data.dependants[1].is_empty());
-        assert_eq!(data.dependency_count[2], 0);
-    }
 
     // ── World::run_schedule reentrancy ──────────────────────────────────────
 

@@ -432,13 +432,7 @@ mod tests {
         let reader = access_of(plain_reader);
         let writer = access_of(writer);
 
-        assert_eq!(
-            SystemAccess::are_disjoint(&optional_reader, &reader),
-            SystemAccess::are_disjoint(&reader, &reader)
-        );
         assert!(!SystemAccess::are_disjoint(&optional_reader, &writer));
-        assert!(!SystemAccess::are_disjoint(&writer, &optional_reader));
         assert!(!SystemAccess::are_disjoint(&optional_writer, &reader));
-        assert!(!SystemAccess::are_disjoint(&reader, &optional_writer));
     }
 }

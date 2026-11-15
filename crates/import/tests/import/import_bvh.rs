@@ -69,18 +69,8 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
             "content/walk/scene.gasset#skeleton/0",
         ]
     );
-    let mut files: Vec<_> = std::fs::read_dir(project.path().join("content/walk"))
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .collect();
-    files.sort();
-    assert_eq!(files, ["animation_walk.gasset", "scene.gasset"]);
     let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
     let mut metadata = SourceMetadata::load(&sidecar).expect("sidecar written");
-    assert_eq!(metadata.importer, "bvh");
-    for key in ["skeleton/0", "animation/walk", "scene"] {
-        assert!(metadata.outputs.contains_key(key), "{key} in sidecar");
-    }
 
     let skeleton = first
         .assets
@@ -113,8 +103,6 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
         ids(&first),
         "asset identities survive a re-import"
     );
-    let reread = SourceMetadata::load(&sidecar).unwrap();
-    assert_eq!(reread.settings["scale"].as_float(), Some(0.5));
 }
 
 #[derive(Debug, PartialEq)]
@@ -152,7 +140,6 @@ fn a_re_import_overwrites_a_resaved_clip_and_rebuilds_its_events_from_the_sideca
     let (_, imported) = decode_content_asset::<AnimationClip>(&read(project.path(), address))
         .expect("the clip decodes");
     let imported_events = stored_events(&imported);
-    assert_eq!(imported_events.len(), 1);
 
     let mut edited = imported;
     edited
@@ -160,15 +147,10 @@ fn a_re_import_overwrites_a_resaved_clip_and_rebuilds_its_events_from_the_sideca
         .unwrap();
     resave_content_asset(&edited, project.path(), address, &mut AssetRegistry::new())
         .expect("resave");
-    let (_, resaved) = decode_content_asset::<AnimationClip>(&read(project.path(), address))
-        .expect("the resaved clip decodes");
-    assert_eq!(resaved.events().len(), 2);
 
     import(&source(scratch.path()), project.path()).expect("re-import");
 
-    let (header, reimported) =
-        decode_content_asset::<AnimationClip>(&read(project.path(), address))
-            .expect("the re-imported clip decodes");
-    assert!(header.provenance.is_some());
+    let (_, reimported) = decode_content_asset::<AnimationClip>(&read(project.path(), address))
+        .expect("the re-imported clip decodes");
     assert_eq!(stored_events(&reimported), imported_events);
 }

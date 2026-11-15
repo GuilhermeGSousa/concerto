@@ -494,11 +494,9 @@ mod tests {
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
     use concerto_app::plugins::TransformPlugin;
     use concerto_ecs::{
-        Entity, IntoSystem, System, With, World,
-        component::{name::Name, scene::SceneEntityRef},
-        entity::hierarchy::{ChildOf, Children},
+        Entity, World,
+        component::scene::SceneEntityRef,
         events::{event_channel::EventChannel, event_cursor::EventCursor},
-        system::BoxedSystem,
     };
     use concerto_editor::{
         hosted::testing::plain_recipe,
@@ -506,13 +504,12 @@ mod tests {
     };
     use concerto_foundation::{
         assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
-        transform::{Transform, systems::propagate_global_transforms},
+        transform::Transform,
     };
     use concerto_mesh::{
         SkeletonGizmo,
         skeleton::{JointPose, Skeleton, SkeletonComponent},
     };
-    use concerto_scene::scene::SceneNode;
     use glam::{Mat4, Quat, Vec3};
     use std::f32::consts::FRAC_PI_2;
     use uuid::Uuid;
@@ -525,8 +522,70 @@ mod tests {
     const DRIVEN_REST: Vec3 = Vec3::new(0.0, 0.5, 0.0);
     const DRIVEN_END: Vec3 = Vec3::new(2.0, 0.5, 0.0);
     const STILL_AT: Vec3 = Vec3::new(7.0, 8.0, 9.0);
-    const BONES_MIDDLE: Vec3 = Vec3::new(3.5, 5.25, 4.5);
     const NEAR: f32 = 1e-4;
+
+    struct Advance {
+        time: f32,
+        delta: f32,
+        rate: f32,
+        duration: f32,
+        looping: bool,
+        next: f32,
+        playing: bool,
+    }
+
+    #[test]
+    fn advancing_scales_by_the_rate_wraps_while_looping_and_stops_at_the_end_otherwise() {
+        let rows = [
+            Advance {
+                time: 1.0,
+                delta: 0.5,
+                rate: 2.0,
+                duration: 10.0,
+                looping: false,
+                next: 2.0,
+                playing: true,
+            },
+            Advance {
+                time: 1.5,
+                delta: 1.0,
+                rate: 1.0,
+                duration: 2.0,
+                looping: true,
+                next: 0.5,
+                playing: true,
+            },
+            Advance {
+                time: 1.5,
+                delta: 1.0,
+                rate: 1.0,
+                duration: 2.0,
+                looping: false,
+                next: 2.0,
+                playing: false,
+            },
+            Advance {
+                time: 0.0,
+                delta: 1.0,
+                rate: 1.0,
+                duration: 0.0,
+                looping: true,
+                next: 0.0,
+                playing: true,
+            },
+        ];
+        for row in rows {
+            assert_eq!(
+                advanced(row.time, row.delta, row.rate, row.duration, row.looping),
+                (row.next, row.playing),
+                "{} + {} at {}x of {}",
+                row.time,
+                row.delta,
+                row.rate,
+                row.duration
+            );
+        }
+    }
 
     fn keys(from: Vec3, to: Vec3) -> AnimationChannel {
         AnimationChannel::new(
@@ -570,22 +629,6 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn a_document_starts_with_the_previews_values() {
-        let document = crate::ClipDocument::default();
-        let transport = crate::transport::ClipTransport::default();
-        let preview = ClipPlayback::default();
-        let posing = ClipPosing::default();
-
-        assert_eq!(transport.time, preview.time);
-        assert_eq!(transport.speed, preview.rate);
-        assert_eq!(transport.playing, preview.playing);
-        assert_eq!(transport.looping, preview.looping);
-        assert_eq!(document.root_motion, posing.root_motion);
-        assert_eq!(document.skeleton_gizmo, posing.skeleton_gizmo);
-    }
-
-    #[derive(Clone, Copy)]
     struct Rig {
         owner: Entity,
         root: Entity,
@@ -593,13 +636,13 @@ mod tests {
         still: Entity,
     }
 
-    fn spawn_rig(world: &mut World, parent: Transform, rooted: bool) -> Rig {
+    fn spawn_rig(world: &mut World) -> Rig {
         let id = AssetId::new();
         world
             .get_resource_mut::<AssetStore<Skeleton>>()
             .unwrap()
             .insert(id, skeleton());
-        let parent = world.spawn(parent);
+        let parent = world.spawn(Transform::IDENTITY);
         let root = world.spawn(Transform::from_translation(ROOT_REST));
         let driven = world.spawn(Transform::from_translation(DRIVEN_REST));
         let still = world.spawn(Transform::from_translation(STILL_AT));
@@ -609,7 +652,7 @@ mod tests {
         let owner = world.spawn(SkeletonComponent::new(
             AssetHandle::weak(id),
             [root, driven, still].map(SceneEntityRef::Entity).to_vec(),
-            rooted.then_some(SceneEntityRef::Entity(root)),
+            Some(SceneEntityRef::Entity(root)),
         ));
         Rig {
             owner,
@@ -619,592 +662,34 @@ mod tests {
         }
     }
 
-    struct Stage {
-        world: World,
-        gizmos: BoxedSystem,
-        pose: BoxedSystem,
-        propagate: BoxedSystem,
-        follow: BoxedSystem,
-        progress: BoxedSystem,
-        bones: BoxedSystem,
+    fn transform(app: &App, entity: Entity) -> Transform {
+        app.main()
+            .world()
+            .get_component_for_entity::<Transform>(entity)
+            .unwrap()
+            .clone()
     }
 
-    impl Stage {
-        fn new() -> Self {
-            let mut world = World::new();
-            world.register_component::<SkeletonComponent>();
-            world.register_component::<Transform>();
-            world.register_component::<ChildOf>();
-            world.register_component::<Children>();
-            world.insert_resource(ClipPlayback::default());
-            world.insert_resource(ClipPosing::default());
-            world.insert_resource(AssetStore::<Skeleton>::new());
-            world.insert_resource(EventChannel::<ClipPreviewProgress>::new());
-            world.insert_resource(EventChannel::<ClipPreviewBones>::new());
-            world.add_listener(show_clip);
-            world.add_listener(show_clip_scene);
-            world.add_listener(set_clip_transport);
-            world.add_listener(seek_clip);
-            world.add_listener(set_root_motion);
-            world.add_listener(set_skeleton_gizmo);
-            let mut gizmos = gizmo_new_skeletons.into_boxed_system();
-            let mut pose = pose_clip.into_boxed_system();
-            let mut propagate = propagate_global_transforms.into_boxed_system();
-            let mut follow = follow_root.into_boxed_system();
-            let mut progress = report_progress.into_boxed_system();
-            let mut bones = report_bones.into_boxed_system();
-            for system in [
-                &mut gizmos,
-                &mut pose,
-                &mut propagate,
-                &mut follow,
-                &mut progress,
-                &mut bones,
-            ] {
-                system.initialize(&mut world);
-            }
-            Self {
-                world,
-                gizmos,
-                pose,
-                propagate,
-                follow,
-                progress,
-                bones,
-            }
-        }
-
-        fn frame(&mut self) {
-            self.gizmos.run_and_apply((), &mut self.world);
-            self.pose.run_and_apply((), &mut self.world);
-            self.propagate.run_and_apply((), &mut self.world);
-            self.follow.run_and_apply((), &mut self.world);
-            self.progress.run_and_apply((), &mut self.world);
-            self.bones.run_and_apply((), &mut self.world);
-            self.world.tick();
-        }
-
-        fn rig(&mut self) -> Rig {
-            spawn_rig(&mut self.world, Transform::IDENTITY, true)
-        }
-
-        fn show_clip(&mut self) {
-            self.world.trigger(ShowClip(clip()));
-        }
-
-        fn seek(&mut self, time: f32) {
-            self.world.trigger(SeekClip(time));
-        }
-
-        fn preview(&self) -> &ClipPlayback {
-            self.world.get_resource::<ClipPlayback>().unwrap()
-        }
-
-        fn transform(&self, entity: Entity) -> &Transform {
-            self.world
-                .get_component_for_entity::<Transform>(entity)
-                .unwrap()
-        }
-
-        fn camera(&mut self) -> Entity {
-            self.world.spawn(OrbitCamera::default())
-        }
-
-        fn target(&self, camera: Entity) -> Vec3 {
-            self.world
-                .get_component_for_entity::<OrbitCamera>(camera)
-                .unwrap()
-                .target
-        }
-
-        fn written<E: Event + Clone + 'static>(&self) -> Vec<E> {
-            self.world
-                .get_resource::<EventChannel<E>>()
-                .unwrap()
-                .read_from(&mut EventCursor::default())
-                .cloned()
-                .collect()
-        }
-
-        fn has_gizmo(&self, entity: Entity) -> bool {
-            self.world
-                .get_component_for_entity::<SkeletonGizmo>(entity)
-                .is_some()
-        }
-
-        fn roots(&mut self) -> Vec<Entity> {
-            self.world
-                .query::<Entity, With<ClipPreviewRoot>>()
-                .iter(&mut self.world)
-                .collect()
-        }
-
-        fn names(&mut self) -> Vec<String> {
-            self.world
-                .query::<&Name, ()>()
-                .iter(&mut self.world)
-                .map(|name| name.as_str().to_owned())
-                .collect()
-        }
+    fn camera_target(app: &mut App) -> Vec3 {
+        let world = app.main_mut().world_mut();
+        world
+            .query::<&OrbitCamera, ()>()
+            .iter(world)
+            .next()
+            .unwrap()
+            .target
     }
 
-    fn scene_of(name: &str) -> Scene {
-        Scene {
-            nodes: vec![SceneNode {
-                name: name.into(),
-                children: vec![],
-                components: vec![],
-            }],
-            referenced_assets: vec![],
-        }
+    fn written<E: Event + Clone + 'static>(app: &App) -> Vec<E> {
+        app.get_resource::<EventChannel<E>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .cloned()
+            .collect()
     }
 
     #[test]
-    fn advancing_scales_the_delta_by_the_rate() {
-        assert_eq!(advanced(1.0, 0.5, 2.0, 10.0, false), (2.0, true));
-        assert_eq!(advanced(1.0, 0.5, 0.5, 10.0, true), (1.25, true));
-    }
-
-    #[test]
-    fn advancing_past_the_end_wraps_while_looping() {
-        assert_eq!(advanced(1.5, 1.0, 1.0, 2.0, true), (0.5, true));
-        assert_eq!(advanced(1.0, 1.0, 1.0, 2.0, true), (0.0, true));
-    }
-
-    #[test]
-    fn advancing_past_the_end_stops_there_when_not_looping() {
-        assert_eq!(advanced(1.5, 1.0, 1.0, 2.0, false), (2.0, false));
-        assert_eq!(advanced(1.0, 1.0, 1.0, 2.0, false), (2.0, false));
-    }
-
-    #[test]
-    fn a_clip_with_no_duration_never_advances() {
-        assert_eq!(advanced(0.0, 1.0, 1.0, 0.0, true), (0.0, true));
-        assert_eq!(advanced(0.0, 1.0, 1.0, 0.0, false), (0.0, true));
-    }
-
-    #[test]
-    fn a_seek_poses_a_driven_bone_exactly_at_that_time() {
-        let mut stage = Stage::new();
-        let rig = stage.rig();
-        stage.show_clip();
-
-        stage.seek(0.5);
-        stage.frame();
-
-        assert!(
-            stage
-                .transform(rig.driven)
-                .translation
-                .abs_diff_eq(DRIVEN_REST.lerp(DRIVEN_END, 0.25), NEAR)
-        );
-    }
-
-    #[test]
-    fn a_bone_without_channels_keeps_its_transform() {
-        let mut stage = Stage::new();
-        let rig = stage.rig();
-        stage.show_clip();
-
-        stage.seek(1.0);
-        stage.frame();
-
-        assert_eq!(stage.transform(rig.still).translation, STILL_AT);
-    }
-
-    #[test]
-    fn a_rootless_skeleton_is_skipped() {
-        let mut stage = Stage::new();
-        let rig = spawn_rig(&mut stage.world, Transform::IDENTITY, false);
-        stage.show_clip();
-
-        stage.seek(1.0);
-        stage.frame();
-
-        assert_eq!(stage.transform(rig.driven).translation, DRIVEN_REST);
-        assert_eq!(stage.transform(rig.root).translation, ROOT_REST);
-    }
-
-    #[test]
-    fn a_cleared_clip_stops_posing_and_goes_back_to_the_start() {
-        let mut stage = Stage::new();
-        stage.world.add_listener(clear_clip);
-        let rig = stage.rig();
-        stage.show_clip();
-        stage.seek(1.0);
-
-        stage.world.trigger(ClearClip);
-        stage.frame();
-
-        assert!(stage.preview().clip.is_none());
-        assert_eq!(stage.preview().time, 0.0);
-        assert_eq!(stage.transform(rig.driven).translation, DRIVEN_REST);
-    }
-
-    #[test]
-    fn nothing_is_posed_before_a_clip_arrives() {
-        let mut stage = Stage::new();
-        let rig = stage.rig();
-
-        stage.frame();
-
-        assert_eq!(stage.transform(rig.driven).translation, DRIVEN_REST);
-    }
-
-    #[test]
-    fn the_root_takes_the_clips_rotation_with_root_motion_on_and_off() {
-        let mut stage = Stage::new();
-        let rig = stage.rig();
-        stage.show_clip();
-        stage.seek(2.0);
-
-        stage.frame();
-        assert!(
-            stage
-                .transform(rig.root)
-                .rotation
-                .abs_diff_eq(turned(), NEAR)
-        );
-
-        stage.world.trigger(SetRootMotion(true));
-        stage.frame();
-        assert!(
-            stage
-                .transform(rig.root)
-                .rotation
-                .abs_diff_eq(turned(), NEAR)
-        );
-    }
-
-    #[test]
-    fn with_root_motion_off_the_root_keeps_its_horizontal_position_and_the_clips_height() {
-        let mut stage = Stage::new();
-        let rig = stage.rig();
-        stage.show_clip();
-
-        stage.seek(2.0);
-        stage.frame();
-
-        assert!(
-            stage
-                .transform(rig.root)
-                .translation
-                .abs_diff_eq(Vec3::new(ROOT_REST.x, ROOT_END.y, ROOT_REST.z), NEAR)
-        );
-    }
-
-    #[test]
-    fn with_root_motion_on_the_root_takes_the_sampled_translation() {
-        let mut stage = Stage::new();
-        let rig = stage.rig();
-        stage.show_clip();
-        stage.world.trigger(SetRootMotion(true));
-
-        stage.seek(2.0);
-        stage.frame();
-
-        assert!(
-            stage
-                .transform(rig.root)
-                .translation
-                .abs_diff_eq(ROOT_END, NEAR)
-        );
-    }
-
-    #[test]
-    fn with_root_motion_off_under_a_rotated_parent_the_root_keeps_height_along_world_up() {
-        let mut stage = Stage::new();
-        let parent = Transform::from_rotation(Quat::from_rotation_x(FRAC_PI_2));
-        let rig = spawn_rig(&mut stage.world, parent, true);
-        stage.show_clip();
-
-        stage.seek(2.0);
-        stage.frame();
-
-        assert!(
-            stage
-                .transform(rig.root)
-                .translation
-                .abs_diff_eq(Vec3::new(0.0, 1.0, -2.0), NEAR)
-        );
-    }
-
-    #[test]
-    fn the_first_frame_with_a_root_targets_the_middle_of_its_bones() {
-        let mut stage = Stage::new();
-        let camera = stage.camera();
-        stage.rig();
-
-        stage.frame();
-
-        assert!(stage.target(camera).abs_diff_eq(BONES_MIDDLE, NEAR));
-    }
-
-    #[test]
-    fn horizontal_root_movement_moves_the_target() {
-        let mut stage = Stage::new();
-        let camera = stage.camera();
-        stage.rig();
-        stage.show_clip();
-        stage.world.trigger(SetRootMotion(true));
-        stage.frame();
-
-        stage.seek(2.0);
-        stage.frame();
-
-        let moved = ROOT_END - ROOT_REST;
-        assert!(
-            stage
-                .target(camera)
-                .abs_diff_eq(BONES_MIDDLE + Vec3::new(moved.x, 0.0, moved.z), NEAR)
-        );
-    }
-
-    #[test]
-    fn root_movement_along_up_leaves_the_target_alone() {
-        let mut stage = Stage::new();
-        let camera = stage.camera();
-        stage.rig();
-        stage.show_clip();
-        stage.frame();
-
-        stage.seek(2.0);
-        stage.frame();
-
-        assert!(stage.target(camera).abs_diff_eq(BONES_MIDDLE, NEAR));
-    }
-
-    #[test]
-    fn turning_root_motion_off_brings_the_target_back() {
-        let mut stage = Stage::new();
-        let camera = stage.camera();
-        stage.rig();
-        stage.show_clip();
-        stage.world.trigger(SetRootMotion(true));
-        stage.frame();
-        stage.seek(2.0);
-        stage.frame();
-
-        stage.world.trigger(SetRootMotion(false));
-        stage.frame();
-
-        assert!(stage.target(camera).abs_diff_eq(BONES_MIDDLE, NEAR));
-    }
-
-    #[test]
-    fn a_new_scenes_root_is_targeted_rather_than_followed() {
-        let mut stage = Stage::new();
-        let camera = stage.camera();
-        let first = stage.rig();
-        stage.frame();
-        stage.world.despawn(first.owner);
-        let parent = Transform::from_translation(Vec3::new(5.0, 0.0, 0.0));
-        spawn_rig(&mut stage.world, parent, true);
-
-        stage.frame();
-
-        assert!(
-            stage
-                .target(camera)
-                .abs_diff_eq(BONES_MIDDLE + Vec3::new(5.0, 0.0, 0.0), NEAR)
-        );
-    }
-
-    #[test]
-    fn progress_is_reported_only_when_it_changes() {
-        let mut stage = Stage::new();
-        stage.frame();
-        stage.frame();
-        assert_eq!(
-            stage.written::<ClipPreviewProgress>(),
-            [ClipPreviewProgress {
-                time: 0.0,
-                playing: true
-            }]
-        );
-
-        stage.seek(1.0);
-        stage.frame();
-        stage.frame();
-        stage.world.trigger(SetClipTransport {
-            playing: false,
-            looping: true,
-            rate: 1.0,
-        });
-        stage.frame();
-
-        assert_eq!(
-            stage.written::<ClipPreviewProgress>()[1..],
-            [
-                ClipPreviewProgress {
-                    time: 1.0,
-                    playing: true
-                },
-                ClipPreviewProgress {
-                    time: 1.0,
-                    playing: false
-                }
-            ]
-        );
-    }
-
-    #[test]
-    fn no_skeleton_reports_no_bones() {
-        let mut stage = Stage::new();
-
-        stage.frame();
-
-        assert_eq!(
-            stage.written::<ClipPreviewBones>(),
-            [ClipPreviewBones {
-                bones: 0,
-                driven: 0,
-                skeleton: Vec::new(),
-            }]
-        );
-    }
-
-    fn rig_bones() -> Vec<ShownBone> {
-        let bone = |id, name: &str| ShownBone {
-            id,
-            name: name.into(),
-        };
-        vec![
-            bone(ROOT, "root"),
-            bone(DRIVEN, "driven"),
-            bone(STILL, "still"),
-        ]
-    }
-
-    #[test]
-    fn the_first_rooted_skeleton_is_reported_once_with_its_counts_and_names() {
-        let mut stage = Stage::new();
-        spawn_rig(&mut stage.world, Transform::IDENTITY, false);
-        stage.frame();
-        stage.rig();
-        stage.show_clip();
-        stage.frame();
-        stage.frame();
-
-        assert_eq!(
-            stage.written::<ClipPreviewBones>(),
-            [
-                ClipPreviewBones {
-                    bones: 0,
-                    driven: 0,
-                    skeleton: Vec::new(),
-                },
-                ClipPreviewBones {
-                    bones: 3,
-                    driven: 2,
-                    skeleton: rig_bones(),
-                }
-            ]
-        );
-    }
-
-    #[test]
-    fn showing_a_clip_replaces_it_and_goes_back_to_the_start() {
-        let mut stage = Stage::new();
-        stage.seek(1.5);
-
-        let shown = clip();
-        stage.world.trigger(ShowClip(Arc::clone(&shown)));
-
-        assert_eq!(stage.preview().time, 0.0);
-        assert!(Arc::ptr_eq(stage.preview().clip.as_ref().unwrap(), &shown));
-    }
-
-    #[test]
-    fn a_seek_moves_the_time() {
-        let mut stage = Stage::new();
-
-        stage.seek(1.25);
-
-        assert_eq!(stage.preview().time, 1.25);
-    }
-
-    #[test]
-    fn a_transport_signal_sets_playing_looping_and_rate() {
-        let mut stage = Stage::new();
-
-        stage.world.trigger(SetClipTransport {
-            playing: false,
-            looping: false,
-            rate: 0.25,
-        });
-
-        let preview = stage.preview();
-        assert_eq!(
-            (preview.playing, preview.looping, preview.rate),
-            (false, false, 0.25)
-        );
-    }
-
-    #[test]
-    fn the_gizmo_signal_changes_only_the_rooted_skeletons_that_exist() {
-        let mut stage = Stage::new();
-        let rooted = stage.rig();
-        let rootless = spawn_rig(&mut stage.world, Transform::IDENTITY, false);
-
-        stage.world.trigger(SetSkeletonGizmo(true));
-        assert!(stage.has_gizmo(rooted.owner));
-        assert!(!stage.has_gizmo(rootless.owner));
-
-        stage.world.trigger(SetSkeletonGizmo(false));
-        assert!(!stage.has_gizmo(rooted.owner));
-    }
-
-    #[test]
-    fn a_skeleton_that_appears_later_follows_the_gizmo_setting() {
-        let mut stage = Stage::new();
-        let shown = stage.rig();
-        let rootless = spawn_rig(&mut stage.world, Transform::IDENTITY, false);
-        stage.frame();
-        assert!(stage.has_gizmo(shown.owner));
-        assert!(!stage.has_gizmo(rootless.owner));
-
-        stage.world.trigger(SetSkeletonGizmo(false));
-        let hidden = stage.rig();
-        stage.world.insert(SkeletonGizmo::default(), hidden.owner);
-        stage.frame();
-
-        assert!(!stage.has_gizmo(hidden.owner));
-    }
-
-    #[test]
-    fn a_second_scene_despawns_the_first_and_its_root_carries_a_transform() {
-        let mut stage = Stage::new();
-        stage.world.trigger(ShowClipScene(Some(scene_of("first"))));
-        let first = stage.roots();
-
-        stage.world.trigger(ShowClipScene(Some(scene_of("second"))));
-
-        assert_eq!(stage.names(), ["second"]);
-        let roots = stage.roots();
-        assert_eq!(roots.len(), 1);
-        assert_ne!(roots, first);
-        assert_eq!(stage.transform(roots[0]).translation, Vec3::ZERO);
-        let children = stage
-            .world
-            .get_component_for_entity::<Children>(roots[0])
-            .unwrap();
-        assert_eq!(children.iter().len(), 1);
-    }
-
-    #[test]
-    fn no_scene_empties_the_stage() {
-        let mut stage = Stage::new();
-        stage.world.trigger(ShowClipScene(Some(scene_of("first"))));
-
-        stage.world.trigger(ShowClipScene(None));
-
-        assert!(stage.names().is_empty());
-        assert!(stage.roots().is_empty());
-    }
-
-    #[test]
-    fn a_preview_app_runs_every_clip_system_in_its_schedule() {
+    fn a_seek_poses_the_clip_with_root_motion_off_and_on_and_the_camera_follows_the_root() {
         let mut app = App::for_previewing();
         plain_recipe(&mut app);
         app.register_plugin(TransformPlugin)
@@ -1214,45 +699,64 @@ mod tests {
         app.finish_plugin_build();
         app.update();
         let world = app.main_mut().world_mut();
-        let rig = spawn_rig(world, Transform::IDENTITY, true);
+        let rig = spawn_rig(world);
         world.trigger(ShowClip(clip()));
+        world.trigger(SetClipTransport {
+            playing: false,
+            looping: true,
+            rate: 1.0,
+        });
+        world.trigger(SeekClip(2.0));
 
-        let mut cursor = EventCursor::default();
-        let mut bones = Vec::new();
-        for _ in 0..4 {
-            std::thread::sleep(std::time::Duration::from_millis(2));
-            app.update();
-            let channel = app
-                .get_resource::<EventChannel<ClipPreviewBones>>()
-                .unwrap();
-            bones.extend(channel.read_from(&mut cursor).cloned());
-        }
+        app.update();
 
-        let world = app.main_mut().world_mut();
-        assert!(world.get_resource::<ClipPlayback>().unwrap().time > 0.0);
         assert!(
-            world
-                .get_component_for_entity::<Transform>(rig.driven)
-                .unwrap()
+            transform(&app, rig.driven)
                 .translation
-                .x
-                > 0.0
+                .abs_diff_eq(DRIVEN_END, NEAR)
         );
+        assert_eq!(transform(&app, rig.still).translation, STILL_AT);
+        let held = transform(&app, rig.root);
         assert!(
-            world
+            held.translation
+                .abs_diff_eq(Vec3::new(ROOT_REST.x, ROOT_END.y, ROOT_REST.z), NEAR),
+            "{}",
+            held.translation
+        );
+        assert!(held.rotation.abs_diff_eq(turned(), NEAR));
+        assert!(
+            app.main()
+                .world()
                 .get_component_for_entity::<SkeletonGizmo>(rig.owner)
                 .is_some()
         );
-        let orbit = world
-            .query::<&OrbitCamera, ()>()
-            .iter(world)
-            .next()
-            .unwrap();
-        assert!(orbit.target.abs_diff_eq(BONES_MIDDLE, 0.1));
-        assert!(bones.contains(&ClipPreviewBones {
-            bones: 3,
-            driven: 2,
-            skeleton: rig_bones(),
-        }));
+        let progress = written::<ClipPreviewProgress>(&app);
+        assert_eq!(
+            progress.last(),
+            Some(&ClipPreviewProgress {
+                time: 2.0,
+                playing: false
+            })
+        );
+        let bones = written::<ClipPreviewBones>(&app);
+        let shown = bones.last().expect("the preview reports its bones");
+        assert_eq!(shown.bones, 3);
+        assert_eq!(shown.driven, 2);
+        let before = camera_target(&mut app);
+
+        app.main_mut().world_mut().trigger(SetRootMotion(true));
+        app.update();
+
+        assert!(
+            transform(&app, rig.root)
+                .translation
+                .abs_diff_eq(ROOT_END, NEAR)
+        );
+        let moved = ROOT_END - ROOT_REST;
+        assert!(
+            camera_target(&mut app).abs_diff_eq(before + Vec3::new(moved.x, 0.0, moved.z), NEAR),
+            "{} from {before}",
+            camera_target(&mut app)
+        );
     }
 }

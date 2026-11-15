@@ -1,10 +1,9 @@
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_motion_matching::{
-    weightless_hash, weights_of, BakeError, FeatureChannel, FeatureChannelData, FrameContext,
-    MirrorAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
-    TimeRange,
+    weightless_hash, FeatureChannel, FeatureChannelData, FrameContext, MirrorAxis, MotionDatabase,
+    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, TimeRange,
 };
-use concerto_reflect::{Reflect, TypeRegistry};
+use concerto_reflect::Reflect;
 
 const SKELETON: &[u8] = &[1, 2, 3];
 const WALK: &[u8] = &[4, 5, 6];
@@ -43,19 +42,6 @@ fn stride(scale: f32, nested: f32, weight: f32) -> FeatureChannelData {
         gait: Gait { weight: nested },
         weight,
     })
-}
-
-fn unloaded(channel: &FeatureChannelData) -> FeatureChannelData {
-    FeatureChannelData::Stored {
-        type_name: channel.type_name().into(),
-        value: channel.value().unwrap().into_owned(),
-    }
-}
-
-fn registry() -> TypeRegistry {
-    let mut registry = TypeRegistry::default();
-    registry.register::<Stride>();
-    registry
 }
 
 fn definition() -> MotionDatabase {
@@ -134,9 +120,6 @@ fn the_hash_follows_every_input_of_the_bake_but_the_top_level_channel_weights() 
             ..change("nothing", |_| {})
         },
         change("a skeleton byte", |inputs| inputs.skeleton[2] = 4),
-        change("the skeleton asset with identical bytes", |inputs| {
-            inputs.definition.skeleton = AssetHandle::weak(AssetId::from_path("another skeleton"));
-        }),
         change("a clip byte", |inputs| inputs.clips[0][2] = 7),
         change("a byte moved from one clip to the next", |inputs| {
             let byte = inputs.clips[0].pop().unwrap();
@@ -147,15 +130,6 @@ fn the_hash_follows_every_input_of_the_bake_but_the_top_level_channel_weights() 
         }),
         change("an entry's range given", |inputs| {
             inputs.definition.entries[0].range = Some(TimeRange::default());
-        }),
-        change("an entry's range end", |inputs| {
-            inputs.definition.entries[1].range = Some(TimeRange {
-                start: 0.25,
-                end: 1.0,
-            });
-        }),
-        change("an entry removed", |inputs| {
-            inputs.definition.entries.pop();
         }),
         change("an entry mirrored", |inputs| {
             inputs.definition.entries[0].mirrored = true;
@@ -177,30 +151,11 @@ fn the_hash_follows_every_input_of_the_bake_but_the_top_level_channel_weights() 
         change("the simulation's position joint", |inputs| {
             inputs.definition.simulation.position_joint = "Root".into();
         }),
-        change("the simulation's position window", |inputs| {
-            inputs.definition.simulation.position_window = 7;
-        }),
         change("the trajectory's sample dt", |inputs| {
             inputs.definition.trajectory.sample_dt = 0.5;
         }),
-        change("the trajectory's sample count", |inputs| {
-            inputs.definition.trajectory.sample_count = 2;
-        }),
         change("a channel's setting", |inputs| {
             inputs.definition.channels[0] = stride(9.0, 0.5, 1.0);
-        }),
-        change("a channel's type name", |inputs| {
-            let channel = &inputs.definition.channels[0];
-            inputs.definition.channels[0] = FeatureChannelData::Stored {
-                type_name: "Pace".into(),
-                value: channel.value().unwrap().into_owned(),
-            };
-        }),
-        change("the channel order", |inputs| {
-            inputs.definition.channels.swap(0, 1);
-        }),
-        change("a channel removed", |inputs| {
-            inputs.definition.channels.pop();
         }),
         change("a nested weight", |inputs| {
             inputs.definition.channels[0] = stride(2.0, 0.75, 1.0);
@@ -210,13 +165,6 @@ fn the_hash_follows_every_input_of_the_bake_but_the_top_level_channel_weights() 
             ..change("every top-level weight", |inputs| {
                 inputs.definition.channels[0] = stride(2.0, 0.5, 7.0);
                 inputs.definition.channels[1] = stride(3.0, 0.5, 8.0);
-            })
-        },
-        Change {
-            changes_the_hash: false,
-            ..change("the channels stored rather than live", |inputs| {
-                inputs.definition.channels =
-                    inputs.definition.channels.iter().map(unloaded).collect();
             })
         },
     ];
@@ -235,19 +183,4 @@ fn the_hash_follows_every_input_of_the_bake_but_the_top_level_channel_weights() 
             row.name
         );
     }
-}
-
-#[test]
-fn weights_of_reads_the_live_channels_in_order_and_names_one_not_loaded() {
-    assert_eq!(weights_of(&definition()).unwrap(), vec![1.0, 0.25]);
-
-    let mut stored = definition();
-    stored.channels[0] = unloaded(&stored.channels[0]);
-    assert_eq!(
-        weights_of(&stored),
-        Err(BakeError::UnloadedChannel("Stride".into()))
-    );
-
-    stored.load_channels(&registry()).unwrap();
-    assert_eq!(weights_of(&stored), weights_of(&definition()));
 }

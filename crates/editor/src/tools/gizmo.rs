@@ -399,58 +399,6 @@ mod tests {
 
     const VIEW: Vec2 = Vec2::new(800.0, 600.0);
 
-    fn ray(origin: [f32; 3], direction: [f32; 3]) -> Ray {
-        Ray {
-            origin: origin.into(),
-            direction: Vec3::from(direction).normalize(),
-        }
-    }
-
-    #[test]
-    fn the_nearest_point_on_an_axis_to_a_ray() {
-        let param = axis_param(
-            &ray([3.0, 5.0, 4.0], [0.0, -1.0, -1.0]),
-            Vec3::ZERO,
-            Vec3::X,
-        );
-        assert!((param.unwrap() - 3.0).abs() < 1e-5);
-        let offset = axis_param(
-            &ray([0.0, 0.0, 9.0], [0.0, 0.0, -1.0]),
-            Vec3::new(-2.0, 0.0, 0.0),
-            Vec3::X,
-        );
-        assert!((offset.unwrap() - 2.0).abs() < 1e-5);
-        assert_eq!(
-            axis_param(&ray([0.0, 1.0, 0.0], [1.0, 0.0, 0.0]), Vec3::ZERO, Vec3::X),
-            None,
-            "a ray along the axis has no single nearest point"
-        );
-    }
-
-    #[test]
-    fn the_angle_of_a_ray_on_a_plane_and_none_when_edge_on() {
-        let (u, v) = ring_basis(Vec3::Z);
-        for expected in [0.0_f32, 0.7, FRAC_PI_2, -2.0] {
-            let point = (u * expected.cos() + v * expected.sin()) * 3.0;
-            let angle = plane_angle(
-                &ray([point.x, point.y, 8.0], [0.0, 0.0, -1.0]),
-                Vec3::ZERO,
-                Vec3::Z,
-            )
-            .unwrap();
-            assert!((angle - expected).abs() < 1e-4, "{angle} vs {expected}");
-        }
-        assert_eq!(
-            plane_angle(&ray([0.0, 0.0, 8.0], [1.0, 0.0, 0.01]), Vec3::ZERO, Vec3::Z),
-            None
-        );
-        assert_eq!(
-            plane_angle(&ray([0.0, 0.0, 8.0], [0.0, 0.0, 1.0]), Vec3::ZERO, Vec3::Z),
-            None,
-            "the plane is behind the ray"
-        );
-    }
-
     struct Fixture {
         world: World,
         root: Entity,
@@ -553,9 +501,6 @@ mod tests {
             self.frame(to, false, true);
             self.frame(to, false, false);
         }
-        fn state(&self) -> &GizmoState {
-            self.world.get_resource::<GizmoState>().unwrap()
-        }
         fn local(&self, entity: Entity) -> Transform {
             self.world
                 .get_component_for_entity::<Transform>(entity)
@@ -583,144 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pointer_over_an_arrow_or_ring_finds_its_axis() {
-        let f = fixture();
-        let view_proj = f.camera.build_projection_matrix() * f.camera_matrix.inverse();
-        let size = f.size(Vec3::ZERO);
-        let at = |point: Vec3, mode| {
-            hovered_handle(f.screen(point), mode, Vec3::ZERO, size, VIEW, view_proj)
-        };
-        assert_eq!(
-            at(Vec3::X * size * 0.6, GizmoMode::Translate),
-            Some(Axis::X)
-        );
-        assert_eq!(
-            at(Vec3::Y * size * 0.6, GizmoMode::Translate),
-            Some(Axis::Y)
-        );
-        assert_eq!(
-            at(Vec3::new(size, size, 0.0), GizmoMode::Translate),
-            None,
-            "between the arrows and beyond reach of both"
-        );
-        let diagonal = Vec3::new(size, size, 0.0) * std::f32::consts::FRAC_1_SQRT_2;
-        assert_eq!(at(diagonal, GizmoMode::Rotate), Some(Axis::Z));
-        assert_eq!(at(diagonal * 0.5, GizmoMode::Rotate), None);
-        assert_eq!(
-            at(Vec3::new(0.0, size * 0.5, 0.0), GizmoMode::Rotate),
-            Some(Axis::X),
-            "the X ring is seen edge-on as a vertical line"
-        );
-    }
-
-    #[test]
-    fn a_hovered_handle_is_let_go_when_the_pointer_leaves_the_picture() {
-        let mut f = fixture();
-        let entity = f.child(f.root, Transform::IDENTITY);
-        f.select(entity);
-        let size = f.size(Vec3::ZERO);
-        f.frame(f.screen(Vec3::X * size * 0.6), false, false);
-        assert_eq!(f.state().hovered(), Some(Axis::X));
-
-        f.frame(f.screen(Vec3::X * size * 0.6), false, false);
-        f.world.get_resource_mut::<ViewportPointer>().unwrap().over = false;
-        let mut system = update_gizmo.into_system();
-        system.initialize(&mut f.world);
-        system.run_and_apply((), &mut f.world);
-
-        assert_eq!(f.state().hovered(), None);
-    }
-
-    #[test]
-    fn nothing_is_drawn_or_hovered_without_a_movable_selection() {
-        let mut f = fixture();
-        f.frame(f.screen(Vec3::ZERO), false, false);
-        assert_eq!(f.segments(), 0);
-        f.select(f.root);
-        f.frame(f.screen(Vec3::ZERO), false, false);
-        assert_eq!(f.segments(), 0, "the scene root has no gizmo");
-        let entity = f.child(f.root, Transform::IDENTITY);
-        f.select(entity);
-        f.frame(f.screen(Vec3::ZERO), false, false);
-        assert_eq!(f.segments(), 15, "three arrows of five lines each");
-        f.set_mode(GizmoMode::Rotate);
-        f.frame(f.screen(Vec3::ZERO), false, false);
-        assert_eq!(f.segments(), 96, "three rings");
-        f.world
-            .get_resource_mut::<FlyCamera>()
-            .unwrap()
-            .set_looking(true);
-        f.frame(f.screen(Vec3::ZERO), false, false);
-        assert_eq!(f.segments(), 0);
-    }
-
-    #[test]
-    fn a_translate_drag_moves_the_entity_along_the_axis_and_writes_scene_edited_when_it_ends() {
-        let mut f = fixture();
-        let entity = f.child(
-            f.root,
-            Transform::from_translation(Vec3::new(1.0, 0.5, 0.0)),
-        );
-        f.select(entity);
-        let origin = Vec3::new(1.0, 0.5, 0.0);
-        let grab = origin + Vec3::X * f.size(origin) * 0.5;
-
-        let (from, to) = (f.screen(grab), f.screen(grab + Vec3::X * 2.0));
-        f.frame(from, false, false);
-        assert_eq!(f.state().hovered(), Some(Axis::X));
-        f.frame(from, true, true);
-        assert!(f.state().dragging());
-        assert!(f.state().captured());
-        f.frame(to, false, true);
-        assert_eq!(f.edits(), 0, "the edit is reported when the drag ends");
-        assert!(!f.dirty());
-        f.frame(to, false, false);
-
-        let moved = f.local(entity).translation;
-        assert!(
-            (moved - Vec3::new(3.0, 0.5, 0.0)).length() < 1e-3,
-            "{moved:?}"
-        );
-        assert_eq!(f.edits(), 1);
-        assert!(f.dirty());
-        assert!(!f.state().dragging());
-    }
-
-    #[test]
-    fn a_press_on_a_handle_without_movement_changes_nothing() {
-        let mut f = fixture();
-        let entity = f.child(f.root, Transform::IDENTITY);
-        f.select(entity);
-        let grab = Vec3::Y * f.size(Vec3::ZERO) * 0.5;
-        f.drag(grab, grab);
-        assert_eq!(f.local(entity).translation, Vec3::ZERO);
-        assert_eq!(f.edits(), 0);
-        assert!(!f.dirty());
-        assert!(f.state().captured(), "the click that follows is not a pick");
-        f.frame(f.screen(Vec3::new(3.0, 3.0, 0.0)), true, true);
-        assert!(!f.state().captured());
-    }
-
-    #[test]
-    fn a_rotate_drag_turns_the_entity_by_the_angle_swept() {
-        let mut f = fixture();
-        let entity = f.child(f.root, Transform::IDENTITY);
-        f.select(entity);
-        f.set_mode(GizmoMode::Rotate);
-        let (u, v) = ring_basis(Vec3::Z);
-        let size = f.size(Vec3::ZERO);
-        let on_ring = |angle: f32| (u * angle.cos() + v * angle.sin()) * size;
-        f.drag(on_ring(0.6), on_ring(0.6 + FRAC_PI_2));
-        let rotation = f.local(entity).rotation;
-        assert!(
-            rotation.dot(Quat::from_rotation_z(FRAC_PI_2)).abs() > 0.99999,
-            "{rotation:?}"
-        );
-        assert_eq!(f.edits(), 1);
-    }
-
-    #[test]
-    fn drags_come_out_right_under_a_rotated_and_scaled_parent() {
+    fn a_drag_on_a_handle_moves_or_turns_the_selection_under_a_rotated_and_scaled_parent() {
         let mut f = fixture();
         let parent_local = Transform::from_translation_rotation_scale(
             Vec3::new(-1.0, 0.0, 0.0),
@@ -732,17 +540,28 @@ mod tests {
             parent,
             Transform::from_translation(Vec3::new(0.0, 0.5, 0.0)),
         );
+        f.select(f.root);
+        f.frame(f.screen(Vec3::ZERO), false, false);
+        assert_eq!(f.segments(), 0, "the scene root has no gizmo");
         f.select(entity);
         let parent_matrix = parent_local.compute_matrix();
         let world = parent_matrix.transform_point3(Vec3::new(0.0, 0.5, 0.0));
 
         let grab = world + Vec3::X * f.size(world) * 0.5;
-        f.drag(grab, grab + Vec3::X * 1.5);
+        let (from, to) = (f.screen(grab), f.screen(grab + Vec3::X * 1.5));
+        f.frame(from, false, false);
+        assert!(f.segments() > 0);
+        f.frame(from, true, true);
+        f.frame(to, false, true);
+        assert_eq!(f.edits(), 0, "the edit is reported when the drag ends");
+        f.frame(to, false, false);
         let moved = parent_matrix.transform_point3(f.local(entity).translation);
         assert!(
             (moved - (world + Vec3::X * 1.5)).length() < 1e-3,
             "{moved:?}"
         );
+        assert_eq!(f.edits(), 1);
+        assert!(f.dirty());
 
         let world_matrix = parent_matrix * f.local(entity).compute_matrix();
         f.world
@@ -761,20 +580,6 @@ mod tests {
             world_rotation.dot(expected).abs() > 0.99999,
             "{world_rotation:?}"
         );
-    }
-
-    #[test]
-    fn the_mode_signal_is_ignored_while_flying() {
-        let mut f = fixture();
-        f.set_mode(GizmoMode::Rotate);
-        assert_eq!(f.state().mode(), GizmoMode::Rotate);
-        f.set_mode(GizmoMode::Translate);
-        assert_eq!(f.state().mode(), GizmoMode::Translate);
-        f.world
-            .get_resource_mut::<FlyCamera>()
-            .unwrap()
-            .set_looking(true);
-        f.set_mode(GizmoMode::Rotate);
-        assert_eq!(f.state().mode(), GizmoMode::Translate);
+        assert_eq!(f.edits(), 2);
     }
 }

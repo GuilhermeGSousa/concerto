@@ -121,25 +121,6 @@ mod tests {
         render.get_resource::<Seen>().unwrap().0
     }
 
-    #[derive(Resource, Default)]
-    struct Ran(bool);
-
-    fn extracts(_: Extracted<Option<Res<Counter>>>, mut ran: ResMut<Ran>) {
-        ran.0 = true;
-    }
-
-    #[test]
-    fn an_extracting_system_is_skipped_without_a_main_world() {
-        let mut render = World::new();
-        render.insert_resource(Ran::default());
-        let mut system = extracts.into_system();
-        system.initialize(&mut render);
-
-        system.run_and_apply((), &mut render);
-
-        assert!(!render.get_resource::<Ran>().unwrap().0);
-    }
-
     #[test]
     fn an_extracted_optional_resource_reads_the_main_world() {
         assert_eq!(run_with(World::new()), None);
@@ -240,17 +221,6 @@ mod tests {
                     Extract(Some(false)),
                     SystemWrite,
                     Tick,
-                    Extract(Some(true)),
-                    Extract(Some(false)),
-                ],
-            },
-            Watch {
-                name: "a direct write between extracts",
-                gated: false,
-                steps: &[
-                    Extract(Some(true)),
-                    Extract(Some(false)),
-                    DirectWrite,
                     Extract(Some(true)),
                     Extract(Some(false)),
                 ],

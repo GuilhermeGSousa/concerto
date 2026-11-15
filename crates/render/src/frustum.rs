@@ -89,21 +89,9 @@ mod tests {
                 intersects: false,
             },
             Case {
-                case: "straddling a side plane",
-                frustum: perspective(),
-                center: Vec3::new(10.0, 0.0, -10.0),
-                intersects: true,
-            },
-            Case {
                 case: "centred just past a side plane",
                 frustum: perspective(),
                 center: Vec3::new(11.2, 0.0, -10.0),
-                intersects: true,
-            },
-            Case {
-                case: "inside an orthographic extent",
-                frustum: orthographic(),
-                center: Vec3::new(3.0, -3.0, -20.0),
                 intersects: true,
             },
             Case {

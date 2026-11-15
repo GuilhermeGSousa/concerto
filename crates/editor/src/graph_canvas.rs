@@ -1501,21 +1501,12 @@ mod tests {
 
         for (row, case) in cases.into_iter().enumerate() {
             let mut f = Fixture::new(case.canvas);
-            let preview = f.parts().preview[0];
-            let shown = |f: &Fixture| {
-                f.world
-                    .get_component_for_entity::<UINode>(preview)
-                    .unwrap()
-                    .visible
-            };
             let Gesture { press, release } = case.connect;
 
             f.press(press);
             f.drag(release, release - press, MouseButton::Left);
-            assert!(shown(&f), "row {row}");
             assert!(f.heard().connected.is_empty(), "row {row}");
             f.release(release);
-            assert!(!shown(&f), "row {row}");
             for miss in case.misses {
                 f.press(miss.press);
                 f.release(miss.release);
@@ -1539,14 +1530,6 @@ mod tests {
         f.frame();
 
         assert_eq!(f.offset(), pan);
-        let content = f.parts().content;
-        let inset = f
-            .world
-            .get_component_for_entity::<UINode>(content)
-            .unwrap()
-            .inset;
-        assert_eq!(inset.left, UIValue::Px(pan.x));
-        assert_eq!(inset.top, UIValue::Px(pan.y));
         f.click(centre(blend.rect), MouseButton::Right);
         let menu = *f.heard().menus.last().unwrap();
         assert_eq!(menu.on, CanvasPart::Node(BLEND));

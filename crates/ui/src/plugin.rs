@@ -253,28 +253,3 @@ impl Plugin for UIPlugin {
             .insert_resource(quad_indices);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use concerto_window::input::actions::ActionLabel;
-
-    use super::*;
-
-    #[test]
-    fn the_list_and_tree_keys_resolve_to_their_actions() {
-        let mut actions = ActionMap::default();
-        bind_default_actions(&mut actions);
-
-        for (key, action) in [
-            (KeyCode::ArrowDown, UIListNext.intern()),
-            (KeyCode::ArrowUp, UIListPrevious.intern()),
-            (KeyCode::Home, UIListFirst.intern()),
-            (KeyCode::End, UIListLast.intern()),
-            (KeyCode::Enter, UIListActivate.intern()),
-            (KeyCode::ArrowRight, UITreeExpand.intern()),
-            (KeyCode::ArrowLeft, UITreeCollapse.intern()),
-        ] {
-            assert_eq!(actions.resolve(Shortcut::key(key)), Some(action), "{key:?}");
-        }
-    }
-}

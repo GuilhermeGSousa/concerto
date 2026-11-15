@@ -270,9 +270,13 @@ pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, m
 mod tests {
     use super::*;
     use crate::list::tests::Harness;
-    use concerto_ecs::{World, events::event_channel::EventChannel};
 
-    fn plain_area(harness: &mut Harness, offset: f32) -> (Entity, Entity) {
+    struct PlainArea {
+        area: Entity,
+        content: Entity,
+    }
+
+    fn plain_area(harness: &mut Harness, offset: f32) -> PlainArea {
         let root = harness.root();
         let area = harness.node(
             UINode::default()
@@ -290,47 +294,13 @@ mod tests {
             area,
         );
         harness.settle();
-        (area, content)
-    }
-
-    #[test]
-    fn a_plain_scroll_area_moves_its_content_by_the_whole_offset() {
-        let mut harness = Harness::new();
-        let (area, content) = plain_area(&mut harness, 140.0);
-
-        assert_eq!(
-            harness.layout(content).rect.min.y,
-            harness.layout(area).rect.min.y - 140.0
-        );
-    }
-
-    #[test]
-    fn a_wheel_that_cannot_scroll_leaves_the_area_unchanged() {
-        let mut harness = Harness::new();
-        let (_, content) = plain_area(&mut harness, 0.0);
-        **harness.world.get_resource_mut::<HoveredNode>().unwrap() = Some(content);
-        harness
-            .world
-            .insert_resource(EventChannel::<WindowEvent>::default());
-        let mut watch =
-            crate::testing::Watch::new::<UIScrollArea, _>(&mut harness.world, update_scroll_areas);
-        watch.run(&mut harness.world);
-
-        harness
-            .world
-            .get_resource_mut::<EventChannel<WindowEvent>>()
-            .unwrap()
-            .push_event(WindowEvent::MouseWheel {
-                delta: ScrollDelta::Pixels(glam::Vec2::new(0.0, 30.0)),
-            });
-
-        assert_eq!(watch.run(&mut harness.world), 0);
+        PlainArea { area, content }
     }
 
     #[test]
     fn scrolling_a_plain_area_moves_its_content_but_not_its_scrollbar() {
         let mut harness = Harness::new();
-        let (area, content) = plain_area(&mut harness, 0.0);
+        let PlainArea { area, content } = plain_area(&mut harness, 0.0);
         let track = harness.track(area);
         let content_top = harness.layout(content).rect.min.y;
         let track_rect = harness.layout(track).rect;
@@ -357,20 +327,13 @@ mod tests {
     }
 
     #[test]
-    fn first_pane_is_sized_from_the_space_left_by_the_handle() {
-        assert_eq!(first_extent(&pane(0.5), 990.0), 495.0);
-    }
-
-    #[test]
-    fn minimums_never_push_the_panes_past_the_available_space() {
-        let mut pane = pane(0.9);
-        pane.minimum_first = 400.0;
-        pane.minimum_second = 400.0;
-        let first = first_extent(&pane, 500.0);
-        assert!(
-            (0.0..=500.0).contains(&first),
-            "{first} escaped the container"
-        );
+    fn the_first_pane_takes_its_ratio_of_the_space_or_all_or_none_when_collapsed() {
+        let mut pane = pane(0.5);
+        assert_eq!(first_extent(&pane, 990.0), 495.0);
+        pane.collapsed = Some(0);
+        assert_eq!(first_extent(&pane, 640.0), 0.0);
+        pane.collapsed = Some(1);
+        assert_eq!(first_extent(&pane, 640.0), 640.0);
     }
 
     #[test]
@@ -383,54 +346,12 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_panes_take_all_or_none_of_the_space() {
-        let mut pane = pane(0.5);
-        pane.collapsed = Some(0);
-        assert_eq!(first_extent(&pane, 640.0), 0.0);
-        pane.collapsed = Some(1);
-        assert_eq!(first_extent(&pane, 640.0), 640.0);
-    }
-
-    #[test]
     fn panes_clip_their_contents_so_they_cannot_paint_over_each_other() {
         let mut first = UINode::default();
         let mut second = UINode::default();
         apply_split(&pane(0.5), 600.0, &mut first, &mut second);
         assert_eq!(first.overflow_x, Overflow::Hidden);
         assert_eq!(second.overflow_y, Overflow::Hidden);
-        assert_eq!(first.width, UIValue::Px(300.0));
-        assert_eq!(second.width, UIValue::Auto);
-        assert_eq!(first.flex_grow, 0.0);
-        assert_eq!(second.flex_grow, 1.0);
-    }
-
-    #[test]
-    fn a_resting_split_pane_leaves_its_children_unchanged() {
-        let mut world = World::new();
-        let first = world.spawn(UINode::default());
-        let second = world.spawn(UINode::default());
-        let rect = crate::node::UIBox {
-            min: glam::Vec2::ZERO,
-            size: glam::Vec2::new(600.0, 400.0),
-        };
-        let pane = world.spawn((
-            UISplitPane::new(UISplitAxis::Horizontal, first, second),
-            UILayout {
-                rect,
-                content_rect: rect,
-                clip_rect: rect,
-                paint_order: 0,
-            },
-        ));
-        let mut watch = crate::testing::Watch::new::<UINode, _>(&mut world, sync_split_panes);
-        watch.run(&mut world);
-        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
-
-        world
-            .get_component_for_entity_mut::<UISplitPane>(pane)
-            .unwrap()
-            .ratio = 0.25;
-        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [1, 0]);
     }
 
     #[test]

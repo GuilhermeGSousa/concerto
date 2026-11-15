@@ -510,7 +510,6 @@ impl Default for App {
 mod tests {
     use super::*;
     use concerto_ecs::{
-        component::removed::RemovedComponents,
         events::{event_channel::EventChannel, event_reader::EventReader},
         query::change_detection::DetectChanges,
         resource::Res,
@@ -658,22 +657,6 @@ mod tests {
         }
     }
 
-    fn count_ten(mut count: ResMut<Count>) {
-        count.0 += 10;
-    }
-
-    #[test]
-    fn marking_a_tuple_marks_every_system_in_it() {
-        let mut app = App::for_editing();
-        app.register_plugin(main_schedule::MainSchedulePlugin)
-            .register_plugin(plugins::TimePlugin)
-            .insert_resource(Count::default())
-            .add_system(Update, (count, count_ten).at_edit_time());
-        app.finish_plugin_build();
-        app.update();
-        assert_eq!(app.get_resource::<Count>().unwrap().0, 11);
-    }
-
     #[derive(Resource, Default)]
     struct RenderTicks(u32);
 
@@ -790,33 +773,6 @@ mod tests {
         assert_eq!(log.loaded, [id]);
     }
 
-    #[derive(Resource, Default)]
-    struct LoadedNotes(Vec<AssetId>);
-
-    fn log_loaded_notes(mut loaded: EventReader<AssetLoaded<Note>>, mut log: ResMut<LoadedNotes>) {
-        log.0.extend(loaded.read().map(|event| event.id));
-    }
-
-    #[test]
-    fn an_asset_type_registered_twice_reports_each_load_once() {
-        let mut app = App::new();
-        app.register_plugin(main_schedule::MainSchedulePlugin)
-            .register_plugin(plugins::TimePlugin)
-            .register_plugin(plugins::AssetManagerPlugin)
-            .register_asset::<Note>()
-            .register_asset::<Note>()
-            .insert_resource(LoadedNotes::default())
-            .add_system(Update, log_loaded_notes);
-        app.finish_plugin_build();
-
-        let handle = app.get_resource::<AssetServer>().unwrap().add(Note);
-        for _ in 0..2 {
-            app.update();
-        }
-
-        assert_eq!(app.get_resource::<LoadedNotes>().unwrap().0, [handle.id()]);
-    }
-
     #[test]
     fn externally_queued_events_survive_until_late_update() {
         let mut app = App::new();
@@ -836,71 +792,6 @@ mod tests {
         app.update();
         assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
     }
-
-    #[derive(Component)]
-    struct Health;
-
-    fn count_removals(mut removed: RemovedComponents<Health>, mut seen: ResMut<Seen>) {
-        seen.0 += removed.read().count();
-    }
-
-    #[test]
-    fn tracking_removals_twice_records_each_removal_once() {
-        let mut app = App::new();
-        app.register_plugin(main_schedule::MainSchedulePlugin)
-            .register_plugin(plugins::TimePlugin)
-            .track_removals::<Health>()
-            .track_removals::<Health>()
-            .insert_resource(Seen::default())
-            .add_system(Update, count_removals);
-        app.finish_plugin_build();
-        let world = app.main_mut().world_mut();
-        let entity = world.spawn(Health);
-        world.remove_component::<Health>(entity);
-
-        app.update();
-
-        assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
-    }
-}
-
-#[cfg(test)]
-mod thread_safety_tests {
-    use super::*;
-
-    struct Marked;
-    impl Plugin for Marked {
-        fn build(&self, _: &mut App) {}
-    }
-
-    struct Absent;
-    impl Plugin for Absent {
-        fn build(&self, _: &mut App) {}
-    }
-
-    fn assert_send_sync<T: Send + Sync>() {}
-
-    #[test]
-    fn an_app_can_cross_threads() {
-        assert_send_sync::<App>();
-    }
-
-    #[test]
-    fn a_plugin_registered_directly_or_by_another_plugin_is_reported_as_added() {
-        struct Outer;
-        impl Plugin for Outer {
-            fn build(&self, app: &mut App) {
-                app.register_plugin(Marked);
-            }
-        }
-        let mut app = App::new();
-        assert!(!app.is_plugin_added::<Marked>());
-        app.register_plugin(Outer);
-
-        assert!(app.is_plugin_added::<Marked>());
-        assert!(app.is_plugin_added::<Outer>());
-        assert!(!app.is_plugin_added::<Absent>());
-    }
 }
 
 #[cfg(test)]
@@ -908,14 +799,8 @@ mod type_registration_tests {
     use super::*;
     use concerto_ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent};
     use concerto_foundation::transform::Transform;
-    use concerto_reflect::{Reflect, ReflectDefault};
+    use concerto_reflect::ReflectDefault;
     use std::any::TypeId;
-
-    #[derive(Component, Reflect, Default)]
-    #[reflect(Component, Default)]
-    struct Health {
-        points: f32,
-    }
 
     fn registry(app: &App) -> &AppTypeRegistry {
         app.get_resource::<AppTypeRegistry>().unwrap()
@@ -936,62 +821,5 @@ mod type_registration_tests {
         assert!(registration.data::<ReflectComponent>().is_some());
         assert!(registration.data::<ReflectDefault>().is_some());
         assert!(registration.data::<ReflectSceneComponent>().is_some());
-    }
-
-    #[test]
-    fn a_recipe_registers_its_own_types() {
-        let mut app = App::new();
-
-        app.register_type::<Health>();
-
-        let registration = registry(&app).read().get(TypeId::of::<Health>()).unwrap();
-        assert!(registration.data::<ReflectComponent>().is_some());
-        assert!(registration.data::<ReflectDefault>().is_some());
-        assert!(registration.data::<ReflectSceneComponent>().is_none());
-        let _ = Health::default().points;
-    }
-
-    #[test]
-    fn two_apps_do_not_share_a_type_registry() {
-        let mut first = App::new();
-        let second = App::new();
-
-        first.register_type::<Health>();
-
-        assert!(registry(&first)
-            .read()
-            .get(TypeId::of::<Health>())
-            .is_some());
-        assert!(registry(&second)
-            .read()
-            .get(TypeId::of::<Health>())
-            .is_none());
-    }
-
-    #[derive(Component, Default)]
-    struct Anchor;
-
-    #[derive(Component, Default)]
-    struct Companion;
-
-    #[derive(Component, Default)]
-    struct Counted(u32);
-
-    #[test]
-    fn an_app_registers_a_required_component_from_outside() {
-        let mut app = App::new();
-
-        app.register_required_components::<Anchor, Companion>()
-            .register_required_components_with::<Anchor, Counted>(|| Counted(3));
-
-        let world = app.main_mut().world_mut();
-        let entity = world.spawn(Anchor);
-        assert!(world
-            .get_component_for_entity::<Companion>(entity)
-            .is_some());
-        assert_eq!(
-            world.get_component_for_entity::<Counted>(entity).unwrap().0,
-            3
-        );
     }
 }

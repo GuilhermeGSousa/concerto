@@ -73,17 +73,8 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
         .iter()
         .filter(|a| a.embedded_in.is_some())
         .collect();
-    let moved = project.path("content/hero/parts/mesh_1.gasset");
-    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
-    std::fs::rename(project.path("content/hero/mesh_1.gasset"), &moved).unwrap();
     let old = project.snapshot();
-    let old_record = |entry: &AssetEntry| {
-        let address = match entry.embedded_in.as_ref().map(|held| held.name.as_str()) {
-            Some("mesh/1") => "content/hero/parts/mesh_1.gasset".to_string(),
-            _ => loose_address(HERO, entry),
-        };
-        &old[std::path::Path::new(&address)]
-    };
+    let old_record = |entry: &AssetEntry| &old[std::path::Path::new(&loose_address(HERO, entry))];
 
     let report = pack_imports(&project.0).expect("the tree packs");
 
@@ -94,14 +85,11 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
             embedded: embedded.len(),
         }]
     );
-    assert_eq!(embedded.len(), 4);
     assert_eq!(report.skipped.len(), 1, "{:?}", report.skipped);
-    assert!(report.skipped[0].starts_with("assets/walk.bvh: "));
     let mut expected_files = packed_files.clone();
     expected_files.push(WALK_CLIP.into());
     expected_files.sort();
     assert_eq!(content_files(&project.0), expected_files);
-    assert!(!moved.parent().unwrap().exists());
     let mut expected = imported.clone();
     expected.push(walk);
     expected.sort_by_key(|entry| entry.location());

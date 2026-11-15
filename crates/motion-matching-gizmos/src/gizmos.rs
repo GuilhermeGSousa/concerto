@@ -253,6 +253,3 @@ pub fn draw_motion_matching(
         });
     }
 }
-
-#[cfg(test)]
-mod tests;

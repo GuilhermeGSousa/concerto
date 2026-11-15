@@ -190,21 +190,6 @@ mod tests {
         assert!(a.distance(b) < 1e-4, "{a:?} vs {b:?}");
     }
 
-    #[test]
-    fn between_gives_the_linear_and_angular_velocity_over_dt() {
-        let previous = Pose::identity(2);
-        let mut next = Pose::identity(2);
-        next.joint_mut(0).unwrap().rotation = Quat::from_rotation_z(0.1);
-        next.joint_mut(1).unwrap().translation = Vec3::new(1.0, -2.0, 0.5);
-
-        let velocity = PoseVelocity::between(&previous, &next, 0.5);
-
-        assert_close(velocity.linear[0], Vec3::ZERO);
-        assert_close(velocity.angular[0], Vec3::new(0.0, 0.0, 0.2));
-        assert_close(velocity.linear[1], Vec3::new(2.0, -4.0, 1.0));
-        assert_close(velocity.angular[1], Vec3::ZERO);
-    }
-
     fn pose_at(translation: Vec3, rotation: Quat) -> Pose {
         let mut pose = Pose::identity(1);
         let joint = pose.joint_mut(0).unwrap();

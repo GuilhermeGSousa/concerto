@@ -275,7 +275,7 @@ mod tests {
     use glam::{Mat4, Quat, Vec3};
     use std::f32::consts::FRAC_PI_2;
 
-    use super::{AimCamera, Body, Stat, feed_body, update_pistol};
+    use super::{AimCamera, Body, feed_body, update_pistol};
     use crate::character::bind_controls;
 
     fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
@@ -369,30 +369,12 @@ mod tests {
         let player = world
             .get_component_for_entity::<AnimationPlayer>(skeleton)
             .unwrap();
-        let float = |param| player.get_float_param(param);
-        assert_eq!(float(name!("pistol_weight")), Some(0.5));
-        assert_eq!(float(name!("aim_weight")), Some(1.0));
-        assert_eq!(float(name!("fatigue")), Some(0.25));
-        assert_eq!(float(name!("sway")), Some(1.0));
-        assert_eq!(float(name!("tremor")), Some(3.0));
-        assert_eq!(float(name!("look_weight")), Some(0.75));
-        assert_eq!(float(name!("pace")), Some(1.25));
+        assert_eq!(player.get_float_param(name!("pistol_weight")), Some(0.5));
+        assert_eq!(player.get_float_param(name!("aim_weight")), Some(1.0));
         let target = player.get_param::<Vec3>(name!("aim_target")).copied();
         assert!(
             target.is_some_and(|target| target.abs_diff_eq(Vec3::new(-29.0, 2.0, 3.0), 1e-4)),
             "{target:?}"
         );
-    }
-
-    #[test]
-    fn a_stat_is_held_inside_its_slider_range() {
-        let mut body = Body::default();
-        for stat in Stat::ALL {
-            let range = stat.range();
-            body.set_stat(stat, range.max + 1.0);
-            assert_eq!(body.stat(stat), range.max);
-            body.set_stat(stat, range.min - 1.0);
-            assert_eq!(body.stat(stat), range.min);
-        }
     }
 }

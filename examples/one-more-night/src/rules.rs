@@ -181,9 +181,9 @@ pub fn may_pass(
 
 #[cfg(test)]
 mod tests {
-    use super::{DoorRule, Offer, Privacy, Refusal, ask_label, door_rule, may_pass, offers};
+    use super::{DoorRule, Offer, Privacy, Refusal, door_rule, may_pass, offers};
     use crate::book::Casebook;
-    use crate::case::{DoorState, GameTime, Phase, Role, Zone};
+    use crate::case::{Ask, DoorState, GameTime, Phase, Role, Zone};
     use crate::casefile::CaseData;
 
     fn at(hour: u16, minute: u16) -> GameTime {
@@ -241,14 +241,13 @@ mod tests {
             .map(|offer| offer.topic)
             .collect();
         assert_eq!(after, [0, 1, 2]);
-        assert_eq!(ask_label(case, ashby.topics[2].ask), "Ask about Mr Corwin");
 
         let cufflink = case.placements.id("p_cufflink").unwrap();
         let shown = offers(ashby, at(18, 0), Phase::Before, &book, Some(cufflink));
         let item = shown.last().unwrap();
         assert_eq!(
-            ask_label(case, ashby.topics[item.topic].ask),
-            "Show the cufflink",
+            ashby.topics[item.topic].ask,
+            Ask::Item(cufflink),
             "an item topic is on offer only while the player carries the item"
         );
         assert_eq!(shown.len(), after.len() + 1);

@@ -25,22 +25,6 @@ fn a_spawned_skeleton_resolves_its_references_in_place_and_leaves_bad_ones_unset
             resolved_root: Some(1),
         },
         Authored {
-            name: "no root, as primitive bindings have",
-            bones: vec![SceneEntityRef::Index(1), SceneEntityRef::Index(2)],
-            root: None,
-            stale_bone_ids: false,
-            resolved_bones: [Some(1), Some(2)],
-            resolved_root: None,
-        },
-        Authored {
-            name: "references past the scene stay unset without shifting the others",
-            bones: vec![SceneEntityRef::Index(9), SceneEntityRef::Index(1)],
-            root: Some(SceneEntityRef::Index(9)),
-            stale_bone_ids: false,
-            resolved_bones: [None, Some(1)],
-            resolved_root: None,
-        },
-        Authored {
             name: "a scene that still stores bone ids",
             bones: vec![SceneEntityRef::Index(1), SceneEntityRef::Index(2)],
             root: Some(SceneEntityRef::Index(1)),

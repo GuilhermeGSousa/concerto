@@ -673,13 +673,10 @@ pub(crate) fn cycle_displacement(characters: Query<&mut CharacterDisplacement>, 
 #[cfg(test)]
 mod tests {
     use concerto::animation::clip::AnimationClip;
-    use concerto::animation::graph::{AnimationGraph, AnimationNodeIndex};
+    use concerto::animation::graph::AnimationGraph;
     use concerto::animation::mask::BoneMask;
-    use concerto::animation::node::{
-        AdditiveNode, AimOffsetNode, AnimationClipNode, LayerNode, TwoBoneIkNode,
-    };
-    use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
-    use concerto::animation::retarget::{PoseRetarget, RetargetNode, RetargetRig};
+    use concerto::animation::player::AnimationPlayer;
+    use concerto::animation::retarget::{PoseRetarget, RetargetRig};
     use concerto::app::{
         App,
         schedule_groups::{LateFixedUpdate, LateUpdate},
@@ -690,41 +687,36 @@ mod tests {
     use concerto::ecs::system::{
         executor::single_thread::SingleThreadedExecutor, schedule::Schedules,
     };
-    use concerto::ecs::{Changed, Entity, IntoSystem, System, With, Without, World};
+    use concerto::ecs::{Entity, IntoSystem, System, With, World};
     use concerto::foundation::{
         assets::{
             Asset, AssetId,
-            asset_server::{AssetServer, handle_asset_load_events},
+            asset_server::AssetServer,
             asset_store::AssetStore,
             content::{asset_record, decode_content_asset},
-            handle::AssetHandle,
         },
         transform::Transform,
     };
+    use concerto::gameplay::actions::bind_gameplay_actions;
+    use concerto::gameplay::camera::CameraPivot;
+    use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
     use concerto::mesh::{Mesh, MeshComponent, Skeleton};
     use concerto::motion_matching::{
         Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp,
-        DesiredMotion, MotionDatabase, MotionMatchingNode, Synchronization,
+        DesiredMotion, MotionDatabase,
     };
-    use concerto::name::{Name, name};
     use concerto::physics::physics_state::PhysicsState;
     use concerto::physics::{
         body::BodyId,
+        collider::Collider,
         ground::GroundProbe,
         plugin::PhysicsPlugin,
         rigid_body::{AllowedDofs, RigidBody},
-    };
-    use concerto::physics::{
-        collider::{Collider, ColliderOffset},
         shape::MeshCollider,
     };
-    use concerto::procedural_animation::{
-        AimNode, FootLockLeg, FootLockNode, FootPlacementLeg, FootPlacementNode, IgnoredBody,
-        LookAtNode, ProceduralMotionNode,
-    };
-    use concerto::reflect::{apply_value, to_value};
-    use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
-    use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
+    use concerto::procedural_animation::IgnoredBody;
+    use concerto::render::assets::material::StandardMaterial;
+    use concerto::scene::scene::Scene;
     use concerto::window::input::actions::ActionMap;
     use concerto::window::input::{
         GamepadAxis, GamepadId, GamepadSettings, Input, KeyCode, MouseButton, PhysicalKey,
@@ -733,201 +725,78 @@ mod tests {
     use concerto_procedural_animation_gizmos::FootLockGizmos;
     use glam::{Quat, Vec3};
 
-    use concerto::director::VirtualCamera;
-    use concerto::gameplay::actions::bind_gameplay_actions;
-    use concerto::gameplay::camera::{CameraBoom, CameraPivot};
-    use concerto::gameplay::third_person::{CameraStance, ShoulderSide, ThirdPersonCamera};
-
-    use crate::body::AimCamera;
-    use crate::retarget::{LAFAN1_RIG, PISTOL_SHOOT, RetargetedPlayer, UAL1_RIG, UAL1_SCENE};
-
     use super::{
-        CHARACTER_SCENE, CharacterConfig, DATABASE, NpcSpawner, PendingLink, Player, PlayerSpawner,
-        RUN, WALK, bind_controls, character_graph, cycle_displacement, debug_keys, facing,
-        feed_foot_placement, foot_lock_weight, foot_placement_ignore, foot_placement_weight,
-        movement, setup_character_animations, spawn_character, spawn_npc, update_camera_stance,
-        update_movement,
+        CharacterConfig, Player, PlayerSpawner, RUN, WALK, bind_controls, cycle_displacement,
+        debug_keys, feed_foot_placement, foot_lock_weight, foot_placement_ignore,
+        foot_placement_weight, movement, spawn_character, update_camera_stance, update_movement,
     };
 
-    fn spawned(world: &mut World) {
-        let mut system = spawn_character.into_system();
+    fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+        let mut system = system.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
     }
 
-    fn capsules(world: &mut World) -> Vec<(Entity, Vec3)> {
+    fn stored<A: Asset + 'static>(world: &mut World, server: &mut AssetServer) {
+        let store = AssetStore::<A>::new();
+        server.register_asset(&store);
+        world.insert_resource(store);
+    }
+
+    struct SpawnerWorld {
+        world: World,
+        spawn_point: Vec3,
+    }
+
+    fn world_with_spawner(rotation: Quat) -> SpawnerWorld {
+        let mut world = World::new();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        world.insert_resource(PhysicsState::new());
+        let mut server = AssetServer::new();
+        stored::<Scene>(&mut world, &mut server);
+        stored::<Mesh>(&mut world, &mut server);
+        stored::<StandardMaterial>(&mut world, &mut server);
+        stored::<AnimationGraph>(&mut world, &mut server);
+        stored::<MotionDatabase>(&mut world, &mut server);
+        stored::<RetargetRig>(&mut world, &mut server);
+        stored::<Skeleton>(&mut world, &mut server);
+        stored::<AnimationClip>(&mut world, &mut server);
+        stored::<BoneMask>(&mut world, &mut server);
+        world.insert_resource(server);
+        world.insert_resource(CharacterConfig::grid());
+        let spawn_point = Vec3::new(3.0, 1.5, -7.0);
+        world.spawn((
+            Transform::from_translation_rotation(spawn_point, rotation),
+            PlayerSpawner { should_spawn: true },
+        ));
+        SpawnerWorld { world, spawn_point }
+    }
+
+    fn characters(world: &mut World) -> Vec<Vec3> {
         world
-            .query::<(
-                Entity,
-                &Transform,
-                &RigidBody,
-                &CharacterSimulation,
-                &Collider,
-                &ColliderOffset,
-                &GroundProbe,
-            ), With<Player>>()
+            .query::<&Transform, With<Player>>()
             .iter(world)
-            .map(|(entity, transform, ..)| (entity, transform.translation))
-            .collect()
-    }
-
-    fn visible_characters(
-        world: &mut World,
-    ) -> Vec<(Entity, Vec3, CharacterDisplacement, AssetId)> {
-        world
-            .query::<(
-                Entity,
-                &Transform,
-                &CharacterDisplacement,
-                &MotionMatchingGizmos,
-                &SceneSpawnerComponent,
-            ), ()>()
-            .iter(world)
-            .map(|(entity, transform, displacement, _, scene)| {
-                (
-                    entity,
-                    transform.translation,
-                    displacement.clone(),
-                    scene.0.id(),
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn spawning_gives_the_capsule_and_the_character_and_no_walls() {
-        let (mut world, spawn_point) = world_with_spawner();
-
-        spawned(&mut world);
-
-        let capsules: Vec<Vec3> = capsules(&mut world)
-            .into_iter()
-            .map(|(_, position)| position)
-            .collect();
-        assert_eq!(capsules, vec![spawn_point]);
-        let characters: Vec<(Vec3, CharacterDisplacement, AssetId)> =
-            visible_characters(&mut world)
-                .into_iter()
-                .map(|(_, position, displacement, scene)| (position, displacement, scene))
-                .collect();
-        assert_eq!(
-            characters,
-            vec![(
-                spawn_point,
-                CharacterDisplacement::Synchronization(Synchronization { data_factor: 0.0 }),
-                CHARACTER_SCENE
-            )]
-        );
-        let walls = world
-            .query::<(&Collider, &MeshComponent, &MaterialComponent, &Transform), Without<RigidBody>>()
-            .iter(&mut world)
-            .count();
-        assert_eq!(walls, 0);
-        let booms: Vec<Entity> = world
-            .query::<Entity, (With<VirtualCamera>, With<CameraBoom>)>()
-            .iter(&mut world)
-            .collect();
-        let aims: Vec<Entity> = world
-            .query::<&AimCamera, With<Player>>()
-            .iter(&mut world)
-            .map(|aim| aim.0)
-            .collect();
-        assert_eq!(aims, booms);
-        assert_eq!(aims.len(), 1);
-    }
-
-    #[test]
-    fn the_capsule_and_the_camera_take_their_size_from_the_character_config() {
-        let (mut world, _) = world_with_spawner();
-        world.insert_resource(CharacterConfig::sanatorium());
-
-        spawned(&mut world);
-
-        let offsets: Vec<Vec3> = world
-            .query::<&ColliderOffset, With<Player>>()
-            .iter(&mut world)
-            .map(|offset| offset.0)
-            .collect();
-        assert_eq!(offsets, vec![Vec3::Y * 0.9]);
-        let cameras: Vec<Vec3> = world
-            .query::<&Transform, With<VirtualCamera>>()
-            .iter(&mut world)
             .map(|transform| transform.translation)
-            .collect();
-        assert_eq!(cameras, vec![Vec3::NEG_Z * 1.9]);
-    }
-
-    fn camera_booms(world: &mut World) -> Vec<Option<CameraBoom>> {
-        world
-            .query::<(&VirtualCamera, Option<&CameraBoom>), ()>()
-            .iter(world)
-            .map(|(_, boom)| boom.cloned())
             .collect()
     }
 
     #[test]
-    fn every_level_follows_close_over_the_shoulder_on_a_boom_as_long_as_its_distance() {
-        for config in [CharacterConfig::grid(), CharacterConfig::sanatorium()] {
-            let distance = config.camera_distance;
-            let (mut world, _) = world_with_spawner();
-            world.insert_resource(config);
+    fn the_character_spawns_at_its_spawner_once_the_ground_collides_with_the_camera_behind_it() {
+        let SpawnerWorld {
+            mut world,
+            spawn_point,
+        } = world_with_spawner(Quat::from_rotation_y(std::f32::consts::PI));
+        let ground = world.spawn((MeshCollider, MeshComponent::default()));
 
-            spawned(&mut world);
+        let mut system = spawn_character.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        assert!(characters(&mut world).is_empty());
 
-            assert_eq!(
-                camera_booms(&mut world),
-                vec![Some(CameraBoom {
-                    offset: Vec3::NEG_Z * distance,
-                    ..Default::default()
-                })]
-            );
-            let rigs: Vec<ThirdPersonCamera> = world
-                .query::<&ThirdPersonCamera, With<CameraPivot>>()
-                .iter(&mut world)
-                .cloned()
-                .collect();
-            assert_eq!(rigs.len(), 1);
-            let rig = &rigs[0];
-            assert_eq!(rig.follow.distance, distance);
-            assert!(distance <= 2.5);
-            assert!(rig.follow.shoulder > 0.0);
-            assert!(rig.aim.distance < rig.follow.distance);
-            assert!(rig.aim.fovy < rig.follow.fovy);
-            assert!(rig.crouch.height < rig.follow.height);
-        }
-    }
-
-    #[test]
-    fn the_character_moves_by_the_displacement_the_config_names() {
-        let (mut world, _) = world_with_spawner();
-        world.insert_resource(CharacterConfig::sanatorium());
-
-        spawned(&mut world);
-
-        let methods: Vec<CharacterDisplacement> = visible_characters(&mut world)
-            .into_iter()
-            .map(|(_, _, displacement, _)| displacement)
-            .collect();
-        assert_eq!(
-            methods,
-            vec![CharacterDisplacement::Synchronization(Synchronization {
-                data_factor: 0.0
-            })]
-        );
-    }
-
-    #[test]
-    fn the_camera_starts_behind_a_spawner_that_faces_away_from_the_default() {
-        let (mut world, _) = world_with_spawner();
-        for mut transform in world
-            .query::<&mut Transform, With<PlayerSpawner>>()
-            .iter(&mut world)
-        {
-            transform.rotation = Quat::from_rotation_y(std::f32::consts::PI);
-        }
-
-        spawned(&mut world);
-
+        world.insert(Collider::capsule(2.0, 1.0), ground);
+        system.run_and_apply((), &mut world);
+        assert_eq!(characters(&mut world), vec![spawn_point]);
         let yaws: Vec<f32> = world
             .query::<&CameraPivot, ()>()
             .iter(&mut world)
@@ -937,338 +806,6 @@ mod tests {
         assert!((yaws[0] - std::f32::consts::PI).abs() < 1e-4);
     }
 
-    #[test]
-    fn the_skeleton_is_linked_and_given_the_graph_once_the_graph_has_landed() {
-        let (mut world, _) = world_with_spawner();
-        spawned(&mut world);
-        let (capsule, _) = capsules(&mut world)[0];
-        let (character, ..) = visible_characters(&mut world)[0];
-        let root = world.spawn(Transform::default());
-        let skeleton = world.spawn(AnimationPlayer::new(1));
-        world.entity_mut(character).add_child(root);
-        world.entity_mut(root).add_child(skeleton);
-
-        let mut setup = setup_character_animations.into_system();
-        setup.initialize(&mut world);
-        setup.run_and_apply((), &mut world);
-        assert!(
-            world
-                .get_component_for_entity::<AnimationHandleComponent>(skeleton)
-                .is_none()
-        );
-        assert!(
-            world
-                .get_component_for_entity::<CharacterLink>(character)
-                .is_none()
-        );
-
-        handle_asset_load_events(&mut world);
-        setup.run_and_apply((), &mut world);
-        setup.run_and_apply((), &mut world);
-
-        assert_eq!(
-            world.get_component_for_entity::<CharacterLink>(character),
-            Some(&CharacterLink {
-                capsule: SceneEntityRef::Entity(capsule),
-                skeleton: SceneEntityRef::Entity(skeleton),
-            })
-        );
-        let handle: AssetHandle<AnimationGraph> = (**world
-            .get_component_for_entity::<AnimationHandleComponent>(skeleton)
-            .unwrap())
-        .clone();
-        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
-        let nodes: Vec<_> = graphs
-            .get(&handle)
-            .unwrap()
-            .nodes()
-            .filter(|node| node.type_name() == std::any::type_name::<MotionMatchingNode>())
-            .map(|node| node.value().unwrap().into_owned())
-            .collect();
-        let expected = MotionMatchingNode::new(AssetHandle::weak(DATABASE));
-        assert_eq!(nodes, vec![to_value(&expected).unwrap()]);
-        assert_eq!(
-            world
-                .get_component_for_entity::<AnimationPlayer>(skeleton)
-                .unwrap()
-                .get_float_param(foot_placement_weight()),
-            Some(0.0)
-        );
-        assert_eq!(
-            world
-                .get_component_for_entity::<AnimationPlayer>(skeleton)
-                .unwrap()
-                .get_float_param(foot_lock_weight()),
-            Some(0.0)
-        );
-        assert_eq!(
-            world.get_component_for_entity::<FootLockGizmos>(skeleton),
-            Some(&FootLockGizmos::default())
-        );
-    }
-
-    #[test]
-    fn each_pending_character_links_the_skeleton_under_it() {
-        let (mut world, _) = world_with_spawner();
-        spawned(&mut world);
-        let (player_capsule, _) = capsules(&mut world)[0];
-        let (player_character, ..) = visible_characters(&mut world)[0];
-        let player_skeleton = world.spawn(AnimationPlayer::new(1));
-        world
-            .entity_mut(player_character)
-            .add_child(player_skeleton);
-
-        let npc_capsule = world.spawn(Transform::default());
-        let graph = {
-            let server = world.get_resource::<AssetServer>().unwrap();
-            server.add(character_graph(server.load(DATABASE)))
-        };
-        let npc_character = world.spawn(PendingLink {
-            capsule: npc_capsule,
-            graph,
-            recoil: None,
-        });
-        let npc_root = world.spawn(Transform::default());
-        let npc_skeleton = world.spawn(AnimationPlayer::new(1));
-        world.entity_mut(npc_character).add_child(npc_root);
-        world.entity_mut(npc_root).add_child(npc_skeleton);
-
-        handle_asset_load_events(&mut world);
-        let mut setup = setup_character_animations.into_system();
-        setup.initialize(&mut world);
-        setup.run_and_apply((), &mut world);
-
-        assert_eq!(
-            world.get_component_for_entity::<CharacterLink>(player_character),
-            Some(&CharacterLink {
-                capsule: SceneEntityRef::Entity(player_capsule),
-                skeleton: SceneEntityRef::Entity(player_skeleton),
-            })
-        );
-        assert_eq!(
-            world.get_component_for_entity::<CharacterLink>(npc_character),
-            Some(&CharacterLink {
-                capsule: SceneEntityRef::Entity(npc_capsule),
-                skeleton: SceneEntityRef::Entity(npc_skeleton),
-            })
-        );
-        for skeleton in [player_skeleton, npc_skeleton] {
-            assert!(
-                world
-                    .get_component_for_entity::<AnimationHandleComponent>(skeleton)
-                    .is_some()
-            );
-        }
-        assert!(
-            world
-                .query::<&PendingLink, ()>()
-                .iter(&mut world)
-                .next()
-                .is_none()
-        );
-        assert_eq!(
-            world.get_component_for_entity::<FootLockGizmos>(player_skeleton),
-            Some(&FootLockGizmos::default())
-        );
-        assert!(
-            world
-                .get_component_for_entity::<FootLockGizmos>(npc_skeleton)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn the_character_graph_locks_then_places_the_feet_on_the_motion_matching_pose() {
-        let (mut world, _) = world_with_spawner();
-        spawned(&mut world);
-        handle_asset_load_events(&mut world);
-        let handle = world
-            .query::<&PendingLink, ()>()
-            .iter(&mut world)
-            .map(|pending| pending.graph.clone())
-            .next()
-            .unwrap();
-
-        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
-        let graph = graphs.get(&handle).unwrap();
-        let nodes: Vec<_> = graph.nodes().collect();
-        let of_type = |type_name: &str| {
-            graph
-                .iter()
-                .filter(|index| nodes[index.index()].type_name() == type_name)
-                .collect::<Vec<AnimationNodeIndex>>()
-        };
-        let inputs = |index: AnimationNodeIndex| {
-            graph
-                .inputs(index)
-                .into_iter()
-                .map(|input| nodes[input.index()].type_name())
-                .collect::<Vec<_>>()
-        };
-        let placements = of_type(std::any::type_name::<FootPlacementNode>());
-        let locks = of_type(std::any::type_name::<FootLockNode>());
-        assert_eq!(placements.len(), 1);
-        assert_eq!(locks.len(), 1);
-        assert_eq!(
-            inputs(placements[0]),
-            vec![std::any::type_name::<FootLockNode>()]
-        );
-        assert_eq!(
-            inputs(locks[0]),
-            vec![std::any::type_name::<MotionMatchingNode>()]
-        );
-        let expected_lock = FootLockNode::new()
-            .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
-            .with_leg(FootLockLeg::new("RightFoot").with_toe("RightToe"))
-            .with_weight_param(name!("foot_lock_weight"));
-        assert_eq!(
-            nodes[locks[0].index()].value().unwrap().into_owned(),
-            to_value(&expected_lock).unwrap()
-        );
-        let expected = FootPlacementNode::new("Hips")
-            .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
-            .with_leg(FootPlacementLeg::new("RightFoot").with_toe("RightToe"))
-            .with_weight_param(name!("foot_placement_weight"))
-            .with_ignore_param(name!("foot_placement_ignore"));
-        assert_eq!(
-            nodes[placements[0].index()].value().unwrap().into_owned(),
-            to_value(&expected).unwrap()
-        );
-    }
-
-    #[test]
-    fn the_retargeted_character_layers_the_pistol_and_the_tired_overlay_over_retargeted_motion_matching_and_fixes_the_feet_last()
-     {
-        let (mut world, _) = world_with_spawner();
-        world.insert_resource(RetargetedPlayer);
-        spawned(&mut world);
-        handle_asset_load_events(&mut world);
-        let scenes: Vec<AssetId> = visible_characters(&mut world)
-            .into_iter()
-            .map(|(.., scene)| scene)
-            .collect();
-        assert_eq!(scenes, vec![UAL1_SCENE]);
-        let handle = world
-            .query::<&PendingLink, ()>()
-            .iter(&mut world)
-            .map(|pending| pending.graph.clone())
-            .next()
-            .unwrap();
-
-        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
-        let graph = graphs.get(&handle).unwrap();
-        let nodes: Vec<_> = graph.nodes().collect();
-        let type_of = |index: AnimationNodeIndex| nodes[index.index()].type_name();
-        let inputs = |index: AnimationNodeIndex| graph.inputs(index);
-        let only = |type_name: &str| {
-            let found: Vec<AnimationNodeIndex> = graph
-                .iter()
-                .filter(|index| type_of(*index) == type_name)
-                .collect();
-            assert_eq!(found.len(), 1, "{type_name}");
-            found[0]
-        };
-
-        let mut trunk = Vec::new();
-        let mut node = only(std::any::type_name::<FootPlacementNode>());
-        loop {
-            trunk.push(type_of(node));
-            let below = inputs(node);
-            if below.len() != 1 {
-                break;
-            }
-            node = below[0];
-        }
-        assert_eq!(
-            trunk,
-            vec![
-                std::any::type_name::<FootPlacementNode>(),
-                std::any::type_name::<FootLockNode>(),
-                std::any::type_name::<TwoBoneIkNode>(),
-                std::any::type_name::<ProceduralMotionNode>(),
-                std::any::type_name::<LookAtNode>(),
-                std::any::type_name::<AdditiveNode>(),
-                std::any::type_name::<AimNode>(),
-                std::any::type_name::<AimOffsetNode>(),
-                std::any::type_name::<LayerNode>(),
-            ]
-        );
-        let layered: Vec<&str> = inputs(node).into_iter().map(type_of).collect();
-        assert_eq!(layered.len(), 2);
-        assert!(layered.contains(&std::any::type_name::<AdditiveNode>()));
-        assert!(layered.contains(&std::any::type_name::<AnimationClipNode>()));
-        let retargets = only(std::any::type_name::<RetargetNode>());
-        let fingers = graph
-            .iter()
-            .find(|index| inputs(*index).contains(&retargets))
-            .unwrap();
-        assert_eq!(type_of(fingers), std::any::type_name::<LayerNode>());
-        let fingered: Vec<&str> = inputs(fingers).into_iter().map(type_of).collect();
-        assert_eq!(fingered.len(), 2);
-        assert!(fingered.contains(&std::any::type_name::<AnimationClipNode>()));
-        let tired = graph
-            .iter()
-            .find(|index| inputs(*index) == vec![fingers])
-            .unwrap();
-        assert_eq!(type_of(tired), std::any::type_name::<AdditiveNode>());
-        assert!(inputs(node).contains(&tired));
-
-        let recoil = world
-            .query::<&PendingLink, ()>()
-            .iter(&mut world)
-            .map(|pending| pending.recoil)
-            .next()
-            .unwrap()
-            .unwrap();
-        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
-        let graph = graphs.get(&handle).unwrap();
-        let nodes: Vec<_> = graph.nodes().collect();
-        let mut shot = AdditiveNode::default();
-        assert!(apply_value(&mut shot, &nodes[recoil.index()].value().unwrap()).is_empty());
-        assert_eq!(shot.clip.id(), PISTOL_SHOOT);
-
-        let retargets: Vec<_> = graph
-            .iter()
-            .filter(|index| {
-                nodes[index.index()].type_name() == std::any::type_name::<RetargetNode>()
-            })
-            .collect();
-        let mut retarget = RetargetNode::default();
-        assert!(
-            apply_value(&mut retarget, &nodes[retargets[0].index()].value().unwrap()).is_empty()
-        );
-        let inner = graphs.get(&retarget.graph).unwrap();
-        let matchers: Vec<_> = inner
-            .nodes()
-            .filter(|node| node.type_name() == std::any::type_name::<MotionMatchingNode>())
-            .map(|node| node.value().unwrap().into_owned())
-            .collect();
-        let expected_matcher = MotionMatchingNode::new(AssetHandle::weak(DATABASE))
-            .with_play_rate_param(name!("pace"));
-        assert_eq!(matchers, vec![to_value(&expected_matcher).unwrap()]);
-        assert_eq!(inner.nodes().count(), 2);
-
-        assert_eq!(retarget.source.id(), LAFAN1_RIG);
-        assert_eq!(retarget.target.id(), UAL1_RIG);
-    }
-
-    #[test]
-    fn the_npc_keeps_lafan1_when_the_player_is_retargeted() {
-        let (mut world, _) = world_with_spawner();
-        world.insert_resource(RetargetedPlayer);
-        world.spawn((Transform::default(), NpcSpawner::ready()));
-
-        let mut system = spawn_npc.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-
-        let scenes: Vec<AssetId> = visible_characters(&mut world)
-            .into_iter()
-            .map(|(.., scene)| scene)
-            .collect();
-        assert_eq!(scenes, vec![CHARACTER_SCENE]);
-    }
-
     struct FedPlayer {
         app: App,
         capsule: Entity,
@@ -1276,30 +813,24 @@ mod tests {
     }
 
     impl FedPlayer {
-        fn weight(&self) -> Option<f32> {
+        fn animation(&self) -> &AnimationPlayer {
             self.app
                 .main()
                 .world()
                 .get_component_for_entity::<AnimationPlayer>(self.player)
                 .unwrap()
-                .get_float_param(foot_placement_weight())
+        }
+
+        fn weight(&self) -> Option<f32> {
+            self.animation().get_float_param(foot_placement_weight())
         }
 
         fn lock_weight(&self) -> Option<f32> {
-            self.app
-                .main()
-                .world()
-                .get_component_for_entity::<AnimationPlayer>(self.player)
-                .unwrap()
-                .get_float_param(foot_lock_weight())
+            self.animation().get_float_param(foot_lock_weight())
         }
 
         fn ignored(&self) -> Option<BodyId> {
-            self.app
-                .main()
-                .world()
-                .get_component_for_entity::<AnimationPlayer>(self.player)
-                .unwrap()
+            self.animation()
                 .get_param::<IgnoredBody>(foot_placement_ignore())
                 .and_then(|ignored| ignored.body)
         }
@@ -1313,7 +844,7 @@ mod tests {
         }
     }
 
-    fn fed_after(fixed_steps: usize, registered: bool, foot_locking: bool) -> FedPlayer {
+    fn fed_after(fixed_steps: usize, foot_locking: bool) -> FedPlayer {
         let mut app = App::new();
         app.register_plugin(PhysicsPlugin);
         let world = app.main_mut().world_mut();
@@ -1344,16 +875,12 @@ mod tests {
         let schedules = world.remove_resource::<Schedules>().unwrap();
         let compiled = schedules.compile::<SingleThreadedExecutor>(world);
         world.insert_resource(compiled);
-        if registered {
-            world.run_schedule(LateUpdate);
-        }
+        world.run_schedule(LateUpdate);
         for _ in 0..fixed_steps {
             world.run_schedule(LateFixedUpdate);
         }
 
-        let mut feed = feed_foot_placement.into_system();
-        feed.initialize(world);
-        feed.run_and_apply((), world);
+        run(world, feed_foot_placement);
         FedPlayer {
             app,
             capsule,
@@ -1362,52 +889,18 @@ mod tests {
     }
 
     #[test]
-    fn a_grounded_capsule_gives_foot_placement_full_weight_and_its_body_to_ignore() {
-        let grounded = fed_after(60, true, true);
-
+    fn grounded_feet_are_placed_and_locked_ignoring_the_capsule_and_in_the_air_they_are_not() {
+        let grounded = fed_after(60, true);
         assert!(grounded.body().is_some());
         assert_eq!(grounded.ignored(), grounded.body());
         assert_eq!(grounded.weight(), Some(1.0));
+        assert_eq!(grounded.lock_weight(), Some(1.0));
 
-        let in_air = fed_after(0, true, true);
+        assert_eq!(fed_after(60, false).lock_weight(), Some(0.0));
 
-        assert!(in_air.body().is_some());
-        assert_eq!(in_air.ignored(), in_air.body());
+        let in_air = fed_after(0, true);
         assert_eq!(in_air.weight(), Some(0.0));
-    }
-
-    #[test]
-    fn a_capsule_without_a_body_gives_foot_placement_no_weight() {
-        let unregistered = fed_after(0, false, true);
-
-        assert_eq!(unregistered.body(), None);
-        assert_eq!(unregistered.weight(), Some(0.0));
-    }
-
-    #[test]
-    fn a_grounded_capsule_gives_foot_locking_full_weight_only_while_it_is_on() {
-        assert_eq!(fed_after(60, true, true).lock_weight(), Some(1.0));
-        assert_eq!(fed_after(60, true, false).lock_weight(), Some(0.0));
-        assert_eq!(fed_after(0, true, true).lock_weight(), Some(0.0));
-    }
-
-    #[test]
-    fn feeding_the_same_probe_state_again_leaves_the_player_unchanged() {
-        let mut fed = fed_after(60, true, true);
-        let world = fed.app.main_mut().world_mut();
-        world.tick();
-        let mut feed = feed_foot_placement.into_system();
-        feed.initialize(world);
-        feed.run_and_apply((), world);
-
-        let changed = world
-            .query::<Entity, Changed<AnimationPlayer>>()
-            .iter(world)
-            .count();
-        assert_eq!(changed, 0);
-        assert_eq!(fed.weight(), Some(1.0));
-        assert_eq!(fed.lock_weight(), Some(1.0));
-        assert_eq!(fed.ignored(), fed.body());
+        assert_eq!(in_air.lock_weight(), Some(0.0));
     }
 
     fn committed_skeleton(path: &str) -> Skeleton {
@@ -1438,49 +931,8 @@ mod tests {
 
         let source = lafan1_rig.resolve(&lafan1, None).unwrap();
         let target = ual1_rig.resolve(&ual1, None).unwrap();
-
-        let bone = |skeleton: &Skeleton, index: usize| skeleton.names[index];
-        for leg in [
-            ExpectedLeg::new(
-                name!("foot_l"),
-                name!("LeftFoot"),
-                name!("LeftLeg"),
-                name!("LeftUpLeg"),
-            ),
-            ExpectedLeg::new(
-                name!("foot_r"),
-                name!("RightFoot"),
-                name!("RightLeg"),
-                name!("RightUpLeg"),
-            ),
-        ] {
-            let goal = source.goal(leg.goal).unwrap();
-            assert_eq!(bone(&lafan1, goal.tip), leg.tip);
-            assert_eq!(bone(&lafan1, goal.mid), leg.mid);
-            assert_eq!(bone(&lafan1, goal.root), leg.root);
-        }
-        for leg in [
-            ExpectedLeg::new(
-                name!("foot_l"),
-                name!("foot_l"),
-                name!("calf_l"),
-                name!("thigh_l"),
-            ),
-            ExpectedLeg::new(
-                name!("foot_r"),
-                name!("foot_r"),
-                name!("calf_r"),
-                name!("thigh_r"),
-            ),
-        ] {
-            let goal = target.goal(leg.goal).unwrap();
-            assert_eq!(bone(&ual1, goal.tip), leg.tip);
-            assert_eq!(bone(&ual1, goal.mid), leg.mid);
-            assert_eq!(bone(&ual1, goal.root), leg.root);
-        }
         assert_eq!(source.goals.len(), 2);
         assert_eq!(target.goals.len(), 2);
-
         assert!(PoseRetarget::new(&source, &lafan1, &target, &ual1).is_ok());
 
         let bytes = std::fs::read(
@@ -1489,108 +941,6 @@ mod tests {
         .unwrap();
         let database = decode_content_asset::<MotionDatabase>(&bytes).unwrap().1;
         assert_eq!(database.skeleton.id(), LAFAN1_SKELETON);
-    }
-
-    struct ExpectedLeg {
-        goal: Name,
-        tip: Name,
-        mid: Name,
-        root: Name,
-    }
-
-    impl ExpectedLeg {
-        fn new(goal: Name, tip: Name, mid: Name, root: Name) -> Self {
-            Self {
-                goal,
-                tip,
-                mid,
-                root,
-            }
-        }
-    }
-
-    fn stored<A: Asset + 'static>(world: &mut World, server: &mut AssetServer) {
-        let store = AssetStore::<A>::new();
-        server.register_asset(&store);
-        world.insert_resource(store);
-    }
-
-    fn world_with_spawner() -> (World, Vec3) {
-        let mut world = World::new();
-        world.register_component::<ChildOf>();
-        world.register_component::<Children>();
-        world.insert_resource(PhysicsState::new());
-        let mut server = AssetServer::new();
-        stored::<Scene>(&mut world, &mut server);
-        stored::<Mesh>(&mut world, &mut server);
-        stored::<StandardMaterial>(&mut world, &mut server);
-        stored::<AnimationGraph>(&mut world, &mut server);
-        stored::<MotionDatabase>(&mut world, &mut server);
-        stored::<RetargetRig>(&mut world, &mut server);
-        stored::<Skeleton>(&mut world, &mut server);
-        stored::<AnimationClip>(&mut world, &mut server);
-        stored::<BoneMask>(&mut world, &mut server);
-        world.insert_resource(server);
-        world.insert_resource(CharacterConfig::grid());
-        let spawn_point = Vec3::new(3.0, 1.5, -7.0);
-        world.spawn((
-            Transform::from_translation_rotation(spawn_point, Quat::IDENTITY),
-            PlayerSpawner { should_spawn: true },
-        ));
-        (world, spawn_point)
-    }
-
-    fn characters(world: &mut World) -> Vec<Vec3> {
-        world
-            .query::<&Transform, With<Player>>()
-            .iter(world)
-            .map(|transform| transform.translation)
-            .collect()
-    }
-
-    #[test]
-    fn the_character_waits_for_the_ground_collider() {
-        let (mut world, spawn_point) = world_with_spawner();
-        let ground = world.spawn((MeshCollider, MeshComponent::default()));
-
-        let mut system = spawn_character.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-        assert!(characters(&mut world).is_empty());
-
-        world.insert(Collider::capsule(2.0, 1.0), ground);
-        system.run_and_apply((), &mut world);
-        assert_eq!(characters(&mut world), vec![spawn_point]);
-    }
-
-    #[test]
-    fn a_mesh_collider_without_a_mesh_does_not_hold_the_character() {
-        let (mut world, spawn_point) = world_with_spawner();
-        world.spawn(MeshCollider);
-
-        let mut system = spawn_character.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-
-        assert_eq!(characters(&mut world), vec![spawn_point]);
-    }
-
-    fn world_with_player(desired: DesiredMotion) -> World {
-        let mut world = World::new();
-        world.register_component::<Collider>();
-        world.register_component::<Transform>();
-        world.insert_resource(PhysicsState::new());
-        world.spawn((
-            Player::default(),
-            RigidBody::default(),
-            Collider::capsule(2.0, 1.0),
-            Transform::from_translation_rotation(Vec3::new(0.0, 5.0, 0.0), Quat::IDENTITY),
-            CharacterSimulation::default(),
-            desired,
-            GroundProbe::default(),
-        ));
-        world.insert_resource(controls());
-        world
     }
 
     fn controls() -> ActionMap {
@@ -1608,10 +958,6 @@ mod tests {
         input
     }
 
-    fn walk(input: &Input, yaw: f32) -> Vec3 {
-        movement(&controls(), input, yaw, false, Quat::IDENTITY).0
-    }
-
     fn pushing_the_left_stick_forward(length: f32) -> Input {
         let mut input = Input::new();
         input.set_gamepad_settings(
@@ -1625,150 +971,85 @@ mod tests {
         input
     }
 
-    #[test]
-    fn a_half_pushed_stick_walks_at_half_the_speed_of_a_full_one() {
-        let full = walk(&pushing_the_left_stick_forward(1.0), 0.0);
-        let half = walk(&pushing_the_left_stick_forward(0.5), 0.0);
+    struct Walk {
+        input: Input,
+        yaw: f32,
+        faces_camera: bool,
+        local: Vec3,
+    }
 
-        assert!(full.abs_diff_eq(Vec3::Z * WALK.forward, 1e-5));
-        assert!(half.abs_diff_eq(full * 0.5, 1e-5));
+    impl Walk {
+        fn keys(keys: &[KeyCode], yaw: f32, local: Vec3) -> Self {
+            Self {
+                input: holding(keys),
+                yaw,
+                faces_camera: false,
+                local,
+            }
+        }
+
+        fn facing_the_camera(mut self) -> Self {
+            self.faces_camera = true;
+            self
+        }
     }
 
     #[test]
-    fn w_with_the_left_arrow_stays_a_diagonal() {
-        let velocity = walk(&holding(&[KeyCode::KeyW, KeyCode::ArrowLeft]), 0.0);
-
-        assert!(velocity.abs_diff_eq(Vec3::new(1.0, 0.0, 1.0).normalize() * WALK.forward, 1e-5));
-    }
-
-    #[test]
-    fn facing_the_camera_holds_its_yaw_whatever_the_input() {
-        let yaw = 0.7;
+    fn input_walks_and_runs_relative_to_the_camera_and_turns_the_character_onto_its_path() {
         let held = Quat::from_rotation_y(-1.2);
-        let inputs: [&[KeyCode]; 3] = [&[], &[KeyCode::KeyD], &[KeyCode::KeyS, KeyCode::ShiftLeft]];
-        for keys in inputs {
-            let (_, rotation) = movement(&controls(), &holding(keys), yaw, true, held);
-            assert!(
-                rotation.abs_diff_eq(Quat::from_rotation_y(yaw), 1e-5),
-                "{keys:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn facing_the_camera_moves_at_the_side_and_back_speeds() {
-        let yaw = 0.7;
-        let camera = Quat::from_rotation_y(yaw);
-        let cases = [
-            (vec![KeyCode::KeyW], Vec3::Z * WALK.forward),
-            (vec![KeyCode::KeyS], Vec3::NEG_Z * WALK.back),
-            (vec![KeyCode::KeyA], Vec3::X * WALK.side),
-            (
-                vec![KeyCode::KeyD, KeyCode::ShiftLeft],
+        let rows = [
+            Walk::keys(&[KeyCode::KeyW], 0.7, Vec3::Z * WALK.forward),
+            Walk::keys(&[KeyCode::ArrowLeft], 0.7, Vec3::X * WALK.forward),
+            Walk::keys(
+                &[KeyCode::KeyW, KeyCode::KeyD],
+                0.0,
+                Vec3::new(-1.0, 0.0, 1.0).normalize() * WALK.forward,
+            ),
+            Walk::keys(
+                &[KeyCode::KeyW, KeyCode::ShiftRight],
+                0.0,
+                Vec3::Z * RUN.forward,
+            ),
+            Walk {
+                input: pushing_the_left_stick_forward(0.5),
+                yaw: 0.0,
+                faces_camera: false,
+                local: Vec3::Z * WALK.forward * 0.5,
+            },
+            Walk::keys(&[], 0.7, Vec3::ZERO),
+            Walk::keys(&[KeyCode::KeyS], 0.7, Vec3::NEG_Z * WALK.back).facing_the_camera(),
+            Walk::keys(
+                &[KeyCode::KeyD, KeyCode::ShiftLeft],
+                0.7,
                 Vec3::NEG_X * RUN.side,
-            ),
-            (
-                vec![KeyCode::KeyS, KeyCode::ShiftRight],
-                Vec3::NEG_Z * RUN.back,
-            ),
+            )
+            .facing_the_camera(),
         ];
-        for (keys, local) in cases {
-            let (velocity, _) = movement(&controls(), &holding(&keys), yaw, true, Quat::IDENTITY);
-            assert!(velocity.abs_diff_eq(camera * local, 1e-5), "{keys:?}");
+        for row in rows {
+            let camera = Quat::from_rotation_y(row.yaw);
+            let (velocity, rotation) =
+                movement(&controls(), &row.input, row.yaw, row.faces_camera, held);
+
+            assert!(
+                velocity.abs_diff_eq(camera * row.local, 1e-5),
+                "{velocity} vs {}",
+                camera * row.local
+            );
+            let forward = rotation * Vec3::Z;
+            if row.faces_camera {
+                assert!(rotation.abs_diff_eq(camera, 1e-5));
+            } else if velocity == Vec3::ZERO {
+                assert_eq!(rotation, held);
+            } else {
+                assert!(forward.cross(velocity).length() < 1e-5);
+                assert!(forward.dot(velocity) > 0.0);
+            }
         }
-    }
-
-    #[test]
-    fn f_toggles_facing_the_camera() {
-        let mut world = world_with_player(DesiredMotion::default());
-        let faces_camera = |world: &mut World| {
-            world
-                .query::<&Player, ()>()
-                .iter(world)
-                .next()
-                .unwrap()
-                .faces_camera
-        };
-
-        for expected in [true, false] {
-            world.insert_resource(holding(&[KeyCode::KeyF]));
-            let mut system = update_movement.into_system();
-            system.initialize(&mut world);
-            system.run_and_apply((), &mut world);
-            assert_eq!(faces_camera(&mut world), expected);
-        }
-    }
-
-    #[test]
-    fn l_toggles_foot_locking() {
-        let mut world = world_with_player(DesiredMotion::default());
-        let foot_locking = |world: &mut World| {
-            world
-                .query::<&Player, ()>()
-                .iter(world)
-                .next()
-                .unwrap()
-                .foot_locking
-        };
-        assert!(foot_locking(&mut world));
-
-        for expected in [false, true] {
-            world.insert_resource(holding(&[KeyCode::KeyL]));
-            let mut system = update_movement.into_system();
-            system.initialize(&mut world);
-            system.run_and_apply((), &mut world);
-            assert_eq!(foot_locking(&mut world), expected);
-        }
-    }
-
-    #[test]
-    fn aiming_turns_the_character_to_the_camera_yaw() {
-        let yaw = 0.7;
-        let mut world = world_with_player(DesiredMotion::default());
-        world.spawn((
-            CameraPivot::facing(yaw),
-            ThirdPersonCamera::default().with_stance(CameraStance::Aim),
-        ));
-        world.insert_resource(Input::new());
-
-        let mut system = update_movement.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-
-        let players: Vec<bool> = world
-            .query::<&Player, ()>()
-            .iter(&mut world)
-            .map(|player| player.faces_camera)
-            .collect();
-        assert_eq!(players, vec![false]);
-        let rotations: Vec<Quat> = world
-            .query::<&DesiredMotion, With<Player>>()
-            .iter(&mut world)
-            .map(|desired| desired.rotation)
-            .collect();
-        assert_eq!(rotations.len(), 1);
-        assert!(rotations[0].abs_diff_eq(Quat::from_rotation_y(yaw), 1e-5));
-    }
-
-    fn world_with_rig() -> World {
-        let mut world = World::new();
-        world.spawn(Player::default());
-        world.spawn(ThirdPersonCamera::default());
-        world.insert_resource(controls());
-        world
-    }
-
-    fn aiming(keys: &[KeyCode]) -> Input {
-        let mut input = holding(keys);
-        input.update_mouse_button(MouseButton::Right, true);
-        input
     }
 
     fn rig_after(world: &mut World, input: Input) -> ThirdPersonCamera {
         world.insert_resource(input);
-        let mut system = update_camera_stance.into_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
+        run(world, update_camera_stance);
         world
             .query::<&ThirdPersonCamera, ()>()
             .iter(world)
@@ -1777,253 +1058,86 @@ mod tests {
             .clone()
     }
 
-    #[test]
-    fn holding_the_right_mouse_button_aims() {
-        let mut world = world_with_rig();
-
-        assert_eq!(rig_after(&mut world, aiming(&[])).stance, CameraStance::Aim);
-        assert_eq!(
-            rig_after(&mut world, Input::new()).stance,
-            CameraStance::Follow
-        );
+    fn aiming() -> Input {
+        let mut input = Input::new();
+        input.update_mouse_button(MouseButton::Right, true);
+        input
     }
 
     #[test]
-    fn c_toggles_the_crouch_stance() {
-        let mut world = world_with_rig();
+    fn the_camera_crouches_aims_and_swaps_shoulders_and_aiming_turns_the_character_to_it() {
+        let yaw = 0.7;
+        let mut world = World::new();
+        world.register_component::<Collider>();
+        world.register_component::<Transform>();
+        world.insert_resource(PhysicsState::new());
+        world.spawn((
+            Player::default(),
+            RigidBody::default(),
+            Collider::capsule(2.0, 1.0),
+            Transform::from_translation_rotation(Vec3::new(0.0, 5.0, 0.0), Quat::IDENTITY),
+            CharacterSimulation::default(),
+            DesiredMotion::default(),
+            GroundProbe::default(),
+        ));
+        world.spawn((CameraPivot::facing(yaw), ThirdPersonCamera::default()));
+        world.insert_resource(controls());
 
         assert_eq!(
             rig_after(&mut world, holding(&[KeyCode::KeyC])).stance,
             CameraStance::Crouch
         );
-        assert_eq!(
-            rig_after(&mut world, holding(&[KeyCode::KeyC])).stance,
-            CameraStance::Follow
-        );
-    }
-
-    #[test]
-    fn shift_and_c_crouches() {
-        let mut world = world_with_rig();
-
-        assert_eq!(
-            rig_after(&mut world, holding(&[KeyCode::ShiftLeft, KeyCode::KeyC])).stance,
-            CameraStance::Crouch
-        );
-    }
-
-    #[test]
-    fn aiming_while_crouched_aims_and_releasing_crouches_again() {
-        let mut world = world_with_rig();
-        rig_after(&mut world, holding(&[KeyCode::KeyC]));
-
-        assert_eq!(rig_after(&mut world, aiming(&[])).stance, CameraStance::Aim);
+        assert_eq!(rig_after(&mut world, aiming()).stance, CameraStance::Aim);
+        run(&mut world, update_movement);
+        let rotations: Vec<Quat> = world
+            .query::<&DesiredMotion, With<Player>>()
+            .iter(&mut world)
+            .map(|desired| desired.rotation)
+            .collect();
+        assert!(rotations[0].abs_diff_eq(Quat::from_rotation_y(yaw), 1e-5));
         assert_eq!(
             rig_after(&mut world, Input::new()).stance,
             CameraStance::Crouch
         );
-    }
-
-    #[test]
-    fn q_swaps_the_shoulder() {
-        let mut world = world_with_rig();
-
+        assert_eq!(
+            rig_after(&mut world, holding(&[KeyCode::KeyC])).stance,
+            CameraStance::Follow
+        );
         assert_eq!(
             rig_after(&mut world, holding(&[KeyCode::KeyQ])).side,
             ShoulderSide::Left
         );
-        assert_eq!(
-            rig_after(&mut world, holding(&[KeyCode::KeyQ])).side,
-            ShoulderSide::Right
-        );
     }
 
     #[test]
-    fn arrow_input_maps_to_a_world_velocity_at_player_speed() {
-        assert!(walk(&holding(&[KeyCode::ArrowUp]), 0.0).abs_diff_eq(Vec3::Z * WALK.forward, 1e-5));
-        assert!(
-            walk(&holding(&[KeyCode::ArrowRight]), 0.0)
-                .abs_diff_eq(Vec3::NEG_X * WALK.forward, 1e-5)
-        );
-        assert_eq!(walk(&Input::new(), 0.0), Vec3::ZERO);
-    }
-
-    #[test]
-    fn wasd_and_the_arrows_move_the_same_way_relative_to_the_camera_yaw() {
-        let yaw = 0.7;
-        let keys = [
-            (KeyCode::KeyW, KeyCode::ArrowUp, Vec3::Z),
-            (KeyCode::KeyS, KeyCode::ArrowDown, Vec3::NEG_Z),
-            (KeyCode::KeyA, KeyCode::ArrowLeft, Vec3::X),
-            (KeyCode::KeyD, KeyCode::ArrowRight, Vec3::NEG_X),
-        ];
-        for (letter, arrow, direction) in keys {
-            let expected = Quat::from_rotation_y(yaw) * direction * WALK.forward;
-            assert!(walk(&holding(&[letter]), yaw).abs_diff_eq(expected, 1e-5));
-            assert!(walk(&holding(&[arrow]), yaw).abs_diff_eq(expected, 1e-5));
-        }
-    }
-
-    #[test]
-    fn a_diagonal_is_no_faster_than_a_straight_line() {
-        let velocity = walk(&holding(&[KeyCode::KeyW, KeyCode::KeyD]), 0.0);
-
-        assert!(velocity.abs_diff_eq(Vec3::new(-1.0, 0.0, 1.0).normalize() * WALK.forward, 1e-5));
-    }
-
-    #[test]
-    fn shift_runs() {
-        for shift in [KeyCode::ShiftLeft, KeyCode::ShiftRight] {
-            let velocity = walk(&holding(&[KeyCode::KeyW, shift]), 0.0);
-            assert!(velocity.abs_diff_eq(Vec3::Z * RUN.forward, 1e-5));
-        }
-    }
-
-    #[test]
-    fn the_desired_rotation_turns_forward_onto_the_velocity_and_holds_without_input() {
-        let held = Quat::from_rotation_y(0.3);
-        for velocity in [
-            Vec3::Z,
-            Vec3::NEG_Z,
-            Vec3::X * RUN.forward,
-            Vec3::new(-1.0, 0.0, -2.0),
-        ] {
-            let forward = facing(velocity, held) * Vec3::Z;
-            assert!(forward.cross(velocity).length() < 1e-5);
-            assert!(forward.dot(velocity) > 0.0);
-        }
-        assert_eq!(facing(Vec3::ZERO, held), held);
-    }
-
-    fn debugged_character(world: &mut World) -> Entity {
-        world.spawn((
+    fn the_number_keys_toggle_their_gizmo_layer_and_m_cycles_the_displacement_method() {
+        let mut world = World::new();
+        let character = world.spawn((
             MotionMatchingGizmos::default(),
             CharacterDisplacement::Adjustment(Adjustment::default()),
-        ))
-    }
+        ));
+        let skeleton = world.spawn(FootLockGizmos::default());
 
-    fn pressed<M>(world: &mut World, key: KeyCode, system: impl IntoSystem<(), M>) {
-        world.insert_resource(holding(&[key]));
-        let mut system = system.into_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
-    }
+        world.insert_resource(holding(&[KeyCode::Digit2]));
+        run(&mut world, debug_keys);
+        world.insert_resource(holding(&[KeyCode::Digit5]));
+        run(&mut world, debug_keys);
+        world.insert_resource(holding(&[KeyCode::KeyM]));
+        run(&mut world, cycle_displacement);
 
-    fn displacement(world: &World, character: Entity) -> CharacterDisplacement {
-        world
-            .get_component_for_entity::<CharacterDisplacement>(character)
-            .unwrap()
-            .clone()
-    }
-
-    fn locks(world: &World, skeleton: Entity) -> bool {
-        world
-            .get_component_for_entity::<FootLockGizmos>(skeleton)
-            .unwrap()
-            .locks
-    }
-
-    fn layers(world: &World, character: Entity) -> [bool; 4] {
         let gizmos = world
             .get_component_for_entity::<MotionMatchingGizmos>(character)
             .unwrap();
-        [
-            gizmos.simulation,
-            gizmos.query,
-            gizmos.matched,
-            gizmos.history,
-        ]
-    }
-
-    #[test]
-    fn each_number_key_toggles_its_gizmo_layer() {
-        let keys = [
-            KeyCode::Digit1,
-            KeyCode::Digit2,
-            KeyCode::Digit3,
-            KeyCode::Digit4,
-        ];
-        for (layer, key) in keys.into_iter().enumerate() {
-            let mut world = World::new();
-            let character = debugged_character(&mut world);
-            let skeleton = world.spawn(FootLockGizmos::default());
-
-            pressed(&mut world, key, debug_keys);
-            let mut expected = [true; 4];
-            expected[layer] = false;
-            assert_eq!(layers(&world, character), expected);
-            assert!(locks(&world, skeleton));
-
-            pressed(&mut world, key, debug_keys);
-            assert_eq!(layers(&world, character), [true; 4]);
-            assert!(locks(&world, skeleton));
-        }
-    }
-
-    #[test]
-    fn five_toggles_the_foot_lock_gizmos() {
-        let mut world = World::new();
-        let character = debugged_character(&mut world);
-        let skeleton = world.spawn(FootLockGizmos::default());
-
-        pressed(&mut world, KeyCode::Digit5, debug_keys);
-        assert!(!locks(&world, skeleton));
-        assert_eq!(layers(&world, character), [true; 4]);
-
-        pressed(&mut world, KeyCode::Digit5, debug_keys);
-        assert!(locks(&world, skeleton));
-    }
-
-    #[test]
-    fn m_cycles_the_displacement_method() {
-        let mut world = World::new();
-        let character = debugged_character(&mut world);
-
-        let methods: Vec<CharacterDisplacement> = (0..4)
-            .map(|_| {
-                pressed(&mut world, KeyCode::KeyM, cycle_displacement);
-                displacement(&world, character)
-            })
-            .collect();
-
-        assert_eq!(
-            methods,
-            vec![
-                CharacterDisplacement::Clamp(Clamp::default()),
-                CharacterDisplacement::Synchronization(Synchronization { data_factor: 0.0 }),
-                CharacterDisplacement::Synchronization(Synchronization { data_factor: 1.0 }),
-                CharacterDisplacement::Adjustment(Adjustment::default()),
-            ]
+        assert!(gizmos.simulation && !gizmos.query && gizmos.matched && gizmos.history);
+        assert!(
+            !world
+                .get_component_for_entity::<FootLockGizmos>(skeleton)
+                .unwrap()
+                .locks
         );
-    }
-
-    #[test]
-    fn the_gizmo_keys_leave_the_displacement_method_alone() {
-        let mut world = World::new();
-        let character = debugged_character(&mut world);
-
-        pressed(&mut world, KeyCode::KeyM, debug_keys);
-
         assert_eq!(
-            displacement(&world, character),
-            CharacterDisplacement::Adjustment(Adjustment::default())
+            world.get_component_for_entity::<CharacterDisplacement>(character),
+            Some(&CharacterDisplacement::Clamp(Clamp::default()))
         );
-    }
-
-    #[test]
-    fn input_in_the_air_does_not_change_the_walk() {
-        let mut world = world_with_player(DesiredMotion::default());
-        world.insert_resource(holding(&[KeyCode::ArrowUp]));
-
-        let mut system = update_movement.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-
-        let velocities: Vec<Vec3> = world
-            .query::<&DesiredMotion, With<Player>>()
-            .iter(&mut world)
-            .map(|desired| desired.velocity)
-            .collect();
-        assert_eq!(velocities, vec![Vec3::ZERO]);
     }
 }

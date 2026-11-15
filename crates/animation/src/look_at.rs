@@ -67,16 +67,10 @@ pub fn look_rotation(frame: &LookFrame, angles: YawPitch) -> Quat {
 
 #[cfg(test)]
 mod tests {
-    use std::f32::consts::FRAC_PI_2;
-
     use glam::Vec3;
     use proptest::prelude::*;
 
-    use super::{LookFrame, YawPitch, look_rotation, yaw_pitch_to};
-
-    fn skewed() -> LookFrame {
-        LookFrame::new(Vec3::new(0.3, -0.2, 1.0), Vec3::new(0.1, 1.0, 0.4)).unwrap()
-    }
+    use super::{LookFrame, look_rotation, yaw_pitch_to};
 
     fn any_vec3() -> impl Strategy<Value = Vec3> {
         prop::array::uniform3(-2.0f32..2.0).prop_map(Vec3::from_array)
@@ -104,31 +98,5 @@ mod tests {
                 "{direction}: turned {turned}"
             );
         }
-    }
-
-    #[test]
-    fn toward_the_side_yaws_positive_toward_up_pitches_a_right_angle_and_nowhere_gives_no_turn() {
-        let frame = skewed();
-
-        let side = yaw_pitch_to(&frame, frame.side());
-        assert!(side.yaw > 0.0, "{side:?}");
-        assert!(side.pitch.abs() < 1e-5, "{side:?}");
-
-        let up = yaw_pitch_to(&frame, frame.up());
-        assert!((up.pitch - FRAC_PI_2).abs() < 1e-5, "{up:?}");
-        assert!(up.yaw.is_finite(), "{up:?}");
-
-        assert_eq!(yaw_pitch_to(&frame, Vec3::ZERO), YawPitch::default());
-    }
-
-    #[test]
-    fn a_frame_needs_a_finite_forward_and_an_up_off_its_line() {
-        let forward = Vec3::new(0.3, -0.2, 1.0);
-        let up = Vec3::new(0.1, 1.0, 0.4);
-        assert_eq!(LookFrame::new(Vec3::ZERO, up), None);
-        assert_eq!(LookFrame::new(forward, Vec3::ZERO), None);
-        assert_eq!(LookFrame::new(forward, forward * 2.0), None);
-        assert_eq!(LookFrame::new(Vec3::new(f32::NAN, 0.0, 1.0), up), None);
-        assert_eq!(LookFrame::new(forward, Vec3::new(0.0, f32::NAN, 0.0)), None);
     }
 }

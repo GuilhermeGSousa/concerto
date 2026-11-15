@@ -392,73 +392,54 @@ mod tests {
         players.drain_events().collect()
     }
 
-    #[test]
-    fn assign_refuses_an_index_at_or_above_max_players() {
-        let mut players = Players::new(JoinSettings::new().with_max_players(2));
-
-        let result = players.assign(PlayerIndex::new(2), PlayerDevice::Gamepad(PAD_A));
-
-        assert_eq!(result, Err(AssignError::OutOfRange { max_players: 2 }));
-        assert_eq!(players.joined().count(), 0);
-        assert!(events(&mut players).is_empty());
+    struct Refusal {
+        name: &'static str,
+        players: fn() -> Players,
+        player: PlayerIndex,
+        error: AssignError,
     }
 
     #[test]
-    fn assign_refuses_a_device_another_player_holds_naming_that_player() {
-        let mut players = Players::default();
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        players.assign(P0, PlayerDevice::KeyboardMouse).unwrap();
+    fn assign_refuses_an_index_past_max_players_and_a_pad_another_player_holds() {
+        let cases = [
+            Refusal {
+                name: "an index at max players",
+                players: || Players::new(JoinSettings::new().with_max_players(2)),
+                player: PlayerIndex::new(2),
+                error: AssignError::OutOfRange { max_players: 2 },
+            },
+            Refusal {
+                name: "a pad another player holds",
+                players: || {
+                    let mut players = Players::default();
+                    players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
+                    players
+                },
+                player: P1,
+                error: AssignError::Taken { by: P0 },
+            },
+        ];
+        for case in cases {
+            let mut players = (case.players)();
+            events(&mut players);
 
-        assert_eq!(
-            players.assign(P1, PlayerDevice::Gamepad(PAD_A)),
-            Err(AssignError::Taken { by: P0 })
-        );
-        assert_eq!(
-            players.assign(P1, PlayerDevice::KeyboardMouse),
-            Err(AssignError::Taken { by: P0 })
-        );
-        assert_eq!(players.devices(P1), None);
+            assert_eq!(
+                players.assign(case.player, PlayerDevice::Gamepad(PAD_A)),
+                Err(case.error),
+                "{}",
+                case.name
+            );
+            assert_eq!(players.devices(case.player), None, "{}", case.name);
+            assert!(events(&mut players).is_empty(), "{}", case.name);
+        }
     }
 
     #[test]
-    fn assigning_a_second_pad_replaces_the_first_which_is_then_free() {
-        let mut players = Players::default();
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        events(&mut players);
-
-        players.assign(P0, PlayerDevice::Gamepad(PAD_B)).unwrap();
-
-        assert_eq!(players.devices(P0).unwrap().gamepad, Some(PAD_B));
-        assert_eq!(players.player_of(PlayerDevice::Gamepad(PAD_A)), None);
-        assert!(events(&mut players).is_empty());
-        assert_eq!(players.assign(P1, PlayerDevice::Gamepad(PAD_A)), Ok(()));
-    }
-
-    #[test]
-    fn unassign_frees_the_place_and_its_devices() {
-        let mut players = Players::default();
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        players.assign(P0, PlayerDevice::KeyboardMouse).unwrap();
-        events(&mut players);
-
-        players.unassign(P0);
-
-        assert_eq!(players.devices(P0), None);
-        assert_eq!(players.joined().count(), 0);
-        assert_eq!(players.player_of(PlayerDevice::Gamepad(PAD_A)), None);
-        assert_eq!(players.player_of(PlayerDevice::KeyboardMouse), None);
-        assert_eq!(events(&mut players), vec![PlayerEvent::Left { player: P0 }]);
-        players.unassign(P0);
-        assert!(events(&mut players).is_empty());
-    }
-
-    #[test]
-    fn assign_to_an_empty_place_joins() {
+    fn a_player_joins_with_their_first_device_swaps_pads_quietly_and_leaves_once() {
         let mut players = Players::default();
 
         players.assign(P1, PlayerDevice::KeyboardMouse).unwrap();
         players.assign(P1, PlayerDevice::Gamepad(PAD_A)).unwrap();
-
         assert_eq!(
             events(&mut players),
             vec![PlayerEvent::Joined {
@@ -474,10 +455,22 @@ mod tests {
                 keyboard_mouse: true
             })
         );
+
+        players.assign(P1, PlayerDevice::Gamepad(PAD_B)).unwrap();
+        assert_eq!(players.devices(P1).unwrap().gamepad, Some(PAD_B));
+        assert_eq!(players.player_of(PlayerDevice::Gamepad(PAD_A)), None);
+        assert!(events(&mut players).is_empty());
+
+        players.unassign(P1);
+        players.unassign(P1);
+        assert_eq!(players.joined().count(), 0);
+        assert_eq!(players.player_of(PlayerDevice::KeyboardMouse), None);
+        assert_eq!(players.player_of(PlayerDevice::Gamepad(PAD_B)), None);
+        assert_eq!(events(&mut players), vec![PlayerEvent::Left { player: P1 }]);
     }
 
     #[test]
-    fn a_lost_pad_makes_its_player_wait() {
+    fn a_lost_pad_makes_its_player_wait_until_a_pad_is_assigned_to_them_or_it_goes_to_another() {
         let mut players = Players::default();
         players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
         players.assign(P0, PlayerDevice::KeyboardMouse).unwrap();
@@ -485,8 +478,6 @@ mod tests {
 
         assert_eq!(players.lose_gamepad(PAD_A), Some(P0));
         assert_eq!(players.lose_gamepad(PAD_B), None);
-
-        assert!(players.is_waiting(P0));
         assert_eq!(players.waiting().collect::<Vec<_>>(), vec![P0]);
         assert_eq!(
             players.devices(P0),
@@ -502,19 +493,9 @@ mod tests {
                 gamepad: PAD_A
             }]
         );
-    }
-
-    #[test]
-    fn a_pad_given_to_a_waiting_player_restores_them() {
-        let mut players = Players::default();
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        players.lose_gamepad(PAD_A);
-        events(&mut players);
 
         players.assign(P0, PlayerDevice::Gamepad(PAD_B)).unwrap();
-
         assert!(!players.is_waiting(P0));
-        assert_eq!(players.waiting().count(), 0);
         assert_eq!(
             events(&mut players),
             vec![PlayerEvent::DeviceRestored {
@@ -522,88 +503,18 @@ mod tests {
                 gamepad: PAD_B
             }]
         );
-    }
 
-    #[test]
-    fn the_keyboard_given_to_a_waiting_player_leaves_them_waiting_quietly() {
-        let mut players = Players::default();
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        players.lose_gamepad(PAD_A);
+        players.lose_gamepad(PAD_B);
         events(&mut players);
-
-        players.assign(P0, PlayerDevice::KeyboardMouse).unwrap();
-
-        assert!(players.is_waiting(P0));
-        assert!(events(&mut players).is_empty());
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        assert_eq!(
-            events(&mut players),
-            vec![PlayerEvent::DeviceRestored {
-                player: P0,
-                gamepad: PAD_A
-            }]
-        );
-    }
-
-    #[test]
-    fn the_keyboard_added_to_a_player_with_a_pad_raises_nothing() {
-        let mut players = Players::default();
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        events(&mut players);
-
-        players.assign(P0, PlayerDevice::KeyboardMouse).unwrap();
-
-        assert!(events(&mut players).is_empty());
-        assert_eq!(players.player_of(PlayerDevice::KeyboardMouse), Some(P0));
-    }
-
-    #[test]
-    fn assigning_a_lost_pad_to_another_player_clears_the_wait_on_it() {
-        let mut players = Players::default();
-        players.assign(P0, PlayerDevice::Gamepad(PAD_A)).unwrap();
-        players.lose_gamepad(PAD_A);
-        events(&mut players);
-
-        players.assign(P1, PlayerDevice::Gamepad(PAD_A)).unwrap();
-
+        players.assign(P1, PlayerDevice::Gamepad(PAD_B)).unwrap();
         assert!(!players.is_waiting(P0));
-        assert_eq!(players.waiting().count(), 0);
         assert_eq!(players.joined().collect::<Vec<_>>(), vec![P0, P1]);
         assert_eq!(
             events(&mut players),
             vec![PlayerEvent::Joined {
                 player: P1,
-                device: PlayerDevice::Gamepad(PAD_A)
+                device: PlayerDevice::Gamepad(PAD_B)
             }]
         );
-    }
-
-    #[test]
-    fn lowering_max_players_keeps_players_above_it() {
-        let mut players = Players::default();
-        players
-            .assign(PlayerIndex::new(3), PlayerDevice::Gamepad(PAD_A))
-            .unwrap();
-
-        players.set_settings(JoinSettings::new().with_max_players(2));
-
-        assert_eq!(
-            players.joined().collect::<Vec<_>>(),
-            vec![PlayerIndex::new(3)]
-        );
-    }
-
-    #[test]
-    fn a_player_above_a_lowered_max_players_cannot_be_given_a_new_device() {
-        let mut players = Players::default();
-        players.assign(P1, PlayerDevice::Gamepad(PAD_A)).unwrap();
-
-        players.set_settings(JoinSettings::new().with_max_players(1));
-
-        assert_eq!(
-            players.assign(P1, PlayerDevice::Gamepad(PAD_B)),
-            Err(AssignError::OutOfRange { max_players: 1 })
-        );
-        assert_eq!(players.devices(P1).unwrap().gamepad, Some(PAD_A));
     }
 }

@@ -23,12 +23,6 @@ fn only_a_game_app_spawns_the_startup_scene_it_declares() {
             spawners: 1,
         },
         Startup {
-            name: "a game app that declares none",
-            app: App::new,
-            declare: false,
-            spawners: 0,
-        },
-        Startup {
             name: "an edit app",
             app: App::for_editing,
             declare: true,

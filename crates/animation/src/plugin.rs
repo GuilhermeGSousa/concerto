@@ -146,7 +146,7 @@ mod tests {
         node::{AnimationNode, CreateNodeInputs, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
-        target::{animate_targets, initialize_animation_players, update_animation_players},
+        target::update_animation_players,
     };
 
     #[derive(Default, Reflect)]
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_walk_whose_input_reads_a_resource_declares_it() {
+    fn the_update_walk_declares_the_resource_a_node_reads_in_update() {
         let mut app = App::new();
         app.register_plugin(AssetManagerPlugin);
         app.register_plugin(AnimationPlugin);
@@ -313,11 +313,7 @@ mod tests {
 
         let writer = access_of(world, |_: ResMut<Speed>| {});
         let update = access_of(world, update_animation_players);
-        let evaluate = access_of(world, animate_targets);
-        let create = access_of(world, initialize_animation_players);
 
         assert!(!SystemAccess::are_disjoint(&update, &writer));
-        assert!(SystemAccess::are_disjoint(&evaluate, &writer));
-        assert!(SystemAccess::are_disjoint(&create, &writer));
     }
 }

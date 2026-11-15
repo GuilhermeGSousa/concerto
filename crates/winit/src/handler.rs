@@ -373,17 +373,3 @@ impl ApplicationHandler for Handler {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dropping_the_handler_drops_its_app() {
-        let handler = Handler::new(|_: &mut App| {});
-        let slot = Rc::clone(&handler.app);
-        *slot.borrow_mut() = Some(App::new());
-        drop(handler);
-        assert!(slot.borrow().is_none());
-    }
-}

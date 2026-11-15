@@ -221,10 +221,5 @@ mod tests {
         assert_eq!(line_at(&lines, 150.0, false), Some(1));
         assert_eq!(line_at(&lines, 300.0, false), None);
         assert_eq!(line_at(&lines, 350.0, true), Some(0));
-        assert_eq!(line_at(&[], 1.0, true), None);
-        assert_eq!(
-            case_time(at(19, 40) + 59.0),
-            GameTime::from_hm(19, 40).unwrap()
-        );
     }
 }

@@ -29,7 +29,6 @@ serde = "1"
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 
 [dev-dependencies]
-bincode = "1.3"
 concerto = { path = "../.." }
 concerto-editor = { workspace = true, features = ["testing"] }
 concerto-mcp.workspace = true

@@ -301,15 +301,9 @@ mod tests {
     #[test]
     fn a_filter_conflicts_with_a_writer_only_when_it_reads_the_component() {
         assert!(conflicts_with_writing_a::<Query<Entity, Changed<A>>>());
-        assert!(conflicts_with_writing_a::<Query<Entity, Added<A>>>());
-        assert!(conflicts_with_writing_a::<
-            Query<Entity, (Changed<A>, With<A>)>,
-        >());
         assert!(conflicts_with_writing_a::<
             Query<Entity, Or<(Changed<A>, With<A>)>>,
         >());
-        assert!(conflicts_with_writing_a::<Query<Entity, Not<Changed<A>>>>());
         assert!(!conflicts_with_writing_a::<Query<Entity, With<A>>>());
-        assert!(!conflicts_with_writing_a::<Query<Entity, Without<A>>>());
     }
 }

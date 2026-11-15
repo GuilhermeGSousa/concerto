@@ -1379,20 +1379,13 @@ mod tests {
     use concerto_ecs::{
         Event, IntoSystem, System,
         entity::hierarchy::{ChildOf, Children},
-        events::event_channel::EventChannel,
-        query::filter::{Changed, With},
+        events::{event_channel::EventChannel, event_cursor::EventCursor},
+        query::filter::With,
         system::BoxedSystem,
     };
-    use concerto_foundation::assets::{
-        Asset,
-        content::{ImportProvenance, read_content_asset},
-    };
-    use concerto_render::assets::material::StandardMaterial;
+    use concerto_foundation::assets::{Asset, content::read_content_asset};
     use concerto_ui::{
         focus::{FocusedWidget, UIFocusLost},
-        interaction::{UIDisabled, UIInteractionStyle},
-        items::UIItem,
-        node::{UIBox, UILayout},
         text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
         tree::update_trees_system,
     };
@@ -1459,56 +1452,14 @@ mod tests {
         world.tick();
     }
 
-    fn send<E: Event + 'static>(world: &mut World, event: E) {
-        let channel = world.get_resource_mut::<EventChannel<E>>().unwrap();
-        channel.update();
-        channel.update();
-        channel.push_event(event);
-    }
-
-    fn left_click(world: &mut World, entity: Entity) {
-        world.trigger_on(
-            entity,
-            UIClick {
-                position: Vec2::ZERO,
-                button: MouseButton::Left,
-            },
-        );
-    }
-
-    fn new_rows(world: &mut World) -> Vec<Entity> {
-        world.query::<Entity, With<NewRow>>().iter(world).collect()
-    }
-
-    fn menu_rows(world: &mut World) -> Vec<Entity> {
+    fn opened(world: &World) -> Vec<AssetId> {
         world
-            .query::<Entity, With<ContentMenuRow>>()
-            .iter(world)
-            .collect()
-    }
-
-    fn pending_field(world: &mut World) -> Option<Entity> {
-        world
-            .query::<Entity, With<PendingField>>()
-            .iter(world)
-            .next()
-    }
-
-    fn set_name(world: &mut World, field: Entity, name: &str) {
-        world
-            .get_component_for_entity_mut::<UITextInput>(field)
-            .unwrap()
-            .value = name.into();
-    }
-
-    fn take_opened(world: &mut World) -> Vec<AssetId> {
-        world
-            .get_resource_mut::<EditorCommands>()
+            .get_resource::<EditorCommands>()
             .unwrap()
             .0
-            .drain(..)
+            .iter()
             .filter_map(|command| match command {
-                EditorCommand::OpenAsset(id) => Some(id),
+                EditorCommand::OpenAsset(id) => Some(*id),
                 _ => None,
             })
             .collect()
@@ -1528,6 +1479,15 @@ mod tests {
         files
     }
 
+    fn events<E: Event + Clone + 'static>(world: &World) -> Vec<E> {
+        world
+            .get_resource::<EventChannel<E>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .cloned()
+            .collect()
+    }
+
     fn entry(address: &str, kind: &str) -> AssetEntry {
         AssetEntry {
             embedded_in: None,
@@ -1545,11 +1505,7 @@ mod tests {
         root: tempfile::TempDir,
     }
 
-    fn fixture(assets: &[(&str, &str)]) -> Fixture {
-        fixture_in("content", assets)
-    }
-
-    fn fixture_in(content_root: &str, assets: &[(&str, &str)]) -> Fixture {
+    fn level_and_forest() -> Fixture {
         let root = tempfile::tempdir().unwrap();
         let mut world = World::new();
         world.register_component::<ChildOf>();
@@ -1562,14 +1518,13 @@ mod tests {
         let mut project = ProjectState::default();
         project.project = Some(Project {
             root: root.path().to_path_buf(),
-            content_root: content_root.into(),
+            content_root: "content".into(),
             default_scene: None,
         });
         world.insert_resource(project);
         let mut registry = AssetRegistry::default();
-        for (address, kind) in assets {
-            registry.insert(entry(address, kind));
-        }
+        registry.insert(entry("content/level.gasset", "Scene"));
+        registry.insert(entry("content/forest/a.gasset", "Scene"));
         world.insert_resource(registry);
         concerto_ui::items::install_listeners(&mut world);
         concerto_ui::tree::install_listeners(&mut world);
@@ -1583,350 +1538,9 @@ mod tests {
         fixture
     }
 
-    fn nested() -> Fixture {
-        fixture(&[
-            ("content/forest/a.gasset", "Scene"),
-            ("content/characters/hero/mesh.gasset", "Mesh"),
-        ])
-    }
-
-    fn folder(path: &str) -> ContentKey {
-        ContentKey::Folder(path.into())
-    }
-
-    fn pending(folder: &str) -> ContentKey {
-        ContentKey::Pending {
-            kind: Scene::name(),
-            folder: folder.into(),
-        }
-    }
-
     impl Fixture {
-        fn update(&mut self) {
-            for system in &mut self.systems {
-                system.run_and_apply((), &mut self.world);
-            }
-        }
-
-        fn new_scene(&mut self) -> Entity {
-            let row = new_rows(&mut self.world)[0];
-            self.click(row);
-            self.refresh();
-            self.field().expect("New shows a pending row")
-        }
-
-        fn field(&mut self) -> Option<Entity> {
-            pending_field(&mut self.world)
-        }
-
-        fn name_value(&self, field: Entity) -> String {
-            self.world
-                .get_component_for_entity::<UITextInput>(field)
-                .unwrap()
-                .value
-                .clone()
-        }
-
-        fn submit(&mut self, name: &str) {
-            let field = self.field().unwrap();
-            set_name(&mut self.world, field, name);
-            send(
-                &mut self.world,
-                UITextInputSubmitted {
-                    entity: field,
-                    value: name.into(),
-                },
-            );
-            self.refresh();
-        }
-
-        fn lose_focus(&mut self, name: &str) {
-            let field = self.field().unwrap();
-            set_name(&mut self.world, field, name);
-            self.focus_on(None);
-            send(&mut self.world, UIFocusLost(field));
-            self.refresh();
-        }
-
-        fn focused(&self) -> Option<Entity> {
-            **self.world.get_resource::<FocusedWidget>().unwrap()
-        }
-
-        fn focus_on(&mut self, entity: Option<Entity>) {
-            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = entity;
-        }
-
-        fn footer(&mut self) -> String {
-            self.world
-                .query::<&UIText, With<CountLabel>>()
-                .iter(&mut self.world)
-                .next()
-                .unwrap()
-                .text
-                .clone()
-        }
-
-        fn border(&self, field: Entity) -> concerto_color::LinearRgba {
-            self.world
-                .get_component_for_entity::<UIMaterial>(field)
-                .unwrap()
-                .border_color
-        }
-
-        fn files(&self) -> Vec<PathBuf> {
-            files_under(self.root.path())
-        }
-
-        fn status(&self) -> String {
-            self.world
-                .get_resource::<ProjectState>()
-                .unwrap()
-                .status
-                .clone()
-        }
-
-        fn disabled(&self, entity: Entity) -> bool {
-            self.world
-                .get_component_for_entity::<UIDisabled>(entity)
-                .is_some()
-        }
-
-        fn content_menu(&mut self) -> Entity {
-            self.world
-                .query::<Entity, With<ContentMenu>>()
-                .iter(&mut self.world)
-                .next()
-                .unwrap()
-        }
-
-        fn menu_panel(&self, menu: Entity) -> &UIAnchoredPanel {
-            self.world
-                .get_component_for_entity::<UIAnchoredPanel>(menu)
-                .unwrap()
-        }
-
-        fn menu_folder(&self, menu: Entity) -> String {
-            self.world
-                .get_component_for_entity::<ContentMenu>(menu)
-                .unwrap()
-                .folder
-                .clone()
-        }
-
-        fn row_label(&self, row: Entity) -> String {
-            let label = *self
-                .world
-                .get_component_for_entity::<Children>(row)
-                .unwrap()
-                .iter()
-                .next()
-                .unwrap();
-            self.world
-                .get_component_for_entity::<UIText>(label)
-                .unwrap()
-                .text
-                .clone()
-        }
-
-        fn press(&mut self, entity: Entity, button: MouseButton, position: Vec2) {
-            self.world.trigger_on(entity, UIClick { position, button });
-            self.refresh();
-        }
-
-        fn new_button(&mut self) -> Entity {
-            self.world
-                .query::<Entity, With<NewButton>>()
-                .iter(&mut self.world)
-                .next()
-                .unwrap()
-        }
-
         fn refresh(&mut self) {
-            self.update();
-            self.world.tick();
-        }
-
-        fn state(&self) -> &ContentState {
-            self.world.get_resource::<ContentState>().unwrap()
-        }
-
-        fn asset(&self, address: &str) -> AssetId {
-            self.world
-                .get_resource::<AssetRegistry>()
-                .unwrap()
-                .id_for_address(address)
-                .unwrap()
-        }
-
-        fn item(&self, key: &ContentKey) -> Entity {
-            *self.state().items.get(key).expect("the key has an item")
-        }
-
-        fn asset_item(&self, address: &str) -> Entity {
-            self.item(&ContentKey::Asset(self.asset(address)))
-        }
-
-        fn area(&self, view: Entity) -> &UIScrollArea {
-            self.world
-                .get_component_for_entity::<UIScrollArea>(view)
-                .unwrap()
-        }
-
-        fn lay_out_view(&mut self, height: f32) {
-            let view = self.view();
-            let frame = UIBox {
-                min: Vec2::ZERO,
-                size: Vec2::new(300.0, height),
-            };
-            self.world.insert(
-                UILayout {
-                    rect: frame,
-                    content_rect: frame,
-                    clip_rect: frame,
-                    paint_order: 0,
-                },
-                view,
-            );
-            self.refresh();
-        }
-
-        fn scroll_view_to_end(&mut self) {
-            let view = self.view();
-            let height = self
-                .world
-                .get_component_for_entity::<UILayout>(view)
-                .unwrap()
-                .content_rect
-                .size
-                .y;
-            let end = self.area(view).content_extent - height;
-            assert!(end > 0.0);
-            self.world
-                .get_component_for_entity_mut::<UIScrollArea>(view)
-                .unwrap()
-                .offset = end;
-            self.refresh();
-            assert_eq!(self.area(view).offset, end);
-        }
-
-        fn in_view(&mut self, item: Entity) -> bool {
-            let view = self.view();
-            let height = self
-                .world
-                .get_component_for_entity::<UILayout>(view)
-                .unwrap()
-                .content_rect
-                .size
-                .y;
-            let placed = *self.world.get_component_for_entity::<UIItem>(item).unwrap();
-            let top = placed.index() as f32 * ROW_HEIGHT;
-            let offset = self.area(view).offset;
-            placed.is_shown() && offset <= top && top + ROW_HEIGHT <= offset + height
-        }
-
-        fn view(&mut self) -> Entity {
-            self.world
-                .query::<Entity, With<ContentView>>()
-                .iter(&mut self.world)
-                .next()
-                .unwrap()
-        }
-
-        fn keys_under(&self, parent: Entity) -> Vec<ContentKey> {
-            self.world
-                .get_component_for_entity::<Children>(parent)
-                .map(|children| {
-                    children
-                        .iter()
-                        .filter_map(|child| {
-                            self.world
-                                .get_component_for_entity::<ContentItem>(*child)
-                                .map(|item| item.key.clone())
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        }
-
-        fn labels_under(&self, parent: Entity) -> Vec<String> {
-            self.keys_under(parent)
-                .iter()
-                .map(|key| self.label(self.item(key)))
-                .collect()
-        }
-
-        fn label(&self, item: Entity) -> String {
-            let label = self
-                .world
-                .get_component_for_entity::<ContentItem>(item)
-                .unwrap()
-                .label;
-            self.world
-                .get_component_for_entity::<UIText>(label)
-                .unwrap()
-                .text
-                .clone()
-        }
-
-        fn expanded(&self, item: Entity) -> bool {
-            self.world
-                .get_component_for_entity::<UITreeElement>(item)
-                .unwrap()
-                .expanded
-        }
-
-        fn expand(&mut self, item: Entity) {
-            self.world
-                .get_component_for_entity_mut::<UITreeElement>(item)
-                .unwrap()
-                .expanded = true;
-            self.refresh();
-        }
-
-        fn shown(&self, item: Entity) -> bool {
-            self.world
-                .get_component_for_entity::<UIItem>(item)
-                .is_some_and(UIItem::is_shown)
-        }
-
-        fn hidden(&self, item: Entity) -> bool {
-            self.world
-                .get_component_for_entity::<UIHidden>(item)
-                .is_some()
-        }
-
-        fn ui_selected(&self, item: Entity) -> bool {
-            self.world
-                .get_component_for_entity::<UISelected>(item)
-                .is_some()
-        }
-
-        fn filtering(&mut self) -> bool {
-            let view = self.view();
-            self.world
-                .get_component_for_entity::<UITree>(view)
-                .unwrap()
-                .filtering
-        }
-
-        fn search(&mut self, value: &str) {
-            let filter = self
-                .world
-                .query::<Entity, With<Filter>>()
-                .iter(&mut self.world)
-                .next()
-                .unwrap();
-            let channel = self
-                .world
-                .get_resource_mut::<EventChannel<UITextInputChanged>>()
-                .unwrap();
-            channel.update();
-            channel.update();
-            channel.push_event(UITextInputChanged {
-                entity: filter,
-                value: value.into(),
-            });
-            self.refresh();
+            run_browser(&mut self.world, &mut self.systems);
         }
 
         fn click(&mut self, entity: Entity) {
@@ -1940,1352 +1554,132 @@ mod tests {
             self.refresh();
         }
 
-        fn chip(&mut self, index: usize) -> Entity {
+        fn asset(&self, address: &str) -> AssetId {
             self.world
-                .query::<(Entity, &Tag), ()>()
+                .get_resource::<AssetRegistry>()
+                .unwrap()
+                .id_for_address(address)
+                .unwrap()
+        }
+
+        fn item(&self, key: &ContentKey) -> Entity {
+            *self
+                .world
+                .get_resource::<ContentState>()
+                .unwrap()
+                .items
+                .get(key)
+                .expect("the key has an item")
+        }
+
+        fn field(&mut self) -> Option<Entity> {
+            self.world
+                .query::<Entity, With<PendingField>>()
                 .iter(&mut self.world)
-                .find(|(_, tag)| tag.0 == index)
-                .unwrap()
-                .0
+                .next()
         }
 
-        fn busy(&mut self) -> std::sync::mpsc::Sender<()> {
-            let (release, wait) = std::sync::mpsc::channel();
-            self.world
-                .get_resource_mut::<ProjectState>()
-                .unwrap()
-                .begin_job_for_test(wait);
-            release
-        }
-
-        fn opened(&self) -> Vec<AssetId> {
-            self.world
-                .get_resource::<EditorCommands>()
-                .unwrap()
-                .0
-                .iter()
-                .filter_map(|command| match command {
-                    EditorCommand::OpenAsset(id) => Some(*id),
-                    _ => None,
-                })
-                .collect()
+        fn create(&mut self, folder: Option<&str>, name: &str) {
+            self.world.trigger(CreateAsset {
+                kind: Scene::name().into(),
+                folder: folder.map(str::to_string),
+                name: name.into(),
+                open: false,
+            });
+            self.refresh();
         }
     }
 
     #[test]
-    fn folders_nest_as_on_disk() {
-        let mut f = nested();
-        let view = f.view();
+    fn create_asset_writes_a_readable_asset_in_its_folder_and_refuses_what_it_cannot_write() {
+        let mut f = level_and_forest();
 
-        assert_eq!(f.labels_under(view), ["characters", "forest"]);
-        assert_eq!(f.keys_under(view), [folder("characters"), folder("forest")]);
-        let characters = f.item(&folder("characters"));
-        assert_eq!(f.keys_under(characters), [folder("characters/hero")]);
-        assert_eq!(f.labels_under(characters), ["hero"]);
-        let hero = f.item(&folder("characters/hero"));
-        let mesh = f.asset("content/characters/hero/mesh.gasset");
-        assert_eq!(f.keys_under(hero), [ContentKey::Asset(mesh)]);
-        assert_eq!(f.labels_under(hero), ["mesh"]);
-        let tile = f.item(&ContentKey::Asset(mesh));
+        f.create(Some("content/rooms"), "Hall");
+        f.create(None, "Yard");
+        f.create(None, "level");
+        f.create(Some("elsewhere"), "Hall");
+        f.create(Some("content/../up"), "Hall");
+
+        let content = f.root.path().join("content");
         assert_eq!(
-            f.world.get_component_for_entity::<ContentAsset>(tile),
-            Some(&ContentAsset { id: mesh })
-        );
-        assert!(
-            f.world
-                .get_component_for_entity::<ContentAsset>(hero)
-                .is_none()
-        );
-        let forest = f.item(&folder("forest"));
-        assert_eq!(f.labels_under(forest), ["a"]);
-        assert_eq!(f.state().items.len(), 5);
-    }
-
-    #[test]
-    fn same_names_in_different_folders_stay_apart() {
-        let f = fixture(&[
-            ("content/a/props/rock.gasset", "Mesh"),
-            ("content/b/props/rock.gasset", "Mesh"),
-        ]);
-
-        let a = f.item(&folder("a/props"));
-        let b = f.item(&folder("b/props"));
-        assert_ne!(a, b);
-        assert_eq!(f.keys_under(f.item(&folder("a"))), [folder("a/props")]);
-        assert_eq!(f.keys_under(f.item(&folder("b"))), [folder("b/props")]);
-        let first = f.asset("content/a/props/rock.gasset");
-        let second = f.asset("content/b/props/rock.gasset");
-        assert_eq!(f.keys_under(a), [ContentKey::Asset(first)]);
-        assert_eq!(f.keys_under(b), [ContentKey::Asset(second)]);
-    }
-
-    #[test]
-    fn folders_sort_before_assets_alphabetically() {
-        let mut f = fixture(&[
-            ("content/zeta.gasset", "Scene"),
-            ("content/moss/one.gasset", "Mesh"),
-            ("content/alpha.gasset", "Texture"),
-            ("content/birch/two.gasset", "Mesh"),
-        ]);
-        let view = f.view();
-
-        assert_eq!(f.labels_under(view), ["birch", "moss", "alpha", "zeta"]);
-    }
-
-    #[test]
-    fn the_material_chip_shows_standard_materials() {
-        let mut f = fixture(&[
-            ("content/stone.gasset", StandardMaterial::name()),
-            ("content/rock.gasset", "Mesh"),
-        ]);
-
-        f.world.get_resource_mut::<ContentState>().unwrap().kind = 4;
-        f.refresh();
-
-        assert!(f.shown(f.asset_item("content/stone.gasset")));
-        assert!(!f.shown(f.asset_item("content/rock.gasset")));
-    }
-
-    #[test]
-    fn folders_start_collapsed() {
-        let f = nested();
-
-        let characters = f.item(&folder("characters"));
-        assert!(f.shown(characters));
-        assert!(!f.expanded(characters));
-        assert!(!f.shown(f.item(&folder("characters/hero"))));
-        assert!(!f.shown(f.asset_item("content/forest/a.gasset")));
-    }
-
-    #[test]
-    fn an_import_keeps_expanded_folders_expanded() {
-        let mut f = nested();
-        let forest = f.item(&folder("forest"));
-        f.expand(forest);
-
-        let catalogue = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-        catalogue.insert(entry("content/forest/b.gasset", "Mesh"));
-        catalogue.insert(entry("content/forest/_first.gasset", "Mesh"));
-        catalogue.insert(entry("content/birch/bark.gasset", "Texture"));
-        f.refresh();
-
-        assert_eq!(f.item(&folder("forest")), forest);
-        assert!(f.expanded(forest));
-        assert_eq!(f.labels_under(forest), ["_first", "a", "b"]);
-        assert!(f.shown(f.asset_item("content/forest/b.gasset")));
-        let view = f.view();
-        assert_eq!(f.labels_under(view), ["birch", "characters", "forest"]);
-    }
-
-    #[test]
-    fn a_search_hides_non_matches_and_keeps_the_path() {
-        let mut f = nested();
-
-        f.search("mesh");
-
-        assert!(f.filtering());
-        let mesh = f.asset_item("content/characters/hero/mesh.gasset");
-        let hero = f.item(&folder("characters/hero"));
-        let characters = f.item(&folder("characters"));
-        let forest = f.item(&folder("forest"));
-        let a = f.asset_item("content/forest/a.gasset");
-        assert!(!f.hidden(mesh));
-        for item in [hero, characters, forest, a] {
-            assert!(f.hidden(item));
-        }
-        for item in [characters, hero, mesh] {
-            assert!(f.shown(item));
-        }
-        assert!(!f.shown(forest) && !f.shown(a));
-        assert!(!f.expanded(characters));
-
-        f.search("");
-
-        assert!(!f.filtering());
-        for item in [mesh, hero, characters, forest, a] {
-            assert!(!f.hidden(item));
-        }
-        assert!(f.shown(characters) && f.shown(forest));
-        assert!(!f.shown(hero));
-    }
-
-    #[test]
-    fn a_kind_chip_filters_like_a_search() {
-        let mut f = nested();
-
-        let mesh_chip = f.chip(2);
-        f.click(mesh_chip);
-
-        assert!(f.filtering());
-        let mesh = f.asset_item("content/characters/hero/mesh.gasset");
-        let a = f.asset_item("content/forest/a.gasset");
-        assert!(!f.hidden(mesh) && f.shown(mesh));
-        assert!(f.hidden(a) && !f.shown(a));
-        assert!(!f.shown(f.item(&folder("forest"))));
-
-        let all_chip = f.chip(0);
-        f.click(all_chip);
-
-        assert!(!f.filtering());
-        assert!(!f.hidden(a));
-    }
-
-    #[test]
-    fn a_chip_write_applied_after_the_reconcile_is_reconciled_next_run() {
-        let mut f = nested();
-        let mut reconcile = reconcile_content_tree.into_system();
-        reconcile.initialize(&mut f.world);
-        reconcile.run_and_apply((), &mut f.world);
-        assert!(!f.filtering());
-
-        let mesh_chip = f.chip(2);
-        f.world.trigger_on(
-            mesh_chip,
-            UIClick {
-                position: Vec2::ZERO,
-                button: MouseButton::Left,
-            },
-        );
-        f.world.tick();
-        reconcile.run_and_apply((), &mut f.world);
-
-        assert!(f.filtering());
-        let a = f.asset_item("content/forest/a.gasset");
-        assert!(f.hidden(a));
-    }
-
-    #[test]
-    fn selecting_an_item_selects_the_asset() {
-        let mut f = fixture(&[
-            ("content/level.gasset", "Scene"),
-            ("content/rock.gasset", "Mesh"),
-        ]);
-        let level = f.asset("content/level.gasset");
-        let item = f.asset_item("content/level.gasset");
-
-        f.world.trigger_on(item, UIItemSelected);
-        f.refresh();
-
-        assert_eq!(f.state().selected(), Some(level));
-        assert!(f.ui_selected(item));
-        assert!(!f.ui_selected(f.asset_item("content/rock.gasset")));
-        assert!(f.opened().is_empty());
-    }
-
-    #[test]
-    fn deselecting_an_asset_restores_its_mark() {
-        let mut f = fixture(&[
-            ("content/level.gasset", "Scene"),
-            ("content/rock.gasset", "Mesh"),
-        ]);
-        let level = f.asset_item("content/level.gasset");
-        let rock = f.asset_item("content/rock.gasset");
-        f.world.trigger_on(level, UIItemSelected);
-        f.refresh();
-
-        f.world.trigger_on(rock, UIItemSelected);
-        f.refresh();
-
-        assert!(!f.ui_selected(level));
-    }
-
-    #[test]
-    fn a_click_while_busy_is_ignored_and_the_highlight_snaps_back() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let item = f.asset_item("content/level.gasset");
-        let release = f.busy();
-
-        f.click(item);
-
-        assert_eq!(f.state().selected(), None);
-        assert!(!f.ui_selected(item));
-        drop(release);
-    }
-
-    fn level_and_forest() -> Fixture {
-        fixture(&[
-            ("content/level.gasset", "Scene"),
-            ("content/forest/a.gasset", "Scene"),
-        ])
-    }
-
-    #[test]
-    fn a_folder_click_keeps_the_folder_selected() {
-        let mut f = level_and_forest();
-        let level = f.asset("content/level.gasset");
-        let level_item = f.asset_item("content/level.gasset");
-        let forest = f.item(&folder("forest"));
-        f.click(level_item);
-
-        f.click(forest);
-        f.refresh();
-
-        assert!(f.ui_selected(forest));
-        assert!(!f.ui_selected(level_item));
-        assert_eq!(f.state().selected(), Some(level));
-    }
-
-    #[test]
-    fn activating_a_folder_toggles_it() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-
-        f.world.trigger_on(forest, UIItemActivated);
-        f.refresh();
-        assert!(f.expanded(forest));
-        assert!(f.shown(f.asset_item("content/forest/a.gasset")));
-
-        f.world.trigger_on(forest, UIItemActivated);
-        f.refresh();
-        assert!(!f.expanded(forest));
-        assert!(f.opened().is_empty());
-    }
-
-    #[test]
-    fn a_busy_click_on_a_folder_snaps_back() {
-        let mut f = level_and_forest();
-        let level = f.asset("content/level.gasset");
-        let level_item = f.asset_item("content/level.gasset");
-        let forest = f.item(&folder("forest"));
-        f.click(level_item);
-        let release = f.busy();
-
-        f.click(forest);
-        f.refresh();
-
-        assert!(!f.ui_selected(forest));
-        assert!(f.ui_selected(level_item));
-        assert_eq!(f.state().selected(), Some(level));
-        drop(release);
-    }
-
-    #[test]
-    fn names_sort_ignoring_case() {
-        let mut f = fixture(&[
-            ("content/Zeta.gasset", "Scene"),
-            ("content/alpha.gasset", "Scene"),
-            ("content/Birch/x.gasset", "Mesh"),
-            ("content/apple/y.gasset", "Mesh"),
-        ]);
-        let view = f.view();
-
-        assert_eq!(f.labels_under(view), ["apple", "Birch", "alpha", "Zeta"]);
-    }
-
-    #[test]
-    fn folders_are_relative_to_the_configured_content_root() {
-        let mut f = fixture_in(
-            "game/content",
-            &[
-                ("game/content/forest/a.gasset", "Scene"),
-                ("game/content/level.gasset", "Scene"),
-            ],
-        );
-        let view = f.view();
-
-        assert_eq!(
-            f.keys_under(view),
+            files_under(f.root.path()),
             [
-                folder("forest"),
-                ContentKey::Asset(f.asset("game/content/level.gasset"))
+                content.join("Yard.gasset"),
+                content.join("rooms/Hall.gasset")
             ]
         );
-        assert_eq!(f.labels_under(view), ["forest", "level"]);
+        let hall = "content/rooms/Hall.gasset";
+        let (header, _) =
+            read_content_asset(&std::fs::read(f.root.path().join(hall)).unwrap()).unwrap();
+        assert_eq!(header.kind, Scene::name());
+        let (hall, yard) = (f.asset(hall), f.asset("content/Yard.gasset"));
+        assert_eq!(header.asset_id, hall);
+        let results: Vec<Result<AssetId, ()>> = events::<AssetCreation>(&f.world)
+            .into_iter()
+            .map(|creation| creation.result.map_err(|_| ()))
+            .collect();
+        assert_eq!(results, [Ok(hall), Ok(yard), Err(()), Err(()), Err(())]);
+        assert_eq!(
+            events::<AssetsWritten>(&f.world),
+            [
+                AssetsWritten { ids: vec![hall] },
+                AssetsWritten { ids: vec![yard] }
+            ]
+        );
+        assert!(opened(&f.world).is_empty());
+        let (_, reopened) = discover_project(f.root.path()).unwrap();
+        assert_eq!(
+            reopened.id_for_address("content/rooms/Hall.gasset"),
+            Some(hall)
+        );
+        assert_eq!(reopened.id_for_address("content/Yard.gasset"), Some(yard));
     }
 
     #[test]
-    fn an_idle_frame_leaves_marks_unchanged() {
+    fn new_writes_the_named_asset_in_the_selected_folder_and_opens_it() {
         let mut f = level_and_forest();
-        let level_item = f.asset_item("content/level.gasset");
-        f.click(level_item);
+        let forest = f.item(&ContentKey::Folder("forest".into()));
+        f.click(forest);
+        let row = f
+            .world
+            .query::<Entity, With<NewRow>>()
+            .iter(&mut f.world)
+            .next()
+            .unwrap();
+        f.click(row);
+        let field = f.field().expect("New shows a pending row");
+
+        f.world
+            .get_component_for_entity_mut::<UITextInput>(field)
+            .unwrap()
+            .value = "Meadow".into();
+        let channel = f
+            .world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap();
+        channel.update();
+        channel.update();
+        channel.push_event(UITextInputSubmitted {
+            entity: field,
+            value: "Meadow".into(),
+        });
         f.refresh();
 
-        f.update();
-
-        let marks: HashSet<Entity> = f
-            .world
-            .query::<&ContentItem, ()>()
-            .iter(&mut f.world)
-            .map(|item| item.icon_node)
-            .collect();
-        let changed: Vec<Entity> = f
-            .world
-            .query::<Entity, Changed<UIText>>()
-            .iter(&mut f.world)
-            .filter(|entity| marks.contains(entity))
-            .collect();
-        assert!(changed.is_empty(), "{changed:?}");
+        let address = "content/forest/Meadow.gasset";
+        assert!(f.root.path().join(address).is_file());
+        assert_eq!(opened(&f.world), [f.asset(address)]);
+        assert_eq!(f.field(), None);
     }
 
     #[test]
     fn activating_an_asset_opens_it() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
+        let mut f = level_and_forest();
         let level = f.asset("content/level.gasset");
-        let item = f.asset_item("content/level.gasset");
+        let item = f.item(&ContentKey::Asset(level));
 
         f.world.trigger_on(item, UIItemActivated);
 
-        assert_eq!(f.opened(), [level]);
-    }
-
-    fn imported(address: &str, kind: &str, source: &str, sub_asset: &str) -> AssetEntry {
-        AssetEntry {
-            provenance: Some(ImportProvenance {
-                source: source.into(),
-                sub_asset: sub_asset.into(),
-            }),
-            ..entry(address, kind)
-        }
-    }
-
-    #[test]
-    fn an_import_with_a_scene_folds_under_it_and_one_without_stays_flat() {
-        let mut f = fixture(&[("content/props/barrel.gasset", "Mesh")]);
-        let registry = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-        for asset in [
-            imported(
-                "content/props/crate/scene.gasset",
-                "Scene",
-                "assets/props/crate.glb",
-                "scene",
-            ),
-            imported(
-                "content/props/crate/mesh_0.gasset",
-                "Mesh",
-                "assets/props/crate.glb",
-                "mesh/0",
-            ),
-            imported(
-                "content/props/crate/material_0.gasset",
-                "StandardMaterial",
-                "assets/props/crate.glb",
-                "material/0",
-            ),
-            imported(
-                "content/hero/scene.gasset",
-                "Scene",
-                "assets/hero.glb",
-                "scene",
-            ),
-            imported(
-                "content/hero/mesh_0.gasset",
-                "Mesh",
-                "assets/hero.glb",
-                "mesh/0",
-            ),
-            entry("content/hero/rig.gasset", "RetargetRig"),
-            imported(
-                "content/town/scene.gasset",
-                "Scene",
-                "assets/town.glb",
-                "scene",
-            ),
-            entry("content/town/signs/inn.gasset", "Texture"),
-            imported(
-                "content/moves/run/animation.gasset",
-                "AnimationClip",
-                "assets/moves/run.bvh",
-                "animation/run",
-            ),
-            imported(
-                "content/moves/run/skeleton.gasset",
-                "Skeleton",
-                "assets/moves/run.bvh",
-                "skeleton/0",
-            ),
-        ] {
-            registry.insert(asset);
-        }
-        f.refresh();
-        let view = f.view();
-        let scene = f.asset("content/props/crate/scene.gasset");
-        let face = f.asset_item("content/props/crate/scene.gasset");
-        let mesh = f.asset_item("content/props/crate/mesh_0.gasset");
-        let material = f.asset_item("content/props/crate/material_0.gasset");
-        let barrel = f.asset_item("content/props/barrel.gasset");
-        let props = f.item(&folder("props"));
-
-        assert_eq!(f.labels_under(view), ["hero", "moves", "props", "town"]);
-        assert_eq!(f.labels_under(f.item(&folder("hero"))), ["hero", "rig"]);
-        assert_eq!(f.labels_under(f.item(&folder("town"))), ["signs", "town"]);
-        assert_eq!(f.labels_under(props), ["barrel", "crate"]);
-        assert!(!f.state().items.contains_key(&folder("props/crate")));
-        assert_eq!(
-            f.world.get_component_for_entity::<ContentAsset>(face),
-            Some(&ContentAsset { id: scene })
-        );
-        assert_eq!(f.labels_under(face), ["material_0", "mesh_0"]);
-        assert!(!f.expanded(face));
-        let run = f.item(&folder("moves/run"));
-        assert_eq!(f.labels_under(run), ["animation", "skeleton"]);
-
-        f.world.trigger_on(face, UIItemActivated);
-        assert_eq!(f.opened(), [scene]);
-
-        f.search("crate");
-        assert!(f.shown(face));
-        assert!(!f.shown(mesh) && !f.shown(material) && !f.shown(barrel));
-
-        f.search("mesh_0");
-        assert!(f.hidden(face) && f.shown(face));
-        assert!(f.shown(mesh));
-        assert!(!f.shown(material) && !f.shown(barrel));
-
-        f.search("");
-        let mesh_chip = f.chip(2);
-        f.click(mesh_chip);
-        assert!(f.shown(barrel) && f.shown(face) && f.shown(mesh));
-        assert!(!f.shown(material));
-    }
-
-    fn parent(world: &World, entity: Entity) -> Entity {
-        world
-            .get_component_for_entity::<ChildOf>(entity)
-            .unwrap()
-            .parent()
-    }
-
-    fn import_buttons(world: &mut World) -> Vec<Entity> {
-        world
-            .query::<(Entity, &UIText), ()>()
-            .iter(world)
-            .filter(|(_, text)| text.text == "Import…")
-            .map(|(entity, _)| entity)
-            .collect()
-    }
-
-    #[test]
-    fn import_is_one_button_beside_the_search_not_a_chip_among_the_filters() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let world = &mut f.world;
-
-        let buttons = import_buttons(world);
-        assert_eq!(buttons.len(), 1);
-        let button = buttons[0];
-        let tag = world
-            .query::<(Entity, &Tag), ()>()
-            .iter(world)
-            .next()
-            .unwrap()
-            .0;
-        let filter = world
-            .query::<(Entity, &Filter), ()>()
-            .iter(world)
-            .next()
-            .unwrap()
-            .0;
-        let search_card = parent(world, filter);
-
-        assert_ne!(parent(world, button), parent(world, tag));
-        assert_eq!(parent(world, button), parent(world, search_card));
-        let style = world
-            .get_component_for_entity::<UIInteractionStyle>(button)
-            .expect("a pressable, so it reacts to the pointer");
-        assert_ne!(style.normal, style.hovered);
-    }
-
-    #[test]
-    fn clicking_import_with_no_project_open_says_what_to_do_first() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let world = &mut f.world;
-        world.insert_resource(crate::import::ImportPicker::default());
-        world.insert_resource(ProjectState::default());
-        let button = import_buttons(world)[0];
-
-        world.trigger_on(
-            button,
-            UIClick {
-                position: Vec2::ZERO,
-                button: MouseButton::Left,
-            },
-        );
-
-        let status = &world.get_resource::<ProjectState>().unwrap().status;
-        assert!(status.contains("project"), "got: {status}");
-        assert!(status.contains("import"), "got: {status}");
-    }
-
-    #[test]
-    fn new_is_a_dropdown_beside_import_with_a_row_per_creatable_kind() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let button = f.new_button();
-        let import = import_buttons(&mut f.world)[0];
-
-        assert_eq!(parent(&f.world, button), parent(&f.world, import));
-        let rows = new_rows(&mut f.world);
-        assert_eq!(rows.len(), 1);
-        let menu = parent(&f.world, rows[0]);
-        let panel = f
-            .world
-            .get_component_for_entity::<UIAnchoredPanel>(menu)
-            .expect("the rows sit in the dropdown");
-        assert_eq!(panel.owner, Some(button));
-        assert!(panel.toggled_by_owner && !panel.open);
-        assert!(f.world.get_component_for_entity::<ChildOf>(menu).is_none());
-        let label = *f
-            .world
-            .get_component_for_entity::<Children>(rows[0])
-            .unwrap()
-            .iter()
-            .next()
-            .unwrap();
-        assert_eq!(
-            f.world
-                .get_component_for_entity::<UIText>(label)
-                .unwrap()
-                .text,
-            "New Scene"
-        );
-    }
-
-    #[test]
-    fn new_from_the_dropdown_shows_a_focused_pending_row_in_the_selected_folder() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-        f.click(forest);
-        assert_eq!(f.state().selected_folder.as_deref(), Some("content/forest"));
-        let row = new_rows(&mut f.world)[0];
-        let menu = parent(&f.world, row);
-        f.world
-            .get_component_for_entity_mut::<UIAnchoredPanel>(menu)
-            .unwrap()
-            .open = true;
-
-        let field = f.new_scene();
-
-        let a = f.asset("content/forest/a.gasset");
-        assert_eq!(
-            f.keys_under(forest),
-            [pending("content/forest"), ContentKey::Asset(a)]
-        );
-        assert_eq!(f.focused(), Some(field));
-        assert_eq!(f.name_value(field), "New Scene");
-        assert!(f.shown(f.item(&pending("content/forest"))));
-        assert!(
-            !f.world
-                .get_component_for_entity::<UIAnchoredPanel>(menu)
-                .unwrap()
-                .open
-        );
-        assert!(f.files().is_empty());
-    }
-
-    #[test]
-    fn submitting_a_valid_name_writes_the_asset_in_the_selected_folder_and_opens_it() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-        f.click(forest);
-        let field = f.new_scene();
-        let before: Vec<AssetId> = f
-            .world
-            .get_resource::<AssetRegistry>()
-            .unwrap()
-            .iter()
-            .map(|asset| asset.id)
-            .collect();
-
-        f.submit("Meadow");
-
-        let address = "content/forest/Meadow.gasset";
-        let bytes = std::fs::read(f.root.path().join(address)).unwrap();
-        let (header, _) = read_content_asset(&bytes).unwrap();
-        assert_eq!(header.kind, Scene::name());
-        assert!(header.provenance.is_none());
-        assert!(!before.contains(&header.asset_id));
-        let id = f.asset(address);
-        assert_eq!(id, header.asset_id);
-        let created = f.asset_item(address);
-        assert_eq!(parent(&f.world, created), forest);
-        assert_eq!(f.state().selected(), Some(id));
-        assert_eq!(f.state().selected_folder, None);
-        assert!(f.ui_selected(created));
-        assert_eq!(f.opened(), [id]);
-        assert_eq!(f.status(), "Created content/forest/Meadow.gasset");
-        assert!(f.state().pending.is_none());
-        assert_eq!(f.field(), None);
-        assert!(!f.state().items.contains_key(&pending("content/forest")));
-        assert_ne!(f.focused(), Some(field));
-        assert_eq!(f.focused(), None);
-
-        let (_, reopened) = discover_project(f.root.path()).unwrap();
-        assert_eq!(reopened.id_for_address(address), Some(id));
-    }
-
-    fn creations(f: &Fixture) -> Vec<AssetCreation> {
-        f.world
-            .get_resource::<EventChannel<AssetCreation>>()
-            .unwrap()
-            .read_from(&mut concerto_ecs::events::event_cursor::EventCursor::default())
-            .cloned()
-            .collect()
-    }
-
-    fn create(f: &mut Fixture, folder: Option<&str>, name: &str) {
-        f.world.trigger(CreateAsset {
-            kind: Scene::name().into(),
-            folder: folder.map(str::to_string),
-            name: name.into(),
-            open: false,
-        });
-        f.refresh();
-    }
-
-    #[test]
-    fn create_asset_writes_into_a_new_folder_without_a_pending_row_or_an_open() {
-        let mut f = level_and_forest();
-
-        create(&mut f, Some("content/rooms"), "Hall");
-
-        let address = "content/rooms/Hall.gasset";
-        assert!(f.root.path().join(address).is_file());
-        let id = f.asset(address);
-        assert_eq!(
-            creations(&f),
-            [AssetCreation {
-                kind: Scene::name().into(),
-                address: address.into(),
-                result: Ok(id),
-            }]
-        );
-        assert_eq!(f.state().selected(), Some(id));
-        assert_eq!(f.status(), "Created content/rooms/Hall.gasset");
-        assert!(f.opened().is_empty());
-        assert_eq!(f.field(), None);
-    }
-
-    #[test]
-    fn create_asset_without_a_folder_writes_in_the_content_root() {
-        let mut f = level_and_forest();
-
-        create(&mut f, None, "Hall");
-
-        assert!(f.root.path().join("content/Hall.gasset").is_file());
-    }
-
-    #[test]
-    fn create_asset_reports_a_refusal_and_writes_nothing() {
-        let mut f = level_and_forest();
-        let status = f.status();
-
-        create(&mut f, None, "level");
-        create(&mut f, Some("elsewhere"), "Hall");
-        create(&mut f, Some("content/../up"), "Hall");
-
-        let refusals: Vec<String> = creations(&f)
-            .into_iter()
-            .map(|creation| creation.result.unwrap_err())
-            .collect();
-        assert_eq!(
-            refusals,
-            [
-                "content/level.gasset already exists",
-                "elsewhere is not inside content",
-                "content/../up: A name holds only letters, digits, spaces, - and _",
-            ]
-        );
-        assert!(f.files().is_empty());
-        assert_eq!(f.status(), status);
-    }
-
-    #[test]
-    fn a_created_asset_is_sent_as_written() {
-        let mut f = level_and_forest();
-        f.new_scene();
-
-        f.submit("Meadow");
-
-        let id = f.asset("content/Meadow.gasset");
-        let written: Vec<AssetsWritten> = f
-            .world
-            .get_resource::<EventChannel<AssetsWritten>>()
-            .unwrap()
-            .read_from(&mut concerto_ecs::events::event_cursor::EventCursor::default())
-            .cloned()
-            .collect();
-        assert_eq!(written, [AssetsWritten { ids: vec![id] }]);
-    }
-
-    #[test]
-    fn new_creates_in_the_root_when_nothing_or_an_asset_is_selected() {
-        let mut f = level_and_forest();
-        f.new_scene();
-        let view = f.view();
-        assert_eq!(
-            f.keys_under(view)[..2],
-            [folder("forest"), pending("content")]
-        );
-        f.submit("Clearing");
-        assert!(f.root.path().join("content/Clearing.gasset").is_file());
-
-        let forest = f.item(&folder("forest"));
-        f.click(forest);
-        let level = f.asset_item("content/level.gasset");
-        f.click(level);
-        assert_eq!(f.state().selected_folder, None);
-        f.new_scene();
-        f.submit("Glade");
-
-        assert!(f.root.path().join("content/Glade.gasset").is_file());
-        assert_eq!(f.files().len(), 2);
-    }
-
-    #[test]
-    fn the_prefill_skips_names_taken_in_the_registry_or_on_disk() {
-        let mut f = fixture(&[("content/new scene.gasset", "Scene")]);
-        std::fs::create_dir_all(f.root.path().join("content")).unwrap();
-        std::fs::write(f.root.path().join("content/New Scene 1.gasset"), b"x").unwrap();
-
-        let field = f.new_scene();
-
-        assert_eq!(f.name_value(field), "New Scene 2");
-    }
-
-    #[test]
-    fn a_refused_name_keeps_the_row_says_why_in_the_footer_and_writes_nothing() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let field = f.new_scene();
-        let theme = UITheme::default();
-        let count = f.footer();
-        let long = "a".repeat(65);
-
-        for name in [
-            "LEVEL",
-            "",
-            long.as_str(),
-            " lead",
-            "con",
-            "a/b",
-            "a.b",
-            "a*b",
-        ] {
-            f.submit(name);
-
-            let error = f.state().pending_error.clone();
-            assert!(error.is_some(), "{name:?} was accepted");
-            assert_eq!(f.footer(), error.unwrap(), "{name:?}");
-            assert_eq!(f.border(field), theme.error.to_linear(), "{name:?}");
-            assert_eq!(f.field(), Some(field), "{name:?}");
-            assert_eq!(f.focused(), Some(field), "{name:?}");
-            assert!(f.files().is_empty(), "{name:?}");
-            assert!(f.opened().is_empty(), "{name:?}");
-        }
-
-        send(
-            &mut f.world,
-            UITextInputChanged {
-                entity: field,
-                value: "a*bc".into(),
-            },
-        );
-        f.refresh();
-
-        assert_eq!(f.state().pending_error, None);
-        assert_eq!(f.footer(), count);
-        assert_eq!(f.border(field), theme.border.to_linear());
-    }
-
-    #[test]
-    fn escape_cancels_the_pending_asset() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let field = f.new_scene();
-        f.submit("a/b");
-
-        send(&mut f.world, UITextInputCancelled { entity: field });
-        f.refresh();
-
-        assert!(f.state().pending.is_none());
-        assert_eq!(f.state().pending_error, None);
-        assert_eq!(f.field(), None);
-        assert_eq!(f.focused(), None);
-        assert!(f.files().is_empty());
-        assert!(f.opened().is_empty());
-        assert_eq!(f.footer(), "1 assets");
-    }
-
-    #[test]
-    fn losing_focus_with_a_valid_name_creates_the_asset() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        f.new_scene();
-
-        f.lose_focus("Meadow");
-
-        let id = f.asset("content/Meadow.gasset");
-        assert_eq!(f.opened(), [id]);
-        assert_eq!(f.field(), None);
-    }
-
-    #[test]
-    fn losing_focus_with_an_invalid_name_cancels_quietly() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        f.new_scene();
-        let status = f.status();
-
-        f.lose_focus("level");
-
-        assert!(f.state().pending.is_none());
-        assert_eq!(f.state().pending_error, None);
-        assert_eq!(f.field(), None);
-        assert!(f.files().is_empty());
-        assert!(f.opened().is_empty());
-        assert_eq!(f.status(), status);
-    }
-
-    #[test]
-    fn a_second_new_creates_the_first_then_shows_the_second() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let first = f.new_scene();
-        set_name(&mut f.world, first, "First");
-        let button = f.new_button();
-        f.focus_on(Some(button));
-        send(&mut f.world, UIFocusLost(first));
-        f.refresh();
-        let id = f.asset("content/First.gasset");
-        assert_eq!(f.opened(), [id]);
-
-        let second = f.new_scene();
-
-        assert_ne!(second, first);
-        assert_eq!(f.focused(), Some(second));
-        assert_eq!(f.name_value(second), "New Scene");
-        assert_eq!(f.field(), Some(second));
-    }
-
-    #[test]
-    fn new_reveals_a_pending_row_inside_collapsed_folders() {
-        for (path, ancestors) in [
-            ("forest", &["forest"][..]),
-            ("characters/hero", &["characters", "characters/hero"][..]),
-        ] {
-            let mut f = nested();
-            let target = f.item(&folder(path));
-            f.world.trigger_on(target, UIItemSelected);
-            f.refresh();
-            for ancestor in ancestors {
-                assert!(!f.expanded(f.item(&folder(ancestor))));
-            }
-
-            f.new_scene();
-
-            for ancestor in ancestors {
-                assert!(f.expanded(f.item(&folder(ancestor))), "{path}: {ancestor}");
-            }
-            let row = f.item(&pending(&format!("content/{path}")));
-            assert!(f.shown(row), "{path}");
-            assert_eq!(f.state().reveal, None, "{path}");
-        }
-    }
-
-    #[test]
-    fn new_keeps_its_row_in_view_in_a_long_folder_before_and_after_it_is_created() {
-        let addresses: Vec<String> = (0..60)
-            .map(|n| format!("content/forest/mesh_{n:02}.gasset"))
-            .collect();
-        let assets: Vec<(&str, &str)> = addresses
-            .iter()
-            .map(|address| (address.as_str(), "Mesh"))
-            .collect();
-        let mut f = fixture(&assets);
-        f.lay_out_view(10.0 * ROW_HEIGHT);
-        let forest = f.item(&folder("forest"));
-        f.expand(forest);
-        f.click(forest);
-        f.scroll_view_to_end();
-
-        f.new_scene();
-        f.refresh();
-
-        let row = f.item(&pending("content/forest"));
-        assert!(f.in_view(row), "the pending row is out of view");
-
-        f.submit("New Scene");
-        f.refresh();
-
-        let created = f.asset_item("content/forest/New Scene.gasset");
-        assert!(f.ui_selected(created));
-        assert!(f.in_view(created), "the created asset is out of view");
-    }
-
-    #[test]
-    fn the_new_menu_on_a_folder_creates_in_that_folder() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-        let menu = f.content_menu();
-        let rows = menu_rows(&mut f.world);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(f.row_label(rows[0]), "New Scene");
-        assert_eq!(parent(&f.world, rows[0]), menu);
-        assert!(f.world.get_component_for_entity::<ChildOf>(menu).is_none());
-        assert!(!f.menu_panel(menu).open);
-
-        f.press(forest, MouseButton::Right, Vec2::new(40.0, 90.0));
-
-        let panel = f.menu_panel(menu);
-        assert!(panel.open);
-        assert_eq!(
-            panel.target,
-            UIAnchorTarget::from_point(Vec2::new(40.0, 90.0))
-        );
-        assert_eq!(f.menu_folder(menu), "content/forest");
-
-        f.click(rows[0]);
-        f.refresh();
-
-        let field = f.field().expect("the menu shows a pending row");
-        let a = f.asset("content/forest/a.gasset");
-        assert_eq!(
-            f.keys_under(forest),
-            [pending("content/forest"), ContentKey::Asset(a)]
-        );
-        assert_eq!(f.focused(), Some(field));
-        assert_eq!(f.name_value(field), "New Scene");
-        assert!(!f.menu_panel(menu).open);
-
-        f.submit("Meadow");
-
-        assert!(f.root.path().join("content/forest/Meadow.gasset").is_file());
-        assert_eq!(f.files().len(), 1);
-    }
-
-    #[test]
-    fn the_new_menu_on_the_empty_space_creates_in_the_root() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-        f.click(forest);
-        let view = f.view();
-        let menu = f.content_menu();
-
-        f.press(view, MouseButton::Left, Vec2::new(60.0, 200.0));
-        assert!(!f.menu_panel(menu).open);
-
-        f.press(view, MouseButton::Right, Vec2::new(60.0, 200.0));
-
-        let panel = f.menu_panel(menu);
-        assert!(panel.open);
-        assert_eq!(panel.owner, None);
-        assert_eq!(
-            panel.target,
-            UIAnchorTarget::from_point(Vec2::new(60.0, 200.0))
-        );
-        assert_eq!(f.menu_folder(menu), "content");
-
-        let row = menu_rows(&mut f.world)[0];
-        f.click(row);
-        f.refresh();
-
-        assert!(f.keys_under(view).contains(&pending("content")));
-        assert!(!f.menu_panel(menu).open);
-        f.submit("Clearing");
-        assert!(f.root.path().join("content/Clearing.gasset").is_file());
-    }
-
-    #[test]
-    fn a_right_click_on_the_empty_space_with_no_project_opens_no_menu() {
-        let mut f = level_and_forest();
-        f.world.insert_resource(ProjectState::default());
-        f.refresh();
-        let view = f.view();
-        let menu = f.content_menu();
-
-        f.press(view, MouseButton::Right, Vec2::new(60.0, 200.0));
-
-        assert!(!f.menu_panel(menu).open);
-    }
-
-    #[test]
-    fn a_selected_folder_does_not_carry_over_to_another_project() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-        f.click(forest);
-        assert_eq!(f.state().selected_folder.as_deref(), Some("content/forest"));
-        let other = tempfile::tempdir().unwrap();
-        let mut project = ProjectState::default();
-        project.project = Some(Project {
-            root: other.path().to_path_buf(),
-            content_root: "game/content".into(),
-            default_scene: None,
-        });
-        f.world.insert_resource(project);
-        f.world.insert_resource(AssetRegistry::default());
-        send(
-            &mut f.world,
-            ProjectOpened {
-                root: other.path().to_path_buf(),
-            },
-        );
-        f.refresh();
-
-        assert_eq!(f.state().selected_folder, None);
-        f.new_scene();
-        f.submit("Meadow");
-
-        assert!(other.path().join("game/content/Meadow.gasset").is_file());
-        assert_eq!(files_under(other.path()).len(), 1);
-        assert!(f.files().is_empty());
-    }
-
-    #[test]
-    fn reopening_the_same_project_drops_the_folder_highlight_with_the_selected_folder() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-        f.click(forest);
-        let root = f
-            .world
-            .get_resource::<ProjectState>()
-            .unwrap()
-            .project
-            .as_ref()
-            .unwrap()
-            .root
-            .clone();
-
-        send(&mut f.world, ProjectOpened { root });
-        f.refresh();
-
-        assert!(!f.ui_selected(forest));
-        assert_eq!(f.state().selected_folder, None);
-    }
-
-    #[test]
-    fn the_selected_folder_goes_when_its_highlight_does() {
-        let mut f = level_and_forest();
-        let forest = f.item(&folder("forest"));
-        let level = f.asset_item("content/level.gasset");
-        f.click(forest);
-        f.new_scene();
-        let row = f.item(&pending("content/forest"));
-
-        f.click(row);
-
-        assert!(!f.ui_selected(forest));
-        assert_eq!(f.state().selected_folder, None);
-
-        f.click(forest);
-        assert!(f.state().selected_folder.is_some());
-        let release = f.busy();
-
-        f.click(level);
-
-        assert!(!f.ui_selected(forest));
-        assert_eq!(f.state().selected_folder, None);
-        drop(release);
-    }
-
-    #[test]
-    fn new_clears_the_search_the_filter_field_and_the_kind_chip() {
-        let mut f = level_and_forest();
-        let filter = f
-            .world
-            .query::<Entity, With<Filter>>()
-            .iter(&mut f.world)
-            .next()
-            .unwrap();
-        set_name(&mut f.world, filter, "level");
-        f.search("level");
-        let scene_chip = f.chip(1);
-        f.click(scene_chip);
-        assert!(f.filtering());
-
-        f.new_scene();
-
-        assert_eq!(f.state().filter, "");
-        assert_eq!(f.state().kind, 0);
-        assert_eq!(f.name_value(filter), "");
-        assert!(!f.filtering());
-        assert!(!f.hidden(f.asset_item("content/forest/a.gasset")));
-        assert!(f.shown(f.item(&pending("content"))));
-    }
-
-    #[test]
-    fn a_right_click_on_an_asset_opens_no_new_menu() {
-        let mut f = level_and_forest();
-        let level = f.asset_item("content/level.gasset");
-        let menu = f.content_menu();
-
-        f.press(level, MouseButton::Right, Vec2::new(40.0, 90.0));
-
-        assert!(!f.menu_panel(menu).open);
-        assert!(f.state().pending.is_none());
-    }
-
-    fn menu_labels(world: &World, row: Entity) -> Vec<String> {
-        world
-            .get_component_for_entity::<Children>(parent(world, row))
-            .unwrap()
-            .iter()
-            .map(|row| {
-                let label = *world
-                    .get_component_for_entity::<Children>(*row)
-                    .unwrap()
-                    .iter()
-                    .next()
-                    .unwrap();
-                world
-                    .get_component_for_entity::<UIText>(label)
-                    .unwrap()
-                    .text
-                    .clone()
-            })
-            .collect()
-    }
-
-    #[test]
-    fn both_new_menus_gain_a_row_when_a_kind_becomes_creatable() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        f.world
-            .get_resource_mut::<AssetEditorRegistry>()
-            .unwrap()
-            .register_inspected(concerto_app::InspectedAsset {
-                kind: "Dialogue",
-                create: |_, _, _| anyhow::bail!("unused"),
-                decode: |_| anyhow::bail!("unused"),
-                save: |_, _, _, _| anyhow::bail!("unused"),
-            });
-
-        f.refresh();
-
-        let rows = new_rows(&mut f.world);
-        let menu = menu_rows(&mut f.world);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(menu.len(), 2);
-        assert_eq!(
-            menu_labels(&f.world, rows[0]),
-            ["New Dialogue", "New Scene"]
-        );
-        assert_eq!(
-            menu_labels(&f.world, menu[0]),
-            ["New Dialogue", "New Scene"]
-        );
-        assert!(rows.iter().chain(&menu).all(|row| !f.disabled(*row)));
-    }
-
-    #[test]
-    fn new_is_disabled_and_does_nothing_without_a_project_or_while_busy() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let button = f.new_button();
-        let row = new_rows(&mut f.world)[0];
-        let menu_row = menu_rows(&mut f.world)[0];
-        assert!(!f.disabled(button) && !f.disabled(row) && !f.disabled(menu_row));
-
-        let release = f.busy();
-        f.refresh();
-        assert!(f.disabled(button) && f.disabled(row) && f.disabled(menu_row));
-        f.click(row);
-        f.click(menu_row);
-        assert!(f.state().pending.is_none());
-        drop(release);
-
-        f.world.insert_resource(ProjectState::default());
-        f.refresh();
-        assert!(f.disabled(button) && f.disabled(row) && f.disabled(menu_row));
-        f.click(row);
-        f.refresh();
-        assert!(f.state().pending.is_none());
-        assert_eq!(f.field(), None);
-        assert!(f.status().contains("project"), "{}", f.status());
-        f.click(menu_row);
-        f.refresh();
-        assert!(f.state().pending.is_none());
-    }
-
-    #[test]
-    fn opening_a_project_drops_the_pending_asset() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        f.new_scene();
-        f.submit("a/b");
-
-        send(
-            &mut f.world,
-            ProjectOpened {
-                root: f.root.path().to_path_buf(),
-            },
-        );
-        f.refresh();
-
-        assert!(f.state().pending.is_none());
-        assert_eq!(f.state().pending_error, None);
-        assert_eq!(f.field(), None);
-        assert_eq!(f.focused(), None);
-    }
-
-    #[test]
-    fn a_submit_while_busy_asks_to_wait_and_writes_nothing() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let field = f.new_scene();
-        let release = f.busy();
-
-        f.submit("Meadow");
-
-        assert_eq!(
-            f.state().pending_error.as_deref(),
-            Some("Wait for the project to finish")
-        );
-        assert_eq!(f.focused(), Some(field));
-        assert!(f.files().is_empty());
-        drop(release);
-    }
-
-    #[test]
-    fn a_failed_write_shows_inline_on_submit_and_in_the_status_on_focus_loss() {
-        let mut f = fixture(&[("content/level.gasset", "Scene")]);
-        let blocker = f.root.path().join("blocker");
-        std::fs::write(&blocker, b"x").unwrap();
-        f.world
-            .get_resource_mut::<ProjectState>()
-            .unwrap()
-            .project
-            .as_mut()
-            .unwrap()
-            .root = blocker;
-        let field = f.new_scene();
-
-        f.submit("Meadow");
-
-        let error = f.state().pending_error.clone().unwrap();
-        assert!(
-            error.starts_with("Could not create content/Meadow.gasset"),
-            "{error}"
-        );
-        assert_eq!(f.focused(), Some(field));
-
-        f.lose_focus("Meadow");
-
-        assert!(f.state().pending.is_none());
-        assert_eq!(f.state().pending_error, None);
-        assert!(
-            f.status()
-                .starts_with("Could not create content/Meadow.gasset"),
-            "{}",
-            f.status()
-        );
-    }
-
-    fn create_scene(world: &mut World, systems: &mut [BoxedSystem], name: &str) -> AssetId {
-        run_browser(world, systems);
-        let row = new_rows(world)[0];
-        left_click(world, row);
-        run_browser(world, systems);
-        let field = pending_field(world).unwrap();
-        set_name(world, field, name);
-        send(
-            world,
-            UITextInputSubmitted {
-                entity: field,
-                value: name.into(),
-            },
-        );
-        run_browser(world, systems);
-        let opened = take_opened(world);
-        assert_eq!(opened.len(), 1);
-        opened[0]
-    }
-
-    fn entry_of(f: &SceneFixture, id: AssetId) -> AssetEntry {
-        f.world
-            .get_resource::<AssetRegistry>()
-            .unwrap()
-            .get(id)
-            .unwrap()
-            .clone()
+        assert_eq!(opened(&f.world), [level]);
     }
 
     fn root_children(f: &mut SceneFixture, document: Entity) -> usize {
@@ -3299,9 +1693,25 @@ mod tests {
     fn a_created_scene_opens_empty_and_survives_a_save_and_a_reopen() {
         let mut f = SceneFixture::new();
         let mut systems = browser(&mut f.world);
+        run_browser(&mut f.world, &mut systems);
 
-        let id = create_scene(&mut f.world, &mut systems, "Meadow");
-        let created = entry_of(&f, id);
+        f.world.trigger(CreateAsset {
+            kind: Scene::name().into(),
+            folder: None,
+            name: "Meadow".into(),
+            open: true,
+        });
+        run_browser(&mut f.world, &mut systems);
+        let [id] = opened(&f.world)[..] else {
+            panic!("the created scene is opened once");
+        };
+        let created = f
+            .world
+            .get_resource::<AssetRegistry>()
+            .unwrap()
+            .get(id)
+            .unwrap()
+            .clone();
         assert_eq!(created.address, "content/Meadow.gasset");
         f.request(&created);
         f.frames_until_idle();
@@ -3337,30 +1747,5 @@ mod tests {
             Some(id)
         );
         assert_eq!(root_children(&mut f, document), 0);
-    }
-
-    #[test]
-    fn with_an_unsaved_scene_open_a_new_scene_is_written_and_the_guard_holds_its_open() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.rename(document, "first", "renamed");
-        assert!(f.unsaved(document));
-        let mut systems = browser(&mut f.world);
-
-        let id = create_scene(&mut f.world, &mut systems, "Meadow");
-
-        assert!(f.project_root.join("content/Meadow.gasset").is_file());
-        let created = entry_of(&f, id);
-        f.request(&created);
-        assert!(
-            f.world
-                .get_resource::<crate::guard::UnsavedGuard>()
-                .unwrap()
-                .asking()
-        );
-        assert_eq!(
-            f.document(document).current.as_ref().map(|a| a.id),
-            Some(f.scene.id)
-        );
     }
 }

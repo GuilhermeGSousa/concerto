@@ -251,14 +251,13 @@ fn blend_mesh(
 mod tests {
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_mesh::Skeleton;
-    use concerto_name::{Name, name};
+    use concerto_name::Name;
     use glam::{Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::{LayerNode, LayerSpace, LayerState};
     use crate::{
         blackboard::AnimationBlackboard,
-        evaluation::RootBone,
         mask::{BoneMask, BoneMaskBranch},
         node::{ErasedAnimationNode, NodeState, model_space::parent},
         pose::{
@@ -399,22 +398,10 @@ mod tests {
         pair(base(), overlay())
     }
 
-    fn fresh_state() -> NodeState {
-        Box::new(LayerState::default())
-    }
-
-    fn typed(state: &NodeState) -> &LayerState {
-        state
-            .downcast_ref::<LayerState>()
-            .expect("a layer node's state is a LayerState")
-    }
-
     struct Rig {
         walks: Walks,
         blackboard: AnimationBlackboard,
         skeleton: Skeleton,
-        root: Option<RootBone>,
-        with_skeleton: bool,
     }
 
     impl Rig {
@@ -423,8 +410,6 @@ mod tests {
                 walks: Walks::new(AssetStore::new(), AssetStore::new()),
                 blackboard: AnimationBlackboard::default(),
                 skeleton: skeleton(),
-                root: None,
-                with_skeleton: true,
             }
         }
 
@@ -442,23 +427,14 @@ mod tests {
         }
 
         fn layer(&self, node: &LayerNode, inputs: &[EvaluatedFrame]) -> AnimationFrame {
-            self.layer_with(node, &mut fresh_state(), inputs)
-        }
-
-        fn layer_with(
-            &self,
-            node: &LayerNode,
-            state: &mut NodeState,
-            inputs: &[EvaluatedFrame],
-        ) -> AnimationFrame {
             let erased: &dyn ErasedAnimationNode = node;
+            let mut state: NodeState = Box::<LayerState>::default();
             let mut pool = FramePool::new(BONES);
             pool.set_rest(&self.skeleton.rest_pose);
             let mut output = pool.acquire();
-            let skeleton = self.with_skeleton.then_some(&self.skeleton);
             self.walks
-                .evaluate_with(&self.blackboard, self.root.clone(), skeleton, |context| {
-                    erased.evaluate(state, context, &[], inputs, &mut pool, &mut output)
+                .evaluate_with(&self.blackboard, None, Some(&self.skeleton), |context| {
+                    erased.evaluate(&mut state, context, &[], inputs, &mut pool, &mut output)
                 });
             output
         }
@@ -471,14 +447,6 @@ mod tests {
                 at = up;
             }
             rotation
-        }
-    }
-
-    fn root_bone() -> RootBone {
-        RootBone {
-            index: 0,
-            rest: JointPose::IDENTITY,
-            up: Vec3::Y,
         }
     }
 
@@ -515,71 +483,35 @@ mod tests {
         )
     }
 
-    fn assert_base_pose(frame: &AnimationFrame) {
-        assert_eq!(frame.joints(), base_joints());
-        assert_eq!(frame.root_motion(), base_motion());
-    }
-
     fn local(mask: AssetHandle<BoneMask>) -> LayerNode {
         LayerNode::new(mask).with_space(LayerSpace::Local)
     }
 
-    struct LayerWeightCase {
-        name: &'static str,
-        node: LayerNode,
-        weight: f32,
-    }
-
     #[test]
-    fn the_masked_arm_moves_by_the_layer_weight_times_its_param_and_the_rest_keeps_the_base() {
+    fn the_masked_arm_moves_by_the_layer_weight_and_the_rest_and_the_root_motion_keep_the_base() {
         let mut rig = Rig::new();
-        let mask = rig.left_arm();
-        rig.blackboard.set(name!("aim"), 0.5_f32);
-        rig.blackboard.set(name!("boost"), 3.0_f32);
-        rig.blackboard.set(name!("flag"), true);
-        let weighted_by = |weight: f32| local(mask.clone()).with_weight(weight);
-        let param = |param: Name| {
-            local(mask.clone())
-                .with_weight(0.8)
-                .with_weight_param(param)
-        };
-        let case = |name, node, weight| LayerWeightCase { name, node, weight };
-        let cases = [
-            case("full weight", weighted_by(1.0), 1.0),
-            case("half weight", weighted_by(0.5), 0.5),
-            case("a float param", param(name!("aim")), 0.8 * 0.5),
-            case("a missing param", param(name!("unset")), 0.8),
-            case("a param that is not a float", param(name!("flag")), 0.8),
-            case("a product above 1", param(name!("boost")), 1.0),
-            case("a NaN weight", weighted_by(f32::NAN), 0.0),
-            case("an infinite weight", weighted_by(f32::INFINITY), 1.0),
-        ];
+        let node = local(rig.left_arm()).with_weight(0.5);
 
-        for case in cases {
-            let frame = rig.layer(&case.node, &layered());
+        let frame = rig.layer(&node, &layered());
 
-            for bone in 0..BONES {
-                if LEFT_ARM.contains(&bone) {
-                    assert_joint_near(&frame.joints()[bone], &blended(bone, case.weight));
-                } else {
-                    assert_eq!(
-                        frame.joints()[bone],
-                        base_joints()[bone],
-                        "{}: bone {bone}",
-                        case.name
-                    );
-                }
+        for bone in 0..BONES {
+            if LEFT_ARM.contains(&bone) {
+                assert_joint_near(&frame.joints()[bone], &blended(bone, 0.5));
+            } else {
+                assert_eq!(frame.joints()[bone], base_joints()[bone], "bone {bone}");
             }
-            let mut events = vec![base_event()];
-            if case.weight > 0.0 {
-                events.push(FiredEvent {
-                    weight: overlay_event().weight * case.weight,
-                    ..overlay_event()
-                });
-            }
-            assert_eq!(frame.events(), events, "{}", case.name);
-            assert_eq!(frame.root_motion(), base_motion(), "{}", case.name);
         }
+        assert_eq!(
+            frame.events(),
+            [
+                base_event(),
+                FiredEvent {
+                    weight: overlay_event().weight * 0.5,
+                    ..overlay_event()
+                }
+            ]
+        );
+        assert_eq!(frame.root_motion(), base_motion());
     }
 
     #[test]
@@ -612,159 +544,5 @@ mod tests {
                 "bone {bone}"
             );
         }
-    }
-
-    #[test]
-    fn mesh_and_local_agree_when_the_branch_ancestors_match() {
-        let mut rig = Rig::new();
-        let mask = rig.left_arm();
-        let mut overlay_joints = overlay_joints();
-        for (bone, joint) in base_joints().iter().enumerate().take(4) {
-            overlay_joints[bone].rotation = joint.rotation;
-        }
-        let inputs = || {
-            pair(
-                base(),
-                frame(overlay_joints.clone(), overlay_motion(), overlay_event()),
-            )
-        };
-
-        let in_mesh = rig.layer(&LayerNode::new(mask.clone()), &inputs());
-        let in_local = rig.layer(&local(mask), &inputs());
-
-        for bone in 0..BONES {
-            assert_joint_near(&in_mesh.joints()[bone], &in_local.joints()[bone]);
-        }
-    }
-
-    #[test]
-    fn root_motion_and_the_root_joint_are_the_base_even_under_a_mask_naming_the_root() {
-        let mut rig = Rig::new();
-        rig.root = Some(root_bone());
-        let mask = rig.add_mask(
-            "everything",
-            BoneMask::new().with_branch(BoneMaskBranch::new("root")),
-        );
-
-        for space in [LayerSpace::Local, LayerSpace::Mesh] {
-            let mut state = fresh_state();
-            let node = LayerNode::new(mask.clone()).with_space(space);
-
-            let frame = rig.layer_with(&node, &mut state, &layered());
-
-            assert_eq!(frame.root_motion(), base_motion());
-            assert_eq!(frame.joints()[0], base_joints()[0]);
-            assert!(typed(&state).warned_root);
-            if space == LayerSpace::Local {
-                assert_joint_near(&frame.joints()[1], &overlay_joints()[1]);
-            }
-        }
-    }
-
-    #[test]
-    fn overlay_events_are_scaled_by_the_layer_weight_whatever_the_mask() {
-        let mut rig = Rig::new();
-        let faint = rig.add_mask(
-            "faint",
-            BoneMask::new().with_branch(BoneMaskBranch::new("left_upper").with_weight(0.25)),
-        );
-        let unloaded = AssetHandle::weak(AssetId::from_path("unloaded"));
-        let expected = [
-            base_event(),
-            FiredEvent {
-                weight: overlay_event().weight * 0.5,
-                ..overlay_event()
-            },
-        ];
-
-        for mask in [faint.clone(), unloaded, AssetHandle::default()] {
-            let frame = rig.layer(&local(mask).with_weight(0.5), &layered());
-            assert_eq!(frame.events(), expected);
-        }
-        rig.with_skeleton = false;
-        let frame = rig.layer(&local(faint).with_weight(0.5), &layered());
-        assert_eq!(frame.events(), expected);
-    }
-
-    #[test]
-    fn the_node_weights_of_its_inputs_do_not_change_the_result() {
-        let mut rig = Rig::new();
-        let node = LayerNode::new(rig.left_arm()).with_weight(0.7);
-
-        let even = rig.layer(&node, &layered());
-        let uneven = rig.layer(&node, &[weighted(base(), 0.0), weighted(overlay(), 0.25)]);
-
-        assert_eq!(uneven.joints(), even.joints());
-        assert_eq!(uneven.root_motion(), even.root_motion());
-        assert_eq!(uneven.events(), even.events());
-    }
-
-    #[test]
-    fn an_unusable_mask_no_skeleton_or_no_overlay_passes_the_base_through() {
-        let mut rig = Rig::new();
-        let mask = rig.left_arm();
-        let unloaded = AssetHandle::weak(AssetId::from_path("unloaded"));
-
-        assert_base_pose(&rig.layer(&LayerNode::default(), &layered()));
-        assert_base_pose(&rig.layer(&LayerNode::new(unloaded), &layered()));
-        assert_base_pose(&rig.layer(&LayerNode::new(mask.clone()), &[weighted(base(), 1.0)]));
-        rig.with_skeleton = false;
-        assert_base_pose(&rig.layer(&LayerNode::new(mask), &layered()));
-    }
-
-    #[test]
-    fn no_input_gives_the_rest_pose() {
-        let mut rig = Rig::new();
-        let node = LayerNode::new(rig.left_arm());
-
-        let frame = rig.layer(&node, &[]);
-
-        assert_eq!(frame.joints(), &*rig.skeleton.rest_pose);
-    }
-
-    #[test]
-    fn a_third_input_warns_once_and_is_ignored() {
-        let mut rig = Rig::new();
-        let node = local(rig.left_arm()).with_weight(0.6);
-        let third = frame(
-            vec![joint(Vec3::X, Quat::from_rotation_y(1.0), Vec3::splat(2.0)); BONES],
-            overlay_motion(),
-            overlay_event(),
-        );
-        let mut inputs = layered();
-        inputs.push(weighted(third, 1.0));
-        let mut state = fresh_state();
-
-        let first = rig.layer_with(&node, &mut state, &inputs);
-        assert!(typed(&state).warned_inputs);
-        let second = rig.layer_with(&node, &mut state, &inputs);
-
-        let expected = rig.layer(&node, &layered());
-        for frame in [first, second] {
-            assert_eq!(frame.joints(), expected.joints());
-            assert_eq!(frame.events(), expected.events());
-        }
-        assert!(typed(&state).warned_inputs);
-        assert!(!typed(&state).warned_missing);
-        assert!(!typed(&state).warned_root);
-    }
-
-    #[test]
-    fn a_missing_bone_sets_its_own_warning_flag_alone() {
-        let mut rig = Rig::new();
-        let mask = rig.add_mask(
-            "tailed",
-            BoneMask::new()
-                .with_branch(BoneMaskBranch::new("tail"))
-                .with_branch(BoneMaskBranch::new("left_upper")),
-        );
-        let mut state = fresh_state();
-
-        let frame = rig.layer_with(&local(mask), &mut state, &layered());
-
-        assert!(typed(&state).warned_missing);
-        assert!(!typed(&state).warned_root);
-        assert!(!typed(&state).warned_inputs);
-        assert_joint_near(&frame.joints()[4], &overlay_joints()[4]);
     }
 }

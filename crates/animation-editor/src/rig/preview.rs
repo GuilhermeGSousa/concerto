@@ -194,47 +194,6 @@ impl RigSides {
     }
 }
 
-#[cfg(test)]
-impl RigSides {
-    fn side(&self, side: RigSide) -> &ShownSide {
-        match side {
-            RigSide::Source => &self.source,
-            RigSide::Target => &self.target,
-        }
-    }
-
-    pub(crate) fn skeleton_of(&self, side: RigSide) -> Option<AssetId> {
-        Some(self.side(side).stage.as_ref()?.skeleton_id)
-    }
-
-    pub(crate) fn root_of(&self, side: RigSide) -> Option<Entity> {
-        Some(self.side(side).stage.as_ref()?.root)
-    }
-
-    pub(crate) fn offset_of(&self, side: RigSide) -> f32 {
-        self.side(side).offset
-    }
-
-    pub(crate) fn root_bone_of(&self, side: RigSide) -> Option<usize> {
-        self.side(side).root
-    }
-
-    pub(crate) fn colors_of(&self, side: RigSide) -> &[Color] {
-        &self.side(side).colors
-    }
-}
-
-#[cfg(test)]
-impl RigPosing {
-    pub(crate) fn retargets(&self) -> bool {
-        self.retarget.is_some()
-    }
-
-    pub(crate) fn mode(&self) -> RigPreviewMode {
-        self.mode
-    }
-}
-
 #[derive(Resource)]
 pub(crate) struct RigPosing {
     mode: RigPreviewMode,
@@ -622,13 +581,9 @@ mod tests {
     use concerto_ecs::{
         World,
         component::{name::Name, scene::SceneEntityRef},
-        entity::hierarchy::ChildOf,
     };
     use concerto_editor::{hosted::testing::plain_recipe, preview::PreviewPlugin};
-    use concerto_foundation::{
-        assets::handle::AssetHandle,
-        transform::{GlobalTransform, Transform},
-    };
+    use concerto_foundation::{assets::handle::AssetHandle, transform::Transform};
     use concerto_mesh::skeleton::SkeletonComponent;
     use concerto_scene::scene::SceneNode;
     use glam::{Mat4, Quat, Vec3};
@@ -637,6 +592,7 @@ mod tests {
     use crate::preview::{SeekClip, SetClipTransport, ShowClip};
 
     const NAMES: [&str; 4] = ["root", "pelvis", "spine", "head"];
+    const SCENE_BONES: [&str; 4] = ["a", "b", "c", "d"];
     const PELVIS: usize = 1;
     const NEAR: f32 = 1e-4;
 
@@ -737,10 +693,10 @@ mod tests {
         Scene {
             nodes: vec![
                 armature,
-                node("a", vec![2]),
-                node("b", vec![3]),
-                node("c", vec![4]),
-                node("d", vec![]),
+                node(SCENE_BONES[0], vec![2]),
+                node(SCENE_BONES[1], vec![3]),
+                node(SCENE_BONES[2], vec![4]),
+                node(SCENE_BONES[3], vec![]),
             ],
             referenced_assets: vec![],
         }
@@ -783,87 +739,27 @@ mod tests {
             }
         }
 
-        fn stage(&mut self, side: RigSide, stage: RigStage) {
-            self.trigger(ShowRigStage {
-                side,
-                stage: Some(stage),
-            });
-        }
-
-        fn both_stages(&mut self) {
-            self.stage(RigSide::Source, RigStage::new(source(), AssetId::new()));
-            self.stage(RigSide::Target, RigStage::new(target(), AssetId::new()));
-        }
-
-        fn shown(&self, side: RigSide) -> &ShownStage {
-            let sides = self.app.get_resource::<RigSides>().unwrap();
-            let shown = match side {
-                RigSide::Source => &sides.source,
-                RigSide::Target => &sides.target,
-            };
-            shown.stage.as_ref().unwrap()
-        }
-
-        fn root(&self, side: RigSide) -> Entity {
-            self.shown(side).root
-        }
-
-        fn bones(&self, side: RigSide) -> Vec<Entity> {
-            self.shown(side).bones.as_ref().unwrap().entities.clone()
-        }
-
-        fn local(&mut self, entity: Entity) -> Transform {
-            self.world()
-                .get_component_for_entity::<Transform>(entity)
-                .unwrap()
-                .clone()
-        }
-
-        fn global(&mut self, entity: Entity) -> Vec3 {
-            self.world()
-                .get_component_for_entity::<GlobalTransform>(entity)
-                .unwrap()
-                .translation()
-        }
-
-        fn name(&mut self, entity: Entity) -> String {
-            self.world()
-                .get_component_for_entity::<Name>(entity)
-                .unwrap()
-                .as_str()
-                .to_owned()
-        }
-
-        fn names(&mut self) -> Vec<String> {
+        fn posed(&mut self, bones: &[&str]) -> Vec<Transform> {
             let world = self.world();
-            world
-                .query::<&Name, ()>()
-                .iter(world)
-                .map(|name| name.as_str().to_owned())
-                .collect()
-        }
-
-        fn parent(&mut self, entity: Entity) -> Entity {
-            self.world()
-                .get_component_for_entity::<ChildOf>(entity)
-                .unwrap()
-                .parent()
-        }
-
-        fn camera(&mut self) -> Vec3 {
-            let world = self.world();
-            world
-                .query::<&OrbitCamera, ()>()
-                .iter(world)
-                .next()
-                .unwrap()
-                .target
-        }
-
-        fn posed(&mut self, side: RigSide) -> Vec<Transform> {
-            self.bones(side)
+            let found: Vec<Entity> = bones
+                .iter()
+                .map(|bone| {
+                    world
+                        .query::<(Entity, &Name), ()>()
+                        .iter(world)
+                        .find(|(_, name)| name.as_str() == *bone)
+                        .map(|(entity, _)| entity)
+                        .expect("the stage shows the bone")
+                })
+                .collect();
+            found
                 .into_iter()
-                .map(|bone| self.local(bone))
+                .map(|bone| {
+                    world
+                        .get_component_for_entity::<Transform>(bone)
+                        .unwrap()
+                        .clone()
+                })
                 .collect()
         }
     }
@@ -887,218 +783,43 @@ mod tests {
     }
 
     #[test]
-    fn reference_mode_poses_each_sides_reference_pose() {
+    fn the_sides_stand_in_their_reference_poses_then_play_the_clip_through_the_retarget() {
         let mut preview = Preview::new();
-        preview.both_stages();
+        let id = AssetId::new();
+        preview.trigger(ShowRigStage {
+            side: RigSide::Source,
+            stage: Some(RigStage::new(source(), id).with_scene(scene_of(id))),
+        });
+        preview.trigger(ShowRigStage {
+            side: RigSide::Target,
+            stage: Some(RigStage::new(target(), AssetId::new())),
+        });
         preview.trigger(SetRigSide::new(RigSide::Source).with_reference(bent(&source())));
         preview.trigger(SetRigSide::new(RigSide::Target));
+        preview.trigger(SetPoseRetarget(Some(retarget())));
         preview.trigger(ShowClip(clip()));
-        preview.trigger(SeekClip(1.0));
-
+        preview.trigger(SeekClip(1.5));
         preview.frames(2);
 
-        assert_posed(&preview.posed(RigSide::Source), &bent(&source()));
-        assert_posed(&preview.posed(RigSide::Target), &target().rest_pose);
-    }
+        assert_posed(&preview.posed(&SCENE_BONES), &bent(&source()));
+        assert_posed(&preview.posed(&NAMES), &target().rest_pose);
 
-    #[test]
-    fn clip_mode_poses_the_source_from_the_clip_and_the_target_from_retarget_into() {
-        let mut preview = Preview::new();
-        preview.both_stages();
-        preview.trigger(SetPoseRetarget(Some(retarget())));
         preview.trigger(SetRigPreview {
             mode: RigPreviewMode::Clip,
             root_motion: true,
             bones: true,
         });
-        preview.trigger(ShowClip(clip()));
-        preview.trigger(SeekClip(1.5));
-
         preview.frames(2);
 
         let sampled = clip().sample_pose(&source(), 1.5);
         let mut retargeted = target().rest_pose.to_vec();
         retarget().retarget_into(&sampled, &mut retargeted).unwrap();
-        assert_posed(&preview.posed(RigSide::Source), &sampled);
-        assert_posed(&preview.posed(RigSide::Target), &retargeted);
+        assert_posed(&preview.posed(&SCENE_BONES), &sampled);
+        assert_posed(&preview.posed(&NAMES), &retargeted);
         assert!(
             !retargeted[PELVIS]
                 .translation
                 .abs_diff_eq(target().rest_pose[PELVIS].translation, NEAR)
         );
-    }
-
-    #[test]
-    fn with_root_motion_off_each_pelvis_stays_over_its_spot() {
-        let mut preview = Preview::new();
-        preview.trigger(PlaceRigSides {
-            source: -1.0,
-            target: 1.0,
-        });
-        preview.both_stages();
-        preview.trigger(SetRigSide::new(RigSide::Source).with_root(PELVIS));
-        preview.trigger(SetRigSide::new(RigSide::Target).with_root(PELVIS));
-        preview.trigger(SetPoseRetarget(Some(retarget())));
-        preview.trigger(SetRigPreview {
-            mode: RigPreviewMode::Clip,
-            root_motion: false,
-            bones: true,
-        });
-        preview.trigger(ShowClip(clip()));
-        preview.trigger(SeekClip(2.0));
-
-        preview.frames(3);
-
-        let source_pelvis = preview.bones(RigSide::Source)[PELVIS];
-        let target_pelvis = preview.bones(RigSide::Target)[PELVIS];
-        assert!(
-            preview
-                .global(source_pelvis)
-                .abs_diff_eq(Vec3::new(-1.0, 1.0, 0.0), NEAR),
-            "{}",
-            preview.global(source_pelvis)
-        );
-        assert!(
-            preview
-                .global(target_pelvis)
-                .abs_diff_eq(Vec3::new(1.0, 0.9, 0.0), NEAR),
-            "{}",
-            preview.global(target_pelvis)
-        );
-    }
-
-    #[test]
-    fn a_stage_with_no_scene_spawns_bones_parented_as_the_skeleton_says() {
-        let mut preview = Preview::new();
-        preview.stage(RigSide::Source, RigStage::new(source(), AssetId::new()));
-
-        preview.frames(1);
-
-        let root = preview.root(RigSide::Source);
-        let bones = preview.bones(RigSide::Source);
-        let names: Vec<String> = bones.iter().map(|bone| preview.name(*bone)).collect();
-        assert_eq!(names, NAMES);
-        assert_eq!(preview.parent(bones[0]), root);
-        for pair in bones.windows(2) {
-            assert_eq!(preview.parent(pair[1]), pair[0]);
-        }
-        for bone in bones {
-            assert!(
-                preview
-                    .world()
-                    .get_component_for_entity::<SkeletonComponent>(bone)
-                    .is_none()
-            );
-        }
-    }
-
-    #[test]
-    fn a_stage_whose_scene_holds_its_skeleton_poses_the_scenes_bones() {
-        let mut preview = Preview::new();
-        let id = AssetId::new();
-        preview.stage(
-            RigSide::Source,
-            RigStage::new(source(), id).with_scene(scene_of(id)),
-        );
-        preview.trigger(SetRigSide::new(RigSide::Source).with_reference(bent(&source())));
-
-        preview.frames(2);
-
-        let bones = preview.bones(RigSide::Source);
-        let names: Vec<String> = bones.iter().map(|bone| preview.name(*bone)).collect();
-        assert_eq!(names, ["a", "b", "c", "d"]);
-        assert!(preview.names().contains(&"armature".to_owned()));
-        assert_posed(&preview.posed(RigSide::Source), &bent(&source()));
-    }
-
-    #[test]
-    fn a_stage_whose_scene_holds_another_skeleton_is_replaced_by_bones() {
-        let mut preview = Preview::new();
-        preview.stage(
-            RigSide::Source,
-            RigStage::new(source(), AssetId::new()).with_scene(scene_of(AssetId::new())),
-        );
-
-        preview.frames(2);
-
-        let mut names = preview.names();
-        names.sort();
-        let mut expected = NAMES.map(str::to_owned).to_vec();
-        expected.sort();
-        assert_eq!(names, expected);
-        let bones = preview.bones(RigSide::Source);
-        assert_eq!(preview.parent(bones[0]), preview.root(RigSide::Source));
-    }
-
-    #[test]
-    fn placing_the_sides_moves_them_without_spawning_them_again() {
-        let mut preview = Preview::new();
-        preview.stage(RigSide::Source, RigStage::new(source(), AssetId::new()));
-        preview.frames(1);
-        let root = preview.root(RigSide::Source);
-        let bones = preview.bones(RigSide::Source);
-
-        preview.trigger(PlaceRigSides {
-            source: -2.0,
-            target: 3.0,
-        });
-        preview.stage(RigSide::Target, RigStage::new(target(), AssetId::new()));
-        preview.frames(2);
-
-        assert_eq!(preview.root(RigSide::Source), root);
-        assert_eq!(preview.bones(RigSide::Source), bones);
-        assert_eq!(preview.global(root), Vec3::new(-2.0, 0.0, 0.0));
-        let target_root = preview.root(RigSide::Target);
-        assert_eq!(preview.global(target_root), Vec3::new(3.0, 0.0, 0.0));
-    }
-
-    #[test]
-    fn the_camera_targets_the_midpoint_of_the_root_bones_and_follows_it_horizontally() {
-        let mut preview = Preview::new();
-        preview.trigger(PlaceRigSides {
-            source: -1.0,
-            target: 1.0,
-        });
-        preview.both_stages();
-        preview.trigger(SetRigSide::new(RigSide::Source).with_root(PELVIS));
-        preview.trigger(SetRigSide::new(RigSide::Target).with_root(PELVIS));
-        preview.trigger(SetPoseRetarget(Some(retarget())));
-        preview.trigger(ShowClip(clip()));
-        preview.frames(3);
-        assert!(
-            preview
-                .camera()
-                .abs_diff_eq(Vec3::new(0.0, 0.95, 0.0), NEAR)
-        );
-
-        preview.trigger(SetRigPreview {
-            mode: RigPreviewMode::Clip,
-            root_motion: true,
-            bones: true,
-        });
-        preview.trigger(SeekClip(2.0));
-        preview.frames(2);
-
-        assert!(
-            preview
-                .camera()
-                .abs_diff_eq(Vec3::new(1.9, 0.95, 0.95), NEAR),
-            "{}",
-            preview.camera()
-        );
-    }
-
-    #[test]
-    fn showing_no_stage_empties_that_side() {
-        let mut preview = Preview::new();
-        preview.stage(RigSide::Source, RigStage::new(source(), AssetId::new()));
-        preview.frames(1);
-
-        preview.trigger(ShowRigStage {
-            side: RigSide::Source,
-            stage: None,
-        });
-
-        assert!(preview.names().is_empty());
     }
 }

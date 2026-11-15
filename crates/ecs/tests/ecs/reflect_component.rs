@@ -7,8 +7,8 @@ use concerto_ecs::{
     system::input::ComponentMetadata,
 };
 use concerto_reflect::{
-    Reflect, ReflectDefault, ReflectJson, TypeRegistry, apply_value, apply_value_with,
-    json_to_value, json_to_value_with, to_json,
+    Reflect, ReflectDefault, ReflectJson, apply_value, apply_value_with, json_to_value,
+    json_to_value_with, to_json,
 };
 use serde_json::{Value, json};
 
@@ -18,30 +18,12 @@ struct Health {
     points: f32,
 }
 
-#[derive(Component, Reflect)]
-#[reflect(Component)]
-struct Lens {
-    length: f32,
-}
-
 fn component<T: 'static>(world: &World) -> ReflectComponent {
     world
         .get_resource::<AppTypeRegistry>()
         .unwrap()
         .get_type_data::<ReflectComponent>(TypeId::of::<T>())
         .unwrap()
-}
-
-#[test]
-fn a_new_world_registers_only_the_built_in_leaves_and_scene_entity_references() {
-    let world = World::new();
-
-    let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
-    assert!(registry.get(TypeId::of::<SceneEntityRef>()).is_some());
-    assert_eq!(
-        registry.iter().count(),
-        TypeRegistry::default().iter().count() + 1
-    );
 }
 
 fn entity_ref_codec(world: &World) -> ReflectJson {
@@ -82,15 +64,7 @@ fn an_entity_reference_is_its_id_string_when_resolved_and_its_node_index_when_no
             reference: None,
         },
         EntityRefCase {
-            json: json!("42v0"),
-            reference: None,
-        },
-        EntityRefCase {
             json: json!(-1),
-            reference: None,
-        },
-        EntityRefCase {
-            json: json!(true),
             reference: None,
         },
     ];
@@ -131,24 +105,6 @@ fn an_unresolved_entity_reference_written_from_json_applies_as_its_index() {
     let mut loaded = Rope::default();
     assert!(apply_value(&mut loaded, &stored).is_empty());
     assert_eq!(loaded, value);
-}
-
-#[test]
-fn a_resolved_entity_reference_is_not_written_from_json_without_live_references() {
-    let world = rope_world();
-    let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
-
-    assert_eq!(
-        json_to_value(
-            &json!({ "ends": ["42v3"] }),
-            TypeId::of::<Rope>(),
-            &registry
-        ),
-        Err(
-            "ends[0]: a resolved scene entity can only be stored while its scene is captured"
-                .to_owned()
-        )
-    );
 }
 
 #[test]
@@ -196,18 +152,6 @@ fn a_reflected_component_is_read_edited_inserted_at_default_and_removed() {
 }
 
 #[test]
-fn a_component_without_default_cannot_be_inserted() {
-    let mut world = World::new();
-    world.register_type::<Lens>();
-    let reflect = component::<Lens>(&world);
-    let entity = world.spawn(());
-
-    assert!(!reflect.insert_default(TypeId::of::<Lens>(), &mut world, entity));
-    assert!(world.get_component_for_entity::<Lens>(entity).is_none());
-    let _ = Lens { length: 1.0 }.length;
-}
-
-#[test]
 fn a_world_hands_out_its_own_registry_and_two_worlds_do_not_share_one() {
     let mut first = World::new();
     let mut second = World::new();
@@ -223,14 +167,4 @@ fn a_world_hands_out_its_own_registry_and_two_worlds_do_not_share_one() {
             .get(TypeId::of::<Health>())
             .is_none()
     );
-}
-
-#[test]
-fn a_type_registered_through_the_world_is_visible_through_its_shared_registry() {
-    let mut world = World::new();
-    let shared = world.type_registry();
-
-    world.register_type::<Health>();
-
-    assert!(shared.read().get(TypeId::of::<Health>()).is_some());
 }

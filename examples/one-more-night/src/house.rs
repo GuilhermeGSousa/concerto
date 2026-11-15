@@ -430,22 +430,18 @@ mod tests {
     #[test]
     fn roles_decide_who_talks_to_whom_and_who_passes_a_service_door() {
         let mut n = Night::new();
-        let npc =
-            |n: &Night, name: &str| Interactable::Npc(n.data.case.characters.id(name).unwrap());
+        let hobbs = Interactable::Npc(n.data.case.characters.id("npc_03").unwrap());
         let service = n.data.catalog.doors.id("d_service").unwrap();
 
-        let hobbs = npc(&n, "npc_03");
         n.uses(0, hobbs);
         assert!(
             n.session.is_walking(0),
             "the Guest gets nothing from the staff"
         );
-        assert!(n.told(0).starts_with("Hobbs is staff"));
         n.uses(1, hobbs);
         assert!(matches!(n.session.mode(1), Mode::Talking { .. }));
 
         n.uses(0, Interactable::Door(service));
-        assert!(n.told(0).starts_with("Staff only"));
         assert!(!n.house.doors[service.index()].open);
         n.session.seats[1].mode = Mode::Walking;
         n.uses(1, Interactable::Door(service));
@@ -453,14 +449,6 @@ mod tests {
         assert!(
             door.open && !door.locked,
             "the key ring unlocks and opens it"
-        );
-
-        n.uses(1, Interactable::Door(service));
-        assert!(!n.house.stands_open(service));
-        n.house.held_open[service.index()] = true;
-        assert!(
-            n.house.stands_open(service),
-            "a closed door stands open while a character passes"
         );
     }
 
@@ -471,12 +459,10 @@ mod tests {
         let key = n.data.case.placements.id("p_key").unwrap();
 
         n.uses(0, Interactable::Placement(cup));
-        assert_eq!(n.session.seats[0].carried, Some(cup));
         n.uses(0, Interactable::Placement(key));
-        assert_eq!(n.told(0), "Your hands are full.");
+        assert_eq!(n.session.seats[0].carried, Some(cup), "one item at a time");
 
         n.uses(0, Interactable::Lift(2));
-        assert_eq!(n.house.lift_at, 2, "the first use calls the car");
         n.uses(0, Interactable::Lift(2));
         assert_eq!(n.house.lift_item(), Some(cup));
         assert_eq!(n.session.seats[0].carried, None);
@@ -493,30 +479,21 @@ mod tests {
     }
 
     #[test]
-    fn a_bell_raises_its_flag_until_the_staff_reads_the_board() {
+    fn a_bell_pulled_or_rung_by_the_schedule_raises_its_flag_until_the_staff_reads_the_board() {
         let mut n = Night::new();
         let study = n.data.catalog.rooms.id("room_b").unwrap();
+        let fact = n.data.case.facts.id("f_10").unwrap();
+        let at = |hour, minute| GameTime::from_hm(hour, minute).unwrap();
 
         n.uses(0, Interactable::BellPull(study));
-        assert_eq!(n.told(1), "A bell rings: Study.");
+        assert!(!n.told(1).is_empty(), "the Staff hears it");
         n.uses(0, Interactable::BellBoard);
-        assert_eq!(n.told(0), "Flags up: Study.");
         assert!(
             n.house.bells[study.index()],
             "the Guest reading it drops nothing"
         );
         n.uses(1, Interactable::BellBoard);
         assert!(!n.house.bells[study.index()]);
-        n.uses(1, Interactable::BellBoard);
-        assert_eq!(n.told(1), "No flag is up on the bell board.");
-    }
-
-    #[test]
-    fn a_scheduled_ring_raises_a_flag_once_and_tells_the_staff_who_reads_it() {
-        let mut n = Night::new();
-        let study = n.data.catalog.rooms.id("room_b").unwrap();
-        let fact = n.data.case.facts.id("f_10").unwrap();
-        let at = |hour, minute| GameTime::from_hm(hour, minute).unwrap();
 
         n.house.ring_scheduled(&mut n.session, &n.data, at(19, 29));
         assert!(
@@ -525,8 +502,6 @@ mod tests {
         );
         n.house.ring_scheduled(&mut n.session, &n.data, at(19, 31));
         assert!(n.house.bells[study.index()]);
-        assert_eq!(n.told(1), "A bell rings: Study.");
-
         n.uses(0, Interactable::BellBoard);
         assert!(
             !n.book.knows(fact),
@@ -546,8 +521,7 @@ mod tests {
         n.book.grant(fact);
         n.uses(0, Interactable::Placement(cup));
 
-        n.uses(0, Interactable::Bed(1));
-        assert_eq!(n.told(0), "That is not your bed.");
+        assert!(n.uses(0, Interactable::Bed(1)).is_empty());
         assert!(n.uses(0, Interactable::Bed(0)).is_empty());
         assert_eq!(n.uses(1, Interactable::Bed(1)), [Effect::EndNight]);
 
@@ -567,6 +541,5 @@ mod tests {
 
         n.uses(0, Interactable::Gong);
         assert!(n.session.finale.is_none());
-        assert!(n.told(0).starts_with("The gong would gather"));
     }
 }

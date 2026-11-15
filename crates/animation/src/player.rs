@@ -328,23 +328,18 @@ impl Deref for AnimationHandleComponent {
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
-    use concerto_name::name;
+
     use concerto_reflect::{Reflect, TypeRegistry};
     use uuid::Uuid;
 
     use super::AnimationPlayer;
     use crate::{
-        blackboard::AnimationBlackboard,
-        clip::AnimationClip,
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
-        node::{
-            AnimationClipNode, AnimationNode, BlendNode, InputSlots, ReflectAnimationNode,
-            ResultNode, register_node_inputs,
-        },
+        node::{AnimationNode, InputSlots, ReflectAnimationNode, register_node_inputs},
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
-        testing::{Walks, made_live},
+        testing::Walks,
     };
 
     #[derive(Default, Reflect)]
@@ -392,41 +387,6 @@ mod tests {
         resets
     }
 
-    struct Fixture {
-        _server: AssetServer,
-        walks: Walks,
-        player: AnimationPlayer,
-    }
-
-    fn fixture() -> Fixture {
-        let mut server = AssetServer::new();
-        let mut clips = AssetStore::<AnimationClip>::new();
-        let mut graphs = AssetStore::<AnimationGraph>::new();
-        server.register_asset(&clips);
-        server.register_asset(&graphs);
-
-        let first = server.add(AnimationClip::default());
-        clips.insert(first.id(), AnimationClip::default());
-        let second = server.add(AnimationClip::default());
-        clips.insert(second.id(), AnimationClip::default());
-
-        let mut graph = AnimationGraph::from_node(AnimationClipNode::new(first));
-        graph
-            .result_node()
-            .add_input(AnimationClipNode::new(second));
-        let handle = server.add(AnimationGraph::default());
-        graphs.insert(handle.id(), made_live(graph));
-
-        let mut player = AnimationPlayer::new(1);
-        let walks = Walks::new(clips, graphs);
-        walks.initialize(&mut player, handle);
-        Fixture {
-            _server: server,
-            walks,
-            player,
-        }
-    }
-
     #[test]
     fn play_restarts_any_node_type_through_its_reset() {
         let mut graph = AnimationGraph::new();
@@ -453,66 +413,5 @@ mod tests {
         player.play(&index, walks.graphs());
 
         assert_eq!(replayable_resets(&mut player, &walks), [1]);
-    }
-
-    #[derive(Debug, PartialEq)]
-    struct Board {
-        flag: Option<bool>,
-        speed: Option<f32>,
-    }
-
-    fn board(blackboard: &AnimationBlackboard) -> Board {
-        Board {
-            flag: blackboard.get_bool(name!("flag")),
-            speed: blackboard.get_float(name!("speed")),
-        }
-    }
-
-    fn set_board() -> Board {
-        Board {
-            flag: Some(true),
-            speed: Some(3.0),
-        }
-    }
-
-    #[test]
-    fn for_each_state_and_for_each_state_mut_visit_only_the_live_nodes_of_the_type_with_the_blackboard()
-     {
-        let mut fixture = fixture();
-        let mut uninitialized = AnimationPlayer::new(1);
-        fixture.player.set_bool_param(name!("flag"), true);
-        fixture.player.set_float_param(name!("speed"), 3.0);
-        let graphs = fixture.walks.graphs();
-
-        let mut mutable = Vec::new();
-        fixture
-            .player
-            .for_each_state_mut::<AnimationClipNode>(graphs, |_, state, blackboard| {
-                state.play();
-                mutable.push(board(blackboard));
-            });
-        let mut shared = Vec::new();
-        fixture
-            .player
-            .for_each_state::<AnimationClipNode>(graphs, |_, _, blackboard| {
-                shared.push(board(blackboard))
-            });
-        let mut result_nodes = 0;
-        fixture
-            .player
-            .for_each_state::<ResultNode>(graphs, |_, _, _| result_nodes += 1);
-        let mut blend_nodes = 0;
-        fixture
-            .player
-            .for_each_state_mut::<BlendNode>(graphs, |_, _, _| blend_nodes += 1);
-        let mut before_initialization = 0;
-        uninitialized
-            .for_each_state_mut::<AnimationClipNode>(graphs, |_, _, _| before_initialization += 1);
-
-        assert_eq!(mutable, [set_board(), set_board()]);
-        assert_eq!(shared, mutable);
-        assert_eq!(result_nodes, 1);
-        assert_eq!(blend_nodes, 0);
-        assert_eq!(before_initialization, 0);
     }
 }

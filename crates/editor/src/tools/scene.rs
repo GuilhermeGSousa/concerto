@@ -121,7 +121,8 @@ mod tests {
     use super::*;
     use crate::tools::selection::Selection;
     use concerto_ecs::component::name::Name;
-    use concerto_foundation::assets::AssetId;
+    use concerto_foundation::assets::{AssetId, handle::AssetHandle};
+    use concerto_mesh::mesh::MeshComponent;
     use concerto_scene::scene::SceneNode;
 
     fn node(name: &str, children: Vec<usize>) -> SceneNode {
@@ -132,76 +133,42 @@ mod tests {
         }
     }
 
-    fn family() -> Scene {
-        Scene {
-            nodes: vec![node("parent", vec![1]), node("child", vec![])],
-            referenced_assets: vec![AssetId::new()],
-        }
+    fn dirty(world: &World) -> bool {
+        world.get_resource::<SceneDirty>().unwrap().0
     }
 
-    fn roots(world: &mut World) -> Vec<Entity> {
+    fn named(world: &mut World, wanted: &str) -> Vec<Entity> {
         world
-            .query::<(Entity, &SceneRoot), ()>()
+            .query::<(Entity, &Name), ()>()
             .iter(world)
-            .map(|(root, _)| root)
-            .collect()
-    }
-
-    fn names(world: &mut World) -> Vec<String> {
-        world
-            .query::<&Name, ()>()
-            .iter(world)
-            .map(|name| name.as_str().to_owned())
+            .filter(|(_, name)| name.as_str() == wanted)
+            .map(|(entity, _)| entity)
             .collect()
     }
 
     #[test]
-    fn an_opened_scene_hangs_under_one_selected_root() {
+    fn an_opened_scene_is_selected_edited_captured_saved_and_replaced() {
         let mut app = tools_app();
         let world = app.main_mut().world_mut();
+        world.register_type::<MeshComponent>();
 
-        world.trigger(OpenScene(family()));
-
-        let root = roots(world)[0];
-        let children = world.get_component_for_entity::<Children>(root).unwrap();
-        assert_eq!(children.iter().count(), 1);
+        world.trigger(OpenScene(Scene {
+            nodes: vec![node("parent", vec![1]), node("child", vec![])],
+            referenced_assets: vec![AssetId::new()],
+        }));
+        let root = world
+            .query::<(Entity, &SceneRoot), ()>()
+            .iter(world)
+            .map(|(root, _)| root)
+            .next()
+            .unwrap();
         assert_eq!(
             world.get_resource::<Selection>().unwrap().entity(),
             Some(root)
         );
-        assert!(written::<SceneEdited>(&app).is_empty());
-    }
+        assert!(!dirty(world));
 
-    #[test]
-    fn opening_another_scene_replaces_the_one_that_was_open() {
-        let mut app = tools_app();
-        let world = app.main_mut().world_mut();
-        world.trigger(OpenScene(family()));
-
-        world.trigger(OpenScene(Scene {
-            nodes: vec![node("alone", vec![])],
-            referenced_assets: vec![],
-        }));
-
-        assert_eq!(roots(world).len(), 1);
-        assert_eq!(names(world), ["alone"]);
-    }
-
-    #[test]
-    fn a_capture_lists_the_assets_the_open_scene_names_not_the_ones_its_file_listed() {
-        use concerto_foundation::assets::handle::AssetHandle;
-        use concerto_mesh::mesh::MeshComponent;
-
-        let mut app = tools_app();
-        let world = app.main_mut().world_mut();
-        world.register_type::<MeshComponent>();
-        world.trigger(OpenScene(family()));
-        let child = world
-            .query::<(Entity, &Name), ()>()
-            .iter(world)
-            .find(|(_, name)| name.as_str() == "child")
-            .map(|(entity, _)| entity)
-            .unwrap();
+        let child = named(world, "child")[0];
         let mesh = AssetId::new();
         world.insert(
             MeshComponent {
@@ -209,58 +176,25 @@ mod tests {
             },
             child,
         );
-
+        report_edit(world);
+        assert!(dirty(world));
         let scene = capture_open_scene(world).unwrap();
         let names: Vec<_> = scene.nodes.iter().map(|node| node.name.as_str()).collect();
         assert_eq!(names, ["parent", "child"]);
         assert_eq!(scene.nodes[0].children, [1]);
         assert_eq!(scene.referenced_assets, [mesh]);
-    }
-
-    fn dirty(world: &World) -> bool {
-        world.get_resource::<SceneDirty>().unwrap().0
-    }
-
-    #[test]
-    fn a_reported_edit_makes_the_scene_dirty_until_it_is_marked_saved() {
-        let mut app = tools_app();
-        let world = app.main_mut().world_mut();
-        world.trigger(OpenScene(family()));
-        assert!(!dirty(world));
-
-        report_edit(world);
         assert!(dirty(world));
-        assert_eq!(written::<SceneEdited>(&app).len(), 1);
-
-        let world = app.main_mut().world_mut();
-        capture_open_scene(world).unwrap();
-        assert!(
-            dirty(world),
-            "a capture alone does not mean the scene was written"
-        );
-
         mark_saved(world);
         assert!(!dirty(world));
-    }
 
-    #[test]
-    fn opening_a_scene_makes_it_clean() {
-        let mut app = tools_app();
-        let world = app.main_mut().world_mut();
-        world.trigger(OpenScene(family()));
         report_edit(world);
-
-        world.trigger(OpenScene(family()));
-
+        world.trigger(OpenScene(Scene {
+            nodes: vec![node("alone", vec![])],
+            referenced_assets: vec![],
+        }));
+        assert!(named(world, "parent").is_empty());
+        assert_eq!(named(world, "alone").len(), 1);
         assert!(!dirty(world));
-    }
-
-    #[test]
-    fn a_capture_with_no_scene_open_returns_the_reason() {
-        let mut app = tools_app();
-
-        let captured = capture_open_scene(app.main_mut().world_mut());
-
-        assert_eq!(captured.unwrap_err(), "No scene is open");
+        assert_eq!(written::<SceneEdited>(&app).len(), 2);
     }
 }

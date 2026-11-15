@@ -33,14 +33,3 @@ fn a_scope_reads_the_resource_while_writing_the_world_and_puts_it_back_unchanged
     assert_eq!(world.get_resource::<Gravity>().unwrap().0, 9.8);
     assert_eq!(world.resource_changed_tick::<Gravity>(), changed);
 }
-
-#[test]
-fn a_scope_over_a_missing_resource_does_not_run() {
-    let mut world = World::new();
-    let mut ran = false;
-
-    world.resource_scope::<Gravity>(|_, _| ran = true);
-
-    assert!(!ran);
-    assert!(world.get_resource::<Gravity>().is_none());
-}

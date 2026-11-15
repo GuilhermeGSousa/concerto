@@ -530,24 +530,16 @@ pub(crate) fn build(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inspector::{InspectorRegistry, ListEdit, ListEditor, PropertyEditor};
     use crate::tools::scene::{
-        SceneEdited,
+        SceneDirty, SceneEdited,
         testing::{tools_app, written},
     };
-    use crate::{
-        inspector::{InspectorRegistry, PropertyEditor},
-        tools::scene::SceneStatus,
-    };
-    use concerto_color::Color;
     use concerto_ecs::{command::EntityCommandQueue, component::scene::SceneEntityRef};
-    use concerto_foundation::{
-        assets::{
-            Asset, AssetId, LoadableAsset, asset_server::AssetServer, asset_store::AssetStore,
-            handle::AssetHandle,
-        },
-        transform::Transform,
+    use concerto_foundation::assets::{
+        Asset, AssetId, LoadableAsset, asset_store::AssetStore, handle::AssetHandle,
     };
-    use concerto_reflect::{PathSegment, ReflectDefault};
+    use concerto_foundation::transform::Transform;
     use concerto_ui::theme::UITheme;
     use serde_json::{Value, json};
 
@@ -557,122 +549,82 @@ mod tests {
         amount: f32,
     }
 
-    #[derive(Component, concerto_reflect::Reflect)]
-    #[reflect(Component)]
-    struct Lens {
-        focal: f32,
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Rig {
+        stops: Vec<f32>,
+        mode: Mode,
     }
 
-    #[derive(Component)]
-    struct Plumbing;
+    #[derive(concerto_reflect::Reflect, Default, Debug, PartialEq)]
+    enum Mode {
+        #[default]
+        Fixed,
+        Orbit {
+            distance: f32,
+        },
+    }
 
-    fn fixture() -> (App, Entity) {
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Follow {
+        target: SceneEntityRef,
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Note;
+
+    impl Asset for Note {
+        fn name() -> &'static str {
+            "Note"
+        }
+    }
+
+    impl LoadableAsset for Note {}
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Voice {
+        note: AssetHandle<Note>,
+    }
+
+    struct Fixture {
+        app: App,
+        entity: Entity,
+    }
+
+    fn fixture() -> Fixture {
         let mut app = tools_app();
         app.register_type::<Transform>()
             .register_type::<Gain>()
-            .register_type::<Lens>()
+            .register_type::<Rig>()
+            .register_type::<Follow>()
+            .register_type::<Voice>()
+            .register_type::<AssetHandle<Note>>()
             .insert_resource(AssetServer::new())
             .insert_resource(AssetRegistry::default());
         let entity = app.main_mut().world_mut().spawn(Transform::IDENTITY);
-        (app, entity)
+        Fixture { app, entity }
     }
 
-    fn add<T: 'static>(entity: Entity) -> ComponentEdit {
-        ComponentEdit::Add {
-            entity,
-            component: TypeId::of::<T>(),
-        }
+    fn read<C: Component, R>(app: &mut App, entity: Entity, read: impl FnOnce(&C) -> R) -> R {
+        read(
+            app.main_mut()
+                .world_mut()
+                .get_component_for_entity::<C>(entity)
+                .unwrap(),
+        )
     }
 
-    fn remove<T: 'static>(entity: Entity) -> ComponentEdit {
-        ComponentEdit::Remove {
-            entity,
-            component: TypeId::of::<T>(),
-        }
+    fn results(app: &App) -> Vec<bool> {
+        written::<PropertyCommitted>(app)
+            .into_iter()
+            .map(|outcome| outcome.result.is_ok())
+            .collect()
     }
 
-    #[test]
-    fn a_component_that_was_never_registered_cannot_be_edited() {
-        let mut app = tools_app();
-        let world = app.main_mut().world_mut();
-        let entity = world.spawn(());
-
-        assert_eq!(
-            apply_component_edit(world, add::<Gain>(entity)),
-            Err(EditError::UnregisteredComponent)
-        );
-    }
-
-    #[test]
-    fn an_applied_component_edit_writes_scene_edited_and_a_dropped_one_does_not() {
-        let (mut app, entity) = fixture();
-
-        app.main_mut()
-            .world_mut()
-            .trigger(EditComponent(remove::<Gain>(entity)));
-        assert!(
-            written::<SceneEdited>(&app).is_empty(),
-            "a dropped edit changes nothing"
-        );
-
-        app.main_mut()
-            .world_mut()
-            .trigger(EditComponent(add::<Gain>(entity)));
-        let world = app.main_mut().world_mut();
-        assert!(world.get_component_for_entity::<Gain>(entity).is_some());
-        assert_eq!(written::<SceneEdited>(&app).len(), 1);
-
-        app.main_mut()
-            .world_mut()
-            .trigger(EditComponent(remove::<Gain>(entity)));
-        let world = app.main_mut().world_mut();
-        assert!(world.get_component_for_entity::<Gain>(entity).is_none());
-        assert_eq!(written::<SceneEdited>(&app).len(), 2);
-    }
-
-    #[test]
-    fn stale_structural_edits_are_dropped() {
-        let (mut app, entity) = fixture();
-        let world = app.main_mut().world_mut();
-        assert_eq!(
-            apply_component_edit(world, add::<Transform>(entity)),
-            Err(EditError::Rejected)
-        );
-        assert_eq!(
-            apply_component_edit(world, remove::<Gain>(entity)),
-            Err(EditError::NotFound)
-        );
-        assert_eq!(
-            apply_component_edit(world, add::<Plumbing>(entity)),
-            Err(EditError::UnregisteredComponent)
-        );
-        let gone = world.spawn(());
-        world.despawn(gone);
-        for edit in [add::<Gain>(gone), remove::<Gain>(gone)] {
-            assert_eq!(
-                apply_component_edit(world, edit),
-                Err(EditError::MissingTarget)
-            );
-        }
-
-        world.trigger(EditComponent(add::<Gain>(gone)));
-        world.trigger(EditComponent(add::<Gain>(entity)));
-        assert!(world.get_component_for_entity::<Gain>(entity).is_some());
-        assert_eq!(written::<SceneEdited>(&app).len(), 1);
-    }
-
-    #[test]
-    fn a_component_without_default_is_removed_but_never_added() {
-        let (mut app, entity) = fixture();
-        let world = app.main_mut().world_mut();
-        assert_eq!(
-            apply_component_edit(world, add::<Lens>(entity)),
-            Err(EditError::Rejected)
-        );
-
-        world.insert(Lens { focal: 35.0 }, entity);
-        assert_eq!(apply_component_edit(world, remove::<Lens>(entity)), Ok(()));
-        assert!(world.get_component_for_entity::<Lens>(entity).is_none());
+    fn dirty(app: &App) -> bool {
+        app.get_resource::<SceneDirty>().unwrap().0
     }
 
     #[derive(Default)]
@@ -697,540 +649,184 @@ mod tests {
         }
     }
 
+    fn row<C: 'static, T: 'static>(
+        entity: Entity,
+        path: &[&'static str],
+        editor: TypeId,
+    ) -> PropertyRow {
+        PropertyRow {
+            address: PropertyAddress {
+                target: Arc::new(ComponentTarget {
+                    entity,
+                    component: TypeId::of::<C>(),
+                }),
+                path: PropertyPath::new(path.iter().copied()),
+                type_id: TypeId::of::<T>(),
+            },
+            editor_type: editor,
+            registry_tick: Tick::default(),
+        }
+    }
+
     fn gain_to(entity: Entity, amount: f32) -> CommitProperty {
         let mut registry = InspectorRegistry::default();
         registry.register_property_editor::<f32, NonNegative>();
         let editor = registry.editor(TypeId::of::<f32>(), None).unwrap();
         CommitProperty {
-            row: PropertyRow {
-                address: PropertyAddress {
-                    target: Arc::new(ComponentTarget {
-                        entity,
-                        component: TypeId::of::<Gain>(),
-                    }),
-                    path: PropertyPath::new(["amount"]),
-                    type_id: TypeId::of::<f32>(),
-                },
-                editor_type: editor.editor_type,
-                registry_tick: Tick::default(),
-            },
+            row: row::<Gain, f32>(entity, &["amount"], editor.editor_type),
             edit: Arc::new(amount),
             editor: Arc::clone(&editor.adapter),
         }
     }
 
-    fn entity_of(outcome: &PropertyCommitted) -> Entity {
-        outcome.address.target.component().unwrap().entity
-    }
-
-    fn statuses(app: &App) -> Vec<String> {
-        written::<SceneStatus>(app)
-            .into_iter()
-            .map(|status| status.0)
-            .collect()
+    fn list_edit(entity: Entity, edit: ListEdit) -> CommitProperty {
+        CommitProperty {
+            row: row::<Rig, Vec<f32>>(entity, &["stops"], TypeId::of::<ListEditor>()),
+            edit: Arc::new(edit),
+            editor: Arc::new(ListEditor),
+        }
     }
 
     #[test]
-    fn a_refused_component_removal_says_what_was_missing() {
-        let (mut app, entity) = fixture();
-
-        app.main_mut()
-            .world_mut()
-            .trigger(EditComponent(remove::<Gain>(entity)));
-
-        assert_eq!(
-            statuses(&app),
-            ["Remove Gain failed: the entity does not have it"]
-        );
-    }
-
-    fn gain(app: &mut App, entity: Entity) -> f32 {
-        app.main_mut()
-            .world_mut()
-            .get_component_for_entity::<Gain>(entity)
-            .unwrap()
-            .amount
-    }
-
-    #[test]
-    fn a_committed_property_writes_its_outcome() {
-        let (mut app, entity) = fixture();
-        app.main_mut().world_mut().insert(Gain::default(), entity);
-
-        app.main_mut().world_mut().trigger(gain_to(entity, 2.0));
-
-        assert_eq!(gain(&mut app, entity), 2.0);
-        let outcomes = written::<PropertyCommitted>(&app);
-        assert_eq!(outcomes.len(), 1);
-        assert_eq!(entity_of(&outcomes[0]), entity);
-        assert_eq!(outcomes[0].result, Ok(()));
-        assert!(statuses(&app).is_empty());
-    }
-
-    #[test]
-    fn a_refused_property_commit_writes_its_outcome_and_a_status_with_the_same_text() {
-        let (mut app, entity) = fixture();
+    fn committed_properties_land_in_the_scene_and_refused_ones_change_nothing() {
+        let Fixture { mut app, entity } = fixture();
         app.main_mut().world_mut().insert(Gain::default(), entity);
 
         app.main_mut().world_mut().trigger(gain_to(entity, -1.0));
+        assert_eq!(read(&mut app, entity, |gain: &Gain| gain.amount), 0.0);
+        assert!(!dirty(&app));
 
-        assert_eq!(gain(&mut app, entity), 0.0);
-        assert_eq!(
-            statuses(&app),
-            ["Set Gain.amount failed: the value was refused"]
-        );
-        let outcomes = written::<PropertyCommitted>(&app);
-        assert_eq!(outcomes.len(), 1);
-        assert_eq!(entity_of(&outcomes[0]), entity);
-        assert_eq!(
-            outcomes[0].result,
-            Err(PropertyRefusal::Refused(statuses(&app).remove(0)))
-        );
-        assert!(written::<SceneEdited>(&app).is_empty());
-    }
-
-    #[test]
-    fn each_component_edit_writes_its_outcome_and_a_refused_one_a_status_with_the_same_text() {
-        let (mut app, entity) = fixture();
-
-        for _ in 0..2 {
-            app.main_mut()
-                .world_mut()
-                .trigger(EditComponent(add::<Gain>(entity)));
-        }
-
-        let statuses = statuses(&app);
-        assert_eq!(
-            statuses,
-            ["Add Gain failed: it is already there, or has no default value"]
-        );
-        let outcomes: Vec<_> = written::<ComponentEdited>(&app)
-            .into_iter()
-            .map(|outcome| (outcome.edit, outcome.result))
-            .collect();
-        assert_eq!(
-            outcomes,
-            vec![
-                (add::<Gain>(entity), Ok(())),
-                (add::<Gain>(entity), Err(statuses[0].clone())),
-            ]
-        );
-    }
-
-    #[derive(Component, concerto_reflect::Reflect, Default)]
-    #[reflect(Component, Default)]
-    struct Rig {
-        optics: Optics,
-        mode: Mode,
-    }
-
-    #[derive(concerto_reflect::Reflect, Default, Debug, PartialEq)]
-    struct Optics {
-        focal: f32,
-        stops: Vec<f32>,
-    }
-
-    #[derive(concerto_reflect::Reflect, Default, Debug, PartialEq)]
-    enum Mode {
-        #[default]
-        Fixed,
-        Orbit {
-            distance: f32,
-            heights: Vec<f32>,
-        },
-    }
-
-    #[derive(Component, concerto_reflect::Reflect, Default)]
-    #[reflect(Component, Default)]
-    struct Follow {
-        target: SceneEntityRef,
-    }
-
-    #[derive(Component, concerto_reflect::Reflect, Default)]
-    #[reflect(Component, Default)]
-    struct Tint {
-        color: Color,
-    }
-
-    #[derive(Component, concerto_reflect::Reflect, Default)]
-    #[reflect(Component, Default)]
-    struct Track {
-        modes: Vec<Mode>,
-    }
-
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct Note;
-
-    impl Asset for Note {
-        fn name() -> &'static str {
-            "Note"
-        }
-    }
-
-    impl LoadableAsset for Note {}
-
-    #[derive(Component, concerto_reflect::Reflect, Default)]
-    #[reflect(Component, Default)]
-    struct Voice {
-        note: AssetHandle<Note>,
-    }
-
-    fn values() -> (App, Entity) {
-        let (mut app, entity) = fixture();
-        app.register_type::<Rig>()
-            .register_type::<Follow>()
-            .register_type::<Tint>()
-            .register_type::<Voice>()
-            .register_type::<AssetHandle<Note>>();
-        app.main_mut().world_mut().insert(
-            (
-                Gain::default(),
-                Lens { focal: 35.0 },
-                Rig::default(),
-                Follow::default(),
-                Tint::default(),
-                Voice::default(),
-            ),
-            entity,
-        );
-        (app, entity)
-    }
-
-    fn set<C: 'static>(app: &mut App, entity: Entity, path: &[&'static str], value: Value) {
-        set_at::<C>(app, entity, PropertyPath::new(path.iter().copied()), value);
-    }
-
-    fn set_at<C: 'static>(app: &mut App, entity: Entity, path: PropertyPath, value: Value) {
-        app.main_mut().world_mut().trigger(SetValue {
-            entity,
-            component: TypeId::of::<C>(),
-            path,
-            value,
-        });
-    }
-
-    fn read<C: Component, R>(app: &mut App, entity: Entity, read: impl FnOnce(&C) -> R) -> R {
-        read(
-            app.main_mut()
-                .world_mut()
-                .get_component_for_entity::<C>(entity)
-                .unwrap(),
-        )
-    }
-
-    fn results(app: &App) -> Vec<Result<(), PropertyRefusal>> {
-        written::<PropertyCommitted>(app)
-            .into_iter()
-            .map(|outcome| outcome.result)
-            .collect()
-    }
-
-    #[test]
-    fn a_set_value_writes_the_field_and_reports_the_row_it_addressed() {
-        let (mut app, entity) = values();
-
-        set::<Gain>(&mut app, entity, &["amount"], json!(2.5));
-        set::<Lens>(&mut app, entity, &["focal"], json!(50));
-
-        assert_eq!(gain(&mut app, entity), 2.5);
-        assert_eq!(read(&mut app, entity, |lens: &Lens| lens.focal), 50.0);
-        let outcomes = written::<PropertyCommitted>(&app);
-        assert_eq!(outcomes.len(), 2);
-        let address = &outcomes[0].address;
-        assert_eq!(
-            address.target.component(),
-            Some(ComponentTarget {
-                entity,
-                component: TypeId::of::<Gain>(),
-            })
-        );
-        assert_eq!(address.path, PropertyPath::new(["amount"]));
-        assert_eq!(address.type_id, TypeId::of::<f32>());
-        assert_eq!(results(&app), [Ok(()), Ok(())]);
-        assert_eq!(written::<SceneEdited>(&app).len(), 2);
-        assert!(statuses(&app).is_empty());
-    }
-
-    #[test]
-    fn a_set_value_reaches_nested_fields_through_structs_and_variants() {
-        let (mut app, entity) = values();
-
-        set::<Rig>(&mut app, entity, &["optics", "focal"], json!(24));
-        set::<Rig>(&mut app, entity, &["optics", "stops"], json!([1.4, 2.8]));
-        set::<Rig>(
-            &mut app,
-            entity,
-            &["mode"],
-            json!({ "Orbit": { "distance": 4 } }),
-        );
-        set::<Rig>(&mut app, entity, &["mode", "distance"], json!(6));
-        set::<Rig>(&mut app, entity, &["mode", "heights"], json!([1, 2]));
-
-        assert_eq!(results(&app), [Ok(()), Ok(()), Ok(()), Ok(()), Ok(())]);
-        let (optics, mode) = read(&mut app, entity, |rig: &Rig| {
-            (
-                Optics {
-                    focal: rig.optics.focal,
-                    stops: rig.optics.stops.clone(),
-                },
-                match &rig.mode {
-                    Mode::Fixed => Mode::Fixed,
-                    Mode::Orbit { distance, heights } => Mode::Orbit {
-                        distance: *distance,
-                        heights: heights.clone(),
-                    },
-                },
-            )
-        });
-        assert_eq!(
-            optics,
-            Optics {
-                focal: 24.0,
-                stops: vec![1.4, 2.8],
-            }
-        );
-        assert_eq!(
-            mode,
-            Mode::Orbit {
-                distance: 6.0,
-                heights: vec![1.0, 2.0],
-            }
-        );
-    }
-
-    #[test]
-    fn a_set_value_writes_one_element_of_a_list() {
-        let (mut app, entity) = values();
-        set::<Rig>(&mut app, entity, &["optics", "stops"], json!([1.4, 2.8]));
-        let element = PropertyPath::new([
-            PathSegment::Field("optics"),
-            PathSegment::Field("stops"),
-            PathSegment::Index(1),
-        ]);
-
-        set_at::<Rig>(&mut app, entity, element.clone(), json!(4));
-
-        assert_eq!(results(&app), [Ok(()), Ok(())]);
-        assert_eq!(
-            read(&mut app, entity, |rig: &Rig| rig.optics.stops.clone()),
-            [1.4, 4.0]
-        );
-        let outcomes = written::<PropertyCommitted>(&app);
-        assert_eq!(outcomes[1].address.path, element);
-        assert_eq!(outcomes[1].address.type_id, TypeId::of::<f32>());
-    }
-
-    #[test]
-    fn a_set_value_under_a_list_refuses_a_type_with_no_json_and_no_default() {
-        let (mut app, entity) = values();
-        app.register_type::<Track>();
-        app.main_mut().world_mut().insert(
-            Track {
-                modes: vec![Mode::Fixed],
-            },
-            entity,
-        );
-
-        set_at::<Track>(
-            &mut app,
-            entity,
-            PropertyPath::new([PathSegment::Field("modes"), PathSegment::Index(0)]),
-            json!({ "Orbit": { "distance": 4 } }),
-        );
-
-        let refused = format!(
-            "Set Track.modes.0 failed: {} has no JSON form and no registered Default, so JSON cannot build it inside a list",
-            std::any::type_name::<Mode>()
-        );
-        assert_eq!(
-            results(&app),
-            [Err(PropertyRefusal::NotEditable(refused.clone()))]
-        );
-        assert_eq!(statuses(&app), [refused]);
-        assert!(read(&mut app, entity, |track: &Track| matches!(
-            track.modes[0],
-            Mode::Fixed
-        )));
-        assert!(written::<SceneEdited>(&app).is_empty());
-    }
-
-    #[test]
-    fn a_set_value_with_an_empty_path_merges_into_the_whole_component() {
-        let (mut app, entity) = values();
-        set::<Rig>(
-            &mut app,
-            entity,
-            &["mode"],
-            json!({ "Orbit": { "distance": 4 } }),
-        );
-
-        set::<Rig>(&mut app, entity, &[], json!({ "optics": { "focal": 85 } }));
-
-        assert_eq!(results(&app), [Ok(()), Ok(())]);
-        assert_eq!(read(&mut app, entity, |rig: &Rig| rig.optics.focal), 85.0);
-        assert!(read(&mut app, entity, |rig: &Rig| matches!(
-            rig.mode,
-            Mode::Orbit { distance: 4.0, .. }
-        )));
-    }
-
-    #[test]
-    fn an_invalid_value_is_refused_and_leaves_the_component_unchanged() {
-        let (mut app, entity) = values();
-        set::<Gain>(&mut app, entity, &["amount"], json!(1.0));
-
-        set::<Gain>(&mut app, entity, &["amount"], json!("loud"));
-        set::<Rig>(&mut app, entity, &["mode"], json!("Spinning"));
-
-        assert_eq!(gain(&mut app, entity), 1.0);
-        assert!(read(&mut app, entity, |rig: &Rig| matches!(
-            rig.mode,
-            Mode::Fixed
-        )));
-        let refused = [
-            "Set Gain.amount failed: expected a number, or \"NaN\", \"inf\" or \"-inf\"",
-            "Set Rig.mode failed: mode: no variant 'Spinning'; the variants are Fixed, Orbit",
-        ];
-        assert_eq!(statuses(&app), refused);
-        assert_eq!(
-            results(&app),
-            [
-                Ok(()),
-                Err(PropertyRefusal::Undecodable(refused[0].to_owned())),
-                Err(PropertyRefusal::Undecodable(refused[1].to_owned()))
-            ]
-        );
+        app.main_mut().world_mut().trigger(gain_to(entity, 2.0));
+        assert_eq!(read(&mut app, entity, |gain: &Gain| gain.amount), 2.0);
+        assert!(dirty(&app));
+        assert_eq!(results(&app), [false, true]);
         assert_eq!(written::<SceneEdited>(&app).len(), 1);
     }
 
     #[test]
-    fn the_scene_root_is_refused() {
-        let (mut app, _) = values();
-        let world = app.main_mut().world_mut();
-        let root = world.spawn((Gain::default(), SceneRoot));
-
-        set::<Gain>(&mut app, root, &["amount"], json!(3.0));
-
-        assert_eq!(gain(&mut app, root), 0.0);
-        assert_eq!(
-            results(&app),
-            [Err(PropertyRefusal::Refused(
-                "Set Gain.amount failed: the scene root cannot be changed".to_owned()
-            ))]
+    fn a_list_commit_pushes_a_default_element_and_removes_one_by_index() {
+        let Fixture { mut app, entity } = fixture();
+        app.main_mut().world_mut().insert(
+            Rig {
+                stops: vec![1.4],
+                mode: Mode::Fixed,
+            },
+            entity,
         );
+
+        for edit in [ListEdit::Push, ListEdit::Remove(0), ListEdit::Remove(5)] {
+            app.main_mut().world_mut().trigger(list_edit(entity, edit));
+        }
+
+        assert_eq!(read(&mut app, entity, |rig: &Rig| rig.stops.clone()), [0.0]);
+        assert_eq!(results(&app), [true, true, false]);
+        assert_eq!(written::<SceneEdited>(&app).len(), 2);
     }
 
     #[test]
-    fn every_listener_refuses_an_entity_outside_the_open_scene() {
-        let (mut app, outsider) = values();
-        let world = app.main_mut().world_mut();
-        let root = world.spawn((Transform::IDENTITY, SceneRoot));
-        let member = world.spawn((Transform::IDENTITY, Gain::default()));
-        world.entity_mut(root).add_child(member);
-
-        set::<Gain>(&mut app, outsider, &["amount"], json!(3.0));
-        app.main_mut().world_mut().trigger(gain_to(outsider, 2.0));
-        app.main_mut()
-            .world_mut()
-            .trigger(EditComponent(remove::<Lens>(outsider)));
-        set::<Gain>(&mut app, member, &["amount"], json!(1.0));
-        app.main_mut().world_mut().trigger(gain_to(member, 2.0));
-        app.main_mut()
-            .world_mut()
-            .trigger(EditComponent(add::<Rig>(member)));
-
-        assert_eq!(gain(&mut app, outsider), 0.0);
-        assert_eq!(read(&mut app, outsider, |lens: &Lens| lens.focal), 35.0);
-        assert_eq!(gain(&mut app, member), 2.0);
-        assert!(
-            app.main_mut()
-                .world_mut()
-                .get_component_for_entity::<Rig>(member)
-                .is_some()
-        );
-        assert_eq!(
-            statuses(&app),
-            [
-                "Set Gain.amount failed: the entity is not part of an open scene",
-                "Set Gain.amount failed: the entity is not part of an open scene",
-                "Remove Lens failed: the entity is not part of an open scene",
-            ]
-        );
-        assert_eq!(written::<SceneEdited>(&app).len(), 3);
-    }
-
-    #[test]
-    fn an_unknown_path_a_missing_component_and_a_missing_entity_are_refused() {
-        let (mut app, entity) = values();
-        let world = app.main_mut().world_mut();
-        let bare = world.spawn(Transform::IDENTITY);
-        let gone = world.spawn(Gain::default());
-        world.despawn(gone);
-
-        set::<Gain>(&mut app, entity, &["volume"], json!(1.0));
-        set::<Gain>(&mut app, bare, &["amount"], json!(1.0));
-        set::<Gain>(&mut app, gone, &["amount"], json!(1.0));
-        set::<Plumbing>(&mut app, entity, &[], json!(null));
-
-        assert_eq!(
-            statuses(&app),
-            [
-                "Set Gain.volume failed: the property was not found",
-                "Set Gain.amount failed: its entity, component or document no longer exists",
-                "Set Gain.amount failed: its entity, component or document no longer exists",
-                "Set the component failed: the component type is not registered",
-            ]
-        );
-        assert_eq!(gain(&mut app, entity), 0.0);
-        assert!(written::<SceneEdited>(&app).is_empty());
-    }
-
-    #[test]
-    fn an_entity_reference_is_written_as_the_live_entity_it_names() {
-        let (mut app, entity) = values();
+    fn a_set_value_writes_a_field_switches_a_variant_and_resolves_entity_and_asset_references() {
+        let Fixture { mut app, entity } = fixture();
+        let mut server = AssetServer::new();
+        server.register_asset(&AssetStore::<Note>::new());
+        app.insert_resource(server.clone());
         let target = app.main_mut().world_mut().spawn(());
+        app.main_mut().world_mut().insert(
+            (
+                Gain::default(),
+                Rig::default(),
+                Follow::default(),
+                Voice::default(),
+            ),
+            entity,
+        );
+        let note = AssetId::new();
+        let set = |app: &mut App, component: TypeId, path: &[&'static str], value: Value| {
+            app.main_mut().world_mut().trigger(SetValue {
+                entity,
+                component,
+                path: PropertyPath::new(path.iter().copied()),
+                value,
+            });
+        };
 
-        set::<Follow>(&mut app, entity, &["target"], json!(target.to_id_string()));
+        set(&mut app, TypeId::of::<Gain>(), &["amount"], json!(2.5));
+        set(&mut app, TypeId::of::<Gain>(), &["amount"], json!("loud"));
+        set(
+            &mut app,
+            TypeId::of::<Rig>(),
+            &["mode"],
+            json!({ "Orbit": { "distance": 4 } }),
+        );
+        set(
+            &mut app,
+            TypeId::of::<Rig>(),
+            &["mode", "distance"],
+            json!(6),
+        );
+        set(
+            &mut app,
+            TypeId::of::<Follow>(),
+            &["target"],
+            json!(target.to_id_string()),
+        );
+        set(
+            &mut app,
+            TypeId::of::<Voice>(),
+            &["note"],
+            json!(note.simple_hex()),
+        );
 
-        assert_eq!(results(&app), [Ok(())]);
+        assert_eq!(results(&app), [true, false, true, true, true, true]);
+        assert_eq!(read(&mut app, entity, |gain: &Gain| gain.amount), 2.5);
+        assert!(read(&mut app, entity, |rig: &Rig| rig.mode
+            == Mode::Orbit { distance: 6.0 }));
         assert_eq!(
             read(&mut app, entity, |follow: &Follow| follow.target),
             SceneEntityRef::Entity(target)
         );
-    }
-
-    #[test]
-    fn an_asset_handle_is_written_strong_and_requested_from_the_asset_server() {
-        let (mut app, entity) = values();
-        let mut server = AssetServer::new();
-        server.register_asset(&AssetStore::<Note>::new());
-        app.insert_resource(server.clone());
-        let id = AssetId::new();
-
-        set::<Voice>(&mut app, entity, &["note"], json!(id.simple_hex()));
-
-        assert_eq!(results(&app), [Ok(())]);
-        let (strong, written) = read(&mut app, entity, |voice: &Voice| {
-            (
-                matches!(voice.note, AssetHandle::Strong(..)),
-                voice.note.id(),
-            )
-        });
-        assert!(strong, "a handle set from JSON keeps its asset alive");
-        assert_eq!(written, id);
+        assert!(read(&mut app, entity, |voice: &Voice| matches!(
+            voice.note,
+            AssetHandle::Strong(..)
+        ) && voice.note.id()
+            == note));
         assert!(server.is_loading());
+        assert_eq!(written::<SceneEdited>(&app).len(), 5);
     }
 
     #[test]
-    fn a_color_is_written_from_its_components() {
-        let (mut app, entity) = values();
+    fn an_edit_component_adds_and_removes_a_component_and_a_refused_one_changes_nothing() {
+        let Fixture { mut app, entity } = fixture();
+        let edit = |app: &mut App, edit: fn(Entity, TypeId) -> ComponentEdit| {
+            app.main_mut()
+                .world_mut()
+                .trigger(EditComponent(edit(entity, TypeId::of::<Gain>())));
+        };
+        let add = |entity, component| ComponentEdit::Add { entity, component };
+        let remove = |entity, component| ComponentEdit::Remove { entity, component };
 
-        set::<Tint>(&mut app, entity, &["color"], json!([0.5, 0.25, 1.0, 1.0]));
-
-        assert_eq!(results(&app), [Ok(())]);
-        assert_eq!(
-            read(&mut app, entity, |tint: &Tint| tint.color),
-            Color::rgba(0.5, 0.25, 1.0, 1.0)
+        edit(&mut app, remove);
+        assert!(!dirty(&app));
+        edit(&mut app, add);
+        assert!(
+            app.main_mut()
+                .world_mut()
+                .get_component_for_entity::<Gain>(entity)
+                .is_some()
         );
+        assert!(dirty(&app));
+        edit(&mut app, remove);
+        assert!(
+            app.main_mut()
+                .world_mut()
+                .get_component_for_entity::<Gain>(entity)
+                .is_none()
+        );
+
+        let outcomes: Vec<bool> = written::<ComponentEdited>(&app)
+            .into_iter()
+            .map(|outcome| outcome.result.is_ok())
+            .collect();
+        assert_eq!(outcomes, [false, true, true]);
+        assert_eq!(written::<SceneEdited>(&app).len(), 2);
     }
 }

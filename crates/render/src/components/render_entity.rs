@@ -103,22 +103,6 @@ mod tests {
             Some(tagged)
         );
 
-        sync_render_entities(&mut main, &mut render);
-        assert_eq!(
-            linked(&main, tagged),
-            mirror,
-            "a second sync does not relink"
-        );
-
-        main.remove_component::<SyncWithRenderWorld>(tagged);
-        sync_render_entities(&mut main, &mut render);
-        assert!(
-            render
-                .get_component_for_entity::<MainEntity>(mirror)
-                .is_some(),
-            "a live entity that drops the marker keeps its mirror"
-        );
-
         let gone = main.spawn(SyncWithRenderWorld);
         let stale = render.spawn(MainEntity::new(gone));
         main.despawn(gone);

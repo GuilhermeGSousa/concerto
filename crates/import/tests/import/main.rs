@@ -4,5 +4,4 @@ mod import_into;
 mod pack;
 mod persistent_identity;
 mod rename_hints;
-mod runtime_identity;
 mod source_metadata;

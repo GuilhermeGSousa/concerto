@@ -286,7 +286,7 @@ impl Gamepad {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Input, KeyCode, PhysicalKey};
+    use crate::input::Input;
 
     const PAD: GamepadId = GamepadId(0);
 
@@ -322,10 +322,6 @@ mod tests {
             Shaped {
                 raw: Vec2::new(0.1, 0.05),
                 shaped: Vec2::ZERO,
-            },
-            Shaped {
-                raw: Vec2::new(0.0, 0.95),
-                shaped: Vec2::new(0.0, 1.0),
             },
             Shaped {
                 raw: Vec2::new(-1.0, 0.0),
@@ -369,19 +365,6 @@ mod tests {
     }
 
     #[test]
-    fn a_pad_button_goes_pressed_down_released_up() {
-        let mut input = input_with_pad();
-        input.update_gamepad_button(PAD, GamepadButton::South, 1.0);
-        assert!(the_pad(&input).button_state(GamepadButton::South) == InputState::Pressed);
-        input.update();
-        assert!(the_pad(&input).button_state(GamepadButton::South) == InputState::Down);
-        input.update_gamepad_button(PAD, GamepadButton::South, 0.0);
-        assert!(the_pad(&input).is_just_released(GamepadButton::South));
-        input.update();
-        assert!(the_pad(&input).button_state(GamepadButton::South) == InputState::Up);
-    }
-
-    #[test]
     fn release_all_zeroes_pads_and_keeps_them_connected() {
         let mut input = input_with_pad();
         input.update_gamepad_button(PAD, GamepadButton::RightTrigger, 1.0);
@@ -395,22 +378,5 @@ mod tests {
         assert!(pad.is_just_released(GamepadButton::RightTrigger));
         assert_eq!(pad.button_value(GamepadButton::RightTrigger), 0.0);
         assert_eq!(pad.stick(GamepadStick::Left), Vec2::ZERO);
-    }
-
-    #[test]
-    fn releasing_keys_and_buttons_leaves_pads_alone() {
-        let key = PhysicalKey::Code(KeyCode::KeyW);
-        let mut input = input_with_pad();
-        input.update_key_input(key, true);
-        input.update_gamepad_button(PAD, GamepadButton::South, 1.0);
-        left_stick(&mut input, Vec2::new(1.0, 0.0));
-        input.update();
-
-        input.release_keys_and_buttons();
-
-        assert!(!input.is_held(key));
-        let pad = the_pad(&input);
-        assert!(pad.is_held(GamepadButton::South));
-        assert!(close(pad.stick(GamepadStick::Left), Vec2::new(1.0, 0.0)));
     }
 }

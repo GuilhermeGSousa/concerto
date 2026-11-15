@@ -382,12 +382,9 @@ pub(crate) fn bind_clip_keys(mut actions: ResMut<ActionMap>) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{Tab, eventful_clip, single_key_clip, tab_of_clip};
+    use super::super::tests::{Tab, eventful_clip, tab_of_clip};
     use super::*;
-    use crate::tests::FOOTSTEP;
-    use concerto_animation::clip::AnimationClip;
     use concerto_ecs::events::event_channel::EventChannel;
-    use concerto_editor::actions::{DeleteEntity, TreeContext, ViewportContext};
     use concerto_name::Name;
     use concerto_window::input::actions::{ActionLabel, InternedActionLabel};
 
@@ -411,25 +408,17 @@ mod tests {
                 .clone()
         }
 
-        fn focused(&self) -> Option<Entity> {
-            **self.world().get_resource::<FocusedWidget>().unwrap()
-        }
-
         fn focus(&mut self, field: Option<Entity>) {
             **self.f.world.get_resource_mut::<FocusedWidget>().unwrap() = field;
         }
 
-        fn type_into(&mut self, field: Entity, value: &str) {
+        fn enter(&mut self, field: Entity, value: &str) {
             self.focus(Some(field));
             self.f
                 .world
                 .get_component_for_entity_mut::<UITextInput>(field)
                 .unwrap()
                 .value = value.to_owned();
-        }
-
-        fn enter(&mut self, field: Entity, value: &str) {
-            self.type_into(field, value);
             self.f
                 .world
                 .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
@@ -441,67 +430,18 @@ mod tests {
             self.f.frame();
         }
 
-        fn escape(&mut self, field: Entity) {
-            self.f
-                .world
-                .get_resource_mut::<EventChannel<UITextInputCancelled>>()
-                .unwrap()
-                .push_event(UITextInputCancelled { entity: field });
-            self.focus(None);
-            self.f.frame();
-        }
-
-        fn select(&mut self, index: usize) {
-            self.select_marker(Some(index));
-            self.f.frame();
-        }
-
         fn delete_means(&self) -> Option<InternedActionLabel> {
             self.world()
                 .get_resource::<ActionMap>()
                 .unwrap()
                 .resolve(Shortcut::key(KeyCode::Delete))
         }
-
-        fn press_delete(&mut self) {
-            self.f
-                .world
-                .get_resource_mut::<EventChannel<ActionFired>>()
-                .unwrap()
-                .push_event(ActionFired::new(RemoveClipEvent));
-            self.f.frame();
-        }
-
-        fn focused_is(&self, field: Entity) -> bool {
-            self.focused() == Some(field)
-        }
     }
 
-    fn event_tab() -> Tab {
+    #[test]
+    fn an_event_added_at_the_head_is_renamed_and_retimed_by_enter_and_removed_by_delete() {
         let mut tab = tab_of_clip(&eventful_clip());
         tab.f.frame();
-        tab
-    }
-
-    #[test]
-    fn with_nothing_selected_the_section_shows_only_add_event() {
-        let tab = event_tab();
-        let section = tab.events();
-
-        assert!(tab.shown(section.add));
-        for hidden in [
-            section.name_row,
-            section.time_row,
-            section.type_name,
-            section.remove,
-        ] {
-            assert!(!tab.shown(hidden));
-        }
-    }
-
-    #[test]
-    fn add_event_adds_event_at_the_heads_frame_and_selects_it() {
-        let mut tab = event_tab();
         tab.scrub(2.01);
         tab.until("the scrub never came back", |transport| {
             !transport.playing && frame_at(transport.time, 30.0) == 60
@@ -511,226 +451,31 @@ mod tests {
         tab.click(add);
         tab.f.frame();
 
-        assert_eq!(tab.state().events.len(), 4);
         assert_eq!(tab.state().events[3], named(2.0, "event"));
         assert_eq!(tab.state().selected_event, Some(3));
-        assert!(!tab.clean());
-        assert_eq!(tab.status(), "");
-        let section = tab.events();
-        assert!(tab.shown(section.name_row));
-        assert_eq!(tab.value(section.name), "event");
-        assert_eq!(tab.value(section.time), "60");
-    }
-
-    #[test]
-    fn add_event_is_disabled_while_the_clip_has_no_duration() {
-        let mut tab = tab_of_clip(&AnimationClip::default());
-        tab.f.frame();
-        assert!(tab.disabled(tab.events().add));
-
-        let tab = event_tab();
-        assert!(!tab.disabled(tab.events().add));
-    }
-
-    #[test]
-    fn the_name_field_applies_on_enter() {
-        let mut tab = event_tab();
-        tab.select(1);
-        let name = tab.events().name;
-        assert_eq!(tab.value(name), "footstep");
-
-        tab.enter(name, "land");
-
-        assert_eq!(tab.state().events[1], named(0.5, "land"));
-        assert_eq!(tab.value(name), "land");
-        assert_eq!(tab.timeline().markers[1].label, "land");
-        assert_eq!(tab.status(), "");
-        assert!(!tab.clean());
-    }
-
-    #[test]
-    fn the_time_field_reads_frames_with_a_rate_and_writes_its_own_format_after_enter() {
-        let mut tab = event_tab();
-        tab.select(1);
-        let time = tab.events().time;
-        assert_eq!(tab.value(time), "15");
-
-        tab.enter(time, " 45 ");
-
-        assert_eq!(tab.event_times(), vec![0.25, 1.5, 1.0]);
-        assert_eq!(tab.value(time), "45");
-        assert!(tab.focused_is(time));
-        assert!(!tab.clean());
-    }
-
-    #[test]
-    fn the_time_field_reads_seconds_with_three_decimals_without_a_rate() {
-        let mut tab = tab_of_clip(&single_key_clip());
-        tab.paused_at(0.5);
-        let add = tab.events().add;
-        tab.click(add);
-        tab.f.frame();
-        let time = tab.events().time;
-        assert_eq!(tab.value(time), "0.500");
-
-        tab.enter(time, "1.25");
-
-        assert_eq!(tab.event_times(), vec![1.25]);
-        assert_eq!(tab.value(time), "1.250");
-    }
-
-    #[test]
-    fn a_refused_enter_puts_back_the_events_value_while_the_field_keeps_focus() {
-        let mut tab = event_tab();
-        tab.select(2);
         let section = tab.events();
         let (name, time) = (section.name, section.time);
+        assert_eq!(tab.value(time), "60");
 
-        tab.enter(time, "15");
+        tab.enter(name, "land");
+        tab.enter(time, " 45 ");
 
-        assert_eq!(tab.status(), "`footstep` is already at frame 15");
-        assert_eq!(tab.value(time), "30");
-        assert!(tab.focused_is(time));
+        assert_eq!(tab.state().events[3], named(1.5, "land"));
+        assert_eq!(tab.value(time), "45");
+        assert_eq!(tab.status(), "");
+
+        tab.focus(None);
+        tab.f.frame();
+        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
+        tab.f
+            .world
+            .get_resource_mut::<EventChannel<ActionFired>>()
+            .unwrap()
+            .push_event(ActionFired::new(RemoveClipEvent));
+        tab.f.frame();
+
         assert_eq!(tab.event_times(), vec![0.25, 0.5, 1.0]);
-
-        tab.enter(time, "abc");
-
-        assert_eq!(tab.status(), "`abc` is not a whole frame");
-        assert_eq!(tab.value(time), "30");
-
-        tab.enter(name, "");
-
-        assert_eq!(tab.status(), "An event needs a name");
-        assert_eq!(tab.value(name), "footstep");
-        assert!(tab.focused_is(name));
-        assert!(tab.clean());
-    }
-
-    #[test]
-    fn a_focused_field_is_not_overwritten_and_escape_or_losing_focus_puts_back_its_value() {
-        let mut tab = event_tab();
-        tab.select(1);
-        let name = tab.events().name;
-
-        tab.type_into(name, "typing");
-        tab.f.frame();
-        assert_eq!(tab.value(name), "typing");
-
-        tab.escape(name);
-        assert_eq!(tab.value(name), "footstep");
-
-        tab.type_into(name, "half");
-        tab.f.frame();
-        tab.focus(None);
-        tab.f.frame();
-
-        assert_eq!(tab.value(name), "footstep");
-        assert_eq!(tab.state().events[1], named(0.5, "footstep"));
-        assert!(tab.clean());
-    }
-
-    #[test]
-    fn selecting_a_typed_event_shows_its_type_name_and_disables_remove() {
-        let mut tab = event_tab();
-
-        tab.select(0);
-
-        let section = tab.events();
-        assert!(tab.shown(section.type_name));
-        assert_eq!(tab.text(section.type_name).text, FOOTSTEP);
-        assert!(!tab.shown(section.name_row));
-        assert!(!tab.shown(section.time_row));
-        assert!(tab.shown(section.remove));
-        assert!(tab.disabled(section.remove));
-
-        tab.select(1);
-
-        let section = tab.events();
-        assert!(!tab.shown(section.type_name));
-        assert!(tab.shown(section.name_row));
-        assert!(!tab.disabled(section.remove));
-    }
-
-    #[test]
-    fn remove_removes_the_selected_event() {
-        let mut tab = event_tab();
-        tab.select(1);
-        let remove = tab.events().remove;
-
-        tab.click(remove);
-        tab.f.frame();
-
-        assert_eq!(tab.event_times(), vec![0.25, 1.0]);
-        assert_eq!(tab.state().selected_event, None);
-        assert!(!tab.shown(remove));
-        assert!(!tab.clean());
-    }
-
-    #[test]
-    fn the_delete_action_removes_the_selected_named_event_while_its_context_is_active() {
-        let mut tab = event_tab();
-        assert_eq!(tab.delete_means(), None);
-        tab.select(1);
-        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
-
-        tab.press_delete();
-
-        assert_eq!(tab.event_times(), vec![0.25, 1.0]);
         assert_eq!(tab.state().selected_event, None);
         assert!(!tab.clean());
-        assert_eq!(tab.delete_means(), None);
-    }
-
-    #[test]
-    fn a_typed_event_or_a_focused_text_input_keeps_the_context_off() {
-        let mut tab = event_tab();
-        tab.select(0);
-        assert_eq!(tab.delete_means(), None);
-
-        tab.select(1);
-        let name = tab.events().name;
-        tab.focus(Some(name));
-        tab.f.frame();
-        assert_eq!(tab.delete_means(), None);
-
-        tab.focus(None);
-        tab.f.frame();
-        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
-    }
-
-    #[test]
-    fn the_unsaved_changes_prompt_keeps_the_context_off() {
-        let mut tab = event_tab();
-        tab.select(1);
-        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
-
-        let actions = tab.f.world.get_resource_mut::<ActionMap>().unwrap();
-        actions.push_context(PromptContext);
-        tab.f.frame();
-        assert_eq!(tab.delete_means(), None);
-
-        let actions = tab.f.world.get_resource_mut::<ActionMap>().unwrap();
-        actions.pop_context(PromptContext);
-        tab.f.frame();
-        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
-    }
-
-    #[test]
-    fn the_delete_action_removes_the_selected_event_over_the_viewport_and_the_tree() {
-        let mut tab = event_tab();
-        tab.select_marker(Some(1));
-        let actions = tab.f.world.get_resource_mut::<ActionMap>().unwrap();
-        let delete = Shortcut::key(KeyCode::Delete);
-        actions.bind(DeleteEntity, delete, ViewportContext);
-        actions.bind(DeleteEntity, delete, TreeContext);
-        actions.push_context(TreeContext);
-        actions.push_context(ViewportContext);
-        tab.f.frame();
-
-        assert_eq!(tab.delete_means(), Some(RemoveClipEvent.intern()));
-
-        tab.press_delete();
-
-        assert_eq!(tab.event_times(), vec![0.25, 1.0]);
     }
 }

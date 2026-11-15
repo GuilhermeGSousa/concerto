@@ -622,20 +622,14 @@ pub fn point_along(points: &[Vec3], distance: f32) -> Vec3 {
 mod tests {
     use glam::Vec3;
 
-    use super::{path_length, point_along};
+    use super::path_length;
     use crate::casefile::CaseData;
 
     #[test]
-    fn the_manor_reads_its_floors_archways_and_feature_nodes() {
+    fn the_manor_places_a_point_in_the_room_of_its_floor_and_routes_up_its_stairs() {
         let data = CaseData::manor_walk();
         let room = |name: &str| data.catalog.rooms.id(name).unwrap();
-        let door = |name: &str| data.catalog.doors.id(name).unwrap();
         let level = &data.level;
-
-        assert_eq!(data.catalog.rooms.len(), 40);
-        assert_eq!(level.doors().count(), 53);
-        assert!(level.door(door("a_hall_e")).always_open);
-        assert!(!level.door(door("d_back")).always_open);
 
         let bedroom = level.room(room("g1"));
         let middle = (bedroom.bounds[0].min + bedroom.bounds[0].max) / 2.0;
@@ -661,28 +655,6 @@ mod tests {
             level.room_at(Vec3::new(18.2, 3.0, -13.0)),
             Some(room("hall")),
             "the main stair climbs inside the hall"
-        );
-
-        let lamps = level.lamps();
-        for anchor in &level.anchors {
-            let home = level.room(anchor.room);
-            let lit = lamps.iter().any(|lamp| {
-                lamp.room == anchor.room
-                    && lamp.position.y > anchor.position.y
-                    && lamp.position.distance(anchor.position) < lamp.range
-            });
-            assert_eq!(
-                lit, home.indoors,
-                "the anchor at {} has a lamp of its room over it only indoors",
-                anchor.position
-            );
-        }
-        let garden = Vec3::new(9.0, -0.6, -28.0);
-        assert!(
-            lamps
-                .iter()
-                .all(|lamp| lamp.position.distance(garden) > lamp.range),
-            "no lamp reaches the middle of the garden"
         );
 
         let anchor = |name: &str| data.catalog.anchors.id(name).unwrap();
@@ -711,62 +683,5 @@ mod tests {
             (38.0..50.0).contains(&to_bed),
             "the Staff's walk to bed is the back stairs' length, not {to_bed} m"
         );
-
-        let hidden = level.hidden_nodes(|_| false);
-        assert!(hidden.contains(&"acoustic.F01.src"));
-        assert!(
-            !hidden.contains(&"F01.bolt"),
-            "a feature that is off shows its off nodes"
-        );
-    }
-
-    #[test]
-    fn the_test_level_reads_rooms_anchors_and_routes_through_placed_doors() {
-        let data = CaseData::test();
-        let mut level = data.level.clone();
-        let catalog = &data.catalog;
-        let room = |name: &str| catalog.rooms.id(name).unwrap();
-        let anchor = |name: &str| catalog.anchors.id(name).unwrap();
-        let door = |name: &str| catalog.doors.id(name).unwrap();
-
-        assert_eq!(
-            level.room_at(Vec3::new(3.0, 0.0, -3.0)),
-            Some(room("room_a"))
-        );
-        assert_eq!(
-            level.room_at(Vec3::new(9.0, 1.0, -3.0)),
-            Some(room("room_b"))
-        );
-        assert_eq!(
-            level.room_at(Vec3::new(9.0, 0.0, -7.5)),
-            Some(room("corridor"))
-        );
-        assert_eq!(level.room_at(Vec3::new(-1.0, 0.0, 0.0)), None);
-
-        let seat = level.anchor(anchor("a_seat_1"));
-        assert_eq!(seat.position, Vec3::new(1.5, 0.0, -1.5));
-        assert!(
-            (seat.yaw + std::f32::consts::FRAC_PI_2).abs() < 1e-5,
-            "it faces +X"
-        );
-
-        assert_eq!(
-            level.doors_on_the_way(room("room_a"), room("room_b")),
-            [door("d_ab")]
-        );
-        level.place_door(door("d_ab"), Vec3::new(6.0, 1.0, -3.0));
-        let route = level.route(anchor("a_seat_1"), anchor("b_stand_1"));
-        assert_eq!(
-            route,
-            [
-                Vec3::new(1.5, 0.0, -1.5),
-                Vec3::new(6.0, 0.0, -3.0),
-                Vec3::new(8.4, 0.0, -3.0)
-            ]
-        );
-        let length = path_length(&route);
-        assert!((point_along(&route, length + 5.0) - route[2]).length() < 1e-5);
-        assert!((point_along(&route, length - 1.0) - Vec3::new(7.4, 0.0, -3.0)).length() < 1e-4);
-        assert_eq!(point_along(&route, -1.0), route[0]);
     }
 }

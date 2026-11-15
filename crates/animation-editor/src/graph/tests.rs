@@ -13,7 +13,17 @@ use concerto_animation::{
     retarget::RetargetNode,
 };
 use concerto_app::App;
-use concerto_ecs::component::scene::SceneEntityRef;
+use concerto_ecs::{
+    IntoSystem, component::scene::SceneEntityRef, events::event_channel::EventChannel,
+};
+use concerto_editor::{
+    asset_editor::{ActiveEditor, AssetEditorRegistry, SaveRequested},
+    hosted::{
+        HostedApp,
+        testing::{SceneFixture, scene_recipe},
+    },
+    scene::SceneRecipe,
+};
 use concerto_foundation::{
     assets::{
         Asset, AssetId,
@@ -39,6 +49,12 @@ use rmcp::{
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
+
+use super::{
+    AnimationGraphEditor, EditGraph, GraphDocument, GraphEdit, GraphEdited, GraphNodeId,
+    document::{apply_graph_edit, load_graph},
+    save::save_graphs,
+};
 
 const SIZE: (u32, u32) = (800, 600);
 const PATIENCE: Duration = Duration::from_secs(120);
@@ -1115,4 +1131,99 @@ fn the_preview_the_parameters_and_the_live_state_of_a_graph_are_read_and_set_ove
         previewed.paused,
         "Set moving to false. The preview is paused, so no live state follows; set playing on the Preview value to see the graph play."
     );
+}
+
+fn animated_recipe(app: &mut App) {
+    scene_recipe(app);
+    app.register_plugin(concerto_animation::plugin::AnimationPlugin);
+}
+
+#[test]
+fn nodes_added_and_connected_by_edit_graph_are_saved_into_the_graphs_file() {
+    let mut f = SceneFixture::new();
+    f.world.insert_resource(SceneRecipe {
+        recipe: animated_recipe,
+        gpu: None,
+        clipboard: None,
+    });
+    f.world
+        .get_resource_mut::<AssetEditorRegistry>()
+        .unwrap()
+        .register::<AnimationGraph, AnimationGraphEditor>()
+        .unwrap();
+    f.world.insert_resource(EventChannel::<GraphEdited>::new());
+    f.world.add_listener(apply_graph_edit);
+    f.add_delivery(load_graph.into_boxed_system());
+    f.add_delivery(save_graphs.into_boxed_system());
+    let root = f.project_root.clone();
+    let registry = f.world.get_resource_mut::<AssetRegistry>().unwrap();
+    let id = save_content_asset_into(&AnimationGraph::new(), &root, GRAPH, registry).unwrap();
+    let asset = registry.get(id).unwrap().clone();
+    f.request(&asset);
+    let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
+    f.frames_until("the graph never opened", |f| {
+        f.document(document).pending.is_none()
+            && f.world
+                .get_component_for_entity::<HostedApp>(document)
+                .is_some()
+    });
+    let result = f
+        .world
+        .get_component_for_entity::<GraphDocument>(document)
+        .unwrap()
+        .graphs()[0]
+        .copy
+        .result();
+    let add = |f: &mut SceneFixture, type_name: &str, parent: Option<GraphNodeId>| {
+        f.world.trigger(EditGraph {
+            document,
+            edit: GraphEdit::AddNode {
+                type_name: type_name.to_owned(),
+                parent,
+                slot: None,
+            },
+        });
+        let edited = f.written::<GraphEdited>();
+        edited
+            .last()
+            .and_then(|edited| edited.result.clone().ok())
+            .and_then(|change| change.node)
+            .expect("the node was added")
+    };
+
+    let layer = add(&mut f, "LayerNode", Some(result));
+    add(&mut f, "AnimationClipNode", Some(layer));
+    let loose = add(&mut f, "AnimationClipNode", None);
+    f.world.trigger(EditGraph {
+        document,
+        edit: GraphEdit::Connect {
+            child: loose,
+            parent: layer,
+            slot: None,
+        },
+    });
+    f.frame();
+    assert!(f.unsaved(document));
+    f.world.insert(SaveRequested, document);
+    f.frame();
+
+    let bytes = std::fs::read(root.join(GRAPH)).unwrap();
+    let (header, graph) = decode_content_asset::<AnimationGraph>(&bytes).unwrap();
+    assert_eq!(header.asset_id, id);
+    let layer = graph.inputs(graph.result_index())[0];
+    assert!(
+        graph
+            .node(layer)
+            .unwrap()
+            .type_name()
+            .ends_with("LayerNode")
+    );
+    let clips: Vec<String> = graph
+        .inputs(layer)
+        .iter()
+        .map(|input| graph.node(*input).unwrap().type_name().to_owned())
+        .collect();
+    assert_eq!(clips.len(), 2);
+    assert!(clips.iter().all(|clip| clip.ends_with("AnimationClipNode")));
+    assert!(!f.unsaved(document));
 }

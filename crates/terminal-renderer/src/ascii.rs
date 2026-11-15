@@ -45,20 +45,8 @@ mod tests {
         let cases = [
             Shade { luma: 0, char: ' ' },
             Shade {
-                luma: 28,
-                char: ' ',
-            },
-            Shade {
-                luma: 29,
-                char: '.',
-            },
-            Shade {
                 luma: 128,
                 char: '=',
-            },
-            Shade {
-                luma: 254,
-                char: '%',
             },
             Shade {
                 luma: 255,

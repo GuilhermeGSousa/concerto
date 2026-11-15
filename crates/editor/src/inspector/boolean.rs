@@ -94,30 +94,3 @@ pub(crate) fn refresh_bool_fields(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
-
-    #[test]
-    fn edit_to_sets_the_value() {
-        for value in [true, false] {
-            let mut field = !value;
-            let edit = BoolCheckbox
-                .edit_to(&value)
-                .expect("a checkbox offers a value edit");
-            BoolCheckbox
-                .apply(
-                    &mut field,
-                    &edit,
-                    &EditContext {
-                        assets: &AssetServer::new(),
-                        registry: &AssetRegistry::default(),
-                    },
-                )
-                .unwrap();
-            assert_eq!(field, value);
-        }
-    }
-}

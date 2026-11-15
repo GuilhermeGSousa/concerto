@@ -149,155 +149,81 @@ impl HostedEventsAppExt for App {
 mod tests {
     use super::*;
     use crate::hosted::testing::*;
-    use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_ecs::{IntoSystem, ResMut, Resource, System};
 
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct Said {
+        document: Entity,
+        said: u32,
+    }
+
     #[derive(Resource, Default)]
-    struct Heard(Vec<(Entity, u32)>);
+    struct Heard(Vec<Said>);
 
     fn record(mut events: HostedAppEvents<Echo>, mut heard: ResMut<Heard>) {
-        let mut read: Vec<(Entity, u32)> = events
+        let mut read: Vec<Said> = events
             .read()
             .into_iter()
-            .map(|(document, echo)| (document, echo.0))
+            .map(|(document, echo)| Said {
+                document,
+                said: echo.0,
+            })
             .collect();
-        read.sort_by_key(|(document, said)| (document.index(), *said));
+        read.sort_by_key(|said| (said.document.index(), said.said));
         heard.0.extend(read);
     }
 
-    struct Reader {
-        world: World,
-        system: Box<dyn System<In = ()>>,
-    }
-
-    impl Reader {
-        fn new() -> Self {
-            let mut world = World::new();
-            world.insert_resource(Heard::default());
-            let mut system: Box<dyn System<In = ()>> = Box::new(record.into_system());
-            system.initialize(&mut world);
-            Self { world, system }
-        }
-
-        fn host(&mut self) -> Entity {
-            self.world.spawn(hosted_now(plain_recipe, |_| {}))
-        }
-
-        fn say(&mut self, document: Entity, said: u32) {
-            self.world
+    #[test]
+    fn events_are_read_once_from_every_hosted_app_with_their_document_through_play_and_stop() {
+        let mut world = World::new();
+        world.insert_resource(Heard::default());
+        let mut system = record.into_system();
+        system.initialize(&mut world);
+        let mut read = |world: &mut World| {
+            system.run_and_apply((), world);
+            std::mem::take(&mut world.get_resource_mut::<Heard>().unwrap().0)
+        };
+        let say = |world: &mut World, document: Entity, said: u32| {
+            world
                 .get_component_for_entity_mut::<HostedApp>(document)
                 .unwrap()
                 .trigger(Say(said));
-        }
+        };
+        let first = world.spawn(hosted_now(plain_recipe, |_| {}));
+        let second = world.spawn(hosted_now(plain_recipe, |_| {}));
 
-        fn read(&mut self) -> Vec<(Entity, u32)> {
-            self.system.run_and_apply((), &mut self.world);
-            std::mem::take(&mut self.world.get_resource_mut::<Heard>().unwrap().0)
-        }
-    }
-
-    #[test]
-    fn events_are_read_from_every_hosted_app_with_their_document() {
-        let mut r = Reader::new();
-        let first = r.host();
-        let second = r.host();
-
-        r.say(first, 1);
-        r.say(second, 2);
-        r.say(first, 3);
-
-        assert_eq!(r.read(), vec![(first, 1), (first, 3), (second, 2)]);
-    }
-
-    #[test]
-    fn each_event_is_read_once() {
-        let mut r = Reader::new();
-        let document = r.host();
-        r.say(document, 1);
-        assert_eq!(r.read(), vec![(document, 1)]);
-
-        assert!(r.read().is_empty());
-
-        r.say(document, 2);
-        assert_eq!(r.read(), vec![(document, 2)]);
-    }
-
-    #[test]
-    fn a_cursor_follows_its_app_through_parking_and_swapping() {
-        let mut r = Reader::new();
-        let document = r.host();
-        r.say(document, 1);
-        assert_eq!(r.read(), vec![(document, 1)]);
-
-        let play = hosted_now(plain_recipe, |_| {});
-        let edit = std::mem::replace(
-            &mut *r
-                .world
-                .get_component_for_entity_mut::<HostedApp>(document)
-                .unwrap(),
-            play,
+        say(&mut world, first, 1);
+        say(&mut world, second, 2);
+        say(&mut world, first, 3);
+        let said = |document, said| Said { document, said };
+        assert_eq!(
+            read(&mut world),
+            [said(first, 1), said(first, 3), said(second, 2)]
         );
-        r.world.insert(ParkedEditApp(edit), document);
-        r.say(document, 10);
-        assert_eq!(r.read(), vec![(document, 10)]);
+        assert!(read(&mut world).is_empty());
 
-        for (mut shown, mut parked) in r
-            .world
-            .query::<(&mut HostedApp, &mut ParkedEditApp), ()>()
-            .iter(&mut r.world)
-        {
-            std::mem::swap(&mut **shown, &mut parked.0);
-        }
-        r.world.remove_component::<ParkedEditApp>(document);
-        r.say(document, 2);
-        assert_eq!(r.read(), vec![(document, 2)]);
-    }
+        let edit = std::mem::replace(
+            &mut *world
+                .get_component_for_entity_mut::<HostedApp>(first)
+                .unwrap(),
+            hosted_now(plain_recipe, |_| {}),
+        );
+        world.insert(ParkedEditApp(edit), first);
+        say(&mut world, first, 10);
+        assert_eq!(read(&mut world), [said(first, 10)]);
 
-    #[test]
-    fn only_the_cursors_of_live_worlds_are_kept() {
-        let mut cursors = HostedCursors::<Echo>::from_world(&World::new());
-        let mut kept = World::new();
-        kept.insert_resource(EventChannel::<Echo>::default());
-        let mut gone = World::new();
-        gone.insert_resource(EventChannel::<Echo>::default());
-        cursors.read(&kept);
-        cursors.read(&gone);
-
-        cursors.keep_only(&[kept.id()]);
-
-        assert_eq!(cursors.cursors.len(), 1);
-        assert!(cursors.cursors.contains_key(&kept.id()));
-    }
-
-    fn hosted_echoes(app: &App) -> Vec<(Entity, u32)> {
-        let mut cursor = EventCursor::default();
-        app.get_resource::<EventChannel<Hosted<Echo>>>()
-            .unwrap()
-            .read_from(&mut cursor)
-            .map(|hosted| (hosted.document, hosted.event.0))
-            .collect()
-    }
-
-    #[test]
-    fn a_forwarded_type_is_rewritten_once_even_when_registered_twice() {
-        let mut app = App::new();
-        app.register_plugin(MainSchedulePlugin)
-            .register_plugin(TimePlugin)
-            .forward_hosted_event::<Echo>()
-            .forward_hosted_event::<Echo>();
-        let document = app
-            .main_mut()
-            .world_mut()
-            .spawn(hosted_now(plain_recipe, |_| {}));
-        app.main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<HostedApp>(document)
-            .unwrap()
-            .trigger(Say(4));
-        app.finish_plugin_build();
-
-        app.update();
-
-        assert_eq!(hosted_echoes(&app), vec![(document, 4)]);
+        let edit = std::mem::replace(
+            &mut world
+                .get_component_for_entity_mut::<ParkedEditApp>(first)
+                .unwrap()
+                .0,
+            hosted_now(plain_recipe, |_| {}),
+        );
+        world.remove_component::<ParkedEditApp>(first);
+        *world
+            .get_component_for_entity_mut::<HostedApp>(first)
+            .unwrap() = edit;
+        say(&mut world, first, 4);
+        assert_eq!(read(&mut world), [said(first, 4)]);
     }
 }

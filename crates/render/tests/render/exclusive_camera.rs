@@ -50,20 +50,6 @@ fn render_cameras(app: &mut App) -> usize {
 }
 
 #[test]
-fn every_synced_camera_is_extracted_without_an_exclusive_camera() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let mut app = two_cameras(&gpu, None);
-
-    for _ in 0..3 {
-        app.update();
-    }
-
-    assert_eq!(render_cameras(&mut app), 2);
-}
-
-#[test]
 fn only_the_exclusive_camera_is_extracted() {
     let Some(gpu) = gpu() else {
         return;

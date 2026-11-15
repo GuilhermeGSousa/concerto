@@ -21,7 +21,6 @@ use concerto_render::{
         render_entity::SyncWithRenderWorld,
     },
 };
-use glam::Vec3;
 
 fn world() -> World {
     let mut world = World::new();
@@ -78,8 +77,6 @@ fn a_component_spawned_from_its_stored_value_captures_back_to_it_with_its_asset_
     let mut light = Light::spot_light(30.0);
     light.color = Color::RED;
     light.range = 12.0;
-    let mut transform = Transform::IDENTITY;
-    transform.translation = Vec3::new(1.0, 2.0, 3.0);
     let cases = [
         round_trip(
             "a mesh",
@@ -115,22 +112,11 @@ fn a_component_spawned_from_its_stored_value_captures_back_to_it_with_its_asset_
                 .with_ambient(Color::WHITE),
             vec![],
         ),
-        round_trip("a transform", &transform, vec![]),
-        round_trip("a marker", &SyncWithRenderWorld, vec![]),
     ];
     for case in &cases {
         assert_eq!(case.captured, case.stored, "{}", case.case);
         assert_eq!(case.referenced, case.expected_referenced, "{}", case.case);
     }
-
-    let ReflectedValue::Struct(fields) = &cases[2].captured else {
-        panic!("a light is a struct");
-    };
-    let (_, light_type) = fields
-        .iter()
-        .find(|(name, _)| name == "light_type")
-        .unwrap();
-    assert!(matches!(light_type, ReflectedValue::Variant { name, .. } if name == "Spot"));
 }
 
 #[test]

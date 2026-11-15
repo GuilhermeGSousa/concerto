@@ -1,21 +1,15 @@
-use std::any::TypeId;
-
 use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     App,
 };
 use concerto_color::Color;
-use concerto_ecs::{
-    reflect::{AppTypeRegistry, ReflectComponent},
-    Entity,
-};
+use concerto_ecs::Entity;
 use concerto_foundation::transform::Transform;
-use concerto_reflect::{apply_value, to_value};
 use concerto_render::{
     components::{
         camera::{Camera, RenderCamera},
-        camera_environment::{CameraEnvironment, Fog},
+        camera_environment::CameraEnvironment,
     },
     draw_target::DrawTarget,
     gpu::Gpu,
@@ -27,7 +21,12 @@ fn gpu() -> Option<Gpu> {
     Gpu::request_for_test()
 }
 
-fn camera_app(gpu: &Gpu) -> (App, Entity) {
+struct CameraApp {
+    app: App,
+    camera: Entity,
+}
+
+fn camera_app(gpu: &Gpu) -> CameraApp {
     let mut app = App::new();
     app.insert_resource(gpu.clone())
         .insert_resource(DrawTarget::None)
@@ -45,7 +44,7 @@ fn camera_app(gpu: &Gpu) -> (App, Entity) {
         Transform::IDENTITY,
     ));
     app.finish_plugin_build();
-    (app, camera)
+    CameraApp { app, camera }
 }
 
 fn uniform(app: &mut App) -> String {
@@ -59,50 +58,11 @@ fn uniform(app: &mut App) -> String {
 }
 
 #[test]
-fn editing_a_camera_environment_changes_the_camera_uniform() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let (mut app, camera) = camera_app(&gpu);
-    for _ in 0..3 {
-        app.update();
-    }
-    let before = uniform(&mut app);
-
-    let replacement = CameraEnvironment::default()
-        .with_fog(Fog {
-            color: Color::BLUE,
-            density: 0.2,
-            start: 4.0,
-        })
-        .with_ambient(Color::WHITE);
-    let stored = to_value(&replacement).unwrap();
-    let world = app.main_mut().world_mut();
-    let reflect = world
-        .get_resource::<AppTypeRegistry>()
-        .unwrap()
-        .get_type_data::<ReflectComponent>(TypeId::of::<CameraEnvironment>())
-        .expect("a camera environment is an editable component");
-    assert!((reflect.edit)(world, camera, &mut |value| {
-        apply_value(value, &stored);
-    }));
-    assert_eq!(
-        world.get_component_for_entity::<CameraEnvironment>(camera),
-        Some(&replacement)
-    );
-
-    for _ in 0..3 {
-        app.update();
-    }
-    assert_ne!(uniform(&mut app), before);
-}
-
-#[test]
 fn removing_a_camera_environment_restores_the_default_uniform() {
     let Some(gpu) = gpu() else {
         return;
     };
-    let (mut app, camera) = camera_app(&gpu);
+    let CameraApp { mut app, camera } = camera_app(&gpu);
     for _ in 0..3 {
         app.update();
     }

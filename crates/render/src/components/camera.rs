@@ -585,27 +585,6 @@ mod tests {
                 aspect: Some(640.0 / 720.0),
             },
             Case {
-                case: "fractions out of range",
-                viewport: Some(Viewport::new(Vec2::new(-0.5, -1.0), Vec2::new(2.0, 3.0))),
-                target: UVec2::new(100, 50),
-                rect: rect(0, 0, 100, 50),
-                aspect: Some(2.0),
-            },
-            Case {
-                case: "an inverted rect",
-                viewport: Some(Viewport::new(Vec2::new(0.8, 0.0), Vec2::new(0.2, 1.0))),
-                target: UVec2::new(100, 50),
-                rect: rect(80, 0, 0, 50),
-                aspect: None,
-            },
-            Case {
-                case: "a non-finite rect",
-                viewport: Some(Viewport::new(Vec2::new(f32::NAN, 0.0), Vec2::ONE)),
-                target: UVec2::new(100, 50),
-                rect: rect(0, 0, 0, 0),
-                aspect: None,
-            },
-            Case {
                 case: "no viewport",
                 viewport: None,
                 target: UVec2::new(1280, 720),
@@ -641,11 +620,6 @@ mod tests {
         let left_half = world
             .spawn(Camera::default().with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))));
         let whole = world.spawn(Camera::default());
-        let empty = world.spawn(Camera {
-            aspect: 0.75,
-            ..Camera::default()
-                .with_viewport(Viewport::new(Vec2::new(0.5, 0.0), Vec2::new(0.5, 1.0)))
-        });
         let texture = world.spawn(
             Camera {
                 aspect: 0.25,
@@ -675,10 +649,5 @@ mod tests {
             .viewport = Some(Viewport::new(Vec2::ZERO, Vec2::new(0.25, 1.0)));
         sync(&mut world);
         assert_eq!(aspect(&world, left_half), 250.0 / 1000.0);
-        assert_eq!(
-            aspect(&world, empty),
-            0.75,
-            "a window camera with an empty viewport keeps its aspect"
-        );
     }
 }

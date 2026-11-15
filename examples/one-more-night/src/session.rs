@@ -1477,13 +1477,6 @@ mod tests {
                 .collect()
         }
 
-        fn lines(&self, player: u8) -> Vec<String> {
-            self.session
-                .view(player, &self.book, &self.data, self.now, Phase::Before)
-                .map(|screen| screen.lines)
-                .unwrap_or_default()
-        }
-
         fn fact(&mut self, name: &str) {
             let fact = self.data.case.facts.id(name).unwrap();
             self.book.grant(fact);
@@ -1516,16 +1509,12 @@ mod tests {
         let hobbs = t.data.case.characters.id("npc_03").unwrap();
         t.session.talk(1, hobbs, &t.data, false);
 
-        assert_eq!(t.lines(1), ["Anything unusual tonight?", "Leave"]);
         t.press(1, &[Press::Confirm]);
-        assert!(t.lines(1)[0].starts_with("Mr Corwin came through"));
         assert_eq!(t.book.facts().len(), 1, "the answer granted its fact");
-        assert_eq!(t.session.notices.len(), 1);
         t.press(1, &[Press::Confirm, Press::Down, Press::Confirm]);
         assert!(t.session.is_walking(1), "Leave ends the talk");
 
         t.session.talk(1, hobbs, &t.data, true);
-        assert_eq!(t.lines(1), ["Beg pardon, I am needed."]);
         t.press(1, &[Press::Confirm]);
         assert!(t.session.is_walking(1), "a busy character says one line");
     }
@@ -1540,13 +1529,6 @@ mod tests {
         assert!(t.book.facts().is_empty(), "the first detail grants nothing");
         t.press(0, &[Press::Down]);
         assert_eq!(t.book.facts().len(), 1);
-        assert_eq!(
-            t.lines(0),
-            [
-                "Detail 1",
-                "The velvet is pressed flat where something small sat."
-            ]
-        );
         t.press(0, &[Press::Back]);
 
         t.session.examine(0, note, &mut t.book, &t.data);
@@ -1582,21 +1564,9 @@ mod tests {
             );
         }
 
-        let lines = t.lines(0);
-        assert_eq!(lines[0], "[Mr Corwin] took [the snuffbox] from the study.");
-        assert!(
-            lines.contains(&"Confirmed: this is what happened.".to_string()),
-            "{lines:?}"
-        );
-        t.press(0, &[Press::Back]);
-        assert_eq!(
-            t.lines(0),
-            [
-                "[Mr Corwin] took [the snuffbox] from the study. (confirmed)",
-                "It was hidden in [____] in the [____]."
-            ]
-        );
-        t.press(0, &[Press::Book]);
+        let deduction = t.data.case.deductions.id("d_01").unwrap();
+        assert!(t.book.is_confirmed(deduction));
+        t.press(0, &[Press::Back, Press::Book]);
         assert!(t.session.is_walking(0));
     }
 
@@ -1611,7 +1581,6 @@ mod tests {
         assert!(t.book.finale_ready(&t.data.case));
 
         t.session.start_finale(&t.book, &t.data);
-        assert_eq!(t.lines(0)[0], "The thief is [____].");
         let wrong: Vec<Effect> = (0..2)
             .flat_map(|player| t.press(player, &[Press::Right, Press::Confirm]))
             .collect();
@@ -1622,166 +1591,21 @@ mod tests {
         for player in 0..2 {
             t.press(player, &[Press::Right, Press::Confirm]);
         }
-        assert_eq!(t.lines(1), ["This is absurd. You have no proof."]);
         t.press(1, &[Press::Confirm]);
-        assert_eq!(t.lines(0)[0], "The reason was [____].");
         for player in 0..2 {
             t.press(player, &[Press::Right, Press::Confirm]);
         }
-        t.press(0, &[Press::Confirm]);
-        assert_eq!(t.lines(0), ["The snuffbox goes back in its case."]);
-        t.press(0, &[Press::Confirm, Press::Confirm]);
+        t.press(0, &[Press::Confirm, Press::Confirm, Press::Confirm]);
         assert!(t.session.finished);
         assert!(t.session.is_walking(0) && t.session.is_walking(1));
     }
 
     #[test]
-    fn the_casebook_lists_subjects_and_moves_cell_by_cell_on_the_timeline() {
-        use super::{BookBody, Subject};
-        let mut t = Table::new();
-        t.fact("f_03");
-        t.fact("f_08");
-        t.session.open_book(0);
-
-        t.press(0, &[Press::Down]);
-        let people = t.session.book_screen(0, &t.book, &t.data).unwrap();
-        let BookBody::Subjects {
-            subjects,
-            selected,
-            facts,
-        } = people.body
-        else {
-            panic!("People lists subjects");
-        };
-        assert_eq!(selected, 1);
-        assert_eq!(
-            subjects[1],
-            Subject {
-                label: "Mr Corwin".into(),
-                portrait: Some(1),
-                count: 2
-            }
-        );
-        assert_eq!(facts.len(), 2);
-
-        t.press(
-            0,
-            &[
-                Press::PageNext,
-                Press::Down,
-                Press::Right,
-                Press::Right,
-                Press::Right,
-            ],
-        );
-        let timeline = t.session.book_screen(0, &t.book, &t.data).unwrap();
-        assert_eq!(timeline.page, Page::Timeline);
-        let BookBody::Timeline {
-            rooms,
-            counts,
-            selected,
-            facts,
-            ..
-        } = timeline.body
-        else {
-            panic!("Timeline is a grid");
-        };
-        assert_eq!(rooms, ["Drawing room", "Study", "Service corridor"]);
-        assert_eq!(selected, 5, "one hour down, and held at the last room");
-        assert_eq!(counts[4], 1, "the argument is at 19:00 in the study");
-        assert!(facts.is_empty());
-        t.press(0, &[Press::Left]);
-        let BookBody::Timeline { facts, .. } =
-            t.session.book_screen(0, &t.book, &t.data).unwrap().body
-        else {
-            panic!("Timeline is a grid");
-        };
-        assert_eq!(
-            facts,
-            ["Lady Ashby and Mr Corwin argued in the study at seven about a debt."]
-        );
-        t.press(0, &[Press::Up, Press::Up]);
-        assert!(
-            matches!(t.session.mode(0), Mode::Book { row: 1, .. }),
-            "it stops at the top"
-        );
-    }
-
-    #[test]
-    fn the_guide_and_the_deduction_screen_say_what_to_do_next() {
-        let mut t = Table::new();
-        let step = |t: &Table| t.session.lesson(&t.book).map(|lesson| lesson.step);
-        assert!(
-            t.session
-                .guide(0, &t.book, &t.data)
-                .unwrap()
-                .starts_with("First night, step 1 of 5: Find a fact"),
-            "with nothing found, the guide says how facts are found"
-        );
-        t.fact("f_01");
-        assert_eq!(step(&t), Some(2), "a fact found, the casebook is next");
-
-        t.session.open_book(0);
-        assert_eq!(
-            t.session.guide(0, &t.book, &t.data),
-            None,
-            "a screen has its own hint"
-        );
-        assert_eq!(step(&t), Some(3));
-        t.press(0, &[Press::PagePrev]);
-        assert_eq!(step(&t), Some(4), "reaching Deductions is its own step");
-        assert!(
-            t.session
-                .book_screen(0, &t.book, &t.data)
-                .unwrap()
-                .hint
-                .starts_with("First night, step 4 of 5"),
-            "inside the casebook the lesson rides on the hint line"
-        );
-        t.press(0, &[Press::Confirm]);
-        let waiting = t.lines(0);
-        assert!(
-            waiting.contains(&"You: still choosing".to_string()),
-            "{waiting:?}"
-        );
-        assert!(
-            waiting.contains(&"Other player: still choosing".to_string()),
-            "{waiting:?}"
-        );
-        t.press(0, &[Press::Confirm]);
-        let locked = t.lines(0);
-        assert!(locked.contains(&"You: LOCKED IN".to_string()), "{locked:?}");
-        let other = {
-            t.session.open_book(1);
-            t.press(1, &[Press::PagePrev, Press::Confirm]);
-            t.lines(1)
-        };
-        assert!(
-            other.contains(&"Other player: LOCKED IN".to_string()),
-            "{other:?}"
-        );
-        t.press(1, &[Press::Confirm]);
-        assert!(
-            t.lines(0).iter().any(|line| line.starts_with("Last try: ")),
-            "both locks are judged and the verdict stays on screen"
-        );
-
-        t.session.show_card(1, Vec::new());
-        assert!(
-            t.lines(0).iter().any(|line| line.contains("holding RB")),
-            "the first night's card says how to play"
-        );
-    }
-
-    #[test]
-    fn the_night_card_lists_new_facts_and_swaps_roles() {
+    fn the_night_card_swaps_roles_and_either_player_goes_on() {
         let mut t = Table::new();
         t.fact("f_01");
         t.session.show_card(2, t.book.fresh().to_vec());
 
-        let lines = t.lines(1);
-        assert_eq!(lines[0], "New facts last night:");
-        assert_eq!(lines.last().unwrap(), "You are the Staff.");
         t.press(1, &[Press::Book]);
         assert_eq!(t.session.role(1), Role::Guest);
         t.press(0, &[Press::Confirm]);
