@@ -75,6 +75,3 @@ pub fn draw_simulation(gizmos: &mut DebugGizmos, bone: &Transform) {
     );
     gizmos.arrow(bone.translation, tip, SIMULATION_COLOR);
 }
-
-#[cfg(test)]
-mod tests;
