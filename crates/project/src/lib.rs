@@ -1979,4 +1979,76 @@ mod tests {
             report.notes
         );
     }
+
+    struct Written {
+        name: &'static str,
+        produced: String,
+        expected: &'static str,
+    }
+
+    #[test]
+    fn windows_paths_and_crlf_templates_are_written_the_way_cargo_reads_them() {
+        let rows = [
+            Written {
+                name: "a verbatim drive path",
+                produced: manifest_path(r"\\?\C:\Users\me\engine"),
+                expected: "C:/Users/me/engine",
+            },
+            Written {
+                name: "a verbatim share path",
+                produced: manifest_path(r"\\?\UNC\server\share\engine"),
+                expected: "//server/share/engine",
+            },
+            Written {
+                name: "a template checked out with CRLF",
+                produced: render(
+                    "fn main() {\r\n    {{crate}}::run();\r\n}\r\n",
+                    &[("crate", "g")],
+                ),
+                expected: "fn main() {\n    g::run();\n}\n",
+            },
+        ];
+        for row in rows {
+            assert_eq!(row.produced, row.expected, "{}", row.name);
+        }
+    }
+
+    const CARGO_MESSAGES: &str = r#"{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["custom-build"],"crate_types":["bin"],"name":"build-script-build","src_path":"/g/build.rs","edition":"2024","doc":false,"doctest":false,"test":false},"features":[],"filenames":["/t/debug/build/g-1/build-script-build"],"executable":null,"fresh":true}
+{"reason":"build-script-executed","package_id":"path+file:///g#0.1.0","linked_libs":[],"linked_paths":[],"cfgs":[],"env":[],"out_dir":"/t/debug/build/g-2/out"}
+{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"g","src_path":"/g/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"features":[],"filenames":["/t/debug/libg.rlib"],"executable":null,"fresh":false}
+{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"g-tool","src_path":"/g/src/bin/g-tool.rs","edition":"2024","doc":true,"doctest":false,"test":true},"features":[],"filenames":["/t/debug/g-tool"],"executable":"/t/debug/g-tool","fresh":false}
+{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"g","src_path":"/g/src/main.rs","edition":"2024","doc":true,"doctest":false,"test":true},"features":[],"filenames":["/t/debug/g"],"executable":"/t/debug/g","fresh":false}
+{"reason":"build-finished","success":true}"#;
+
+    struct Built {
+        executable: &'static str,
+        content: &'static str,
+    }
+
+    #[test]
+    fn run_launches_the_packages_own_bin_and_stages_content_beside_it() {
+        let found: Vec<PathBuf> = CARGO_MESSAGES
+            .lines()
+            .filter_map(|line| executable_of(line, "g"))
+            .collect();
+        assert_eq!(found, vec![PathBuf::from("/t/debug/g")]);
+
+        for built in [
+            Built {
+                executable: "/t/x86_64-unknown-linux-gnu/release/g",
+                content: "/t/x86_64-unknown-linux-gnu/release/g-content",
+            },
+            Built {
+                executable: "/t/debug/g.exe",
+                content: "/t/debug/g-content",
+            },
+        ] {
+            assert_eq!(
+                built_content_dir(Path::new(built.executable)),
+                Some(PathBuf::from(built.content)),
+                "{}",
+                built.executable
+            );
+        }
+    }
 }
