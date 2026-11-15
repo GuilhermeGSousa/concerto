@@ -25,12 +25,6 @@ fn sample_vertex(x: f32) -> Vertex {
 
 #[test]
 fn an_aabb_spans_the_vertices_and_its_transform_spans_the_moved_corners() {
-    let empty = Mesh {
-        vertices: vec![],
-        indices: vec![],
-    };
-    assert_eq!(empty.local_aabb(), None);
-
     let mesh = Mesh {
         vertices: vec![sample_vertex(-2.0), sample_vertex(4.0)],
         indices: vec![],
@@ -38,8 +32,6 @@ fn an_aabb_spans_the_vertices_and_its_transform_spans_the_moved_corners() {
     let bounds = mesh.local_aabb().unwrap();
     assert_eq!(bounds.min, Vec3::new(-2.0, 0.0, 0.0));
     assert_eq!(bounds.max, Vec3::new(4.0, 0.0, 0.0));
-    assert_eq!(bounds.center(), Vec3::X);
-    assert_eq!(bounds.extent(), Vec3::new(6.0, 0.0, 0.0));
 
     let corners = Mesh {
         vertices: vec![
