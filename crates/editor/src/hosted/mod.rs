@@ -1186,12 +1186,11 @@ mod tests {
         }
     }
 
-    fn waiting_in_finish() -> (Arc<std::sync::Barrier>, impl FnOnce(&mut App)) {
-        let barrier = Arc::new(std::sync::Barrier::new(2));
-        let held = Arc::clone(&barrier);
-        (barrier, move |app: &mut App| {
+    fn waiting_in_finish(barrier: &Arc<std::sync::Barrier>) -> impl FnOnce(&mut App) + use<> {
+        let held = Arc::clone(barrier);
+        move |app: &mut App| {
             app.register_plugin(WaitsInFinish(held));
-        })
+        }
     }
 
     fn off_thread_world() -> World {
@@ -1234,7 +1233,8 @@ mod tests {
     #[test]
     fn a_plugin_finish_that_blocks_leaves_the_editor_frame_running_until_it_returns() {
         let mut world = off_thread_world();
-        let (barrier, wait) = waiting_in_finish();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let wait = waiting_in_finish(&barrier);
         let document = world.spawn(begin(request(plain_recipe), wait, |_| {}));
         let mut finish = finishing(&mut world);
 

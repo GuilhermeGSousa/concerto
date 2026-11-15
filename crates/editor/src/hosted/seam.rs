@@ -274,13 +274,18 @@ mod tests {
         }
     }
 
-    fn seam_world() -> (World, concerto_ecs::Entity) {
+    struct SeamWorld {
+        world: World,
+        document: concerto_ecs::Entity,
+    }
+
+    fn seam_world() -> SeamWorld {
         let (mut world, document) = host_world(plain_recipe);
         world.insert(hosting(markers(&[1], 0)), document);
         retarget(&mut world);
         world.insert_resource(Seen::default());
         world.insert_resource(Runs::default());
-        (world, document)
+        SeamWorld { world, document }
     }
 
     fn runs(world: &World) -> usize {
@@ -302,7 +307,10 @@ mod tests {
 
     #[test]
     fn edit_world_reads_its_target_through_replacements_changes_of_document_and_play() {
-        let (mut world, document) = seam_world();
+        let SeamWorld {
+            mut world,
+            document,
+        } = seam_world();
         let other = world.spawn(hosting(markers(&[7], 2)));
         let mut system = read_markers.into_system();
         system.initialize(&mut world);
@@ -351,7 +359,10 @@ mod tests {
 
     #[test]
     fn signals_reach_the_target_in_order_and_a_queue_for_an_app_that_is_gone_is_dropped() {
-        let (mut world, document) = seam_world();
+        let SeamWorld {
+            mut world,
+            document,
+        } = seam_world();
 
         run(&mut world, say_one_two_three);
         assert_eq!(heard(&mut world, document), [1, 2, 3]);
@@ -378,7 +389,10 @@ mod tests {
 
     #[test]
     fn edit_world_and_its_signals_skip_the_system_without_a_target_to_reach() {
-        let (mut world, document) = seam_world();
+        let SeamWorld {
+            mut world,
+            document,
+        } = seam_world();
         run(&mut world, read_missing);
         assert_eq!(
             runs(&world),
@@ -436,7 +450,10 @@ mod tests {
 
     #[test]
     fn edit_world_sees_changes_since_its_last_run_through_skipped_runs_and_a_new_target() {
-        let (mut world, document) = seam_world();
+        let SeamWorld {
+            mut world,
+            document,
+        } = seam_world();
         world.insert_resource(Changes::default());
         let other = world.spawn(hosting(markers(&[3], 0)));
         for _ in 0..100_000 {
@@ -481,7 +498,10 @@ mod tests {
 
     #[test]
     fn edit_world_sees_a_signal_sent_through_edit_world_signals() {
-        let (mut world, document) = seam_world();
+        let SeamWorld {
+            mut world,
+            document,
+        } = seam_world();
         world.insert_resource(Flags::default());
         world.insert(
             hosted_now(plain_recipe, |app| {
@@ -533,7 +553,10 @@ mod tests {
 
     #[test]
     fn edit_world_reads_removals_in_the_target_and_in_the_next_target() {
-        let (mut world, first) = seam_world();
+        let SeamWorld {
+            mut world,
+            document: first,
+        } = seam_world();
         world.insert_resource(Removed::default());
         let (hosted, a) = tracking_markers(0);
         world.insert(hosted, first);

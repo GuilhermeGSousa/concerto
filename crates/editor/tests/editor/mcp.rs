@@ -874,7 +874,7 @@ fn status_reports_the_project_documents_and_the_selection_that_select_sets_and_c
     );
     assert_eq!(line(&before, "active: "), document);
     assert_eq!(line(&before, "values: "), "none");
-    let (width, height) = viewport_size(&before);
+    let ViewportSize { width, height } = viewport_size(&before);
     assert!(width > 0.0 && height > 0.0, "{before}");
     assert_eq!(selected, format!("Selected {hero} Hero."));
     assert_eq!(line(&after, "selection: "), format!("{hero} Hero"));
@@ -958,7 +958,7 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
         line(&before, "layout: "),
         "left 260 · right 320 · bottom 220 · browser fill"
     );
-    let (width, height) = viewport_size(&before);
+    let ViewportSize { width, height } = viewport_size(&before);
     let expected = [
         Shown {
             layout: "left 300 · right 320 · bottom 220 · browser fill",
@@ -986,7 +986,10 @@ fn set_panel_size_resizes_the_panels_around_the_viewport_and_status_reports_them
             assert_eq!(line(answer, "layout: "), shown.layout);
             assert_eq!(
                 viewport_size(answer),
-                (shown.width, shown.height),
+                ViewportSize {
+                    width: shown.width,
+                    height: shown.height,
+                },
                 "{answer}"
             );
         }
@@ -1016,6 +1019,11 @@ fn a_plugin_given_to_the_editor_is_installed_after_it_and_adds_its_tools_under_m
 
     assert!(served.result.listed);
     assert_eq!(served.result.state, "after the editor");
+}
+
+struct AssetPages {
+    pages: Vec<String>,
+    malformed: CallToolResult,
 }
 
 #[test]
@@ -1066,7 +1074,7 @@ fn list_assets_filters_pages_and_folds_an_import_under_its_scene() {
         ];
         let malformed = call_with(&client, "list_assets", json!({ "limit": "many" })).await;
         client.cancel().await.unwrap();
-        (pages, malformed)
+        AssetPages { pages, malformed }
     }) else {
         return;
     };
@@ -1090,7 +1098,7 @@ fn list_assets_filters_pages_and_folds_an_import_under_its_scene() {
         "StandardMaterial",
         material,
     );
-    let (pages, malformed) = served.result;
+    let AssetPages { pages, malformed } = served.result;
     assert_eq!(
         pages[0],
         format!("5 assets match; showing 1–5:\n{level}\n{rock}\n{tree}\n{face}\n{bark}")
@@ -1268,6 +1276,14 @@ fn component_names(inspection: &Value) -> Vec<&str> {
         .collect()
 }
 
+struct Inspections {
+    closed: Value,
+    hero: String,
+    tree: String,
+    inspections: Vec<Value>,
+    errors: Vec<Value>,
+}
+
 #[test]
 fn inspect_reads_components_as_json_with_their_paths_and_adapters() {
     let fixture = Fixture::new();
@@ -1313,12 +1329,24 @@ fn inspect_reads_components_as_json_with_their_paths_and_adapters() {
             .await,
         ];
         client.cancel().await.unwrap();
-        (closed, hero, tree, inspections, errors)
+        Inspections {
+            closed,
+            hero,
+            tree,
+            inspections,
+            errors,
+        }
     }) else {
         return;
     };
 
-    let (closed, hero, tree, inspections, errors) = served.result;
+    let Inspections {
+        closed,
+        hero,
+        tree,
+        inspections,
+        errors,
+    } = served.result;
     assert_eq!(closed["code"], "no_scene");
 
     let whole = &inspections[0];
@@ -1414,6 +1442,12 @@ async fn dirty(client: &Client) {
     }
 }
 
+struct ImportedSource {
+    imported: String,
+    listed: String,
+    errors: Vec<Value>,
+}
+
 #[test]
 fn import_source_writes_the_source_and_its_assets_into_the_project() {
     let fixture = Fixture::new();
@@ -1457,12 +1491,20 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         ];
         until(&client, "status", |status| status.contains("busy: no")).await;
         client.cancel().await.unwrap();
-        (imported, listed, errors)
+        ImportedSource {
+            imported,
+            listed,
+            errors,
+        }
     }) else {
         return;
     };
 
-    let (imported, listed, errors) = served.result;
+    let ImportedSource {
+        imported,
+        listed,
+        errors,
+    } = served.result;
     let mut lines = imported.lines();
     let summary = lines.next().unwrap();
     assert!(
@@ -2123,6 +2165,14 @@ mod other {
     }
 }
 
+struct ComponentEdits {
+    hero: String,
+    added: Value,
+    carried: String,
+    removed: String,
+    errors: Vec<Value>,
+}
+
 #[test]
 fn the_component_tools_add_and_remove_by_name() {
     let fixture = Fixture::new();
@@ -2192,12 +2242,24 @@ fn the_component_tools_add_and_remove_by_name() {
             .await,
         ];
         client.cancel().await.unwrap();
-        (hero, added, carried, removed, errors)
+        ComponentEdits {
+            hero,
+            added,
+            carried,
+            removed,
+            errors,
+        }
     }) else {
         return;
     };
 
-    let (hero, added, carried, removed, errors) = served.result;
+    let ComponentEdits {
+        hero,
+        added,
+        carried,
+        removed,
+        errors,
+    } = served.result;
     assert_eq!(added["name"], "Light");
     assert_eq!(added["type"], "concerto_render::components::light::Light");
     assert_eq!(added["value"]["intensity"], 1.0);
@@ -2892,9 +2954,18 @@ fn play_answers_once_the_game_has_spawned_its_scene_and_loaded_what_it_loads_at_
     assert!(played.ends_with(" s."), "{played}");
 }
 
-fn viewport_size(status: &str) -> (f32, f32) {
+#[derive(Debug, PartialEq)]
+struct ViewportSize {
+    width: f32,
+    height: f32,
+}
+
+fn viewport_size(status: &str) -> ViewportSize {
     let (width, height) = line(status, "viewport: ").split_once('x').unwrap();
-    (width.parse().unwrap(), height.parse().unwrap())
+    ViewportSize {
+        width: width.parse().unwrap(),
+        height: height.parse().unwrap(),
+    }
 }
 
 fn received(inspection: &str) -> Value {
@@ -2941,7 +3012,7 @@ fn send_input_reaches_the_game_as_the_editor_window_would_pass_it_on() {
             .await;
             ok(&client, "play").await;
             let status = ok(&client, "status").await;
-            let (width, height) = viewport_size(&status);
+            let ViewportSize { width, height } = viewport_size(&status);
             let document = document_id(&status);
             let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
             let counter = scene_id(&ids, "Counter");
@@ -3046,7 +3117,7 @@ fn send_input_hands_input_between_editor_and_game_and_its_pads_reach_the_game_un
             open(&client).await;
             ok(&client, "play").await;
             let status = ok(&client, "status").await;
-            let (width, height) = viewport_size(&status);
+            let ViewportSize { width, height } = viewport_size(&status);
             let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
             let counter = scene_id(&ids, "Counter");
             let send = |events: Value| {

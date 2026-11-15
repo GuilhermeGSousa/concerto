@@ -743,7 +743,12 @@ mod tests {
         world.insert_resource(store);
     }
 
-    fn world_with_spawner(rotation: Quat) -> (World, Vec3) {
+    struct SpawnerWorld {
+        world: World,
+        spawn_point: Vec3,
+    }
+
+    fn world_with_spawner(rotation: Quat) -> SpawnerWorld {
         let mut world = World::new();
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
@@ -765,7 +770,7 @@ mod tests {
             Transform::from_translation_rotation(spawn_point, rotation),
             PlayerSpawner { should_spawn: true },
         ));
-        (world, spawn_point)
+        SpawnerWorld { world, spawn_point }
     }
 
     fn characters(world: &mut World) -> Vec<Vec3> {
@@ -778,8 +783,10 @@ mod tests {
 
     #[test]
     fn the_character_spawns_at_its_spawner_once_the_ground_collides_with_the_camera_behind_it() {
-        let (mut world, spawn_point) =
-            world_with_spawner(Quat::from_rotation_y(std::f32::consts::PI));
+        let SpawnerWorld {
+            mut world,
+            spawn_point,
+        } = world_with_spawner(Quat::from_rotation_y(std::f32::consts::PI));
         let ground = world.spawn((MeshCollider, MeshComponent::default()));
 
         let mut system = spawn_character.into_system();

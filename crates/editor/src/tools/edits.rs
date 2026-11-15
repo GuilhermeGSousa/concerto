@@ -588,7 +588,12 @@ mod tests {
         note: AssetHandle<Note>,
     }
 
-    fn fixture() -> (App, Entity) {
+    struct Fixture {
+        app: App,
+        entity: Entity,
+    }
+
+    fn fixture() -> Fixture {
         let mut app = tools_app();
         app.register_type::<Transform>()
             .register_type::<Gain>()
@@ -599,7 +604,7 @@ mod tests {
             .insert_resource(AssetServer::new())
             .insert_resource(AssetRegistry::default());
         let entity = app.main_mut().world_mut().spawn(Transform::IDENTITY);
-        (app, entity)
+        Fixture { app, entity }
     }
 
     fn read<C: Component, R>(app: &mut App, entity: Entity, read: impl FnOnce(&C) -> R) -> R {
@@ -684,7 +689,7 @@ mod tests {
 
     #[test]
     fn committed_properties_land_in_the_scene_and_refused_ones_change_nothing() {
-        let (mut app, entity) = fixture();
+        let Fixture { mut app, entity } = fixture();
         app.main_mut().world_mut().insert(Gain::default(), entity);
 
         app.main_mut().world_mut().trigger(gain_to(entity, -1.0));
@@ -700,7 +705,7 @@ mod tests {
 
     #[test]
     fn a_list_commit_pushes_a_default_element_and_removes_one_by_index() {
-        let (mut app, entity) = fixture();
+        let Fixture { mut app, entity } = fixture();
         app.main_mut().world_mut().insert(
             Rig {
                 stops: vec![1.4],
@@ -720,7 +725,7 @@ mod tests {
 
     #[test]
     fn a_set_value_writes_a_field_switches_a_variant_and_resolves_entity_and_asset_references() {
-        let (mut app, entity) = fixture();
+        let Fixture { mut app, entity } = fixture();
         let mut server = AssetServer::new();
         server.register_asset(&AssetStore::<Note>::new());
         app.insert_resource(server.clone());
@@ -790,7 +795,7 @@ mod tests {
 
     #[test]
     fn an_edit_component_adds_and_removes_a_component_and_a_refused_one_changes_nothing() {
-        let (mut app, entity) = fixture();
+        let Fixture { mut app, entity } = fixture();
         let edit = |app: &mut App, edit: fn(Entity, TypeId) -> ComponentEdit| {
             app.main_mut()
                 .world_mut()

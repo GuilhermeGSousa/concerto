@@ -61,7 +61,12 @@ fn children(world: &World, entity: Entity) -> Vec<Entity> {
         .unwrap_or_default()
 }
 
-fn items(world: &mut World) -> Vec<(Entity, String)> {
+struct Item {
+    entity: Entity,
+    name: String,
+}
+
+fn items(world: &mut World) -> Vec<Item> {
     let menus: Vec<Entity> = world
         .query::<(Entity, &AssetPickerMenu), ()>()
         .iter(world)
@@ -82,7 +87,10 @@ fn items(world: &mut World) -> Vec<(Entity, String)> {
         .map(|item| {
             let label = children(world, item)[0];
             let text = world.get_component_for_entity::<UIText>(label).unwrap();
-            (item, text.text.clone())
+            Item {
+                entity: item,
+                name: text.text.clone(),
+            }
         })
         .collect()
 }
@@ -105,10 +113,10 @@ fn a_menu_with_no_row_lists_the_kind_and_runs_the_pick_it_was_given() {
     click(&mut world, button);
 
     let items = items(&mut world);
-    let names: Vec<&str> = items.iter().map(|(_, name)| name.as_str()).collect();
+    let names: Vec<&str> = items.iter().map(|item| item.name.as_str()).collect();
     assert_eq!(names, ["cube", "sphere"]);
 
-    click(&mut world, items[1].0);
+    click(&mut world, items[1].entity);
 
     assert_eq!(world.get_resource::<Picks>().unwrap().0, [sphere.id]);
 }
