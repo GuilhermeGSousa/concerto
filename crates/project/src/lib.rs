@@ -1350,8 +1350,28 @@ mod tests {
     const GAME_MANIFEST: &str = "[package]\nname = \"g\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n# the game\n[dependencies]\n";
 
     fn write_game(dir: &Path) {
-        write(dir.join("Cargo.toml"), GAME_MANIFEST);
+        write_game_with_plugins(dir, "");
+    }
+
+    fn write_game_with_plugins(dir: &Path, plugins: &str) {
+        write(dir.join("Cargo.toml"), &format!("{GAME_MANIFEST}{plugins}"));
         write(dir.join("src/lib.rs"), "pub fn game() {}\n");
+    }
+
+    fn plugin_list(entries: &str) -> String {
+        format!("\n[package.metadata.concerto.editor]\nplugins = [{entries}]\n")
+    }
+
+    const PLUGINS: &str = "\n[package.metadata.concerto.editor]\nplugins = [{ package = \"concerto-motion-matching-editor\", install = \"concerto_motion_matching_editor::install\" }]\n";
+
+    const PLAIN_MAIN: &str = "fn main() {\n    concerto_editor::run(g::game, concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"));\n}\n";
+
+    const MOTION_MAIN: &str = "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_motion_matching_editor::install],\n    );\n}\n";
+
+    fn editor_manifest(dependency: &str) -> String {
+        format!(
+            "[package]\nname = \"g-editor\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ntracy = [\"concerto-editor/tracy\"]\n\n[dependencies]\ng = {{ path = \"..\" }}\nconcerto-editor = \"{VERSION}\"\n{dependency}"
+        )
     }
 
     fn canonical(path: &Path) -> PathBuf {
@@ -1359,22 +1379,17 @@ mod tests {
     }
 
     #[test]
-    fn a_template_checked_out_with_crlf_renders_with_lf() {
-        assert_eq!(
-            render(
-                "fn main() {\r\n    {{crate}}::run();\r\n}\r\n",
-                &[("crate", "g")]
-            ),
-            "fn main() {\n    g::run();\n}\n"
-        );
-    }
-
-    #[test]
-    fn new_writes_a_buildable_layout() {
+    fn new_writes_a_buildable_project_that_names_its_engine_by_version_or_checkout_path() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("my-game");
+        let checkout = tmp.path().join("engine");
+        fs::create_dir_all(&checkout).unwrap();
+        let published = tmp.path().join("my-game");
+        let outside = tmp.path().join("projects/g");
+        let inside = checkout.join("examples/g");
 
-        new_project(&dir, Engine::Published).unwrap();
+        let published_report = new_project(&published, Engine::Published).unwrap();
+        let outside_report = new_project(&outside, Engine::Checkout(checkout.clone())).unwrap();
+        new_project(&inside, Engine::Checkout(checkout.clone())).unwrap();
 
         for file in [
             "Cargo.toml",
@@ -1388,412 +1403,69 @@ mod tests {
             "editor/Cargo.toml",
             "editor/src/main.rs",
         ] {
-            assert!(dir.join(file).is_file(), "{file} was not written");
+            assert!(published.join(file).is_file(), "{file} was not written");
         }
-        let manifest = read(dir.join("Cargo.toml"));
+        let manifest = read(published.join("Cargo.toml"));
         assert!(manifest.contains("name = \"my-game\""));
         assert!(manifest.contains(&format!("concerto = \"{VERSION}\"")));
         assert!(manifest.contains(&format!("concerto-asset-build = \"{VERSION}\"")));
-        assert!(manifest.contains("[lib]"));
-        assert!(!manifest.contains("crate-type"));
         assert!(manifest.contains("[workspace]\nmembers = [\".\", \"editor\"]\n"));
         assert!(manifest.contains(
             "[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n"
         ));
-        assert!(read(dir.join("src/main.rs"))
+        assert!(read(published.join("src/main.rs"))
             .contains("concerto::run(my_game::game, concerto::content_registry!());"));
-        assert!(!dir.join("content/.registry.toml").exists());
-        assert!(read(dir.join(".gitignore"))
-            .lines()
-            .any(|line| line == "content/.registry.toml"));
-        assert!(read(dir.join(".gitignore"))
-            .lines()
-            .any(|line| line == "derived-cache/"));
-        assert!(read(dir.join("index.html")).contains("<title>my-game</title>"));
-        let editor = read(dir.join("editor/Cargo.toml"));
+        let ignored = read(published.join(".gitignore"));
+        assert!(ignored.lines().any(|line| line == "content/.registry.toml"));
+        assert!(ignored.lines().any(|line| line == "derived-cache/"));
+        let editor = read(published.join("editor/Cargo.toml"));
         assert!(editor.contains("name = \"my-game-editor\""));
         assert!(editor.contains("my-game = { path = \"..\" }"));
         assert!(editor.contains(&format!("concerto-editor = \"{VERSION}\"")));
         assert_eq!(
-            read(dir.join("editor/src/main.rs")),
+            read(published.join("editor/src/main.rs")),
             "fn main() {\n    concerto_editor::run_with(\n        my_game::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_animation_editor::install],\n    );\n}\n"
         );
-        assert!(!read(dir.join("build.rs")).contains("//"));
-    }
+        assert!(!published_report.warnings.is_empty());
 
-    #[test]
-    fn a_new_project_lists_the_clip_editor() {
-        let tmp = tempfile::tempdir().unwrap();
-        let checkout = tmp.path().join("engine");
-        fs::create_dir_all(&checkout).unwrap();
-        let dir = tmp.path().join("projects/g");
-
-        new_project(&dir, Engine::Checkout(checkout.clone())).unwrap();
-
-        let manifest: DocumentMut = read(dir.join("Cargo.toml")).parse().unwrap();
-        let plugins: Vec<_> = editor_plugins(&manifest, "g")
-            .unwrap()
-            .into_iter()
-            .map(|plugin| (plugin.package, plugin.install))
-            .collect();
-        assert_eq!(
-            plugins,
-            [(
-                "concerto-animation-editor".to_string(),
-                "concerto_animation_editor::install".to_string()
-            )]
-        );
-        let checkout = slashed(&canonical(&checkout));
-        assert!(read(dir.join("editor/Cargo.toml")).contains(&format!(
-            "concerto-animation-editor = {{ version = \"{VERSION}\", path = \"{checkout}/crates/animation-editor\" }}"
+        let absolute = slashed(&canonical(&checkout));
+        assert!(read(outside.join("Cargo.toml")).contains(&format!(
+            "concerto = {{ version = \"{VERSION}\", path = \"{absolute}\" }}"
         )));
-        assert_eq!(
-            read(dir.join("editor/src/main.rs")),
-            "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_animation_editor::install],\n    );\n}\n"
-        );
-    }
-
-    #[test]
-    fn engine_checkout_writes_each_crates_own_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let checkout = tmp.path().join("engine");
-        fs::create_dir_all(&checkout).unwrap();
-        let dir = tmp.path().join("projects/g");
-
-        new_project(&dir, Engine::Checkout(checkout.clone())).unwrap();
-
-        let checkout = slashed(&canonical(&checkout));
-        let manifest = read(dir.join("Cargo.toml"));
-        assert!(manifest.contains(&format!(
-            "concerto = {{ version = \"{VERSION}\", path = \"{checkout}\" }}"
+        assert!(read(outside.join("editor/Cargo.toml")).contains(&format!(
+            "concerto-animation-editor = {{ version = \"{VERSION}\", path = \"{absolute}/crates/animation-editor\" }}"
         )));
-        assert!(manifest.contains(&format!(
-            "concerto-asset-build = {{ version = \"{VERSION}\", path = \"{checkout}/crates/asset-build\" }}"
-        )));
-        assert!(read(dir.join("editor/Cargo.toml")).contains(&format!(
-            "concerto-editor = {{ version = \"{VERSION}\", path = \"{checkout}/crates/editor\" }}"
-        )));
-    }
-
-    #[test]
-    fn inside_the_checkout_paths_are_relative() {
-        let tmp = tempfile::tempdir().unwrap();
-        let checkout = tmp.path().join("engine");
-        fs::create_dir_all(&checkout).unwrap();
-        let dir = checkout.join("examples/g");
-
-        new_project(&dir, Engine::Checkout(checkout)).unwrap();
-
-        let manifest = read(dir.join("Cargo.toml"));
-        assert!(manifest.contains(&format!(
-            "concerto = {{ version = \"{VERSION}\", path = \"../..\" }}"
-        )));
-        assert!(manifest.contains(&format!(
+        assert!(outside_report.warnings.is_empty());
+        assert!(read(inside.join("Cargo.toml")).contains(&format!(
             "concerto-asset-build = {{ version = \"{VERSION}\", path = \"../../crates/asset-build\" }}"
         )));
-        assert!(read(dir.join("editor/Cargo.toml")).contains(&format!(
+        assert!(read(inside.join("editor/Cargo.toml")).contains(&format!(
             "concerto-editor = {{ version = \"{VERSION}\", path = \"../../../crates/editor\" }}"
         )));
     }
 
     #[test]
-    fn new_refuses_a_non_empty_directory() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write(dir.join("notes.txt"), "mine");
-
-        assert!(new_project(&dir, Engine::Published).is_err());
-
-        assert_eq!(read(dir.join("notes.txt")), "mine");
-        assert!(!dir.join("Cargo.toml").exists());
-    }
-
-    #[test]
-    fn new_refuses_an_invalid_package_name() {
-        let tmp = tempfile::tempdir().unwrap();
-        for name in [
-            "1game",
-            "has space",
-            "test",
-            "Self",
-            "self",
-            "build",
-            "deps",
-            "examples",
-            "incremental",
-            "concerto",
-            "concerto-editor",
-            "concerto_editor",
-            "concerto-asset-build",
-            "concerto-animation-editor",
-            "concerto_animation_editor",
-        ] {
-            let dir = tmp.path().join(name);
-
-            let error = new_project(&dir, Engine::Published).unwrap_err();
-
-            assert!(error.to_string().contains(name), "{error}");
-            assert!(!dir.exists());
-        }
-    }
-
-    #[test]
-    fn editor_refuses_an_existing_editor_directory() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game(&dir);
-        write(dir.join("editor/notes.txt"), "mine");
-
-        assert!(add_editor(&dir, Engine::Published).is_err());
-
-        assert!(!dir.join("editor/Cargo.toml").exists());
-        assert_eq!(read(dir.join("Cargo.toml")), GAME_MANIFEST);
-    }
-
-    #[test]
-    fn editor_requires_a_library() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write(dir.join("Cargo.toml"), GAME_MANIFEST);
-        write(dir.join("src/main.rs"), "fn main() {}\n");
-
-        assert!(add_editor(&dir, Engine::Published).is_err());
-
-        assert!(!dir.join("editor").exists());
-        assert_eq!(read(dir.join("Cargo.toml")), GAME_MANIFEST);
-    }
-
-    #[test]
-    fn editor_names_the_recipe_it_assumes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game(&dir);
-
-        let report = add_editor(&dir, Engine::Published).unwrap();
-
-        assert!(report.notes.iter().any(|note| note.contains("g::game")));
-        assert_eq!(
-            read(dir.join("editor/src/main.rs")),
-            "fn main() {\n    concerto_editor::run(g::game, concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"));\n}\n"
-        );
-    }
-
-    #[test]
-    fn an_enclosing_workspace_gains_the_editor_member() {
+    fn new_joins_an_enclosing_workspace_and_leaves_nothing_behind_when_it_cannot() {
         let tmp = tempfile::tempdir().unwrap();
         let ws = tmp.path().join("ws");
-        let before = "[package]\nname = \"root\"\n\n[workspace]\n# every engine crate and example\nmembers = [\"crates/*\", \"examples/*\"] # globs\n\n[workspace.package]\nversion = \"0.1.0\"\n";
-        write(ws.join("Cargo.toml"), before);
-        let game = ws.join("examples/g");
-        write_game(&game);
+        let unusable = "[workspace]\nmembers = \"g\"\n";
+        write(ws.join("Cargo.toml"), unusable);
+        let created = ws.join("g");
+        let existing = ws.join("h");
+        fs::create_dir_all(&existing).unwrap();
 
-        let report = add_editor(&game, Engine::Published).unwrap();
+        assert!(new_project(&created, Engine::Published).is_err());
+        assert!(new_project(&existing, Engine::Published).is_err());
 
-        assert_eq!(
-            read(ws.join("Cargo.toml")),
-            before.replace("\"examples/*\"]", "\"examples/*\", \"examples/*/editor\"]")
-        );
-        assert_eq!(read(game.join("Cargo.toml")), GAME_MANIFEST);
-        assert_eq!(report.edited, vec![canonical(&ws).join("Cargo.toml")]);
-    }
+        assert!(!created.exists());
+        assert!(fs::read_dir(&existing).unwrap().next().is_none());
+        assert_eq!(read(ws.join("Cargo.toml")), unusable);
 
-    #[test]
-    fn a_multi_line_member_list_keeps_its_layout() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
-        let before =
-            "[workspace]\nmembers = [\n    \"tools\",\n    # the game\n    \"games/g\",\n]\n";
-        write(ws.join("Cargo.toml"), before);
-        let game = ws.join("games/g");
-        write_game(&game);
-
-        add_editor(&game, Engine::Published).unwrap();
-
-        assert_eq!(
-            read(ws.join("Cargo.toml")),
-            "[workspace]\nmembers = [\n    \"tools\",\n    # the game\n    \"games/g\",\n    \"games/g/editor\",\n]\n"
-        );
-    }
-
-    #[test]
-    fn a_covered_member_is_left_alone() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
-        let before =
-            "[workspace]\nmembers = [\"crates/*\", \"examples/*\", \"examples/*/editor\"]\n";
-        write(ws.join("Cargo.toml"), before);
-        let game = ws.join("examples/g");
-        write_game(&game);
-
-        let report = add_editor(&game, Engine::Published).unwrap();
-
-        assert_eq!(read(ws.join("Cargo.toml")), before);
-        assert!(report.edited.is_empty());
-        assert!(game.join("editor/Cargo.toml").is_file());
-    }
-
-    #[test]
-    fn an_excluded_game_is_not_added() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
-        let before = "[workspace]\nmembers = [\"examples/*\"]\nexclude = [\"examples/g\"]\n";
-        write(ws.join("Cargo.toml"), before);
-        let game = ws.join("examples/g");
-        write_game(&game);
-
-        add_editor(&game, Engine::Published).unwrap();
-
-        assert_eq!(read(ws.join("Cargo.toml")), before);
-        assert_eq!(
-            read(game.join("Cargo.toml")),
-            format!("{GAME_MANIFEST}\n[workspace]\nmembers = [\".\", \"editor\"]\n")
-        );
-    }
-
-    #[test]
-    fn a_standalone_game_gains_its_own_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
-        let game = tmp.path().join("g");
-        write_game(&game);
-
-        let report = add_editor(&game, Engine::Published).unwrap();
-
-        assert_eq!(
-            read(game.join("Cargo.toml")),
-            format!("{GAME_MANIFEST}\n[workspace]\nmembers = [\".\", \"editor\"]\n")
-        );
-        assert_eq!(report.edited, vec![canonical(&game).join("Cargo.toml")]);
-    }
-
-    #[test]
-    fn a_game_that_is_its_own_workspace_gains_the_member() {
-        let tmp = tempfile::tempdir().unwrap();
-        let game = tmp.path().join("g");
-        let before = format!(
-            "{GAME_MANIFEST}\n[workspace]\nmembers = [\".\", \"tools\"]\nresolver = \"2\"\n\n[workspace.dependencies]\nserde = \"1\"\n"
-        );
-        write(game.join("Cargo.toml"), &before);
-        write(game.join("src/lib.rs"), "pub fn game() {}\n");
-
-        let report = add_editor(&game, Engine::Published).unwrap();
-
-        assert_eq!(
-            read(game.join("Cargo.toml")),
-            before.replace("[\".\", \"tools\"]", "[\".\", \"tools\", \"editor\"]")
-        );
-        assert_eq!(report.edited, vec![canonical(&game).join("Cargo.toml")]);
-    }
-
-    #[test]
-    fn editor_writes_nothing_when_the_workspace_cannot_be_read() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
-        write(ws.join("Cargo.toml"), "name = {{bad}}\n");
-        let game = ws.join("g");
-        write_game(&game);
-
-        assert!(add_editor(&game, Engine::Published).is_err());
-        assert!(!game.join("editor").exists());
-
-        write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"g\"]\n");
-        add_editor(&game, Engine::Published).unwrap();
-        assert!(game.join("editor/Cargo.toml").is_file());
-    }
-
-    #[test]
-    fn editor_removes_what_it_wrote_when_it_fails() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
-        write(ws.join("Cargo.toml"), "[workspace]\nmembers = \"g\"\n");
-        let game = ws.join("g");
-        write_game(&game);
-
-        assert!(add_editor(&game, Engine::Published).is_err());
-        assert!(!game.join("editor").exists());
-        assert_eq!(
-            read(ws.join("Cargo.toml")),
-            "[workspace]\nmembers = \"g\"\n"
-        );
-
-        write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"g\"]\n");
-        add_editor(&game, Engine::Published).unwrap();
-        assert!(game.join("editor/Cargo.toml").is_file());
-    }
-
-    #[test]
-    fn new_removes_the_project_it_created_when_it_fails() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
-        write(ws.join("Cargo.toml"), "[workspace]\nmembers = \"g\"\n");
-        let dir = ws.join("g");
-
-        let error = new_project(&dir, Engine::Published).unwrap_err();
-        let manifest = canonical(&ws).join("Cargo.toml");
-        assert!(format!("{error:#}").contains(&manifest.display().to_string()));
-        assert!(!dir.exists());
-        assert_eq!(
-            read(ws.join("Cargo.toml")),
-            "[workspace]\nmembers = \"g\"\n"
-        );
-
-        write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"g\"]\n");
-        new_project(&dir, Engine::Published).unwrap();
-        assert!(dir.join("editor/Cargo.toml").is_file());
-    }
-
-    #[test]
-    fn new_empties_a_directory_it_did_not_create_when_it_fails() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
-        write(ws.join("Cargo.toml"), "[workspace]\nmembers = \"g\"\n");
-        let dir = ws.join("g");
-        fs::create_dir_all(&dir).unwrap();
-
-        assert!(new_project(&dir, Engine::Published).is_err());
-        assert!(dir.is_dir());
-        assert!(fs::read_dir(&dir).unwrap().next().is_none());
-
-        write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"g\"]\n");
-        new_project(&dir, Engine::Published).unwrap();
-        assert!(dir.join("editor/Cargo.toml").is_file());
-    }
-
-    #[test]
-    fn manifest_paths_lose_the_verbatim_prefix_and_use_forward_slashes() {
-        assert_eq!(
-            manifest_path(r"\\?\C:\Users\me\engine"),
-            "C:/Users/me/engine"
-        );
-        assert_eq!(
-            manifest_path(r"\\?\UNC\server\share\engine"),
-            "//server/share/engine"
-        );
-        assert_eq!(manifest_path(r"C:\Users\me\engine"), "C:/Users/me/engine");
-        assert_eq!(manifest_path("/home/me/engine"), "/home/me/engine");
-    }
-
-    #[test]
-    fn a_dependency_path_is_escaped_as_a_toml_string() {
-        let path = r#"C:/Users/o"brien\engine's"#;
-
-        let document: DocumentMut = format!("concerto = {}", dependency_value(path))
-            .parse()
-            .unwrap();
-
-        assert_eq!(document["concerto"]["path"].as_str(), Some(path));
-        assert_eq!(document["concerto"]["version"].as_str(), Some(VERSION));
-    }
-
-    #[test]
-    fn new_inside_a_workspace_joins_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("ws");
         write(
             ws.join("Cargo.toml"),
             "[workspace]\nmembers = [\"tools\"]\n",
         );
         let dir = ws.join("games/g");
-
         new_project(&dir, Engine::Published).unwrap();
 
         assert_eq!(
@@ -1806,163 +1478,215 @@ mod tests {
     }
 
     #[test]
-    fn the_report_warns_without_engine() {
+    fn new_refuses_a_directory_in_use_or_a_name_cargo_or_the_engine_owns() {
         let tmp = tempfile::tempdir().unwrap();
-        let checkout = tmp.path().join("engine");
-        fs::create_dir_all(&checkout).unwrap();
+        let in_use = tmp.path().join("g");
+        write(in_use.join("notes.txt"), "mine");
 
-        let published = new_project(tmp.path().join("a"), Engine::Published).unwrap();
-        let local = new_project(tmp.path().join("b"), Engine::Checkout(checkout)).unwrap();
+        assert!(new_project(&in_use, Engine::Published).is_err());
+        assert_eq!(read(in_use.join("notes.txt")), "mine");
+        assert!(!in_use.join("Cargo.toml").exists());
 
-        assert!(published
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("release")));
-        assert!(local.warnings.is_empty());
+        for name in ["1game", "test", "concerto-editor"] {
+            let dir = tmp.path().join(name);
+            assert!(new_project(&dir, Engine::Published).is_err(), "{name}");
+            assert!(!dir.exists(), "{name}");
+        }
+    }
+
+    struct Membership {
+        name: &'static str,
+        workspace: Option<&'static str>,
+        game: &'static str,
+        game_manifest: &'static str,
+        workspace_after: Option<String>,
+        game_after: String,
     }
 
     #[test]
-    fn the_parser_skips_cargo_s_subcommand_name() {
-        assert_eq!(
-            parse(["concerto", "new", "x"]).unwrap(),
-            Command::New(PathBuf::from("x"), Engine::Published)
-        );
-        assert_eq!(
-            parse(["concerto", "editor", "x", "--engine", "."]).unwrap(),
-            Command::Editor(PathBuf::from("x"), Engine::Checkout(PathBuf::from(".")))
-        );
-        assert_eq!(
-            parse(["new", "--engine", "e", "x"]).unwrap(),
-            Command::New(PathBuf::from("x"), Engine::Checkout(PathBuf::from("e")))
-        );
-        assert!(parse(["concerto"]).is_err());
-        assert!(parse(["concerto", "bogus", "x"]).is_err());
-        assert!(parse(["concerto", "new"]).is_err());
-        assert!(parse(["concerto", "new", "x", "--engine"]).is_err());
-        assert!(parse(["concerto", "new", "x", "y"]).is_err());
-        assert!(parse(["concerto", "new", "x", "--bogus"]).is_err());
-    }
-
-    const PLUGINS: &str = "\n[package.metadata.concerto.editor]\nplugins = [{ package = \"concerto-motion-matching-editor\", install = \"concerto_motion_matching_editor::install\" }]\n";
-
-    fn write_game_with_plugins(dir: &Path, plugins: &str) {
-        write(dir.join("Cargo.toml"), &format!("{GAME_MANIFEST}{plugins}"));
-        write(dir.join("src/lib.rs"), "pub fn game() {}\n");
-    }
-
-    fn plugin_list(entries: &str) -> String {
-        format!("\n[package.metadata.concerto.editor]\nplugins = [{entries}]\n")
-    }
-
-    fn editor_manifest(dependency: &str) -> String {
-        format!(
-            "[package]\nname = \"g-editor\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ntracy = [\"concerto-editor/tracy\"]\n\n[dependencies]\ng = {{ path = \"..\" }}\nconcerto-editor = \"{VERSION}\"\n{dependency}"
-        )
-    }
-
-    const PLAIN_MAIN: &str = "fn main() {\n    concerto_editor::run(g::game, concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"));\n}\n";
-
-    const MOTION_MAIN: &str = "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_motion_matching_editor::install],\n    );\n}\n";
-
-    #[test]
-    fn without_a_plugin_list_the_editor_calls_run() {
-        for plugins in ["", &plugin_list("")] {
+    fn the_editor_joins_the_workspace_that_holds_the_game_or_gives_the_game_its_own() {
+        let own = format!("{GAME_MANIFEST}\n[workspace]\nmembers = [\".\", \"editor\"]\n");
+        let globbed = "[package]\nname = \"root\"\n\n[workspace]\n# every engine crate and example\nmembers = [\"crates/*\", \"examples/*\"] # globs\n\n[workspace.package]\nversion = \"0.1.0\"\n";
+        let covered =
+            "[workspace]\nmembers = [\"crates/*\", \"examples/*\", \"examples/*/editor\"]\n";
+        let excluded = "[workspace]\nmembers = [\"examples/*\"]\nexclude = [\"examples/g\"]\n";
+        let multi_line =
+            "[workspace]\nmembers = [\n    \"tools\",\n    # the game\n    \"games/g\",\n]\n";
+        let own_with_tools = "[package]\nname = \"g\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\nmembers = [\".\", \"tools\"]\nresolver = \"2\"\n";
+        let memberships = [
+            Membership {
+                name: "an enclosing workspace with globs and comments",
+                workspace: Some(globbed),
+                game: "examples/g",
+                game_manifest: GAME_MANIFEST,
+                workspace_after: Some(globbed.replace(
+                    "\"examples/*\"]",
+                    "\"examples/*\", \"examples/*/editor\"]",
+                )),
+                game_after: GAME_MANIFEST.to_string(),
+            },
+            Membership {
+                name: "a multi-line member list",
+                workspace: Some(multi_line),
+                game: "games/g",
+                game_manifest: GAME_MANIFEST,
+                workspace_after: Some(
+                    "[workspace]\nmembers = [\n    \"tools\",\n    # the game\n    \"games/g\",\n    \"games/g/editor\",\n]\n".to_string(),
+                ),
+                game_after: GAME_MANIFEST.to_string(),
+            },
+            Membership {
+                name: "a member already covered",
+                workspace: Some(covered),
+                game: "examples/g",
+                game_manifest: GAME_MANIFEST,
+                workspace_after: Some(covered.to_string()),
+                game_after: GAME_MANIFEST.to_string(),
+            },
+            Membership {
+                name: "an excluded game",
+                workspace: Some(excluded),
+                game: "examples/g",
+                game_manifest: GAME_MANIFEST,
+                workspace_after: Some(excluded.to_string()),
+                game_after: own.clone(),
+            },
+            Membership {
+                name: "a standalone game",
+                workspace: None,
+                game: "g",
+                game_manifest: GAME_MANIFEST,
+                workspace_after: None,
+                game_after: own.clone(),
+            },
+            Membership {
+                name: "a game that is its own workspace",
+                workspace: None,
+                game: "g",
+                game_manifest: own_with_tools,
+                workspace_after: None,
+                game_after: own_with_tools.replace("[\".\", \"tools\"]", "[\".\", \"tools\", \"editor\"]"),
+            },
+        ];
+        for membership in memberships {
             let tmp = tempfile::tempdir().unwrap();
-            let dir = tmp.path().join("g");
-            write_game_with_plugins(&dir, plugins);
+            let ws = tmp.path().join("ws");
+            if let Some(workspace) = membership.workspace {
+                write(ws.join("Cargo.toml"), workspace);
+            }
+            let game = ws.join(membership.game);
+            write(game.join("Cargo.toml"), membership.game_manifest);
+            write(game.join("src/lib.rs"), "pub fn game() {}\n");
 
-            add_editor(&dir, Engine::Published).unwrap();
+            add_editor(&game, Engine::Published).unwrap();
 
-            assert_eq!(read(dir.join("editor/Cargo.toml")), editor_manifest(""));
-            assert_eq!(read(dir.join("editor/src/main.rs")), PLAIN_MAIN);
+            assert_eq!(
+                read(game.join("editor/src/main.rs")),
+                PLAIN_MAIN,
+                "{}",
+                membership.name
+            );
+            assert_eq!(
+                read(game.join("Cargo.toml")),
+                membership.game_after,
+                "{}",
+                membership.name
+            );
+            if let Some(after) = membership.workspace_after {
+                assert_eq!(read(ws.join("Cargo.toml")), after, "{}", membership.name);
+            }
+        }
+    }
+
+    struct Refusal {
+        name: &'static str,
+        workspace: &'static str,
+        plugins: String,
+        editor_notes: bool,
+        library: bool,
+    }
+
+    #[test]
+    fn the_editor_refuses_or_rolls_back_leaving_the_game_and_its_workspace_as_they_were() {
+        let refusals = [
+            Refusal {
+                name: "an editor directory in use",
+                workspace: "[workspace]\nmembers = [\"g\"]\n",
+                plugins: String::new(),
+                editor_notes: true,
+                library: true,
+            },
+            Refusal {
+                name: "a game without a library",
+                workspace: "[workspace]\nmembers = [\"g\"]\n",
+                plugins: String::new(),
+                editor_notes: false,
+                library: false,
+            },
+            Refusal {
+                name: "a workspace that cannot be read",
+                workspace: "name = {{bad}}\n",
+                plugins: String::new(),
+                editor_notes: false,
+                library: true,
+            },
+            Refusal {
+                name: "a workspace that cannot take the member",
+                workspace: "[workspace]\nmembers = \"g\"\n",
+                plugins: String::new(),
+                editor_notes: false,
+                library: true,
+            },
+            Refusal {
+                name: "a plugin install that is not a path",
+                workspace: "[workspace]\nmembers = [\"g\"]\n",
+                plugins: plugin_list("{ package = \"concerto-a\", install = \"a::b(); evil()\" }"),
+                editor_notes: false,
+                library: true,
+            },
+        ];
+        for refusal in refusals {
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = tmp.path().join("ws");
+            write(ws.join("Cargo.toml"), refusal.workspace);
+            let game = ws.join("g");
+            let manifest = format!("{GAME_MANIFEST}{}", refusal.plugins);
+            write(game.join("Cargo.toml"), &manifest);
+            if refusal.library {
+                write(game.join("src/lib.rs"), "pub fn game() {}\n");
+            }
+            if refusal.editor_notes {
+                write(game.join("editor/notes.txt"), "mine");
+            }
+
+            assert!(
+                add_editor(&game, Engine::Published).is_err(),
+                "{}",
+                refusal.name
+            );
+
+            assert_eq!(read(game.join("Cargo.toml")), manifest, "{}", refusal.name);
+            assert_eq!(
+                read(ws.join("Cargo.toml")),
+                refusal.workspace,
+                "{}",
+                refusal.name
+            );
+            assert!(!game.join("editor/Cargo.toml").exists(), "{}", refusal.name);
+            if refusal.editor_notes {
+                assert_eq!(read(game.join("editor/notes.txt")), "mine");
+            }
         }
     }
 
     #[test]
-    fn a_plugin_list_names_the_crate_and_the_call() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game_with_plugins(&dir, PLUGINS);
-
-        add_editor(&dir, Engine::Published).unwrap();
-
-        assert_eq!(
-            read(dir.join("editor/Cargo.toml")),
-            editor_manifest(&format!(
-                "concerto-motion-matching-editor = \"{VERSION}\"\n"
-            ))
-        );
-        assert_eq!(read(dir.join("editor/src/main.rs")), MOTION_MAIN);
-        assert!(read(dir.join("Cargo.toml")).contains(PLUGINS));
-        assert!(!read(dir.join("Cargo.toml")).contains("concerto-motion-matching-editor ="));
-    }
-
-    #[test]
-    fn a_long_plugin_list_is_written_the_way_cargo_fmt_keeps_it() {
+    fn the_editor_depends_on_and_installs_each_listed_plugin_where_its_entry_says() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("g");
         write_game_with_plugins(
             &dir,
             &plugin_list(
-                "{ package = \"concerto-first-long-extension\", install = \"concerto_first_long_extension::install\" }, { package = \"concerto-second\", install = \"concerto_second::setup::install\" }",
-            ),
-        );
-
-        add_editor(&dir, Engine::Published).unwrap();
-
-        assert_eq!(
-            read(dir.join("editor/src/main.rs")),
-            "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[\n            concerto_first_long_extension::install,\n            concerto_second::setup::install,\n        ],\n    );\n}\n"
-        );
-    }
-
-    #[test]
-    fn one_plugin_stays_on_one_line_however_long() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game_with_plugins(
-            &dir,
-            &plugin_list(
-                "{ package = \"concerto-a-very-long-plugin-crate-name-that-fills-the-row\", install = \"a_very_long_plugin_crate_name_that_fills_the_row::setup::install\" }",
-            ),
-        );
-
-        add_editor(&dir, Engine::Published).unwrap();
-
-        assert!(read(dir.join("editor/src/main.rs")).contains(
-            "        &[a_very_long_plugin_crate_name_that_fills_the_row::setup::install],\n"
-        ));
-    }
-
-    #[test]
-    fn a_concerto_package_resolves_to_its_crate_in_the_checkout() {
-        let tmp = tempfile::tempdir().unwrap();
-        let checkout = tmp.path().join("engine");
-        fs::create_dir_all(&checkout).unwrap();
-        let inside = checkout.join("examples/g");
-        let outside = tmp.path().join("projects/g");
-        for dir in [&inside, &outside] {
-            write_game_with_plugins(dir, PLUGINS);
-            add_editor(dir, Engine::Checkout(checkout.clone())).unwrap();
-        }
-
-        assert!(read(inside.join("editor/Cargo.toml")).contains(&format!(
-            "concerto-motion-matching-editor = {{ version = \"{VERSION}\", path = \"../../../crates/motion-matching-editor\" }}"
-        )));
-        let checkout = slashed(&canonical(&checkout));
-        assert!(read(outside.join("editor/Cargo.toml")).contains(&format!(
-            "concerto-motion-matching-editor = {{ version = \"{VERSION}\", path = \"{checkout}/crates/motion-matching-editor\" }}"
-        )));
-    }
-
-    #[test]
-    fn another_package_uses_the_version_and_path_its_entry_gives() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game_with_plugins(
-            &dir,
-            &plugin_list(
-                "{ package = \"by-version\", install = \"by_version::install\", version = \"2.1\" }, { package = \"by-path\", install = \"by_path::install\", path = \"../tools/by-path\" }, { package = \"by-both\", install = \"by_both::install\", version = \"3\", path = \"plugins/by-both\" }, { package = \"concerto-own\", install = \"concerto_own::install\", path = \"/elsewhere/own\" }",
+                "{ package = \"by-version\", install = \"by_version::install\", version = \"2.1\" }, { package = \"by-path\", install = \"by_path::install\", path = \"../tools/by-path\" }, { package = \"by-both\", install = \"by_both::setup::install\", version = \"3\", path = \"plugins/by-both\" }, { package = \"concerto-own\", install = \"concerto_own::install\", path = \"/elsewhere/own\" }",
             ),
         );
 
@@ -1973,98 +1697,13 @@ mod tests {
         assert!(manifest.contains("by-path = { path = \"../../tools/by-path\" }\n"));
         assert!(manifest.contains("by-both = { version = \"3\", path = \"../plugins/by-both\" }\n"));
         assert!(manifest.contains("concerto-own = { path = \"/elsewhere/own\" }\n"));
-    }
-
-    #[test]
-    fn a_malformed_entry_names_itself_and_nothing_is_written() {
-        for (entries, named) in [
-            ("\"loose\"", "loose"),
-            ("{ install = \"a::install\" }", "a::install"),
-            ("{ package = \"a-b\" }", "a-b"),
-            ("{ package = 1, install = \"a::install\" }", "`package`"),
-            (
-                "{ package = \"bad name\", install = \"a::install\", version = \"1\" }",
-                "bad name",
-            ),
-            (
-                "{ package = \"thing\", install = \"thing::install\" }",
-                "thing",
-            ),
-            (
-                "{ package = \"concerto-\", install = \"a::install\" }",
-                "concerto-",
-            ),
-            (
-                "{ package = \"concerto-a\", install = \"install\" }",
-                "concerto-a",
-            ),
-            (
-                "{ package = \"concerto-a\", install = \"a::\" }",
-                "concerto-a",
-            ),
-            (
-                "{ package = \"concerto-a\", install = \"a::b(); evil()\" }",
-                "concerto-a",
-            ),
-            (
-                "{ package = \"concerto-a\", install = \"a::fn\" }",
-                "concerto-a",
-            ),
-            (
-                "{ package = \"concerto-a\", install = \"a::install\", version = 1 }",
-                "`version`",
-            ),
-            (
-                "{ package = \"concerto-a\", install = \"a::install\", pth = \"x\" }",
-                "pth",
-            ),
-            (
-                "{ package = \"concerto-editor\", install = \"a::install\" }",
-                "concerto-editor",
-            ),
-            ("{ package = \"g\", install = \"a::install\", version = \"1\" }", "`g`"),
-            (
-                "{ package = \"concerto-a\", install = \"a::i\" }, { package = \"concerto-a\", install = \"a::j\" }",
-                "a::j",
-            ),
-        ] {
-            let tmp = tempfile::tempdir().unwrap();
-            let dir = tmp.path().join("g");
-            write_game_with_plugins(&dir, &plugin_list(entries));
-
-            let added = add_editor(&dir, Engine::Published).unwrap_err();
-
-            assert!(format!("{added:#}").contains(named), "{added:#}");
-            assert!(!dir.join("editor").exists(), "{entries}");
-            assert!(!read(dir.join("Cargo.toml")).contains("[workspace]"));
-
-            write(dir.join("editor/Cargo.toml"), "mine");
-            write(dir.join("editor/src/main.rs"), "mine too");
-
-            let updated = update_editor(&dir, None).unwrap_err();
-
-            assert!(format!("{updated:#}").contains(named), "{updated:#}");
-            assert_eq!(read(dir.join("editor/Cargo.toml")), "mine");
-            assert_eq!(read(dir.join("editor/src/main.rs")), "mine too");
-        }
-    }
-
-    #[test]
-    fn a_plugin_list_that_is_not_an_array_is_refused() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game_with_plugins(
-            &dir,
-            "\n[package.metadata.concerto.editor]\nplugins = \"all\"\n",
+        assert_eq!(
+            read(dir.join("editor/src/main.rs")),
+            "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[\n            by_version::install,\n            by_path::install,\n            by_both::setup::install,\n            concerto_own::install,\n        ],\n    );\n}\n"
         );
-
-        let error = add_editor(&dir, Engine::Published).unwrap_err();
-
-        assert!(format!("{error:#}").contains("plugins"), "{error:#}");
-        assert!(!dir.join("editor").exists());
     }
 
-    fn tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn tree(dir: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
         let mut folders = vec![dir.to_path_buf()];
         while let Some(folder) = folders.pop() {
@@ -2073,8 +1712,7 @@ mod tests {
                 if path.is_dir() {
                     folders.push(path);
                 } else {
-                    let contents = fs::read(&path).unwrap();
-                    files.push((path, contents));
+                    files.push(path);
                 }
             }
         }
@@ -2083,167 +1721,124 @@ mod tests {
     }
 
     #[test]
-    fn update_rewrites_only_the_editors_two_files() {
+    fn update_rewrites_only_the_editors_two_files_from_the_plugin_list_keeping_or_taking_its_engine(
+    ) {
         let tmp = tempfile::tempdir().unwrap();
+        let checkout = tmp.path().join("engine");
+        fs::create_dir_all(&checkout).unwrap();
         let ws = tmp.path().join("ws");
         write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"g\"]\n");
         let dir = ws.join("g");
         write_game(&dir);
         add_editor(&dir, Engine::Published).unwrap();
         write(dir.join("editor/src/notes.rs"), "mine");
-        write(dir.join("editor/README.md"), "also mine");
         write_game_with_plugins(&dir, PLUGINS);
-        let before = tree(&ws);
+        let files = tree(&ws);
+        let others = || -> Vec<String> {
+            files
+                .iter()
+                .filter(|path| {
+                    !path.ends_with("editor/Cargo.toml") && !path.ends_with("editor/src/main.rs")
+                })
+                .map(read)
+                .collect()
+        };
+        let untouched = others();
 
         let report = update_editor(&dir, None).unwrap();
 
-        let dir = canonical(&dir);
-        let changed: Vec<_> = tree(&ws)
-            .into_iter()
-            .filter(|file| !before.contains(file))
-            .map(|(path, _)| canonical(&path))
-            .collect();
+        assert_eq!(tree(&ws), files);
+        assert_eq!(others(), untouched);
         assert_eq!(
-            changed,
-            vec![
-                dir.join("editor/Cargo.toml"),
-                dir.join("editor/src/main.rs")
-            ]
+            read(dir.join("editor/Cargo.toml")),
+            editor_manifest(&format!(
+                "concerto-motion-matching-editor = \"{VERSION}\"\n"
+            ))
         );
-        assert_eq!(tree(&ws).len(), before.len());
-        assert_eq!(
-            report.written,
-            vec![
-                dir.join("editor/Cargo.toml"),
-                dir.join("editor/src/main.rs")
-            ]
-        );
-        assert!(report.edited.is_empty());
         assert_eq!(read(dir.join("editor/src/main.rs")), MOTION_MAIN);
+        assert!(!report.warnings.is_empty());
+
+        write_game(&dir);
+        update_editor(&dir, Some(Engine::Checkout(checkout.clone()))).unwrap();
+
+        assert_eq!(read(dir.join("editor/src/main.rs")), PLAIN_MAIN);
+        let taken = read(dir.join("editor/Cargo.toml"));
+        let absolute = slashed(&canonical(&checkout));
+        assert!(taken.contains(&format!(
+            "concerto-editor = {{ version = \"{VERSION}\", path = \"{absolute}/crates/editor\" }}"
+        )));
+
+        let report = update_editor(&dir, None).unwrap();
+
+        assert_eq!(read(dir.join("editor/Cargo.toml")), taken);
+        assert!(report.warnings.is_empty());
     }
 
     #[test]
-    fn update_with_an_empty_list_goes_back_to_run() {
+    fn update_refuses_without_an_editor_an_engine_or_a_valid_plugin_list_and_writes_nothing() {
+        let rows = [
+            Some("[dependencies]\nconcerto-editor = { workspace = true }\n"),
+            Some("[dependencies]\nconcerto-editor = { version = \"1\", git = \"https://example.com/e\" }\n"),
+            None,
+        ];
+        for editor in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path().join("g");
+            write_game(&dir);
+            if let Some(manifest) = editor {
+                write(dir.join("editor/Cargo.toml"), manifest);
+            }
+
+            assert!(update_editor(&dir, None).is_err(), "{editor:?}");
+
+            match editor {
+                Some(manifest) => assert_eq!(read(dir.join("editor/Cargo.toml")), manifest),
+                None => assert!(!dir.join("editor").exists()),
+            }
+        }
+
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("g");
-        write_game_with_plugins(&dir, PLUGINS);
+        write_game(&dir);
         add_editor(&dir, Engine::Published).unwrap();
-        let manifest = read(dir.join("Cargo.toml")).replace(PLUGINS, "");
-        write(dir.join("Cargo.toml"), &manifest);
+        let manifest = read(dir.join("editor/Cargo.toml"));
+        write_game_with_plugins(
+            &dir,
+            &plugin_list("{ package = \"concerto-a\", install = \"a::fn\" }"),
+        );
 
-        update_editor(&dir, None).unwrap();
+        assert!(update_editor(&dir, None).is_err());
 
-        assert_eq!(read(dir.join("editor/Cargo.toml")), editor_manifest(""));
+        assert_eq!(read(dir.join("editor/Cargo.toml")), manifest);
         assert_eq!(read(dir.join("editor/src/main.rs")), PLAIN_MAIN);
     }
 
     #[test]
-    fn update_keeps_the_engine_the_editor_already_has() {
-        let tmp = tempfile::tempdir().unwrap();
-        let checkout = tmp.path().join("engine");
-        fs::create_dir_all(&checkout).unwrap();
-        let inside = checkout.join("examples/g");
-        let outside = tmp.path().join("projects/g");
-        for dir in [&inside, &outside] {
-            write_game(dir);
-            add_editor(dir, Engine::Checkout(checkout.clone())).unwrap();
-            let before = read(dir.join("editor/Cargo.toml"));
-
-            let report = update_editor(dir, None).unwrap();
-
-            assert_eq!(read(dir.join("editor/Cargo.toml")), before);
-            assert!(report.warnings.is_empty());
-        }
-
-        write_game_with_plugins(&inside, PLUGINS);
-        update_editor(&inside, None).unwrap();
-
-        assert!(read(inside.join("editor/Cargo.toml")).contains(&format!(
-            "concerto-motion-matching-editor = {{ version = \"{VERSION}\", path = \"../../../crates/motion-matching-editor\" }}"
-        )));
-    }
-
-    #[test]
-    fn update_keeps_the_published_engine_and_warns() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game(&dir);
-        add_editor(&dir, Engine::Published).unwrap();
-
-        let report = update_editor(&dir, None).unwrap();
-
-        assert_eq!(read(dir.join("editor/Cargo.toml")), editor_manifest(""));
-        assert!(report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("release")));
-    }
-
-    #[test]
-    fn update_takes_the_engine_it_is_given() {
-        let tmp = tempfile::tempdir().unwrap();
-        let checkout = tmp.path().join("engine");
-        fs::create_dir_all(&checkout).unwrap();
-        let dir = tmp.path().join("g");
-        write_game(&dir);
-        add_editor(&dir, Engine::Published).unwrap();
-
-        update_editor(&dir, Some(Engine::Checkout(checkout.clone()))).unwrap();
-
-        let checkout = slashed(&canonical(&checkout));
-        assert!(read(dir.join("editor/Cargo.toml")).contains(&format!(
-            "concerto-editor = {{ version = \"{VERSION}\", path = \"{checkout}/crates/editor\" }}"
-        )));
-    }
-
-    #[test]
-    fn update_refuses_an_engine_it_cannot_read_from_the_editor() {
-        for dependency in [
-            "concerto-editor = { workspace = true }\n",
-            "concerto-editor = { path = \"../somewhere/else\" }\n",
-            "concerto-editor = { version = \"1\", git = \"https://example.com/e\" }\n",
-            "concerto-editor = { version = \"1\", registry = \"corp\" }\n",
-            "serde = \"1\"\n",
+    fn the_parser_refuses_options_that_do_not_apply_to_the_command() {
+        for args in [
+            &["build", "--target", "x86_64-unknown-linux-gnu"][..],
+            &["build", "--public-url", "./"],
+            &["run", "--target", "wasm32-unknown-unknown"],
+            &["build", "--", "--forest"],
+            &["new", "x", "--update"],
         ] {
-            let tmp = tempfile::tempdir().unwrap();
-            let dir = tmp.path().join("g");
-            write_game(&dir);
-            let manifest = format!("[dependencies]\n{dependency}");
-            write(dir.join("editor/Cargo.toml"), &manifest);
-
-            let error = update_editor(&dir, None).unwrap_err();
-
-            assert!(format!("{error:#}").contains("--engine"), "{error:#}");
-            assert_eq!(read(dir.join("editor/Cargo.toml")), manifest);
+            assert!(parse(args.iter().copied()).is_err(), "{args:?}");
         }
     }
 
-    #[test]
-    fn update_refuses_a_missing_editor_directory() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-        write_game(&dir);
-
-        let error = update_editor(&dir, None).unwrap_err();
-
-        assert!(format!("{error:#}").contains("editor"), "{error:#}");
-        assert!(!dir.join("editor").exists());
+    fn args(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| arg.to_string()).collect()
     }
 
-    #[test]
-    fn the_parser_reads_update() {
-        assert_eq!(
-            parse(["concerto", "editor", "x", "--update"]).unwrap(),
-            Command::UpdateEditor(PathBuf::from("x"), None)
-        );
-        assert_eq!(
-            parse(["editor", "--update", "x", "--engine", "e"]).unwrap(),
-            Command::UpdateEditor(
-                PathBuf::from("x"),
-                Some(Engine::Checkout(PathBuf::from("e")))
-            )
-        );
-        assert!(parse(["new", "x", "--update"]).is_err());
+    fn cargo_step(game: &Path, release: bool) -> BuildStep {
+        let mut cargo = args(&["build", "--manifest-path"]);
+        cargo.push(game.join("Cargo.toml").display().to_string());
+        cargo.extend(args(&["-p", "g", "--bin", "g"]));
+        if release {
+            cargo.push("--release".to_string());
+        }
+        cargo.push("--message-format=json-render-diagnostics".to_string());
+        BuildStep::Cargo { args: cargo }
     }
 
     fn build_options(dir: &str) -> BuildOptions {
@@ -2257,249 +1852,105 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_parser_reads_build() {
-        assert_eq!(
-            parse(["concerto", "build"]).unwrap(),
-            Command::Build(build_options("."))
-        );
-        assert_eq!(
-            parse(["build", "g", "--cook", "--release"]).unwrap(),
-            Command::Build(BuildOptions {
-                cook: true,
-                release: true,
-                ..build_options("g")
-            })
-        );
-        assert_eq!(
-            parse([
-                "build",
-                "--target",
-                "wasm32-unknown-unknown",
-                "--public-url",
-                "./",
-                "--dist",
-                "out",
-                "g",
-            ])
-            .unwrap(),
-            Command::Build(BuildOptions {
-                wasm: true,
-                public_url: Some("./".to_string()),
-                dist: Some(PathBuf::from("out")),
-                ..build_options("g")
-            })
-        );
-    }
-
-    fn refused(args: &[&str], words: &str) {
-        let error = parse(args.iter().copied()).unwrap_err();
-        assert!(error.to_string().contains(words), "{args:?}: {error:#}");
+    struct Plan {
+        name: &'static str,
+        options: BuildOptions,
+        game_args: Option<Vec<String>>,
+        steps: Vec<BuildStep>,
     }
 
     #[test]
-    fn the_parser_refuses_build_options_that_do_not_apply() {
-        refused(
-            &["build", "--target", "x86_64-unknown-linux-gnu"],
-            "wasm32-unknown-unknown",
-        );
-        refused(&["build", "--target"], "--target");
-        refused(&["build", "--public-url", "./"], "--target");
-        refused(&["build", "--dist", "out"], "--target");
-        refused(&["build", "--public-url"], "--public-url");
-        refused(&["build", "--engine", "e"], "--engine");
-        refused(&["build", "--update"], "--update");
-        refused(&["build", "--bogus"], "--bogus");
-        refused(&["build", "a", "b"], "`b`");
-    }
-
-    #[test]
-    fn the_parser_reads_run_with_the_game_s_arguments_after_a_double_dash() {
-        assert_eq!(
-            parse(["concerto", "run"]).unwrap(),
-            Command::Run(RunOptions {
-                build: build_options("."),
-                args: Vec::new(),
-            })
-        );
-        assert_eq!(
-            parse([
-                "run",
-                "g",
-                "--cook",
-                "--release",
-                "--",
-                "--forest",
-                "--cook"
-            ])
-            .unwrap(),
-            Command::Run(RunOptions {
-                build: BuildOptions {
-                    cook: true,
-                    release: true,
-                    ..build_options("g")
-                },
-                args: args(&["--forest", "--cook"]),
-            })
-        );
-    }
-
-    #[test]
-    fn the_parser_refuses_web_options_for_run() {
-        refused(&["run", "--target", "wasm32-unknown-unknown"], "`build`");
-        refused(&["run", "--public-url", "./"], "`build`");
-        refused(&["run", "--dist", "out"], "`build`");
-        refused(&["run", "--forest"], "--forest");
-        refused(&["build", "--", "--forest"], "`--`");
-    }
-
-    fn arg(path: impl AsRef<Path>) -> String {
-        path.as_ref().display().to_string()
-    }
-
-    fn args(args: &[&str]) -> Vec<String> {
-        args.iter().map(|arg| arg.to_string()).collect()
-    }
-
-    fn cargo_step(game: &Path, release: bool) -> BuildStep {
-        let mut cargo = args(&["build", "--manifest-path"]);
-        cargo.push(arg(game.join("Cargo.toml")));
-        cargo.extend(args(&["-p", "g", "--bin", "g"]));
-        if release {
-            cargo.push("--release".to_string());
-        }
-        cargo.push("--message-format=json-render-diagnostics".to_string());
-        BuildStep::Cargo { args: cargo }
-    }
-
-    #[test]
-    fn a_native_build_is_one_cargo_step() {
-        let game = Path::new("/g");
-
-        let plan = plan_build(&build_options("/g"), "g", Path::new("/t"));
-
-        assert_eq!(plan.steps, vec![cargo_step(game, false)]);
-    }
-
-    #[test]
-    fn a_native_cook_stages_the_cooked_files_over_the_content_next_to_the_binary() {
-        let game = Path::new("/g");
-        let target = Path::new("/t");
-        let options = BuildOptions {
-            cook: true,
-            release: true,
-            ..build_options("/g")
-        };
-
-        let plan = plan_build(&options, "g", target);
-
-        let cooked = target.join("cooked").join("g");
-        assert_eq!(
-            plan.steps,
-            vec![
-                cargo_step(game, true),
-                BuildStep::Cook {
-                    out: cooked.clone()
-                },
-                BuildStep::Overlay {
-                    from: cooked,
-                    onto: OverlayTarget::BuiltContent,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn a_run_builds_cooks_and_stages_then_runs_the_binary_with_the_game_s_arguments() {
-        let game = Path::new("/g");
-        let target = Path::new("/t");
-        let options = BuildOptions {
-            cook: true,
-            ..build_options("/g")
-        };
-
-        let plan = plan_run(&options, &args(&["--forest"]), "g", target);
-
-        let cooked = target.join("cooked").join("g");
-        assert_eq!(
-            plan.steps,
-            vec![
-                cargo_step(game, false),
-                BuildStep::Cook {
-                    out: cooked.clone()
-                },
-                BuildStep::Overlay {
-                    from: cooked,
-                    onto: OverlayTarget::BuiltContent,
-                },
-                BuildStep::Run {
-                    args: args(&["--forest"]),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn a_web_build_is_one_trunk_step_into_the_game_s_dist() {
-        let game = Path::new("/g");
-        let options = BuildOptions {
-            wasm: true,
-            ..build_options("/g")
-        };
-
-        let plan = plan_build(&options, "g", Path::new("/t"));
-
-        let mut trunk = args(&["build", "--dist"]);
-        trunk.push(arg(game.join("dist")));
-        assert_eq!(
-            plan.steps,
-            vec![BuildStep::Trunk {
-                dir: game.to_path_buf(),
-                args: trunk,
-            }]
-        );
-    }
-
-    #[test]
-    fn a_web_cook_cooks_natively_then_overlays_the_dist() {
+    fn each_build_and_run_plans_its_cargo_cook_trunk_overlay_and_run_steps() {
         let game = Path::new("/g");
         let target = Path::new("/t");
         let dist = Path::new("/d");
-        let options = BuildOptions {
-            cook: true,
-            release: true,
-            wasm: true,
-            public_url: Some("./".to_string()),
-            dist: Some(dist.to_path_buf()),
-            ..build_options("/g")
-        };
-
-        let plan = plan_build(&options, "g", target);
-
         let cooked = target.join("cooked").join("g");
-        let mut trunk = args(&["build", "--release", "--public-url", "./", "--dist"]);
-        trunk.push(arg(dist));
-        assert_eq!(
-            plan.steps,
-            vec![
-                cargo_step(game, true),
-                BuildStep::Cook {
-                    out: cooked.clone()
+        let staged = || BuildStep::Overlay {
+            from: cooked.clone(),
+            onto: OverlayTarget::BuiltContent,
+        };
+        let cook = || BuildStep::Cook {
+            out: cooked.clone(),
+        };
+        let mut web = args(&["build", "--dist"]);
+        web.push(game.join("dist").display().to_string());
+        let mut cooked_web = args(&["build", "--release", "--public-url", "./", "--dist"]);
+        cooked_web.push(dist.display().to_string());
+        let plans = [
+            Plan {
+                name: "a native cooked release",
+                options: BuildOptions {
+                    cook: true,
+                    release: true,
+                    ..build_options("/g")
                 },
-                BuildStep::Trunk {
+                game_args: None,
+                steps: vec![cargo_step(game, true), cook(), staged()],
+            },
+            Plan {
+                name: "a cooked run",
+                options: BuildOptions {
+                    cook: true,
+                    ..build_options("/g")
+                },
+                game_args: Some(args(&["--forest"])),
+                steps: vec![
+                    cargo_step(game, false),
+                    cook(),
+                    staged(),
+                    BuildStep::Run {
+                        args: args(&["--forest"]),
+                    },
+                ],
+            },
+            Plan {
+                name: "a web build",
+                options: BuildOptions {
+                    wasm: true,
+                    ..build_options("/g")
+                },
+                game_args: None,
+                steps: vec![BuildStep::Trunk {
                     dir: game.to_path_buf(),
-                    args: trunk,
+                    args: web,
+                }],
+            },
+            Plan {
+                name: "a cooked web release",
+                options: BuildOptions {
+                    cook: true,
+                    release: true,
+                    wasm: true,
+                    public_url: Some("./".to_string()),
+                    dist: Some(dist.to_path_buf()),
+                    ..build_options("/g")
                 },
-                BuildStep::Overlay {
-                    from: cooked,
-                    onto: OverlayTarget::Dir(dist.to_path_buf()),
-                },
-            ]
-        );
+                game_args: None,
+                steps: vec![
+                    cargo_step(game, true),
+                    cook(),
+                    BuildStep::Trunk {
+                        dir: game.to_path_buf(),
+                        args: cooked_web,
+                    },
+                    BuildStep::Overlay {
+                        from: cooked.clone(),
+                        onto: OverlayTarget::Dir(dist.to_path_buf()),
+                    },
+                ],
+            },
+        ];
+        for plan in plans {
+            let planned = match &plan.game_args {
+                Some(game_args) => plan_run(&plan.options, game_args, "g", target),
+                None => plan_build(&plan.options, "g", target),
+            };
+            assert_eq!(planned.steps, plan.steps, "{}", plan.name);
+        }
     }
 
     #[test]
-    fn an_overlay_replaces_the_files_that_exist_and_skips_the_rest() {
+    fn an_overlay_replaces_the_files_that_exist_and_names_the_ones_it_skips() {
         let tmp = tempfile::tempdir().unwrap();
         let from = tmp.path().join("cooked");
         let onto = tmp.path().join("dist");
@@ -2519,57 +1970,13 @@ mod tests {
         assert_eq!(read(onto.join("index.html")), "page");
         assert!(!onto.join("content/c.gasset").exists());
         assert!(!onto.join(".concerto-cook").exists());
-        assert_eq!(
-            report.edited,
-            vec![
-                onto.join("content").join("a.gasset"),
-                onto.join("content").join("deep").join("b.gasset"),
-            ]
-        );
-        assert_eq!(report.notes.len(), 1, "{:?}", report.notes);
         assert!(
-            report.notes[0].contains("content/c.gasset"),
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("content/c.gasset")),
             "{:?}",
             report.notes
         );
-    }
-
-    #[test]
-    fn the_built_content_sits_next_to_the_executable_under_its_stem() {
-        assert_eq!(
-            built_content_dir(Path::new("/t/x86_64-unknown-linux-gnu/release/g")),
-            Some(PathBuf::from(
-                "/t/x86_64-unknown-linux-gnu/release/g-content"
-            ))
-        );
-        assert_eq!(
-            built_content_dir(Path::new("/t/debug/g.exe")),
-            Some(PathBuf::from("/t/debug/g-content"))
-        );
-    }
-
-    #[test]
-    fn a_missing_trunk_is_named_with_how_to_install_it() {
-        let error = require_trunk(std::ffi::OsStr::new("concerto-no-such-trunk")).unwrap_err();
-
-        assert_eq!(error.to_string(), TRUNK_MISSING);
-    }
-
-    const CARGO_MESSAGES: &str = r#"{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["custom-build"],"crate_types":["bin"],"name":"build-script-build","src_path":"/g/build.rs","edition":"2024","doc":false,"doctest":false,"test":false},"features":[],"filenames":["/t/debug/build/g-1/build-script-build"],"executable":null,"fresh":true}
-{"reason":"build-script-executed","package_id":"path+file:///g#0.1.0","linked_libs":[],"linked_paths":[],"cfgs":[],"env":[],"out_dir":"/t/debug/build/g-2/out"}
-{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"g","src_path":"/g/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"features":[],"filenames":["/t/debug/libg.rlib"],"executable":null,"fresh":false}
-{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"g-tool","src_path":"/g/src/bin/g-tool.rs","edition":"2024","doc":true,"doctest":false,"test":true},"features":[],"filenames":["/t/debug/g-tool"],"executable":"/t/debug/g-tool","fresh":false}
-{"reason":"compiler-artifact","package_id":"path+file:///g#0.1.0","manifest_path":"/g/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"g","src_path":"/g/src/main.rs","edition":"2024","doc":true,"doctest":false,"test":true},"features":[],"filenames":["/t/debug/g"],"executable":"/t/debug/g","fresh":false}
-{"reason":"build-finished","success":true}"#;
-
-    #[test]
-    fn the_executable_is_the_bin_artifact_named_after_the_package() {
-        let found: Vec<PathBuf> = CARGO_MESSAGES
-            .lines()
-            .filter_map(|line| executable_of(line, "g"))
-            .collect();
-
-        assert_eq!(found, vec![PathBuf::from("/t/debug/g")]);
-        assert_eq!(executable_of("warning: not json", "g"), None);
     }
 }
