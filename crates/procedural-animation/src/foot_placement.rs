@@ -636,8 +636,8 @@ mod tests {
 
     use super::{FootPlacementLeg, FootPlacementNode, IgnoredBody};
     use crate::testing::{
-        Bone, angle, app_with, assert_near, captured_graph, compile, insert_asset, skeleton_of,
-        spawn_rigged, write_state,
+        Bone, angle, app_with, assert_near, captured, captured_graph, compile, insert_asset,
+        skeleton_of, spawn_rigged, write_state,
     };
 
     const EPS: f32 = 1.0e-4;
@@ -1134,12 +1134,27 @@ mod tests {
 
         for row in rows {
             let skeleton = rig_with_toe(row.toe);
-            let input = ConstantPose::rest_of(&skeleton);
+            let input = ConstantPose {
+                root_translation: Vec3::new(0.01, 0.0, 0.04),
+                root_rotation: Quat::from_rotation_y(0.03),
+                ..ConstantPose::rest_of(&skeleton)
+            };
+            let passed = RootMotion {
+                translation: input.root_translation,
+                rotation: input.root_rotation,
+            };
             let mut stage = Stage::new(skeleton, input, row.node)
                 .with_physics()
                 .under(row.space);
             (row.ground)(&mut stage);
             stage.settle();
+            let player = stage.player;
+            assert_eq!(
+                captured(stage.world(), player).root_motion,
+                passed,
+                "{}",
+                row.name
+            );
 
             let checked =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (row.check)(&mut stage)));

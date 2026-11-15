@@ -514,8 +514,8 @@ mod tests {
 
     use super::{FootLockLeg, FootLockNode, FootLockState, LegLock, LockPhase};
     use crate::testing::{
-        Bone, angle, app_with, captured_graph, compile, input_event, insert_asset, read_state,
-        skeleton_of, spawn_rigged, write_state,
+        Bone, angle, app_with, captured, captured_graph, compile, input_event, insert_asset,
+        read_state, skeleton_of, spawn_rigged, write_state,
     };
 
     const EPS: f32 = 1.0e-4;
@@ -1009,6 +1009,14 @@ mod tests {
             let mut stage = (row.stage)();
 
             assert_eq!(stage.phases(), [row.phase; 2], "{}", row.name);
+            let player = stage.player;
+            let passed = RootMotion {
+                translation: stage.script.root_translation,
+                rotation: stage.script.root_rotation,
+            };
+            let frame = captured(stage.world(), player);
+            assert_eq!(frame.root_motion, passed, "{}", row.name);
+            assert_eq!(frame.events, [input_event()], "{}", row.name);
             if row.phase == LockPhase::Locked {
                 for (leg, toe) in stage.legs().into_iter().zip(TOES) {
                     let toe = stage.input_world(toe);
