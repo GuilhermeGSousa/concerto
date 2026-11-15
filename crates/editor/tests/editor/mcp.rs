@@ -455,7 +455,19 @@ fn wants_playing(mut calls: ToolCalls<WantsPlaying>, _: Res<NeverInserted>) {
 }
 
 fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u8]) {
-    write_imported(root, address, id, kind, None, payload);
+    write_imported(root, address, id, kind, 1, None, payload);
+}
+
+fn write_scene(root: &Path, address: &str, id: AssetId, scene: &Scene) {
+    write_imported(
+        root,
+        address,
+        id,
+        Scene::name(),
+        Scene::FORMAT_VERSION,
+        None,
+        &bincode::serialize(scene).unwrap(),
+    );
 }
 
 fn write_imported(
@@ -463,6 +475,7 @@ fn write_imported(
     address: &str,
     id: AssetId,
     kind: &str,
+    kind_version: u32,
     provenance: Option<ImportProvenance>,
     payload: &[u8],
 ) {
@@ -470,7 +483,7 @@ fn write_imported(
         asset_id: id,
         references: vec![],
         kind: kind.into(),
-        kind_version: 1,
+        kind_version,
         provenance,
         derived: None,
         embedded: Vec::new(),
@@ -502,6 +515,7 @@ impl Fixture {
                 name: name.into(),
                 children,
                 components: vec![],
+                link: None,
             };
             node.push_component(&Transform::IDENTITY).unwrap();
             node
@@ -519,13 +533,7 @@ impl Fixture {
             referenced_assets: vec![],
         };
         let id = AssetId::new();
-        write_asset(
-            fixture.directory.path(),
-            "content/level.gasset",
-            id,
-            Scene::name(),
-            &bincode::serialize(&scene).unwrap(),
-        );
+        write_scene(fixture.directory.path(), "content/level.gasset", id, &scene);
         Self {
             scene: id,
             ..fixture
@@ -537,6 +545,7 @@ impl Fixture {
             name: "Crate".into(),
             children: vec![],
             components: vec![],
+            link: None,
         };
         node.push_component(&Transform::IDENTITY).unwrap();
         let scene = Scene {
@@ -544,13 +553,7 @@ impl Fixture {
             referenced_assets: vec![],
         };
         let id = AssetId::new();
-        write_asset(
-            self.directory.path(),
-            address,
-            id,
-            Scene::name(),
-            &bincode::serialize(&scene).unwrap(),
-        );
+        write_scene(self.directory.path(), address, id, &scene);
         id
     }
 
@@ -571,6 +574,7 @@ impl Fixture {
             address,
             id,
             kind,
+            1,
             Some(provenance),
             &[],
         );

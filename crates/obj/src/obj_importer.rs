@@ -53,6 +53,7 @@ impl Importer for ObjImporter {
                 name: model.name.clone(),
                 children: vec![],
                 components: Vec::new(),
+                link: None,
             };
             push_node_component(&mut node, &Transform::default())?;
 

@@ -286,6 +286,7 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
                 name: (*name).into(),
                 children: vec![],
                 components: vec![],
+                link: None,
             };
             node.push_component(&Transform::IDENTITY).unwrap();
             node

@@ -23,6 +23,7 @@ fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) 
         name: name.to_string(),
         children,
         components,
+        link: None,
     }
 }
 

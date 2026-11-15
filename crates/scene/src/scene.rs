@@ -24,6 +24,42 @@ pub struct SceneNode {
     /// Indices into `Scene::nodes`.
     pub children: Vec<usize>,
     pub components: Vec<SerializedComponent>,
+    /// The scene this node links to and the changes made to its nodes, when it is a link.
+    pub link: Option<SceneLinkData>,
+}
+
+/// A link stored on a [`SceneNode`]: the linked scene and the changes made to its nodes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneLinkData {
+    pub scene: AssetId,
+    pub changes: Vec<LinkChange>,
+}
+
+/// One change a link makes to a node of its scene, addressed by the node's path from the link.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LinkChange {
+    AddComponent {
+        path: String,
+        component: SerializedComponent,
+    },
+    RemoveComponent {
+        path: String,
+        type_name: String,
+    },
+    RemoveNode {
+        path: String,
+    },
+}
+
+impl LinkChange {
+    /// The path of the linked node this change applies to.
+    pub fn path(&self) -> &str {
+        match self {
+            LinkChange::AddComponent { path, .. }
+            | LinkChange::RemoveComponent { path, .. }
+            | LinkChange::RemoveNode { path } => path,
+        }
+    }
 }
 
 impl SceneNode {
@@ -51,12 +87,33 @@ pub struct Scene {
 }
 
 impl Asset for Scene {
+    const FORMAT_VERSION: u32 = 2;
+
     fn name() -> &'static str {
         "Scene"
     }
 
+    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
+        match version {
+            1 => {
+                let old: legacy::SceneV1 = bincode::deserialize(payload)?;
+                Ok(old.into())
+            }
+            _ => anyhow::bail!(
+                "Scene version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+                Self::FORMAT_VERSION
+            ),
+        }
+    }
+
     fn referenced_sub_assets(&self) -> Vec<AssetId> {
-        self.referenced_assets.clone()
+        let mut ids = self.referenced_assets.clone();
+        for link in self.nodes.iter().filter_map(|node| node.link.as_ref()) {
+            if !ids.contains(&link.scene) {
+                ids.push(link.scene);
+            }
+        }
+        ids
     }
 }
 
@@ -74,5 +131,43 @@ impl LoadableAsset for Scene {}
 impl PlaceableAsset for Scene {
     fn place(asset: &Self, _handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
         crate::spawner::spawn_scene(cmd, asset, entity);
+    }
+}
+
+mod legacy {
+    use concerto_foundation::assets::AssetId;
+    use serde::Deserialize;
+
+    use super::{Scene, SceneNode, SerializedComponent};
+
+    #[derive(Deserialize)]
+    struct SceneNodeV1 {
+        name: String,
+        children: Vec<usize>,
+        components: Vec<SerializedComponent>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct SceneV1 {
+        nodes: Vec<SceneNodeV1>,
+        referenced_assets: Vec<AssetId>,
+    }
+
+    impl From<SceneV1> for Scene {
+        fn from(old: SceneV1) -> Self {
+            Self {
+                nodes: old
+                    .nodes
+                    .into_iter()
+                    .map(|node| SceneNode {
+                        name: node.name,
+                        children: node.children,
+                        components: node.components,
+                        link: None,
+                    })
+                    .collect(),
+                referenced_assets: old.referenced_assets,
+            }
+        }
     }
 }

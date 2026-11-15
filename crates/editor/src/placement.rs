@@ -467,6 +467,7 @@ mod tests {
             name: name.into(),
             children: vec![],
             components: vec![],
+            link: None,
         };
         let pair = save_content_asset_into(
             &Scene {

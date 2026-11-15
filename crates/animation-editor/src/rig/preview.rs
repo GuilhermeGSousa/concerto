@@ -678,6 +678,7 @@ mod tests {
                 name: name.into(),
                 children,
                 components: vec![],
+                link: None,
             };
             node.push_component(&Transform::IDENTITY).unwrap();
             node

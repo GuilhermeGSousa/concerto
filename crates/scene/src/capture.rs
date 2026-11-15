@@ -97,5 +97,6 @@ fn capture_node(
         name,
         children,
         components,
+        link: None,
     })
 }

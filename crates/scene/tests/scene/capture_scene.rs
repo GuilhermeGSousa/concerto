@@ -37,6 +37,7 @@ fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) 
         name: name.into(),
         children,
         components,
+        link: None,
     }
 }
 

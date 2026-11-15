@@ -33,7 +33,7 @@
 "crates/reflect" = 16
 "crates/render" = 75
 "crates/render/macros" = 1
-"crates/scene" = 10
+"crates/scene" = 12
 "crates/tasks" = 2
 "crates/terminal-renderer" = 2
 "crates/ui" = 99

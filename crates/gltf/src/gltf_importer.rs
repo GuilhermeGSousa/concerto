@@ -499,6 +499,7 @@ impl Importer for GltfImporter {
                 name: gltf_node.name().map(str::to_string).unwrap_or_default(),
                 children: gltf_node.children().map(|c| c.index()).collect(),
                 components: Vec::new(),
+                link: None,
             };
             push_node_component(
                 &mut scene_node,
@@ -648,6 +649,7 @@ impl Importer for GltfImporter {
                             name: format!("{node_name}.primitive{k}"),
                             children: Vec::new(),
                             components: Vec::new(),
+                            link: None,
                         };
                         push_node_component(&mut child, &Transform::IDENTITY)?;
                         push_mesh_components(&mut child, mesh_id, material_id)?;

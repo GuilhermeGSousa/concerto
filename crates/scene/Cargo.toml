@@ -12,10 +12,10 @@ concerto-foundation.workspace = true
 concerto-ecs.workspace = true
 concerto-reflect.workspace = true
 anyhow = "1.0.97"
+bincode = "1.3"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 concerto-mesh.workspace = true
 concerto-render.workspace = true
-bincode = "1.3"
 glam.workspace = true

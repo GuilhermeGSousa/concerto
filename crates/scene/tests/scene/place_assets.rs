@@ -23,6 +23,7 @@ fn node(name: &str, children: Vec<usize>, x: f32) -> SceneNode {
         name: name.to_string(),
         children,
         components: vec![],
+        link: None,
     };
     node.push_component(&Transform::from_translation(Vec3::new(x, 0.0, 0.0)))
         .unwrap();

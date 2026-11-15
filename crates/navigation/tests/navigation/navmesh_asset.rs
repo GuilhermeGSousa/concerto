@@ -138,6 +138,7 @@ fn placed(name: &str, transform: Transform, children: Vec<usize>) -> SceneNode {
         name: name.to_owned(),
         children,
         components: Vec::new(),
+        link: None,
     };
     node.push_component(&transform).unwrap();
     node

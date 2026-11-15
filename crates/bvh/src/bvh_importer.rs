@@ -218,6 +218,7 @@ fn build_scene(bvh: &Bvh, skeleton: &Skeleton, skeleton_id: AssetId) -> Result<S
             name: joint.name.clone(),
             children: Vec::new(),
             components: Vec::new(),
+            link: None,
         };
         let pose = &skeleton.rest_pose[index];
         push_node_component(

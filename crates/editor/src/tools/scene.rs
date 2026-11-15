@@ -130,6 +130,7 @@ mod tests {
             name: name.into(),
             children,
             components: vec![],
+            link: None,
         }
     }
 
