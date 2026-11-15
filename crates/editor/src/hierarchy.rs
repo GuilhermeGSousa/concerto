@@ -74,11 +74,6 @@ impl HierarchyState {
     }
 
     #[cfg(test)]
-    pub(crate) fn pending_scene_reveal(&self) -> Option<Entity> {
-        self.pending_scene_reveal
-    }
-
-    #[cfg(test)]
     pub(crate) fn items(&self) -> &HashMap<Entity, Entity> {
         &self.items
     }
