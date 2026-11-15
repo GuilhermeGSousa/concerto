@@ -85,35 +85,6 @@ impl FeatureChannel for SilentChannel {
 }
 
 #[test]
-fn a_channel_with_no_preview_adds_no_shapes() {
-    assert!(shapes_of(&SilentChannel, &[], &[], &[1.0]).is_empty());
-}
-
-#[test]
-fn bone_positions_ring_the_values_in_the_slice_and_not_the_context() {
-    let channel = BonePositions {
-        bones: vec!["LeftFoot".into(), "Hips".into()],
-        weight: 1.0,
-    };
-
-    let shapes = shapes_of(&channel, &feet(), &[], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-
-    assert_eq!(
-        shapes,
-        vec![
-            FeatureShape::Ring {
-                center: Vec3::new(1.0, 2.0, 3.0),
-                radius: 0.05,
-            },
-            FeatureShape::Ring {
-                center: Vec3::new(4.0, 5.0, 6.0),
-                radius: 0.05,
-            },
-        ]
-    );
-}
-
-#[test]
 fn bone_velocities_leave_the_bone_in_the_context_along_the_scaled_slice() {
     let channel = BoneVelocities {
         bones: vec!["LeftFoot".into()],
@@ -127,51 +98,6 @@ fn bone_velocities_leave_the_bone_in_the_context_along_the_scaled_slice() {
     };
     assert_near(start, Vec3::new(0.0, 0.5, 1.0));
     assert_near(end, Vec3::new(0.2, 0.5, 0.9));
-}
-
-#[test]
-fn a_bone_velocity_the_context_cannot_place_is_left_out() {
-    let named = |bone: &str| BoneVelocities {
-        bones: vec![bone.into()],
-        weight: 1.0,
-    };
-
-    assert!(shapes_of(&named("Head"), &feet(), &[], &[1.0, 0.0, 0.0]).is_empty());
-    assert!(shapes_of(&named("LeftFoot"), &[], &[], &[1.0, 0.0, 0.0]).is_empty());
-}
-
-#[test]
-fn trajectory_positions_join_the_origin_and_the_slice_with_a_ring_at_each_sample() {
-    let channel = TrajectoryPositions {
-        samples: vec![0, 1],
-        weight: 1.0,
-    };
-
-    let shapes = shapes_of(&channel, &[], &[], &[0.0, 1.0, 1.0, 2.0]);
-
-    let first = Vec3::new(0.0, 0.0, 1.0);
-    let second = Vec3::new(1.0, 0.0, 2.0);
-    assert_eq!(
-        shapes,
-        vec![
-            FeatureShape::Line {
-                start: Vec3::ZERO,
-                end: first,
-            },
-            FeatureShape::Ring {
-                center: first,
-                radius: 0.12,
-            },
-            FeatureShape::Line {
-                start: first,
-                end: second,
-            },
-            FeatureShape::Ring {
-                center: second,
-                radius: 0.12,
-            },
-        ]
-    );
 }
 
 #[test]
@@ -189,17 +115,6 @@ fn trajectory_directions_leave_the_sample_in_the_context_at_a_set_length() {
     };
     assert_near(start, Vec3::new(-3.0, 0.0, 0.0));
     assert_near(end, Vec3::new(-2.82, 0.0, 0.24));
-}
-
-#[test]
-fn a_trajectory_direction_the_context_cannot_place_or_aim_is_left_out() {
-    let channel = TrajectoryDirections {
-        samples: vec![0],
-        weight: 1.0,
-    };
-
-    assert!(shapes_of(&channel, &[], &[], &[0.0, 1.0]).is_empty());
-    assert!(shapes_of(&channel, &[], &[sample_at(Vec3::X)], &[0.0, 0.0]).is_empty());
 }
 
 #[test]

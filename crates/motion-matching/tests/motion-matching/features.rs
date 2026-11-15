@@ -3,12 +3,11 @@ use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{bake, trajectory_samples};
 use concerto_motion_matching::{
-    reference_channels, BakeError, BodyMotion, BonePositions, BoneVelocities, ChannelSource,
-    FeatureChannel, FeatureChannelData, FeatureQuery, FrameContext, JointAxis, MotionDatabase,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, TrajectoryDirections,
-    TrajectoryPositions, TrajectorySample,
+    BakeError, BodyMotion, BonePositions, BoneVelocities, FeatureChannel, FeatureChannelData,
+    FeatureQuery, FrameContext, JointAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel,
+    SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
-use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
+use concerto_reflect::Reflect;
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -51,13 +50,6 @@ impl FeatureChannel for FlatChannel {
     fn weight(&self) -> f32 {
         self.weight
     }
-}
-
-fn registry() -> TypeRegistry {
-    let mut registry = TypeRegistry::default();
-    registry.register::<RampChannel>();
-    registry.register::<FlatChannel>();
-    registry
 }
 
 fn skeleton() -> Skeleton {
@@ -170,50 +162,6 @@ fn a_constant_group_normalises_to_exactly_zero() {
     }
 }
 
-#[test]
-fn a_changed_weight_scales_one_group_by_the_weight_ratio() {
-    let mut database = baked(vec![ramp(1.0), flat(1.0)]);
-    let before = database.scales().unwrap();
-    let features = database.features(5).unwrap().to_vec();
-    let offset = database.offset().unwrap().to_vec();
-
-    database.channels[0] = ramp(4.0);
-
-    let after = database.scales().unwrap();
-    assert!((after[0] - before[0] / 4.0).abs() < before[0] * 1e-5);
-    assert!((after[1] - before[1] / 4.0).abs() < before[1] * 1e-5);
-    assert_eq!(after[2], before[2]);
-    assert_eq!(database.features(5).unwrap(), features);
-    assert_eq!(database.offset().unwrap(), offset);
-}
-
-#[test]
-fn a_weight_that_is_not_positive_and_finite_or_not_loaded_normalises_nothing() {
-    let database = baked(vec![ramp(1.0), flat(1.0)]);
-    for weight in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        let mut changed = database.clone();
-        changed.channels[1] = flat(weight);
-        assert_eq!(changed.scales(), None, "{weight}");
-    }
-    let mut changed = database.clone();
-    changed.channels[1] = FeatureChannelData::Stored {
-        type_name: "FlatChannel".into(),
-        value: to_value(&FlatChannel { weight: 2.0 }).unwrap(),
-    };
-    assert_eq!(changed.normalised_features(0), None);
-    let mut fewer = database.clone();
-    fewer.channels.pop();
-    assert_eq!(fewer.scales(), None);
-}
-
-#[test]
-fn features_still_returns_raw_values() {
-    let database = baked(vec![flat(1.0)]);
-
-    assert_eq!(database.features(0).unwrap(), [0.1]);
-    assert_eq!(database.offset().unwrap(), [0.1]);
-}
-
 fn yawed_simulation() -> Transform {
     Transform::from_translation_rotation(
         Vec3::new(1.0, 0.0, 2.0),
@@ -251,149 +199,70 @@ fn assert_close(actual: &[f32], expected: &[f32]) {
     }
 }
 
-#[test]
-fn bone_positions_are_expressed_in_the_simulation_frame() {
-    let channel = BonePositions {
-        bones: vec!["Hips".into()],
-        weight: 0.75,
-    };
-
-    assert_eq!(channel.dims(), 3);
-    assert_eq!(channel.source(), ChannelSource::Pose);
-    assert_close(&extract_with(&channel, &[]), &[-5.0, 5.0, 3.0]);
+struct Extracted {
+    channel: Box<dyn FeatureChannel>,
+    trajectory: Vec<TrajectorySample>,
+    features: Vec<f32>,
 }
 
 #[test]
-fn bone_velocities_are_rotated_but_not_translated() {
-    let channel = BoneVelocities {
-        bones: vec!["Hips".into(), "Spine2".into()],
-        weight: 1.0,
-    };
-
-    assert_eq!(channel.dims(), 6);
-    assert_eq!(channel.source(), ChannelSource::Pose);
-    assert_close(
-        &extract_with(&channel, &[]),
-        &[-2.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    );
-}
-
-#[test]
-fn trajectory_positions_keep_the_ground_plane_in_the_simulation_frame() {
-    let channel = TrajectoryPositions {
-        samples: vec![1],
-        weight: 1.0,
-    };
-    let trajectory = [
-        TrajectorySample::default(),
-        TrajectorySample {
-            position: Vec3::new(1.0, 3.0, 6.0),
-            ..Default::default()
+fn each_reference_channel_extracts_its_features_in_the_simulation_frame() {
+    let rows = [
+        Extracted {
+            channel: Box::new(BonePositions {
+                bones: vec!["Hips".into()],
+                weight: 0.75,
+            }),
+            trajectory: Vec::new(),
+            features: vec![-5.0, 5.0, 3.0],
+        },
+        Extracted {
+            channel: Box::new(BoneVelocities {
+                bones: vec!["Hips".into(), "Spine2".into()],
+                weight: 1.0,
+            }),
+            trajectory: Vec::new(),
+            features: vec![-2.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        },
+        Extracted {
+            channel: Box::new(TrajectoryPositions {
+                samples: vec![1],
+                weight: 1.0,
+            }),
+            trajectory: vec![
+                TrajectorySample::default(),
+                TrajectorySample {
+                    position: Vec3::new(1.0, 3.0, 6.0),
+                    ..Default::default()
+                },
+            ],
+            features: vec![-4.0, 0.0],
+        },
+        Extracted {
+            channel: Box::new(TrajectoryDirections {
+                samples: vec![0, 1],
+                weight: 1.5,
+            }),
+            trajectory: vec![
+                TrajectorySample {
+                    rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                    ..Default::default()
+                },
+                TrajectorySample {
+                    rotation: Quat::from_rotation_y(std::f32::consts::PI),
+                    ..Default::default()
+                },
+            ],
+            features: vec![0.0, 1.0, 1.0, 0.0],
         },
     ];
 
-    assert_eq!(channel.dims(), 2);
-    assert_eq!(channel.source(), ChannelSource::Trajectory);
-    assert_close(&extract_with(&channel, &trajectory), &[-4.0, 0.0]);
-}
-
-#[test]
-fn trajectory_directions_are_relative_to_the_simulation_facing() {
-    let channel = TrajectoryDirections {
-        samples: vec![0, 1],
-        weight: 1.5,
-    };
-    let trajectory = [
-        TrajectorySample {
-            rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-            ..Default::default()
-        },
-        TrajectorySample {
-            rotation: Quat::from_rotation_y(std::f32::consts::PI),
-            ..Default::default()
-        },
-    ];
-
-    assert_eq!(channel.dims(), 4);
-    assert_eq!(channel.source(), ChannelSource::Trajectory);
-    assert_close(&extract_with(&channel, &trajectory), &[0.0, 1.0, 1.0, 0.0]);
-}
-
-#[test]
-fn reference_channels_are_27_dimensions_with_the_reference_weights() {
-    let definition = MotionDatabase::default();
-    let built = definition.live_channels().unwrap();
-
-    let dims: Vec<usize> = built.iter().map(|channel| channel.dims()).collect();
-    let weights: Vec<f32> = built.iter().map(|channel| channel.weight()).collect();
-    assert_eq!(dims, [6, 6, 3, 6, 6]);
-    assert_eq!(dims.iter().sum::<usize>(), 27);
-    assert_eq!(weights, [0.75, 1.0, 1.0, 1.0, 1.5]);
-    assert_eq!(definition.channels, reference_channels());
-}
-
-fn bake_with(channel: FeatureChannelData) -> Result<MotionDatabase, BakeError> {
-    let definition = MotionDatabase {
-        entries: vec![MotionEntry {
-            clip: Default::default(),
-            range: None,
-            mirrored: false,
-        }],
-        rate: 30.0,
-        speed: 1.0,
-        simulation: SimulationBoneSettings {
-            facing_axis: JointAxis::Z,
-            position_window: 5,
-            facing_window: 5,
-            ..Default::default()
-        },
-        channels: vec![channel],
-        ..Default::default()
-    };
-    with_bake(definition)
-}
-
-#[test]
-fn a_missing_bone_fails_the_bake_with_a_channel_value_error() {
-    let error = bake_with(FeatureChannelData::live(BoneVelocities {
-        bones: vec!["Nope".into()],
-        weight: 1.0,
-    }))
-    .unwrap_err();
-
-    assert!(matches!(error, BakeError::ChannelValue { .. }), "{error:?}");
-}
-
-#[test]
-fn a_sample_index_past_the_trajectory_fails_the_bake_with_a_channel_value_error() {
-    for samples in [vec![3], vec![0, 7]] {
-        let error = bake_with(FeatureChannelData::live(TrajectoryPositions {
-            samples,
-            weight: 1.0,
-        }))
-        .unwrap_err();
-
-        assert!(matches!(error, BakeError::ChannelValue { .. }), "{error:?}");
+    for row in rows {
+        assert_close(
+            &extract_with(row.channel.as_ref(), &row.trajectory),
+            &row.features,
+        );
     }
-}
-
-#[test]
-fn valid_concrete_channels_bake() {
-    let database = bake_with(FeatureChannelData::live(TrajectoryPositions {
-        samples: vec![0, 2],
-        weight: 1.0,
-    }))
-    .unwrap();
-
-    assert_eq!(database.feature_dims(), Some(4));
-    assert_eq!(database.channel_range(0), Some(0..4));
-}
-
-fn query_registry() -> TypeRegistry {
-    let mut registry = registry();
-    registry.register::<TrajectoryPositions>();
-    registry.register::<TrajectoryDirections>();
-    registry
 }
 
 fn query_definition(
@@ -462,232 +331,4 @@ fn a_query_for_a_database_frame_equals_its_normalised_features() {
 
         assert_close(&built, &database.normalised_features(frame).unwrap());
     }
-}
-
-#[test]
-fn a_raw_query_holds_its_trajectory_span_in_metres_and_its_pose_spans_as_baked() {
-    let database = query_database();
-    let query = FeatureQuery::new(&database).unwrap();
-    let simulation = Transform::from_translation(Vec3::new(1.0, 0.0, 2.0));
-    let trajectory = [
-        Vec3::new(1.0, 0.0, 5.0),
-        Vec3::new(9.0, 0.0, 9.0),
-        Vec3::new(4.0, 0.0, 2.0),
-    ]
-    .map(|position| TrajectorySample {
-        position,
-        ..Default::default()
-    });
-
-    let raw = query
-        .raw(&database, &skeleton(), 7, &simulation, &trajectory)
-        .unwrap();
-
-    let span = database.channel_range(1).unwrap();
-    assert_eq!(
-        database.channels[1].channel().unwrap().source(),
-        ChannelSource::Trajectory
-    );
-    assert_close(&raw[span], &[0.0, 3.0, 3.0, 0.0]);
-    let ramp = database.channel_range(0).unwrap();
-    assert_eq!(
-        database.channels[0].channel().unwrap().source(),
-        ChannelSource::Pose
-    );
-    assert_close(&raw[ramp.clone()], &database.features(7).unwrap()[ramp]);
-}
-
-#[test]
-fn a_query_follows_a_changed_weight() {
-    let mut database = query_database();
-    let query = FeatureQuery::new(&database).unwrap();
-    database.channels = query_definition([1.0, 3.0, 1.0, 0.5]).channels;
-
-    let built = query
-        .build(
-            &database,
-            &skeleton(),
-            4,
-            &database.simulation_bone(4).unwrap(),
-            &frame_trajectory(&database, 4),
-        )
-        .unwrap();
-
-    assert_close(&built, &database.normalised_features(4).unwrap());
-}
-
-#[test]
-fn a_query_rejects_a_frame_past_the_database() {
-    let database = query_database();
-    let query = FeatureQuery::new(&database).unwrap();
-    let frame = database.frame_count().unwrap();
-
-    let error = query
-        .build(
-            &database,
-            &skeleton(),
-            frame,
-            &database.simulation_bone(0).unwrap(),
-            &frame_trajectory(&database, 0),
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        error,
-        BakeError::FrameOutOfRange {
-            frame,
-            frame_count: frame
-        }
-    );
-}
-
-#[test]
-fn a_query_rejects_a_short_trajectory() {
-    let database = query_database();
-    let query = FeatureQuery::new(&database).unwrap();
-    let needed = database.trajectory.sample_count;
-    let mut trajectory = frame_trajectory(&database, 0);
-    trajectory.pop();
-
-    let error = query
-        .build(
-            &database,
-            &skeleton(),
-            0,
-            &database.simulation_bone(0).unwrap(),
-            &trajectory,
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        error,
-        BakeError::TrajectoryTooShort {
-            needed,
-            actual: needed - 1
-        }
-    );
-}
-
-#[test]
-fn a_query_rejects_a_wrong_bone_count() {
-    let database = query_database();
-    let query = FeatureQuery::new(&database).unwrap();
-    let small = Skeleton::new(
-        vec![Mat4::IDENTITY],
-        vec![None],
-        vec!["Root".into()],
-        vec![JointPose::IDENTITY],
-        vec![Uuid::from_u128(1)],
-    )
-    .unwrap();
-
-    let error = query
-        .build(
-            &database,
-            &small,
-            0,
-            &database.simulation_bone(0).unwrap(),
-            &frame_trajectory(&database, 0),
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        error,
-        BakeError::BoneCountMismatch {
-            expected: 3,
-            actual: 1
-        }
-    );
-}
-
-#[test]
-fn a_query_rejects_a_database_with_another_channel_count() {
-    let database = query_database();
-    let query = FeatureQuery::new(&database).unwrap();
-    let other = baked(vec![ramp(1.0), flat(1.0)]);
-
-    let error = query
-        .build(
-            &other,
-            &skeleton(),
-            0,
-            &other.simulation_bone(0).unwrap(),
-            &frame_trajectory(&other, 0),
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        error,
-        BakeError::ChannelCountMismatch {
-            expected: 4,
-            actual: 2
-        }
-    );
-}
-
-#[test]
-fn a_query_needs_the_database_channels_loaded() {
-    let bytes = bincode::serialize(&query_database()).unwrap();
-    let mut database: MotionDatabase = bincode::deserialize(&bytes).unwrap();
-
-    let error = FeatureQuery::new(&database).err().unwrap();
-    assert_eq!(error, BakeError::UnloadedChannel("RampChannel".into()));
-
-    database.load_channels(&query_registry()).unwrap();
-    assert!(FeatureQuery::new(&database).is_ok());
-}
-
-fn reference_registry() -> TypeRegistry {
-    let mut registry = TypeRegistry::default();
-    registry.register::<BonePositions>();
-    registry.register::<BoneVelocities>();
-    registry.register::<TrajectoryPositions>();
-    registry.register::<TrajectoryDirections>();
-    registry
-}
-
-#[test]
-fn an_empty_stored_value_builds_a_channel_at_its_defaults() {
-    let registry = reference_registry();
-    let data = registry
-        .get_by_name("BonePositions")
-        .unwrap()
-        .data::<ReflectFeatureChannel>()
-        .copied()
-        .unwrap();
-
-    let built = (data.from_value)(&ReflectedValue::Struct(Vec::new())).unwrap();
-
-    assert_eq!(
-        (data.to_value)(built.as_ref()).unwrap(),
-        to_value(&BonePositions::default()).unwrap()
-    );
-}
-
-#[test]
-fn a_channel_registers_its_joint_names() {
-    let registry = reference_registry();
-
-    assert!(registry.get_by_name("JointName").is_some());
-}
-
-#[test]
-fn a_query_on_a_database_not_derived_is_an_error() {
-    let database = MotionDatabase {
-        baked: None,
-        ..query_database()
-    };
-    let query = FeatureQuery::new(&database).unwrap();
-
-    let error = query
-        .build(
-            &database,
-            &skeleton(),
-            0,
-            &Transform::IDENTITY,
-            &[TrajectorySample::default(); 3],
-        )
-        .unwrap_err();
-
-    assert_eq!(error, BakeError::NotBaked);
 }

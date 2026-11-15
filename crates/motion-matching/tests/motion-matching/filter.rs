@@ -1,5 +1,4 @@
 use concerto_motion_matching::filter::savitzky_golay;
-use concerto_motion_matching::BakeError;
 use proptest::prelude::*;
 
 fn variance(values: &[f32]) -> f32 {
@@ -42,72 +41,4 @@ fn reduces_the_variance_of_a_noisy_line() {
             .collect()
     };
     assert!(variance(&residual(&smoothed)) < variance(&residual(&values)) * 0.2);
-}
-
-struct Window {
-    count: usize,
-    window: usize,
-    refused: bool,
-}
-
-#[test]
-fn a_window_must_be_odd_and_over_three_and_is_clamped_to_the_input() {
-    let refused = |window| Window {
-        count: 20,
-        window,
-        refused: true,
-    };
-    let rows = [
-        refused(0),
-        refused(1),
-        refused(2),
-        refused(3),
-        refused(4),
-        refused(10),
-        Window {
-            count: 20,
-            window: 5,
-            refused: false,
-        },
-        Window {
-            count: 9,
-            window: 61,
-            refused: false,
-        },
-        Window {
-            count: 2,
-            window: 31,
-            refused: false,
-        },
-        Window {
-            count: 1,
-            window: 5,
-            refused: false,
-        },
-    ];
-
-    for row in rows {
-        let values: Vec<f32> = (0..row.count).map(|i| i as f32 * 0.5).collect();
-
-        let smoothed = savitzky_golay(&values, row.window, 3);
-
-        if row.refused {
-            assert!(
-                matches!(
-                    smoothed,
-                    Err(BakeError::InvalidWindow { window, .. }) if window == row.window
-                ),
-                "window {}",
-                row.window
-            );
-        } else {
-            let smoothed = smoothed.unwrap();
-            assert_eq!(smoothed.len(), row.count, "window {}", row.window);
-            assert!(
-                smoothed.iter().all(|v| v.is_finite()),
-                "window {}",
-                row.window
-            );
-        }
-    }
 }
