@@ -946,7 +946,10 @@ mod tests {
     }
 
     fn stepping_world() -> (World, Entity) {
-        let (mut world, document) = host_world(plain_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(plain_recipe);
         add_stepping(&mut world);
         (world, document)
     }
@@ -1086,7 +1089,10 @@ mod tests {
 
     #[test]
     fn a_replacement_keeps_the_old_app_until_the_new_one_is_ready() {
-        let (mut world, document) = host_world(plain_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(plain_recipe);
         let old = world
             .get_component_for_entity::<HostedApp>(document)
             .unwrap()
@@ -1133,7 +1139,10 @@ mod tests {
     #[test]
     fn play_parks_the_edit_app_behind_a_game_app_and_stop_brings_it_back_and_drops_the_game() {
         let (dropped, insert_canary) = canary();
-        let (mut world, document) = host_world(plain_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(plain_recipe);
         let edit = hosted_id(&world, document);
         play_now(&mut world, document, plain_recipe, insert_canary);
         assert!(!dropped.load(Ordering::SeqCst));
@@ -1287,7 +1296,10 @@ mod tests {
 
     #[test]
     fn a_play_app_still_loading_is_stepped_hidden_until_it_settles() {
-        let (mut world, document) = host_world(plain_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(plain_recipe);
         world.insert_resource(FinishBuildsOffThread);
         let edit = hosted_id(&world, document);
         let server = loading_server();

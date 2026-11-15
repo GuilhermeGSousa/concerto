@@ -226,7 +226,7 @@ fn viewport_shortcuts(mut fired: EventReader<ActionFired>, mut scene: EditWorldS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hosted::testing::{host_world, hosted_now, plain_recipe};
+    use crate::hosted::testing::{HostWorld, host_world, hosted_now, plain_recipe};
     use concerto_app::edit_time::AtEditTime;
     use concerto_ecs::{
         IntoSystem, Resource, System, World, events::event_channel::EventChannel, signal::On,
@@ -296,7 +296,10 @@ mod tests {
 
     #[test]
     fn the_panel_shows_the_picture_of_the_active_documents_app_or_nothing() {
-        let (mut world, document) = host_world(plain_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(plain_recipe);
         let other = world.spawn(hosted_now(plain_recipe, |_| {}));
         let panel = world.spawn((
             ViewportRegion,
@@ -356,7 +359,10 @@ mod tests {
 
     #[test]
     fn each_viewport_shortcut_triggers_its_signal_in_the_edit_target() {
-        let (mut world, document) = host_world(noting_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(noting_recipe);
         world.insert_resource(EventChannel::<ActionFired>::default());
         let channel = world
             .get_resource_mut::<EventChannel<ActionFired>>()

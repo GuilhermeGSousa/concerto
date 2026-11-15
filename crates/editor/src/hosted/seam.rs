@@ -274,18 +274,16 @@ mod tests {
         }
     }
 
-    struct SeamWorld {
-        world: World,
-        document: concerto_ecs::Entity,
-    }
-
-    fn seam_world() -> SeamWorld {
-        let (mut world, document) = host_world(plain_recipe);
+    fn seam_world() -> HostWorld {
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(plain_recipe);
         world.insert(hosting(markers(&[1], 0)), document);
         retarget(&mut world);
         world.insert_resource(Seen::default());
         world.insert_resource(Runs::default());
-        SeamWorld { world, document }
+        HostWorld { world, document }
     }
 
     fn runs(world: &World) -> usize {
@@ -307,7 +305,7 @@ mod tests {
 
     #[test]
     fn edit_world_reads_its_target_through_replacements_changes_of_document_and_play() {
-        let SeamWorld {
+        let HostWorld {
             mut world,
             document,
         } = seam_world();
@@ -359,7 +357,7 @@ mod tests {
 
     #[test]
     fn signals_reach_the_target_in_order_and_a_queue_for_an_app_that_is_gone_is_dropped() {
-        let SeamWorld {
+        let HostWorld {
             mut world,
             document,
         } = seam_world();
@@ -389,7 +387,7 @@ mod tests {
 
     #[test]
     fn edit_world_and_its_signals_skip_the_system_without_a_target_to_reach() {
-        let SeamWorld {
+        let HostWorld {
             mut world,
             document,
         } = seam_world();
@@ -450,7 +448,7 @@ mod tests {
 
     #[test]
     fn edit_world_sees_changes_since_its_last_run_through_skipped_runs_and_a_new_target() {
-        let SeamWorld {
+        let HostWorld {
             mut world,
             document,
         } = seam_world();
@@ -498,7 +496,7 @@ mod tests {
 
     #[test]
     fn edit_world_sees_a_signal_sent_through_edit_world_signals() {
-        let SeamWorld {
+        let HostWorld {
             mut world,
             document,
         } = seam_world();
@@ -553,7 +551,7 @@ mod tests {
 
     #[test]
     fn edit_world_reads_removals_in_the_target_and_in_the_next_target() {
-        let SeamWorld {
+        let HostWorld {
             mut world,
             document: first,
         } = seam_world();

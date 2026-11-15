@@ -221,7 +221,12 @@ fn insert_play_outcomes(world: &mut World) {
     world.insert_resource(EventChannel::<PlayStopped>::new());
 }
 
-pub fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
+pub struct HostWorld {
+    pub world: World,
+    pub document: Entity,
+}
+
+pub fn host_world(recipe: fn(&mut App)) -> HostWorld {
     let mut world = World::new();
     world.insert_resource(ActiveEditor::default());
     world.insert_resource(Routing::default());
@@ -230,7 +235,7 @@ pub fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
     let document = world.spawn(hosted_now(recipe, |_| {}));
     world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
     world.trigger(SetEditTarget(Some(document)));
-    (world, document)
+    HostWorld { world, document }
 }
 
 pub fn scene_recipe(app: &mut App) {
