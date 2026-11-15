@@ -1,8 +1,11 @@
 use super::*;
-use crate::preview::{ClipPlayback, ClipPreviewProgress};
+use crate::{
+    preview::{ClipPlayback, ClipPreviewProgress},
+    transport::{TransportRow, spawn_transport},
+};
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
 use concerto_ecs::{
-    IntoSystem, component::name::Name as EntityName, events::event_channel::EventChannel,
+    IntoSystem, System, component::name::Name as EntityName, events::event_channel::EventChannel,
 };
 use concerto_editor::{
     asset_editor::{ActiveEditor, AssetEditorRegistry, SaveRequested},
@@ -21,7 +24,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::skeleton::JointPose;
-use concerto_ui::interaction::UIClick;
+use concerto_ui::{interaction::UIClick, node::UINode, theme::UITheme};
 use concerto_window::input::MouseButton;
 use glam::{Mat4, Quat, Vec3};
 use serde_json::{Value, json};
@@ -220,6 +223,74 @@ impl RigTab {
         self.write_value(1, path, json);
     }
 
+    fn transport(&self) -> &ClipTransport {
+        self.f
+            .world
+            .get_component_for_entity::<ClipTransport>(self.document)
+            .unwrap()
+    }
+
+    fn playback(&self) -> &ClipPlayback {
+        self.f
+            .scene_world(self.document)
+            .get_resource::<ClipPlayback>()
+            .unwrap()
+    }
+
+    fn until(&mut self, what: &str, done: impl Fn(&RigTab) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            self.f.frame();
+            if done(self) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    fn playing_the_walk(mut self) -> Self {
+        let (other, walk) = (hex(&self.other), hex(&self.walk));
+        self.write_preview("other", other);
+        self.write_preview("clip", walk);
+        self.write_preview("mode", json!("Clip"));
+        self.until("the walk never played", |tab| {
+            tab.playback().clip.is_some() && tab.transport().time > 0.0
+        });
+        self
+    }
+
+    fn play_button(&mut self) -> Entity {
+        let document = self.document;
+        let host = self.f.world.spawn(UINode::default());
+        let mut spawn = (move |theme: Res<UITheme>, mut cmd: CommandQueue| {
+            spawn_transport(&mut cmd.entity(host), document, &theme);
+        })
+        .into_system();
+        spawn.initialize(&mut self.f.world);
+        spawn.run_and_apply((), &mut self.f.world);
+        let world = &mut self.f.world;
+        world
+            .query::<&TransportRow, ()>()
+            .iter(world)
+            .next()
+            .unwrap()
+            .play
+    }
+
+    fn edit_every_frame(&mut self, edit: usize) {
+        if edit.is_multiple_of(2) {
+            let root = if edit.is_multiple_of(4) {
+                "spine"
+            } else {
+                "pelvis"
+            };
+            self.write_rig("root", json!(root));
+        } else {
+            self.write_preview("bones", json!(edit % 4 == 1));
+        }
+    }
+
     fn spine_rotations(&mut self) -> Vec<Quat> {
         let world = self.f.scene_world_mut(self.document);
         let spines: Vec<Entity> = world
@@ -324,4 +395,88 @@ fn the_preview_value_plays_the_clip_through_the_retarget_and_pauses_where_told()
     assert!(!transport.playing);
     assert_eq!(transport.time, 0.5);
     assert_eq!(tab.state().preview.paused_at, Some(0.5));
+}
+
+#[test]
+fn a_pause_from_the_transport_holds_while_the_rig_is_edited_every_frame_and_play_clears_it() {
+    let mut tab = rig_tab().playing_the_walk();
+    let play = tab.play_button();
+    for edit in 0..5 {
+        tab.write_rig(
+            "root",
+            json!(if edit % 2 == 0 { "spine" } else { "pelvis" }),
+        );
+    }
+
+    tab.f.world.trigger_on(play, left_click());
+    for edit in 5..15 {
+        tab.write_rig(
+            "root",
+            json!(if edit % 2 == 0 { "spine" } else { "pelvis" }),
+        );
+    }
+
+    assert!(tab.state().preview.paused_at.is_some());
+    assert_eq!(tab.state().preview.paused_at, Some(tab.transport().time));
+    assert!(tab.transport().time > 0.0);
+    assert_eq!(tab.playback().time, tab.transport().time);
+    assert!(!tab.transport().playing);
+    assert!(!tab.playback().playing);
+
+    tab.f.world.trigger_on(play, left_click());
+    tab.until("play never cleared paused_at", |tab| {
+        tab.state().preview.paused_at.is_none()
+    });
+    assert!(tab.transport().playing);
+}
+
+#[test]
+fn a_clip_that_does_not_loop_stops_at_its_end_while_the_rig_and_the_preview_are_edited_every_frame()
+{
+    let mut tab = rig_tab().playing_the_walk();
+    tab.write_preview("looping", json!(false));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut edit = 0;
+    while tab.state().preview.paused_at.is_none() {
+        assert!(std::time::Instant::now() < deadline, "the clip never ended");
+        tab.edit_every_frame(edit);
+        edit += 1;
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    for _ in 0..6 {
+        tab.edit_every_frame(edit);
+        edit += 1;
+    }
+
+    assert_eq!(tab.state().preview.paused_at, Some(1.0));
+    assert!(!tab.state().preview.looping);
+    assert!(!tab.transport().playing);
+    assert!(!tab.playback().playing);
+    assert_eq!(tab.playback().time, 1.0);
+}
+
+#[test]
+fn a_clip_that_does_not_loop_ending_leaves_the_saved_status_alone() {
+    let mut tab = rig_tab().playing_the_walk();
+    tab.write_preview("speed", json!(0.25));
+    tab.write_preview("looping", json!(false));
+    tab.write_rig("root", json!("spine"));
+    tab.f.world.insert(SaveRequested, tab.document);
+    tab.f.frame();
+    tab.f.frame();
+    let saved = tab.f.status(tab.document);
+    assert!(!saved.is_empty());
+    assert!(!tab.f.unsaved(tab.document));
+    assert_eq!(tab.state().preview.paused_at, None);
+
+    tab.until("the clip never ended", |tab| {
+        tab.state().preview.paused_at.is_some()
+    });
+    for _ in 0..5 {
+        tab.f.frame();
+    }
+
+    assert_eq!(tab.f.status(tab.document), saved);
+    assert!(!tab.transport().playing);
 }
