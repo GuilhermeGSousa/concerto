@@ -265,38 +265,14 @@ fn clear_transient_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::{IntoSystem, Resource, System, World};
-    use concerto_window::input::MouseButton;
-    fn process_editor_commands(world: &mut World) {
-        let mut system = crate::asset_editor::process_editor_commands.into_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
-    }
-    #[derive(Resource)]
-    struct WorkspaceSystems([concerto_ecs::system::BoxedSystem; 2]);
-
-    fn sync_workspace(world: &mut World) {
-        let mut systems = world
-            .remove_resource::<WorkspaceSystems>()
-            .unwrap_or_else(|| {
-                let mut systems = [
-                    super::sync_workspace.into_boxed_system(),
-                    super::reset_workspace_input.into_boxed_system(),
-                ];
-                for system in &mut systems {
-                    system.initialize(world);
-                }
-                WorkspaceSystems(systems)
-            });
-        for system in &mut systems.0 {
-            system.run_and_apply((), world);
-        }
-        world.insert_resource(systems);
-    }
     use crate::asset_editor::{
         AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
     };
-    use concerto_foundation::assets::{Asset, AssetId, content::ImportProvenance};
+    use concerto_ecs::{IntoSystem, System, World};
+    use concerto_foundation::assets::{
+        AssetId,
+        registry::{AssetEntry, AssetRegistry},
+    };
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
@@ -310,549 +286,18 @@ mod tests {
     struct NotesEditor;
     impl AssetEditor for NotesEditor {}
 
-    #[derive(Serialize, Deserialize)]
-    struct Take;
-    impl Asset for Take {
-        fn name() -> &'static str {
-            "Take"
-        }
-    }
-    #[derive(Default)]
-    struct TakeEditor;
-    impl AssetEditor for TakeEditor {
-        fn bottom_host(&self) -> bool {
-            true
-        }
-    }
-
-    fn resources(world: &mut World) {
-        world.insert_resource(ActiveEditor::default());
-        world.insert_resource(AssetEditorCommands::default());
-        world.insert_resource(crate::guard::UnsavedGuard::default());
-        world.insert_resource(AssetEditorRegistry::default());
-        world.insert_resource(crate::project::ProjectState::default());
-        world.insert_resource(PanelRegistry::default());
-        world.insert_resource(PanelStates::default());
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(HoveredNode::default());
-        world.insert_resource(UIInputState::default());
-        world.insert_resource(ActionMap::default());
+    fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+        let mut system = system.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
     }
 
     #[test]
-    fn workspace_systems_do_not_request_exclusive_world_access() {
-        for system in [
-            super::create_editor_hosts.into_boxed_system(),
-            super::sync_workspace.into_boxed_system(),
-            super::reset_workspace_input.into_boxed_system(),
-        ] {
-            let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
-            let mut access = concerto_ecs::system::access::SystemAccess::default();
-            system.fill_access(&mut meta, &mut access);
-            assert!(!access.is_exclusive());
-        }
-    }
-
-    #[test]
-    fn unchanged_resources_preserve_focus_and_new_hosts_refresh_without_activation() {
-        let mut world = World::new();
-        resources(&mut world);
-        let editor = world.spawn(());
-        let first = world.spawn(UINode::default());
-        world.insert(
-            EditorHosts {
-                canvas: Some(first),
-                ..Default::default()
-            },
-            editor,
-        );
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(editor);
-        sync_workspace(&mut world);
-        world.tick();
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(first);
-        world
-            .get_resource_mut::<UIInputState>()
-            .unwrap()
-            .set_captured(MouseButton::Left, Some(first));
-        world
-            .get_component_for_entity_mut::<UINode>(first)
-            .unwrap()
-            .visible = false;
-        sync_workspace(&mut world);
-        assert!(
-            !world
-                .get_component_for_entity::<UINode>(first)
-                .unwrap()
-                .visible
-        );
-        assert_eq!(
-            **world.get_resource::<FocusedWidget>().unwrap(),
-            Some(first)
-        );
-        assert_eq!(
-            world
-                .get_resource::<UIInputState>()
-                .unwrap()
-                .captured(MouseButton::Left),
-            Some(first)
-        );
-
-        let second = world.spawn(UINode::default().with_visible(false));
-        world
-            .get_component_for_entity_mut::<EditorHosts>(editor)
-            .unwrap()
-            .canvas = Some(second);
-        sync_workspace(&mut world);
-        assert!(
-            world
-                .get_component_for_entity::<UINode>(second)
-                .unwrap()
-                .visible
-        );
-        assert_eq!(
-            **world.get_resource::<FocusedWidget>().unwrap(),
-            Some(first)
-        );
-
-        world.tick();
-        let mut deactivate = (|mut active: ResMut<ActiveEditor>| active.0 = None).into_system();
-        deactivate.initialize(&mut world);
-        deactivate.run_and_apply((), &mut world);
-        sync_workspace(&mut world);
-        assert!(
-            !world
-                .get_component_for_entity::<UINode>(second)
-                .unwrap()
-                .visible
-        );
-        assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
-        assert!(
-            world
-                .get_resource::<UIInputState>()
-                .unwrap()
-                .captured(MouseButton::Left)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn panel_changes_refresh_visibility_and_a_new_viewport_target_clears_input() {
-        let mut world = World::new();
-        resources(&mut world);
-        let editor = world.spawn(());
-        let host = world.spawn(UINode::default());
-        world.insert(
-            EditorHosts {
-                canvas: Some(host),
-                ..Default::default()
-            },
-            editor,
-        );
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(editor);
-        sync_workspace(&mut world);
-        world.tick();
-        world
-            .get_component_for_entity_mut::<UINode>(host)
-            .unwrap()
-            .visible = false;
-        let mut change_panels = (|mut panels: ResMut<PanelRegistry>| {
-            panels.register(crate::dock::PanelDescriptor {
-                id: "test",
-                title: "Test",
-                region: crate::dock::Region::Centre,
-            })
-        })
-        .into_system();
-        change_panels.initialize(&mut world);
-        change_panels.run_and_apply((), &mut world);
-        sync_workspace(&mut world);
-        assert!(
-            world
-                .get_component_for_entity::<UINode>(host)
-                .unwrap()
-                .visible
-        );
-
-        world.tick();
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(host);
-        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(host);
-        world
-            .get_resource_mut::<UIInputState>()
-            .unwrap()
-            .set_captured(MouseButton::Left, Some(host));
-        world
-            .get_resource_mut::<ActionMap>()
-            .unwrap()
-            .push_context(crate::actions::ViewportContext);
-        sync_workspace(&mut world);
-        assert_eq!(**world.get_resource::<FocusedWidget>().unwrap(), Some(host));
-
-        world.add_listener(reset_input_for_viewport_target);
-        let target = world.spawn(ViewportTarget);
-        world.despawn(target);
-
-        assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
-        assert!(world.get_resource::<HoveredNode>().unwrap().is_none());
-        assert!(
-            world
-                .get_resource::<UIInputState>()
-                .unwrap()
-                .captured(MouseButton::Left)
-                .is_none()
-        );
-        assert!(
-            !world
-                .get_resource::<ActionMap>()
-                .unwrap()
-                .is_active(crate::actions::ViewportContext)
-        );
-    }
-
-    fn hold_input(world: &mut World, node: Entity) {
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(node);
-        world
-            .get_resource_mut::<UIInputState>()
-            .unwrap()
-            .set_captured(MouseButton::Left, Some(node));
-    }
-
-    fn input_is_clear(world: &World) -> bool {
-        world.get_resource::<FocusedWidget>().unwrap().is_none()
-            && world
-                .get_resource::<UIInputState>()
-                .unwrap()
-                .captured(MouseButton::Left)
-                .is_none()
-    }
-
-    #[test]
-    fn retargeting_a_front_preview_clears_input() {
-        use crate::hosted::{SetEditTarget, testing::*};
-        let mut world = World::new();
-        resources(&mut world);
-        world.insert_resource(crate::hosted::input::Routing::default());
-        crate::hosted::install_listeners(&mut world);
-        world.add_listener(reset_input_for_viewport_target);
-        let preview = world.spawn(preview_now(plain_recipe));
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(preview);
-        world.trigger(SetEditTarget(Some(preview)));
-        let node = world.spawn(UINode::default());
-        hold_input(&mut world, node);
-
-        world.trigger(SetEditTarget(Some(preview)));
-
-        assert!(input_is_clear(&world));
-    }
-
-    fn document_of(world: &mut World, asset_type: &'static str) -> Entity {
-        world.spawn(EditorDocument {
-            asset_type,
-            title: asset_type.into(),
-            current: None,
-            pending: None,
-            order: 0,
-            status: String::new(),
-            failed: None,
-        })
-    }
-
-    fn docked_world() -> World {
-        use crate::dock::{DockPlugin, DockedApp, PanelDescriptor, Region};
-        let mut app = concerto_app::App::new();
-        let world = app.main_mut().world_mut();
-        world.register_component::<ChildOf>();
-        world.register_component::<Children>();
-        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
-            .insert_resource(concerto_window::plugin::Window::new((1280, 720), 1.0))
-            .insert_resource(UITheme::default())
-            .insert_resource(PanelRegistry::default())
-            .register_plugin(DockPlugin);
-        for (id, region) in [
-            (crate::viewport::PANEL_ID, Region::Centre),
-            (crate::hierarchy::PANEL_ID, Region::Left),
-            (crate::inspector::PANEL_ID, Region::Right),
-            (crate::content::PANEL_ID, Region::Bottom),
-            (crate::shell::CHATTER_ID, Region::Status),
-        ] {
-            app.add_panel(PanelDescriptor {
-                id,
-                title: id,
-                region,
-            });
-        }
-        app.finish_plugin_build();
-        std::mem::take(app.main_mut().world_mut())
-    }
-
-    fn visible(world: &World, node: Option<Entity>) -> bool {
-        world
-            .get_component_for_entity::<UINode>(node.unwrap())
-            .unwrap()
-            .visible
-    }
-
-    fn siblings(world: &World, entity: Entity) -> Vec<Entity> {
-        let region = world
-            .get_component_for_entity::<ChildOf>(entity)
-            .unwrap()
-            .parent();
-        world
-            .get_component_for_entity::<Children>(region)
-            .unwrap()
-            .iter()
-            .copied()
-            .collect()
-    }
-
-    fn states(world: &World) -> PanelStates {
-        *world.get_resource::<PanelStates>().unwrap()
-    }
-
-    #[test]
-    fn a_bottom_host_shares_the_strip_with_the_asset_browser_follows_its_document_and_closes_with_it()
-     {
-        let mut world = docked_world();
-        world.insert_resource(ActiveEditor::default());
-        world.insert_resource(AssetEditorCommands::default());
-        world.insert_resource(crate::guard::UnsavedGuard::default());
-        world.insert_resource(concerto_foundation::assets::registry::AssetRegistry::default());
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(HoveredNode::default());
-        world.insert_resource(UIInputState::default());
-        world.insert_resource(ActionMap::default());
-        let mut editors = AssetEditorRegistry::default();
-        editors.register::<Take, TakeEditor>().unwrap();
-        editors.register::<Notes, NotesEditor>().unwrap();
-        world.insert_resource(editors);
-        let browser = world
-            .get_resource::<PanelRegistry>()
-            .unwrap()
-            .body(crate::content::PANEL_ID)
-            .unwrap();
-        let strip = siblings(&world, browser);
-        assert_eq!(strip[0], browser);
-        let take = document_of(&mut world, Take::name());
-        let notes = document_of(&mut world, Notes::name());
-        let scene = document_of(&mut world, concerto_scene::scene::Scene::name());
-        let mut create = super::create_editor_hosts.into_system();
-        create.initialize(&mut world);
-        create.run_and_apply((), &mut world);
-
-        let hosts = *world.get_component_for_entity::<EditorHosts>(take).unwrap();
-        let bottom = hosts.bottom.unwrap();
-        for document in [notes, scene] {
-            assert!(
-                world
-                    .get_component_for_entity::<EditorHosts>(document)
-                    .unwrap()
-                    .bottom
-                    .is_none()
-            );
-        }
-        assert_eq!(
-            world.get_component_for_entity::<EditorOwned>(bottom),
-            Some(&EditorOwned(take))
-        );
-        assert!(
-            world
-                .get_component_for_entity::<Interactable>(bottom)
-                .is_some()
-        );
-        assert!(!visible(&world, Some(bottom)));
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(take);
-        sync_workspace(&mut world);
-        assert_eq!(
-            siblings(&world, browser),
-            [strip.as_slice(), &[bottom]].concat()
-        );
-        assert!(visible(&world, Some(bottom)));
-        assert_eq!(states(&world).browser, PanelState::Sized);
-        assert_eq!(states(&world).left, PanelState::Sized);
-
-        for other in [notes, scene] {
-            world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
-            sync_workspace(&mut world);
-            assert!(!visible(&world, Some(bottom)));
-            assert_eq!(states(&world).browser, PanelState::Fill);
-            assert_eq!(states(&world).left, PanelState::Sized);
-            assert_eq!(states(&world).bottom, PanelState::Sized);
-        }
-
-        let second = document_of(&mut world, Take::name());
-        create.run_and_apply((), &mut world);
-        let second_bottom = world
-            .get_component_for_entity::<EditorHosts>(second)
-            .unwrap()
-            .bottom
-            .unwrap();
-        sync_workspace(&mut world);
-        assert_eq!(
-            siblings(&world, browser),
-            [strip.as_slice(), &[bottom, second_bottom]].concat()
-        );
-
-        world
-            .get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::Close(take));
-        process_editor_commands(&mut world);
-        sync_workspace(&mut world);
-        assert!(!world.entity_is_valid(bottom));
-        assert_eq!(
-            siblings(&world, browser),
-            [strip.as_slice(), &[second_bottom]].concat()
-        );
-    }
-
-    #[test]
-    fn a_value_document_shows_the_inspector_under_a_host_that_neither_grows_nor_shrinks() {
-        let mut world = docked_world();
-        world.insert_resource(ActiveEditor::default());
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(HoveredNode::default());
-        world.insert_resource(UIInputState::default());
-        world.insert_resource(ActionMap::default());
-        let mut editors = AssetEditorRegistry::default();
-        editors.register::<Notes, NotesEditor>().unwrap();
-        editors.register::<Take, TakeEditor>().unwrap();
-        world.insert_resource(editors);
-        let bases = panel_bodies(world.get_resource::<PanelRegistry>().unwrap());
-        let notes = document_of(&mut world, Notes::name());
-        let take = document_of(&mut world, Take::name());
-        let mut create = super::create_editor_hosts.into_system();
-        create.initialize(&mut world);
-        create.run_and_apply((), &mut world);
-        let hosts = *world
-            .get_component_for_entity::<EditorHosts>(notes)
-            .unwrap();
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(notes);
-        sync_workspace(&mut world);
-        assert!(!visible(&world, bases[2]));
-        world.tick();
-
-        world.insert(InspectedValues::default(), notes);
-        sync_workspace(&mut world);
-
-        assert!(visible(&world, bases[2]) && visible(&world, hosts.inspector));
-        assert!(!visible(&world, bases[1]) && visible(&world, hosts.left));
-        let host = hosts.inspector.unwrap();
-        let base = bases[2].unwrap();
-        let node = |world: &World, entity| {
-            world
-                .get_component_for_entity::<UINode>(entity)
-                .unwrap()
-                .flex_grow
-        };
-        assert_eq!(node(&world, host), 0.0);
-        assert_eq!(node(&world, base), 1.0);
-        let shrink = |world: &World, entity| {
-            world
-                .get_component_for_entity::<UINode>(entity)
-                .unwrap()
-                .flex_shrink
-        };
-        assert_eq!(shrink(&world, host), 0.0);
-        assert_eq!(shrink(&world, base), 1.0);
-        let order = siblings(&world, base);
-        let position = |entity| order.iter().position(|&child| child == entity).unwrap();
-        assert!(position(host) < position(base));
-        world.tick();
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(take);
-        sync_workspace(&mut world);
-        assert!(!visible(&world, bases[2]));
-        let other = world.get_component_for_entity::<EditorHosts>(take).unwrap();
-        assert_eq!(node(&world, other.inspector.unwrap()), 1.0);
-    }
-
-    #[test]
-    fn a_preview_tab_keeps_the_shared_viewport_in_place_of_a_canvas_host() {
-        use crate::hosted::{
-            EditTarget, SetEditTarget,
-            input::{InViewport, Routing, ViewportShown, ViewportView, sync_in_viewport},
-            testing::*,
-        };
-        let mut world = docked_world();
-        world.insert_resource(ActiveEditor::default());
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(HoveredNode::default());
-        world.insert_resource(UIInputState::default());
-        world.insert_resource(ActionMap::default());
-        world.insert_resource(Routing::default());
-        let mut editors = AssetEditorRegistry::default();
-        editors
-            .register::<PreviewedAsset, PreviewedEditor>()
-            .unwrap();
-        editors.register::<PlainAsset, PlainEditor>().unwrap();
-        world.insert_resource(editors);
-        crate::hosted::install_listeners(&mut world);
-        let bases = panel_bodies(world.get_resource::<PanelRegistry>().unwrap());
-        let preview = document_of(&mut world, PreviewedAsset::name());
-        world.insert(preview_now(plain_recipe), preview);
-        let plain = document_of(&mut world, PlainAsset::name());
-        let mut create = super::create_editor_hosts.into_system();
-        create.initialize(&mut world);
-        create.run_and_apply((), &mut world);
-
-        let hosts = *world
-            .get_component_for_entity::<EditorHosts>(preview)
-            .unwrap();
-        assert!(hosts.canvas.is_none());
-        assert!(hosts.left.is_some() && hosts.inspector.is_some());
-        assert!(
-            world
-                .get_component_for_entity::<EditorHosts>(plain)
-                .unwrap()
-                .canvas
-                .is_some()
-        );
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(plain);
-        sync_workspace(&mut world);
-        assert!(!visible(&world, bases[0]));
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(preview);
-        world.trigger(SetEditTarget(Some(preview)));
-        sync_workspace(&mut world);
-        assert!(visible(&world, bases[0]));
-        assert!(!visible(&world, bases[1]) && !visible(&world, bases[2]));
-        assert!(visible(&world, hosts.left) && visible(&world, hosts.inspector));
-
-        world.insert_resource(ViewportShown(Some(ViewportView {
-            origin: glam::Vec2::ZERO,
-            size: (640, 480),
-            over: false,
-            typing: false,
-        })));
-        let mut sync = sync_in_viewport.into_system();
-        sync.initialize(&mut world);
-        sync.run_and_apply((), &mut world);
-        assert!(
-            world
-                .get_component_for_entity::<InViewport>(preview)
-                .is_some()
-        );
-        assert!(
-            world
-                .get_component_for_entity::<ViewportTarget>(preview)
-                .is_some()
-        );
-        assert!(
-            world
-                .get_component_for_entity::<EditTarget>(preview)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn contextual_hosts_follow_active_editor_and_are_removed_on_close() {
+    fn a_documents_hosts_show_while_it_is_in_front_and_go_when_it_closes() {
         let mut world = World::new();
         let mut registry = AssetEditorRegistry::default();
         registry.register::<Notes, NotesEditor>().unwrap();
         world.insert_resource(registry);
-        world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
         world.insert_resource(crate::guard::UnsavedGuard::default());
@@ -862,34 +307,30 @@ mod tests {
         world.insert_resource(HoveredNode::default());
         world.insert_resource(UIInputState::default());
         world.insert_resource(ActionMap::default());
-        let asset = concerto_foundation::assets::registry::AssetEntry {
+        let asset = AssetEntry {
             embedded_in: None,
             id: AssetId::new(),
             address: "notes.gasset".into(),
             kind: "Notes".into(),
             kind_version: None,
-            provenance: Some(ImportProvenance {
-                source: "fixture".into(),
-                sub_asset: "notes".into(),
-            }),
+            provenance: None,
         };
-        let mut content = concerto_foundation::assets::registry::AssetRegistry::default();
+        let mut content = AssetRegistry::default();
         content.insert(asset.clone());
         world.insert_resource(content);
-        world
-            .get_resource_mut::<crate::project::ProjectState>()
-            .unwrap()
-            .project = Some(crate::project::Project {
+        let mut project = crate::project::ProjectState::default();
+        project.project = Some(crate::project::Project {
             root: std::path::PathBuf::from("project"),
             content_root: "content".into(),
             default_scene: None,
         });
+        world.insert_resource(project);
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
             .push_back(AssetEditorCommand::Open(asset));
-        process_editor_commands(&mut world);
+        run(&mut world, crate::asset_editor::process_editor_commands);
         let editor = world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         let canvas = world.spawn((UINode::default(), EditorOwned(editor)));
         let left = world.spawn((UINode::default(), EditorOwned(editor)));
@@ -903,33 +344,30 @@ mod tests {
             },
             editor,
         );
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(left);
-        sync_workspace(&mut world);
-        assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
-        for host in [canvas, left, inspector] {
-            assert!(
+        let mut sync = sync_workspace.into_system();
+        sync.initialize(&mut world);
+        let shown = |world: &World| {
+            [canvas, left, inspector].map(|host| {
                 world
                     .get_component_for_entity::<UINode>(host)
                     .unwrap()
                     .visible
-            );
-        }
+            })
+        };
+
+        sync.run_and_apply((), &mut world);
+        assert_eq!(shown(&world), [true; 3]);
+
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
-        sync_workspace(&mut world);
-        for host in [canvas, left, inspector] {
-            assert!(
-                !world
-                    .get_component_for_entity::<UINode>(host)
-                    .unwrap()
-                    .visible
-            );
-        }
+        sync.run_and_apply((), &mut world);
+        assert_eq!(shown(&world), [false; 3]);
+
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
             .push_back(AssetEditorCommand::Close(editor));
-        process_editor_commands(&mut world);
+        run(&mut world, crate::asset_editor::process_editor_commands);
         for host in [canvas, left, inspector] {
             assert!(!world.entity_is_valid(host));
         }
