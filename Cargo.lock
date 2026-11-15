@@ -1205,10 +1205,8 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-render",
- "concerto-scene",
  "concerto-ui",
  "concerto-window",
- "concerto-world-grid",
  "criterion",
  "serde",
 ]

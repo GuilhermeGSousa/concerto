@@ -10,7 +10,7 @@ use concerto_color::Color;
 use concerto_ecs::entity::{hierarchy::ChildOf, Entity};
 use concerto_ui::{
     material::UIMaterial,
-    node::{FlexDirection, UICulled, UINode, UIRect},
+    node::{FlexDirection, UINode, UIRect},
     plugin::UIPlugin,
     text::UIText,
     transform::UIValue,
@@ -40,7 +40,6 @@ struct Labels {
     root: Entity,
     labels: Vec<Entity>,
     readout: Entity,
-    quad: Entity,
 }
 
 fn text(text: impl Into<String>) -> UIText {
@@ -77,48 +76,13 @@ fn labels() -> Option<Labels> {
         text("66 fps"),
         ChildOf::new(root),
     ));
-    let quad = world.spawn((
-        UINode::default()
-            .with_size(UIValue::Px(32.0), UIValue::Px(32.0))
-            .with_flex_shrink(0.0),
-        UIMaterial::flat(Color::WHITE),
-        ChildOf::new(root),
-    ));
     settle(&mut app);
     Some(Labels {
         app,
         root,
         labels,
         readout,
-        quad,
     })
-}
-
-struct Culled {
-    app: App,
-    shown: Entity,
-}
-
-fn culled() -> Option<Culled> {
-    let mut app = headless(ui_plugins)?;
-    let world = app.main_mut().world_mut();
-    let row = || {
-        UINode::default()
-            .with_size(UIValue::Px(100.0), UIValue::Px(20.0))
-            .with_flex_shrink(0.0)
-    };
-    let root = world.spawn(
-        UINode::default()
-            .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
-            .with_flex_direction(FlexDirection::Column),
-    );
-    let shown = world.spawn((row(), ChildOf::new(root)));
-    for _ in 0..LABELS {
-        let hidden = world.spawn((row(), UICulled, ChildOf::new(root)));
-        world.spawn((row(), ChildOf::new(hidden)));
-    }
-    settle(&mut app);
-    Some(Culled { app, shown })
 }
 
 fn node(app: &mut App, entity: Entity) -> &mut UINode {
@@ -180,25 +144,6 @@ fn ui_frames(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("one quad resized", |b| {
-        b.iter(|| {
-            flip = !flip;
-            let size = if flip { 48.0 } else { 32.0 };
-            *node(&mut fixture.app, fixture.quad) = UINode::default()
-                .with_size(UIValue::Px(size), UIValue::Px(size))
-                .with_flex_shrink(0.0);
-            fixture.app.update();
-        })
-    });
-
-    group.bench_function("one label raised to a new layer", |b| {
-        b.iter(|| {
-            flip = !flip;
-            node(&mut fixture.app, changing).z_index = if flip { 11 } else { 12 };
-            fixture.app.update();
-        })
-    });
-
     group.bench_function("every label scrolled by one pixel", |b| {
         b.iter(|| {
             flip = !flip;
@@ -226,20 +171,6 @@ fn ui_frames(c: &mut Criterion) {
             },
             BatchSize::SmallInput,
         )
-    });
-    group.finish();
-
-    let Some(mut fixture) = culled() else {
-        return;
-    };
-    let mut group = c.benchmark_group("ui frame with 1,000 culled rows");
-    group.bench_function("the one shown row resized", |b| {
-        b.iter(|| {
-            flip = !flip;
-            node(&mut fixture.app, fixture.shown).height =
-                UIValue::Px(if flip { 30.0 } else { 20.0 });
-            fixture.app.update();
-        })
     });
     group.finish();
 }
