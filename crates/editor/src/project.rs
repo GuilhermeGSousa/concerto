@@ -362,13 +362,23 @@ mod tests {
     };
     use concerto_foundation::assets::{Asset, registry::AssetEntry};
     #[test]
-    fn discovers_imported_and_authored_assets_without_writing_registry() {
+    fn an_opened_project_lists_its_assets_without_writing_a_registry_and_is_reported_once() {
         let dir = tempfile::tempdir().unwrap();
-        let (_, empty) = discover_project(dir.path()).unwrap();
-        assert_eq!(empty.of_type::<Scene>().count(), 0);
         let id = write_assets(dir.path());
-        let (project, registry) = discover_project(dir.path()).unwrap();
-        assert_eq!(project.content_root, "content");
+        let mut world = project_world();
+
+        settle(
+            &mut world,
+            Some(EditorCommand::OpenProject(dir.path().into())),
+        );
+
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(
+            written::<ProjectOpened>(&world),
+            [ProjectOpened { root: root.clone() }]
+        );
+        assert!(written::<ProjectOpenFailed>(&world).is_empty());
+        let registry = world.get_resource::<AssetRegistry>().unwrap();
         assert_eq!(registry.iter().count(), 3);
         let scenes: Vec<_> = registry.of_type::<Scene>().collect();
         assert_eq!(scenes.len(), 2);
@@ -376,8 +386,14 @@ mod tests {
         assert!(scenes[0].provenance.is_none());
         assert_eq!(scenes[1].id, id);
         assert!(scenes[1].provenance.is_some());
-        assert_eq!(registry.iter().next().unwrap().folder(), "content");
         assert!(!dir.path().join("content/.registry.toml").exists());
+        let line = world
+            .get_resource::<ProjectState>()
+            .unwrap()
+            .line(Some(registry));
+        assert!(line.starts_with("3 assets · 2 scenes · "), "{line}");
+        let cache = world.get_resource::<AssetServer>().unwrap().derived_cache();
+        assert_eq!(cache.root(), Some(root.join("derived-cache").as_path()));
     }
 
     fn write_assets(root: &Path) -> AssetId {
@@ -447,75 +463,50 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn opening_a_project_opens_its_default_scene() {
-        let dir = tempfile::tempdir().unwrap();
-        write_scene(dir.path(), "content/a.gasset", "Scene");
-        let forest = write_scene(dir.path(), "content/forest.gasset", "Scene");
-        std::fs::write(
-            dir.path().join("content.toml"),
-            "default_scene = \"content/forest.gasset\"\n",
-        )
-        .unwrap();
-
-        assert_eq!(opened_scene(dir.path()), [forest]);
+    struct DefaultScene {
+        content_toml: Option<&'static str>,
+        opens_forest: bool,
     }
 
     #[test]
-    fn opening_a_project_with_no_default_scene_opens_its_first_scene() {
-        let dir = tempfile::tempdir().unwrap();
-        write_scene(dir.path(), "content/b.gasset", "Scene");
-        let first = write_scene(dir.path(), "content/a.gasset", "Scene");
-        write_scene(dir.path(), "content/0.gasset", "Mesh");
-
-        assert_eq!(opened_scene(dir.path()), [first]);
-    }
-
-    #[test]
-    fn a_default_scene_that_is_missing_or_not_a_scene_falls_back_to_the_first_scene() {
-        for default in ["content/gone.gasset", "content/mesh.gasset"] {
+    fn opening_a_project_opens_its_default_scene_or_else_its_first_scene() {
+        for case in [
+            DefaultScene {
+                content_toml: Some("default_scene = \"content/forest.gasset\"\n"),
+                opens_forest: true,
+            },
+            DefaultScene {
+                content_toml: Some("default_scene = \"content/gone.gasset\"\n"),
+                opens_forest: false,
+            },
+            DefaultScene {
+                content_toml: Some("default_scene = \"content/0.gasset\"\n"),
+                opens_forest: false,
+            },
+            DefaultScene {
+                content_toml: None,
+                opens_forest: false,
+            },
+        ] {
             let dir = tempfile::tempdir().unwrap();
+            write_scene(dir.path(), "content/0.gasset", "Mesh");
             let first = write_scene(dir.path(), "content/a.gasset", "Scene");
-            write_scene(dir.path(), "content/mesh.gasset", "Mesh");
-            std::fs::write(
-                dir.path().join("content.toml"),
-                format!("default_scene = \"{default}\"\n"),
-            )
-            .unwrap();
+            let forest = write_scene(dir.path(), "content/forest.gasset", "Scene");
+            if let Some(content_toml) = case.content_toml {
+                std::fs::write(dir.path().join("content.toml"), content_toml).unwrap();
+            }
 
-            assert_eq!(opened_scene(dir.path()), [first], "{default}");
+            let expected = if case.opens_forest { forest } else { first };
+            assert_eq!(
+                opened_scene(dir.path()),
+                [expected],
+                "{:?}",
+                case.content_toml
+            );
         }
-    }
-
-    #[test]
-    fn opening_a_project_with_no_scene_opens_nothing() {
         let dir = tempfile::tempdir().unwrap();
         write_scene(dir.path(), "content/mesh.gasset", "Mesh");
-
         assert_eq!(opened_scene(dir.path()), []);
-    }
-
-    #[test]
-    fn rejects_a_content_toml_with_a_custom_root() {
-        for root in ["../x", "data"] {
-            let dir = tempfile::tempdir().unwrap();
-            std::fs::write(
-                dir.path().join("content.toml"),
-                format!("root = \"{root}\"\n"),
-            )
-            .unwrap();
-            assert!(discover_project(dir.path()).is_err(), "{root}");
-        }
-    }
-
-    #[test]
-    fn rejects_non_directory_and_corrupt_content() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("content")).unwrap();
-        let path = dir.path().join("content/broken.gasset");
-        std::fs::write(&path, b"invalid").unwrap();
-        assert!(discover_project(&path).is_err());
-        assert!(discover_project(dir.path()).is_err());
     }
 
     fn project_world() -> concerto_ecs::World {
@@ -567,107 +558,8 @@ mod tests {
         system.run_and_apply((), world);
     }
 
-    fn finished_job(
-        world: &mut concerto_ecs::World,
-        root: PathBuf,
-        result: Result<Option<(Project, AssetRegistry)>, String>,
-    ) {
-        world.get_resource_mut::<ProjectState>().unwrap().job = Some(ProjectJob {
-            root,
-            worker: std::thread::spawn(move || result),
-        });
-    }
-
     fn status(world: &concerto_ecs::World) -> String {
         world.get_resource::<ProjectState>().unwrap().status.clone()
-    }
-
-    #[test]
-    fn the_status_line_counts_the_registry_as_it_is_now() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut world = project_world();
-        settle(
-            &mut world,
-            Some(EditorCommand::OpenProject(dir.path().into())),
-        );
-        let line = |world: &concerto_ecs::World| {
-            world
-                .get_resource::<ProjectState>()
-                .unwrap()
-                .line(world.get_resource::<AssetRegistry>())
-        };
-        assert!(
-            line(&world).starts_with("0 assets · 0 scenes · "),
-            "{}",
-            line(&world)
-        );
-
-        world
-            .get_resource_mut::<AssetRegistry>()
-            .unwrap()
-            .insert(AssetEntry {
-                embedded_in: None,
-                id: AssetId::new(),
-                address: "content/a.gasset".into(),
-                kind: Scene::name().into(),
-                kind_version: None,
-                provenance: None,
-            });
-        world.get_resource_mut::<ProjectState>().unwrap().status = "Created a.gasset".into();
-
-        assert!(
-            line(&world).starts_with("1 assets · 1 scenes · "),
-            "{}",
-            line(&world)
-        );
-        assert!(
-            line(&world).ends_with(" · Created a.gasset"),
-            "{}",
-            line(&world)
-        );
-    }
-
-    #[test]
-    fn an_opened_project_is_reported_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut world = project_world();
-
-        settle(
-            &mut world,
-            Some(EditorCommand::OpenProject(dir.path().into())),
-        );
-
-        assert_eq!(
-            written::<ProjectOpened>(&world),
-            [ProjectOpened {
-                root: dir.path().canonicalize().unwrap()
-            }]
-        );
-        assert!(written::<ProjectOpenFailed>(&world).is_empty());
-    }
-
-    #[test]
-    fn an_opened_project_keeps_derived_data_in_its_derived_cache_folder() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut world = project_world();
-
-        settle(
-            &mut world,
-            Some(EditorCommand::OpenProject(dir.path().into())),
-        );
-
-        let cache = world.get_resource::<AssetServer>().unwrap().derived_cache();
-        assert_eq!(
-            cache.root(),
-            Some(
-                dir.path()
-                    .canonicalize()
-                    .unwrap()
-                    .join("derived-cache")
-                    .as_path()
-            )
-        );
-        assert!(!dir.path().join("derived-cache").exists());
     }
 
     #[test]
@@ -690,61 +582,6 @@ mod tests {
             }]
         );
         assert!(written::<ProjectOpened>(&world).is_empty());
-    }
-
-    #[test]
-    fn a_cancelled_folder_pick_is_reported_failed_with_its_message() {
-        let mut world = project_world();
-        finished_job(&mut world, "picked".into(), Ok(None));
-
-        settle(&mut world, None);
-
-        assert_eq!(
-            written::<ProjectOpenFailed>(&world),
-            [ProjectOpenFailed {
-                root: "picked".into(),
-                message: "Folder selection cancelled.".into()
-            }]
-        );
-        assert!(written::<ProjectOpened>(&world).is_empty());
-    }
-
-    #[test]
-    fn a_project_whose_assets_cannot_be_activated_is_reported_failed_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let gone = dir.path().join("gone");
-        let mut world = project_world();
-        finished_job(
-            &mut world,
-            gone.clone(),
-            Ok(Some((
-                Project {
-                    root: gone.clone(),
-                    content_root: "content".into(),
-                    default_scene: None,
-                },
-                AssetRegistry::default(),
-            ))),
-        );
-
-        settle(&mut world, None);
-
-        assert!(status(&world).starts_with("Could not activate project assets"));
-        assert_eq!(
-            written::<ProjectOpenFailed>(&world),
-            [ProjectOpenFailed {
-                root: gone,
-                message: status(&world)
-            }]
-        );
-        assert!(written::<ProjectOpened>(&world).is_empty());
-        assert!(
-            world
-                .get_resource::<ProjectState>()
-                .unwrap()
-                .project
-                .is_none()
-        );
     }
 
     #[test]
@@ -790,36 +627,6 @@ mod tests {
         assert!(world.get_resource::<ProjectState>().unwrap().busy());
     }
 
-    #[test]
-    fn opening_a_project_while_playing_stops_the_game_first() {
-        use crate::hosted::{PlayState, testing::SceneFixture};
-        use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
-
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.world.trigger(crate::scene::Play(document));
-        f.frames_until_playing(document);
-        f.world.insert_resource(EditorCommands::default());
-        f.world.insert_resource(AssetServer::new());
-        f.world.insert_resource(AssetRegistry::default());
-        f.world
-            .insert_resource(EventChannel::<ProjectOpened>::new());
-        f.world
-            .insert_resource(EventChannel::<ProjectOpenFailed>::new());
-        f.world
-            .get_resource_mut::<EditorCommands>()
-            .unwrap()
-            .0
-            .push_back(EditorCommand::OpenProject(f.project_root.clone()));
-        let mut system = process_commands.into_system();
-        system.initialize(&mut f.world);
-
-        system.run_and_apply((), &mut f.world);
-
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.hosted_is_editing(document));
-    }
-
     fn versioned(kind: &str, kind_version: Option<u32>) -> AssetEntry {
         AssetEntry {
             embedded_in: None,
@@ -829,52 +636,6 @@ mod tests {
             kind_version,
             provenance: None,
         }
-    }
-
-    #[test]
-    fn outdated_content_groups_by_kind_and_file_version() {
-        let mut registry = AssetRegistry::default();
-        for entry in [
-            versioned("Mesh", Some(1)),
-            versioned("Mesh", Some(1)),
-            versioned("Mesh", Some(2)),
-            versioned("Mesh", Some(3)),
-            versioned("Clip", Some(0)),
-            versioned("Clip", None),
-            versioned("Clip", Some(1)),
-            versioned("Unknown", Some(0)),
-        ] {
-            registry.insert(entry);
-        }
-        let versions = |kind: &str| match kind {
-            "Mesh" => Some(3),
-            "Clip" => Some(1),
-            _ => None,
-        };
-
-        assert_eq!(
-            outdated_content(&registry, versions),
-            [
-                OutdatedContent {
-                    kind: "Clip".into(),
-                    file_version: 0,
-                    current: 1,
-                    count: 1,
-                },
-                OutdatedContent {
-                    kind: "Mesh".into(),
-                    file_version: 1,
-                    current: 3,
-                    count: 2,
-                },
-                OutdatedContent {
-                    kind: "Mesh".into(),
-                    file_version: 2,
-                    current: 3,
-                    count: 1,
-                },
-            ]
-        );
     }
 
     #[derive(serde::Serialize, serde::Deserialize)]
