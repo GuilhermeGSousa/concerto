@@ -234,14 +234,10 @@ mod tests {
     }
 
     #[test]
-    fn a_preview_in_front_that_is_still_loading_counts() {
+    fn a_preview_still_loading_keeps_the_editor_busy_only_in_front() {
         assert!(sees_a_loading_preview(|world| {
             world.spawn((preview_now(loading_recipe), ViewportTarget));
         }));
-    }
-
-    #[test]
-    fn a_preview_behind_another_tab_is_frozen_and_does_not_count() {
         assert!(!sees_a_loading_preview(|world| {
             world.spawn(preview_now(loading_recipe));
         }));
@@ -262,14 +258,10 @@ mod tests {
     }
 
     #[test]
-    fn a_panels_text_changing_keeps_the_editor_busy() {
+    fn a_panels_text_changing_keeps_the_editor_busy_and_a_playback_readout_does_not() {
         assert!(notes_a_change(|world| {
             world.spawn(UIText::default());
         }));
-    }
-
-    #[test]
-    fn a_readout_counting_through_playback_does_not() {
         assert!(!notes_a_change(|world| {
             world.spawn((UIText::default(), TimelineReadout));
             world.spawn((UIText::default(), CanvasReadout));

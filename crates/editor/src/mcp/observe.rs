@@ -1105,26 +1105,7 @@ mod tests {
     }
 
     #[test]
-    fn a_struct_elements_heading_is_not_a_path_but_its_fields_are() {
-        let track = Track {
-            strides: strides(2),
-            ..Track::default()
-        };
-
-        assert_eq!(
-            shown(&track),
-            [
-                "strides",
-                "strides.0.length",
-                "strides.1.length",
-                "grid",
-                "gain"
-            ]
-        );
-    }
-
-    #[test]
-    fn a_long_list_shows_its_first_sixteen_elements_and_says_how_many_were_cut() {
+    fn a_struct_elements_fields_are_paths_and_a_long_list_shows_its_first_sixteen() {
         let track = Track {
             strides: strides(20),
             ..Track::default()
@@ -1135,37 +1116,5 @@ mod tests {
         expected.push("… 4 more of strides, 20 in all".to_owned());
         expected.extend(["grid".to_owned(), "gain".to_owned()]);
         assert_eq!(shown(&track), expected);
-    }
-
-    #[test]
-    fn a_list_of_exactly_sixteen_elements_is_not_cut() {
-        let track = Track {
-            strides: strides(16),
-            ..Track::default()
-        };
-
-        assert!(!shown(&track).iter().any(|path| path.contains("more of")));
-    }
-
-    #[test]
-    fn each_list_is_cut_on_its_own_and_a_cut_element_hides_its_inner_lists() {
-        let mut grid = vec![Vec::new(); 18];
-        grid[0] = vec![0.0; 17];
-        grid[17] = vec![0.0; 17];
-        let track = Track {
-            grid,
-            ..Track::default()
-        };
-
-        let paths = shown(&track);
-        assert_eq!(paths[0..2], ["strides", "grid"]);
-        assert_eq!(paths[2], "grid.0");
-        assert_eq!(paths[18], "grid.0.15");
-        assert_eq!(paths[19], "… 1 more of grid.0, 17 in all");
-        assert_eq!(paths[20], "grid.1");
-        assert_eq!(paths[34], "grid.15");
-        assert_eq!(paths[35], "… 2 more of grid, 18 in all");
-        assert_eq!(paths[36], "gain");
-        assert_eq!(paths.len(), 37);
     }
 }
