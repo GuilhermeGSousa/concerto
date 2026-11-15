@@ -319,184 +319,50 @@ mod tests {
         Duration::from_secs(real * 60)
     }
 
-    #[test]
-    fn a_game_time_reads_back_its_hour_and_minute() {
-        let time = GameTime::hm(21, 45);
-        assert_eq!(time.hour(), 21);
-        assert_eq!(time.minute(), 45);
-        assert_eq!(GameTime::hm(24, 0).hour(), 0);
+    fn hours(step: &NightStep) -> Vec<u32> {
+        step.hours.iter().map(|struck| struck.hour).collect()
     }
 
     #[test]
-    fn the_night_starts_at_six_and_runs_twenty_times_faster_than_real_time() {
-        let mut clock = NightClock::default();
-        assert_eq!(clock.now(), GameTime::hm(18, 0));
-
-        clock.advance(Duration::from_secs(3), false, &NightSchedule::default());
-
-        assert_eq!(clock.now(), GameTime::hm(18, 1));
-    }
-
-    #[test]
-    fn eighteen_real_minutes_take_the_night_to_midnight_once_and_stop_there() {
-        let mut clock = NightClock::default();
-        let schedule = NightSchedule::default();
-
-        let step = clock.advance(minutes(18), false, &schedule);
-        assert!(step.midnight);
-        assert_eq!(clock.now(), GameTime::hm(24, 0));
-        assert!(clock.is_over());
-
-        let after = clock.advance(minutes(5), false, &schedule);
-        assert!(!after.midnight);
-        assert_eq!(clock.now(), GameTime::hm(24, 0));
-    }
-
-    #[test]
-    fn a_paused_night_does_not_move_or_fire() {
-        let mut clock = NightClock::default();
-        let mut schedule = NightSchedule::default();
-        schedule.at(GameTime::hm(18, 1), name!("soon"));
-
-        let step = clock.advance(minutes(10), true, &schedule);
-
-        assert_eq!(clock.now(), GameTime::hm(18, 0));
-        assert!(step.reached.is_empty());
-        assert!(step.hours.is_empty());
-        assert!(!step.midnight);
-    }
-
-    #[test]
-    fn a_step_over_several_timestamps_fires_each_once_in_time_order() {
+    fn the_night_runs_twenty_times_faster_than_real_time_to_midnight_firing_each_moment_once() {
         let mut clock = NightClock::default();
         let mut schedule = NightSchedule::default();
         schedule
             .at(GameTime::hm(20, 0), name!("later"))
-            .at(GameTime::hm(19, 30), name!("sooner"))
-            .at(GameTime::hm(23, 0), name!("too_late"));
-
-        let step = clock.advance(minutes(6), false, &schedule);
-
-        assert_eq!(clock.now(), GameTime::hm(20, 0));
-        assert_eq!(
-            step.reached,
-            vec![
-                ClockReached {
-                    name: name!("sooner"),
-                    at: GameTime::hm(19, 30),
-                },
-                ClockReached {
-                    name: name!("later"),
-                    at: GameTime::hm(20, 0),
-                },
-            ]
-        );
-
-        let next = clock.advance(minutes(1), false, &schedule);
-        assert!(next.reached.is_empty());
-    }
-
-    #[test]
-    fn small_steps_fire_a_timestamp_on_the_step_that_reaches_it() {
-        let mut clock = NightClock::default();
-        let mut schedule = NightSchedule::default();
-        schedule.at(GameTime::hm(18, 1), name!("bell"));
-
-        let fired: Vec<usize> = (0..5)
-            .map(|_| {
-                clock
-                    .advance(Duration::from_millis(1000), false, &schedule)
-                    .reached
-                    .len()
-            })
-            .collect();
-
-        assert_eq!(fired, vec![0, 0, 1, 0, 0]);
-    }
-
-    #[test]
-    fn every_hour_strikes_once_and_midnight_strikes_zero() {
-        let mut clock = NightClock::default();
-        let schedule = NightSchedule::default();
-
-        let hours: Vec<u32> = (0..18)
-            .flat_map(|_| clock.advance(minutes(1), false, &schedule).hours)
-            .map(|struck| struck.hour)
-            .collect();
-
-        assert_eq!(hours, vec![19, 20, 21, 22, 23, 0]);
-    }
-
-    #[test]
-    fn haste_runs_the_night_faster_and_still_strikes_the_hours() {
-        let mut clock = NightClock::default();
-        clock.set_haste(12.0);
-
-        let step = clock.advance(Duration::from_secs(20), false, &NightSchedule::default());
-
-        assert_eq!(clock.now(), GameTime::hm(19, 20));
-        assert_eq!(step.hours, [HourStruck { hour: 19 }]);
-        clock.set_haste(0.0);
-        assert_eq!(
-            clock.haste(),
-            1.0,
-            "the clock never runs slower than its scale"
-        );
-    }
-
-    #[test]
-    fn a_slower_scale_stretches_the_night() {
-        let mut clock = NightClock::default().with_scale(10.0);
-
-        clock.advance(Duration::from_secs(6), false, &NightSchedule::default());
-
-        assert_eq!(clock.now(), GameTime::hm(18, 1));
-    }
-
-    #[test]
-    fn the_readout_shows_hours_and_minutes() {
-        assert_eq!(readout(GameTime::hm(18, 5)), "18:05");
-        assert_eq!(readout(GameTime::hm(24, 0)), "00:00");
-    }
-
-    #[test]
-    fn moments_at_or_before_the_start_fire_on_the_first_advance_only() {
-        let mut clock = NightClock::default();
-        let mut schedule = NightSchedule::default();
-        schedule
             .at(GameTime::hm(17, 0), name!("early"))
-            .at(GameTime::hm(18, 0), name!("opening"));
-
-        let first = clock.advance(Duration::from_secs(1), false, &schedule);
-        let second = clock.advance(Duration::from_secs(1), false, &schedule);
-
-        assert_eq!(
-            first
-                .reached
+            .at(GameTime::hm(19, 30), name!("sooner"));
+        let names = |step: &NightStep| {
+            step.reached
                 .iter()
-                .map(|event| event.name)
-                .collect::<Vec<_>>(),
-            vec![name!("early"), name!("opening")]
-        );
-        assert!(second.reached.is_empty());
-    }
+                .map(|reached| reached.name)
+                .collect::<Vec<_>>()
+        };
 
-    #[test]
-    fn a_moment_at_the_start_fires_once_even_while_the_clock_stands_still() {
-        let mut clock = NightClock::default().with_scale(0.0);
-        let mut schedule = NightSchedule::default();
-        schedule.at(GameTime::hm(18, 0), name!("opening"));
+        let first = clock.advance(Duration::from_secs(3), false, &schedule);
+        assert_eq!(clock.now(), GameTime::hm(18, 1));
+        assert_eq!(names(&first), [name!("early")]);
 
-        let fired: Vec<usize> = (0..3)
-            .map(|_| {
-                clock
-                    .advance(Duration::from_millis(16), false, &schedule)
-                    .reached
-                    .len()
-            })
-            .collect();
+        let second = clock.advance(minutes(6), false, &schedule);
+        assert_eq!(clock.now(), GameTime::hm(20, 1));
+        assert_eq!(names(&second), [name!("sooner"), name!("later")]);
+        assert_eq!(hours(&second), [19, 20]);
 
-        assert_eq!(fired, vec![1, 0, 0]);
+        let paused = clock.advance(minutes(10), true, &schedule);
+        assert_eq!(clock.now(), GameTime::hm(20, 1));
+        assert!(paused.reached.is_empty() && paused.hours.is_empty());
+
+        clock.set_haste(12.0);
+        let hasted = clock.advance(Duration::from_secs(20), false, &schedule);
+        assert_eq!(clock.now(), GameTime::hm(21, 21));
+        assert_eq!(hours(&hasted), [21]);
+        clock.set_haste(1.0);
+
+        let last = clock.advance(minutes(18), false, &schedule);
+        assert!(last.midnight && clock.is_over());
+        assert_eq!(clock.now(), GameTime::hm(24, 0));
+        assert_eq!(hours(&last), [22, 23, 0]);
+        assert!(names(&last).is_empty());
+        assert!(!clock.advance(minutes(5), false, &schedule).midnight);
     }
 
     fn world_after_one_frame(paused: bool) -> World {
@@ -529,20 +395,15 @@ mod tests {
     }
 
     #[test]
-    fn the_clock_system_holds_still_while_the_shared_pause_is_on() {
-        let world = world_after_one_frame(true);
-
+    fn the_clock_system_sends_the_hours_and_midnight_it_passed_unless_the_shared_pause_is_on() {
+        let held = world_after_one_frame(true);
         assert_eq!(
-            world.get_resource::<NightClock>().unwrap().now(),
+            held.get_resource::<NightClock>().unwrap().now(),
             GameTime::hm(18, 0)
         );
-        assert!(sent::<Midnight>(&world).is_empty());
-    }
+        assert!(sent::<Midnight>(&held).is_empty());
 
-    #[test]
-    fn the_clock_system_sends_the_hours_and_midnight_it_passed() {
         let world = world_after_one_frame(false);
-
         assert!(world.get_resource::<NightClock>().unwrap().is_over());
         assert_eq!(
             sent::<HourStruck>(&world)

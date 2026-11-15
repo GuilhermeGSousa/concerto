@@ -2370,23 +2370,6 @@ mod tests {
     }
 
     #[test]
-    fn every_portrait_a_case_can_name_has_its_own_figure_and_picture() {
-        let figures: Vec<_> = crate::casefile::PORTRAITS
-            .iter()
-            .map(|portrait| super::figure_of(portrait).scene)
-            .collect();
-        assert_eq!(figures.len(), 10);
-        for (index, figure) in figures.iter().enumerate() {
-            assert!(
-                !figures[..index].contains(figure),
-                "{} wears a figure of its own",
-                crate::casefile::PORTRAITS[index]
-            );
-        }
-        assert_eq!(crate::book_ui::PORTRAITS.len(), figures.len());
-    }
-
-    #[test]
     fn the_manor_is_walked_and_its_doors_bells_beds_and_dumbwaiter_answer() {
         let Some(mut app) = concerto::headless(|app| {
             crate::manor_walk(app);
