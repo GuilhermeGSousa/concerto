@@ -178,6 +178,7 @@ pub struct SceneSpawn<'w> {
 pub struct SceneCapture {
     node_indices: HashMap<Entity, usize>,
     referenced_assets: Vec<AssetId>,
+    outside: Option<Entity>,
 }
 
 impl SceneCapture {
@@ -185,12 +186,23 @@ impl SceneCapture {
         Self {
             node_indices,
             referenced_assets: Vec::new(),
+            outside: None,
         }
     }
 
     /// The node index `entity` is captured as, if it is in the scene.
     pub fn index_of(&self, entity: Entity) -> Option<usize> {
         self.node_indices.get(&entity).copied()
+    }
+
+    /// Records that a captured value referenced `entity`, which is not in the scene.
+    pub fn refer_outside(&mut self, entity: Entity) {
+        self.outside = Some(entity);
+    }
+
+    /// The last entity outside the scene that a captured value referenced.
+    pub fn outside(&self) -> Option<Entity> {
+        self.outside
     }
 
     /// Records an asset the captured values refer to; the nil id is not an asset.

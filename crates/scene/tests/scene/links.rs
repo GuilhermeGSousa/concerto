@@ -5,14 +5,14 @@ use concerto_app::{
     App,
 };
 use concerto_ecs::{
-    component::name::Name,
+    component::{name::Name, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
     events::event_reader::EventReader,
     reflect::{ReflectComponent, ReflectSceneComponent},
     resource::{ResMut, Resource},
     Component, Entity,
 };
-use concerto_foundation::assets::{asset_server::AssetServer, AssetId};
+use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_scene::{
@@ -31,6 +31,13 @@ use concerto_scene::{
 #[reflect(Component, Default, SceneComponent)]
 struct Label {
     text: String,
+}
+
+#[derive(Component, Reflect, Default, Clone, Debug)]
+#[reflect(Component, Default, SceneComponent)]
+struct Prop {
+    art: AssetHandle<Scene>,
+    facing: SceneEntityRef,
 }
 
 #[derive(Resource, Default)]
@@ -55,6 +62,17 @@ fn label(text: &str) -> SerializedComponent {
     SerializedComponent {
         type_name: std::any::type_name::<Label>().into(),
         value: concerto_reflect::to_value(&Label { text: text.into() }).unwrap(),
+    }
+}
+
+fn prop(art: AssetId) -> SerializedComponent {
+    SerializedComponent {
+        type_name: std::any::type_name::<Prop>().into(),
+        value: concerto_reflect::to_value(&Prop {
+            art: AssetHandle::weak(art),
+            facing: SceneEntityRef::default(),
+        })
+        .unwrap(),
     }
 }
 
@@ -100,6 +118,7 @@ fn app() -> App {
         .register_plugin(TransformPlugin)
         .register_plugin(ScenePlugin)
         .register_type::<Label>()
+        .register_type::<Prop>()
         .insert_resource(Heard::default())
         .add_system(LateUpdate, hear);
     app.finish_plugin_build();
@@ -172,6 +191,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let server = app.get_resource::<AssetServer>().unwrap().clone();
     let s = AssetId::new();
     let handle = server.insert_loaded(s, room());
+    let art = AssetId::new();
 
     let changes = vec![
         LinkChange::RemoveNode {
@@ -187,7 +207,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         },
         LinkChange::AddComponent {
             path: "room/gone".into(),
-            component: label("lost"),
+            component: prop(art),
         },
     ];
     let link = app.main_mut().world_mut().spawn(
@@ -277,6 +297,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         .components
         .contains(&link_parent("room/lamp")));
     assert!(captured.referenced_assets.contains(&s));
+    assert!(captured.referenced_assets.contains(&art));
     let mut copy = self::app();
     copy.get_resource::<AssetServer>()
         .unwrap()
@@ -290,6 +311,22 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         bincode::serialize(&capture_scene(copy.main().world(), holder).unwrap()).unwrap(),
         bincode::serialize(&captured).unwrap()
     );
+    let world = app.main_mut().world_mut();
+    world.insert(
+        Prop {
+            art: AssetHandle::default(),
+            facing: SceneEntityRef::Entity(lamp),
+        },
+        own,
+    );
+    let refused = capture_subtree(world, link).unwrap_err().to_string();
+    assert!(
+        refused.contains(
+            "references the linked node room/lamp; references into a link are not supported yet"
+        ),
+        "{refused}"
+    );
+    world.remove_component::<Prop>(own);
 
     app.main_mut()
         .world_mut()

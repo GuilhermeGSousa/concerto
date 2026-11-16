@@ -1,14 +1,19 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
 use anyhow::bail;
 use concerto_ecs::{
     component::name::Name,
     entity::hierarchy::Children,
-    reflect::{AppTypeRegistry, ReflectSceneComponent, SceneCapture},
+    reflect::{AppTypeRegistry, ReflectSceneComponent, ReflectSceneLeaf, SceneCapture},
     Entity, World,
 };
-use concerto_reflect::ReflectedValue;
+use concerto_foundation::assets::{handle::ReflectAssetHandle, AssetId};
+use concerto_reflect::{
+    apply_value_with, decode_leaf, LeafError, LeafHook, Reflect, ReflectDefault, ReflectedValue,
+    TypeRegistry,
+};
+use log::warn;
 
 use crate::link::{find_linked, owning_link, LinkParent, LinkedNode, SceneLink};
 use crate::scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent};
@@ -140,10 +145,17 @@ fn capture_node(
         }
         let value = match info.capture(world, entity, capture) {
             Ok(value) => value,
-            Err(error) => bail!(
-                "component '{}' on '{name}' cannot be written to a scene: {error}",
-                info.name()
-            ),
+            Err(error) => match capture.outside().and_then(|entity| owning_link(world, entity)) {
+                Some(owned) => bail!(
+                    "component '{}' on '{name}' references the linked node {}; references into a link are not supported yet",
+                    info.name(),
+                    owned.path
+                ),
+                None => bail!(
+                    "component '{}' on '{name}' cannot be written to a scene: {error}",
+                    info.name()
+                ),
+            },
         };
         components.push(SerializedComponent {
             type_name: info.name().to_owned(),
@@ -205,22 +217,81 @@ fn added_value(
     component: &SerializedComponent,
     capture: &mut SceneCapture,
 ) -> anyhow::Result<ReflectedValue> {
-    let Some(target) = find_linked(world, link, path) else {
-        return Ok(component.value.clone());
+    let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
+        return Ok(unlisted(component, path));
     };
-    let Some(scene) = world
-        .get_resource::<AppTypeRegistry>()
-        .and_then(|registry| registry.read().get_by_name(&component.type_name))
-        .and_then(|registration| registration.data::<ReflectSceneComponent>().copied())
-    else {
-        return Ok(component.value.clone());
+    let Some(registration) = registry.read().get_by_name(&component.type_name) else {
+        return Ok(unlisted(component, path));
     };
-    match (scene.capture)(world, target, capture) {
-        Some(Ok(value)) => Ok(value),
+    let mut added = SceneCapture::default();
+    let live = registration
+        .data::<ReflectSceneComponent>()
+        .zip(find_linked(world, link, path))
+        .and_then(|(scene, target)| (scene.capture)(world, target, &mut added));
+    let value = match live {
+        Some(Ok(value)) => value,
+        Some(Err(_)) if added.outside().is_some() => bail!(
+            "{} added to {path} holds an entity reference; references in added components are not supported yet",
+            registration.short_name()
+        ),
         Some(Err(error)) => bail!(
-            "component '{}' added at {path} cannot be written to a scene: {error}",
+            "component '{}' added to {path} cannot be written to a scene: {error}",
             component.type_name
         ),
-        None => Ok(component.value.clone()),
+        None => {
+            let Some(mut value) = registration
+                .data::<ReflectDefault>()
+                .map(ReflectDefault::default)
+            else {
+                return Ok(unlisted(component, path));
+            };
+            apply_value_with(
+                &mut *value,
+                &component.value,
+                &mut StoredAssets {
+                    registry: &registry.read(),
+                    capture: &mut added,
+                },
+            );
+            component.value.clone()
+        }
+    };
+    for id in added.referenced_assets() {
+        capture.reference(*id);
+    }
+    Ok(value)
+}
+
+fn unlisted(component: &SerializedComponent, path: &str) -> ReflectedValue {
+    warn!(
+        "{} added to {path} cannot be decoded, so the assets it names are not listed",
+        component.type_name
+    );
+    component.value.clone()
+}
+
+struct StoredAssets<'a> {
+    registry: &'a TypeRegistry,
+    capture: &'a mut SceneCapture,
+}
+
+impl LeafHook for StoredAssets<'_> {
+    fn encode(&mut self, _: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
+        None
+    }
+
+    fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>> {
+        let type_id = (&*leaf as &dyn Any).type_id();
+        if self
+            .registry
+            .get_type_data::<ReflectAssetHandle>(type_id)
+            .is_some()
+        {
+            let mut id = AssetId::nil();
+            return Some(decode_leaf(&mut id, bytes).map(|()| self.capture.reference(id)));
+        }
+        self.registry
+            .get_type_data::<ReflectSceneLeaf>(type_id)
+            .map(|_| Ok(()))
     }
 }
