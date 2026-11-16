@@ -1,35 +1,68 @@
-//! Scene links in the editor: which edits a linked node refuses, the changes edits record on their link, and reloading the files a save or an import rewrote.
+//! Scene links in the editor: which edits a linked node refuses, the changes edits record on their link, how links and linked nodes show in the tree and the inspector, and reloading the files a save or an import rewrote.
 use std::any::TypeId;
 
 use anyhow::{Context, bail};
-use concerto_app::{App, Plugin, edit_time::AtEditTime, schedule_groups::Update};
-use concerto_ecs::{
-    Entity, Query, World,
-    command::CommandQueue,
-    component::name::Name,
-    events::{Event, event_reader::EventReader},
-    reflect::{AppTypeRegistry, ReflectSceneComponent, SceneCapture},
-    signal::{On, Signal},
+use concerto_app::{
+    App, Plugin,
+    edit_time::AtEditTime,
+    schedule_groups::{LateUpdate, Update},
 };
-use concerto_foundation::assets::{AssetId, registry::AssetEntry};
+use concerto_ecs::{
+    Entity, IntoSystemConfig, Query, Ref, Res, World,
+    command::CommandQueue,
+    component::{name::Name, removed::RemovedComponents},
+    entity::{
+        EntityHashMap,
+        hierarchy::{ChildOf, Children},
+    },
+    events::{Event, event_reader::EventReader},
+    query::{
+        change_detection::DetectChanges,
+        filter::{Added, Changed, Or, With, Without},
+    },
+    reflect::{AppTypeRegistry, ReflectSceneComponent, SceneCapture},
+    resource::ResMut,
+    signal::{
+        On, Signal,
+        listener::{IntoListener, Listener},
+    },
+};
+use concerto_foundation::assets::{
+    AssetId,
+    registry::{AssetEntry, AssetRegistry},
+};
 use concerto_reflect::TypeRegistry;
 use concerto_scene::{
     link::{
         ChangeOutcome, LinkParent, LinkedNode, OwnedPath, SceneLink, SceneLinkState, owning_link,
-        scene_address, shown_name,
+        owning_link_by, scene_address, shown_name,
     },
     scene::{LinkChange, SerializedComponent},
 };
+use concerto_ui::{
+    elements::{Surface, prelude::*},
+    interaction::UIClick,
+    node::{UINode, UIRect},
+    theme::UITheme,
+};
+use concerto_window::input::MouseButton;
 use log::warn;
+use taffy::AlignItems;
 
 use crate::{
-    hosted::{HostRole, HostedApp, HostedEventsAppExt, ParkedEditApp, PendingApp},
+    fonts::{button_icon, glyph, icon_button},
+    hierarchy::{RowLook, RowLooks, reconcile_content},
+    hosted::{
+        EditTarget, EditWorld, EditWorldSignals, HostRole, HostedApp, HostedEventsAppExt,
+        ParkedEditApp, PendingApp,
+    },
     import::ImportFinished,
+    inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard},
     scene::SceneSaved,
     tools::{
         edits::{ComponentEdit, ComponentEdited},
-        entity_ops::{EntityEdit, EntityEdited, in_open_scene, scene_member},
-        scene::{SceneStatus, report_edit, write},
+        entity_ops::{EntityEdit, EntityEdited, in_open_scene, scene_member, scene_member_by},
+        scene::{SceneRoot, SceneStatus, report_edit, write},
     },
 };
 
@@ -57,14 +90,293 @@ pub(crate) enum LinkedEdit {
     SetOwnComponent(TypeId),
 }
 
-/// Reloads, in every `App` but a playing game's, the assets of the files a save or an import rewrote, so the links to their scenes spawn again.
+/// Shows links and their linked nodes in the tree and the inspector, and reloads, in every `App` but a playing game's, the assets of the files a save or an import rewrote, so the links to their scenes spawn again.
 pub struct LinksPlugin;
 
 impl Plugin for LinksPlugin {
     fn build(&self, app: &mut App) {
         app.forward_hosted_event::<LinkChangeRemoved>()
-            .add_system(Update, reload_rewritten_files);
+            .add_system(Update, reload_rewritten_files)
+            .add_system(LateUpdate, look_linked_rows.before(reconcile_content))
+            .add_system(LateUpdate, lock_linked_cards)
+            .add_system(LateUpdate, fill_inspector_headers);
     }
+}
+
+/// The outermost link of `entity` and its path from there, when `entity` is a linked node of a link in the open scene, read through queries; `None` in a world without a scene root.
+pub(crate) fn linked_in_open_scene_by(
+    entity: Entity,
+    nodes: &Query<&LinkedNode>,
+    members: &Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
+) -> Option<OwnedPath> {
+    let owned = owning_link_by(entity, |entity| nodes.get_entity(entity))?;
+    scene_member_by(owned.link, |entity| {
+        members
+            .get_entity(entity)
+            .map(|(parent, root)| (root.is_some(), parent.map(ChildOf::parent)))
+    })
+    .ok()?;
+    Some(owned)
+}
+
+fn change_path(change: &LinkChange) -> &str {
+    match change {
+        LinkChange::AddComponent { path, .. }
+        | LinkChange::RemoveComponent { path, .. }
+        | LinkChange::RemoveNode { path } => path,
+    }
+}
+
+fn look_linked_rows(
+    mut scene: EditWorld<(
+        Query<Entity, With<LinkedNode>>,
+        Query<&LinkedNode>,
+        Query<(Entity, &SceneLink)>,
+        Query<&Children>,
+        Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
+        Query<
+            Entity,
+            Or<(
+                Changed<LinkedNode>,
+                Changed<SceneLink>,
+                Changed<Children>,
+                Added<SceneRoot>,
+            )>,
+        >,
+        RemovedComponents<Children>,
+    )>,
+    targeted: Query<Entity, Added<EditTarget>>,
+    looks: Option<ResMut<RowLooks>>,
+) {
+    let Some(mut looks) = looks else {
+        return;
+    };
+    let (linked, nodes, links, children, members, changed, removed) = &mut *scene;
+    let removed = removed.read().count() > 0;
+    if !removed && changed.iter().next().is_none() && targeted.iter().next().is_none() {
+        return;
+    }
+    let mut wanted: EntityHashMap<RowLook> = links
+        .iter()
+        .map(|(link, _)| {
+            (
+                link,
+                RowLook {
+                    icon: Some(glyph::LINK_SIMPLE),
+                    ..RowLook::default()
+                },
+            )
+        })
+        .collect();
+    for entity in linked.iter() {
+        let Some(owned) = linked_in_open_scene_by(entity, nodes, members) else {
+            continue;
+        };
+        let changed = links.get_entity(owned.link).is_some_and(|(_, link)| {
+            link.changes()
+                .iter()
+                .any(|change| change_path(change) == owned.path)
+        });
+        let holds_own = children.get_entity(entity).is_some_and(|children| {
+            children
+                .iter()
+                .any(|child| nodes.get_entity(*child).is_none())
+        });
+        let look = wanted.entry(entity).or_default();
+        look.muted = true;
+        if changed || holds_own {
+            look.marker = Some(glyph::PENCIL_SIMPLE);
+        }
+    }
+    if looks.0 != wanted {
+        looks.0 = wanted;
+    }
+}
+
+fn lock_linked_cards(
+    scene: EditWorld<(
+        Query<&LinkedNode>,
+        Query<&SceneLink>,
+        Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
+        Res<AppTypeRegistry>,
+    )>,
+    cards: Query<(Entity, &InspectedComponent), Without<ReadOnlyCard>>,
+    mut cmd: CommandQueue,
+) {
+    let (nodes, links, members, types) = &*scene;
+    let types = types.read();
+    for (card, inspected) in cards.iter() {
+        let Some(owned) = linked_in_open_scene_by(inspected.scene_entity, nodes, members) else {
+            continue;
+        };
+        let added = links.get_entity(owned.link).is_some_and(|link| {
+            link.changes().iter().any(|change| {
+                matches!(change, LinkChange::AddComponent { path, component }
+                    if *path == owned.path
+                        && types.get_by_name(&component.type_name).map(|registration| registration.type_id())
+                            == Some(inspected.type_id))
+            })
+        });
+        if !added {
+            cmd.insert(ReadOnlyCard, card);
+        }
+    }
+}
+
+fn fill_inspector_headers(
+    scene: EditWorld<(
+        Query<Ref<SceneLink>>,
+        Query<&LinkedNode>,
+        Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
+        Res<AppTypeRegistry>,
+    )>,
+    assets: Option<Res<AssetRegistry>>,
+    headers: Query<(Entity, Ref<InspectorHeader>, &mut UINode, Option<&Children>)>,
+    theme: Res<UITheme>,
+    mut cmd: CommandQueue,
+) {
+    let (links, nodes, members, types) = &*scene;
+    let address = |link: &SceneLink| {
+        let id = link.scene().id();
+        assets
+            .as_deref()
+            .and_then(|assets| assets.get(id))
+            .map_or_else(|| id.simple_hex(), |entry| entry.address.clone())
+    };
+    for (header, inspected, mut layout, children) in headers.iter() {
+        let scene_entity = inspected.scene_entity;
+        let link = links.get_entity(scene_entity).filter(|_| {
+            scene_member_by(scene_entity, |entity| {
+                members
+                    .get_entity(entity)
+                    .map(|(parent, root)| (root.is_some(), parent.map(ChildOf::parent)))
+            })
+            .is_ok()
+        });
+        if !inspected.is_added() && !link.as_ref().is_some_and(|link| link.is_changed()) {
+            continue;
+        }
+        if children.is_some() {
+            cmd.entity(header).despawn_children();
+        }
+        let linked = linked_in_open_scene_by(scene_entity, nodes, members);
+        let visible = link.is_some() || linked.is_some();
+        if layout.visible != visible {
+            layout.visible = visible;
+        }
+        if let Some(owned) = linked {
+            let scene = links
+                .get_entity(owned.link)
+                .map(|link| address(&link))
+                .unwrap_or_default();
+            spawn_linked_note(&mut cmd, header, &scene, &owned.path, &theme);
+        } else if let Some(link) = link {
+            let changes = shown_changes(&link, &types.read());
+            spawn_link_changes(
+                &mut cmd,
+                header,
+                scene_entity,
+                &address(&link),
+                changes,
+                &theme,
+            );
+        }
+    }
+}
+
+fn info_card(theme: &UITheme) -> Surface {
+    theme
+        .card()
+        .column()
+        .fixed()
+        .gap(theme.spacing_xs)
+        .padding(UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm))
+}
+
+fn spawn_linked_note(
+    cmd: &mut CommandQueue,
+    header: Entity,
+    scene: &str,
+    path: &str,
+    theme: &UITheme,
+) {
+    cmd.entity(header)
+        .add_child_with(info_card(theme), |mut card| {
+            card.add_child(theme.label(format!("Linked from {scene}")).single_line())
+                .add_child(theme.label(path).small().mono().muted().single_line())
+                .add_child(
+                    theme
+                        .label(format!(
+                            "Its own components are read-only. Add a component to change it, or edit {scene}."
+                        ))
+                        .small()
+                        .muted(),
+                );
+        });
+}
+
+fn spawn_link_changes(
+    cmd: &mut CommandQueue,
+    header: Entity,
+    scene_link: Entity,
+    scene: &str,
+    changes: Vec<ShownChange>,
+    theme: &UITheme,
+) {
+    let card = cmd
+        .entity(header)
+        .spawn_child(info_card(theme))
+        .add_child(theme.label(format!("Link → {scene}")).single_line())
+        .entity();
+    if changes.is_empty() {
+        cmd.entity(card)
+            .add_child(theme.label("No changes").small().muted());
+    }
+    for (index, change) in changes.into_iter().enumerate() {
+        let what = theme.label(change.what).small();
+        let outcome = match change.unapplied {
+            None => theme.label("applied").small().muted(),
+            Some(reason) => theme
+                .label(format!("unapplied: {reason}"))
+                .small()
+                .color(theme.error),
+        };
+        let text = cmd
+            .spawn(theme.column().grow().shrink(1.0).gap(2.0))
+            .add_child(what)
+            .add_child(outcome)
+            .entity();
+        let button = cmd
+            .spawn((
+                icon_button(theme).on_click(remove_change_on_click(scene_link, index)),
+                button_icon(theme, glyph::X),
+            ))
+            .entity();
+        let row = cmd
+            .spawn(
+                theme
+                    .row()
+                    .fixed()
+                    .gap(theme.spacing_xs)
+                    .align_items(AlignItems::Center),
+            )
+            .entity();
+        cmd.add_child(row, text);
+        cmd.add_child(row, button);
+        cmd.add_child(card, row);
+    }
+}
+
+fn remove_change_on_click(scene_link: Entity, index: usize) -> Listener<UIClick> {
+    (move |on: On<UIClick>, mut scene: EditWorldSignals| {
+        if on.signal().button == MouseButton::Left {
+            scene.trigger(RemoveLinkChange {
+                link: scene_link,
+                index,
+            });
+        }
+    })
+    .into_listener()
 }
 
 /// The edit `App`'s part: the refusals, and the listeners that record edits of linked nodes on their link.
@@ -300,8 +612,12 @@ fn remove_change(world: &mut World, request: &RemoveLinkChange) -> anyhow::Resul
     Ok(())
 }
 
-/// One line per own change of `link`: its index, kind, path and component, and whether it applied at the last spawn.
-pub(crate) fn change_lines(link: &SceneLink, types: &TypeRegistry) -> Vec<String> {
+struct ShownChange {
+    what: String,
+    unapplied: Option<String>,
+}
+
+fn shown_changes(link: &SceneLink, types: &TypeRegistry) -> Vec<ShownChange> {
     let short = |type_name: &str| {
         types.get_by_name(type_name).map_or_else(
             || type_name.to_owned(),
@@ -311,8 +627,8 @@ pub(crate) fn change_lines(link: &SceneLink, types: &TypeRegistry) -> Vec<String
     link.changes()
         .iter()
         .enumerate()
-        .map(|(index, change)| {
-            let what = match change {
+        .map(|(index, change)| ShownChange {
+            what: match change {
                 LinkChange::AddComponent { path, component } => {
                     format!("AddComponent {path} [{}]", short(&component.type_name))
                 }
@@ -320,13 +636,23 @@ pub(crate) fn change_lines(link: &SceneLink, types: &TypeRegistry) -> Vec<String
                     format!("RemoveComponent {path} [{}]", short(type_name))
                 }
                 LinkChange::RemoveNode { path } => format!("RemoveNode {path}"),
-            };
-            match link.outcomes().get(index) {
-                Some(ChangeOutcome::Unapplied(reason)) => {
-                    format!("{index}: {what} — unapplied: {reason}")
-                }
-                _ => format!("{index}: {what} — applied"),
-            }
+            },
+            unapplied: match link.outcomes().get(index) {
+                Some(ChangeOutcome::Unapplied(reason)) => Some(reason.clone()),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
+/// One line per own change of `link`: its index, kind, path and component, and whether it applied at the last spawn.
+pub(crate) fn change_lines(link: &SceneLink, types: &TypeRegistry) -> Vec<String> {
+    shown_changes(link, types)
+        .into_iter()
+        .enumerate()
+        .map(|(index, change)| match change.unapplied {
+            Some(reason) => format!("{index}: {} — unapplied: {reason}", change.what),
+            None => format!("{index}: {} — applied", change.what),
         })
         .collect()
 }

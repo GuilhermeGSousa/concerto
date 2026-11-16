@@ -570,9 +570,15 @@ measure. An icon button is `fonts::icon_button` with `fonts::button_icon`: a
 16 px glyph in a square of the theme's control height. A tree row's icon is the
 muted text colour at rest and the text colour while its row is hovered or
 selected, and a tab's is the text colour on the active tab and muted on the
-others, whether hovered or not; the glyph, not a colour, tells kinds apart. The hierarchy shows `stack` for the scene root, `camera`,
-`lightbulb` and `cube` for an entity with a camera, a light or a mesh, and
-`circle` for any other entity, with or without children.
+others, whether hovered or not; the glyph, not a colour, tells kinds apart. The hierarchy shows `stack` for the scene root, `link-simple`
+for a link, `camera`, `lightbulb` and `cube` for an entity with a camera, a
+light or a mesh, and `circle` for any other entity, with or without children.
+While a scene is edited, a link's linked nodes show their names muted, and one
+its link changes, or that holds an entity of the scene's own, shows
+`pencil-simple` in the accent colour after its name. Selecting a linked node
+shows its link and path above its cards, with its own components' fields
+disabled and no gizmo in the viewport; selecting a link lists its changes,
+each with whether it applied and a button that removes it.
 
 The `AssetIcons` resource maps an asset kind's `Asset::name()` to its glyph,
 and the Asset Browser's rows and the tab strip both read it. `ContentPlugin`,

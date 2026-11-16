@@ -2,7 +2,7 @@
 use crate::actions::{DeleteEntity, DuplicateEntity, EditorContextSet, RenameEntity, TreeContext};
 use crate::asset_editor::{ActiveEditor, EditorDocument};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::fonts::{button_icon, draw_row_icon, glyph, icon_button, row_icon};
+use crate::fonts::{button_icon, draw_row_icon, glyph, icon, icon_button, row_icon};
 use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState};
 use crate::inspector::FocusNameField;
 use crate::scene::SceneState;
@@ -21,7 +21,10 @@ use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Ref, Res, ResMut, Resource, World,
     command::CommandQueue,
     component::{name::Name, removed::RemovedComponents},
-    entity::hierarchy::{ChildOf, Children},
+    entity::{
+        EntityHashMap,
+        hierarchy::{ChildOf, Children},
+    },
     events::event_reader::EventReader,
     query::{
         change_detection::DetectChanges,
@@ -74,6 +77,18 @@ impl HierarchyState {
     }
 }
 
+/// How a row of the world tree differs from a plain one: a muted name, its own icon, or a marker after the name.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RowLook {
+    pub muted: bool,
+    pub icon: Option<char>,
+    pub marker: Option<char>,
+}
+
+/// The rows that look other than plain, by their entity in the edit `App`'s world; the plugins that know why fill it.
+#[derive(Resource, Default, Debug, PartialEq)]
+pub struct RowLooks(pub EntityHashMap<RowLook>);
+
 #[derive(Component)]
 pub(crate) struct TreeView;
 #[derive(Component)]
@@ -90,6 +105,7 @@ pub(crate) struct HierarchyItem {
     scene_entity: Entity,
     mark: Entity,
     label: Entity,
+    marker: Entity,
     count: Entity,
 }
 
@@ -117,6 +133,7 @@ pub struct HierarchyPlugin;
 impl Plugin for HierarchyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(HierarchyState::default());
+        app.insert_resource(RowLooks::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Warren",
@@ -154,6 +171,7 @@ pub(crate) fn install_listeners(world: &mut World) {
 fn forget_scene(
     _: On<Remove<EditTarget>>,
     mut state: ResMut<HierarchyState>,
+    looks: Option<ResMut<RowLooks>>,
     menus: Query<&mut RowMenu>,
     views: Query<&mut UIScrollArea, With<TreeView>>,
     parents: Query<&ChildOf>,
@@ -163,6 +181,11 @@ fn forget_scene(
     despawn_outermost(&items, &parents, &mut cmd);
     state.pending_scene_reveal = None;
     state.top_level.clear();
+    if let Some(mut looks) = looks
+        && !looks.0.is_empty()
+    {
+        looks.0.clear();
+    }
     for mut menu in menus.iter() {
         menu.scene_target = None;
     }
@@ -312,6 +335,14 @@ fn spawn_item(
             theme.text("").single_line(),
         ))
         .entity();
+    let marker = cmd
+        .spawn((
+            UINode::default()
+                .with_flex_shrink(0.0)
+                .with_align_self(taffy::AlignItems::Center),
+            icon(theme, ' ', 12.0).color(theme.accent),
+        ))
+        .entity();
     let count = cmd
         .spawn(
             theme
@@ -332,6 +363,7 @@ fn spawn_item(
                 scene_entity,
                 mark,
                 label,
+                marker,
                 count,
             },
             select_item.into_listener(),
@@ -339,7 +371,7 @@ fn spawn_item(
             ChildOf::new(parent),
         ))
         .entity();
-    for content in [mark, label, count] {
+    for content in [mark, label, marker, count] {
         cmd.add_child(item, content);
     }
     item
@@ -676,7 +708,7 @@ pub(crate) fn reconcile_content(
     )>,
     active: Res<ActiveEditor>,
     documents: Query<Ref<EditorDocument>>,
-    state: Res<HierarchyState>,
+    (state, looks): (Res<HierarchyState>, Res<RowLooks>),
     (items, added): (
         Query<(Entity, Ref<HierarchyItem>, Option<&UISelected>)>,
         Query<Entity, Added<HierarchyItem>>,
@@ -703,12 +735,17 @@ pub(crate) fn reconcile_content(
     let every_row = selection.is_changed()
         || active.is_changed()
         || theme.is_changed()
+        || looks.is_changed()
         || document
             .as_ref()
             .is_some_and(|document| document.is_changed());
     let scene = (&*names, &*roots, &*scene_children, &*kinds);
     let selected = selection.entity();
-    let mut update = |row| update_row(row, selected, address, scene, &texts, &theme, &mut cmd);
+    let mut update = |row| {
+        update_row(
+            row, selected, address, scene, &looks, &texts, &theme, &mut cmd,
+        )
+    };
     if every_row {
         items.iter().for_each(&mut update);
         return;
@@ -736,22 +773,25 @@ fn update_row(
         &Query<Ref<Children>>,
         &Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>,
     ),
+    looks: &RowLooks,
     texts: &Query<&mut UIText>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
     let scene_entity = item.scene_entity;
     let is_root = roots.get_entity(scene_entity).is_some();
+    let look = looks.0.get(&scene_entity).copied().unwrap_or_default();
     let children = scene_children.get_entity(scene_entity);
     let count = children
         .as_ref()
         .map_or(0, |children| children.iter().len());
     let kind = kinds.get_entity(scene_entity);
-    let mark = match kind {
+    let mark = match (kind, look.icon) {
         _ if is_root => glyph::STACK,
-        Some((Some(_), _, _)) => glyph::CAMERA,
-        Some((_, Some(_), _)) => glyph::LIGHTBULB,
-        Some((_, _, Some(_))) => glyph::CUBE,
+        (_, Some(icon)) => icon,
+        (Some((Some(_), _, _)), _) => glyph::CAMERA,
+        (Some((_, Some(_), _)), _) => glyph::LIGHTBULB,
+        (Some((_, _, Some(_))), _) => glyph::CUBE,
         _ => glyph::CIRCLE,
     };
     let name = names.get_entity(scene_entity);
@@ -768,13 +808,30 @@ fn update_row(
         _ if same_children => None,
         count => Some(count.to_string().into()),
     };
-    for (text, value) in [(item.label, label), (item.count, count)] {
+    let marker: Cow<str> = look
+        .marker
+        .map_or("".into(), |marker| marker.to_string().into());
+    for (text, value) in [
+        (item.label, label),
+        (item.count, count),
+        (item.marker, Some(marker)),
+    ] {
         if let Some(value) = value
             && let Some(mut text) = texts.get_entity(text)
             && text.text != *value
         {
             text.text = value.into_owned();
         }
+    }
+    let label_color = if look.muted {
+        theme.text_muted
+    } else {
+        theme.text
+    };
+    if let Some(mut text) = texts.get_entity(item.label)
+        && text.color != label_color
+    {
+        text.color = label_color;
     }
     let wanted = selection == Some(scene_entity);
     if let Some(mut text) = texts.get_entity(item.mark) {

@@ -5,7 +5,11 @@ use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::list::remove_button;
 use super::registry::InspectionSource;
-use concerto_ecs::{component::Tick, reflect::AppTypeRegistry};
+use concerto_ecs::{
+    component::Tick,
+    query::filter::{With, Without},
+    reflect::AppTypeRegistry,
+};
 use concerto_reflect::{PathSegment, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
@@ -18,6 +22,17 @@ pub struct InspectedComponent {
     pub name: &'static str,
     body: Entity,
     read: bool,
+}
+
+/// Marks a component card whose values cannot be edited here: the widgets in its body are disabled, and its menu still works.
+#[derive(Component)]
+pub struct ReadOnlyCard;
+
+/// An empty column above the inspected entity's component cards, spawned again with them, for other plugins to fill.
+#[derive(Component)]
+pub struct InspectorHeader {
+    /// The inspected entity, in the edit `App`'s world.
+    pub scene_entity: Entity,
 }
 
 #[derive(Component)]
@@ -101,6 +116,12 @@ pub(super) fn sync_inspected_components(
     };
 
     if rebuild {
+        cmd.entity(stack_entity).add_child((
+            theme.column().fixed().gap(theme.spacing_xs + 2.0).hidden(),
+            InspectorHeader {
+                scene_entity: target,
+            },
+        ));
         let mut components = source.visible_components(target);
         components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
         for (type_id, name) in components {
@@ -483,4 +504,27 @@ pub(super) fn build_row_widgets(
             .add_child(remove_button(theme, list, index));
     }
     cmd.remove::<BuildPropertyWidget>(entity);
+}
+
+pub(super) fn disable_read_only_cards(
+    cards: Query<&InspectedComponent, With<ReadOnlyCard>>,
+    children: Query<&Children>,
+    enabled: Query<Entity, (With<Interactable>, Without<UIDisabled>)>,
+    mut cmd: CommandQueue,
+) {
+    for card in cards.iter() {
+        let mut pending = vec![card.body];
+        while let Some(node) = pending.pop() {
+            if enabled.contains_entity(node) {
+                cmd.insert(UIDisabled, node);
+            }
+            pending.extend(
+                children
+                    .get_entity(node)
+                    .into_iter()
+                    .flat_map(|children| children.iter())
+                    .copied(),
+            );
+        }
+    }
 }

@@ -50,7 +50,7 @@ use crate::{
         EditorDocument, PreviewSpec, Unsaved,
     },
     guard::UnsavedGuard,
-    hierarchy::HierarchyState,
+    hierarchy::{HierarchyState, RowLooks},
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
     preview::PreviewSignalQueue,
     project::{Project, ProjectState},
@@ -351,6 +351,7 @@ impl SceneFixture {
             clipboard: None,
         });
         world.insert_resource(HierarchyState::default());
+        world.insert_resource(RowLooks::default());
         world.insert_resource(InspectorData::default());
         world.insert_resource(PropertyCommits::default());
         world.insert_resource(ComponentEdits::default());
