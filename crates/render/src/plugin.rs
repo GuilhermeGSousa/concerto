@@ -5,13 +5,17 @@ use crate::{
     },
     capabilities::RenderCapabilities,
     components::{
-        camera::{extract_cameras, sync_camera_aspect, Camera},
+        camera::{
+            extract_cameras, prepare_view_textures, resolve_view_textures, sync_camera_aspect,
+            Camera, WindowMainTextures,
+        },
         camera_environment::CameraEnvironment,
         light::{
             cull_lights, extract_lights, write_visible_lights, Light, RenderLights, VisibleLights,
         },
         material::MaterialComponent,
         mesh::{extract_meshes, RenderMeshInstances},
+        msaa::{Msaa, MsaaSupport},
         render_entity::{extract, SyncWithRenderWorld},
         shadows::{
             assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
@@ -29,7 +33,7 @@ use crate::{
     render_asset::{
         register_render_asset_budget,
         render_mesh::RenderMesh,
-        render_texture::{DummyRenderTexture, RenderTexture},
+        render_texture::{DummyRenderTexture, RenderTexture, DEPTH_FORMAT},
         render_window::RenderWindow,
         RenderAssetPlugin,
     },
@@ -112,6 +116,7 @@ impl Plugin for RenderPlugin {
             .register_asset::<Skeleton>();
         app.register_type::<Light>()
             .register_type::<Camera>()
+            .register_type::<Msaa>()
             .register_type::<CameraEnvironment>()
             .register_type::<SyncWithRenderWorld>()
             .register_type::<NoFrustumCulling>()
@@ -138,7 +143,10 @@ impl Plugin for RenderPlugin {
         if has_window {
             app.add_system(LateUpdate, sync_camera_aspect.at_edit_time())
                 .add_render_system(Extract, update_window::extract_window)
-                .add_render_system(Render, update_window::update_render_window);
+                .add_render_system(
+                    Render,
+                    update_window::update_render_window.before(prepare_view_textures),
+                );
         }
 
         app.configure_render_sets(
@@ -149,10 +157,12 @@ impl Plugin for RenderPlugin {
                 RenderSet::Shadows,
                 RenderSet::Draw,
                 RenderSet::Overlay,
+                RenderSet::Resolve,
             )
                 .chain(),
         )
-        .add_render_system(Render, clear_cameras)
+        .add_render_system(Render, prepare_view_textures.before(clear_cameras))
+        .add_render_system(Render, clear_cameras.before(RenderSet::Draw))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
         .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
         .add_render_system(
@@ -164,6 +174,12 @@ impl Plugin for RenderPlugin {
         .add_render_system(
             Render,
             (update_shadow_view_proj, resize_shadow_maps).in_set(RenderSet::Shadows),
+        )
+        .add_render_system(
+            Render,
+            resolve_view_textures
+                .in_set(RenderSet::Resolve)
+                .after(RenderSet::Draw),
         )
         .add_render_system(LateRender, finish_render)
         .add_render_system(
@@ -235,6 +251,8 @@ impl Plugin for RenderPlugin {
         let capabilities = RenderCapabilities::from_adapter(&adapter);
         let viewport_clear = ViewportClearPipeline::new(&device, &capabilities, config.format);
 
+        let msaa_support = MsaaSupport::from_device(&adapter, &device, config.format, DEPTH_FORMAT);
+
         let lighting_layout = LightingLayout::new(&device, &capabilities);
 
         let render_lights = RenderLights::new(&device);
@@ -267,6 +285,8 @@ impl Plugin for RenderPlugin {
             })
             .insert_resource(RenderQueue { queue })
             .insert_resource(capabilities)
+            .insert_resource(msaa_support)
+            .insert_resource(WindowMainTextures::default())
             .insert_resource(viewport_clear)
             .insert_resource(RenderWindow::new())
             .insert_resource(camera_layouts)

@@ -13,13 +13,18 @@ use concerto_ecs::{
     query::Query,
     reflect::{ReflectComponent, ReflectSceneComponent},
     resource::{Res, ResMut, Resource},
+    system::input::SystemLocal,
+    world::{FromWorld, World},
     Entity,
 };
 use concerto_window::plugin::Window;
 use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-use crate::components::visibility::RenderLayers;
+use crate::components::{
+    msaa::{Msaa, MsaaSupport},
+    visibility::RenderLayers,
+};
 use crate::{
     assets::texture::Texture,
     components::{
@@ -29,7 +34,7 @@ use crate::{
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
-    render_asset::{render_texture::RenderTexture, RenderAssets},
+    render_asset::{render_texture::RenderTexture, render_window::RenderWindow, RenderAssets},
     resources::RenderContext,
 };
 
@@ -157,7 +162,7 @@ pub fn viewport_rect(viewport: Option<&Viewport>, target: UVec2) -> PixelRect {
 
 #[derive(Component, concerto_reflect::Reflect)]
 #[reflect(Component, SceneComponent)]
-#[require(crate::components::render_entity::SyncWithRenderWorld)]
+#[require(crate::components::render_entity::SyncWithRenderWorld, Msaa)]
 pub struct Camera {
     pub aspect: f32,
     pub fovy: f32,
@@ -265,11 +270,30 @@ pub struct RenderCamera {
     pub render_target: Option<RenderTexture>,
     pub(crate) viewport: Option<Viewport>,
     pub(crate) layers: RenderLayers,
+    pub(crate) samples: u32,
+    pub(crate) msaa_color: Option<RenderTexture>,
 }
 
 impl RenderCamera {
     pub fn depth_texture(&self) -> &RenderTexture {
         &self.depth_texture
+    }
+
+    /// The samples per pixel of this camera's scene passes, which every pipeline drawing them matches.
+    pub fn samples(&self) -> u32 {
+        self.samples
+    }
+
+    /// The view its scene passes draw to: its multisampled texture, else its target or `window`.
+    pub fn color_view<'a>(
+        &'a self,
+        window: Option<&'a wgpu::TextureView>,
+    ) -> Option<&'a wgpu::TextureView> {
+        let target = match &self.render_target {
+            Some(target) => &target.view,
+            None => window?,
+        };
+        Some(self.msaa_color.as_ref().map_or(target, |msaa| &msaa.view))
     }
 
     /// The size of the target this camera draws to: its texture, or the window's surface.
@@ -298,8 +322,137 @@ impl RenderCamera {
         if self.render_target.is_some() {
             self.render_target = Some(create_rtt(device, format, width, height));
         }
-        self.depth_texture =
-            RenderTexture::create_depth_texture(device, width, height, "depth_texture");
+    }
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct WindowMainTextures {
+    pub(crate) by_samples: Vec<WindowMainTexture>,
+}
+
+pub(crate) struct WindowMainTexture {
+    pub(crate) samples: u32,
+    pub(crate) texture: RenderTexture,
+}
+
+fn texture_size(texture: &RenderTexture) -> UVec2 {
+    let size = texture.texture.size();
+    UVec2::new(size.width, size.height)
+}
+
+fn matches(texture: Option<&RenderTexture>, size: UVec2, samples: u32) -> bool {
+    texture.is_some_and(|texture| {
+        texture_size(texture) == size && texture.texture.sample_count() == samples
+    })
+}
+
+fn create_msaa_texture(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    size: UVec2,
+    samples: u32,
+) -> RenderTexture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Camera MSAA Colour"),
+        size: wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: samples,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    RenderTexture {
+        texture,
+        view,
+        sampler,
+    }
+}
+
+pub(crate) struct MixedWindowSamplesWarned {
+    warned: bool,
+}
+
+impl FromWorld for MixedWindowSamplesWarned {
+    fn from_world(_: &World) -> Self {
+        Self { warned: false }
+    }
+}
+
+pub(crate) fn prepare_view_textures(
+    render_cameras: Query<&mut RenderCamera>,
+    mut window_textures: ResMut<WindowMainTextures>,
+    device: Res<RenderDevice>,
+    context: Res<RenderContext>,
+    mut mixed: SystemLocal<MixedWindowSamplesWarned>,
+) {
+    let format = context.surface_config.format;
+    let window_size = UVec2::new(
+        context.surface_config.width.max(1),
+        context.surface_config.height.max(1),
+    );
+    let mut window_samples: Vec<u32> = render_cameras
+        .iter()
+        .filter(|camera| camera.render_target.is_none())
+        .map(|camera| camera.samples)
+        .collect();
+    window_samples.sort_unstable();
+    window_samples.dedup();
+    if window_samples.len() > 1 && !mixed.warned {
+        mixed.warned = true;
+        log::warn!(
+            "the window's cameras draw with different Msaa settings, {window_samples:?} samples, \
+             so the window shows only one of them; give them all the same Msaa"
+        );
+    }
+
+    let textures = &mut window_textures.by_samples;
+    textures.retain(|texture| {
+        window_samples.contains(&texture.samples) && texture_size(&texture.texture) == window_size
+    });
+    for &samples in window_samples.iter().filter(|&&samples| samples > 1) {
+        if !textures.iter().any(|texture| texture.samples == samples) {
+            textures.push(WindowMainTexture {
+                samples,
+                texture: create_msaa_texture(&device, format, window_size, samples),
+            });
+        }
+    }
+
+    for mut camera in render_cameras.iter() {
+        let samples = camera.samples;
+        let size = camera.target_size(&context).max(UVec2::ONE);
+        if !matches(Some(&camera.depth_texture), size, samples) {
+            camera.depth_texture = RenderTexture::create_depth_texture(
+                &device,
+                size.x,
+                size.y,
+                samples,
+                "depth_texture",
+            );
+        }
+        if samples == 1 {
+            camera.msaa_color = None;
+            continue;
+        }
+        if matches(camera.msaa_color.as_ref(), size, samples) {
+            continue;
+        }
+        camera.msaa_color = Some(match camera.render_target {
+            Some(_) => create_msaa_texture(&device, format, size, samples),
+            None => textures
+                .iter()
+                .find(|texture| texture.samples == samples)
+                .expect("a window texture exists for every window camera's sample count")
+                .texture
+                .clone(),
+        });
     }
 }
 
@@ -329,6 +482,7 @@ pub(crate) fn extract_cameras(
         Query<(
             Entity,
             &Camera,
+            Option<&Msaa>,
             Option<&CameraEnvironment>,
             Option<&RenderLayers>,
             &GlobalTransform,
@@ -343,9 +497,11 @@ pub(crate) fn extract_cameras(
     texture_assets: Extracted<Res<AssetStore<Texture>>>,
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
+    msaa_support: Res<MsaaSupport>,
 ) {
-    for (entity, camera, environment, layers, transform, render_entity) in cameras.iter() {
+    for (entity, camera, msaa, environment, layers, transform, render_entity) in cameras.iter() {
         let layers = layers.copied().unwrap_or_default();
+        let samples = msaa_support.samples(msaa.copied().unwrap_or_default());
         if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
             continue;
         }
@@ -359,6 +515,7 @@ pub(crate) fn extract_cameras(
             render_camera.clear_color = camera.clear_color.to_linear();
             render_camera.viewport = camera.viewport;
             render_camera.layers = layers;
+            render_camera.samples = samples;
 
             if let RenderTarget::Texture(handle) = &camera.render_target {
                 if let Some(texture) = texture_assets.get(handle) {
@@ -432,8 +589,13 @@ pub(crate) fn extract_cameras(
                 context.surface_config.height.max(1),
             ),
         };
-        let depth_texture =
-            RenderTexture::create_depth_texture(&device, depth_w, depth_h, "depth_texture");
+        let depth_texture = RenderTexture::create_depth_texture(
+            &device,
+            depth_w,
+            depth_h,
+            samples,
+            "depth_texture",
+        );
 
         let render_cam = RenderCamera {
             camera_bind_group,
@@ -444,6 +606,8 @@ pub(crate) fn extract_cameras(
             render_target,
             viewport: camera.viewport,
             layers,
+            samples,
+            msaa_color: None,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);
 
@@ -492,6 +656,59 @@ pub fn create_rtt(
         texture,
         view,
         sampler,
+    }
+}
+
+fn resolve(
+    encoder: &mut wgpu::CommandEncoder,
+    msaa: &wgpu::TextureView,
+    target: &wgpu::TextureView,
+) {
+    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        multiview_mask: None,
+        label: Some("MSAA Resolve Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            depth_slice: None,
+            view: msaa,
+            resolve_target: Some(target),
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Discard,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    });
+}
+
+pub(crate) fn resolve_view_textures(
+    mut device: ResMut<RenderDevice>,
+    render_cameras: Query<&RenderCamera>,
+    window_textures: Res<WindowMainTextures>,
+    render_window: Res<RenderWindow>,
+    context: Res<RenderContext>,
+) {
+    let encoder = device.command_encoder();
+    let drawn = |camera: &RenderCamera| {
+        !camera
+            .viewport_rect(camera.target_size(&context))
+            .is_empty()
+    };
+    for camera in render_cameras.iter().filter(|camera| drawn(camera)) {
+        if let (Some(msaa), Some(target)) = (&camera.msaa_color, &camera.render_target) {
+            resolve(encoder, &msaa.view, &target.view);
+        }
+    }
+    let Some(window) = render_window.get_view() else {
+        return;
+    };
+    for texture in &window_textures.by_samples {
+        if render_cameras.iter().any(|camera| {
+            camera.render_target.is_none() && camera.samples == texture.samples && drawn(camera)
+        }) {
+            resolve(encoder, &texture.texture.view, window);
+        }
     }
 }
 

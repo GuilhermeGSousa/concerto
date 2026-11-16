@@ -193,7 +193,10 @@ pub(crate) fn ui_renderpass(
             let Some(material) = render_material else {
                 continue;
             };
-            render_pass.set_pipeline(&pipeline.pipeline);
+            let Some(ui_pipeline) = pipeline.get(1) else {
+                continue;
+            };
+            render_pass.set_pipeline(ui_pipeline);
             render_pass.set_bind_group(0, &material.material_bind_group, &[]);
 
             render_pass.draw_indexed(0..QUAD_INDICES.len() as u32, 0, 0..1);

@@ -2,6 +2,7 @@ pub mod camera;
 pub mod camera_environment;
 pub mod light;
 pub mod material;
+pub mod msaa;
 pub mod render_entity;
 pub mod visibility;
 
@@ -14,5 +15,6 @@ pub use camera::Camera;
 pub use camera_environment::CameraEnvironment;
 pub use light::Light;
 pub use material::MaterialComponent;
+pub use msaa::Msaa;
 pub use render_entity::RenderEntity;
 pub use visibility::{NoFrustumCulling, NotShadowCaster};

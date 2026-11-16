@@ -11,6 +11,9 @@ use concerto_ecs::{
 use std::ops::Deref;
 use wgpu::TextureUsages;
 
+/// The format of every camera's depth target.
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct RenderTexture {
@@ -101,10 +104,12 @@ impl RenderTexture {
         }
     }
 
+    /// A depth target of `samples` samples per pixel; only a single-sampled one can be sampled.
     pub fn create_depth_texture(
         device: &wgpu::Device,
         width: u32,
         height: u32,
+        samples: u32,
         label: &str,
     ) -> Self {
         let size = wgpu::Extent3d {
@@ -116,12 +121,16 @@ impl RenderTexture {
             label: Some(label),
             size,
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: samples,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: TextureUsages::RENDER_ATTACHMENT
-                | TextureUsages::TEXTURE_BINDING
-                | TextureUsages::COPY_SRC,
+            format: DEPTH_FORMAT,
+            usage: if samples == 1 {
+                TextureUsages::RENDER_ATTACHMENT
+                    | TextureUsages::TEXTURE_BINDING
+                    | TextureUsages::COPY_SRC
+            } else {
+                TextureUsages::RENDER_ATTACHMENT
+            },
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

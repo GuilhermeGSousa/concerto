@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use concerto_ecs::resource::Resource;
 
 use crate::{
@@ -6,7 +8,10 @@ use crate::{
 
 #[derive(Resource)]
 pub(crate) struct ViewportClearPipeline {
-    pipeline: wgpu::RenderPipeline,
+    module: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    pipelines: HashMap<u32, wgpu::RenderPipeline>,
 }
 
 impl ViewportClearPipeline {
@@ -26,6 +31,19 @@ impl ViewportClearPipeline {
             bind_group_layouts: &[],
             immediate_size: 0,
         });
+        Self {
+            module,
+            layout,
+            format,
+            pipelines: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn specialize(&mut self, device: &wgpu::Device, samples: u32) {
+        if self.pipelines.contains_key(&samples) {
+            return;
+        }
+        let (module, layout, format) = (&self.module, &self.layout, self.format);
         let constant = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::Constant,
             dst_factor: wgpu::BlendFactor::Zero,
@@ -33,15 +51,15 @@ impl ViewportClearPipeline {
         };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Viewport Clear Pipeline"),
-            layout: Some(&layout),
+            layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &module,
+                module,
                 entry_point: Some("vs_main"),
                 buffers: &[],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &module,
+                module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
@@ -55,20 +73,27 @@ impl ViewportClearPipeline {
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                ..Default::default()
+            },
             multiview_mask: None,
             cache: None,
         });
-        Self { pipeline }
+        self.pipelines.insert(samples, pipeline);
     }
 
     pub(crate) fn fill(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
+        samples: u32,
         rect: PixelRect,
         color: wgpu::Color,
     ) {
+        let Some(pipeline) = self.pipelines.get(&samples) else {
+            return;
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             multiview_mask: None,
             label: Some("Viewport Clear Pass"),
@@ -86,7 +111,7 @@ impl ViewportClearPipeline {
             timestamp_writes: None,
         });
         rect.apply(&mut pass);
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_blend_constant(color);
         pass.draw(0..3, 0..1);
     }

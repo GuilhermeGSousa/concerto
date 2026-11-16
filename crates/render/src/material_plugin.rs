@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{collections::HashMap, marker::PhantomData};
 
 use concerto_app::{
     extractor::Extracted,
@@ -92,19 +92,68 @@ pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl
 //
 // Inserted as a resource by [`MaterialPlugin<M>::finish`].
 pub struct MaterialPipeline<M: 'static> {
-    pub pipeline: wgpu::RenderPipeline,
     // The `@group(0)` bind-group layout for `M`'s own data.
     pub bind_group_layout: wgpu::BindGroupLayout,
+    layout: wgpu::PipelineLayout,
+    vertex: wgpu::ShaderModule,
+    fragment: wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+    pipelines: HashMap<u32, wgpu::RenderPipeline>,
     _marker: PhantomData<fn() -> M>,
 }
 
 impl<M: 'static> MaterialPipeline<M> {
-    pub fn new(pipeline: wgpu::RenderPipeline, bind_group_layout: wgpu::BindGroupLayout) -> Self {
-        Self {
-            pipeline,
-            bind_group_layout,
-            _marker: PhantomData,
+    /// The pipeline for `samples` samples per pixel, once built; the single-sampled one always is.
+    pub fn get(&self, samples: u32) -> Option<&wgpu::RenderPipeline> {
+        self.pipelines.get(&samples)
+    }
+}
+
+impl<M: Material> MaterialPipeline<M> {
+    /// Builds the pipeline for targets of `samples` samples per pixel, unless it exists.
+    pub fn specialize(&mut self, device: &wgpu::Device, samples: u32) {
+        if self.pipelines.contains_key(&samples) {
+            return;
         }
+        let vertex_layouts: Vec<_> = M::vertex_layouts().into_iter().map(Some).collect();
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Material Pipeline"),
+            layout: Some(&self.layout),
+            vertex: wgpu::VertexState {
+                module: &self.vertex,
+                entry_point: Some("vs_main"),
+                buffers: &vertex_layouts,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &self.fragment,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.format,
+                    blend: M::blend_state(),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: M::topology(),
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: M::cull_mode(),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: M::depth_stencil(),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+        self.pipelines.insert(samples, pipeline);
     }
 }
 
@@ -342,7 +391,7 @@ pub(crate) fn clear_cameras(
     render_cameras: Query<&RenderCamera>,
     render_window: Res<RenderWindow>,
     context: Res<RenderContext>,
-    viewport_clear: Res<ViewportClearPipeline>,
+    mut viewport_clear: ResMut<ViewportClearPipeline>,
     mut overlap: SystemLocal<WindowOverlapWarned>,
 ) {
     let window_cameras = || {
@@ -360,7 +409,9 @@ pub(crate) fn clear_cameras(
              with_main_camera(false) or give every window camera a viewport"
         );
     }
-
+    for camera in window_cameras().filter(|camera| camera.viewport.is_some()) {
+        viewport_clear.specialize(&device, camera.samples());
+    }
     let swapchain_view = render_window.get_view();
     let encoder = device.command_encoder();
     for render_camera in render_cameras.iter() {
@@ -370,12 +421,8 @@ pub(crate) fn clear_cameras(
         {
             continue;
         }
-        let color_view: &wgpu::TextureView = match &render_camera.render_target {
-            Some(rt) => &rt.view,
-            None => match swapchain_view {
-                Some(v) => v,
-                None => continue,
-            },
+        let Some(color_view) = render_camera.color_view(swapchain_view) else {
+            continue;
         };
         let depth_stencil_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
             view: &render_camera.depth_texture.view,
@@ -411,22 +458,33 @@ pub(crate) fn clear_cameras(
             timestamp_writes: None,
         });
     }
-
-    let Some(window_view) = swapchain_view else {
+    if swapchain_view.is_none() {
         return;
-    };
-    if any_with_viewport && !any_without_viewport {
-        clear_window(encoder, window_view);
     }
-
+    if any_with_viewport && !any_without_viewport {
+        let mut cleared: Vec<u32> = Vec::new();
+        for camera in window_cameras() {
+            if cleared.contains(&camera.samples()) {
+                continue;
+            }
+            cleared.push(camera.samples());
+            if let Some(view) = camera.color_view(swapchain_view) {
+                clear_window(encoder, view);
+            }
+        }
+    }
     for render_camera in window_cameras() {
         let rect = render_camera.viewport_rect(render_camera.target_size(&context));
         if render_camera.viewport.is_none() || rect.is_empty() {
             continue;
         }
+        let Some(view) = render_camera.color_view(swapchain_view) else {
+            continue;
+        };
         viewport_clear.fill(
             encoder,
-            window_view,
+            view,
+            render_camera.samples(),
             rect,
             wgpu_color(render_camera.clear_color),
         );
@@ -496,7 +554,7 @@ pub(crate) fn queue_material_meshes<M: Material>(
 // so multiple `MaterialPlugin` instantiations for different material types can
 // coexist without interfering with each other.
 pub(crate) fn material_renderpass<M: Material>(
-    pipeline: Res<MaterialPipeline<M>>,
+    mut pipeline: ResMut<MaterialPipeline<M>>,
     mut device: ResMut<RenderDevice>,
     render_cameras: Query<(Entity, &RenderCamera)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
@@ -507,6 +565,9 @@ pub(crate) fn material_renderpass<M: Material>(
     view_batches: Res<MaterialViewBatches<M>>,
     context: Res<RenderContext>,
 ) {
+    for (_, render_camera) in render_cameras.iter() {
+        pipeline.specialize(&device, render_camera.samples());
+    }
     let encoder = device.command_encoder();
 
     for (camera, render_camera) in render_cameras.iter() {
@@ -520,14 +581,11 @@ pub(crate) fn material_renderpass<M: Material>(
             wgpu::LoadOp::Load
         };
 
-        // Route to RTT for texture-targeted cameras, or to the swapchain for window cameras.
-        let swapchain_view = render_window.get_view();
-        let color_view: &wgpu::TextureView = match &render_camera.render_target {
-            Some(rt) => &rt.view,
-            None => match swapchain_view {
-                Some(v) => v,
-                None => continue,
-            },
+        let Some(color_view) = render_camera.color_view(render_window.get_view()) else {
+            continue;
+        };
+        let Some(camera_pipeline) = pipeline.get(render_camera.samples()) else {
+            continue;
         };
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -565,7 +623,7 @@ pub(crate) fn material_renderpass<M: Material>(
             continue;
         };
 
-        render_pass.set_pipeline(&pipeline.pipeline);
+        render_pass.set_pipeline(camera_pipeline);
         render_pass.set_vertex_buffer(1, batches.instances.buffer().slice(..));
 
         // Set the engine built-in bind groups that M declared it needs.
@@ -749,49 +807,18 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         let vs_module = create_shader_module(device, "Material VS", vs_src, &shader_defs);
         let fs_module = create_shader_module(device, "Material FS", fs_src, &shader_defs);
 
-        // Use the vertex layouts from the material trait.
-        let vertex_layouts: Vec<_> = M::vertex_layouts().into_iter().map(Some).collect();
+        let mut pipeline = MaterialPipeline::<M> {
+            bind_group_layout: material_layout,
+            layout: pipeline_layout,
+            vertex: vs_module,
+            fragment: fs_module,
+            format: surface_format,
+            pipelines: HashMap::new(),
+            _marker: PhantomData,
+        };
+        pipeline.specialize(device, 1);
+        app.render_mut().insert_resource(pipeline);
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Material Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &vs_module,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_layouts,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &fs_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: M::blend_state(),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: M::topology(),
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: M::cull_mode(),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: M::depth_stencil(),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        });
-
-        app.render_mut()
-            .insert_resource(MaterialPipeline::<M>::new(pipeline, material_layout));
         if !self.pipeline_only {
             app.render_mut()
                 .insert_resource(MaterialViewBatches::<M>::default());
