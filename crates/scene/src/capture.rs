@@ -64,8 +64,22 @@ impl Collector {
                     parent: place.parent,
                     link_parent: None,
                 });
+            let parks = world
+                .get_component_for_entity::<SceneLink>(entity)
+                .is_some();
             for child in child_entities(world, entity) {
-                self.collect(world, child, below.clone());
+                let parked = parks
+                    && world
+                        .get_component_for_entity::<LinkParent>(child)
+                        .is_some();
+                let place = match parked {
+                    true => Place {
+                        parent: below.parent,
+                        link_parent: None,
+                    },
+                    false => below.clone(),
+                };
+                self.collect(world, child, place);
             }
             return;
         }

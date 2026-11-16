@@ -342,9 +342,13 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
 
     let m = AssetId::new();
     let mut inner = node("inner", vec![]);
+    let manor = LinkChange::AddComponent {
+        path: "room/helper".into(),
+        component: label("manor"),
+    };
     inner.link = Some(SceneLinkData {
         scene: s,
-        changes: vec![],
+        changes: vec![manor.clone()],
     });
     let outer_handle = server.insert_loaded(
         m,
@@ -353,25 +357,37 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
             referenced_assets: vec![],
         },
     );
-    let outer = app
-        .main_mut()
-        .world_mut()
-        .spawn(
-            SceneLink::new(outer_handle).with_change(LinkChange::AddComponent {
+    let world = app.main_mut().world_mut();
+    let outer = world.spawn(
+        SceneLink::new(outer_handle)
+            .with_change(LinkChange::AddComponent {
                 path: "inner/room/chair".into(),
                 component: label("deep"),
+            })
+            .with_change(LinkChange::RemoveComponent {
+                path: "inner/room/helper".into(),
+                type_name: std::any::type_name::<Label>().into(),
             }),
-        );
+    );
+    let guest = world.spawn((
+        Name::new("guest"),
+        Transform::IDENTITY,
+        LinkParent {
+            path: "inner/room/chair#1".into(),
+        },
+    ));
+    world.entity_mut(outer).add_child(guest);
     assert!(matches!(settle(&mut app, outer), SceneLinkState::Spawned));
     let inner = linked(&mut app, outer, "inner");
     assert!(matches!(state(&app, inner), SceneLinkState::Spawned));
-    assert!(app
-        .main()
-        .world()
-        .get_component_for_entity::<SceneLink>(inner)
-        .unwrap()
-        .changes()
-        .is_empty());
+    assert_eq!(
+        app.main()
+            .world()
+            .get_component_for_entity::<SceneLink>(inner)
+            .unwrap()
+            .changes(),
+        [manor]
+    );
     let deep_chair = linked(&mut app, inner, "room/chair");
     assert_eq!(label_of(&app, deep_chair).as_deref(), Some("deep"));
     assert_eq!(
@@ -381,6 +397,49 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
             path: "inner/room/chair".into()
         })
     );
+    assert_eq!(
+        parent(&app, guest),
+        Some(linked(&mut app, inner, "room/chair#1"))
+    );
+    let deep_helper = linked(&mut app, inner, "room/helper");
+    assert_eq!(label_of(&app, deep_helper), None);
+    assert_eq!(
+        app.main()
+            .world()
+            .get_component_for_entity::<SceneLink>(outer)
+            .unwrap()
+            .outcomes(),
+        [ChangeOutcome::Applied, ChangeOutcome::Applied]
+    );
+
+    app.main_mut()
+        .world_mut()
+        .get_component_for_entity_mut::<Label>(deep_chair)
+        .unwrap()
+        .text = "edited".into();
+    let mut one_chair = room_with_shelf();
+    one_chair.nodes[0].children.pop();
+    one_chair.nodes.pop();
+    server.insert_loaded(s, one_chair);
+    app.update();
+    settle(&mut app, inner);
+    let deep_chair = linked(&mut app, inner, "room/chair");
+    assert_eq!(label_of(&app, deep_chair).as_deref(), Some("edited"));
+    let captured = capture_subtree(app.main().world(), outer).unwrap();
+    assert_eq!(
+        captured.nodes[0].link.as_ref().unwrap().changes[0],
+        LinkChange::AddComponent {
+            path: "inner/room/chair".into(),
+            component: label("edited"),
+        }
+    );
+    assert!(captured
+        .nodes
+        .iter()
+        .find(|node| node.name == "guest")
+        .unwrap()
+        .components
+        .contains(&link_parent("inner/room/chair#1")));
 
     let cold = AssetId::new();
     let mut late = node("late", vec![]);

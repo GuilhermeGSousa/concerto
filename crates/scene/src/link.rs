@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
 use concerto_ecs::{
     component::name::Name,
-    entity::hierarchy::{ChildOf, Children},
+    entity::hierarchy::Children,
     events::{event_channel::EventChannel, event_reader::EventReader},
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent, SceneCapture},
     resource::{Res, Resource},
@@ -266,13 +264,9 @@ impl Crossing {
     }
 }
 
-struct Moved {
-    entity: Entity,
-    path: Option<String>,
-}
-
 fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
     refresh_added_values(world, link);
+    refresh_handed_values(world, link);
     let scene_link = world.get_component_for_entity::<SceneLink>(link)?;
     let handle = scene_link.scene.clone();
     let own_count = scene_link.own.len();
@@ -301,7 +295,7 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         return None;
     }
 
-    let moved = lift_own_entities(world, link);
+    lift_own_entities(world, link);
     for entity in previous {
         if world.entity_is_valid(entity) {
             world.despawn(entity);
@@ -371,21 +365,26 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         scene_link.spawned = spawned_nodes;
     }
 
-    for change in &changes {
-        let LinkChange::AddComponent { path, component } = change else {
-            continue;
-        };
-        let Some(node) = paths.iter().position(|known| known == path) else {
-            continue;
-        };
-        if live[node] {
-            world.apply_scene_component(
-                &component.type_name,
-                &component.value,
-                spawned.node_entities[node],
-                &spawned.node_entities,
-            );
+    let (own, handed) = changes.split_at(own_count);
+    let target = |path: &str| {
+        paths
+            .iter()
+            .position(|known| known == path)
+            .filter(|&node| live[node])
+            .map(|node| spawned.node_entities[node])
+    };
+    for change in own {
+        apply_added(world, change, &target, &spawned.node_entities);
+    }
+    for change in handed {
+        if let LinkChange::RemoveComponent { path, type_name } = change {
+            if let Some(entity) = target(path) {
+                remove_named(world, type_name, entity);
+            }
         }
+    }
+    for change in handed {
+        apply_added(world, change, &target, &spawned.node_entities);
     }
 
     let mut handoffs = Vec::new();
@@ -425,7 +424,7 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         scene_link.handoffs = handoffs;
     }
     settle_handoffs(world, link);
-    place_own_entities(world, link, &moved, &scene_name);
+    place_own_entities(world, link, &scene_name);
 
     world.insert(SceneLinkState::Spawned, link);
     if let Some(channel) = world.get_resource_mut::<EventChannel<SceneLinkSpawned>>() {
@@ -433,6 +432,40 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
     }
     settle_outer_links(world, link);
     Some(())
+}
+
+fn apply_added(
+    world: &mut World,
+    change: &LinkChange,
+    target: &impl Fn(&str) -> Option<Entity>,
+    node_entities: &[Entity],
+) {
+    let LinkChange::AddComponent { path, component } = change else {
+        return;
+    };
+    if let Some(entity) = target(path) {
+        world.apply_scene_component(
+            &component.type_name,
+            &component.value,
+            entity,
+            node_entities,
+        );
+    }
+}
+
+fn remove_named(world: &mut World, type_name: &str, entity: Entity) {
+    let remove = world
+        .get_resource::<AppTypeRegistry>()
+        .and_then(|registry| {
+            let registry = registry.read();
+            let registration = registry.get_by_name(type_name)?;
+            registration
+                .data::<ReflectComponent>()
+                .map(|component| component.remove)
+        });
+    if let Some(remove) = remove {
+        remove(world, entity);
+    }
 }
 
 fn refresh_added_values(world: &mut World, link: Entity) {
@@ -456,6 +489,73 @@ fn refresh_added_values(world: &mut World, link: Entity) {
         if let (LinkChange::AddComponent { component, .. }, Some(value)) = (change, value) {
             component.value = value;
         }
+    }
+}
+
+struct Refreshed {
+    at: usize,
+    value: ReflectedValue,
+}
+
+fn refresh_handed_values(world: &mut World, link: Entity) {
+    let Some(scene_link) = world.get_component_for_entity::<SceneLink>(link) else {
+        return;
+    };
+    let refreshed: Vec<Refreshed> = scene_link
+        .inherited
+        .iter()
+        .enumerate()
+        .filter_map(|(at, change)| match change {
+            LinkChange::AddComponent { path, component } => {
+                live_value(world, link, path, &component.type_name)
+                    .map(|value| Refreshed { at, value })
+            }
+            _ => None,
+        })
+        .collect();
+    for Refreshed { at, value } in refreshed {
+        let mut inner = link;
+        let mut handed = at;
+        set_added_value(world, inner, Slot::Inherited(handed), &value);
+        while let Some(outer) = linked_by(world, inner) {
+            let Some(scene_link) = world.get_component_for_entity::<SceneLink>(outer) else {
+                break;
+            };
+            let Some(outcome) = scene_link
+                .handoffs
+                .iter()
+                .find(|handoff| handoff.inner == inner && handoff.at == handed)
+                .map(|handoff| handoff.outcome)
+            else {
+                break;
+            };
+            let own = scene_link.own.len();
+            if outcome < own {
+                set_added_value(world, outer, Slot::Own(outcome), &value);
+                break;
+            }
+            handed = outcome - own;
+            set_added_value(world, outer, Slot::Inherited(handed), &value);
+            inner = outer;
+        }
+    }
+}
+
+enum Slot {
+    Own(usize),
+    Inherited(usize),
+}
+
+fn set_added_value(world: &mut World, link: Entity, slot: Slot, value: &ReflectedValue) {
+    let Some(scene_link) = world.get_component_for_entity_mut::<SceneLink>(link) else {
+        return;
+    };
+    let change = match slot {
+        Slot::Own(index) => scene_link.own.get_mut(index),
+        Slot::Inherited(index) => scene_link.inherited.get_mut(index),
+    };
+    if let Some(LinkChange::AddComponent { component, .. }) = change {
+        component.value = value.clone();
     }
 }
 
@@ -487,7 +587,7 @@ fn settle_outer_links(world: &mut World, link: Entity) {
             return;
         };
         let scene_name = scene_address(world, scene);
-        place_own_entities(world, outer, &[], &scene_name);
+        place_own_entities(world, outer, &scene_name);
         current = outer;
     }
 }
@@ -571,36 +671,51 @@ fn stored_names(world: &World, node: &SceneNode, type_name: &str) -> Vec<String>
         .collect()
 }
 
-fn lift_own_entities(world: &mut World, link: Entity) -> Vec<Moved> {
-    let mut moved = Vec::new();
-    let mut pending = children_of(world, link);
-    while let Some(entity) = pending.pop() {
-        if world
-            .get_component_for_entity::<LinkParent>(entity)
-            .is_none()
-            || linked_by(world, entity) == Some(link)
-        {
-            pending.extend(children_of(world, entity));
-            continue;
-        }
-        let path = match owned_by(world, link, entity) {
-            true => None,
-            false => world
-                .get_component_for_entity::<ChildOf>(entity)
-                .map(ChildOf::parent)
-                .and_then(|parent| path_from(world, link, parent)),
-        };
-        world.entity_mut(link).add_child(entity);
-        moved.push(Moved { entity, path });
-    }
-    moved
+struct Below {
+    entity: Entity,
+    parent: Entity,
 }
 
-fn place_own_entities(world: &mut World, link: Entity, moved: &[Moved], scene_name: &str) {
-    let crossing: HashMap<Entity, Option<String>> = moved
-        .iter()
-        .map(|moved| (moved.entity, moved.path.clone()))
-        .collect();
+fn lift_own_entities(world: &mut World, link: Entity) {
+    let below = |world: &World, parent: Entity| -> Vec<Below> {
+        children_of(world, parent)
+            .into_iter()
+            .map(|entity| Below { entity, parent })
+            .collect()
+    };
+    let mut pending = below(world, link);
+    while let Some(Below { entity, parent }) = pending.pop() {
+        if path_from(world, link, entity).is_some() {
+            pending.extend(below(world, entity));
+            continue;
+        }
+        if parent == link {
+            continue;
+        }
+        let unplaced = world
+            .get_component_for_entity::<LinkParent>(entity)
+            .is_none();
+        if unplaced {
+            let path =
+                home_link(world, link, entity).and_then(|home| path_from(world, home, parent));
+            if let Some(path) = path {
+                world.insert(LinkParent { path }, entity);
+            }
+        }
+        world.entity_mut(link).add_child(entity);
+    }
+}
+
+fn home_link(world: &World, link: Entity, entity: Entity) -> Option<Entity> {
+    let level = linked_by(world, entity);
+    let mut home = link;
+    while linked_by(world, home) != level {
+        home = linked_by(world, home)?;
+    }
+    Some(home)
+}
+
+fn place_own_entities(world: &mut World, link: Entity, scene_name: &str) {
     for entity in children_of(world, link) {
         let Some(own_path) = world
             .get_component_for_entity::<LinkParent>(entity)
@@ -608,13 +723,13 @@ fn place_own_entities(world: &mut World, link: Entity, moved: &[Moved], scene_na
         else {
             continue;
         };
-        if linked_by(world, entity) == Some(link) {
+        if path_from(world, link, entity).is_some() {
             continue;
         }
-        let path = match owned_by(world, link, entity) {
+        let path = home_link(world, link, entity).and_then(|home| match home == link {
             true => Some(own_path),
-            false => crossing.get(&entity).cloned().flatten(),
-        };
+            false => strip_prefix(&own_path, &path_from(world, home, link)?),
+        });
         let Some(path) = path else {
             continue;
         };
@@ -673,10 +788,6 @@ fn path_from(world: &World, link: Entity, entity: Entity) -> Option<String> {
     path_from_by(link, entity, |entity| {
         world.get_component_for_entity::<LinkedNode>(entity)
     })
-}
-
-fn owned_by(world: &World, link: Entity, entity: Entity) -> bool {
-    linked_by(world, entity) == linked_by(world, link)
 }
 
 fn linked_by(world: &World, entity: Entity) -> Option<Entity> {
