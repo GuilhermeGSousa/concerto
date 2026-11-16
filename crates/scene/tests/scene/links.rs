@@ -16,6 +16,7 @@ use concerto_foundation::assets::{asset_server::AssetServer, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_scene::{
+    capture::{capture_scene, capture_subtree},
     link::{
         owning_link, ChangeOutcome, LinkParent, LinkRoot, LinkedNode, OwnedPath, SceneLink,
         SceneLinkSpawned, SceneLinkState,
@@ -54,6 +55,13 @@ fn label(text: &str) -> SerializedComponent {
     SerializedComponent {
         type_name: std::any::type_name::<Label>().into(),
         value: concerto_reflect::to_value(&Label { text: text.into() }).unwrap(),
+    }
+}
+
+fn link_parent(path: &str) -> SerializedComponent {
+    SerializedComponent {
+        type_name: std::any::type_name::<LinkParent>().into(),
+        value: concerto_reflect::to_value(&LinkParent { path: path.into() }).unwrap(),
     }
 }
 
@@ -165,23 +173,28 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let s = AssetId::new();
     let handle = server.insert_loaded(s, room());
 
+    let changes = vec![
+        LinkChange::RemoveNode {
+            path: "room/helper".into(),
+        },
+        LinkChange::RemoveComponent {
+            path: "room/lamp".into(),
+            type_name: std::any::type_name::<Transform>().into(),
+        },
+        LinkChange::AddComponent {
+            path: "room/chair#1".into(),
+            component: label("added"),
+        },
+        LinkChange::AddComponent {
+            path: "room/gone".into(),
+            component: label("lost"),
+        },
+    ];
     let link = app.main_mut().world_mut().spawn(
-        SceneLink::new(handle.clone())
-            .with_change(LinkChange::RemoveNode {
-                path: "room/helper".into(),
-            })
-            .with_change(LinkChange::RemoveComponent {
-                path: "room/lamp".into(),
-                type_name: std::any::type_name::<Transform>().into(),
-            })
-            .with_change(LinkChange::AddComponent {
-                path: "room/chair#1".into(),
-                component: label("added"),
-            })
-            .with_change(LinkChange::AddComponent {
-                path: "room/gone".into(),
-                component: label("lost"),
-            }),
+        changes
+            .iter()
+            .cloned()
+            .fold(SceneLink::new(handle.clone()), SceneLink::with_change),
     );
     let own = app.main_mut().world_mut().spawn((
         Name::new("own"),
@@ -239,6 +252,44 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     expected.sort();
     assert_eq!(paths, expected);
     assert_eq!(parent(&app, own), Some(lamp));
+
+    app.main_mut()
+        .world_mut()
+        .get_component_for_entity_mut::<Label>(chairs[1])
+        .unwrap()
+        .text = "edited".into();
+    let captured = capture_subtree(app.main().world(), link).unwrap();
+    let mut saved = changes.clone();
+    saved[2] = LinkChange::AddComponent {
+        path: "room/chair#1".into(),
+        component: label("edited"),
+    };
+    assert_eq!(captured.nodes.len(), 2);
+    assert_eq!(
+        captured.nodes[0].link,
+        Some(SceneLinkData {
+            scene: s,
+            changes: saved,
+        })
+    );
+    assert_eq!(captured.nodes[0].children, [1]);
+    assert!(captured.nodes[1]
+        .components
+        .contains(&link_parent("room/lamp")));
+    assert!(captured.referenced_assets.contains(&s));
+    let mut copy = self::app();
+    copy.get_resource::<AssetServer>()
+        .unwrap()
+        .insert_loaded(s, room());
+    let world = copy.main_mut().world_mut();
+    let holder = world.spawn(Transform::IDENTITY);
+    let copied =
+        spawn_scene_in_world(world, &captured, holder, &SpawnFilter::default()).node_entities[0];
+    assert!(matches!(settle(&mut copy, copied), SceneLinkState::Spawned));
+    assert_eq!(
+        bincode::serialize(&capture_scene(copy.main().world(), holder).unwrap()).unwrap(),
+        bincode::serialize(&captured).unwrap()
+    );
 
     app.main_mut()
         .world_mut()
@@ -345,6 +396,11 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         parent(&app, lodger),
         Some(linked(&mut app, late, "room/lamp"))
     );
+    let captured = capture_subtree(app.main().world(), early).unwrap();
+    assert_eq!(captured.nodes.len(), 2);
+    assert!(captured.nodes[1]
+        .components
+        .contains(&link_parent("late/room/lamp")));
 
     let mut copy = node("copy", vec![]);
     let stored = vec![LinkChange::RemoveNode {

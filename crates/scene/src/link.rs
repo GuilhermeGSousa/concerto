@@ -560,7 +560,7 @@ fn place_own_entities(world: &mut World, link: Entity, moved: &[Moved], scene_na
     }
 }
 
-fn find_linked(world: &World, link: Entity, path: &str) -> Option<Entity> {
+pub(crate) fn find_linked(world: &World, link: Entity, path: &str) -> Option<Entity> {
     let scene_link = world.get_component_for_entity::<SceneLink>(link)?;
     for &entity in &scene_link.spawned {
         let Some(node) = world.get_component_for_entity::<LinkedNode>(entity) else {
