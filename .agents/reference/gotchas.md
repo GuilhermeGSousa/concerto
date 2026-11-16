@@ -207,6 +207,13 @@ fix the entry in the same commit as the change that made it false.
 
 ## Scenes and assets
 
+- **A respawned link takes its linked nodes away.** Spawning a link again
+  despawns every `LinkedNode` of it, so state on one is lost unless a change
+  records it. An entity a game parents under a linked node survives by
+  carrying `LinkParent { path }`, which parents it again after the respawn.
+- **Linked scenes' editor rules are off in play.** The read-only refusals and
+  the recording of edits as changes apply to the edit target's scene, never to
+  a playing game, and a save never reloads a playing game's assets.
 - **A type nothing registered is invisible.** Scenes spawn and capture, and the
   inspector shows, only types registered with `app.register_type::<T>()` in that
   `App`. The derive's `#[reflect(...)]` says what a type supports; registering

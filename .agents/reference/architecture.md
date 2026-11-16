@@ -152,6 +152,14 @@ sounds) are imported once, ahead of time. The running game never reads them.
   Asset handles are stored as their `AssetId` and entity references as node
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
+- A scene node may be a link: the `SceneLink` component names another scene and
+  holds the changes made to its nodes (`Scene` format version 2, `SceneNode::link`).
+  `request_link_spawns` runs in `Update`: once the linked scene has loaded it
+  spawns the scene's nodes under the link's entity, each tagged `LinkedNode`,
+  applies the changes, and sets `SceneLinkState::Spawned`, or `Refused` with the
+  reason; a scene still loading leaves it `Waiting`. A reloaded scene
+  sets its links back to `Waiting` in `LateUpdate`, so they spawn again. Placing a scene
+  and a startup scene make links, and the editor's settle waits on `Waiting` ones.
 - An asset that holds trait objects by type name (`AnimationGraph`'s nodes,
   the feature channels of a `MotionDatabase`)
   keeps each one as a data enum: `Stored { type_name, value }` as decoded and

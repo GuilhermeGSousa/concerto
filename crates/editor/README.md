@@ -241,6 +241,21 @@ once the asset has loaded and the entity exists. An address that names nothing
 answers `unknown_asset`; an id the project does not have, a kind that cannot
 be placed, which names the kinds that can, a load that fails and a game that
 is playing answer `refused` (see [Placing assets](#placing-assets)).
+A scene's links show in `scene_tree` collapsed, as `id name [link → <scene address>] (<n> change(s))`, and
+the nodes a link spawned show, once its row is the `root` or while a game plays,
+as `id name [components] (linked) <path>`. An entity of a linked scene is
+addressed `<link id>/<path>`, such as `42v3/hall/door`, by every tool that takes
+`entity`, `scene_tree` showing the paths. Those nodes are read-only: `set_property` on a component
+the scene gave them, `rename_entity`, `duplicate_entity` and `remove_component`
+of one of its components answer `refused` and name the scene to edit. What does
+not alter the scene's own nodes is allowed and recorded as a change on the
+link: `add_component` and then `set_property` on the added component, a
+`delete_entity` of a linked node, and `create_entity` under one. `inspect` of a
+link lists its changes, each with whether it applied, and `remove_link_change`
+removes the change at `index` of the link `entity`, which spawns the link again.
+A save or an import that rewrites a scene's file reloads it in every open edit,
+parked and preview `App`, so its links spawn again; a playing game is never
+reloaded.
 `delete_entity` deletes `entity` and its descendants and answers what is
 selected afterwards. `duplicate_entity` copies `entity` beside it and answers
 the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
