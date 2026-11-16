@@ -56,7 +56,7 @@ impl RenderTexture {
                 "bytes_per_row assumes a 4-byte-per-texel format",
             );
             let levels =
-                std::iter::once(texture.data()).chain(texture.mips.iter().map(Vec::as_slice));
+                std::iter::once(texture.data()).chain(texture.mips().iter().map(Vec::as_slice));
             for (mip_level, data) in levels.enumerate() {
                 let width = (size.width >> mip_level).max(1);
                 let height = (size.height >> mip_level).max(1);
@@ -167,7 +167,7 @@ impl RenderAsset for RenderTexture {
     fn byte_len(source: &Self::SourceAsset) -> Option<usize> {
         match source.kind {
             TextureKind::Sampled => {
-                Some(source.data().len() + source.mips.iter().map(Vec::len).sum::<usize>())
+                Some(source.data().len() + source.mips().iter().map(Vec::len).sum::<usize>())
             }
             TextureKind::RenderTarget => None,
         }

@@ -1,6 +1,13 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
+use concerto_app::{
+    main_schedule::MainSchedulePlugin,
+    plugins::{AssetManagerPlugin, TimePlugin},
+    App,
+};
 use concerto_asset_import::{ImportContext, Importer};
+use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
 use concerto_foundation::assets::utils::load_content_asset;
 use concerto_foundation::assets::{Asset, ContentAssetRoot};
@@ -8,7 +15,7 @@ use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
 use concerto_render::importers::image_importer::ImageImporter;
 
 #[test]
-fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_address() {
+fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_address_with_its_mips() {
     let temp_dir = std::env::temp_dir().join(format!("texture-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
@@ -59,6 +66,21 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
     assert_eq!(texture.format, TextureFormat::Rgba8UnormSrgb);
     assert_eq!(texture.kind, TextureKind::Sampled);
     assert_eq!(texture.data, [9, 9, 9, 255].repeat(4));
+
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TimePlugin)
+        .register_asset::<Texture>();
+    app.finish_plugin_build();
+    let handle = app.get_resource::<AssetServer>().unwrap().add(texture);
+    app.update();
+    let loaded = app
+        .get_resource::<AssetStore<Texture>>()
+        .unwrap()
+        .get(&handle)
+        .expect("an added texture reaches its store after one update");
+    assert_eq!(loaded.mip_level_count(), 2, "2x2 loads with a 1x1 mip");
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

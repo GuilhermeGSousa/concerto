@@ -16,12 +16,23 @@ pub struct Texture {
     pub kind: TextureKind,
     /// RGBA8 pixels matching `format`. Empty for `TextureKind::RenderTarget`.
     pub data: Vec<u8>,
-    /// The mip levels below `data`, largest first, built from it when the texture loads.
     #[serde(skip)]
-    pub mips: Vec<Vec<u8>>,
+    mips: Vec<Vec<u8>>,
 }
 
 impl Texture {
+    /// A sampled texture from RGBA8 pixels matching `format`; its mip chain is built when it loads.
+    pub fn new(width: u32, height: u32, format: TextureFormat, data: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            format,
+            kind: TextureKind::Sampled,
+            data,
+            mips: Vec::new(),
+        }
+    }
+
     /// A GPU-only render target; the camera system allocates the wgpu texture.
     pub fn render_target(width: u32, height: u32) -> Self {
         Self {
@@ -50,11 +61,15 @@ impl Texture {
     pub fn mip_level_count(&self) -> u32 {
         1 + self.mips.len() as u32
     }
+
+    pub(crate) fn mips(&self) -> &[Vec<u8>] {
+        &self.mips
+    }
 }
 
 impl LoadableAsset for Texture {
     fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
-        if self.kind == TextureKind::Sampled && self.mips.is_empty() {
+        if self.kind == TextureKind::Sampled {
             self.mips = build_mips(self.width, self.height, self.format, &self.data);
         }
         Ok(())
@@ -68,7 +83,7 @@ struct MipExtent {
 }
 
 fn build_mips(width: u32, height: u32, format: TextureFormat, data: &[u8]) -> Vec<Vec<u8>> {
-    if data.len() != width as usize * height as usize * 4 {
+    if width == 0 || height == 0 || data.len() != width as usize * height as usize * 4 {
         return Vec::new();
     }
     let srgb = format.is_srgb();
@@ -107,21 +122,15 @@ fn downsample(
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(next.width as usize * next.height as usize * 4);
     for y in 0..next.height {
-        let rows = [
-            (y * 2).min(extent.height - 1),
-            (y * 2 + 1).min(extent.height - 1),
-        ];
+        let rows = footprint(y, extent.height, next.height);
         for x in 0..next.width {
-            let columns = [
-                (x * 2).min(extent.width - 1),
-                (x * 2 + 1).min(extent.width - 1),
-            ];
+            let columns = footprint(x, extent.width, next.width);
+            let count = (rows.len() * columns.len()) as f32;
             for channel in 0..4 {
                 let mut sum = 0.0;
-                for row in rows {
-                    for column in columns {
-                        let index = ((row * extent.width + column) * 4) as usize + channel;
-                        let byte = source[index];
+                for row in rows.clone() {
+                    for column in columns.clone() {
+                        let byte = source[((row * extent.width + column) * 4) as usize + channel];
                         sum += if channel == 3 {
                             byte as f32 / 255.0
                         } else {
@@ -129,7 +138,7 @@ fn downsample(
                         };
                     }
                 }
-                let mean = sum / 4.0;
+                let mean = sum / count;
                 let encoded = if srgb && channel != 3 {
                     linear_to_srgb(mean)
                 } else {
@@ -140,6 +149,12 @@ fn downsample(
         }
     }
     out
+}
+
+fn footprint(index: u32, size: u32, next_size: u32) -> std::ops::Range<u32> {
+    let start = index * size / next_size;
+    let end = ((index + 1) * size / next_size).max(start + 1);
+    start..end
 }
 
 fn srgb_to_linear(c: f32) -> f32 {
@@ -198,7 +213,7 @@ mod tests {
                 height: 1,
                 format: TextureFormat::Rgba8Unorm,
                 data: [[0, 0, 0, 0], [200, 200, 200, 200], [255, 255, 255, 255]].concat(),
-                mips: vec![vec![100, 100, 100, 100]],
+                mips: vec![vec![152, 152, 152, 152]],
             },
             Case {
                 width: 2,
@@ -218,6 +233,13 @@ mod tests {
                 width: 2,
                 height: 2,
                 format: TextureFormat::Rgba8UnormSrgb,
+                data: vec![],
+                mips: vec![],
+            },
+            Case {
+                width: 0,
+                height: 4,
+                format: TextureFormat::Rgba8Unorm,
                 data: vec![],
                 mips: vec![],
             },
