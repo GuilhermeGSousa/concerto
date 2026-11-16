@@ -1,10 +1,8 @@
 //! Covers that the engine's spawnable components go through reflection alone:
 //! each spawns from a stored value and captures back to that same value, with
 //! handles keeping the `AssetId` the scene referenced.
-use std::collections::HashMap;
-
 use concerto_color::{Color, LinearRgba};
-use concerto_ecs::{component::Component, reflect::SceneCapture, World};
+use concerto_ecs::{component::Component, entity::EntityHashMap, reflect::SceneCapture, World};
 use concerto_foundation::{
     assets::{handle::AssetHandle, AssetId},
     transform::Transform,
@@ -53,7 +51,7 @@ fn round_trip<T: Component + Reflect>(
     let name = std::any::type_name::<T>();
     assert!(world.apply_scene_component(name, &stored, entity, &[entity]));
 
-    let mut capture = SceneCapture::new(HashMap::from([(entity, 0)]));
+    let mut capture = SceneCapture::new(EntityHashMap::from_iter([(entity, 0)]));
     let captured = world
         .component_types(entity)
         .find(|component| component.name() == name)

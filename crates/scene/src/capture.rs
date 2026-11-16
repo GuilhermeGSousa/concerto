@@ -1,10 +1,9 @@
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
 
 use anyhow::bail;
 use concerto_ecs::{
     component::name::Name,
-    entity::hierarchy::Children,
+    entity::{hierarchy::Children, EntityHashMap},
     reflect::{AppTypeRegistry, ReflectSceneComponent, ReflectSceneLeaf, SceneCapture},
     Entity, World,
 };
@@ -44,7 +43,7 @@ struct Place {
 #[derive(Default)]
 struct Collector {
     nodes: Vec<Collected>,
-    indices: HashMap<Entity, usize>,
+    indices: EntityHashMap<usize>,
 }
 
 impl Collector {

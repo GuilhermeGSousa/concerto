@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use concerto_ecs::{
     Component, Entity, World,
     component::scene::SceneEntityRef,
+    entity::EntityHashMap,
     reflect::{AppTypeRegistry, ReflectSceneComponent, SceneCapture},
 };
 use concerto_reflect::{Reflect, ReflectedValue, ValueWarning, to_value};
@@ -28,11 +27,7 @@ fn stored_rig(bones: Vec<usize>, root: Option<usize>) -> ReflectedValue {
     .unwrap()
 }
 
-fn capture(
-    world: &World,
-    entity: Entity,
-    indices: HashMap<Entity, usize>,
-) -> Option<ReflectedValue> {
+fn capture(world: &World, entity: Entity, indices: EntityHashMap<usize>) -> Option<ReflectedValue> {
     let mut capture = SceneCapture::new(indices);
     world
         .component_types(entity)
@@ -164,7 +159,7 @@ fn capturing_a_reference_to_an_entity_outside_the_scene_fails() {
         root: None,
     });
 
-    let mut capture = SceneCapture::new(HashMap::from([(entity, 0)]));
+    let mut capture = SceneCapture::new(EntityHashMap::from_iter([(entity, 0)]));
     let component = world.component_types(entity).next().unwrap();
     let error = component.capture(&world, entity, &mut capture).unwrap_err();
     assert_eq!(error.path, "bones[0]");
@@ -184,7 +179,7 @@ fn a_unit_component_spawns_and_captures() {
             .is_some()
     );
     assert_eq!(
-        capture(&world, entity, HashMap::from([(entity, 0)])),
+        capture(&world, entity, EntityHashMap::from_iter([(entity, 0)])),
         Some(stored)
     );
 }

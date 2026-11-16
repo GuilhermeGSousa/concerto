@@ -876,8 +876,8 @@ mod tests {
         registry::{AssetEntry, AssetRegistry},
     };
     use concerto_ecs::{
-        component::Component, events::event_cursor::EventCursor, reflect::ReflectSceneComponent,
-        world::World,
+        component::Component, entity::EntityHashMap, events::event_cursor::EventCursor,
+        reflect::ReflectSceneComponent, world::World,
     };
     use concerto_reflect::ReflectDefault;
 
@@ -1030,7 +1030,7 @@ mod tests {
         assert!(matches!(holder.empty, AssetHandle::Weak(..)));
         assert!(holder.empty.id().is_nil());
 
-        let mut capture = SceneCapture::new(HashMap::from([(entity, 0)]));
+        let mut capture = SceneCapture::new(EntityHashMap::from_iter([(entity, 0)]));
         let captured = world
             .component_types(entity)
             .next()
