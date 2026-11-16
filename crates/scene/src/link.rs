@@ -247,7 +247,23 @@ pub(crate) fn spawn_links(on: On<SpawnLinks>, world: &mut World) {
             .get_component_for_entity::<SceneLinkState>(link)
             .is_some_and(|state| matches!(state, SceneLinkState::Waiting));
         if waiting {
-            spawn_link(world, link);
+            spawn_or_refuse(world, link);
+        }
+    }
+}
+
+enum SpawnLinkError {
+    NotALink,
+    SceneNotLoaded,
+    LinksItself(String),
+}
+
+fn spawn_or_refuse(world: &mut World, link: Entity) {
+    match spawn_link(world, link) {
+        Ok(()) | Err(SpawnLinkError::NotALink | SpawnLinkError::SceneNotLoaded) => {}
+        Err(SpawnLinkError::LinksItself(reason)) => {
+            warn!("{}: {reason}", link_name(world, link));
+            world.insert(SceneLinkState::Refused(reason), link);
         }
     }
 }
@@ -286,10 +302,12 @@ fn in_scene(index: &HashMap<NodeId, usize>, path: &LinkPath) -> Option<usize> {
     }
 }
 
-fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
+fn spawn_link(world: &mut World, link: Entity) -> Result<(), SpawnLinkError> {
     refresh_added_values(world, link);
     refresh_handed_values(world, link);
-    let scene_link = world.get_component_for_entity::<SceneLink>(link)?;
+    let scene_link = world
+        .get_component_for_entity::<SceneLink>(link)
+        .ok_or(SpawnLinkError::NotALink)?;
     let handle = scene_link.scene.clone();
     let own_count = scene_link.own.len();
     let changes: Vec<LinkChange> = scene_link
@@ -302,8 +320,9 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
     let mut chain = scene_link.chain.clone();
     let id = handle.id();
     let scene = world
-        .get_resource::<AssetStore<Scene>>()?
-        .get(&handle)?
+        .get_resource::<AssetStore<Scene>>()
+        .and_then(|scenes| scenes.get(&handle))
+        .ok_or(SpawnLinkError::SceneNotLoaded)?
         .clone();
     if chain.is_empty() {
         chain.extend(world.get_resource::<LinkRoot>().map(|root| root.0));
@@ -311,10 +330,10 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
     let scene_name = scene_address(world, id);
     if chain.contains(&id) {
         let through: Vec<String> = chain.iter().map(|id| scene_address(world, *id)).collect();
-        let reason = format!("{scene_name} links itself through {}", through.join(" → "));
-        warn!("{}: {reason}", link_name(world, link));
-        world.insert(SceneLinkState::Refused(reason), link);
-        return None;
+        return Err(SpawnLinkError::LinksItself(format!(
+            "{scene_name} links itself through {}",
+            through.join(" → ")
+        )));
     }
 
     lift_own_entities(world, link);
@@ -441,7 +460,7 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         };
         inner_link.inherited = inherited;
         inner_link.chain = inner_chain;
-        spawn_link(world, inner);
+        spawn_or_refuse(world, inner);
     }
 
     if let Some(scene_link) = world.get_component_for_entity_mut::<SceneLink>(link) {
@@ -457,7 +476,7 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         channel.push_event(SceneLinkSpawned { link });
     }
     settle_outer_links(world, link);
-    Some(())
+    Ok(())
 }
 
 fn apply_added(
