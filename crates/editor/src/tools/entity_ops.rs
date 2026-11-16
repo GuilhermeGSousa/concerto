@@ -17,7 +17,7 @@ use concerto_scene::{
 };
 
 use crate::{
-    links::{LinkedEdit, refusal},
+    links::{LinkedEdit, record_removal, refusal},
     tools::{
         scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
         selection::Select,
@@ -117,6 +117,7 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
         }
         EntityEdit::Delete(entity) => {
             let parent = editable(world, *entity)?;
+            record_removal(world, *entity);
             world.despawn(*entity);
             Ok(Applied::Removed(parent))
         }

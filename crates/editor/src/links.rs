@@ -1,28 +1,24 @@
-//! Scene links in the editor: which edits a linked node refuses, the changes edits record on their link, and reloading the scenes a save or an import rewrote.
+//! Scene links in the editor: which edits a linked node refuses, the changes edits record on their link, and reloading the files a save or an import rewrote.
 use std::any::TypeId;
 
 use anyhow::{Context, bail};
 use concerto_app::{App, Plugin, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_ecs::{
-    Entity, Query, Res, World,
+    Entity, Query, World,
     command::CommandQueue,
     component::name::Name,
     events::{Event, event_reader::EventReader},
     reflect::{AppTypeRegistry, ReflectSceneComponent, SceneCapture},
     signal::{On, Signal},
 };
-use concerto_foundation::assets::{
-    Asset, AssetId,
-    asset_server::AssetServer,
-    registry::{AssetEntry, AssetRegistry},
-};
+use concerto_foundation::assets::{AssetId, registry::AssetEntry};
 use concerto_reflect::TypeRegistry;
 use concerto_scene::{
     link::{
         ChangeOutcome, LinkParent, LinkedNode, OwnedPath, SceneLink, SceneLinkState, owning_link,
+        scene_address, shown_name,
     },
-    link_path::child_path,
-    scene::{LinkChange, Scene, SerializedComponent},
+    scene::{LinkChange, SerializedComponent},
 };
 use log::warn;
 
@@ -61,20 +57,19 @@ pub(crate) enum LinkedEdit {
     SetOwnComponent(TypeId),
 }
 
-/// Reloads, in every `App` but a playing game's, the scenes a save or an import rewrote, so the links to them spawn again.
+/// Reloads, in every `App` but a playing game's, the assets of the files a save or an import rewrote, so the links to their scenes spawn again.
 pub struct LinksPlugin;
 
 impl Plugin for LinksPlugin {
     fn build(&self, app: &mut App) {
         app.forward_hosted_event::<LinkChangeRemoved>()
-            .add_system(Update, reload_rewritten_scenes);
+            .add_system(Update, reload_rewritten_files);
     }
 }
 
 /// The edit `App`'s part: the refusals, and the listeners that record edits of linked nodes on their link.
 pub(crate) fn build_tools(app: &mut App) {
     app.register_event::<LinkChangeRemoved>()
-        .add_listener(record_removed_node.at_edit_time())
         .add_listener(record_link_edits.at_edit_time())
         .add_listener(remove_link_change.at_edit_time())
         .add_system(Update, note_link_edits.at_edit_time());
@@ -89,7 +84,7 @@ pub(crate) fn refusal(world: &World, entity: Entity, edit: LinkedEdit) -> Option
         return None;
     }
     let link = world.get_component_for_entity::<SceneLink>(owned.link)?;
-    let scene = scene_location(world, link.scene().id());
+    let scene = scene_address(world, link.scene().id());
     Some(format!(
         "{} is a linked node of {scene}; add a component to it, or edit {scene}",
         owned.path
@@ -117,24 +112,14 @@ fn own_addition(world: &World, owned: &OwnedPath, component: TypeId) -> Option<u
     })
 }
 
-fn scene_location(world: &World, id: AssetId) -> String {
-    world
-        .get_resource::<AssetServer>()
-        .and_then(AssetServer::registry)
-        .and_then(|registry| registry.get(id).map(AssetEntry::location))
-        .unwrap_or_else(|| id.simple_hex())
-}
-
 fn push_change(world: &mut World, link: Entity, change: LinkChange) {
     if let Some(link) = world.get_component_for_entity_mut::<SceneLink>(link) {
         link.push_change(change);
     }
 }
 
-fn record_removed_node(on: On<EntityEdit>, world: &mut World) {
-    let EntityEdit::Delete(entity) = *on.signal() else {
-        return;
-    };
+/// Records the removal of `entity`, a linked node of a link in the open scene, on its link; call it before the entity is despawned.
+pub(crate) fn record_removal(world: &mut World, entity: Entity) {
     if let Some(owned) = linked_in_open_scene(world, entity) {
         push_change(
             world,
@@ -289,7 +274,10 @@ fn remove_change(world: &mut World, request: &RemoveLinkChange) -> anyhow::Resul
         bail!("the entity no longer exists");
     }
     in_open_scene(world, request.link)?;
-    let name = link_name(world, request.link);
+    let name = shown_name(
+        request.link,
+        world.get_component_for_entity::<Name>(request.link),
+    );
     let link = world
         .get_component_for_entity_mut::<SceneLink>(request.link)
         .with_context(|| format!("{name} is not a link; scene_tree marks links with [link → …]"))?;
@@ -310,50 +298,6 @@ fn remove_change(world: &mut World, request: &RemoveLinkChange) -> anyhow::Resul
     }
     world.insert(SceneLinkState::Waiting, request.link);
     Ok(())
-}
-
-fn link_name(world: &World, entity: Entity) -> String {
-    world
-        .get_component_for_entity::<Name>(entity)
-        .map(|name| name.as_str().to_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| entity.to_id_string())
-}
-
-/// `entity`'s outermost link and its path from there, reading linked nodes through `node`.
-pub(crate) fn owned_path<'a>(
-    entity: Entity,
-    node: impl Fn(Entity) -> Option<&'a LinkedNode>,
-) -> Option<OwnedPath> {
-    let first = node(entity)?;
-    let mut owned = OwnedPath {
-        link: first.link,
-        path: first.path.clone(),
-    };
-    while let Some(outer) = node(owned.link) {
-        owned = OwnedPath {
-            link: outer.link,
-            path: child_path(&outer.path, &owned.path),
-        };
-    }
-    Some(owned)
-}
-
-/// The path of `entity` from `link`, one of the links it was spawned under, reading linked nodes through `node`.
-pub(crate) fn path_from<'a>(
-    link: Entity,
-    entity: Entity,
-    node: impl Fn(Entity) -> Option<&'a LinkedNode>,
-) -> Option<String> {
-    let first = node(entity)?;
-    let mut owner = first.link;
-    let mut path = first.path.clone();
-    while owner != link {
-        let outer = node(owner)?;
-        path = child_path(&outer.path, &path);
-        owner = outer.link;
-    }
-    Some(path)
 }
 
 /// One line per own change of `link`: its index, kind, path and component, and whether it applied at the last spawn.
@@ -395,13 +339,15 @@ fn rewritten_files<'a>(
     let imported = imported
         .filter_map(|finished| finished.result.as_ref().ok())
         .flat_map(|source| &source.assets);
-    saved.chain(imported).map(AssetEntry::file).collect()
+    let mut files: Vec<AssetId> = saved.chain(imported).map(AssetEntry::file).collect();
+    files.sort_unstable();
+    files.dedup();
+    files
 }
 
-fn reload_rewritten_scenes(
+fn reload_rewritten_files(
     mut saved: EventReader<SceneSaved>,
     mut imported: EventReader<ImportFinished>,
-    registry: Res<AssetRegistry>,
     hosted: Query<&HostedApp>,
     parked: Query<&ParkedEditApp>,
     pending: Query<&PendingApp>,
@@ -410,16 +356,11 @@ fn reload_rewritten_scenes(
     if files.is_empty() {
         return;
     }
-    let scenes: Vec<AssetId> = registry
-        .iter()
-        .filter(|entry| entry.kind == Scene::name() && files.contains(&entry.file()))
-        .map(|entry| entry.id)
-        .collect();
     let apps = hosted
         .iter()
         .chain(parked.iter().map(|parked| &parked.0))
         .chain(pending.iter().filter_map(PendingApp::held));
     for app in apps.filter(|app| app.role() != HostRole::Game) {
-        app.reload_scenes(&scenes);
+        app.reload_files(&files);
     }
 }

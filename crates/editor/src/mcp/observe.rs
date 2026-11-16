@@ -21,7 +21,7 @@ use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
-use concerto_scene::link::{LinkedNode, SceneLink};
+use concerto_scene::link::{LinkedNode, SceneLink, owning_link_by, path_from_by};
 use image::{ImageFormat, RgbaImage, imageops::FilterType};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -42,7 +42,7 @@ use crate::{
         InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
         listed_paths, shown_paths,
     },
-    links::{change_lines, owned_path, path_from},
+    links::change_lines,
     placement::PlaceableKinds,
     project::ProjectState,
     tools::{
@@ -616,7 +616,7 @@ pub(crate) fn resolve(
     entities
         .iter()
         .map(|(entity, ..)| entity)
-        .find(|&entity| path_from(link, entity, node).as_deref() == Some(path))
+        .find(|&entity| path_from_by(link, entity, node).as_deref() == Some(path))
         .ok_or_else(|| {
             ToolError::new(
                 "unknown_entity",
@@ -665,7 +665,7 @@ fn link_row(link: &SceneLink, registry: Option<&AssetRegistry>) -> String {
     let id = link.scene().id();
     let scene = registry
         .and_then(|registry| registry.get(id))
-        .map_or_else(|| id.simple_hex(), AssetEntry::location);
+        .map_or_else(|| id.simple_hex(), |entry| entry.address.clone());
     let changes = match link.changes().len() {
         1 => "1 change".to_owned(),
         count => format!("{count} changes"),
@@ -700,7 +700,7 @@ fn scene_tree(
             .map(|link| link_row(link, registry.as_deref()))
     };
     let linked = |entity| {
-        owned_path(entity, |entity| {
+        owning_link_by(entity, |entity| {
             entities.get_entity(entity).and_then(|(.., node)| node)
         })
         .map(|owned| owned.path)
@@ -763,7 +763,7 @@ fn find_entities(
             .map(|link| link_row(link, registry.as_deref()))
     };
     let linked = |entity| {
-        owned_path(entity, |entity| {
+        owning_link_by(entity, |entity| {
             entities.get_entity(entity).and_then(|(.., node)| node)
         })
         .map(|owned| owned.path)

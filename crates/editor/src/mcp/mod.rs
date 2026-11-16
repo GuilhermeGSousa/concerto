@@ -18,17 +18,15 @@ use concerto_app::{
 use concerto_ecs::{
     Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
-    events::{event_channel::EventChannel, event_cursor::EventCursor},
     query::filter::{Changed, Or, With, Without},
     signal::On,
     system::{
         NonSendMarker,
-        input::{StaticSystemInput, SystemInputData, SystemLocal},
+        input::{StaticSystemInput, SystemInputData},
     },
 };
-use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetLoaded};
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, FrameDemand, McpPlugin, Needs, ToolError, host::HostClosing};
-use concerto_scene::scene::Scene;
 use concerto_ui::{sets::UiSet, text::UIText, text_input::UITextInput};
 
 use crate::{
@@ -90,7 +88,6 @@ impl Plugin for EditorMcpPlugin {
                 .chain(),
         )
         .add_system(LateUpdate, demand_frames_while_the_scene_loads)
-        .add_system(LateUpdate, demand_a_frame_after_a_scene_loads)
         .add_system(Update, discard_while_closing)
         .add_listener(quit_when_host_closes);
         observe::build(app);
@@ -178,19 +175,6 @@ fn demand_frames_while_the_scene_loads(
     mut demand: ResMut<FrameDemand>,
 ) {
     if assets.as_deref().is_some_and(AssetServer::is_loading) {
-        demand.request();
-    }
-}
-
-fn demand_a_frame_after_a_scene_loads(
-    loaded: EditWorld<Option<Res<EventChannel<AssetLoaded<Scene>>>>>,
-    mut read: SystemLocal<EventCursor<AssetLoaded<Scene>>>,
-    mut demand: ResMut<FrameDemand>,
-) {
-    let Some(loaded) = loaded.as_deref() else {
-        return;
-    };
-    if loaded.read_from(&mut read).count() > 0 {
         demand.request();
     }
 }

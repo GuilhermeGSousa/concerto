@@ -202,12 +202,10 @@ impl HostedApp {
         self.app.insert_resource(registry.clone());
     }
 
-    pub(crate) fn reload_scenes(&self, scenes: &[AssetId]) {
+    pub(crate) fn reload_files(&self, files: &[AssetId]) {
         if let Some(server) = self.app.get_resource::<AssetServer>() {
-            for &scene in scenes {
-                if server.is_loading_or_loaded(scene) {
-                    server.reload::<Scene>(scene);
-                }
+            for &file in files {
+                server.reload_file(file);
             }
         }
     }

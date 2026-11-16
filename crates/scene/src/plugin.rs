@@ -1,11 +1,14 @@
 use concerto_app::{
     edit_time::AtEditTime,
     plugins::Plugin,
-    schedule_groups::{Startup, Update},
+    schedule_groups::{LateUpdate, Startup},
     App, StartupScene,
 };
-use concerto_ecs::{CommandQueue, Res};
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_ecs::{CommandQueue, IntoSystemConfig, Res};
+use concerto_foundation::{
+    assets::asset_server::{handle_asset_load_events, AssetServer},
+    transform::systems::propagate_global_transforms,
+};
 
 use crate::link::{request_link_spawns, spawn_links, LinkParent, SceneLink, SceneLinkSpawned};
 use crate::scene::Scene;
@@ -17,7 +20,13 @@ impl Plugin for ScenePlugin {
         app.register_placeable_asset::<Scene>()
             .register_type::<LinkParent>()
             .register_event::<SceneLinkSpawned>()
-            .add_system(Update, request_link_spawns.at_edit_time())
+            .add_system(
+                LateUpdate,
+                request_link_spawns
+                    .after(handle_asset_load_events)
+                    .before(propagate_global_transforms)
+                    .at_edit_time(),
+            )
             .add_listener(spawn_links.at_edit_time());
     }
 

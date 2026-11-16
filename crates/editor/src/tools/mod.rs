@@ -49,9 +49,9 @@ pub(crate) fn build_core(app: &mut App) {
         .track_removals::<MeshComponent>();
     scene::build(app);
     selection::build(app);
-    crate::links::build_tools(app);
     entity_ops::build(app);
     edits::build(app);
+    crate::links::build_tools(app);
     placement::build(app);
 }
 

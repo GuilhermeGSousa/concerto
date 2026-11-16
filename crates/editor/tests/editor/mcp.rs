@@ -44,6 +44,7 @@ use concerto_foundation::{
     assets::{
         Asset, AssetId, LoadableAsset,
         asset_server::{AssetLoadContext, AssetServer},
+        asset_store::AssetStore,
         content::{
             ContentAssetHeader, ImportProvenance, decode_content_asset, write_content_asset,
         },
@@ -60,7 +61,7 @@ use concerto_render::{
     components::{camera::Camera, light::Light},
     gpu::Gpu,
 };
-use concerto_scene::scene::{Scene, SceneNode};
+use concerto_scene::scene::{LinkChange, Scene, SceneLinkData, SceneNode};
 use concerto_ui::theme::UITheme;
 use concerto_window::input::{GamepadButton, Input, KeyCode, MouseButton, PhysicalKey};
 use glam::{Vec2, Vec3};
@@ -2660,6 +2661,7 @@ fn an_imports_scene_is_read_only_and_is_placed_in_an_authored_scene() {
 }
 
 const PROPS: &str = "content/props.gasset";
+const NOTE: &str = "content/note.gasset";
 
 fn props(anchor: &str) -> Scene {
     let node = |name: &str| {
@@ -2680,6 +2682,57 @@ fn props(anchor: &str) -> Scene {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Note(String);
+
+impl Asset for Note {
+    fn name() -> &'static str {
+        "Note"
+    }
+}
+
+impl LoadableAsset for Note {}
+
+#[derive(Resource)]
+struct NoteLoad(AssetHandle<Note>);
+
+fn load_the_note(server: Res<AssetServer>, mut cmd: CommandQueue) {
+    cmd.insert_resource(NoteLoad(server.load::<Note>(AssetId::from_path(NOTE))));
+}
+
+fn noted_game(app: &mut App) {
+    game(app);
+    app.register_asset::<Note>()
+        .add_system(Startup, load_the_note.at_edit_time());
+}
+
+fn write_note(root: &Path, text: &str) {
+    write_asset(
+        root,
+        NOTE,
+        AssetId::from_path(NOTE),
+        Note::name(),
+        &bincode::serialize(&Note(text.into())).unwrap(),
+    );
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct NoteText {}
+
+fn note_text(
+    mut calls: ToolCalls<NoteText>,
+    load: EditWorld<Option<Res<NoteLoad>>>,
+    notes: EditWorld<Option<Res<AssetStore<Note>>>>,
+) {
+    for (_, reply) in calls.read() {
+        let note = load
+            .as_deref()
+            .zip(notes.as_deref())
+            .and_then(|(load, notes)| notes.get(&load.0));
+        reply.ok(note.map_or("", |note| note.0.as_str()));
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 struct Reimported {}
 
@@ -2691,7 +2744,7 @@ fn reimported(
     for (_, reply) in calls.read() {
         let assets = registry
             .iter()
-            .filter(|asset| asset.address == PROPS)
+            .filter(|asset| asset.address == PROPS || asset.address == NOTE)
             .cloned()
             .collect();
         finished.write(ImportFinished {
@@ -2706,18 +2759,40 @@ fn reimported(
     }
 }
 
+fn link_of(file: &[u8]) -> (Vec<String>, SceneLinkData) {
+    let (_, level) = decode_content_asset::<Scene>(file).unwrap();
+    let names = level.nodes.iter().map(|node| node.name.clone()).collect();
+    let mut links = level.nodes.into_iter().filter_map(|node| node.link);
+    let link = links.next().expect("one link node");
+    assert!(links.next().is_none(), "one link node");
+    (names, link)
+}
+
+fn added_gain(link: &SceneLinkData) -> f32 {
+    let mut samples = Samples::default();
+    for change in &link.changes {
+        if let LinkChange::AddComponent { component, .. } = change {
+            concerto_reflect::apply_value(&mut samples, &component.value);
+        }
+    }
+    samples.gain
+}
+
 struct Links {
     placed: String,
     top: String,
     expanded: String,
     own: String,
+    copied: String,
     refused: Vec<Value>,
     saved: String,
     saved_file: Vec<u8>,
+    removed: String,
+    kept: Value,
+    resaved_file: Vec<u8>,
     reloaded: Value,
     after_reload: String,
-    removed: String,
-    remaining: Value,
+    note: String,
     itself: Value,
 }
 
@@ -2727,15 +2802,20 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
     let root = fixture.root();
     let props_id = AssetId::new();
     write_scene(&root, PROPS, props_id, &props("Anchor"));
+    write_note(&root, "first");
     let log = Log::default();
-    let add_reimported = |app: &mut App| {
-        app.add_tool::<Reimported, _>(McpTool::new("reimported"), reimported);
+    let add_tools = |app: &mut App| {
+        app.add_tool::<Reimported, _>(McpTool::new("reimported"), reimported)
+            .add_tool::<NoteText, _>(
+                McpTool::read_only("note_text").needs(Needs::Scene),
+                note_text,
+            );
     };
     let Some(served) = serve_with(
         &fixture,
         &log,
-        game,
-        add_reimported,
+        noted_game,
+        add_tools,
         move |client| async move {
             open(&client).await;
             let placed = ok_with(&client, "place_asset", json!({ "asset": PROPS })).await;
@@ -2754,6 +2834,12 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             .await;
             ok_with(
                 &client,
+                "set_property",
+                json!({ "entity": at("Anchor"), "component": "editor::mcp::Samples", "path": "gain", "value": 2.5 }),
+            )
+            .await;
+            ok_with(
+                &client,
                 "remove_component",
                 json!({ "entity": at("Lantern"), "component": "Light" }),
             )
@@ -2762,23 +2848,52 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             let own = second_word(
                 &ok_with(&client, "create_entity", json!({ "parent": at("Anchor") })).await,
             );
+            let duplicated = ok_with(&client, "duplicate_entity", json!({ "entity": own })).await;
+            let copy = duplicated
+                .rsplit(" as ")
+                .next()
+                .and_then(|copy| copy.split_whitespace().next())
+                .unwrap()
+                .to_owned();
+            let copied = ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": copy, "components": ["LinkParent"] }),
+            )
+            .await;
             let refused = vec![
-            error_with(
-                &client,
-                "set_property",
-                json!({ "entity": at("Anchor"), "component": "Transform", "path": "translation", "value": [1.0, 2.0, 3.0] }),
-            )
-            .await,
-            error_with(
-                &client,
-                "rename_entity",
-                json!({ "entity": at("Anchor"), "name": "Pillar" }),
-            )
-            .await,
-        ];
+                error_with(
+                    &client,
+                    "set_property",
+                    json!({ "entity": at("Anchor"), "component": "Transform", "path": "translation", "value": [1.0, 2.0, 3.0] }),
+                )
+                .await,
+                error_with(
+                    &client,
+                    "rename_entity",
+                    json!({ "entity": at("Anchor"), "name": "Pillar" }),
+                )
+                .await,
+            ];
             let saved = ok(&client, "save").await;
             let saved_file = std::fs::read(root.join("content/level.gasset")).unwrap();
+            let removed = ok_with(
+                &client,
+                "remove_link_change",
+                json!({ "entity": link, "index": 1 }),
+            )
+            .await;
+            let kept = until_with(
+                &client,
+                "inspect",
+                json!({ "entity": at("Lantern"), "components": ["Light"] }),
+                |_| true,
+            )
+            .await;
+            ok(&client, "save").await;
+            let resaved_file = std::fs::read(root.join("content/level.gasset")).unwrap();
             write_scene(&root, PROPS, props_id, &props("Pillar"));
+            write_note(&root, "second");
             ok(&client, "reimported").await;
             let reloaded = until_with(
                 &client,
@@ -2788,13 +2903,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             )
             .await;
             let after_reload = ok_with(&client, "scene_tree", json!({ "root": link })).await;
-            let removed = ok_with(
-                &client,
-                "remove_link_change",
-                json!({ "entity": link, "index": 0 }),
-            )
-            .await;
-            let remaining = ok_with(&client, "inspect", json!({ "entity": link })).await;
+            let note = until(&client, "note_text", |text| text == "second").await;
             let itself = error_with(
                 &client,
                 "place_asset",
@@ -2807,13 +2916,16 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
                 top,
                 expanded,
                 own,
+                copied,
                 refused,
                 saved,
                 saved_file,
+                removed,
+                kept: serde_json::from_str(&kept).unwrap(),
+                resaved_file,
                 reloaded: serde_json::from_str(&reloaded).unwrap(),
                 after_reload,
-                removed,
-                remaining: serde_json::from_str(&remaining).unwrap(),
+                note,
                 itself,
             }
         },
@@ -2826,13 +2938,16 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         top,
         expanded,
         own,
+        copied,
         refused,
         saved,
         saved_file,
+        removed,
+        kept,
+        resaved_file,
         reloaded,
         after_reload,
-        removed,
-        remaining,
+        note,
         itself,
     } = served.result;
     assert!(placed.starts_with("placed props as entity "), "{placed}");
@@ -2849,6 +2964,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
     for path in ["Anchor", "Lantern", "Helper"] {
         assert!(expanded.contains(&format!("(linked) {path}")), "{expanded}");
     }
+    assert!(copied.contains("\"path\":\"Anchor\""), "{copied}");
     let linked = "Anchor is a linked node of content/props.gasset; add a component to it, or edit content/props.gasset";
     for error in &refused {
         assert_eq!(error["code"], "refused", "{error}");
@@ -2858,15 +2974,17 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         );
     }
     assert_eq!(saved, "Saved content/level.gasset.");
+    let (names, saved_link) = link_of(&saved_file);
+    assert_eq!(saved_link.scene, props_id);
+    assert_eq!(saved_link.changes.len(), 3, "{:?}", saved_link.changes);
+    assert_eq!(added_gain(&saved_link), 2.5);
+    assert_eq!(names.iter().filter(|name| *name == "Entity").count(), 2);
+    assert!(
+        names
+            .iter()
+            .all(|name| !["Anchor", "Lantern", "Helper"].contains(&name.as_str()))
+    );
     let (_, level) = decode_content_asset::<Scene>(&saved_file).unwrap();
-    let links: Vec<_> = level
-        .nodes
-        .iter()
-        .filter_map(|node| node.link.as_ref())
-        .collect();
-    assert_eq!(links.len(), 1);
-    assert_eq!(links[0].scene, props_id);
-    assert_eq!(links[0].changes.len(), 3, "{:?}", links[0].changes);
     assert!(level.nodes.iter().any(|node| {
         node.name == "Entity"
             && node
@@ -2874,14 +2992,13 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
                 .iter()
                 .any(|component| component.type_name.ends_with("LinkParent"))
     }));
-    assert!(
-        level
-            .nodes
-            .iter()
-            .all(|node| !["Anchor", "Lantern", "Helper"].contains(&node.name.as_str()))
-    );
+    assert_eq!(removed, "Removed change 1 from props.");
+    assert_eq!(kept["components"][0]["name"], "Light", "{kept}");
+    let (_, resaved_link) = link_of(&resaved_file);
+    assert_eq!(resaved_link.changes.len(), 2, "{:?}", resaved_link.changes);
+    assert_eq!(added_gain(&resaved_link), 2.5);
     let changes = reloaded["changes"].as_array().unwrap();
-    assert_eq!(changes.len(), 3, "{reloaded}");
+    assert_eq!(changes.len(), 2, "{reloaded}");
     assert!(
         changes[0]
             .as_str()
@@ -2889,17 +3006,12 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             .starts_with("0: AddComponent Anchor [Samples] — unapplied: "),
         "{reloaded}"
     );
-    assert_eq!(changes[2], "2: RemoveNode Helper — applied", "{reloaded}");
+    assert_eq!(changes[1], "1: RemoveNode Helper — applied", "{reloaded}");
     assert!(
         after_reload.contains(&format!("{own} Entity ")),
         "{after_reload}"
     );
-    assert_eq!(removed, "Removed change 0 from props.");
-    assert_eq!(
-        remaining["changes"].as_array().unwrap().len(),
-        2,
-        "{remaining}"
-    );
+    assert_eq!(note, "second");
     assert_eq!(itself["code"], "refused", "{itself}");
     assert!(
         itself["message"]

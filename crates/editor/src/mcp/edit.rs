@@ -12,6 +12,7 @@ use concerto_ecs::{
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError};
 use concerto_reflect::{PropertyPath, Reflect, ReflectRef, TypeRegistry, with_property};
+use concerto_scene::link::shown_name;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -985,11 +986,7 @@ fn answer_link_change_removals(
             match &event.result {
                 Ok(()) => {
                     let link = event.request.link;
-                    let name = names
-                        .get_entity(link)
-                        .map(|name| name.as_str().to_owned())
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or_else(|| link.to_id_string());
+                    let name = shown_name(link, names.get_entity(link));
                     pending.reply.ok(format!(
                         "Removed change {} from {name}.",
                         event.request.index

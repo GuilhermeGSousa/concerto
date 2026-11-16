@@ -4,7 +4,7 @@ use concerto_ecs::{
     component::name::Name,
     entity::hierarchy::{ChildOf, Children},
     events::{event_channel::EventChannel, event_reader::EventReader},
-    reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
+    reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent, SceneCapture},
     resource::{Res, Resource},
     signal::{On, Signal},
     CommandQueue, Component, Entity, Event, Query, World,
@@ -16,7 +16,7 @@ use concerto_foundation::assets::{
     AssetId,
 };
 use concerto_foundation::transform::Transform;
-use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue};
 use log::warn;
 
 use crate::link_path::{child_path, node_paths, strip_prefix};
@@ -154,18 +154,45 @@ pub struct OwnedPath {
 
 /// The outermost link `entity` was spawned by, following nested links outwards, and the path joined on the way.
 pub fn owning_link(world: &World, entity: Entity) -> Option<OwnedPath> {
-    let node = world.get_component_for_entity::<LinkedNode>(entity)?;
+    owning_link_by(entity, |entity| {
+        world.get_component_for_entity::<LinkedNode>(entity)
+    })
+}
+
+/// [`owning_link`], reading each entity's [`LinkedNode`] through `node`.
+pub fn owning_link_by<'a>(
+    entity: Entity,
+    node: impl Fn(Entity) -> Option<&'a LinkedNode>,
+) -> Option<OwnedPath> {
+    let first = node(entity)?;
     let mut owned = OwnedPath {
-        link: node.link,
-        path: node.path.clone(),
+        link: first.link,
+        path: first.path.clone(),
     };
-    while let Some(outer) = world.get_component_for_entity::<LinkedNode>(owned.link) {
+    while let Some(outer) = node(owned.link) {
         owned = OwnedPath {
             link: outer.link,
             path: child_path(&outer.path, &owned.path),
         };
     }
     Some(owned)
+}
+
+/// The path of `entity` from `link`, one of the links it was spawned under, reading each entity's [`LinkedNode`] through `node`.
+pub fn path_from_by<'a>(
+    link: Entity,
+    entity: Entity,
+    node: impl Fn(Entity) -> Option<&'a LinkedNode>,
+) -> Option<String> {
+    let first = node(entity)?;
+    let mut owner = first.link;
+    let mut path = first.path.clone();
+    while owner != link {
+        let outer = node(owner)?;
+        path = child_path(&outer.path, &path);
+        owner = outer.link;
+    }
+    Some(path)
 }
 
 pub(crate) struct SpawnLinks {
@@ -236,6 +263,7 @@ struct Moved {
 }
 
 fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
+    refresh_added_values(world, link);
     let scene_link = world.get_component_for_entity::<SceneLink>(link)?;
     let handle = scene_link.scene.clone();
     let own_count = scene_link.own.len();
@@ -396,6 +424,41 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
     }
     settle_outer_links(world, link);
     Some(())
+}
+
+fn refresh_added_values(world: &mut World, link: Entity) {
+    let Some(scene_link) = world.get_component_for_entity::<SceneLink>(link) else {
+        return;
+    };
+    let refreshed: Vec<Option<ReflectedValue>> = scene_link
+        .own
+        .iter()
+        .map(|change| match change {
+            LinkChange::AddComponent { path, component } => {
+                live_value(world, link, path, &component.type_name)
+            }
+            _ => None,
+        })
+        .collect();
+    let Some(scene_link) = world.get_component_for_entity_mut::<SceneLink>(link) else {
+        return;
+    };
+    for (change, value) in scene_link.own.iter_mut().zip(refreshed) {
+        if let (LinkChange::AddComponent { component, .. }, Some(value)) = (change, value) {
+            component.value = value;
+        }
+    }
+}
+
+fn live_value(world: &World, link: Entity, path: &str, type_name: &str) -> Option<ReflectedValue> {
+    let scene = *world
+        .get_resource::<AppTypeRegistry>()?
+        .read()
+        .get_by_name(type_name)?
+        .data::<ReflectSceneComponent>()?;
+    let target = find_linked(world, link, path)?;
+    let mut capture = SceneCapture::default();
+    (scene.capture)(world, target, &mut capture)?.ok()
 }
 
 fn settle_outer_links(world: &mut World, link: Entity) {
@@ -598,15 +661,9 @@ fn waits_on_inner_link(world: &World, link: Entity, path: &str) -> bool {
 }
 
 fn path_from(world: &World, link: Entity, entity: Entity) -> Option<String> {
-    let node = world.get_component_for_entity::<LinkedNode>(entity)?;
-    let mut owner = node.link;
-    let mut path = node.path.clone();
-    while owner != link {
-        let outer = world.get_component_for_entity::<LinkedNode>(owner)?;
-        path = child_path(&outer.path, &path);
-        owner = outer.link;
-    }
-    Some(path)
+    path_from_by(link, entity, |entity| {
+        world.get_component_for_entity::<LinkedNode>(entity)
+    })
 }
 
 fn owned_by(world: &World, link: Entity, entity: Entity) -> bool {
@@ -627,14 +684,18 @@ fn children_of(world: &World, entity: Entity) -> Vec<Entity> {
 }
 
 fn link_name(world: &World, entity: Entity) -> String {
-    world
-        .get_component_for_entity::<Name>(entity)
-        .map(|name| name.as_str().to_owned())
+    shown_name(entity, world.get_component_for_entity::<Name>(entity))
+}
+
+/// How a link or node is named in a message: its name, or its id when it has none.
+pub fn shown_name(entity: Entity, name: Option<&Name>) -> String {
+    name.map(|name| name.as_str().to_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| entity.to_id_string())
 }
 
-fn scene_address(world: &World, id: AssetId) -> String {
+/// How a linked scene is named in a message: its address, or its id when the registry does not know it.
+pub fn scene_address(world: &World, id: AssetId) -> String {
     world
         .get_resource::<AssetServer>()
         .and_then(AssetServer::registry)
