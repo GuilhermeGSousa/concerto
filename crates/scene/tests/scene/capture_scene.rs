@@ -11,7 +11,7 @@ use concerto_reflect::{apply_value, to_value, Reflect, ReflectedValue};
 use concerto_render::components::camera::Camera;
 use concerto_scene::capture::{capture_scene, capture_subtree};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
-use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world};
+use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world, SpawnFilter};
 use glam::Vec3;
 
 fn world() -> World {
@@ -90,7 +90,7 @@ fn comparable(scene: &Scene) -> Vec<Comparable> {
 struct Fixture(Scene, Entity);
 
 fn spawn_fixture(mut cmd: CommandQueue, fixture: Res<Fixture>) {
-    spawn_scene(&mut cmd, &fixture.0, fixture.1);
+    spawn_scene(&mut cmd, &fixture.0, fixture.1, &SpawnFilter::default());
 }
 
 fn spawn(world: &mut World, scene: Scene) -> Entity {
@@ -192,7 +192,7 @@ fn a_scene_spawned_by_command_or_in_the_world_captures_back_to_what_was_spawned(
     let queued = spawn(&mut world, scene.clone());
     let direct = world.spawn(Transform::IDENTITY);
 
-    let spawned = spawn_scene_in_world(&mut world, &scene, direct);
+    let spawned = spawn_scene_in_world(&mut world, &scene, direct, &SpawnFilter::default());
 
     assert_eq!(spawned.node_entities.len(), 4);
     assert_eq!(

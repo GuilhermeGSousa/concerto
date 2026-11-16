@@ -6,18 +6,19 @@ use concerto_app::{
 };
 use concerto_ecs::{CommandQueue, Res};
 use concerto_foundation::assets::asset_server::AssetServer;
-use concerto_foundation::transform::Transform;
 
+use crate::link::{request_link_spawns, spawn_links, LinkParent, SceneLink, SceneLinkSpawned};
 use crate::scene::Scene;
-use crate::spawner::{spawn_scene_components, SceneSpawnerComponent};
 
 pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.register_placeable_asset::<Scene>();
-
-        app.add_system(Update, spawn_scene_components.at_edit_time());
+        app.register_placeable_asset::<Scene>()
+            .register_type::<LinkParent>()
+            .register_event::<SceneLinkSpawned>()
+            .add_system(Update, request_link_spawns.at_edit_time())
+            .add_listener(spawn_links.at_edit_time());
     }
 
     fn finish(&self, app: &mut App) {
@@ -32,8 +33,5 @@ fn spawn_startup_scene(
     asset_server: Res<AssetServer>,
     mut cmd: CommandQueue,
 ) {
-    cmd.spawn((
-        SceneSpawnerComponent(asset_server.load::<Scene>(startup.0)),
-        Transform::default(),
-    ));
+    cmd.spawn(SceneLink::new(asset_server.load::<Scene>(startup.0)));
 }

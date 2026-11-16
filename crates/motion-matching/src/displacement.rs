@@ -202,7 +202,10 @@ mod tests {
     use concerto_app::{plugins::AssetManagerPlugin, App};
     use concerto_ecs::entity::hierarchy::{ChildOf, Children};
     use concerto_reflect::{apply_value, to_value};
-    use concerto_scene::{capture::capture_scene, spawner::spawn_scene_in_world};
+    use concerto_scene::{
+        capture::capture_scene,
+        spawner::{spawn_scene_in_world, SpawnFilter},
+    };
 
     use super::*;
     use crate::plugin::MotionMatchingPlugin;
@@ -448,7 +451,8 @@ mod tests {
 
         let scene = capture_scene(world, root).unwrap();
         let parent = world.spawn(());
-        let spawned = spawn_scene_in_world(world, &scene, parent).node_entities;
+        let spawned =
+            spawn_scene_in_world(world, &scene, parent, &SpawnFilter::default()).node_entities;
 
         let link = world
             .get_component_for_entity::<CharacterLink>(spawned[1])

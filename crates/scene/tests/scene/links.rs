@@ -1,0 +1,345 @@
+use concerto_app::{
+    main_schedule::MainSchedulePlugin,
+    plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
+    schedule_groups::LateUpdate,
+    App,
+};
+use concerto_ecs::{
+    component::name::Name,
+    entity::hierarchy::ChildOf,
+    events::event_reader::EventReader,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    resource::{ResMut, Resource},
+    Component, Entity,
+};
+use concerto_foundation::assets::{asset_server::AssetServer, AssetId};
+use concerto_foundation::transform::Transform;
+use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_scene::{
+    link::{
+        owning_link, ChangeOutcome, LinkParent, LinkRoot, LinkedNode, OwnedPath, SceneLink,
+        SceneLinkSpawned, SceneLinkState,
+    },
+    link_path::node_paths,
+    plugin::ScenePlugin,
+    scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent},
+    spawner::{spawn_scene_in_world, SpawnFilter},
+};
+
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, Default, SceneComponent)]
+struct Label {
+    text: String,
+}
+
+#[derive(Resource, Default)]
+struct Heard(Vec<Entity>);
+
+fn hear(mut spawned: EventReader<SceneLinkSpawned>, mut heard: ResMut<Heard>) {
+    heard.0.extend(spawned.read().map(|event| event.link));
+}
+
+fn node(name: &str, children: Vec<usize>) -> SceneNode {
+    let mut node = SceneNode {
+        name: name.into(),
+        children,
+        components: vec![],
+        link: None,
+    };
+    node.push_component(&Transform::IDENTITY).unwrap();
+    node
+}
+
+fn label(text: &str) -> SerializedComponent {
+    SerializedComponent {
+        type_name: std::any::type_name::<Label>().into(),
+        value: concerto_reflect::to_value(&Label { text: text.into() }).unwrap(),
+    }
+}
+
+fn room() -> Scene {
+    Scene {
+        nodes: vec![
+            node("room", vec![1, 2, 3, 4]),
+            node("lamp", vec![]),
+            node("helper", vec![]),
+            node("chair", vec![]),
+            node("chair", vec![]),
+        ],
+        referenced_assets: vec![],
+    }
+}
+
+fn room_with_shelf() -> Scene {
+    Scene {
+        nodes: vec![
+            node("room", vec![2, 3, 4, 5]),
+            node("lamp", vec![]),
+            node("shelf", vec![1]),
+            node("helper", vec![]),
+            node("chair", vec![]),
+            node("chair", vec![]),
+        ],
+        referenced_assets: vec![],
+    }
+}
+
+fn app() -> App {
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(ScenePlugin)
+        .register_type::<Label>()
+        .insert_resource(Heard::default())
+        .add_system(LateUpdate, hear);
+    app.finish_plugin_build();
+    app
+}
+
+fn settle(app: &mut App, link: Entity) -> &SceneLinkState {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while matches!(state(app, link), SceneLinkState::Waiting) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the link never spawned"
+        );
+        app.update();
+    }
+    app.update();
+    state(app, link)
+}
+
+fn state(app: &App, link: Entity) -> &SceneLinkState {
+    app.main()
+        .world()
+        .get_component_for_entity::<SceneLinkState>(link)
+        .unwrap()
+}
+
+fn linked(app: &mut App, link: Entity, path: &str) -> Entity {
+    linked_nodes(app, link)
+        .into_iter()
+        .find(|node| node.path == path)
+        .unwrap_or_else(|| panic!("no linked node at {path}"))
+        .entity
+}
+
+struct Linked {
+    entity: Entity,
+    path: String,
+}
+
+fn linked_nodes(app: &mut App, link: Entity) -> Vec<Linked> {
+    let world = app.main_mut().world_mut();
+    world
+        .query::<(Entity, &LinkedNode), ()>()
+        .iter(world)
+        .filter(|(_, node)| node.link == link)
+        .map(|(entity, node)| Linked {
+            entity,
+            path: node.path.clone(),
+        })
+        .collect()
+}
+
+fn parent(app: &App, entity: Entity) -> Option<Entity> {
+    app.main()
+        .world()
+        .get_component_for_entity::<ChildOf>(entity)
+        .map(ChildOf::parent)
+}
+
+fn label_of(app: &App, entity: Entity) -> Option<String> {
+    app.main()
+        .world()
+        .get_component_for_entity::<Label>(entity)
+        .map(|label| label.text.clone())
+}
+
+#[test]
+fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children() {
+    let mut app = app();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let s = AssetId::new();
+    let handle = server.insert_loaded(s, room());
+
+    let link = app.main_mut().world_mut().spawn(
+        SceneLink::new(handle.clone())
+            .with_change(LinkChange::RemoveNode {
+                path: "room/helper".into(),
+            })
+            .with_change(LinkChange::RemoveComponent {
+                path: "room/lamp".into(),
+                type_name: std::any::type_name::<Transform>().into(),
+            })
+            .with_change(LinkChange::AddComponent {
+                path: "room/chair#1".into(),
+                component: label("added"),
+            })
+            .with_change(LinkChange::AddComponent {
+                path: "room/gone".into(),
+                component: label("lost"),
+            }),
+    );
+    let own = app.main_mut().world_mut().spawn((
+        Name::new("own"),
+        Transform::IDENTITY,
+        LinkParent {
+            path: "room/lamp".into(),
+        },
+    ));
+    app.main_mut().world_mut().entity_mut(link).add_child(own);
+
+    assert!(matches!(settle(&mut app, link), SceneLinkState::Spawned));
+    assert_eq!(app.get_resource::<Heard>().unwrap().0, [link]);
+    let world = app.main_mut().world_mut();
+    assert!(!world
+        .query::<&Name, ()>()
+        .iter(world)
+        .any(|name| name.as_str() == "helper"));
+    let lamp = linked(&mut app, link, "room/lamp");
+    assert!(app
+        .main()
+        .world()
+        .get_component_for_entity::<Transform>(lamp)
+        .is_none());
+    let chairs = [
+        linked(&mut app, link, "room/chair"),
+        linked(&mut app, link, "room/chair#1"),
+    ];
+    assert_eq!(
+        chairs.map(|chair| label_of(&app, chair)),
+        [None, Some("added".to_owned())]
+    );
+    let scene_link = app
+        .main()
+        .world()
+        .get_component_for_entity::<SceneLink>(link)
+        .unwrap();
+    assert_eq!(
+        scene_link.outcomes(),
+        [
+            ChangeOutcome::Applied,
+            ChangeOutcome::Applied,
+            ChangeOutcome::Applied,
+            ChangeOutcome::Unapplied(format!("no node at room/gone in {}", s.simple_hex())),
+        ]
+    );
+    let mut paths: Vec<String> = linked_nodes(&mut app, link)
+        .into_iter()
+        .map(|node| node.path)
+        .collect();
+    paths.sort();
+    let mut expected: Vec<String> = node_paths(&room())
+        .into_iter()
+        .filter(|path| path != "room/helper")
+        .collect();
+    expected.sort();
+    assert_eq!(paths, expected);
+    assert_eq!(parent(&app, own), Some(lamp));
+
+    app.main_mut()
+        .world_mut()
+        .insert(Label { text: "own".into() }, own);
+    server.insert_loaded(s, room_with_shelf());
+    app.update();
+    settle(&mut app, link);
+    assert!(matches!(state(&app, link), SceneLinkState::Spawned));
+    assert_eq!(app.get_resource::<Heard>().unwrap().0, [link, link]);
+    linked(&mut app, link, "room/shelf/lamp");
+    assert_eq!(parent(&app, own), Some(link));
+    assert_eq!(label_of(&app, own).as_deref(), Some("own"));
+
+    let m = AssetId::new();
+    let mut inner = node("inner", vec![]);
+    inner.link = Some(SceneLinkData {
+        scene: s,
+        changes: vec![],
+    });
+    let outer_handle = server.insert_loaded(
+        m,
+        Scene {
+            nodes: vec![inner],
+            referenced_assets: vec![],
+        },
+    );
+    let outer = app
+        .main_mut()
+        .world_mut()
+        .spawn(
+            SceneLink::new(outer_handle).with_change(LinkChange::AddComponent {
+                path: "inner/room/chair".into(),
+                component: label("deep"),
+            }),
+        );
+    assert!(matches!(settle(&mut app, outer), SceneLinkState::Spawned));
+    let inner = linked(&mut app, outer, "inner");
+    assert!(matches!(state(&app, inner), SceneLinkState::Spawned));
+    assert!(app
+        .main()
+        .world()
+        .get_component_for_entity::<SceneLink>(inner)
+        .unwrap()
+        .changes()
+        .is_empty());
+    let deep_chair = linked(&mut app, inner, "room/chair");
+    assert_eq!(label_of(&app, deep_chair).as_deref(), Some("deep"));
+    assert_eq!(
+        owning_link(app.main().world(), deep_chair),
+        Some(OwnedPath {
+            link: outer,
+            path: "inner/room/chair".into()
+        })
+    );
+
+    let mut copy = node("copy", vec![]);
+    let stored = vec![LinkChange::RemoveNode {
+        path: "room/helper".into(),
+    }];
+    copy.link = Some(SceneLinkData {
+        scene: s,
+        changes: stored.clone(),
+    });
+    let world = app.main_mut().world_mut();
+    let holder = world.spawn(Transform::IDENTITY);
+    let opened = spawn_scene_in_world(
+        world,
+        &Scene {
+            nodes: vec![copy],
+            referenced_assets: vec![],
+        },
+        holder,
+        &SpawnFilter::default(),
+    )
+    .node_entities[0];
+    assert!(matches!(settle(&mut app, opened), SceneLinkState::Spawned));
+    assert_eq!(
+        app.main()
+            .world()
+            .get_component_for_entity::<SceneLink>(opened)
+            .unwrap()
+            .changes(),
+        stored
+    );
+    linked(&mut app, opened, "room/shelf/lamp");
+    assert!(!linked_nodes(&mut app, opened)
+        .iter()
+        .any(|node| node.path == "room/helper"));
+
+    app.main_mut().world_mut().insert_resource(LinkRoot(s));
+    let looped = app
+        .main_mut()
+        .world_mut()
+        .spawn(SceneLink::new(handle.clone()));
+    assert_eq!(
+        settle(&mut app, looped),
+        &SceneLinkState::Refused(format!(
+            "{} links itself through {}",
+            s.simple_hex(),
+            s.simple_hex()
+        ))
+    );
+    assert!(linked_nodes(&mut app, looped).is_empty());
+}

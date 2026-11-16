@@ -4,13 +4,13 @@ use concerto_app::{
     App,
 };
 use concerto_foundation::assets::AssetId;
-use concerto_scene::{plugin::ScenePlugin, spawner::SceneSpawnerComponent};
+use concerto_scene::{link::SceneLink, plugin::ScenePlugin};
 
 struct Startup {
     name: &'static str,
     app: fn() -> App,
     declare: bool,
-    spawners: usize,
+    links: usize,
 }
 
 #[test]
@@ -20,19 +20,19 @@ fn only_a_game_app_spawns_the_startup_scene_it_declares() {
             name: "a game app",
             app: App::new,
             declare: true,
-            spawners: 1,
+            links: 1,
         },
         Startup {
             name: "an edit app",
             app: App::for_editing,
             declare: true,
-            spawners: 0,
+            links: 0,
         },
         Startup {
             name: "a preview app",
             app: App::for_previewing,
             declare: true,
-            spawners: 0,
+            links: 0,
         },
     ];
     for case in cases {
@@ -48,11 +48,8 @@ fn only_a_game_app_spawns_the_startup_scene_it_declares() {
         app.finish_plugin_build();
         let world = app.main_mut().world_mut();
         assert_eq!(
-            world
-                .query::<&SceneSpawnerComponent, ()>()
-                .iter(world)
-                .count(),
-            case.spawners,
+            world.query::<&SceneLink, ()>().iter(world).count(),
+            case.links,
             "{}",
             case.name
         );

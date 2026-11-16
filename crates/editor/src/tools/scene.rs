@@ -7,7 +7,11 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 use concerto_foundation::transform::Transform;
-use concerto_scene::{capture::capture_scene, scene::Scene, spawner::spawn_scene_in_world};
+use concerto_scene::{
+    capture::capture_scene,
+    scene::Scene,
+    spawner::{SpawnFilter, spawn_scene_in_world},
+};
 
 use crate::tools::selection::Select;
 
@@ -46,7 +50,7 @@ fn open_scene(on: On<OpenScene>, world: &mut World) {
     }
     world.register_component::<Transform>();
     let root = world.spawn((Transform::IDENTITY, SceneRoot));
-    spawn_scene_in_world(world, &on.signal().0, root);
+    spawn_scene_in_world(world, &on.signal().0, root, &SpawnFilter::default());
     world.insert_resource(SceneDirty(false));
     world.trigger(Select(Some(root)));
 }

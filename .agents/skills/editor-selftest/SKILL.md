@@ -65,8 +65,9 @@ mode, maximised, size.
   `App`'s world and `EditWorldSignals` triggers in it, so the selftest finds and
   selects game entities the same way it does scene entities. A game's own
   marker types are not reachable from the editor crate; find its entities by
-  engine components (`Transform`, `Children`, `Name`), and remember that
-  `SceneSpawnerComponent` is removed once its scene has spawned.
+  engine components (`Transform`, `Children`, `Name`, `LinkedNode`); a
+  `SceneLink` stays on its entity, with `SceneLinkState::Spawned` once its
+  scene has spawned.
 - **A log line inside the game.** To prove a key reached the game, add a
   selftest-only system to the play `App` from the `extra` closure in
   `scene.rs`'s `begin_play`, gated on `CONCERTO_SELFTEST`, and delete it with

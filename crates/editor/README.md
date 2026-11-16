@@ -487,8 +487,8 @@ steps, and drops. The crate has three parts:
   skips the ready step, and drops the `App`.
   An edit or play `App` then warms up: the editor steps it hidden once per
   `First`, whatever tab is in front and with no input, until a step leaves its
-  `AssetServer` not loading, no `SceneSpawnerComponent` whose scene is in its
-  `AssetStore<Scene>`, and `render_assets_settled` true, or until
+  `AssetServer` not loading, no `SceneLink` that is `Waiting` with its scene
+  loaded or loading (a `Refused` one counts as settled), and `render_assets_settled` true, or until
   `WARM_UP_LIMIT`, 10 s after the join. A `WarmUpLimit` resource in the
   editor's world, when present, replaces `WARM_UP_LIMIT` for the edit and play
   `App`s it starts.

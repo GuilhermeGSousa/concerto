@@ -13,6 +13,7 @@ use concerto_foundation::assets::{
 };
 use concerto_foundation::transform::Transform;
 use concerto_scene::{
+    link::SceneLinkState,
     plugin::ScenePlugin,
     scene::{Scene, SceneNode},
 };
@@ -112,6 +113,13 @@ fn placing_a_scene_adds_its_roots_as_children() {
     app.finish_plugin_build();
 
     let placed_scene = place(&mut app, "Scene", scene);
+    app.update();
+    assert_eq!(
+        app.main()
+            .world()
+            .get_component_for_entity::<SceneLinkState>(placed_scene),
+        Some(&SceneLinkState::Spawned)
+    );
     let mut roots = children_of(&app, placed_scene);
     roots.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(

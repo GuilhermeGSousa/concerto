@@ -29,8 +29,7 @@ use concerto_ecs::{
     system::{NonSendMarker, executor::multi_thread::MainThreadExecutor},
 };
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, derived::DerivedDataCache,
-    registry::AssetRegistry,
+    asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
 };
 use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
@@ -38,7 +37,10 @@ use concerto_render::{
     render_asset::{RenderAssetBytesPerFrame, render_assets_settled},
     wgpu,
 };
-use concerto_scene::{scene::Scene, spawner::SceneSpawnerComponent};
+use concerto_scene::{
+    link::{SceneLink, SceneLinkState},
+    scene::Scene,
+};
 
 use crate::project::ProjectState;
 use concerto_window::{
@@ -162,14 +164,18 @@ impl HostedApp {
             .get_resource::<AssetServer>()
             .is_some_and(AssetServer::is_loading);
         let world = self.app.main_mut().world_mut();
-        let spawners: Vec<_> = world
-            .query::<&SceneSpawnerComponent, ()>()
-            .iter(world)
-            .map(|spawner| spawner.0.clone())
-            .collect();
         let spawning = world
-            .get_resource::<AssetStore<Scene>>()
-            .is_some_and(|scenes| spawners.iter().any(|scene| scenes.get(scene).is_some()));
+            .get_resource::<AssetServer>()
+            .cloned()
+            .is_some_and(|server| {
+                world
+                    .query::<(&SceneLink, &SceneLinkState), ()>()
+                    .iter(world)
+                    .any(|(link, state)| {
+                        *state == SceneLinkState::Waiting
+                            && server.is_loading_or_loaded(link.scene().id())
+                    })
+            });
         !loading && !spawning && render_assets_settled(&self.app)
     }
 

@@ -129,8 +129,8 @@ impl CreatableAsset for Scene {
 impl LoadableAsset for Scene {}
 
 impl PlaceableAsset for Scene {
-    fn place(asset: &Self, _handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
-        crate::spawner::spawn_scene(cmd, asset, entity);
+    fn place(_asset: &Self, handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
+        cmd.insert(crate::link::SceneLink::new(handle), entity);
     }
 }
 

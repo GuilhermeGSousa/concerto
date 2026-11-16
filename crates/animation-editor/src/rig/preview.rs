@@ -28,7 +28,7 @@ use concerto_reflect::Reflect;
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{
     scene::Scene,
-    spawner::{SpawnedScene, spawn_scene},
+    spawner::{SpawnFilter, SpawnedScene, spawn_scene},
 };
 use glam::Vec3;
 
@@ -228,7 +228,7 @@ fn show_rig_stage(on: On<ShowRigStage>, mut sides: ResMut<RigSides>, mut cmd: Co
     let scene = stage
         .scene
         .as_ref()
-        .map(|scene| spawn_scene(&mut cmd, scene, root));
+        .map(|scene| spawn_scene(&mut cmd, scene, root, &SpawnFilter::default()));
     side.stage = Some(ShownStage {
         skeleton: Arc::clone(&stage.skeleton),
         skeleton_id: stage.skeleton_id,

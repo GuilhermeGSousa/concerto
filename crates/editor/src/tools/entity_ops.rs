@@ -10,7 +10,11 @@ use concerto_ecs::{
 };
 use concerto_foundation::transform::Transform;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
-use concerto_scene::{capture::capture_subtree, scene::Scene, spawner::spawn_scene_in_world};
+use concerto_scene::{
+    capture::capture_subtree,
+    scene::Scene,
+    spawner::{SpawnFilter, spawn_scene_in_world},
+};
 
 use crate::tools::{
     scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
@@ -169,7 +173,7 @@ fn editable(world: &mut World, entity: Entity) -> anyhow::Result<Option<Entity>>
 
 fn spawn_beside(world: &mut World, scene: &Scene, parent: Option<Entity>) -> Option<Entity> {
     let holder = parent.unwrap_or_else(|| world.spawn(()));
-    let spawned = spawn_scene_in_world(world, scene, holder);
+    let spawned = spawn_scene_in_world(world, scene, holder, &SpawnFilter::default());
     if parent.is_none() {
         for root in &spawned.root_entities {
             world.remove_component::<ChildOf>(*root);
