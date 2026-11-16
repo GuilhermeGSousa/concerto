@@ -16,9 +16,12 @@ use concerto_scene::{
     spawner::{SpawnFilter, spawn_scene_in_world},
 };
 
-use crate::tools::{
-    scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
-    selection::Select,
+use crate::{
+    links::{LinkedEdit, refusal},
+    tools::{
+        scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
+        selection::Select,
+    },
 };
 
 /// A structural change to an open scene, or to a game's world, which has no scene root. Trigger it; one listener applies it.
@@ -119,11 +122,13 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
         }
         EntityEdit::Duplicate(entity) => {
             let parent = editable(world, *entity)?;
+            refuse_linked(world, *entity, LinkedEdit::Duplicate)?;
             let scene = capture_subtree(world, *entity)?;
             Ok(Applied::Changed(spawn_beside(world, &scene, parent)))
         }
         EntityEdit::Rename { entity, name } => {
             editable(world, *entity)?;
+            refuse_linked(world, *entity, LinkedEdit::Rename)?;
             let name = name.trim();
             if name.is_empty() {
                 bail!("a name cannot be empty");
@@ -135,6 +140,13 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
             }
             Ok(Applied::Changed(None))
         }
+    }
+}
+
+fn refuse_linked(world: &World, entity: Entity, edit: LinkedEdit) -> anyhow::Result<()> {
+    match refusal(world, entity, edit) {
+        Some(reason) => bail!(reason),
+        None => Ok(()),
     }
 }
 
@@ -192,7 +204,7 @@ pub(crate) fn in_open_scene(world: &mut World, entity: Entity) -> anyhow::Result
 }
 
 /// Whether `entity` is the scene root; an error if it is not part of an open scene at all.
-fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
+pub(crate) fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
     scene_member_by(entity, |entity| {
         world.entity_is_valid(entity).then(|| {
             (

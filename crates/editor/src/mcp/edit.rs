@@ -28,6 +28,7 @@ use crate::{
         adapter_commit, find_path, listed_paths, not_editable, refusal_error,
         refused as inspector_refused, unknown_path,
     },
+    links::{LinkChangeRemoved, RemoveLinkChange},
     tools::{
         edits::{
             ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, SetValue, dotted_name,
@@ -129,6 +130,21 @@ pub struct ListRemove {
     pub index: usize,
 }
 
+/// Removes one change from a link, by its index in the changes inspect lists for the link, and spawns the link again without it.
+#[derive(Deserialize, JsonSchema)]
+pub struct RemoveLinkChangeArgs {
+    /// The link, such as 42v3, as scene_tree shows it with [link → …].
+    pub entity: String,
+    /// The change's index, from 0, as inspect lists it under changes.
+    pub index: usize,
+}
+
+#[derive(Component)]
+struct RemovingLinkChange {
+    document: Entity,
+    request: RemoveLinkChange,
+}
+
 #[derive(Component)]
 struct EditingEntity {
     document: Entity,
@@ -182,12 +198,17 @@ pub(super) fn build(app: &mut App) {
     )
     .add_tool::<ListPush, _>(McpTool::new("list_push").needs(Needs::Scene), list_push)
     .add_tool::<ListRemove, _>(McpTool::new("list_remove").needs(Needs::Scene), list_remove)
+    .add_tool::<RemoveLinkChangeArgs, _>(
+        McpTool::new("remove_link_change").needs(Needs::Scene),
+        remove_link_change,
+    )
     .add_system(
         LateUpdate,
         (
             answer_entity_edits,
             answer_property_commits,
             answer_component_edits,
+            answer_link_change_removals,
         ),
     );
 }
@@ -916,6 +937,65 @@ fn answer_component_edits(
                     .ok(component_answer(&source, &registry, entity, component)),
                 (Ok(()), ComponentEdit::Remove { .. }) => pending.reply.ok(editing.label.clone()),
                 (Err(reason), _) => pending.reply.err(refused(reason)),
+            }
+            cmd.despawn(call);
+        }
+    }
+}
+
+fn remove_link_change(
+    mut calls: ToolCalls<RemoveLinkChangeArgs>,
+    entities: EditWorld<SceneEntities>,
+    targets: Query<Entity, With<EditTarget>>,
+    mut scene: EditWorldSignals,
+    mut cmd: CommandQueue,
+) {
+    let Some(document) = targets.iter().next() else {
+        return;
+    };
+    for (arguments, reply) in calls.read() {
+        match resolve(&arguments.entity, &entities) {
+            Ok(link) => {
+                let request = RemoveLinkChange {
+                    link,
+                    index: arguments.index,
+                };
+                scene.trigger(request.clone());
+                cmd.spawn((
+                    PendingCall::new(reply, "the change to be removed"),
+                    RemovingLinkChange { document, request },
+                ));
+            }
+            Err(error) => reply.err(error),
+        }
+    }
+}
+
+fn answer_link_change_removals(
+    mut removed: EventReader<Hosted<LinkChangeRemoved>>,
+    waiting: Query<(Entity, &PendingCall, &RemovingLinkChange)>,
+    names: EditWorld<Query<&Name>>,
+    mut cmd: CommandQueue,
+) {
+    for Hosted { document, event } in removed.read() {
+        for (call, pending, removing) in waiting.iter() {
+            if removing.document != *document || removing.request != event.request {
+                continue;
+            }
+            match &event.result {
+                Ok(()) => {
+                    let link = event.request.link;
+                    let name = names
+                        .get_entity(link)
+                        .map(|name| name.as_str().to_owned())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| link.to_id_string());
+                    pending.reply.ok(format!(
+                        "Removed change {} from {name}.",
+                        event.request.index
+                    ));
+                }
+                Err(reason) => pending.reply.err(refused(reason)),
             }
             cmd.despawn(call);
         }

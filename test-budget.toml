@@ -11,7 +11,7 @@
 "crates/debug-gizmos" = 2
 "crates/director" = 4
 "crates/ecs" = 87
-"crates/editor" = 175
+"crates/editor" = 176
 "crates/foundation" = 65
 "crates/gameplay" = 11
 "crates/gltf" = 7

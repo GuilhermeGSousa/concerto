@@ -29,7 +29,7 @@ use concerto_ecs::{
     system::{NonSendMarker, executor::multi_thread::MainThreadExecutor},
 };
 use concerto_foundation::assets::{
-    asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+    AssetId, asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
 };
 use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
@@ -201,6 +201,16 @@ impl HostedApp {
         }
         self.app.insert_resource(registry.clone());
     }
+
+    pub(crate) fn reload_scenes(&self, scenes: &[AssetId]) {
+        if let Some(server) = self.app.get_resource::<AssetServer>() {
+            for &scene in scenes {
+                if server.is_loading_or_loaded(scene) {
+                    server.reload::<Scene>(scene);
+                }
+            }
+        }
+    }
 }
 
 type OnReady = Box<dyn FnOnce(&mut HostedApp) + Send + Sync>;
@@ -248,7 +258,7 @@ impl PendingApp {
         }
     }
 
-    fn held(&self) -> Option<&HostedApp> {
+    pub(crate) fn held(&self) -> Option<&HostedApp> {
         match &self.phase {
             Phase::Building(hosted) => Some(hosted.as_ref()),
             Phase::WarmingUp(warming) => Some(&warming.hosted),

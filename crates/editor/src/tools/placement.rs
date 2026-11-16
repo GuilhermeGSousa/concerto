@@ -23,6 +23,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Aabb, Mesh, MeshComponent, Ray};
 use concerto_render::components::{camera::Camera, render_entity::SyncWithRenderWorld};
+use concerto_scene::link::LinkRoot;
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::import_fold::shown_name;
@@ -198,6 +199,12 @@ fn resolve(world: &mut World, request: &PlaceAsset) -> anyhow::Result<Placement>
                 request.asset.simple_hex()
             )
         })?;
+    if world
+        .get_resource::<LinkRoot>()
+        .is_some_and(|root| root.0 == request.asset)
+    {
+        bail!("a scene cannot link itself");
+    }
     let placeable = world.get_resource::<PlaceableAssets>();
     let Some(kind) = placeable.and_then(|kinds| kinds.get(&entry.kind).copied()) else {
         let kinds: Vec<&str> = placeable

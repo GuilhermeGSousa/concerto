@@ -702,6 +702,7 @@ pub(crate) fn update_scenes(
                 };
                 match loaded {
                     Ok(scene) => {
+                        let id = Some(job.asset.id);
                         let request = HostRequest {
                             gpu: recipe.gpu.as_ref(),
                             recipe: recipe.recipe,
@@ -716,7 +717,7 @@ pub(crate) fn update_scenes(
                                 app.register_plugin(EditToolsPlugin);
                             },
                             move |hosted| {
-                                hosted.trigger(OpenScene(scene));
+                                hosted.trigger(OpenScene { scene, id });
                             },
                         );
                         commands.insert(
