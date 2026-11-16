@@ -532,6 +532,58 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         .iter()
         .any(|node| node.path == "room/helper"));
 
+    let mut mid = node("mid", vec![]);
+    mid.link = Some(SceneLinkData {
+        scene: s,
+        changes: vec![],
+    });
+    let s2 = AssetId::new();
+    server.insert_loaded(
+        s2,
+        Scene {
+            nodes: vec![mid],
+            referenced_assets: vec![],
+        },
+    );
+    let mut middle = node("middle", vec![]);
+    middle.link = Some(SceneLinkData {
+        scene: s2,
+        changes: vec![LinkChange::AddComponent {
+            path: "mid/room/chair".into(),
+            component: label("manor"),
+        }],
+    });
+    let level_handle = server.insert_loaded(
+        AssetId::new(),
+        Scene {
+            nodes: vec![middle],
+            referenced_assets: vec![],
+        },
+    );
+    let level = app
+        .main_mut()
+        .world_mut()
+        .spawn(
+            SceneLink::new(level_handle).with_change(LinkChange::RemoveComponent {
+                path: "middle/mid/room/chair".into(),
+                type_name: std::any::type_name::<Label>().into(),
+            }),
+        );
+    assert!(matches!(settle(&mut app, level), SceneLinkState::Spawned));
+    let middle = linked(&mut app, level, "middle");
+    let mid = linked(&mut app, middle, "mid");
+    settle(&mut app, mid);
+    let far_chair = linked(&mut app, mid, "room/chair");
+    assert_eq!(label_of(&app, far_chair), None);
+    assert_eq!(
+        app.main()
+            .world()
+            .get_component_for_entity::<SceneLink>(level)
+            .unwrap()
+            .outcomes(),
+        [ChangeOutcome::Applied]
+    );
+
     app.main_mut().world_mut().insert_resource(LinkRoot(s));
     let looped = app
         .main_mut()

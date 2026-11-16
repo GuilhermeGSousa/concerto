@@ -377,14 +377,17 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         apply_added(world, change, &target, &spawned.node_entities);
     }
     for change in handed {
-        if let LinkChange::RemoveComponent { path, type_name } = change {
-            if let Some(entity) = target(path) {
-                remove_named(world, type_name, entity);
+        match change {
+            LinkChange::RemoveComponent { path, type_name } => {
+                if let Some(entity) = target(path) {
+                    remove_named(world, type_name, entity);
+                }
             }
+            LinkChange::AddComponent { .. } => {
+                apply_added(world, change, &target, &spawned.node_entities)
+            }
+            LinkChange::RemoveNode { .. } => {}
         }
-    }
-    for change in handed {
-        apply_added(world, change, &target, &spawned.node_entities);
     }
 
     let mut handoffs = Vec::new();
