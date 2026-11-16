@@ -25,8 +25,12 @@ use concerto_ecs::{
         input::{StaticSystemInput, SystemInputData},
     },
 };
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
 use concerto_mcp::{AppMcpExt, FrameDemand, McpPlugin, Needs, ToolError, host::HostClosing};
+use concerto_scene::{
+    link::{SceneLink, SceneLinkState},
+    scene::Scene,
+};
 use concerto_ui::{sets::UiSet, text::UIText, text_input::UITextInput};
 
 use crate::{
@@ -88,6 +92,7 @@ impl Plugin for EditorMcpPlugin {
                 .chain(),
         )
         .add_system(LateUpdate, demand_frames_while_the_scene_loads)
+        .add_system(LateUpdate, demand_frames_while_links_wait)
         .add_system(Update, discard_while_closing)
         .add_listener(quit_when_host_closes);
         observe::build(app);
@@ -175,6 +180,21 @@ fn demand_frames_while_the_scene_loads(
     mut demand: ResMut<FrameDemand>,
 ) {
     if assets.as_deref().is_some_and(AssetServer::is_loading) {
+        demand.request();
+    }
+}
+
+fn demand_frames_while_links_wait(
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    scenes: EditWorld<Option<Res<AssetStore<Scene>>>>,
+    mut demand: ResMut<FrameDemand>,
+) {
+    let Some(scenes) = scenes.as_deref() else {
+        return;
+    };
+    if links.iter().any(|(link, state)| {
+        *state == SceneLinkState::Waiting && scenes.get(link.scene()).is_some()
+    }) {
         demand.request();
     }
 }

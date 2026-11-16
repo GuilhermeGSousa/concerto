@@ -15,7 +15,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, With, Without, World,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With, Without, World,
     command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
     events::{event_reader::EventReader, event_writer::EventWriter},
@@ -51,7 +51,7 @@ use concerto_foundation::{
         handle::AssetHandle,
         registry::AssetRegistry,
     },
-    transform::{GlobalTransform, Transform},
+    transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
 use concerto_import::ImportedSource as Imported;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::run_with};
@@ -61,7 +61,10 @@ use concerto_render::{
     components::{camera::Camera, light::Light},
     gpu::Gpu,
 };
-use concerto_scene::scene::{LinkChange, Scene, SceneLinkData, SceneNode};
+use concerto_scene::{
+    link::{LinkedNode, SceneLinkSpawned},
+    scene::{LinkChange, Scene, SceneLinkData, SceneNode},
+};
 use concerto_ui::theme::UITheme;
 use concerto_window::input::{GamepadButton, Input, KeyCode, MouseButton, PhysicalKey};
 use glam::{Vec2, Vec3};
@@ -2700,10 +2703,46 @@ fn load_the_note(server: Res<AssetServer>, mut cmd: CommandQueue) {
     cmd.insert_resource(NoteLoad(server.load::<Note>(AssetId::from_path(NOTE))));
 }
 
+#[derive(Resource, Default)]
+struct SpawnedAt(Option<f32>);
+
+fn note_spawned_placement(
+    mut spawned: EventReader<SceneLinkSpawned>,
+    linked: Query<(&LinkedNode, &GlobalTransform)>,
+    mut at: ResMut<SpawnedAt>,
+) {
+    for event in spawned.read() {
+        if at.0.is_none() {
+            at.0 = linked
+                .iter()
+                .find(|(node, _)| node.link == event.link)
+                .map(|(_, global)| global.translation().x);
+        }
+    }
+}
+
 fn noted_game(app: &mut App) {
     game(app);
     app.register_asset::<Note>()
-        .add_system(Startup, load_the_note.at_edit_time());
+        .insert_resource(SpawnedAt::default())
+        .add_system(Startup, load_the_note.at_edit_time())
+        .add_system(
+            LateUpdate,
+            note_spawned_placement
+                .after(propagate_global_transforms)
+                .at_edit_time(),
+        );
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct SpawnedPlacement {}
+
+fn spawned_placement(mut calls: ToolCalls<SpawnedPlacement>, at: EditWorld<Res<SpawnedAt>>) {
+    for (_, reply) in calls.read() {
+        reply.ok(at
+            .0
+            .map_or_else(|| "none".to_owned(), |x| format!("{x:.2}")));
+    }
 }
 
 fn write_note(root: &Path, text: &str) {
@@ -2759,13 +2798,18 @@ fn reimported(
     }
 }
 
-fn link_of(file: &[u8]) -> (Vec<String>, SceneLinkData) {
+struct SavedLevel {
+    names: Vec<String>,
+    link: SceneLinkData,
+}
+
+fn saved_level(file: &[u8]) -> SavedLevel {
     let (_, level) = decode_content_asset::<Scene>(file).unwrap();
     let names = level.nodes.iter().map(|node| node.name.clone()).collect();
     let mut links = level.nodes.into_iter().filter_map(|node| node.link);
     let link = links.next().expect("one link node");
     assert!(links.next().is_none(), "one link node");
-    (names, link)
+    SavedLevel { names, link }
 }
 
 fn added_gain(link: &SceneLinkData) -> f32 {
@@ -2780,6 +2824,7 @@ fn added_gain(link: &SceneLinkData) -> f32 {
 
 struct Links {
     placed: String,
+    spawned_at: String,
     top: String,
     expanded: String,
     own: String,
@@ -2809,6 +2854,10 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             .add_tool::<NoteText, _>(
                 McpTool::read_only("note_text").needs(Needs::Scene),
                 note_text,
+            )
+            .add_tool::<SpawnedPlacement, _>(
+                McpTool::read_only("spawned_placement").needs(Needs::Scene),
+                spawned_placement,
             );
     };
     let Some(served) = serve_with(
@@ -2818,7 +2867,12 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         add_tools,
         move |client| async move {
             open(&client).await;
-            let placed = ok_with(&client, "place_asset", json!({ "asset": PROPS })).await;
+            let placed = ok_with(
+                &client,
+                "place_asset",
+                json!({ "asset": PROPS, "position": [5.0, 0.0, 0.0] }),
+            )
+            .await;
             let link = placed.rsplit(' ').next().unwrap().to_owned();
             let at = |path: &str| format!("{link}/{path}");
             let expanded = until_with(&client, "scene_tree", json!({ "root": link }), |tree| {
@@ -2826,6 +2880,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             })
             .await;
             let top = ok(&client, "scene_tree").await;
+            let spawned_at = ok(&client, "spawned_placement").await;
             ok_with(
                 &client,
                 "add_component",
@@ -2913,6 +2968,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             client.cancel().await.unwrap();
             Links {
                 placed,
+                spawned_at,
                 top,
                 expanded,
                 own,
@@ -2935,6 +2991,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
 
     let Links {
         placed,
+        spawned_at,
         top,
         expanded,
         own,
@@ -2951,6 +3008,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         itself,
     } = served.result;
     assert!(placed.starts_with("placed props as entity "), "{placed}");
+    assert_eq!(spawned_at, "5.00");
     let link_rows: Vec<&str> = top
         .lines()
         .filter(|line| line.contains("[link → "))
@@ -2974,7 +3032,10 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         );
     }
     assert_eq!(saved, "Saved content/level.gasset.");
-    let (names, saved_link) = link_of(&saved_file);
+    let SavedLevel {
+        names,
+        link: saved_link,
+    } = saved_level(&saved_file);
     assert_eq!(saved_link.scene, props_id);
     assert_eq!(saved_link.changes.len(), 3, "{:?}", saved_link.changes);
     assert_eq!(added_gain(&saved_link), 2.5);
@@ -2994,7 +3055,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
     }));
     assert_eq!(removed, "Removed change 1 from props.");
     assert_eq!(kept["components"][0]["name"], "Light", "{kept}");
-    let (_, resaved_link) = link_of(&resaved_file);
+    let resaved_link = saved_level(&resaved_file).link;
     assert_eq!(resaved_link.changes.len(), 2, "{:?}", resaved_link.changes);
     assert_eq!(added_gain(&resaved_link), 2.5);
     let changes = reloaded["changes"].as_array().unwrap();

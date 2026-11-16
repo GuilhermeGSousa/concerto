@@ -201,24 +201,33 @@ pub(crate) struct SpawnLinks {
 
 impl Signal for SpawnLinks {}
 
-pub(crate) fn request_link_spawns(
+pub(crate) fn wait_for_reloaded_scenes(
     mut loaded: EventReader<AssetLoaded<Scene>>,
-    links: Query<(Entity, &mut SceneLink, &mut SceneLinkState)>,
+    links: Query<(&SceneLink, &mut SceneLinkState)>,
+) {
+    let reloaded: Vec<AssetId> = loaded.read().map(|event| event.id).collect();
+    if reloaded.is_empty() {
+        return;
+    }
+    for (link, mut state) in links.iter() {
+        if **state != SceneLinkState::Waiting && reloaded.contains(&link.scene.id()) {
+            **state = SceneLinkState::Waiting;
+        }
+    }
+}
+
+pub(crate) fn request_link_spawns(
+    links: Query<(Entity, &mut SceneLink, &SceneLinkState)>,
     scenes: Res<AssetStore<Scene>>,
     server: Option<Res<AssetServer>>,
     mut cmd: CommandQueue,
 ) {
-    let reloaded: Vec<AssetId> = loaded.read().map(|event| event.id).collect();
     let mut ready = Vec::new();
-    for (entity, mut link, mut state) in links.iter() {
+    for (entity, mut link, state) in links.iter() {
         if let (AssetHandle::Weak(..), Some(server)) = (&link.scene, server.as_deref()) {
             link.scene = server.load::<Scene>(link.scene.id());
         }
-        let waiting = matches!(*state, SceneLinkState::Waiting);
-        if !waiting && reloaded.contains(&link.scene.id()) {
-            **state = SceneLinkState::Waiting;
-        }
-        if matches!(*state, SceneLinkState::Waiting) && scenes.get(&link.scene).is_some() {
+        if *state == SceneLinkState::Waiting && scenes.get(&link.scene).is_some() {
             ready.push(entity);
         }
     }
