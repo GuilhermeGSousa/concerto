@@ -98,19 +98,6 @@ impl Asset for Scene {
         "Scene"
     }
 
-    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
-        match version {
-            1 => {
-                let old: legacy::SceneV1 = bincode::deserialize(payload)?;
-                Ok(old.into())
-            }
-            _ => anyhow::bail!(
-                "Scene version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
-                Self::FORMAT_VERSION
-            ),
-        }
-    }
-
     fn referenced_sub_assets(&self) -> Vec<AssetId> {
         let mut ids = self.referenced_assets.clone();
         for link in self.nodes.iter().filter_map(|node| node.link.as_ref()) {
@@ -136,47 +123,5 @@ impl LoadableAsset for Scene {}
 impl PlaceableAsset for Scene {
     fn place(_asset: &Self, handle: AssetHandle<Self>, entity: Entity, cmd: &mut CommandQueue) {
         cmd.insert(crate::link::SceneLink::new(handle), entity);
-    }
-}
-
-mod legacy {
-    use concerto_foundation::assets::AssetId;
-    use serde::Deserialize;
-
-    use super::{Scene, SceneNode, SerializedComponent};
-    use crate::node_id::{derive_ids, NodeId};
-
-    #[derive(Deserialize)]
-    struct SceneNodeV1 {
-        name: String,
-        children: Vec<usize>,
-        components: Vec<SerializedComponent>,
-    }
-
-    #[derive(Deserialize)]
-    pub(super) struct SceneV1 {
-        nodes: Vec<SceneNodeV1>,
-        referenced_assets: Vec<AssetId>,
-    }
-
-    impl From<SceneV1> for Scene {
-        fn from(old: SceneV1) -> Self {
-            let mut nodes: Vec<SceneNode> = old
-                .nodes
-                .into_iter()
-                .map(|node| SceneNode {
-                    id: NodeId::default(),
-                    name: node.name,
-                    children: node.children,
-                    components: node.components,
-                    link: None,
-                })
-                .collect();
-            derive_ids(&mut nodes);
-            Self {
-                nodes,
-                referenced_assets: old.referenced_assets,
-            }
-        }
     }
 }

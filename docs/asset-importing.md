@@ -550,11 +550,11 @@ type name and reflected fields. A clip makes its events live when it loads; an
 event whose type is not registered with `register_clip_event`, or whose stored
 value leaves a warning, is dropped with a warning naming the clip and the type.
 
-`Scene` is at version 2, which adds `link` to each node: `None`, or the
-`AssetId` of a linked scene and the changes made to its nodes. Its `migrate`
-reads a version-1 payload through `legacy::SceneV1`
-(`crates/scene/src/scene.rs`) as a scene with no links. `Scene.v1.bin` stays,
-with a test that decodes it.
+`Scene` is at version 2, which gives each node an `id` and adds `link`:
+`None`, or the `AssetId` of a linked scene and the changes made to its nodes.
+It has no migration: a Scene file before version 2 is refused, so an imported
+scene must be re-imported from its source, and one authored in the editor
+re-created.
 
 The editor reports outdated files when the first scene of a project opens.
 It compares each entry's `kind_version` with the `FORMAT_VERSION` that the
