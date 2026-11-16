@@ -13,6 +13,7 @@ use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_reflect::Reflect;
+use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use serde::Deserialize;
@@ -215,6 +216,7 @@ fn build_scene(bvh: &Bvh, skeleton: &Skeleton, skeleton_id: AssetId) -> Result<S
     let mut nodes: Vec<SceneNode> = Vec::with_capacity(bvh.joints.len());
     for (index, joint) in bvh.joints.iter().enumerate() {
         let mut node = SceneNode {
+            id: NodeId::default(),
             name: joint.name.clone(),
             children: Vec::new(),
             components: Vec::new(),
@@ -244,6 +246,7 @@ fn build_scene(bvh: &Bvh, skeleton: &Skeleton, skeleton_id: AssetId) -> Result<S
             nodes[parent].children.push(index);
         }
     }
+    derive_ids(&mut nodes);
     Ok(Scene {
         nodes,
         referenced_assets: vec![skeleton_id],

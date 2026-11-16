@@ -15,6 +15,7 @@ use concerto_ecs::{
 use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_scene::node_id::NodeId;
 use concerto_scene::{
     capture::{capture_scene, capture_subtree},
     link::{
@@ -49,6 +50,7 @@ fn hear(mut spawned: EventReader<SceneLinkSpawned>, mut heard: ResMut<Heard>) {
 
 fn node(name: &str, children: Vec<usize>) -> SceneNode {
     let mut node = SceneNode {
+        id: NodeId::from_name_path(name),
         name: name.into(),
         children,
         components: vec![],

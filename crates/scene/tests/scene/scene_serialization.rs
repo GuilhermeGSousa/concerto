@@ -5,6 +5,7 @@ use concerto_foundation::assets::content::{
 };
 use concerto_foundation::assets::AssetId;
 use concerto_reflect::ReflectedValue;
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent};
 
 fn encoding_dir() -> &'static Path {
@@ -37,12 +38,14 @@ fn team() -> SerializedComponent {
 fn version_1_nodes() -> Vec<SceneNode> {
     vec![
         SceneNode {
+            id: NodeId::from_name_path("root"),
             name: "root".to_string(),
             children: vec![1],
             components: vec![],
             link: None,
         },
         SceneNode {
+            id: NodeId::from_name_path("root/child"),
             name: "child".to_string(),
             children: vec![],
             components: vec![health(), team()],
@@ -55,6 +58,7 @@ fn version_1_nodes() -> Vec<SceneNode> {
 fn scene_encoding_matches_its_fixture() {
     let mut nodes = version_1_nodes();
     nodes.push(SceneNode {
+        id: NodeId(7),
         name: "manor_art".to_string(),
         children: vec![],
         components: vec![],
@@ -102,6 +106,7 @@ fn a_version_1_scene_still_decodes() {
     let expected = version_1_nodes();
     assert_eq!(scene.nodes.len(), expected.len());
     for (node, expected) in scene.nodes.iter().zip(&expected) {
+        assert_eq!(node.id, expected.id);
         assert_eq!(node.name, expected.name);
         assert_eq!(node.children, expected.children);
         assert_eq!(node.components, expected.components);

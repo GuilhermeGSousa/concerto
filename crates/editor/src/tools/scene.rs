@@ -137,10 +137,12 @@ mod tests {
     use concerto_ecs::component::name::Name;
     use concerto_foundation::assets::handle::AssetHandle;
     use concerto_mesh::mesh::MeshComponent;
+    use concerto_scene::node_id::NodeId;
     use concerto_scene::scene::SceneNode;
 
     fn node(name: &str, children: Vec<usize>) -> SceneNode {
         SceneNode {
+            id: NodeId::from_name_path(name),
             name: name.into(),
             children,
             components: vec![],

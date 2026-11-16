@@ -3,6 +3,7 @@ use concerto_ecs::{command::CommandQueue, component::name::Name, entity::Entity,
 use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle};
 
 use crate::link::SceneLink;
+use crate::node_id::SceneNodeId;
 use crate::scene::{Scene, SceneLinkData};
 
 /// Nodes and components a spawn leaves out; the default leaves out nothing.
@@ -79,7 +80,9 @@ pub fn spawn_scene(
     for (index, node) in scene.nodes.iter().enumerate() {
         node_entities.push(match skipped[index] {
             true => cmd.spawn(()).entity(),
-            false => cmd.spawn(Name::new(node.name.clone())).entity(),
+            false => cmd
+                .spawn((Name::new(node.name.clone()), SceneNodeId(node.id)))
+                .entity(),
         });
     }
 
@@ -152,7 +155,7 @@ pub fn spawn_scene_in_world(
         .enumerate()
         .map(|(index, node)| match skipped[index] {
             true => world.spawn(()),
-            false => world.spawn(Name::new(node.name.clone())),
+            false => world.spawn((Name::new(node.name.clone()), SceneNodeId(node.id))),
         })
         .collect();
 

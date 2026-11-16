@@ -275,6 +275,7 @@ mod tests {
     use concerto_mcp::{McpPlugin, spawn_server};
     use concerto_mesh::Mesh;
     use concerto_render::components::camera::Camera;
+    use concerto_scene::node_id::NodeId;
     use concerto_scene::scene::{Scene, SceneNode};
     use concerto_ui::{
         interaction::UIInputState,
@@ -464,6 +465,7 @@ mod tests {
         let dir = directory.path();
         let mut registry = AssetRegistry::new();
         let node = |name: &str| SceneNode {
+            id: NodeId::from_name_path(name),
             name: name.into(),
             children: vec![],
             components: vec![],

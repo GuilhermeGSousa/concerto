@@ -1,7 +1,7 @@
 mod capture_scene;
 mod glam_encoding;
-mod link_path;
 mod links;
+mod node_id;
 mod place_assets;
 mod scene_serialization;
 mod scene_skeleton;

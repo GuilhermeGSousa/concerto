@@ -63,6 +63,7 @@ use concerto_render::{
 };
 use concerto_scene::{
     link::{LinkedNode, SceneLinkSpawned},
+    node_id::NodeId,
     scene::{LinkChange, Scene, SceneLinkData, SceneNode},
 };
 use concerto_ui::theme::UITheme;
@@ -521,6 +522,7 @@ impl Fixture {
         let fixture = Self::without_a_scene();
         let node = |name: &str, children: Vec<usize>| {
             let mut node = SceneNode {
+                id: NodeId::from_name_path(name),
                 name: name.into(),
                 children,
                 components: vec![],
@@ -551,6 +553,7 @@ impl Fixture {
 
     fn add_scene(&self, address: &str) -> AssetId {
         let mut node = SceneNode {
+            id: NodeId::from_name_path("Crate"),
             name: "Crate".into(),
             children: vec![],
             components: vec![],
@@ -2670,6 +2673,7 @@ const LOOP: &str = "content/loop.gasset";
 
 fn plain_node(name: &str) -> SceneNode {
     let mut node = SceneNode {
+        id: NodeId::from_name_path(name),
         name: name.into(),
         children: vec![],
         components: vec![],

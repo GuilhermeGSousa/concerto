@@ -12,6 +12,7 @@ use concerto_foundation::assets::{
     asset_server::AssetServer, content::save_content_asset_into, registry::AssetRegistry, AssetId,
 };
 use concerto_foundation::transform::Transform;
+use concerto_scene::node_id::NodeId;
 use concerto_scene::{
     link::SceneLinkState,
     plugin::ScenePlugin,
@@ -21,6 +22,7 @@ use glam::Vec3;
 
 fn node(name: &str, children: Vec<usize>, x: f32) -> SceneNode {
     let mut node = SceneNode {
+        id: NodeId::from_name_path(name),
         name: name.to_string(),
         children,
         components: vec![],

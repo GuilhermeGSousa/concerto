@@ -25,6 +25,7 @@ use concerto_navigation::{
 };
 use concerto_physics::{collider::BoxCollider, sensor::Sensor, shape::MeshCollider};
 use concerto_reflect::Reflect;
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Affine3A, Quat, Vec2, Vec3};
 
@@ -135,6 +136,7 @@ fn app() -> App {
 
 fn placed(name: &str, transform: Transform, children: Vec<usize>) -> SceneNode {
     let mut node = SceneNode {
+        id: NodeId::from_name_path(name),
         name: name.to_owned(),
         children,
         components: Vec::new(),

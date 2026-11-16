@@ -16,6 +16,7 @@ use concerto_mesh::vertex::Vertex;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
+use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 
 pub struct ObjImporter;
@@ -50,6 +51,7 @@ impl Importer for ObjImporter {
         let mut referenced_assets: Vec<AssetId> = Vec::new();
         for (index, model) in models.iter().enumerate() {
             let mut node = SceneNode {
+                id: NodeId::default(),
                 name: model.name.clone(),
                 children: vec![],
                 components: Vec::new(),
@@ -79,6 +81,7 @@ impl Importer for ObjImporter {
 
             nodes.push(node);
         }
+        derive_ids(&mut nodes);
 
         ctx.emit(
             "scene",

@@ -8,12 +8,14 @@ use concerto_foundation::assets::AssetId;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_reflect::to_value;
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 use concerto_scene::spawner::{spawn_scene_in_world, SpawnFilter};
 use glam::Vec3;
 
 fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) -> SceneNode {
     SceneNode {
+        id: NodeId::from_name_path(name),
         name: name.to_string(),
         children,
         components,

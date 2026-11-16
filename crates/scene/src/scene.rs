@@ -5,6 +5,8 @@ use concerto_foundation::assets::{
 use concerto_reflect::{Reflect, ReflectedValue};
 use serde::{Deserialize, Serialize};
 
+use crate::node_id::NodeId;
+
 /// One component as scene data: the registry key it was registered under plus
 /// its reflected value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -13,13 +15,15 @@ pub struct SerializedComponent {
     pub value: ReflectedValue,
 }
 
-/// One node in a [`Scene`]: a name, the indices of its children within
+/// One node in a [`Scene`]: an id, a name, the indices of its children within
 /// `Scene::nodes`, and the list of components authored onto it. Every
 /// runtime concern (transform, mesh, material, camera, light, ...) is carried
 /// as a [`SerializedComponent`]; the spawner applies them generically through
 /// the component registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneNode {
+    /// Names this node within its scene, whatever its name or index.
+    pub id: NodeId,
     pub name: String,
     /// Indices into `Scene::nodes`.
     pub children: Vec<usize>,
@@ -139,6 +143,7 @@ mod legacy {
     use serde::Deserialize;
 
     use super::{Scene, SceneNode, SerializedComponent};
+    use crate::node_id::{derive_ids, NodeId};
 
     #[derive(Deserialize)]
     struct SceneNodeV1 {
@@ -155,17 +160,20 @@ mod legacy {
 
     impl From<SceneV1> for Scene {
         fn from(old: SceneV1) -> Self {
+            let mut nodes: Vec<SceneNode> = old
+                .nodes
+                .into_iter()
+                .map(|node| SceneNode {
+                    id: NodeId::default(),
+                    name: node.name,
+                    children: node.children,
+                    components: node.components,
+                    link: None,
+                })
+                .collect();
+            derive_ids(&mut nodes);
             Self {
-                nodes: old
-                    .nodes
-                    .into_iter()
-                    .map(|node| SceneNode {
-                        name: node.name,
-                        children: node.children,
-                        components: node.components,
-                        link: None,
-                    })
-                    .collect(),
+                nodes,
                 referenced_assets: old.referenced_assets,
             }
         }

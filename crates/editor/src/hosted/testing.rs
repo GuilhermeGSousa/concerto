@@ -29,6 +29,7 @@ use concerto_foundation::{
     },
     transform::Transform,
 };
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
 use concerto_ui::{focus::FocusedWidget, node::UINode, theme::UITheme};
 use concerto_window::{
@@ -283,6 +284,7 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
         .iter()
         .map(|name| {
             let mut node = SceneNode {
+                id: NodeId::from_name_path(name),
                 name: (*name).into(),
                 children: vec![],
                 components: vec![],

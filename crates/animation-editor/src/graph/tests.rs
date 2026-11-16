@@ -40,6 +40,7 @@ use concerto_mcp::host::run_with;
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_render::gpu::Gpu;
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::Mat4;
 use rmcp::{
@@ -762,6 +763,7 @@ fn write_stage(root: &Path) -> AssetId {
         save_content_asset_into(&skeleton, root, "content/skeleton.gasset", &mut registry).unwrap();
     let node = |name: &str, children: Vec<usize>| {
         let mut node = SceneNode {
+            id: NodeId::from_name_path(name),
             name: name.into(),
             children,
             components: vec![],

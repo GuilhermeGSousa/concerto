@@ -29,6 +29,7 @@ use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
+use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
@@ -496,6 +497,7 @@ impl Importer for GltfImporter {
         let mut referenced_assets: Vec<AssetId> = Vec::new();
         for gltf_node in document.nodes() {
             let mut scene_node = SceneNode {
+                id: NodeId::default(),
                 name: gltf_node.name().map(str::to_string).unwrap_or_default(),
                 children: gltf_node.children().map(|c| c.index()).collect(),
                 components: Vec::new(),
@@ -600,6 +602,7 @@ impl Importer for GltfImporter {
 
             nodes.push(scene_node);
         }
+        derive_ids(&mut nodes);
 
         for gltf_node in document.nodes() {
             let Some(gltf_mesh) = gltf_node.mesh() else {
@@ -646,6 +649,7 @@ impl Importer for GltfImporter {
                             ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
 
                         let mut child = SceneNode {
+                            id: nodes[node_index].id.primitive(k),
                             name: format!("{node_name}.primitive{k}"),
                             children: Vec::new(),
                             components: Vec::new(),

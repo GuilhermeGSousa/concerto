@@ -395,6 +395,7 @@ mod tests {
     };
     use concerto_mesh::Vertex;
     use concerto_scene::{
+        node_id::NodeId,
         plugin::ScenePlugin,
         scene::{Scene, SceneNode},
     };
@@ -444,6 +445,7 @@ mod tests {
 
     fn node(name: &str) -> SceneNode {
         SceneNode {
+            id: NodeId::from_name_path(name),
             name: name.into(),
             children: vec![],
             components: vec![],

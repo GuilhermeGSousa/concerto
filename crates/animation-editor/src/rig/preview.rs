@@ -585,6 +585,7 @@ mod tests {
     use concerto_editor::{hosted::testing::plain_recipe, preview::PreviewPlugin};
     use concerto_foundation::{assets::handle::AssetHandle, transform::Transform};
     use concerto_mesh::skeleton::SkeletonComponent;
+    use concerto_scene::node_id::NodeId;
     use concerto_scene::scene::SceneNode;
     use glam::{Mat4, Quat, Vec3};
     use uuid::Uuid;
@@ -675,6 +676,7 @@ mod tests {
     fn scene_of(skeleton_id: AssetId) -> Scene {
         let node = |name: &str, children: Vec<usize>| {
             let mut node = SceneNode {
+                id: NodeId::from_name_path(name),
                 name: name.into(),
                 children,
                 components: vec![],

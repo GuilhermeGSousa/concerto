@@ -12,6 +12,7 @@ use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_gltf::gltf_importer::GltfImporter;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
 use concerto_reflect::{Reflect, apply_value};
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 
 fn decode<T: Reflect + Default>(component: &SerializedComponent) -> T {
@@ -201,14 +202,20 @@ fn a_multi_primitive_mesh_becomes_a_parent_with_one_child_per_primitive() {
 
     let parent = &scene.nodes[0];
     assert_eq!(parent.name, "Triangle");
+    assert_eq!(parent.id, NodeId::from_name_path("Triangle"));
     assert!(mesh_handle_id(parent).is_none());
     assert!(!has_component_ending_in(parent, "MaterialComponent"));
     assert_eq!(parent.children, vec![1, 2]);
 
-    for (child, address) in scene.nodes[1..].iter().zip([
-        "triangle_two_prims.gltf#mesh/0",
-        "triangle_two_prims.gltf#mesh/1",
-    ]) {
+    for (k, (child, address)) in scene.nodes[1..]
+        .iter()
+        .zip([
+            "triangle_two_prims.gltf#mesh/0",
+            "triangle_two_prims.gltf#mesh/1",
+        ])
+        .enumerate()
+    {
+        assert_eq!(child.id, parent.id.primitive(k));
         assert!(child.children.is_empty());
         assert!(has_component_ending_in(child, "MaterialComponent"));
         assert_eq!(mesh_handle_id(child), Some(AssetId::from_path(address)));

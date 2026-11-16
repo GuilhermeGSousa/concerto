@@ -15,6 +15,7 @@ use concerto_reflect::{
 use log::warn;
 
 use crate::link::{find_linked, owning_link, LinkParent, LinkedNode, SceneLink};
+use crate::node_id::{derive_missing_ids, NodeId, SceneNodeId};
 use crate::scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent};
 
 /// Reads every descendant of `root` back into a [`Scene`]; the inverse of
@@ -118,12 +119,22 @@ fn capture(world: &World, roots: Vec<Entity>) -> anyhow::Result<Scene> {
         );
     }
     let mut capture = SceneCapture::new(collector.indices);
+    let kept: Vec<Option<NodeId>> = collector
+        .nodes
+        .iter()
+        .map(|collected| {
+            world
+                .get_component_for_entity::<SceneNodeId>(collected.entity)
+                .map(|id| id.0)
+        })
+        .collect();
 
-    let nodes = collector
+    let mut nodes = collector
         .nodes
         .into_iter()
         .map(|collected| capture_node(world, collected, &mut capture))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    derive_missing_ids(&mut nodes, &kept);
 
     Ok(Scene {
         nodes,
@@ -189,6 +200,7 @@ fn capture_node(
     };
 
     Ok(SceneNode {
+        id: NodeId::default(),
         name,
         children: collected.children,
         components,

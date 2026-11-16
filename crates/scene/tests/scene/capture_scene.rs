@@ -10,6 +10,7 @@ use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_reflect::{apply_value, to_value, Reflect, ReflectedValue};
 use concerto_render::components::camera::Camera;
 use concerto_scene::capture::{capture_scene, capture_subtree};
+use concerto_scene::node_id::{NodeId, SceneNodeId};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world, SpawnFilter};
 use glam::Vec3;
@@ -34,6 +35,7 @@ fn transform(x: f32) -> Transform {
 
 fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) -> SceneNode {
     SceneNode {
+        id: NodeId(name.len() as u64),
         name: name.into(),
         children,
         components,
@@ -62,6 +64,7 @@ struct Stored {
 
 #[derive(Debug, PartialEq)]
 struct Comparable {
+    id: NodeId,
     name: String,
     children: Vec<usize>,
     components: Vec<Stored>,
@@ -72,6 +75,7 @@ fn comparable(scene: &Scene) -> Vec<Comparable> {
         .nodes
         .iter()
         .map(|node| Comparable {
+            id: node.id,
             name: node.name.clone(),
             children: node.children.clone(),
             components: node
@@ -103,17 +107,23 @@ fn spawn(world: &mut World, scene: Scene) -> Entity {
 }
 
 #[test]
-fn the_root_is_not_a_node_and_unnamed_entities_get_an_empty_name() {
+fn the_root_is_not_a_node_and_unnamed_entities_get_an_empty_name_and_a_unique_id() {
     let mut world = world();
     let root = world.spawn((Transform::IDENTITY, Name::new("wrapper")));
     let child = world.spawn(transform(5.0));
+    let kept = NodeId::from_name_path("#0");
+    let holder = world.spawn((Name::new("holder"), SceneNodeId(kept)));
     world.entity_mut(root).add_child(child);
+    world.entity_mut(root).add_child(holder);
 
     let captured = capture_scene(&world, root).unwrap();
 
-    assert_eq!(captured.nodes.len(), 1);
+    assert_eq!(captured.nodes.len(), 2);
     assert_eq!(captured.nodes[0].name, "");
     assert_eq!(captured.nodes[0].components[0].type_name, Transform::name());
+    assert_eq!(captured.nodes[1].id, kept);
+    assert_ne!(captured.nodes[0].id, kept);
+    assert!(captured.nodes[1].components.is_empty());
 }
 
 #[test]
