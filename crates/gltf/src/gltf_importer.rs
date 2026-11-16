@@ -200,6 +200,7 @@ impl Importer for GltfImporter {
                 },
                 kind: TextureKind::Sampled,
                 data: rgba.into_raw(),
+                mips: Vec::new(),
             };
             ctx.emit(&texture_name(key.image_index, key.srgb), &texture)?;
         }

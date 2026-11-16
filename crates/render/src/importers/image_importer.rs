@@ -29,6 +29,7 @@ impl Importer for ImageImporter {
             format: wgpu_types::TextureFormat::Rgba8UnormSrgb,
             kind: TextureKind::Sampled,
             data: img.to_rgba8().into_raw(),
+            mips: Vec::new(),
         };
 
         ctx.emit("main", &texture)

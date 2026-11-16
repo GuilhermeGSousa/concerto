@@ -67,6 +67,10 @@ The import picks the importer by file extension:
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
 | `.ogg` `.wav`        | `AudioImporter` | one `main` audio clip                             |
 
+A texture's `.gasset` holds only its full-size pixels. When it loads, the
+texture builds its mip chain from them, averaging sRGB colour in linear space,
+and the renderer samples the chain trilinearly with 16× anisotropic filtering.
+
 ### `content.toml`
 
 Optional, at the project root. The import, the editor's scan, and

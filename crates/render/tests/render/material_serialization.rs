@@ -42,6 +42,7 @@ fn texture_encoding_matches_its_fixture() {
         format: TextureFormat::Rgba8Unorm,
         kind: TextureKind::RenderTarget,
         data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        mips: Vec::new(),
     };
 
     check_encoding(&texture, encoding_dir());
