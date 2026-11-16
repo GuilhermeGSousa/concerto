@@ -2665,22 +2665,35 @@ fn an_imports_scene_is_read_only_and_is_placed_in_an_authored_scene() {
 
 const PROPS: &str = "content/props.gasset";
 const NOTE: &str = "content/note.gasset";
+const WORLD: &str = "content/world.gasset";
+const LOOP: &str = "content/loop.gasset";
+
+fn plain_node(name: &str) -> SceneNode {
+    let mut node = SceneNode {
+        name: name.into(),
+        children: vec![],
+        components: vec![],
+        link: None,
+    };
+    node.push_component(&Transform::IDENTITY).unwrap();
+    node
+}
+
+fn moved_props() -> Scene {
+    let mut scene = props("Pillar");
+    scene.nodes.swap(1, 2);
+    scene.nodes[1].components.clear();
+    scene.nodes[1]
+        .push_component(&Transform::from_translation(Vec3::new(3.0, 0.0, 0.0)))
+        .unwrap();
+    scene
+}
 
 fn props(anchor: &str) -> Scene {
-    let node = |name: &str| {
-        let mut node = SceneNode {
-            name: name.into(),
-            children: vec![],
-            components: vec![],
-            link: None,
-        };
-        node.push_component(&Transform::IDENTITY).unwrap();
-        node
-    };
-    let mut lantern = node("Lantern");
+    let mut lantern = plain_node("Lantern");
     lantern.push_component(&Light::point_light()).unwrap();
     Scene {
-        nodes: vec![node(anchor), lantern, node("Helper")],
+        nodes: vec![plain_node(anchor), lantern, plain_node("Helper")],
         referenced_assets: vec![],
     }
 }
@@ -2839,6 +2852,13 @@ struct Links {
     after_reload: String,
     note: String,
     itself: Value,
+    nested_tree: String,
+    nested: Value,
+    inner_removal: Value,
+    world_file: Vec<u8>,
+    refused_tree: String,
+    refused_link: Value,
+    reaching: Value,
 }
 
 #[test]
@@ -2848,6 +2868,31 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
     let props_id = AssetId::new();
     write_scene(&root, PROPS, props_id, &props("Anchor"));
     write_note(&root, "first");
+    write_scene(
+        &root,
+        WORLD,
+        AssetId::new(),
+        &Scene {
+            nodes: vec![plain_node("Ground")],
+            referenced_assets: vec![],
+        },
+    );
+    let loop_id = AssetId::new();
+    let mut again = plain_node("again");
+    again.link = Some(SceneLinkData {
+        scene: loop_id,
+        changes: vec![],
+    });
+    write_scene(
+        &root,
+        LOOP,
+        loop_id,
+        &Scene {
+            nodes: vec![again],
+            referenced_assets: vec![],
+        },
+    );
+    let level_id = fixture.scene;
     let log = Log::default();
     let add_tools = |app: &mut App| {
         app.add_tool::<Reimported, _>(McpTool::new("reimported"), reimported)
@@ -2947,7 +2992,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             .await;
             ok(&client, "save").await;
             let resaved_file = std::fs::read(root.join("content/level.gasset")).unwrap();
-            write_scene(&root, PROPS, props_id, &props("Pillar"));
+            write_scene(&root, PROPS, props_id, &moved_props());
             write_note(&root, "second");
             ok(&client, "reimported").await;
             let reloaded = until_with(
@@ -2965,6 +3010,65 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
                 json!({ "asset": "content/level.gasset" }),
             )
             .await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": WORLD, "unsaved": "discard" }),
+            )
+            .await;
+            until(&client, "scene_tree", |tree| tree.contains(" Ground ")).await;
+            let placed_level = ok_with(
+                &client,
+                "place_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            let level_link = placed_level.rsplit(' ').next().unwrap().to_owned();
+            let nested_tree = until_with(
+                &client,
+                "scene_tree",
+                json!({ "root": format!("{level_link}/props") }),
+                |tree| tree.contains("(linked) props/Lantern"),
+            )
+            .await;
+            ok_with(
+                &client,
+                "add_component",
+                json!({ "entity": format!("{level_link}/props/Lantern"), "component": "editor::mcp::Samples" }),
+            )
+            .await;
+            let nested = ok_with(&client, "inspect", json!({ "entity": level_link })).await;
+            let inner_removal = error_with(
+                &client,
+                "remove_link_change",
+                json!({ "entity": format!("{level_link}/props"), "index": 0 }),
+            )
+            .await;
+            ok(&client, "save").await;
+            let world_file = std::fs::read(root.join(WORLD)).unwrap();
+            let placed_loop = ok_with(&client, "place_asset", json!({ "asset": LOOP })).await;
+            let loop_link = placed_loop.rsplit(' ').next().unwrap().to_owned();
+            let refused_tree = until_with(
+                &client,
+                "scene_tree",
+                json!({ "root": loop_link }),
+                |tree| tree.contains(" — refused: "),
+            )
+            .await;
+            let refused_link = ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": format!("{loop_link}/again") }),
+            )
+            .await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset", "unsaved": "discard" }),
+            )
+            .await;
+            until(&client, "scene_tree", |tree| tree.contains("[link → ")).await;
+            let reaching = error_with(&client, "place_asset", json!({ "asset": WORLD })).await;
             client.cancel().await.unwrap();
             Links {
                 placed,
@@ -2983,6 +3087,13 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
                 after_reload,
                 note,
                 itself,
+                nested_tree,
+                nested: serde_json::from_str(&nested).unwrap(),
+                inner_removal,
+                world_file,
+                refused_tree,
+                refused_link: serde_json::from_str(&refused_link).unwrap(),
+                reaching,
             }
         },
     ) else {
@@ -3006,6 +3117,13 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         after_reload,
         note,
         itself,
+        nested_tree,
+        nested,
+        inner_removal,
+        world_file,
+        refused_tree,
+        refused_link,
+        reaching,
     } = served.result;
     assert!(placed.starts_with("placed props as entity "), "{placed}");
     assert_eq!(spawned_at, "5.00");
@@ -3072,6 +3190,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         after_reload.contains(&format!("{own} Entity ")),
         "{after_reload}"
     );
+    assert!(!after_reload.contains("(linked) Helper"), "{after_reload}");
     assert_eq!(note, "second");
     assert_eq!(itself["code"], "refused", "{itself}");
     assert!(
@@ -3080,6 +3199,53 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             .unwrap()
             .contains("a scene cannot link itself"),
         "{itself}"
+    );
+    assert!(
+        nested_tree.contains("(linked) props/Lantern"),
+        "{nested_tree}"
+    );
+    assert_eq!(nested["state"], "spawned", "{nested}");
+    assert_eq!(
+        nested["changes"][0], "0: AddComponent props/Lantern [Samples] — applied",
+        "{nested}"
+    );
+    assert_eq!(inner_removal["code"], "refused", "{inner_removal}");
+    assert!(
+        inner_removal["message"]
+            .as_str()
+            .unwrap()
+            .contains("props is a linked node of content/level.gasset"),
+        "{inner_removal}"
+    );
+    let world_link = saved_level(&world_file).link;
+    assert_eq!(world_link.scene, level_id);
+    assert!(
+        matches!(&world_link.changes[..], [LinkChange::AddComponent { path, .. }] if path == "props/Lantern"),
+        "{:?}",
+        world_link.changes
+    );
+    let refused_row = refused_tree
+        .lines()
+        .find(|line| line.contains(" again [link → content/loop.gasset]"))
+        .unwrap_or_else(|| panic!("{refused_tree}"));
+    assert!(
+        refused_row.contains(" — refused: content/loop.gasset links itself through "),
+        "{refused_tree}"
+    );
+    assert!(
+        refused_link["state"]
+            .as_str()
+            .unwrap()
+            .starts_with("refused: content/loop.gasset links itself"),
+        "{refused_link}"
+    );
+    assert_eq!(reaching["code"], "refused", "{reaching}");
+    assert!(
+        reaching["message"]
+            .as_str()
+            .unwrap()
+            .contains("a scene cannot link itself"),
+        "{reaching}"
     );
 }
 

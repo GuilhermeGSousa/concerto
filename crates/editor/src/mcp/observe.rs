@@ -21,7 +21,7 @@ use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
-use concerto_scene::link::{LinkedNode, SceneLink, owning_link_by, path_from_by};
+use concerto_scene::link::{LinkedNode, SceneLink, SceneLinkState, owning_link_by, path_from_by};
 use image::{ImageFormat, RgbaImage, imageops::FilterType};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -42,7 +42,7 @@ use crate::{
         InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
         listed_paths, shown_paths,
     },
-    links::change_lines,
+    links::{change_lines, link_row, state_text},
     placement::PlaceableKinds,
     project::ProjectState,
     tools::{
@@ -603,7 +603,6 @@ fn outside_open_scene(entity: Entity, entities: &SystemInputData<SceneEntities>)
         .is_err()
 }
 
-/// The entity `id` names: an id such as 42v3, or a link's id and a linked node's path from it, such as 42v3/hall/door.
 pub(crate) fn resolve(
     id: &str,
     entities: &SystemInputData<SceneEntities>,
@@ -661,18 +660,6 @@ fn resolve_id(id: &str, entities: &SystemInputData<SceneEntities>) -> Result<Ent
     }
 }
 
-fn link_row(link: &SceneLink, registry: Option<&AssetRegistry>) -> String {
-    let id = link.scene().id();
-    let scene = registry
-        .and_then(|registry| registry.get(id))
-        .map_or_else(|| id.simple_hex(), |entry| entry.address.clone());
-    let changes = match link.changes().len() {
-        1 => "1 change".to_owned(),
-        count => format!("{count} changes"),
-    };
-    format!("[link → {scene}] ({changes})")
-}
-
 fn scene_tree(
     mut calls: ToolCalls<SceneTree>,
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
@@ -682,7 +669,7 @@ fn scene_tree(
     entities: EditWorld<SceneEntities>,
     components: EditWorld<ComponentMetadata>,
     documents: StaticSystemInput<EditTargetDocument>,
-    links: EditWorld<Query<&SceneLink>>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
     registry: Option<Res<AssetRegistry>>,
 ) {
     let Some((document, play)) = documents.iter().next() else {
@@ -697,7 +684,7 @@ fn scene_tree(
     let link = |entity| {
         links
             .get_entity(entity)
-            .map(|link| link_row(link, registry.as_deref()))
+            .map(|(link, state)| link_row(link, state, registry.as_deref()))
     };
     let linked = |entity| {
         owning_link_by(entity, |entity| {
@@ -744,7 +731,7 @@ fn find_entities(
     names: EditWorld<Query<&Name>>,
     components: EditWorld<ComponentMetadata>,
     documents: StaticSystemInput<EditTargetDocument>,
-    links: EditWorld<Query<&SceneLink>>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
     entities: EditWorld<SceneEntities>,
     registry: Option<Res<AssetRegistry>>,
 ) {
@@ -760,7 +747,7 @@ fn find_entities(
     let link = |entity| {
         links
             .get_entity(entity)
-            .map(|link| link_row(link, registry.as_deref()))
+            .map(|(link, state)| link_row(link, state, registry.as_deref()))
     };
     let linked = |entity| {
         owning_link_by(entity, |entity| {
@@ -953,7 +940,7 @@ fn inspect(
     source: EditWorld<InspectionSource>,
     entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
-    links: EditWorld<Query<&SceneLink>>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
     registry: Res<InspectorRegistry>,
 ) {
     for (arguments, reply) in calls.read() {
@@ -961,16 +948,22 @@ fn inspect(
             continue;
         };
         let answer = resolve(entity, &entities).and_then(|entity| {
-            let changes = links
-                .get_entity(entity)
-                .map(|link| change_lines(link, &source.types()));
-            inspection(&source, &registry, &names, entity, &arguments, changes)
+            let link = links.get_entity(entity).map(|(link, state)| LinkLines {
+                state: state_text(state),
+                changes: change_lines(link, state, &source.types()),
+            });
+            inspection(&source, &registry, &names, entity, &arguments, link)
         });
         match answer {
             Ok(text) => reply.ok(text),
             Err(error) => reply.err(error),
         }
     }
+}
+
+struct LinkLines {
+    state: String,
+    changes: Vec<String>,
 }
 
 pub(super) fn names_component(short: &str, full: &str, name: &str) -> bool {
@@ -983,7 +976,7 @@ fn inspection(
     names: &Query<&Name>,
     entity: Entity,
     arguments: &Inspect,
-    changes: Option<Vec<String>>,
+    link: Option<LinkLines>,
 ) -> Result<String, ToolError> {
     let mut carried: Vec<_> = source
         .visible_components(entity)
@@ -1035,8 +1028,9 @@ fn inspection(
         answer.insert("name".into(), name.as_str().into());
     }
     answer.insert("components".into(), components.into());
-    if let Some(changes) = changes {
-        answer.insert("changes".into(), changes.into());
+    if let Some(link) = link {
+        answer.insert("state".into(), link.state.into());
+        answer.insert("changes".into(), link.changes.into());
     }
     Ok(Value::Object(answer).to_string())
 }

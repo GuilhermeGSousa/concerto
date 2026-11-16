@@ -63,9 +63,10 @@ it to an AI agent (below).
   edits components.
 - **Save** with Ctrl+S. A scene an import made belongs to its source and is
   read-only: a save of it is refused. To build on it, make a scene of your own
-  and place the import's scene in it. That copies its nodes, which keep
-  pointing at the import's meshes and materials, so a re-import updates how
-  they look but not which nodes your scene has.
+  and place the import's scene in it. That makes a link: your scene stores
+  which scene it links and the changes you make to the linked nodes, not the
+  nodes themselves, so a re-import updates the nodes, and a change whose node
+  was renamed shows as unapplied.
 - **Play** with the button on the Scene tab, or Ctrl+P. The game is built from
   your recipe and starts in the open scene. Stop returns to the scene exactly
   as it was; changes made while playing are not kept.

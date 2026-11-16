@@ -8,7 +8,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Entity, IntoSystemConfig, Query, Ref, Res, World,
+    Component, Entity, IntoSystemConfig, Query, Ref, Res, World,
     command::CommandQueue,
     component::{name::Name, removed::RemovedComponents},
     entity::{
@@ -31,6 +31,7 @@ use concerto_foundation::assets::{
     AssetId,
     registry::{AssetEntry, AssetRegistry},
 };
+use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, ToolCalls, ToolRegistry};
 use concerto_reflect::TypeRegistry;
 use concerto_scene::{
     link::{
@@ -47,17 +48,20 @@ use concerto_ui::{
 };
 use concerto_window::input::MouseButton;
 use log::warn;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use taffy::AlignItems;
 
 use crate::{
     fonts::{button_icon, glyph, icon_button},
     hierarchy::{RowLook, RowLooks, reconcile_content},
     hosted::{
-        EditTarget, EditWorld, EditWorldSignals, HostRole, HostedApp, HostedEventsAppExt,
+        EditTarget, EditWorld, EditWorldSignals, HostRole, Hosted, HostedApp, HostedEventsAppExt,
         ParkedEditApp, PendingApp,
     },
     import::ImportFinished,
-    inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard},
+    inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard, refused},
+    mcp::{SceneEntities, resolve},
     scene::SceneSaved,
     tools::{
         edits::{ComponentEdit, ComponentEdited},
@@ -82,12 +86,12 @@ pub struct LinkChangeRemoved {
     pub result: Result<(), String>,
 }
 
-/// An edit a linked node may refuse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LinkedEdit {
     Rename,
     Duplicate,
     SetOwnComponent(TypeId),
+    ChangeLink,
 }
 
 /// Shows links and their linked nodes in the tree and the inspector, and reloads, in every `App` but a playing game's, the assets of the files a save or an import rewrote, so the links to their scenes spawn again.
@@ -101,6 +105,87 @@ impl Plugin for LinksPlugin {
             .add_system(LateUpdate, lock_linked_cards)
             .add_system(LateUpdate, fill_inspector_headers);
     }
+
+    fn finish(&self, app: &mut App) {
+        if app.get_resource::<ToolRegistry>().is_none() {
+            return;
+        }
+        app.add_tool::<RemoveLinkChangeArgs, _>(
+            McpTool::new("remove_link_change").needs(Needs::Scene),
+            call_remove_link_change,
+        )
+        .add_system(LateUpdate, answer_link_change_removals);
+    }
+}
+
+/// Removes one change from a link, by its index in the changes inspect lists for the link, and spawns the link again without it.
+#[derive(Deserialize, JsonSchema)]
+pub struct RemoveLinkChangeArgs {
+    /// The link, such as 42v3, as scene_tree shows it with [link → …].
+    pub entity: String,
+    /// The change's index, from 0, as inspect lists it under changes.
+    pub index: usize,
+}
+
+#[derive(Component)]
+struct RemovingLinkChange {
+    document: Entity,
+    request: RemoveLinkChange,
+}
+
+fn call_remove_link_change(
+    mut calls: ToolCalls<RemoveLinkChangeArgs>,
+    entities: EditWorld<SceneEntities>,
+    targets: Query<Entity, With<EditTarget>>,
+    mut scene: EditWorldSignals,
+    mut cmd: CommandQueue,
+) {
+    let Some(document) = targets.iter().next() else {
+        return;
+    };
+    for (arguments, reply) in calls.read() {
+        match resolve(&arguments.entity, &entities) {
+            Ok(link) => {
+                let request = RemoveLinkChange {
+                    link,
+                    index: arguments.index,
+                };
+                scene.trigger(request.clone());
+                cmd.spawn((
+                    PendingCall::new(reply, "the change to be removed"),
+                    RemovingLinkChange { document, request },
+                ));
+            }
+            Err(error) => reply.err(error),
+        }
+    }
+}
+
+fn answer_link_change_removals(
+    mut removed: EventReader<Hosted<LinkChangeRemoved>>,
+    waiting: Query<(Entity, &PendingCall, &RemovingLinkChange)>,
+    names: EditWorld<Query<&Name>>,
+    mut cmd: CommandQueue,
+) {
+    for Hosted { document, event } in removed.read() {
+        for (call, pending, removing) in waiting.iter() {
+            if removing.document != *document || removing.request != event.request {
+                continue;
+            }
+            match &event.result {
+                Ok(()) => {
+                    let link = event.request.link;
+                    let name = shown_name(link, names.get_entity(link));
+                    pending.reply.ok(format!(
+                        "Removed change {} from {name}.",
+                        event.request.index
+                    ));
+                }
+                Err(reason) => pending.reply.err(refused(reason).into()),
+            }
+            cmd.despawn(call);
+        }
+    }
 }
 
 fn linked_in_open_scene_with<'a>(
@@ -113,7 +198,6 @@ fn linked_in_open_scene_with<'a>(
     Some(owned)
 }
 
-/// [`linked_in_open_scene`], read through queries.
 pub(crate) fn linked_in_open_scene_by(
     entity: Entity,
     nodes: &Query<&LinkedNode>,
@@ -144,14 +228,6 @@ fn added_component(
                 && types.get_by_name(&added.type_name).map(|registration| registration.type_id())
                     == Some(component))
     })
-}
-
-fn change_path(change: &LinkChange) -> &str {
-    match change {
-        LinkChange::AddComponent { path, .. }
-        | LinkChange::RemoveComponent { path, .. }
-        | LinkChange::RemoveNode { path } => path,
-    }
 }
 
 fn look_linked_rows(
@@ -202,7 +278,7 @@ fn look_linked_rows(
         let changed = links.get_entity(owned.link).is_some_and(|(_, link)| {
             link.changes()
                 .iter()
-                .any(|change| change_path(change) == owned.path)
+                .any(|change| change.path() == owned.path)
         });
         let holds_own = children.get_entity(entity).is_some_and(|children| {
             children
@@ -247,7 +323,7 @@ fn lock_linked_cards(
 
 fn fill_inspector_headers(
     scene: EditWorld<(
-        Query<Ref<SceneLink>>,
+        Query<(Ref<SceneLink>, Ref<SceneLinkState>)>,
         Query<&LinkedNode>,
         Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
         Res<AppTypeRegistry>,
@@ -275,7 +351,10 @@ fn fill_inspector_headers(
             })
             .is_ok()
         });
-        if !inspected.is_added() && !link.as_ref().is_some_and(|link| link.is_changed()) {
+        let changed = link
+            .as_ref()
+            .is_some_and(|(link, state)| link.is_changed() || state.is_changed());
+        if !inspected.is_added() && !changed {
             continue;
         }
         if children.is_some() {
@@ -289,17 +368,20 @@ fn fill_inspector_headers(
         if let Some(owned) = linked {
             let scene = links
                 .get_entity(owned.link)
-                .map(|link| address(&link))
+                .map(|(link, _)| address(&link))
                 .unwrap_or_default();
             spawn_linked_note(&mut cmd, header, &scene, &owned.path, &theme);
-        } else if let Some(link) = link {
-            let changes = shown_changes(&link, &types.read());
+        } else if let Some((link, state)) = link {
+            let changes = shown_changes(&link, &state, &types.read());
             spawn_link_changes(
                 &mut cmd,
                 header,
-                scene_entity,
-                &address(&link),
-                changes,
+                LinkCard {
+                    link: scene_entity,
+                    scene: address(&link),
+                    state: state.clone(),
+                    changes,
+                },
                 &theme,
             );
         }
@@ -337,31 +419,51 @@ fn spawn_linked_note(
         });
 }
 
-fn spawn_link_changes(
-    cmd: &mut CommandQueue,
-    header: Entity,
-    scene_link: Entity,
-    scene: &str,
+struct LinkCard {
+    link: Entity,
+    scene: String,
+    state: SceneLinkState,
     changes: Vec<ShownChange>,
-    theme: &UITheme,
-) {
+}
+
+fn spawn_link_changes(cmd: &mut CommandQueue, header: Entity, shown: LinkCard, theme: &UITheme) {
+    let scene_link = shown.link;
     let card = cmd
         .entity(header)
         .spawn_child(info_card(theme))
-        .add_child(theme.label(format!("Link → {scene}")).single_line())
+        .add_child(theme.label(format!("Link → {}", shown.scene)).single_line())
         .entity();
-    if changes.is_empty() {
+    match &shown.state {
+        SceneLinkState::Spawned => {}
+        SceneLinkState::Waiting => {
+            cmd.entity(card)
+                .add_child(theme.label(state_text(&shown.state)).small().muted());
+        }
+        SceneLinkState::Refused(_) => {
+            cmd.entity(card).add_child(
+                theme
+                    .label(state_text(&shown.state))
+                    .small()
+                    .color(theme.error),
+            );
+        }
+    }
+    if shown.changes.is_empty() {
         cmd.entity(card)
             .add_child(theme.label("No changes").small().muted());
     }
-    for (index, change) in changes.into_iter().enumerate() {
+    for (index, change) in shown.changes.into_iter().enumerate() {
         let what = theme.label(change.what).small();
-        let outcome = match change.unapplied {
-            None => theme.label("applied").small().muted(),
-            Some(reason) => theme
+        let outcome = match change.outcome {
+            Shown::Applied => theme.label("applied").small().muted(),
+            Shown::Unapplied(reason) => theme
                 .label(format!("unapplied: {reason}"))
                 .small()
                 .color(theme.error),
+            Shown::NotApplied(state) => theme
+                .label(format!("not applied: link {state}"))
+                .small()
+                .muted(),
         };
         let text = cmd
             .spawn(theme.column().grow().shrink(1.0).gap(2.0))
@@ -401,7 +503,6 @@ fn remove_change_on_click(scene_link: Entity, index: usize) -> Listener<UIClick>
     .into_listener()
 }
 
-/// The edit `App`'s part: the refusals, and the listeners that record edits of linked nodes on their link.
 pub(crate) fn build_tools(app: &mut App) {
     app.register_event::<LinkChangeRemoved>()
         .add_listener(record_link_edits.at_edit_time())
@@ -409,7 +510,6 @@ pub(crate) fn build_tools(app: &mut App) {
         .add_system(Update, note_link_edits.at_edit_time());
 }
 
-/// Why `edit` cannot be made to `entity`, a linked node of a link in the open scene; `None` for any other entity, and in a world without a scene root.
 pub(crate) fn refusal(world: &World, entity: Entity, edit: LinkedEdit) -> Option<String> {
     let owned = linked_in_open_scene(world, entity)?;
     if let LinkedEdit::SetOwnComponent(component) = edit
@@ -425,7 +525,6 @@ pub(crate) fn refusal(world: &World, entity: Entity, edit: LinkedEdit) -> Option
     ))
 }
 
-/// The outermost link of `entity` and its path from there, when `entity` is a linked node of a link in the open scene; `None` in a world without a scene root.
 fn linked_in_open_scene(world: &World, entity: Entity) -> Option<OwnedPath> {
     linked_in_open_scene_with(
         entity,
@@ -446,7 +545,6 @@ fn push_change(world: &mut World, link: Entity, change: LinkChange) {
     }
 }
 
-/// Records the removal of `entity`, a linked node of a link in the open scene, on its link; call it before the entity is despawned.
 pub(crate) fn record_removal(world: &mut World, entity: Entity) {
     if let Some(owned) = linked_in_open_scene(world, entity) {
         push_change(
@@ -602,6 +700,9 @@ fn remove_change(world: &mut World, request: &RemoveLinkChange) -> anyhow::Resul
         bail!("the entity no longer exists");
     }
     in_open_scene(world, request.link)?;
+    if let Some(reason) = refusal(world, request.link, LinkedEdit::ChangeLink) {
+        bail!(reason);
+    }
     let name = shown_name(
         request.link,
         world.get_component_for_entity::<Name>(request.link),
@@ -630,10 +731,47 @@ fn remove_change(world: &mut World, request: &RemoveLinkChange) -> anyhow::Resul
 
 struct ShownChange {
     what: String,
-    unapplied: Option<String>,
+    outcome: Shown,
 }
 
-fn shown_changes(link: &SceneLink, types: &TypeRegistry) -> Vec<ShownChange> {
+enum Shown {
+    Applied,
+    Unapplied(String),
+    NotApplied(String),
+}
+
+pub(crate) fn state_text(state: &SceneLinkState) -> String {
+    match state {
+        SceneLinkState::Spawned => "spawned".to_owned(),
+        SceneLinkState::Waiting => "waiting".to_owned(),
+        SceneLinkState::Refused(reason) => format!("refused: {reason}"),
+    }
+}
+
+pub(crate) fn link_row(
+    link: &SceneLink,
+    state: &SceneLinkState,
+    registry: Option<&AssetRegistry>,
+) -> String {
+    let id = link.scene().id();
+    let scene = registry
+        .and_then(|registry| registry.get(id))
+        .map_or_else(|| id.simple_hex(), |entry| entry.address.clone());
+    let changes = match link.changes().len() {
+        1 => "1 change".to_owned(),
+        count => format!("{count} changes"),
+    };
+    match state {
+        SceneLinkState::Spawned => format!("[link → {scene}] ({changes})"),
+        _ => format!("[link → {scene}] ({changes}) — {}", state_text(state)),
+    }
+}
+
+fn shown_changes(
+    link: &SceneLink,
+    state: &SceneLinkState,
+    types: &TypeRegistry,
+) -> Vec<ShownChange> {
     let short = |type_name: &str| {
         types.get_by_name(type_name).map_or_else(
             || type_name.to_owned(),
@@ -653,22 +791,31 @@ fn shown_changes(link: &SceneLink, types: &TypeRegistry) -> Vec<ShownChange> {
                 }
                 LinkChange::RemoveNode { path } => format!("RemoveNode {path}"),
             },
-            unapplied: match link.outcomes().get(index) {
-                Some(ChangeOutcome::Unapplied(reason)) => Some(reason.clone()),
-                _ => None,
+            outcome: match (state, link.outcomes().get(index)) {
+                (SceneLinkState::Spawned, Some(ChangeOutcome::Unapplied(reason))) => {
+                    Shown::Unapplied(reason.clone())
+                }
+                (SceneLinkState::Spawned, _) => Shown::Applied,
+                _ => Shown::NotApplied(state_text(state)),
             },
         })
         .collect()
 }
 
-/// One line per own change of `link`: its index, kind, path and component, and whether it applied at the last spawn.
-pub(crate) fn change_lines(link: &SceneLink, types: &TypeRegistry) -> Vec<String> {
-    shown_changes(link, types)
+pub(crate) fn change_lines(
+    link: &SceneLink,
+    state: &SceneLinkState,
+    types: &TypeRegistry,
+) -> Vec<String> {
+    shown_changes(link, state, types)
         .into_iter()
         .enumerate()
-        .map(|(index, change)| match change.unapplied {
-            Some(reason) => format!("{index}: {} — unapplied: {reason}", change.what),
-            None => format!("{index}: {} — applied", change.what),
+        .map(|(index, change)| match change.outcome {
+            Shown::Applied => format!("{index}: {} — applied", change.what),
+            Shown::Unapplied(reason) => format!("{index}: {} — unapplied: {reason}", change.what),
+            Shown::NotApplied(state) => {
+                format!("{index}: {} — not applied: link {state}", change.what)
+            }
         })
         .collect()
 }

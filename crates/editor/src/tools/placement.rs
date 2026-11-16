@@ -23,7 +23,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Aabb, Mesh, MeshComponent, Ray};
 use concerto_render::components::{camera::Camera, render_entity::SyncWithRenderWorld};
-use concerto_scene::link::LinkRoot;
+use concerto_scene::{link::LinkRoot, scene::Scene};
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::import_fold::shown_name;
@@ -199,12 +199,7 @@ fn resolve(world: &mut World, request: &PlaceAsset) -> anyhow::Result<Placement>
                 request.asset.simple_hex()
             )
         })?;
-    if world
-        .get_resource::<LinkRoot>()
-        .is_some_and(|root| root.0 == request.asset)
-    {
-        bail!("a scene cannot link itself");
-    }
+    refuse_linking_the_root(world, request.asset)?;
     let placeable = world.get_resource::<PlaceableAssets>();
     let Some(kind) = placeable.and_then(|kinds| kinds.get(&entry.kind).copied()) else {
         let kinds: Vec<&str> = placeable
@@ -239,8 +234,35 @@ fn resolve(world: &mut World, request: &PlaceAsset) -> anyhow::Result<Placement>
     })
 }
 
+fn refuse_linking_the_root(world: &World, asset: AssetId) -> anyhow::Result<()> {
+    let Some(root) = world.get_resource::<LinkRoot>().map(|root| root.0) else {
+        return Ok(());
+    };
+    let scenes = world.get_resource::<AssetStore<Scene>>();
+    let mut seen = Vec::new();
+    let mut pending = vec![asset];
+    while let Some(id) = pending.pop() {
+        if id == root {
+            bail!("a scene cannot link itself");
+        }
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let linked = scenes
+            .and_then(|scenes| scenes.get(&AssetHandle::weak(id)))
+            .into_iter()
+            .flat_map(|scene| &scene.nodes)
+            .filter_map(|node| node.link.as_ref())
+            .map(|link| link.scene);
+        pending.extend(linked);
+    }
+    Ok(())
+}
+
 fn spawn(world: &mut World, placement: &Placement) -> anyhow::Result<Entity> {
     scene_root(world)?;
+    refuse_linking_the_root(world, placement.request.asset)?;
     new_parent(world, Some(placement.parent))?;
     let parent = world_matrix(world, placement.parent);
     let local = if parent.determinant().abs() < 1e-12 {

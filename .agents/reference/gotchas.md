@@ -209,8 +209,10 @@ fix the entry in the same commit as the change that made it false.
 
 - **A respawned link takes its linked nodes away.** Spawning a link again
   despawns every `LinkedNode` of it, so state on one is lost unless a change
-  records it. An entity a game parents under a linked node survives by
-  carrying `LinkParent { path }`, which parents it again after the respawn.
+  records it. An entity that is not a linked node and sits under one, put
+  there by a game, a placement or `create_entity`, is lifted onto the link
+  before the respawn and given `LinkParent { path }` when it has none, which
+  parents it again afterwards; capture writes that path too.
 - **Linked scenes' editor rules are off in play.** The read-only refusals and
   the recording of edits as changes apply to the edit target's scene, never to
   a playing game, and a save never reloads a playing game's assets.

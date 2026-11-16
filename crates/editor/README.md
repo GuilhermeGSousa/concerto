@@ -239,20 +239,32 @@ scene root, at `position`, `[x, y, z]` in world space, or at the parent's
 origin without one, and selects it. It answers `placed <name> as entity <id>`
 once the asset has loaded and the entity exists. An address that names nothing
 answers `unknown_asset`; an id the project does not have, a kind that cannot
-be placed, which names the kinds that can, a load that fails and a game that
-is playing answer `refused` (see [Placing assets](#placing-assets)).
-A scene's links show in `scene_tree` collapsed, as `id name [link → <scene address>] (1 change)` or `(<n> changes)`, and
+be placed, which names the kinds that can, a load that fails, a game that
+is playing, and a scene that is the open one or links it, directly or through
+its links' scenes, which answers `a scene cannot link itself`, answer `refused`
+(see [Placing assets](#placing-assets)).
+A scene's links show in `scene_tree` collapsed, as `id name [link → <scene address>] (1 change)` or `(<n> changes)`,
+followed by ` — waiting` while its scene loads or ` — refused: <reason>` when
+it was refused, and
 the nodes a link spawned show, once its row is the `root` or while a game plays,
 as `id name [components] (linked) <path>`. An entity of a linked scene is
 addressed `<link id>/<path>`, such as `42v3/hall/door`, by every tool that takes
-`entity`, `scene_tree` showing the paths. Those nodes are read-only: `set_property` on a component
-the scene gave them, `rename_entity`, `duplicate_entity` and `remove_component`
-of one of its components answer `refused` and name the scene to edit. What does
-not alter the scene's own nodes is allowed and recorded as a change on the
-link: `add_component` and then `set_property` on the added component, a
-`delete_entity` of a linked node, and `create_entity` under one. `inspect` of a
-link lists its changes, each with whether it applied, and `remove_link_change`
-removes the change at `index` of the link `entity`, which spawns the link again.
+`entity`, `scene_tree` showing the paths. A path names each node by its name,
+with `#<n>` added for the n-th later sibling of the same name and `\` before a
+`/`, `#` or `\` in a name; a node with no name is `#<n>`, n counting its
+unnamed siblings from 0. Those nodes are read-only: `set_property` on a
+component the scene gave them, `rename_entity` and `duplicate_entity` answer
+`refused` and name the scene to edit. The other edits are allowed and recorded
+as a change on the outermost link of the open scene: `add_component` and then
+`set_property` on the added component, `remove_component`, recorded as a
+removal or, for a component the link added, by dropping that addition, a
+`delete_entity` of a linked node, and `create_entity` or `place_asset` under
+one, whose entity keeps its place there through `LinkParent`. `inspect` of a
+link answers its `state`, `spawned`, `waiting` or `refused: <reason>`, and
+lists its changes, each with whether it applied, or `not applied: link
+<state>` while the link is not spawned. `remove_link_change` removes the change
+at `index` of the link `entity`, which spawns the link again; a link inside
+another link is read-only like its nodes, so it answers `refused`.
 A save or an import that rewrites a scene's file reloads it in every open edit,
 parked and preview `App`, so its links spawn again; a playing game is never
 reloaded.
@@ -593,7 +605,8 @@ its link changes, or that holds an entity of the scene's own, shows
 `pencil-simple` in the accent colour after its name. Selecting a linked node
 shows its link and path above its cards, with its own components' fields
 disabled and no gizmo in the viewport; selecting a link lists its changes,
-each with whether it applied and a button that removes it.
+each with whether it applied and a button that removes it, under a line saying
+`waiting` or `refused: <reason>` while the link is not spawned.
 
 The `AssetIcons` resource maps an asset kind's `Asset::name()` to its glyph,
 and the Asset Browser's rows and the tab strip both read it. `ContentPlugin`,
@@ -1014,8 +1027,10 @@ Shift-F frames the scene.
 `AssetPlacementPlugin` (`placement.rs`) puts an asset in the open scene as an
 entity. What the entity is made of is the asset kind's `PlaceableAsset::place`,
 which the game's recipe registers with `register_placeable_asset`; the engine
-registers `Scene`, whose root nodes become children of the entity, and no
-other kind for now, so a `Mesh` cannot be placed. The editor never names a kind: the plugin
+registers `Scene`, whose entity becomes a `SceneLink` to the scene: its nodes
+spawn under the entity as linked nodes and spawn again whenever the scene
+loads again, and saving the scene stores the link and its changes, not the
+nodes. No other kind is registered for now, so a `Mesh` cannot be placed. The editor never names a kind: the plugin
 copies the kinds' names out of the edit `App`'s `PlaceableAssets` into its
 `PlaceableKinds` resource each time a scene opens, so a panel or a tool can ask
 `PlaceableKinds::contains(kind)` or walk `PlaceableKinds::iter()` with no scene
