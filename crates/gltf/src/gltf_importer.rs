@@ -25,7 +25,7 @@ use concerto_mesh::vertex::Vertex;
 use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
-use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
+use concerto_render::assets::texture::{Texture, TextureFormat};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
@@ -190,17 +190,12 @@ impl Importer for GltfImporter {
 
         for key in &needed_textures {
             let rgba = decoded_images[key.image_index].to_rgba8();
-            let texture = Texture {
-                width: rgba.width(),
-                height: rgba.height(),
-                format: if key.srgb {
-                    TextureFormat::Rgba8UnormSrgb
-                } else {
-                    TextureFormat::Rgba8Unorm
-                },
-                kind: TextureKind::Sampled,
-                data: rgba.into_raw(),
+            let format = if key.srgb {
+                TextureFormat::Rgba8UnormSrgb
+            } else {
+                TextureFormat::Rgba8Unorm
             };
+            let texture = Texture::new(rgba.width(), rgba.height(), format, rgba.into_raw());
             ctx.emit(&texture_name(key.image_index, key.srgb), &texture)?;
         }
 

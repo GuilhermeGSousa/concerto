@@ -36,13 +36,13 @@ fn a_material_decodes_with_weak_texture_handles_and_lists_only_its_present_textu
 
 #[test]
 fn texture_encoding_matches_its_fixture() {
-    let texture = Texture {
-        width: 2,
-        height: 1,
-        format: TextureFormat::Rgba8Unorm,
-        kind: TextureKind::RenderTarget,
-        data: vec![1, 2, 3, 4, 5, 6, 7, 8],
-    };
+    let mut texture = Texture::new(
+        2,
+        1,
+        TextureFormat::Rgba8Unorm,
+        vec![1, 2, 3, 4, 5, 6, 7, 8],
+    );
+    texture.kind = TextureKind::RenderTarget;
 
     check_encoding(&texture, encoding_dir());
 }

@@ -38,7 +38,7 @@ impl RenderTexture {
         let wgpu_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture"),
             size,
-            mip_level_count: 1,
+            mip_level_count: texture.mip_level_count(),
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: texture.format,
@@ -55,21 +55,31 @@ impl RenderTexture {
                 Some(4),
                 "bytes_per_row assumes a 4-byte-per-texel format",
             );
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    aspect: wgpu::TextureAspect::All,
-                    texture: &wgpu_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                },
-                texture.data(),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * size.width),
-                    rows_per_image: Some(size.height),
-                },
-                size,
-            );
+            let levels =
+                std::iter::once(texture.data()).chain(texture.mips().iter().map(Vec::as_slice));
+            for (mip_level, data) in levels.enumerate() {
+                let width = (size.width >> mip_level).max(1);
+                let height = (size.height >> mip_level).max(1);
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        aspect: wgpu::TextureAspect::All,
+                        texture: &wgpu_texture,
+                        mip_level: mip_level as u32,
+                        origin: wgpu::Origin3d::ZERO,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * width),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -79,6 +89,8 @@ impl RenderTexture {
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -154,7 +166,9 @@ impl RenderAsset for RenderTexture {
 
     fn byte_len(source: &Self::SourceAsset) -> Option<usize> {
         match source.kind {
-            TextureKind::Sampled => Some(source.data().len()),
+            TextureKind::Sampled => {
+                Some(source.data().len() + source.mips().iter().map(Vec::len).sum::<usize>())
+            }
             TextureKind::RenderTarget => None,
         }
     }

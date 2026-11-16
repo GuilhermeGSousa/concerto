@@ -67,6 +67,13 @@ The import picks the importer by file extension:
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
 | `.ogg` `.wav`        | `AudioImporter` | one `main` audio clip                             |
 
+A texture's `.gasset` holds only its full-size pixels. When it loads, through
+`AssetServer::load` or `add`, a sampled texture builds its mip chain from them,
+averaging sRGB colour in linear space, and the renderer samples the chain
+trilinearly with up to 16× anisotropic filtering, as much as the adapter
+supports. A texture put straight into `AssetStore` gets no chain. Code builds a
+sampled texture with `Texture::new`.
+
 ### `content.toml`
 
 Optional, at the project root. The import, the editor's scan, and
