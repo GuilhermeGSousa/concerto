@@ -51,7 +51,9 @@ pub fn read_texture(gpu: &Gpu, texture: &wgpu::Texture) -> RgbaImage {
     slice.map_async(wgpu::MapMode::Read, move |result| {
         let _ = tx.send(result);
     });
-    gpu.device.poll(wgpu::Maintain::Wait);
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("the device polls");
     rx.recv()
         .expect("the readback buffer was mapped")
         .expect("the readback buffer maps");
@@ -59,7 +61,9 @@ pub fn read_texture(gpu: &Gpu, texture: &wgpu::Texture) -> RgbaImage {
     let row_bytes = (width * 4) as usize;
     let mut pixels = Vec::with_capacity(row_bytes * height as usize);
     {
-        let data = slice.get_mapped_range();
+        let data = slice
+            .get_mapped_range()
+            .expect("the mapped range is readable");
         for row in data.chunks_exact(padded_bpr as usize) {
             pixels.extend_from_slice(&row[..row_bytes]);
         }

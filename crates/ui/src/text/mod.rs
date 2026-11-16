@@ -92,7 +92,7 @@ pub(crate) fn physical_metrics(font_size: f32, line_height: f32, scale: f32) -> 
 fn truncate_to_width(
     font_system: &mut FontSystem,
     metrics: Metrics,
-    attrs: Attrs<'_>,
+    attrs: &Attrs<'_>,
     text: &str,
     width: f32,
 ) -> Option<String> {
@@ -128,13 +128,13 @@ fn truncate_to_width(
 fn measure_line(
     font_system: &mut FontSystem,
     metrics: Metrics,
-    attrs: Attrs<'_>,
+    attrs: &Attrs<'_>,
     text: &str,
 ) -> f32 {
     let mut buffer = Buffer::new(font_system, metrics);
-    buffer.set_size(font_system, None, None);
-    buffer.set_wrap(font_system, Wrap::None);
-    buffer.set_text(font_system, text, attrs, Shaping::Advanced);
+    buffer.set_size(None, None);
+    buffer.set_wrap(Wrap::None);
+    buffer.set_text(text, attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
     buffer
         .layout_runs()
@@ -262,19 +262,12 @@ fn shape_text(
     let metrics = physical_metrics(text_component.font_size, text_component.line_height, scale);
     let mut text_buffer = Buffer::new(font_system, metrics);
 
-    text_buffer.set_size(
-        font_system,
-        Some(content_size.x.max(0.0)),
-        Some(content_size.y.max(0.0)),
-    );
-    text_buffer.set_wrap(
-        font_system,
-        if text_component.wrap {
-            Wrap::Word
-        } else {
-            Wrap::None
-        },
-    );
+    text_buffer.set_size(Some(content_size.x.max(0.0)), Some(content_size.y.max(0.0)));
+    text_buffer.set_wrap(if text_component.wrap {
+        Wrap::Word
+    } else {
+        Wrap::None
+    });
 
     let family = match &text_component.font_family {
         FontFamily::SansSerif => Family::SansSerif,
@@ -297,7 +290,7 @@ fn shape_text(
         truncate_to_width(
             font_system,
             metrics,
-            attrs,
+            &attrs,
             &text_component.text,
             content_size.x.max(0.0),
         )
@@ -305,10 +298,10 @@ fn shape_text(
         None
     };
     text_buffer.set_text(
-        font_system,
         display.as_deref().unwrap_or(&text_component.text),
-        attrs,
+        &attrs,
         Shaping::Advanced,
+        None,
     );
     text_buffer.shape_until_scroll(font_system, false);
     text_buffer
@@ -352,7 +345,7 @@ mod tests {
     use super::*;
 
     fn widest(font_system: &mut FontSystem, metrics: Metrics, text: &str) -> f32 {
-        measure_line(font_system, metrics, Attrs::new(), text)
+        measure_line(font_system, metrics, &Attrs::new(), text)
     }
 
     #[test]
@@ -365,7 +358,7 @@ mod tests {
         let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
         let metrics = physical_metrics(14.0, 20.0, 1.0);
         let mut truncate = |text: &str, width: f32| {
-            truncate_to_width(&mut font_system, metrics, Attrs::new(), text, width)
+            truncate_to_width(&mut font_system, metrics, &Attrs::new(), text, width)
         };
         for case in [
             Case {
@@ -414,12 +407,12 @@ mod tests {
         let at_one = truncate_to_width(
             &mut font_system,
             physical_metrics(14.0, 20.0, 1.0),
-            Attrs::new(),
+            &Attrs::new(),
             text,
             60.0,
         )
         .expect("must truncate");
-        let at_two = truncate_to_width(&mut font_system, metrics, Attrs::new(), text, 120.0)
+        let at_two = truncate_to_width(&mut font_system, metrics, &Attrs::new(), text, 120.0)
             .expect("must truncate");
         assert_eq!(at_one, at_two);
         let width = widest(&mut font_system, metrics, &at_two);

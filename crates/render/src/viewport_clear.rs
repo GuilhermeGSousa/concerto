@@ -24,7 +24,7 @@ impl ViewportClearPipeline {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Viewport Clear Pipeline Layout"),
             bind_group_layouts: &[],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
         let constant = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::Constant,
@@ -56,7 +56,7 @@ impl ViewportClearPipeline {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self { pipeline }
@@ -70,8 +70,10 @@ impl ViewportClearPipeline {
         color: wgpu::Color,
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("Viewport Clear Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {

@@ -23,9 +23,9 @@ impl Gpu {
         } else {
             wgpu::Backends::all()
         };
-        wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         })
     }
 
@@ -45,17 +45,19 @@ impl Gpu {
         instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
     ) -> Result<Gpu, GpuRequestError> {
-        let adapter = match wgpu::util::initialize_adapter_from_env(instance, compatible_surface) {
-            Some(adapter) => adapter,
-            None => instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: power_preference(wgpu::PowerPreference::from_env()),
-                    compatible_surface,
-                    force_fallback_adapter: false,
-                })
-                .await
-                .ok_or(GpuRequestError::NoAdapter)?,
-        };
+        let adapter =
+            match wgpu::util::initialize_adapter_from_env(instance, compatible_surface).await {
+                Ok(adapter) => adapter,
+                Err(_) => instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: power_preference(wgpu::PowerPreference::from_env()),
+                        compatible_surface,
+                        force_fallback_adapter: false,
+                        apply_limit_buckets: false,
+                    })
+                    .await
+                    .map_err(|_| GpuRequestError::NoAdapter)?,
+            };
         let info = adapter.get_info();
         log::info!(
             "Rendering on {} ({:?}, {:?})",
@@ -65,23 +67,22 @@ impl Gpu {
         );
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    required_limits: if cfg!(target_arch = "wasm32") {
-                        Limits {
-                            max_color_attachments: adapter.limits().max_color_attachments,
-                            ..Limits::downlevel_webgl2_defaults()
-                        }
-                        .using_resolution(adapter.limits())
-                    } else {
-                        wgpu::Limits::default()
-                    },
-                    label: None,
-                    memory_hints: MemoryHints::Performance,
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: if cfg!(target_arch = "wasm32") {
+                    Limits {
+                        max_color_attachments: adapter.limits().max_color_attachments,
+                        ..Limits::downlevel_webgl2_defaults()
+                    }
+                    .using_resolution(adapter.limits())
+                } else {
+                    wgpu::Limits::default()
                 },
-                None,
-            )
+                label: None,
+                memory_hints: MemoryHints::Performance,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .map_err(|error| GpuRequestError::Device {
                 error,
@@ -143,8 +144,7 @@ impl std::error::Error for GpuRequestError {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn adapters_seen(instance: &wgpu::Instance) -> String {
-    let seen: Vec<String> = instance
-        .enumerate_adapters(wgpu::Backends::all())
+    let seen: Vec<String> = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
         .iter()
         .map(|adapter| {
             let info = adapter.get_info();

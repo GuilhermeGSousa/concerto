@@ -94,8 +94,8 @@ impl Plugin for ShadowPipelinePlugin {
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("Shadow Pipeline Layout"),
-            bind_group_layouts: &[&light_view_bind_group_layout, skeleton_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&light_view_bind_group_layout), Some(skeleton_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -104,7 +104,10 @@ impl Plugin for ShadowPipelinePlugin {
             vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::describe(), GlobalTransformRaw::describe()],
+                buffers: &[
+                    Some(Vertex::describe()),
+                    Some(GlobalTransformRaw::describe()),
+                ],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: None,
@@ -119,8 +122,8 @@ impl Plugin for ShadowPipelinePlugin {
             },
             depth_stencil: Some(DepthStencilState {
                 format: TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: StencilState::default(),
                 bias: DepthBiasState {
                     constant: 0,
@@ -137,7 +140,7 @@ impl Plugin for ShadowPipelinePlugin {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

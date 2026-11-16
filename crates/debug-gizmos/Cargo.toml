@@ -15,8 +15,9 @@ concerto-color.workspace = true
 concerto-mesh.workspace = true
 glam.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }
-wgpu = { version = "24.0.1", default-features = false, features = [
+wgpu = { version = "30.0.2", default-features = false, features = [
     "wgsl",
+    "std",
     "metal",
     "naga-ir",
     "fragile-send-sync-non-atomic-wasm",

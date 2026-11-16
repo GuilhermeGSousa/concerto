@@ -136,7 +136,7 @@ pub(crate) struct UITextEditState {
 impl UITextEditState {
     fn new(font_system: &mut FontSystem, text: &UIText, input: &UITextInput) -> Self {
         let mut buffer = Buffer::new(font_system, ui_text_metrics(text));
-        buffer.set_wrap(font_system, Wrap::None);
+        buffer.set_wrap(Wrap::None);
         let mut state = Self {
             editor: Editor::new(buffer),
             attrs: ui_text_attrs(text),
@@ -153,21 +153,21 @@ impl UITextEditState {
             follow: false,
             word: None,
         };
-        state.load(font_system, input);
+        state.load(input);
         state
     }
 
-    fn load(&mut self, font_system: &mut FontSystem, input: &UITextInput) {
-        let attrs = self.attrs;
+    fn load(&mut self, input: &UITextInput) {
+        let attrs = &self.attrs;
         self.editor.with_buffer_mut(|buffer| {
-            buffer.set_text(font_system, &input.value, attrs, Shaping::Advanced)
+            buffer.set_text(&input.value, attrs, Shaping::Advanced, None)
         });
         self.place(input);
     }
 
-    fn sync(&mut self, font_system: &mut FontSystem, input: &UITextInput) {
+    fn sync(&mut self, input: &UITextInput) {
         if input.value != self.written.value {
-            self.load(font_system, input);
+            self.load(input);
             self.forget_history();
         } else if input.cursor != self.written.cursor
             || input.selection_anchor != self.written.selection_anchor
@@ -447,10 +447,16 @@ impl UITextEditState {
                 return (0.0, 0.0, None);
             };
             let highlight = selection.and_then(|(start, end)| {
-                run.highlight(
+                let mut spans = run.highlight(
                     Cursor::new(start.line, start.index),
                     Cursor::new(end.line, end.index),
-                )
+                );
+                spans.next().map(|first| {
+                    spans.fold(first, |(x, w), (span_x, span_w)| {
+                        let left = x.min(span_x);
+                        (left, (x + w).max(span_x + span_w) - left)
+                    })
+                })
             });
             (caret_x(&run, cursor), run.line_w, highlight)
         })
@@ -712,7 +718,7 @@ pub(crate) fn update_text_inputs(
             }
         };
 
-        state.sync(font_system, &text_input);
+        state.sync(&text_input);
         let focusing = !state.focused;
         if focusing {
             state.focused = true;
@@ -1534,7 +1540,10 @@ mod tests {
             .editor
             .with_buffer(|buffer| {
                 let run = buffer.layout_runs().next().unwrap();
-                let highlight = run.highlight(Cursor::new(0, 2), Cursor::new(0, 7)).unwrap();
+                let highlight = run
+                    .highlight(Cursor::new(0, 2), Cursor::new(0, 7))
+                    .next()
+                    .unwrap();
                 let glyph = run.glyphs.iter().find(|glyph| glyph.start == 7).unwrap();
                 Marks {
                     left: highlight.0,

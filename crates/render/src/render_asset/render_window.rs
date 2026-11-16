@@ -39,9 +39,9 @@ impl RenderWindow {
         self.size
     }
 
-    pub fn present(&mut self) {
+    pub fn present(&mut self, queue: &wgpu::Queue) {
         if let Some(texture) = self.texture.take() {
-            texture.present();
+            queue.present(texture);
             self.view = None;
         }
     }

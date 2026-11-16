@@ -320,8 +320,10 @@ fn wgpu_color(color: LinearRgba) -> wgpu::Color {
 
 fn clear_window(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
     let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        multiview_mask: None,
         label: Some("Window Clear Pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            depth_slice: None,
             view,
             resolve_target: None,
             ops: wgpu::Operations {
@@ -384,6 +386,7 @@ pub(crate) fn clear_cameras(
             stencil_ops: None,
         });
         let color_attachment = wgpu::RenderPassColorAttachment {
+            depth_slice: None,
             view: color_view,
             resolve_target: None,
             ops: wgpu::Operations {
@@ -400,6 +403,7 @@ pub(crate) fn clear_cameras(
             &color_attachments[..]
         };
         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("Clear Pass"),
             color_attachments,
             depth_stencil_attachment,
@@ -527,8 +531,10 @@ pub(crate) fn material_renderpass<M: Material>(
         };
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("Material Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view: color_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -715,10 +721,12 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
             all_layouts.push(skeleton_layout);
         }
 
+        let all_layouts: Vec<Option<&wgpu::BindGroupLayout>> =
+            all_layouts.into_iter().map(Some).collect();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Material Pipeline Layout"),
             bind_group_layouts: &all_layouts,
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         // Resolve shader sources (fall back to the built-in Phong shader).
@@ -742,7 +750,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         let fs_module = create_shader_module(device, "Material FS", fs_src, &shader_defs);
 
         // Use the vertex layouts from the material trait.
-        let vertex_layouts = M::vertex_layouts();
+        let vertex_layouts: Vec<_> = M::vertex_layouts().into_iter().map(Some).collect();
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Material Pipeline"),
@@ -778,7 +786,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
