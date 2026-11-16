@@ -43,7 +43,7 @@ impl fmt::Display for NoAdapter {
 
 /// Serves the `App` that `build` makes over MCP on stdin and stdout, drawing into a texture of `size`; exits with status 1 without a GPU.
 pub fn run(build: impl FnOnce(&mut App), size: (u32, u32)) {
-    let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(), None)) else {
+    let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(None), None)) else {
         eprintln!("{NoAdapter}");
         std::process::exit(1);
     };

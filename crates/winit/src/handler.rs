@@ -274,7 +274,12 @@ impl ApplicationHandler for Handler {
         let Some(build) = self.build.take() else {
             return;
         };
-        let building = crate::build_app(window, build, Rc::clone(&self.app));
+        let building = crate::build_app(
+            event_loop.owned_display_handle(),
+            window,
+            build,
+            Rc::clone(&self.app),
+        );
         cfg_if::cfg_if! {
             if #[cfg(target_arch = "wasm32")] {
                 wasm_bindgen_futures::spawn_local(building);
