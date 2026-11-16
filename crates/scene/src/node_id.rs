@@ -10,22 +10,13 @@ const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// A scene node's id, unique within its scene; an imported node's is a pure function of its name path.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u64);
 
 impl NodeId {
     /// The id of the node at `path`: names joined by `/`, with `#n` after the n-th same-named sibling.
     pub fn from_name_path(path: &str) -> NodeId {
         NodeId(fnv1a(FNV_OFFSET, path.as_bytes()))
-    }
-
-    /// The id of the `k`-th primitive child an importer adds under this node.
-    pub fn primitive(self, k: usize) -> NodeId {
-        let tagged = fnv1a(FNV_OFFSET, b"primitive");
-        let parent = fnv1a(tagged, &self.0.to_le_bytes());
-        NodeId(fnv1a(parent, &(k as u64).to_le_bytes()))
     }
 
     /// A random id, for a node the editor creates.

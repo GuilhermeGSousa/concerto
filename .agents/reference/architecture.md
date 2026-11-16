@@ -153,9 +153,9 @@ sounds) are imported once, ahead of time. The running game never reads them.
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
 - Each scene node has a `NodeId`, unique within its scene. An importer derives
-  it from the node's name path (`NodeId::from_name_path`; a primitive child
-  from its parent's id with `NodeId::primitive`), so a re-import keeps it while
-  the name path is unchanged. A spawned entity carries its node's id as
+  it from the node's name path (`NodeId::from_name_path`), the nodes it adds
+  itself, such as a glTF mesh's `<node>.primitive<k>` children, included, so a
+  re-import keeps it while the name path is unchanged. A spawned entity carries its node's id as
   `SceneNodeId`, and capture writes it back; an entity without one gets the id
   of its name path in the captured scene, made unique. The editor gives an
   entity it creates, duplicates or places a fresh id.

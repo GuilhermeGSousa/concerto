@@ -215,7 +215,10 @@ fn a_multi_primitive_mesh_becomes_a_parent_with_one_child_per_primitive() {
         ])
         .enumerate()
     {
-        assert_eq!(child.id, parent.id.primitive(k));
+        assert_eq!(
+            child.id,
+            NodeId::from_name_path(&format!("Triangle/Triangle.primitive{k}"))
+        );
         assert!(child.children.is_empty());
         assert!(has_component_ending_in(child, "MaterialComponent"));
         assert_eq!(mesh_handle_id(child), Some(AssetId::from_path(address)));

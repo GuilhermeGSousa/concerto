@@ -36,6 +36,9 @@ fn node_ids_follow_name_paths_tell_every_node_apart_and_cross_links() {
         node("x", vec![]),
         node("a", vec![12]),
         node("b", vec![]),
+        node("lamp", vec![14, 15]),
+        node("lamp.primitive0", vec![]),
+        node("lamp.primitive1", vec![]),
     ];
 
     derive_ids(&mut nodes);
@@ -54,6 +57,9 @@ fn node_ids_follow_name_paths_tell_every_node_apart_and_cross_links() {
         "x",
         "a",
         "a/b",
+        "lamp",
+        "lamp/lamp.primitive0",
+        "lamp/lamp.primitive1",
     ];
     for (node, path) in nodes.iter().zip(paths) {
         assert_eq!(node.id, NodeId::from_name_path(path), "{path}");
@@ -62,9 +68,7 @@ fn node_ids_follow_name_paths_tell_every_node_apart_and_cross_links() {
         NodeId::from_name_path("hall/door"),
         NodeId(0x15d1_8ef5_d862_f9df)
     );
-    let chair = nodes[1].id;
-    let mut ids: Vec<NodeId> = nodes.iter().map(|node| node.id).collect();
-    ids.extend([chair.primitive(0), chair.primitive(1)]);
+    let ids: Vec<NodeId> = nodes.iter().map(|node| node.id).collect();
     assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
 
     let rows = [

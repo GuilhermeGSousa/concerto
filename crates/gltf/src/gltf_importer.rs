@@ -602,7 +602,6 @@ impl Importer for GltfImporter {
 
             nodes.push(scene_node);
         }
-        derive_ids(&mut nodes);
 
         for gltf_node in document.nodes() {
             let Some(gltf_mesh) = gltf_node.mesh() else {
@@ -649,7 +648,7 @@ impl Importer for GltfImporter {
                             ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
 
                         let mut child = SceneNode {
-                            id: nodes[node_index].id.primitive(k),
+                            id: NodeId::default(),
                             name: format!("{node_name}.primitive{k}"),
                             children: Vec::new(),
                             components: Vec::new(),
@@ -679,6 +678,7 @@ impl Importer for GltfImporter {
             }
         }
 
+        derive_ids(&mut nodes);
         ctx.emit(
             "scene",
             &Scene {
