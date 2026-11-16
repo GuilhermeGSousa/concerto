@@ -294,6 +294,58 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         })
     );
 
+    let cold = AssetId::new();
+    let mut late = node("late", vec![]);
+    late.link = Some(SceneLinkData {
+        scene: cold,
+        changes: vec![],
+    });
+    let early_handle = server.insert_loaded(
+        AssetId::new(),
+        Scene {
+            nodes: vec![late],
+            referenced_assets: vec![],
+        },
+    );
+    let world = app.main_mut().world_mut();
+    let early = world.spawn(
+        SceneLink::new(early_handle).with_change(LinkChange::AddComponent {
+            path: "late/room/chair".into(),
+            component: label("late"),
+        }),
+    );
+    let lodger = world.spawn((
+        Name::new("lodger"),
+        Transform::IDENTITY,
+        LinkParent {
+            path: "late/room/lamp".into(),
+        },
+    ));
+    world.entity_mut(early).add_child(lodger);
+    assert!(matches!(settle(&mut app, early), SceneLinkState::Spawned));
+    let outcomes = |app: &App| {
+        app.main()
+            .world()
+            .get_component_for_entity::<SceneLink>(early)
+            .unwrap()
+            .outcomes()
+            .to_vec()
+    };
+    assert_eq!(
+        outcomes(&app),
+        [ChangeOutcome::Unapplied("waiting for late to load".into())]
+    );
+    let late = linked(&mut app, early, "late");
+    server.insert_loaded(cold, room());
+    assert!(matches!(settle(&mut app, late), SceneLinkState::Spawned));
+    assert_eq!(outcomes(&app), [ChangeOutcome::Applied]);
+    let late_chair = linked(&mut app, late, "room/chair");
+    assert_eq!(label_of(&app, late_chair).as_deref(), Some("late"));
+    assert_eq!(
+        parent(&app, lodger),
+        Some(linked(&mut app, late, "room/lamp"))
+    );
+
     let mut copy = node("copy", vec![]);
     let stored = vec![LinkChange::RemoveNode {
         path: "room/helper".into(),

@@ -31,8 +31,19 @@ pub struct SceneLink {
     own: Vec<LinkChange>,
     inherited: Vec<LinkChange>,
     outcomes: Vec<ChangeOutcome>,
+    inherited_outcomes: Vec<ChangeOutcome>,
+    handoffs: Vec<Handoff>,
     spawned: Vec<Entity>,
     chain: Vec<AssetId>,
+}
+
+#[derive(Clone)]
+struct Handoff {
+    outcome: usize,
+    inner: Entity,
+    at: usize,
+    node_path: String,
+    change_path: String,
 }
 
 impl SceneLink {
@@ -43,6 +54,8 @@ impl SceneLink {
             own: Vec::new(),
             inherited: Vec::new(),
             outcomes: Vec::new(),
+            inherited_outcomes: Vec::new(),
+            handoffs: Vec::new(),
             spawned: Vec::new(),
             chain: Vec::new(),
         }
@@ -81,6 +94,12 @@ impl SceneLink {
         }
         if index < self.outcomes.len() {
             self.outcomes.remove(index);
+            self.handoffs.retain(|handoff| handoff.outcome != index);
+            for handoff in &mut self.handoffs {
+                if handoff.outcome > index {
+                    handoff.outcome -= 1;
+                }
+            }
         }
         Some(self.own.remove(index))
     }
@@ -198,12 +217,25 @@ struct Crossing {
     path: String,
 }
 
+impl Crossing {
+    fn find(scene: &Scene, paths: &[String], change: usize, path: &str) -> Option<Self> {
+        scene
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(node, scene_node)| {
+                scene_node.link.as_ref()?;
+                strip_prefix(path, &paths[node]).map(|path| Crossing { change, node, path })
+            })
+    }
+}
+
 struct Moved {
     entity: Entity,
     path: Option<String>,
 }
 
-fn spawn_link(world: &mut World, link: Entity) -> Option<Vec<ChangeOutcome>> {
+fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
     let scene_link = world.get_component_for_entity::<SceneLink>(link)?;
     let handle = scene_link.scene.clone();
     let own_count = scene_link.own.len();
@@ -257,12 +289,8 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<Vec<ChangeOutcome>> {
             }
             continue;
         }
-        match crossing(&scene, &paths, change.path()) {
-            Some((node, path)) => crossings.push(Crossing {
-                change: index,
-                node,
-                path,
-            }),
+        match Crossing::find(&scene, &paths, index, change.path()) {
+            Some(crossing) => crossings.push(crossing),
             None => {
                 warn!(
                     "{}: no node at {} in {scene_name}",
@@ -323,58 +351,119 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<Vec<ChangeOutcome>> {
         }
     }
 
+    let mut handoffs = Vec::new();
     for (index, node) in scene.nodes.iter().enumerate() {
-        let Some(data) = node.link.as_ref().filter(|_| live[index]) else {
+        if node.link.is_none() || !live[index] {
             continue;
-        };
+        }
+        let inner = spawned.node_entities[index];
         let handed: Vec<&Crossing> = crossings
             .iter()
             .filter(|crossing| crossing.node == index)
             .collect();
+        handoffs.extend(handed.iter().enumerate().map(|(at, crossing)| Handoff {
+            outcome: crossing.change,
+            inner,
+            at,
+            node_path: paths[index].clone(),
+            change_path: changes[crossing.change].path().to_owned(),
+        }));
         let inherited = handed
             .iter()
             .map(|crossing| with_path(&changes[crossing.change], crossing.path.clone()))
             .collect();
         let mut inner_chain = chain.clone();
         inner_chain.push(id);
-        let inner = spawned.node_entities[index];
         let Some(inner_link) = world.get_component_for_entity_mut::<SceneLink>(inner) else {
             continue;
         };
         inner_link.inherited = inherited;
         inner_link.chain = inner_chain;
-        let inner_own = data.changes.len();
-        let Some(inner_outcomes) = spawn_link(world, inner) else {
-            continue;
-        };
-        for (at, crossing) in handed.iter().enumerate() {
-            if let Some(ChangeOutcome::Unapplied(_)) = inner_outcomes.get(inner_own + at) {
-                outcomes[crossing.change] = unapplied(changes[crossing.change].path(), &scene_name);
-            }
-        }
+        spawn_link(world, inner);
     }
-
-    place_own_entities(world, link, &moved, &scene_name);
 
     if let Some(scene_link) = world.get_component_for_entity_mut::<SceneLink>(link) {
-        scene_link.outcomes = outcomes[..own_count].to_vec();
+        scene_link.inherited_outcomes = outcomes.split_off(own_count);
+        scene_link.outcomes = outcomes;
+        scene_link.handoffs = handoffs;
     }
+    settle_handoffs(world, link);
+    place_own_entities(world, link, &moved, &scene_name);
+
     world.insert(SceneLinkState::Spawned, link);
     if let Some(channel) = world.get_resource_mut::<EventChannel<SceneLinkSpawned>>() {
         channel.push_event(SceneLinkSpawned { link });
     }
-    Some(outcomes)
+    settle_outer_links(world, link);
+    Some(())
+}
+
+fn settle_outer_links(world: &mut World, link: Entity) {
+    let mut current = link;
+    while let Some(outer) = linked_by(world, current) {
+        let spawned = world
+            .get_component_for_entity::<SceneLinkState>(outer)
+            .is_some_and(|state| matches!(state, SceneLinkState::Spawned));
+        if !spawned {
+            return;
+        }
+        settle_handoffs(world, outer);
+        let Some(scene) = world
+            .get_component_for_entity::<SceneLink>(outer)
+            .map(|scene_link| scene_link.scene.id())
+        else {
+            return;
+        };
+        let scene_name = scene_address(world, scene);
+        place_own_entities(world, outer, &[], &scene_name);
+        current = outer;
+    }
+}
+
+fn settle_handoffs(world: &mut World, link: Entity) {
+    let Some(scene_link) = world.get_component_for_entity::<SceneLink>(link) else {
+        return;
+    };
+    let handoffs = scene_link.handoffs.clone();
+    let scene_name = scene_address(world, scene_link.scene.id());
+    let settled: Vec<ChangeOutcome> = handoffs
+        .iter()
+        .map(|handoff| handed_outcome(world, handoff, &scene_name))
+        .collect();
+    let Some(scene_link) = world.get_component_for_entity_mut::<SceneLink>(link) else {
+        return;
+    };
+    let own = scene_link.outcomes.len();
+    for (handoff, outcome) in handoffs.iter().zip(settled) {
+        let slot = match handoff.outcome < own {
+            true => scene_link.outcomes.get_mut(handoff.outcome),
+            false => scene_link.inherited_outcomes.get_mut(handoff.outcome - own),
+        };
+        if let Some(slot) = slot {
+            *slot = outcome;
+        }
+    }
+}
+
+fn handed_outcome(world: &World, handoff: &Handoff, scene_name: &str) -> ChangeOutcome {
+    let lost = || unapplied(&handoff.change_path, scene_name);
+    let Some(inner) = world.get_component_for_entity::<SceneLink>(handoff.inner) else {
+        return lost();
+    };
+    match world.get_component_for_entity::<SceneLinkState>(handoff.inner) {
+        Some(SceneLinkState::Waiting) => {
+            ChangeOutcome::Unapplied(format!("waiting for {} to load", handoff.node_path))
+        }
+        Some(SceneLinkState::Spawned) => match inner.inherited_outcomes.get(handoff.at) {
+            Some(ChangeOutcome::Applied) => ChangeOutcome::Applied,
+            _ => lost(),
+        },
+        _ => lost(),
+    }
 }
 
 fn unapplied(path: &str, scene_name: &str) -> ChangeOutcome {
     ChangeOutcome::Unapplied(format!("no node at {path} in {scene_name}"))
-}
-
-fn crossing(scene: &Scene, paths: &[String], path: &str) -> Option<(usize, String)> {
-    scene.nodes.iter().enumerate().find_map(|(index, node)| {
-        node.link.as_ref()?;
-        strip_prefix(path, &paths[index]).map(|rest| (index, rest))
-    })
 }
 
 fn with_path(change: &LinkChange, path: String) -> LinkChange {
@@ -461,6 +550,7 @@ fn place_own_entities(world: &mut World, link: Entity, moved: &[Moved], scene_na
             Some(parent) => {
                 world.entity_mut(parent).add_child(entity);
             }
+            None if waits_on_inner_link(world, link, &path) => {}
             None => warn!(
                 "{}: no node at {path} in {scene_name} for {}",
                 link_name(world, link),
@@ -486,6 +576,25 @@ fn find_linked(world: &World, link: Entity, path: &str) -> Option<Entity> {
         }
     }
     None
+}
+
+fn waits_on_inner_link(world: &World, link: Entity, path: &str) -> bool {
+    let Some(scene_link) = world.get_component_for_entity::<SceneLink>(link) else {
+        return false;
+    };
+    scene_link.spawned.iter().any(|&entity| {
+        let Some(rest) = world
+            .get_component_for_entity::<LinkedNode>(entity)
+            .and_then(|node| strip_prefix(path, &node.path))
+        else {
+            return false;
+        };
+        match world.get_component_for_entity::<SceneLinkState>(entity) {
+            Some(SceneLinkState::Waiting) => true,
+            Some(SceneLinkState::Spawned) => waits_on_inner_link(world, entity, &rest),
+            _ => false,
+        }
+    })
 }
 
 fn path_from(world: &World, link: Entity, entity: Entity) -> Option<String> {
