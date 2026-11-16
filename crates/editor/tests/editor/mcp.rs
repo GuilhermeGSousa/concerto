@@ -2055,6 +2055,11 @@ fn stale(id: &str) -> String {
     format!("{index}v{}", generation.parse::<u32>().unwrap() + 1)
 }
 
+fn linked_row(tree: &str, name: &str) -> bool {
+    tree.lines()
+        .any(|line| line.split_whitespace().nth(1) == Some(name) && line.ends_with(" (linked)"))
+}
+
 fn second_word(answer: &str) -> String {
     answer.split_whitespace().nth(1).unwrap().to_owned()
 }
@@ -2923,11 +2928,11 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             )
             .await;
             let link = placed.rsplit(' ').next().unwrap().to_owned();
-            let at = |path: &str| format!("{link}/{path}");
             let expanded = until_with(&client, "scene_tree", json!({ "root": link }), |tree| {
-                tree.contains("(linked) Helper")
+                linked_row(tree, "Helper")
             })
             .await;
+            let at = |name: &str| tree_id(&expanded, name);
             let top = ok(&client, "scene_tree").await;
             let spawned_at = ok(&client, "spawned_placement").await;
             ok_with(
@@ -2987,11 +2992,14 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
                 json!({ "entity": link, "index": 1 }),
             )
             .await;
-            let kept = until_with(
+            let respawned = until_with(&client, "scene_tree", json!({ "root": link }), |tree| {
+                tree.lines().any(|line| line.contains(" Lantern [Light"))
+            })
+            .await;
+            let kept = ok_with(
                 &client,
                 "inspect",
-                json!({ "entity": at("Lantern"), "components": ["Light"] }),
-                |_| true,
+                json!({ "entity": tree_id(&respawned, "Lantern"), "components": ["Light"] }),
             )
             .await;
             ok(&client, "save").await;
@@ -3028,24 +3036,32 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             )
             .await;
             let level_link = placed_level.rsplit(' ').next().unwrap().to_owned();
+            let level_tree = until_with(
+                &client,
+                "scene_tree",
+                json!({ "root": level_link }),
+                |tree| tree.contains(" props [link → "),
+            )
+            .await;
+            let inner_link = tree_id(&level_tree, "props");
             let nested_tree = until_with(
                 &client,
                 "scene_tree",
-                json!({ "root": format!("{level_link}/props") }),
-                |tree| tree.contains("(linked) props/Lantern"),
+                json!({ "root": inner_link }),
+                |tree| linked_row(tree, "Lantern"),
             )
             .await;
             ok_with(
                 &client,
                 "add_component",
-                json!({ "entity": format!("{level_link}/props/Lantern"), "component": "editor::mcp::Samples" }),
+                json!({ "entity": tree_id(&nested_tree, "Lantern"), "component": "editor::mcp::Samples" }),
             )
             .await;
             let nested = ok_with(&client, "inspect", json!({ "entity": level_link })).await;
             let inner_removal = error_with(
                 &client,
                 "remove_link_change",
-                json!({ "entity": format!("{level_link}/props"), "index": 0 }),
+                json!({ "entity": inner_link, "index": 0 }),
             )
             .await;
             ok(&client, "save").await;
@@ -3062,7 +3078,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             let refused_link = ok_with(
                 &client,
                 "inspect",
-                json!({ "entity": format!("{loop_link}/again") }),
+                json!({ "entity": tree_id(&refused_tree, "again") }),
             )
             .await;
             ok_with(
@@ -3141,10 +3157,13 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         "{top}"
     );
     assert!(!top.contains("(linked)"), "{top}");
-    for path in ["Anchor", "Lantern", "Helper"] {
-        assert!(expanded.contains(&format!("(linked) {path}")), "{expanded}");
+    for name in ["Anchor", "Lantern", "Helper"] {
+        assert!(linked_row(&expanded, name), "{expanded}");
     }
-    assert!(copied.contains("\"path\":\"Anchor\""), "{copied}");
+    assert!(
+        copied.contains(&NodeId::from_name_path("Anchor").0.to_string()),
+        "{copied}"
+    );
     let linked = "Anchor is a linked node of content/props.gasset; add a component to it, or edit content/props.gasset";
     for error in &refused {
         assert_eq!(error["code"], "refused", "{error}");
@@ -3183,10 +3202,10 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
     let changes = reloaded["changes"].as_array().unwrap();
     assert_eq!(changes.len(), 2, "{reloaded}");
     assert!(
-        changes[0]
-            .as_str()
-            .unwrap()
-            .starts_with("0: AddComponent Anchor [Samples] — unapplied: "),
+        changes[0].as_str().unwrap().starts_with(&format!(
+            "0: AddComponent {} [Samples] — unapplied: ",
+            NodeId::from_name_path("Anchor")
+        )),
         "{reloaded}"
     );
     assert_eq!(changes[1], "1: RemoveNode Helper — applied", "{reloaded}");
@@ -3194,7 +3213,7 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
         after_reload.contains(&format!("{own} Entity ")),
         "{after_reload}"
     );
-    assert!(!after_reload.contains("(linked) Helper"), "{after_reload}");
+    assert!(!linked_row(&after_reload, "Helper"), "{after_reload}");
     assert_eq!(note, "second");
     assert_eq!(itself["code"], "refused", "{itself}");
     assert!(
@@ -3204,13 +3223,10 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             .contains("a scene cannot link itself"),
         "{itself}"
     );
-    assert!(
-        nested_tree.contains("(linked) props/Lantern"),
-        "{nested_tree}"
-    );
+    assert!(linked_row(&nested_tree, "Lantern"), "{nested_tree}");
     assert_eq!(nested["state"], "spawned", "{nested}");
     assert_eq!(
-        nested["changes"][0], "0: AddComponent props/Lantern [Samples] — applied",
+        nested["changes"][0], "0: AddComponent Lantern [Samples] — applied",
         "{nested}"
     );
     assert_eq!(inner_removal["code"], "refused", "{inner_removal}");
@@ -3221,10 +3237,17 @@ fn links_are_placed_edited_saved_and_followed_over_mcp() {
             .contains("props is a linked node of content/level.gasset"),
         "{inner_removal}"
     );
+    let props_node = level
+        .nodes
+        .iter()
+        .find(|node| node.link.is_some())
+        .unwrap()
+        .id;
     let world_link = saved_level(&world_file).link;
     assert_eq!(world_link.scene, level_id);
     assert!(
-        matches!(&world_link.changes[..], [LinkChange::AddComponent { path, .. }] if path == "props/Lantern"),
+        matches!(&world_link.changes[..], [LinkChange::AddComponent { path, .. }]
+            if path.ids() == [props_node, NodeId::from_name_path("Lantern")]),
         "{:?}",
         world_link.changes
     );

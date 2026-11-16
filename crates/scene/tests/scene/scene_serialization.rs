@@ -5,6 +5,7 @@ use concerto_foundation::assets::content::{
 };
 use concerto_foundation::assets::AssetId;
 use concerto_reflect::ReflectedValue;
+use concerto_scene::link_path::LinkPath;
 use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent};
 
@@ -66,15 +67,15 @@ fn scene_encoding_matches_its_fixture() {
             scene: AssetId::from_path("content/manor_art/scene.gasset"),
             changes: vec![
                 LinkChange::AddComponent {
-                    path: "hall/door".to_string(),
+                    path: LinkPath::new(vec![NodeId(11), NodeId(12)]),
                     component: health(),
                 },
                 LinkChange::RemoveComponent {
-                    path: "hall/chair#1".to_string(),
+                    path: LinkPath::new(vec![NodeId(11), NodeId(13)]),
                     type_name: "game::Team".to_string(),
                 },
                 LinkChange::RemoveNode {
-                    path: "helpers".to_string(),
+                    path: LinkPath::node(NodeId(14)),
                 },
             ],
         }),

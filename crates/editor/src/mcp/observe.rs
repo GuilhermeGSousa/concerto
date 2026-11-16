@@ -11,6 +11,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     asset_server::AssetServer,
+    asset_store::AssetStore,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mcp::{
@@ -21,7 +22,10 @@ use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
-use concerto_scene::link::{LinkedNode, SceneLink, SceneLinkState, owning_link_by, path_from_by};
+use concerto_scene::{
+    link::{LinkedNode, SceneLink, SceneLinkState},
+    scene::Scene,
+};
 use image::{ImageFormat, RgbaImage, imageops::FilterType};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -490,7 +494,7 @@ struct SceneView<'a> {
     label: &'a dyn Fn(Entity) -> String,
     components: &'a dyn Fn(Entity) -> Vec<(&'static str, &'static str)>,
     link: &'a dyn Fn(Entity) -> Option<String>,
-    linked: &'a dyn Fn(Entity) -> Option<String>,
+    linked: &'a dyn Fn(Entity) -> bool,
     links: Links,
 }
 
@@ -512,8 +516,8 @@ impl SceneView<'_> {
                 format!("{id} {label} [{}]", names.join(", "))
             }
         };
-        if let Some(path) = (self.linked)(entity) {
-            line.push_str(&format!(" (linked) {path}"));
+        if (self.linked)(entity) {
+            line.push_str(" (linked)");
         }
         line
     }
@@ -607,26 +611,6 @@ pub(crate) fn resolve(
     id: &str,
     entities: &SystemInputData<SceneEntities>,
 ) -> Result<Entity, ToolError> {
-    let Some((link_id, path)) = id.split_once('/') else {
-        return resolve_id(id, entities);
-    };
-    let link = resolve_id(link_id, entities)?;
-    let node = |entity| entities.get_entity(entity).and_then(|(.., node)| node);
-    entities
-        .iter()
-        .map(|(entity, ..)| entity)
-        .find(|&entity| path_from_by(link, entity, node).as_deref() == Some(path))
-        .ok_or_else(|| {
-            ToolError::new(
-                "unknown_entity",
-                format!(
-                    "{link_id} has no linked node at `{path}`; call scene_tree with root {link_id} for the paths of its linked nodes."
-                ),
-            )
-        })
-}
-
-fn resolve_id(id: &str, entities: &SystemInputData<SceneEntities>) -> Result<Entity, ToolError> {
     let Some(entity) = Entity::parse_id(id) else {
         return Err(ToolError::new(
             "unknown_entity",
@@ -687,10 +671,9 @@ fn scene_tree(
             .map(|(link, state)| link_row(link, state, registry.as_deref()))
     };
     let linked = |entity| {
-        owning_link_by(entity, |entity| {
-            entities.get_entity(entity).and_then(|(.., node)| node)
-        })
-        .map(|owned| owned.path)
+        entities
+            .get_entity(entity)
+            .is_some_and(|(.., node)| node.is_some())
     };
     for (arguments, reply) in calls.read() {
         let starts = match &arguments.root {
@@ -750,10 +733,9 @@ fn find_entities(
             .map(|(link, state)| link_row(link, state, registry.as_deref()))
     };
     let linked = |entity| {
-        owning_link_by(entity, |entity| {
-            entities.get_entity(entity).and_then(|(.., node)| node)
-        })
-        .map(|owned| owned.path)
+        entities
+            .get_entity(entity)
+            .is_some_and(|(.., node)| node.is_some())
     };
     for (arguments, reply) in calls.read() {
         let view = SceneView {
@@ -941,6 +923,7 @@ fn inspect(
     entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
     links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    scenes: EditWorld<Option<Res<AssetStore<Scene>>>>,
     registry: Res<InspectorRegistry>,
 ) {
     for (arguments, reply) in calls.read() {
@@ -950,7 +933,7 @@ fn inspect(
         let answer = resolve(entity, &entities).and_then(|entity| {
             let link = links.get_entity(entity).map(|(link, state)| LinkLines {
                 state: state_text(state),
-                changes: change_lines(link, state, &source.types()),
+                changes: change_lines(link, state, &source.types(), scenes.as_deref()),
             });
             inspection(&source, &registry, &names, entity, &arguments, link)
         });

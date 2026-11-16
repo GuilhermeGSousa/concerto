@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use concerto_scene::link_path::strip_prefix;
+use concerto_scene::link_path::LinkPath;
 use concerto_scene::node_id::{derive_ids, NodeId};
 use concerto_scene::scene::SceneNode;
 
@@ -15,9 +15,9 @@ fn node(name: &str, children: Vec<usize>) -> SceneNode {
 }
 
 struct StripRow {
-    path: &'static str,
-    prefix: &'static str,
-    rest: Option<&'static str>,
+    path: LinkPath,
+    prefix: LinkPath,
+    rest: Option<LinkPath>,
 }
 
 #[test]
@@ -71,30 +71,34 @@ fn node_ids_follow_name_paths_tell_every_node_apart_and_cross_links() {
     let ids: Vec<NodeId> = nodes.iter().map(|node| node.id).collect();
     assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
 
+    let [a, b, c] = [NodeId(1), NodeId(2), NodeId(3)];
     let rows = [
         StripRow {
-            path: "manor_art/hall/door",
-            prefix: "manor_art",
-            rest: Some("hall/door"),
+            path: LinkPath::new(vec![a, b, c]),
+            prefix: LinkPath::node(a),
+            rest: Some(LinkPath::new(vec![b, c])),
         },
         StripRow {
-            path: "manor_artx/hall",
-            prefix: "manor_art",
+            path: LinkPath::new(vec![b, c]),
+            prefix: LinkPath::node(a),
             rest: None,
         },
         StripRow {
-            path: "a\\/b/c",
-            prefix: "a\\/b",
-            rest: Some("c"),
+            path: LinkPath::node(a),
+            prefix: LinkPath::node(a),
+            rest: None,
         },
     ];
     for row in rows {
         assert_eq!(
-            strip_prefix(row.path, row.prefix).as_deref(),
+            row.path.strip_prefix(&row.prefix),
             row.rest,
-            "strip_prefix({:?}, {:?})",
+            "{} below {}",
             row.path,
             row.prefix
         );
+        if let Some(rest) = &row.rest {
+            assert_eq!(row.prefix.join(rest), row.path);
+        }
     }
 }

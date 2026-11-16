@@ -29,6 +29,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     AssetId,
+    asset_store::AssetStore,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, ToolCalls, ToolRegistry};
@@ -36,9 +37,10 @@ use concerto_reflect::TypeRegistry;
 use concerto_scene::{
     link::{
         ChangeOutcome, LinkParent, LinkedNode, OwnedPath, SceneLink, SceneLinkState,
-        owning_link_by, scene_address, shown_name,
+        linked_node_name, owning_link_by, scene_address, shown_name,
     },
-    scene::{LinkChange, SerializedComponent},
+    link_path::LinkPath,
+    scene::{LinkChange, Scene, SerializedComponent},
 };
 use concerto_ui::{
     elements::{Surface, prelude::*},
@@ -278,7 +280,7 @@ fn look_linked_rows(
         let changed = links.get_entity(owned.link).is_some_and(|(_, link)| {
             link.changes()
                 .iter()
-                .any(|change| change.path() == owned.path)
+                .any(|change| *change.path() == owned.path)
         });
         let holds_own = children.get_entity(entity).is_some_and(|children| {
             children
@@ -327,13 +329,14 @@ fn fill_inspector_headers(
         Query<&LinkedNode>,
         Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
         Res<AppTypeRegistry>,
+        Option<Res<AssetStore<Scene>>>,
     )>,
     assets: Option<Res<AssetRegistry>>,
     headers: Query<(Entity, Ref<InspectorHeader>, &mut UINode, Option<&Children>)>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let (links, nodes, members, types) = &*scene;
+    let (links, nodes, members, types, scenes) = &*scene;
     let address = |link: &SceneLink| {
         let id = link.scene().id();
         assets
@@ -370,9 +373,9 @@ fn fill_inspector_headers(
                 .get_entity(owned.link)
                 .map(|(link, _)| address(&link))
                 .unwrap_or_default();
-            spawn_linked_note(&mut cmd, header, &scene, &owned.path, &theme);
+            spawn_linked_note(&mut cmd, header, &scene, &theme);
         } else if let Some((link, state)) = link {
-            let changes = shown_changes(&link, &state, &types.read());
+            let changes = shown_changes(&link, &state, &types.read(), scenes.as_deref());
             spawn_link_changes(
                 &mut cmd,
                 header,
@@ -397,17 +400,10 @@ fn info_card(theme: &UITheme) -> Surface {
         .padding(UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm))
 }
 
-fn spawn_linked_note(
-    cmd: &mut CommandQueue,
-    header: Entity,
-    scene: &str,
-    path: &str,
-    theme: &UITheme,
-) {
+fn spawn_linked_note(cmd: &mut CommandQueue, header: Entity, scene: &str, theme: &UITheme) {
     cmd.entity(header)
         .add_child_with(info_card(theme), |mut card| {
             card.add_child(theme.label(format!("Linked from {scene}")).single_line())
-                .add_child(theme.label(path).small().mono().muted().single_line())
                 .add_child(
                     theme
                         .label(format!(
@@ -521,7 +517,7 @@ pub(crate) fn refusal(world: &World, entity: Entity, edit: LinkedEdit) -> Option
     let scene = scene_address(world, link.scene().id());
     Some(format!(
         "{} is a linked node of {scene}; add a component to it, or edit {scene}",
-        owned.path
+        shown_name(entity, world.get_component_for_entity::<Name>(entity))
     ))
 }
 
@@ -650,7 +646,7 @@ fn record_added(world: &mut World, entity: Entity, component: TypeId) {
         _ => warn!(
             "{} added to {} cannot be written to a scene, so its link does not keep it",
             registration.short_name(),
-            owned.path
+            shown_name(entity, world.get_component_for_entity::<Name>(entity))
         ),
     }
 }
@@ -771,6 +767,7 @@ fn shown_changes(
     link: &SceneLink,
     state: &SceneLinkState,
     types: &TypeRegistry,
+    scenes: Option<&AssetStore<Scene>>,
 ) -> Vec<ShownChange> {
     let short = |type_name: &str| {
         types.get_by_name(type_name).map_or_else(
@@ -778,18 +775,28 @@ fn shown_changes(
             |registration| registration.short_name().to_owned(),
         )
     };
+    let node = |path: &LinkPath| {
+        scenes
+            .and_then(|scenes| linked_node_name(scenes, link.scene().id(), path))
+            .filter(|name| !name.is_empty())
+            .map_or_else(|| path.to_string(), str::to_owned)
+    };
     link.changes()
         .iter()
         .enumerate()
         .map(|(index, change)| ShownChange {
             what: match change {
                 LinkChange::AddComponent { path, component } => {
-                    format!("AddComponent {path} [{}]", short(&component.type_name))
+                    format!(
+                        "AddComponent {} [{}]",
+                        node(path),
+                        short(&component.type_name)
+                    )
                 }
                 LinkChange::RemoveComponent { path, type_name } => {
-                    format!("RemoveComponent {path} [{}]", short(type_name))
+                    format!("RemoveComponent {} [{}]", node(path), short(type_name))
                 }
-                LinkChange::RemoveNode { path } => format!("RemoveNode {path}"),
+                LinkChange::RemoveNode { path } => format!("RemoveNode {}", node(path)),
             },
             outcome: match (state, link.outcomes().get(index)) {
                 (SceneLinkState::Spawned, Some(ChangeOutcome::Unapplied(reason))) => {
@@ -806,8 +813,9 @@ pub(crate) fn change_lines(
     link: &SceneLink,
     state: &SceneLinkState,
     types: &TypeRegistry,
+    scenes: Option<&AssetStore<Scene>>,
 ) -> Vec<String> {
-    shown_changes(link, state, types)
+    shown_changes(link, state, types, scenes)
         .into_iter()
         .enumerate()
         .map(|(index, change)| match change.outcome {

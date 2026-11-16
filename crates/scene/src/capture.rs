@@ -14,7 +14,8 @@ use concerto_reflect::{
 };
 use log::warn;
 
-use crate::link::{find_linked, owning_link, LinkParent, LinkedNode, SceneLink};
+use crate::link::{find_linked, owning_link, shown_name, LinkParent, LinkedNode, SceneLink};
+use crate::link_path::LinkPath;
 use crate::node_id::{derive_missing_ids, NodeId, SceneNodeId};
 use crate::scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent};
 
@@ -32,13 +33,13 @@ pub fn capture_subtree(world: &World, entity: Entity) -> anyhow::Result<Scene> {
 struct Collected {
     entity: Entity,
     children: Vec<usize>,
-    link_parent: Option<String>,
+    link_parent: Option<LinkPath>,
 }
 
 #[derive(Clone)]
 struct Place {
     parent: Option<usize>,
-    link_parent: Option<String>,
+    link_parent: Option<LinkPath>,
 }
 
 #[derive(Default)]
@@ -169,11 +170,14 @@ fn capture_node(
         }
         let value = match info.capture(world, entity, capture) {
             Ok(value) => value,
-            Err(error) => match capture.outside().and_then(|entity| owning_link(world, entity)) {
-                Some(owned) => bail!(
+            Err(error) => match capture
+                .outside()
+                .filter(|&entity| owning_link(world, entity).is_some())
+            {
+                Some(linked) => bail!(
                     "component '{}' on '{name}' references the linked node {}; references into a link are not supported yet",
                     info.name(),
-                    owned.path
+                    shown_name(linked, world.get_component_for_entity::<Name>(linked))
                 ),
                 None => bail!(
                     "component '{}' on '{name}' cannot be written to a scene: {error}",
@@ -238,10 +242,16 @@ fn link_data(
 fn added_value(
     world: &World,
     link: Entity,
-    path: &str,
+    path: &LinkPath,
     component: &SerializedComponent,
     capture: &mut SceneCapture,
 ) -> anyhow::Result<ReflectedValue> {
+    let target = find_linked(world, link, path);
+    let node = target.map_or_else(
+        || path.to_string(),
+        |target| shown_name(target, world.get_component_for_entity::<Name>(target)),
+    );
+    let path = node.as_str();
     let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
         return Ok(unlisted(component, path));
     };
@@ -251,7 +261,7 @@ fn added_value(
     let mut added = SceneCapture::default();
     let live = registration
         .data::<ReflectSceneComponent>()
-        .zip(find_linked(world, link, path))
+        .zip(target)
         .and_then(|(scene, target)| (scene.capture)(world, target, &mut added));
     let value = match live {
         Some(Ok(value)) => value,

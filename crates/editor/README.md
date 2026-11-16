@@ -247,12 +247,10 @@ A scene's links show in `scene_tree` collapsed, as `id name [link → <scene add
 followed by ` — waiting` while its scene loads or ` — refused: <reason>` when
 it was refused, and
 the nodes a link spawned show, once its row is the `root` or while a game plays,
-as `id name [components] (linked) <path>`. An entity of a linked scene is
-addressed `<link id>/<path>`, such as `42v3/hall/door`, by every tool that takes
-`entity`, `scene_tree` showing the paths. A path names each node by its name,
-with `#<n>` added for the n-th later sibling of the same name and `\` before a
-`/`, `#` or `\` in a name; a node with no name is `#<n>`, n counting its
-unnamed siblings from 0. Those nodes are read-only: `set_property` on a
+as `id name [components] (linked)`, and are addressed by that id like any
+other entity. A link stores its changes by node id, not by name, so a change
+names its node by the scene's name for it in `inspect`, or by the node's id
+when the scene no longer has that node. Those nodes are read-only: `set_property` on a
 component the scene gave them, `rename_entity` and `duplicate_entity` answer
 `refused` and name the scene to edit. The other edits are allowed and recorded
 as a change on the outermost link of the open scene: `add_component` and then

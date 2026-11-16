@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use concerto_ecs::Component;
+use concerto_reflect::Reflect;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -10,7 +12,7 @@ const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// A scene node's id, unique within its scene; an imported node's is a pure function of its name path.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Reflect)]
 pub struct NodeId(pub u64);
 
 impl NodeId {
@@ -26,6 +28,12 @@ impl NodeId {
 
     fn rehashed(self) -> NodeId {
         NodeId(fnv1a(FNV_OFFSET, &self.0.to_le_bytes()))
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:016x}", self.0)
     }
 }
 
@@ -57,7 +65,7 @@ pub(crate) fn derive_missing_ids(nodes: &mut [SceneNode], kept: &[Option<NodeId>
     }
 }
 
-pub(crate) fn name_paths(nodes: &[SceneNode]) -> Vec<String> {
+fn name_paths(nodes: &[SceneNode]) -> Vec<String> {
     let mut is_child = vec![false; nodes.len()];
     for node in nodes {
         for &child in &node.children {

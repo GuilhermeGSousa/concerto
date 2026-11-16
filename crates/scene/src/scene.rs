@@ -5,6 +5,7 @@ use concerto_foundation::assets::{
 use concerto_reflect::{Reflect, ReflectedValue};
 use serde::{Deserialize, Serialize};
 
+use crate::link_path::LinkPath;
 use crate::node_id::NodeId;
 
 /// One component as scene data: the registry key it was registered under plus
@@ -39,25 +40,25 @@ pub struct SceneLinkData {
     pub changes: Vec<LinkChange>,
 }
 
-/// One change a link makes to a node of its scene, addressed by the node's path from the link.
+/// One change a link makes to a node of its scene, addressed by the node's path of ids from the link.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LinkChange {
     AddComponent {
-        path: String,
+        path: LinkPath,
         component: SerializedComponent,
     },
     RemoveComponent {
-        path: String,
+        path: LinkPath,
         type_name: String,
     },
     RemoveNode {
-        path: String,
+        path: LinkPath,
     },
 }
 
 impl LinkChange {
     /// The path of the linked node this change applies to.
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> &LinkPath {
         match self {
             LinkChange::AddComponent { path, .. }
             | LinkChange::RemoveComponent { path, .. }

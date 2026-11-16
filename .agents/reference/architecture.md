@@ -155,15 +155,17 @@ sounds) are imported once, ahead of time. The running game never reads them.
 - Each scene node has a `NodeId`, unique within its scene. An importer derives
   it from the node's name path (`NodeId::from_name_path`), the nodes it adds
   itself, such as a glTF mesh's `<node>.primitive<k>` children, included, so a
-  re-import keeps it while the name path is unchanged. A spawned entity carries its node's id as
-  `SceneNodeId`, and capture writes it back; an entity without one gets the id
+  re-import keeps it while the name path is unchanged. A spawned entity carries
+  its node's id as `SceneNodeId`, and capture writes it back; an entity without one gets the id
   of its name path in the captured scene, made unique. The editor gives an
   entity it creates, duplicates or places a fresh id.
 - A scene node may be a link: the `SceneLink` component names another scene and
   holds the changes made to its nodes (`Scene` format version 2, `SceneNode::link`).
   `request_link_spawns` runs in `Update`: once the linked scene has loaded it
-  spawns the scene's nodes under the link's entity, each tagged `LinkedNode`,
-  applies the changes, and sets `SceneLinkState::Spawned`, or `Refused` with the
+  spawns the scene's nodes under the link's entity, each tagged
+  `LinkedNode { link, node }` with its node's id and kept in the link's
+  `NodeId → Entity` table, applies the changes, each addressed by a `LinkPath`
+  of node ids, one per link level, outermost first, and sets `SceneLinkState::Spawned`, or `Refused` with the
   reason; a scene still loading leaves it `Waiting`. A reloaded scene
   sets its links back to `Waiting` in `LateUpdate`, so they spawn again. Placing a scene
   and a startup scene make links, and the editor's settle waits on `Waiting` ones.

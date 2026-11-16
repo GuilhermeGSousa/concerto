@@ -15,14 +15,14 @@ use concerto_ecs::{
 use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_scene::node_id::NodeId;
+use concerto_scene::node_id::{derive_ids, NodeId};
 use concerto_scene::{
     capture::{capture_scene, capture_subtree},
     link::{
         owning_link, ChangeOutcome, LinkParent, LinkRoot, LinkedNode, OwnedPath, SceneLink,
         SceneLinkSpawned, SceneLinkState,
     },
-    link_path::node_paths,
+    link_path::LinkPath,
     plugin::ScenePlugin,
     scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent},
     spawner::{spawn_scene_in_world, SpawnFilter},
@@ -78,38 +78,49 @@ fn prop(art: AssetId) -> SerializedComponent {
     }
 }
 
-fn link_parent(path: &str) -> SerializedComponent {
+fn at(levels: &[&str]) -> LinkPath {
+    LinkPath::new(
+        levels
+            .iter()
+            .map(|level| NodeId::from_name_path(level))
+            .collect(),
+    )
+}
+
+fn link_parent(path: LinkPath) -> SerializedComponent {
     SerializedComponent {
         type_name: std::any::type_name::<LinkParent>().into(),
-        value: concerto_reflect::to_value(&LinkParent { path: path.into() }).unwrap(),
+        value: concerto_reflect::to_value(&LinkParent { path }).unwrap(),
+    }
+}
+
+fn imported(mut nodes: Vec<SceneNode>) -> Scene {
+    derive_ids(&mut nodes);
+    Scene {
+        nodes,
+        referenced_assets: vec![],
     }
 }
 
 fn room() -> Scene {
-    Scene {
-        nodes: vec![
-            node("room", vec![1, 2, 3, 4]),
-            node("lamp", vec![]),
-            node("helper", vec![]),
-            node("chair", vec![]),
-            node("chair", vec![]),
-        ],
-        referenced_assets: vec![],
-    }
+    imported(vec![
+        node("room", vec![1, 2, 3, 4]),
+        node("lamp", vec![]),
+        node("helper", vec![]),
+        node("chair", vec![]),
+        node("chair", vec![]),
+    ])
 }
 
 fn room_with_shelf() -> Scene {
-    Scene {
-        nodes: vec![
-            node("room", vec![2, 3, 4, 5]),
-            node("lamp", vec![]),
-            node("shelf", vec![1]),
-            node("helper", vec![]),
-            node("chair", vec![]),
-            node("chair", vec![]),
-        ],
-        referenced_assets: vec![],
-    }
+    imported(vec![
+        node("room", vec![2, 3, 4, 5]),
+        node("lamp", vec![]),
+        node("shelf", vec![1]),
+        node("helper", vec![]),
+        node("chair", vec![]),
+        node("chair", vec![]),
+    ])
 }
 
 fn app() -> App {
@@ -150,14 +161,14 @@ fn state(app: &App, link: Entity) -> &SceneLinkState {
 fn linked(app: &mut App, link: Entity, path: &str) -> Entity {
     linked_nodes(app, link)
         .into_iter()
-        .find(|node| node.path == path)
+        .find(|node| node.node == NodeId::from_name_path(path))
         .unwrap_or_else(|| panic!("no linked node at {path}"))
         .entity
 }
 
 struct Linked {
     entity: Entity,
-    path: String,
+    node: NodeId,
 }
 
 fn linked_nodes(app: &mut App, link: Entity) -> Vec<Linked> {
@@ -168,7 +179,7 @@ fn linked_nodes(app: &mut App, link: Entity) -> Vec<Linked> {
         .filter(|(_, node)| node.link == link)
         .map(|(entity, node)| Linked {
             entity,
-            path: node.path.clone(),
+            node: node.node,
         })
         .collect()
 }
@@ -197,18 +208,18 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
 
     let changes = vec![
         LinkChange::RemoveNode {
-            path: "room/helper".into(),
+            path: at(&["room/helper"]),
         },
         LinkChange::RemoveComponent {
-            path: "room/lamp".into(),
+            path: at(&["room/lamp"]),
             type_name: std::any::type_name::<Transform>().into(),
         },
         LinkChange::AddComponent {
-            path: "room/chair#1".into(),
+            path: at(&["room/chair#1"]),
             component: label("added"),
         },
         LinkChange::AddComponent {
-            path: "room/gone".into(),
+            path: at(&["room/gone"]),
             component: prop(art),
         },
     ];
@@ -222,7 +233,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         Name::new("own"),
         Transform::IDENTITY,
         LinkParent {
-            path: "room/lamp".into(),
+            path: at(&["room/lamp"]),
         },
     ));
     app.main_mut().world_mut().entity_mut(link).add_child(own);
@@ -259,20 +270,27 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
             ChangeOutcome::Applied,
             ChangeOutcome::Applied,
             ChangeOutcome::Applied,
-            ChangeOutcome::Unapplied(format!("no node at room/gone in {}", s.simple_hex())),
+            ChangeOutcome::Unapplied(format!(
+                "no node {} in {}",
+                at(&["room/gone"]),
+                s.simple_hex()
+            )),
         ]
     );
-    let mut paths: Vec<String> = linked_nodes(&mut app, link)
+    let mut ids: Vec<u64> = linked_nodes(&mut app, link)
         .into_iter()
-        .map(|node| node.path)
+        .map(|node| node.node.0)
         .collect();
-    paths.sort();
-    let mut expected: Vec<String> = node_paths(&room())
-        .into_iter()
-        .filter(|path| path != "room/helper")
+    ids.sort();
+    let mut expected: Vec<u64> = room()
+        .nodes
+        .iter()
+        .map(|node| node.id)
+        .filter(|id| *id != NodeId::from_name_path("room/helper"))
+        .map(|id| id.0)
         .collect();
     expected.sort();
-    assert_eq!(paths, expected);
+    assert_eq!(ids, expected);
     assert_eq!(parent(&app, own), Some(lamp));
 
     app.main_mut()
@@ -283,7 +301,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let captured = capture_subtree(app.main().world(), link).unwrap();
     let mut saved = changes.clone();
     saved[2] = LinkChange::AddComponent {
-        path: "room/chair#1".into(),
+        path: at(&["room/chair#1"]),
         component: label("edited"),
     };
     assert_eq!(captured.nodes.len(), 2);
@@ -297,7 +315,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     assert_eq!(captured.nodes[0].children, [1]);
     assert!(captured.nodes[1]
         .components
-        .contains(&link_parent("room/lamp")));
+        .contains(&link_parent(at(&["room/lamp"]))));
     assert!(captured.referenced_assets.contains(&s));
     assert!(captured.referenced_assets.contains(&art));
     let mut copy = self::app();
@@ -324,7 +342,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let refused = capture_subtree(world, link).unwrap_err().to_string();
     assert!(
         refused.contains(
-            "references the linked node room/lamp; references into a link are not supported yet"
+            "references the linked node lamp; references into a link are not supported yet"
         ),
         "{refused}"
     );
@@ -345,7 +363,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let m = AssetId::new();
     let mut inner = node("inner", vec![]);
     let manor = LinkChange::AddComponent {
-        path: "room/helper".into(),
+        path: at(&["room/helper"]),
         component: label("manor"),
     };
     inner.link = Some(SceneLinkData {
@@ -363,11 +381,11 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let outer = world.spawn(
         SceneLink::new(outer_handle)
             .with_change(LinkChange::AddComponent {
-                path: "inner/room/chair".into(),
+                path: at(&["inner", "room/chair"]),
                 component: label("deep"),
             })
             .with_change(LinkChange::RemoveComponent {
-                path: "inner/room/helper".into(),
+                path: at(&["inner", "room/helper"]),
                 type_name: std::any::type_name::<Label>().into(),
             }),
     );
@@ -375,7 +393,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         Name::new("guest"),
         Transform::IDENTITY,
         LinkParent {
-            path: "inner/room/chair#1".into(),
+            path: at(&["inner", "room/chair#1"]),
         },
     ));
     world.entity_mut(outer).add_child(guest);
@@ -396,7 +414,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         owning_link(app.main().world(), deep_chair),
         Some(OwnedPath {
             link: outer,
-            path: "inner/room/chair".into()
+            path: at(&["inner", "room/chair"])
         })
     );
     assert_eq!(
@@ -431,7 +449,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     assert_eq!(
         captured.nodes[0].link.as_ref().unwrap().changes[0],
         LinkChange::AddComponent {
-            path: "inner/room/chair".into(),
+            path: at(&["inner", "room/chair"]),
             component: label("edited"),
         }
     );
@@ -441,7 +459,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         .find(|node| node.name == "guest")
         .unwrap()
         .components
-        .contains(&link_parent("inner/room/chair#1")));
+        .contains(&link_parent(at(&["inner", "room/chair#1"]))));
 
     let cold = AssetId::new();
     let mut late = node("late", vec![]);
@@ -459,7 +477,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let world = app.main_mut().world_mut();
     let early = world.spawn(
         SceneLink::new(early_handle).with_change(LinkChange::AddComponent {
-            path: "late/room/chair".into(),
+            path: at(&["late", "room/chair"]),
             component: label("late"),
         }),
     );
@@ -467,7 +485,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         Name::new("lodger"),
         Transform::IDENTITY,
         LinkParent {
-            path: "late/room/lamp".into(),
+            path: at(&["late", "room/lamp"]),
         },
     ));
     world.entity_mut(early).add_child(lodger);
@@ -498,11 +516,11 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     assert_eq!(captured.nodes.len(), 2);
     assert!(captured.nodes[1]
         .components
-        .contains(&link_parent("late/room/lamp")));
+        .contains(&link_parent(at(&["late", "room/lamp"]))));
 
     let mut copy = node("copy", vec![]);
     let stored = vec![LinkChange::RemoveNode {
-        path: "room/helper".into(),
+        path: at(&["room/helper"]),
     }];
     copy.link = Some(SceneLinkData {
         scene: s,
@@ -532,7 +550,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     linked(&mut app, opened, "room/shelf/lamp");
     assert!(!linked_nodes(&mut app, opened)
         .iter()
-        .any(|node| node.path == "room/helper"));
+        .any(|node| node.node == NodeId::from_name_path("room/helper")));
 
     let mut mid = node("mid", vec![]);
     mid.link = Some(SceneLinkData {
@@ -551,7 +569,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     middle.link = Some(SceneLinkData {
         scene: s2,
         changes: vec![LinkChange::AddComponent {
-            path: "mid/room/chair".into(),
+            path: at(&["mid", "room/chair"]),
             component: label("manor"),
         }],
     });
@@ -567,7 +585,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         .world_mut()
         .spawn(
             SceneLink::new(level_handle).with_change(LinkChange::RemoveComponent {
-                path: "middle/mid/room/chair".into(),
+                path: at(&["middle", "mid", "room/chair"]),
                 type_name: std::any::type_name::<Label>().into(),
             }),
         );
