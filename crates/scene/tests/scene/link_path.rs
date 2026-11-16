@@ -27,6 +27,10 @@ fn node_paths_name_every_node_distinctly_and_cross_links() {
             node("a/b", vec![]),
             node("c#d", vec![]),
             node("e\\f", vec![]),
+            node("", vec![9]),
+            node("", vec![]),
+            node("x", vec![]),
+            node("x", vec![]),
         ],
         referenced_assets: vec![],
     };
@@ -41,6 +45,10 @@ fn node_paths_name_every_node_distinctly_and_cross_links() {
             "a\\/b",
             "c\\#d",
             "e\\\\f",
+            "#0",
+            "#1",
+            "#0/x",
+            "x",
         ]
     );
 

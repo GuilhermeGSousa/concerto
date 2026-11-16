@@ -25,9 +25,10 @@ pub fn node_paths(scene: &Scene) -> Vec<String> {
                 continue;
             };
             let count = seen.entry(node.name.as_str()).or_insert(0);
-            let segment = match *count {
-                0 => escape(&node.name),
-                n => format!("{}#{n}", escape(&node.name)),
+            let segment = match (node.name.is_empty(), *count) {
+                (true, n) => format!("#{n}"),
+                (false, 0) => escape(&node.name),
+                (false, n) => format!("{}#{n}", escape(&node.name)),
             };
             *count += 1;
             if paths[index].is_some() {
