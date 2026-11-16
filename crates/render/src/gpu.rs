@@ -12,8 +12,8 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    /// The wgpu instance a host creates its surface from before requesting a `Gpu`.
-    pub fn instance() -> wgpu::Instance {
+    /// The wgpu instance a host creates its surface from before requesting a `Gpu`; a windowed host passes its event loop's display, which GLES needs to present.
+    pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
         // wasm renders through WebGL2 (see the `webgl` feature and the
         // downlevel_webgl2 limits below). `Instance::default()` enables every
         // backend and prefers WebGPU, which yields no adapter on browsers
@@ -25,6 +25,7 @@ impl Gpu {
         };
         wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
+            display,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         })
     }
@@ -100,7 +101,7 @@ impl Gpu {
 
     /// Requests a `Gpu` for a test; without one it prints a skip line naming why and the adapters seen, and returns `None`, or panics with that reason when `CONCERTO_REQUIRE_GPU` is set.
     pub fn request_for_test() -> Option<Gpu> {
-        let instance = Gpu::instance();
+        let instance = Gpu::instance(None);
         let found = pollster::block_on(Gpu::try_request(&instance, None))
             .map_err(|error| format!("{error}; adapters seen: {}", adapters_seen(&instance)));
         skip_without_gpu(

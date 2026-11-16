@@ -9,7 +9,7 @@ use crate::TerminalInput;
 
 /// Builds an `App` with `build` and `content` installed, and drives it from the terminal until Esc is pressed.
 pub fn run(build: impl FnOnce(&mut App), content: ContentSettings<'static>) {
-    let gpu = pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    let gpu = pollster::block_on(Gpu::request(&Gpu::instance(None), None))
         .expect("no GPU adapter is available");
     let mut app = App::new();
     app.insert_resource(gpu).insert_resource(DrawTarget::None);

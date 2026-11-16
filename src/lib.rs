@@ -225,7 +225,7 @@ pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
     use concerto_render::{draw_target::DrawTarget, gpu::Gpu};
     use concerto_window::plugin::Window;
 
-    let gpu = pollster::block_on(Gpu::request(&Gpu::instance(), None))?;
+    let gpu = pollster::block_on(Gpu::request(&Gpu::instance(None), None))?;
     let mut app = App::new();
     app.insert_resource(gpu)
         .insert_resource(DrawTarget::None)

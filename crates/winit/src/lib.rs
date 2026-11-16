@@ -6,7 +6,7 @@ use concerto_app::App;
 use concerto_render::{draw_target::DrawTarget, gpu::Gpu};
 use concerto_window::{clipboard::WindowClipboard, plugin::Window};
 use winit::{
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop, OwnedDisplayHandle},
     window::Window as WinitWindow,
 };
 
@@ -32,11 +32,12 @@ pub fn run(build: impl FnOnce(&mut App) + 'static) {
 }
 
 async fn build_app(
+    display: OwnedDisplayHandle,
     window: Arc<dyn WinitWindow>,
     build: impl FnOnce(&mut App) + 'static,
     slot: Rc<RefCell<Option<App>>>,
 ) {
-    let instance = Gpu::instance();
+    let instance = Gpu::instance(Some(Box::new(display)));
     let surface = Arc::new(
         instance
             .create_surface(Arc::clone(&window))
