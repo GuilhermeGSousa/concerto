@@ -25,18 +25,6 @@ impl LinkPath {
         &self.0
     }
 
-    /// The id this path ends at, in the innermost scene it reaches.
-    pub fn last(&self) -> Option<NodeId> {
-        self.0.last().copied()
-    }
-
-    /// This path continued into the node `id` of the scene its last node links.
-    pub fn child(&self, id: NodeId) -> Self {
-        let mut ids = self.0.clone();
-        ids.push(id);
-        Self(ids)
-    }
-
     /// This path continued by `rest`, which starts in the scene its last node links.
     pub fn join(&self, rest: &LinkPath) -> Self {
         let mut ids = self.0.clone();
@@ -44,14 +32,9 @@ impl LinkPath {
         Self(ids)
     }
 
-    /// Whether `prefix` names the leading ids of this path.
-    pub fn starts_with(&self, prefix: &LinkPath) -> bool {
-        self.0.starts_with(&prefix.0)
-    }
-
     /// The rest of this path below `prefix`, when `prefix` names its leading ids and leaves at least one.
     pub fn strip_prefix(&self, prefix: &LinkPath) -> Option<LinkPath> {
-        (self.0.len() > prefix.0.len() && self.starts_with(prefix))
+        (self.0.len() > prefix.0.len() && self.0.starts_with(&prefix.0))
             .then(|| Self(self.0[prefix.0.len()..].to_vec()))
     }
 }

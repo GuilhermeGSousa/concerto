@@ -35,6 +35,7 @@ pub struct SceneLink {
     inherited_outcomes: Vec<ChangeOutcome>,
     handoffs: Vec<Handoff>,
     spawned: HashMap<NodeId, Entity>,
+    roots: Vec<Entity>,
     chain: Vec<AssetId>,
 }
 
@@ -58,6 +59,7 @@ impl SceneLink {
             inherited_outcomes: Vec::new(),
             handoffs: Vec::new(),
             spawned: HashMap::new(),
+            roots: Vec::new(),
             chain: Vec::new(),
         }
     }
@@ -296,7 +298,7 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         .chain(&scene_link.inherited)
         .cloned()
         .collect();
-    let previous: Vec<Entity> = scene_link.spawned.values().copied().collect();
+    let previous = scene_link.roots.clone();
     let mut chain = scene_link.chain.clone();
     let id = handle.id();
     let scene = world
@@ -322,12 +324,16 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         }
     }
 
-    let index: HashMap<NodeId, usize> = scene
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(at, node)| (node.id, at))
-        .collect();
+    let mut index: HashMap<NodeId, usize> = HashMap::new();
+    for (at, node) in scene.nodes.iter().enumerate() {
+        if *index.entry(node.id).or_insert(at) != at {
+            warn!(
+                "{}: {scene_name} has more than one node with id {}; only the first can be changed",
+                link_name(world, link),
+                node.id
+            );
+        }
+    }
     let mut outcomes = vec![ChangeOutcome::Applied; changes.len()];
     let mut removed_nodes = Vec::new();
     let mut removed_components = Vec::new();
@@ -374,11 +380,14 @@ fn spawn_link(world: &mut World, link: Entity) -> Option<()> {
         if live[at] {
             let node = scene.nodes[at].id;
             world.insert(LinkedNode { link, node }, *entity);
-            spawned_nodes.insert(node, *entity);
+            if index.get(&node) == Some(&at) {
+                spawned_nodes.insert(node, *entity);
+            }
         }
     }
     if let Some(scene_link) = world.get_component_for_entity_mut::<SceneLink>(link) {
         scene_link.spawned = spawned_nodes;
+        scene_link.roots = spawned.root_entities.clone();
     }
 
     let (own, handed) = changes.split_at(own_count);

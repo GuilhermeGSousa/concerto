@@ -247,16 +247,15 @@ fn added_value(
     capture: &mut SceneCapture,
 ) -> anyhow::Result<ReflectedValue> {
     let target = find_linked(world, link, path);
-    let node = target.map_or_else(
+    let shown = target.map_or_else(
         || path.to_string(),
         |target| shown_name(target, world.get_component_for_entity::<Name>(target)),
     );
-    let path = node.as_str();
     let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
-        return Ok(unlisted(component, path));
+        return Ok(unlisted(component, &shown));
     };
     let Some(registration) = registry.read().get_by_name(&component.type_name) else {
-        return Ok(unlisted(component, path));
+        return Ok(unlisted(component, &shown));
     };
     let mut added = SceneCapture::default();
     let live = registration
@@ -266,11 +265,11 @@ fn added_value(
     let value = match live {
         Some(Ok(value)) => value,
         Some(Err(_)) if added.outside().is_some() => bail!(
-            "{} added to {path} holds an entity reference; references in added components are not supported yet",
+            "{} added to {shown} holds an entity reference; references in added components are not supported yet",
             registration.short_name()
         ),
         Some(Err(error)) => bail!(
-            "component '{}' added to {path} cannot be written to a scene: {error}",
+            "component '{}' added to {shown} cannot be written to a scene: {error}",
             component.type_name
         ),
         None => {
@@ -278,7 +277,7 @@ fn added_value(
                 .data::<ReflectDefault>()
                 .map(ReflectDefault::default)
             else {
-                return Ok(unlisted(component, path));
+                return Ok(unlisted(component, &shown));
             };
             apply_value_with(
                 &mut *value,
@@ -297,9 +296,9 @@ fn added_value(
     Ok(value)
 }
 
-fn unlisted(component: &SerializedComponent, path: &str) -> ReflectedValue {
+fn unlisted(component: &SerializedComponent, node: &str) -> ReflectedValue {
     warn!(
-        "{} added to {path} cannot be decoded, so the assets it names are not listed",
+        "{} added to {node} cannot be decoded, so the assets it names are not listed",
         component.type_name
     );
     component.value.clone()

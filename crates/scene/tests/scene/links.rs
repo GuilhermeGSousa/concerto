@@ -604,6 +604,23 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         [ChangeOutcome::Applied]
     );
 
+    let twins = || Scene {
+        nodes: vec![node("twin", vec![1]), node("twin", vec![])],
+        referenced_assets: vec![],
+    };
+    let twins_id = AssetId::new();
+    let twins_handle = server.insert_loaded(twins_id, twins());
+    let paired = app
+        .main_mut()
+        .world_mut()
+        .spawn(SceneLink::new(twins_handle));
+    settle(&mut app, paired);
+    assert_eq!(linked_nodes(&mut app, paired).len(), 2);
+    server.insert_loaded(twins_id, twins());
+    app.update();
+    assert!(matches!(settle(&mut app, paired), SceneLinkState::Spawned));
+    assert_eq!(linked_nodes(&mut app, paired).len(), 2);
+
     app.main_mut().world_mut().insert_resource(LinkRoot(s));
     let looped = app
         .main_mut()

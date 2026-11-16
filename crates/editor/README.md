@@ -601,7 +601,7 @@ light or a mesh, and `circle` for any other entity, with or without children.
 While a scene is edited, a link's linked nodes show their names muted, and one
 its link changes, or that holds an entity of the scene's own, shows
 `pencil-simple` in the accent colour after its name. Selecting a linked node
-shows its link and path above its cards, with its own components' fields
+shows the scene it is linked from above its cards, with its own components' fields
 disabled and no gizmo in the viewport; selecting a link lists its changes,
 each with whether it applied and a button that removes it, under a line saying
 `waiting` or `refused: <reason>` while the link is not spawned.
