@@ -19,13 +19,13 @@ fn glyph_ids(font_system: &mut FontSystem, text: &str, family: &str) -> Vec<u16>
             line_height: 20.0,
         },
     );
-    buffer.set_size(font_system, None, None);
-    buffer.set_wrap(font_system, Wrap::None);
+    buffer.set_size(None, None);
+    buffer.set_wrap(Wrap::None);
     buffer.set_text(
-        font_system,
         text,
-        Attrs::new().family(Family::Name(family)),
+        &Attrs::new().family(Family::Name(family)),
         Shaping::Advanced,
+        None,
     );
     buffer.shape_until_scroll(font_system, false);
     buffer

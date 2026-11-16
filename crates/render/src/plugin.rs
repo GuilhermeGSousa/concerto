@@ -58,6 +58,7 @@ fn offscreen_config(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
         alpha_mode: wgpu::CompositeAlphaMode::Opaque,
         view_formats: vec![],
         desired_maximum_frame_latency: 2,
+        color_space: wgpu::SurfaceColorSpace::Auto,
     }
 }
 
@@ -210,6 +211,7 @@ impl Plugin for RenderPlugin {
                     alpha_mode: surface_caps.alpha_modes[0],
                     view_formats: vec![],
                     desired_maximum_frame_latency: 2,
+                    color_space: wgpu::SurfaceColorSpace::Auto,
                 };
                 if width != 0 {
                     surface.configure(&gpu.device, &config);

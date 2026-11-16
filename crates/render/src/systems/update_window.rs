@@ -48,7 +48,9 @@ pub(crate) fn update_render_window(
                 surface.configure(&device, &context.surface_config);
                 resize_window_depth(&device, &render_cameras, size);
             }
-            if let Ok(output) = surface.get_current_texture() {
+            if let wgpu::CurrentSurfaceTexture::Success(output)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(output) = surface.get_current_texture()
+            {
                 render_window.set_swapchain_texture(output);
             }
         }

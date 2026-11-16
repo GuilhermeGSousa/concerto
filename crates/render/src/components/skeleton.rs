@@ -359,12 +359,18 @@ mod tests {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        gpu.device.poll(wgpu::Maintain::Wait);
+        gpu.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("the device polls");
         rx.recv().unwrap().unwrap();
-        let matrices = bytemuck::cast_slice::<u8, [f32; 16]>(&slice.get_mapped_range())
-            .iter()
-            .map(Mat4::from_cols_array)
-            .collect();
+        let matrices = bytemuck::cast_slice::<u8, [f32; 16]>(
+            &slice
+                .get_mapped_range()
+                .expect("the mapped range is readable"),
+        )
+        .iter()
+        .map(Mat4::from_cols_array)
+        .collect();
         readback.unmap();
         matrices
     }

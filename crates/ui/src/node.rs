@@ -514,20 +514,17 @@ impl UITextMeasure {
                 line_height: measure.line_height,
             },
         );
-        buffer.set_size(&mut self.font_system, width, None);
-        buffer.set_wrap(
-            &mut self.font_system,
-            if measure.wrap {
-                glyphon::Wrap::Word
-            } else {
-                glyphon::Wrap::None
-            },
-        );
+        buffer.set_size(width, None);
+        buffer.set_wrap(if measure.wrap {
+            glyphon::Wrap::Word
+        } else {
+            glyphon::Wrap::None
+        });
         buffer.set_text(
-            &mut self.font_system,
             &measure.text,
-            text_attrs(measure.family.clone(), measure.weight, measure.italic),
+            &text_attrs(measure.family.clone(), measure.weight, measure.italic),
             glyphon::Shaping::Advanced,
+            None,
         );
         buffer.shape_until_scroll(&mut self.font_system, false);
 

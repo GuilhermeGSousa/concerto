@@ -10,8 +10,9 @@ license.workspace = true
 concerto-app.workspace = true
 concerto-ecs.workspace = true
 concerto-render.workspace = true
-wgpu = { version = "24.0.1", default-features = false, features = [
+wgpu = { version = "30.0.2", default-features = false, features = [
     "wgsl",
+    "std",
     "metal",
     "naga-ir",
     "fragile-send-sync-non-atomic-wasm",

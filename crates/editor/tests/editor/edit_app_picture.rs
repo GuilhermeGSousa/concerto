@@ -47,8 +47,12 @@ fn first_pixel(gpu: &Gpu, texture: &wgpu::Texture) -> [u8; 4] {
     gpu.queue.submit([encoder.finish()]);
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, |result| result.unwrap());
-    gpu.device.poll(wgpu::Maintain::Wait);
-    let data = slice.get_mapped_range();
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("the device polls");
+    let data = slice
+        .get_mapped_range()
+        .expect("the mapped range is readable");
     [data[0], data[1], data[2], data[3]]
 }
 

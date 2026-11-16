@@ -156,8 +156,10 @@ pub(crate) fn ui_renderpass(
 
     if let Some(view) = render_window.get_view() {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("UI Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {

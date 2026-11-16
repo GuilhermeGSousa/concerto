@@ -93,8 +93,10 @@ pub(crate) fn render_gizmos(
         };
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("Gizmo Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view: color_view,
                 resolve_target: None,
                 ops: wgpu::Operations {

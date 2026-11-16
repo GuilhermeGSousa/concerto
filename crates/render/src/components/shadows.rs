@@ -815,6 +815,7 @@ pub(crate) fn render_shadow_maps(
 
         let encoder = device.command_encoder();
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("Shadow Depth Render Pass"),
             color_attachments: &[],
             depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
