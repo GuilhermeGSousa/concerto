@@ -12,6 +12,7 @@ use concerto_foundation::transform::Transform;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
 use concerto_scene::{
     capture::capture_subtree,
+    node_id::{NodeId, SceneNodeId},
     scene::Scene,
     spawner::{SpawnFilter, spawn_scene_in_world},
 };
@@ -109,6 +110,7 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
                 Name::new("Entity"),
                 Transform::IDENTITY,
                 SyncWithRenderWorld,
+                SceneNodeId(NodeId::fresh()),
             ));
             if let Some(parent) = parent {
                 world.entity_mut(*parent).add_child(child);
@@ -124,7 +126,10 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
         EntityEdit::Duplicate(entity) => {
             let parent = editable(world, *entity)?;
             refuse_linked(world, *entity, LinkedEdit::Duplicate)?;
-            let scene = capture_subtree(world, *entity)?;
+            let mut scene = capture_subtree(world, *entity)?;
+            for node in &mut scene.nodes {
+                node.id = NodeId::fresh();
+            }
             Ok(Applied::Changed(spawn_beside(world, &scene, parent)))
         }
         EntityEdit::Rename { entity, name } => {
@@ -279,10 +284,15 @@ mod tests {
         world.register_component::<Children>();
         world.register_component::<Name>();
         let root = world.spawn((Transform::IDENTITY, SceneRoot));
-        let node = world.spawn((Name::new("node"), Transform::IDENTITY));
+        let node = world.spawn((
+            Name::new("node"),
+            Transform::IDENTITY,
+            SceneNodeId(NodeId(1)),
+        ));
         let child = world.spawn((
             Name::new("child"),
             Transform::from_translation(glam::Vec3::X * 7.0),
+            SceneNodeId(NodeId(2)),
         ));
         world.entity_mut(root).add_child(node);
         world.entity_mut(node).add_child(child);
@@ -324,6 +334,11 @@ mod tests {
         fn valid(&mut self, entity: Entity) -> bool {
             self.world().entity_is_valid(entity)
         }
+        fn node_id(&mut self, entity: Entity) -> Option<NodeId> {
+            self.world()
+                .get_component_for_entity::<SceneNodeId>(entity)
+                .map(|id| id.0)
+        }
     }
 
     #[test]
@@ -337,6 +352,10 @@ mod tests {
             .unwrap();
         assert_eq!(f.children(node), [child, created]);
         assert_eq!(f.name(created), "Entity");
+        assert!(
+            f.node_id(created)
+                .is_some_and(|id| id != NodeId(1) && id != NodeId(2))
+        );
         assert!(
             f.world()
                 .get_component_for_entity::<SyncWithRenderWorld>(created)
@@ -357,6 +376,13 @@ mod tests {
         let copied_child = f.children(copy)[0];
         assert_ne!(copied_child, child);
         assert_eq!(f.name(copied_child), "child");
+        let copied = [f.node_id(copy), f.node_id(copied_child)];
+        assert!(
+            copied
+                .iter()
+                .all(|id| id.is_some_and(|id| id != NodeId(1) && id != NodeId(2)))
+        );
+        assert_ne!(copied[0], copied[1]);
         assert_eq!(
             f.world()
                 .get_component_for_entity::<Transform>(copied_child)

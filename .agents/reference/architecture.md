@@ -152,6 +152,13 @@ sounds) are imported once, ahead of time. The running game never reads them.
   Asset handles are stored as their `AssetId` and entity references as node
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
+- Each scene node has a `NodeId`, unique within its scene. An importer derives
+  it from the node's name path (`NodeId::from_name_path`; a primitive child
+  from its parent's id with `NodeId::primitive`), so a re-import keeps it while
+  the name path is unchanged. A spawned entity carries its node's id as
+  `SceneNodeId`, and capture writes it back; an entity without one gets the id
+  of its name path in the captured scene, made unique. The editor gives an
+  entity it creates, duplicates or places a fresh id.
 - A scene node may be a link: the `SceneLink` component names another scene and
   holds the changes made to its nodes (`Scene` format version 2, `SceneNode::link`).
   `request_link_spawns` runs in `Update`: once the linked scene has loaded it

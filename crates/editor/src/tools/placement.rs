@@ -23,7 +23,11 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Aabb, Mesh, MeshComponent, Ray};
 use concerto_render::components::{camera::Camera, render_entity::SyncWithRenderWorld};
-use concerto_scene::{link::LinkRoot, scene::Scene};
+use concerto_scene::{
+    link::LinkRoot,
+    node_id::{NodeId, SceneNodeId},
+    scene::Scene,
+};
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::import_fold::shown_name;
@@ -274,6 +278,7 @@ fn spawn(world: &mut World, placement: &Placement) -> anyhow::Result<Entity> {
         Name::new(placement.name.clone()),
         Transform::from_translation(local),
         SyncWithRenderWorld,
+        SceneNodeId(NodeId::fresh()),
     ));
     world.entity_mut(placement.parent).add_child(entity);
     (placement.kind.fill)(world, placement.request.asset, entity);
@@ -395,7 +400,7 @@ mod tests {
     };
     use concerto_mesh::Vertex;
     use concerto_scene::{
-        node_id::NodeId,
+        node_id::{NodeId, SceneNodeId},
         plugin::ScenePlugin,
         scene::{Scene, SceneNode},
     };
@@ -691,6 +696,12 @@ mod tests {
         assert_eq!(f.parent(hook), Some(anchor));
         assert!(near(f.local(hook), Vec3::ZERO));
         assert!(near(f.world_position(hook), Vec3::new(10.0, 0.0, 0.0)));
+        let ids = [lamp, hook].map(|entity| {
+            f.world()
+                .get_component_for_entity::<SceneNodeId>(entity)
+                .copied()
+        });
+        assert!(ids[0].is_some() && ids[0] != ids[1]);
         assert_eq!(f.heard::<SceneEdited>().len(), 3);
         assert!(f.heard::<SceneStatus>().is_empty());
     }
