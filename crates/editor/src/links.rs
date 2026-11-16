@@ -34,7 +34,7 @@ use concerto_foundation::assets::{
 use concerto_reflect::TypeRegistry;
 use concerto_scene::{
     link::{
-        ChangeOutcome, LinkParent, LinkedNode, OwnedPath, SceneLink, SceneLinkState, owning_link,
+        ChangeOutcome, LinkParent, LinkedNode, OwnedPath, SceneLink, SceneLinkState,
         owning_link_by, scene_address, shown_name,
     },
     scene::{LinkChange, SerializedComponent},
@@ -103,20 +103,47 @@ impl Plugin for LinksPlugin {
     }
 }
 
-/// The outermost link of `entity` and its path from there, when `entity` is a linked node of a link in the open scene, read through queries; `None` in a world without a scene root.
+fn linked_in_open_scene_with<'a>(
+    entity: Entity,
+    node: impl Fn(Entity) -> Option<&'a LinkedNode>,
+    member: impl FnOnce(Entity) -> anyhow::Result<bool>,
+) -> Option<OwnedPath> {
+    let owned = owning_link_by(entity, node)?;
+    member(owned.link).ok()?;
+    Some(owned)
+}
+
+/// [`linked_in_open_scene`], read through queries.
 pub(crate) fn linked_in_open_scene_by(
     entity: Entity,
     nodes: &Query<&LinkedNode>,
     members: &Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
 ) -> Option<OwnedPath> {
-    let owned = owning_link_by(entity, |entity| nodes.get_entity(entity))?;
-    scene_member_by(owned.link, |entity| {
-        members
-            .get_entity(entity)
-            .map(|(parent, root)| (root.is_some(), parent.map(ChildOf::parent)))
+    linked_in_open_scene_with(
+        entity,
+        |entity| nodes.get_entity(entity),
+        |link| {
+            scene_member_by(link, |entity| {
+                members
+                    .get_entity(entity)
+                    .map(|(parent, root)| (root.is_some(), parent.map(ChildOf::parent)))
+            })
+        },
+    )
+}
+
+fn added_component(
+    link: &SceneLink,
+    owned: &OwnedPath,
+    component: TypeId,
+    types: &TypeRegistry,
+) -> Option<usize> {
+    link.changes().iter().position(|change| {
+        matches!(change, LinkChange::AddComponent { path, component: added }
+            if *path == owned.path
+                && types.get_by_name(&added.type_name).map(|registration| registration.type_id())
+                    == Some(component))
     })
-    .ok()?;
-    Some(owned)
 }
 
 fn change_path(change: &LinkChange) -> &str {
@@ -209,14 +236,9 @@ fn lock_linked_cards(
         let Some(owned) = linked_in_open_scene_by(inspected.scene_entity, nodes, members) else {
             continue;
         };
-        let added = links.get_entity(owned.link).is_some_and(|link| {
-            link.changes().iter().any(|change| {
-                matches!(change, LinkChange::AddComponent { path, component }
-                    if *path == owned.path
-                        && types.get_by_name(&component.type_name).map(|registration| registration.type_id())
-                            == Some(inspected.type_id))
-            })
-        });
+        let added = links
+            .get_entity(owned.link)
+            .is_some_and(|link| added_component(link, &owned, inspected.type_id, &types).is_some());
         if !added {
             cmd.insert(ReadOnlyCard, card);
         }
@@ -403,25 +425,19 @@ pub(crate) fn refusal(world: &World, entity: Entity, edit: LinkedEdit) -> Option
     ))
 }
 
+/// The outermost link of `entity` and its path from there, when `entity` is a linked node of a link in the open scene; `None` in a world without a scene root.
 fn linked_in_open_scene(world: &World, entity: Entity) -> Option<OwnedPath> {
-    let owned = owning_link(world, entity)?;
-    scene_member(world, owned.link).ok()?;
-    Some(owned)
-}
-
-fn type_of(world: &World, type_name: &str) -> Option<TypeId> {
-    let registry = world.get_resource::<AppTypeRegistry>()?.read();
-    registry
-        .get_by_name(type_name)
-        .map(|registration| registration.type_id())
+    linked_in_open_scene_with(
+        entity,
+        |entity| world.get_component_for_entity::<LinkedNode>(entity),
+        |link| scene_member(world, link),
+    )
 }
 
 fn own_addition(world: &World, owned: &OwnedPath, component: TypeId) -> Option<usize> {
     let link = world.get_component_for_entity::<SceneLink>(owned.link)?;
-    link.changes().iter().position(|change| {
-        matches!(change, LinkChange::AddComponent { path, component: added }
-            if *path == owned.path && type_of(world, &added.type_name) == Some(component))
-    })
+    let types = world.get_resource::<AppTypeRegistry>()?.read();
+    added_component(link, owned, component, &types)
 }
 
 fn push_change(world: &mut World, link: Entity, change: LinkChange) {
