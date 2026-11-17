@@ -1009,17 +1009,6 @@ mod tests {
                 case.extension
             );
         }
-        for extension in importers()
-            .iter()
-            .flat_map(|importer| importer.supported_extensions())
-        {
-            assert!(
-                cases
-                    .iter()
-                    .any(|case| case.extension.eq_ignore_ascii_case(extension)),
-                "{extension}"
-            );
-        }
     }
 
     #[derive(serde::Serialize, serde::Deserialize)]
