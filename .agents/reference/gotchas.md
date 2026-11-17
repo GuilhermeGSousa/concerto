@@ -152,6 +152,16 @@ fix the entry in the same commit as the change that made it false.
   `GlobalTransform`, so such a mesh disappears whenever that box is out of
   view. The world grid, whose three vertices sit at the origin, requires
   `NoFrustumCulling` and `NotShadowCaster` for this reason.
+- **A normal map's blue channel is ignored.** The standard shader reads x and
+  y and rebuilds `z = sqrt(max(0, 1 - x² - y²))`, because BC5, the default for
+  normal maps, has no blue channel. A shader that samples a normal map itself
+  rebuilds z the same way, and a tangent-space normal with z below 0 cannot
+  be stored.
+- **A BC texture needs `TEXTURE_COMPRESSION_BC` on the device.** `Gpu`
+  requests it when the adapter has it, and `RenderCapabilities::bc_textures`
+  says whether it did. Without it, preparing a BC texture logs an error naming
+  the texture and binds the dummy texture, a transparent black texel, in its
+  place; nothing decodes BC on the CPU.
 - **`Pose::identity` and `AnimationFrame::identity` have zero translation per
   joint.** Applying a pose that was never evaluated collapses every bone to the
   origin and the mesh folds onto itself. A frame from `FramePool::acquire` starts at the skeleton's rest pose,

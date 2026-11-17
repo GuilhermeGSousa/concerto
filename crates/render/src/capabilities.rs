@@ -11,6 +11,8 @@ pub struct RenderCapabilities {
     pub depth_bias_clamp: bool,
     /// A single-layer texture can be viewed as an array. `false` on GL.
     pub single_layer_texture_arrays: bool,
+    /// BC1 to BC7 textures can be sampled. `false` where the adapter lacks `TEXTURE_COMPRESSION_BC`.
+    pub bc_textures: bool,
 }
 
 impl RenderCapabilities {
@@ -24,6 +26,9 @@ impl RenderCapabilities {
                 && !is_webgl2,
             depth_bias_clamp: downlevel.contains(wgpu::DownlevelFlags::DEPTH_BIAS_CLAMP),
             single_layer_texture_arrays: !is_gl,
+            bc_textures: adapter
+                .features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
         }
     }
 

@@ -242,8 +242,10 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
 
     // Normal mapping calculations
     let object_normal = sample_normal(in.tex_coords);
+    let normal_xy = object_normal.xy * 2.0 - 1.0;
+    let normal_z = sqrt(max(0.0, 1.0 - dot(normal_xy, normal_xy)));
     let TBN = mat3x3<f32>(in.world_tangent, in.world_bitangent, in.world_normal);
-    let mapped_normal = normalize(TBN * normalize(object_normal.xyz * 2.0 - 1.0));
+    let mapped_normal = normalize(TBN * vec3<f32>(normal_xy, normal_z));
 
     let view_dir = normalize(camera.view_pos - in.world_position);
     let NdotV = max(dot(mapped_normal, view_dir), 1e-4);

@@ -1,13 +1,16 @@
 use crate::{
     assets::texture::{block_extent, block_row_bytes, block_rows, Texture, TextureKind},
+    capabilities::RenderCapabilities,
     device::RenderDevice,
     queue::RenderQueue,
     render_asset::{AssetPreparationError, RenderAsset},
 };
+use concerto_app::extractor::Extracted;
 use concerto_ecs::{
     resource::{Res, Resource},
     system::input::SystemInputData,
 };
+use concerto_foundation::assets::{asset_server::AssetServer, AssetId};
 use std::ops::Deref;
 use wgpu::TextureUsages;
 
@@ -134,9 +137,16 @@ impl RenderTexture {
 
 impl RenderAsset for RenderTexture {
     type SourceAsset = Texture;
-    type PreparationParams = (Res<'static, RenderDevice>, Res<'static, RenderQueue>);
+    type PreparationParams = (
+        Res<'static, RenderDevice>,
+        Res<'static, RenderQueue>,
+        Res<'static, RenderCapabilities>,
+        Res<'static, DummyRenderTexture>,
+        Extracted<'static, 'static, Option<Res<'static, AssetServer>>>,
+    );
 
     fn prepare_asset(
+        id: AssetId,
         source_asset: &Self::SourceAsset,
         params: &mut SystemInputData<Self::PreparationParams>,
     ) -> Result<Self, AssetPreparationError> {
@@ -149,7 +159,24 @@ impl RenderAsset for RenderTexture {
             return Err(AssetPreparationError::NotReady);
         }
 
-        let (device, queue) = params;
+        let (device, queue, capabilities, dummy, server) = params;
+        let format = source_asset.levels().map(|levels| levels.format);
+        if let Some(format) = format.filter(|format| {
+            format
+                .required_features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+                && !capabilities.bc_textures
+        }) {
+            let location = (**server)
+                .as_ref()
+                .and_then(|server| server.registry())
+                .and_then(|registry| registry.get(id).map(|entry| entry.location()))
+                .unwrap_or_else(|| format!("{id:?}"));
+            log::error!(
+                "{location} is {format:?}, but this device has no BC texture compression; set its compression to Uncompressed or use a browser with BC"
+            );
+            return Ok(dummy.inner().clone());
+        }
         Ok(RenderTexture::from_texture(source_asset, device, queue))
     }
 

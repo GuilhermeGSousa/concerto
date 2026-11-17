@@ -1,6 +1,7 @@
 mod camera_environment_edit;
 mod camera_render_target;
 mod camera_viewport;
+mod compressed_textures;
 mod exclusive_camera;
 mod hosted_target;
 mod material_serialization;

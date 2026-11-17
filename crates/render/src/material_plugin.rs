@@ -134,6 +134,7 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
     );
 
     fn prepare_asset(
+        _id: AssetId,
         source_asset: &Self::SourceAsset,
         params: &mut SystemInputData<Self::PreparationParams>,
     ) -> Result<Self, AssetPreparationError> {

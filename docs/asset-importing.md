@@ -86,7 +86,11 @@ image importer gives its texture the `Color` role; the glTF importer gives
 base colour and emissive textures `Color` and the others `Data`. The loaded
 texture keeps its levels, not its source. On the web there is no encoder, so
 an uncooked run derives uncompressed levels; a cooked build carries the
-compressed ones. The renderer samples the chain trilinearly with up to 16×
+compressed ones. A device without BC texture compression (Safari, and some
+GPU and driver combinations on the web) refuses BC textures: each one logs an
+error naming the texture and the fix, and its material samples the dummy
+texture, a transparent black texel, in its place. Set such a texture's
+compression to `Uncompressed` to show it there. The renderer samples the chain trilinearly with up to 16×
 anisotropic filtering, as much as the adapter supports. Code builds a sampled
 RGBA8 texture with `Texture::new`; it builds its mip chain when it loads,
 through `AssetServer::load` or `add`, and never derives.
