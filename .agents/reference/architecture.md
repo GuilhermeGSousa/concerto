@@ -205,13 +205,22 @@ sounds) are imported once, ahead of time. The running game never reads them.
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the
   live definition at use.
-- A sampled `Texture` derives from its own payload, with no inputs: its file
-  holds the imported image's bytes (`TextureSource`), its `role` and its
-  `TextureSettings`, and the key is the source's hash, the settings and the
-  role. `derive_levels` decodes the source, resolves `Auto` from the role,
+- A record may carry an editor-only section of the type its asset declares as
+  `Asset::EditorOnly`: loads never read it, a derive reads its own on a cache
+  miss through `DerivedInputs::own_editor_only`, tools read it with
+  `read_editor_only`, and a cook drops it.
+- A sampled `Texture` derives from its own file, with no inputs: its payload
+  holds its `role`, its `TextureSettings` and a `SourceSummary` (width, height,
+  hash) of the imported image, whose bytes (`TextureSource`) are the file's
+  editor-only section. The key is the summary's hash, the settings and the
+  role, so a cache hit or a cooked blob never reads the source. On a miss
+  `derive` takes the section, refuses one whose hash differs from the
+  summary's, and `derive_levels` decodes it, resolves `Auto` from the role,
   fits `max_size` (to whole 4×4 blocks for BC), builds the mips and encodes
   each level in BC1, BC4, BC5, BC7 or RGBA8; `apply_derived` keeps the levels
-  and drops the source. The encoder is native only, so an uncooked web run
+  and the summary. A version-2 file, with its source in the payload, migrates
+  to the summary and has no section, so it derives only from a cached blob
+  until it is imported again. The encoder is native only, so an uncooked web run
   derives RGBA8. `Texture::new` builds the mip chain from its RGBA8 level; it
   never derives, and `Texture` has no `on_load` work.
 - A packaged build can carry the blob in the file. Every `concerto::run`

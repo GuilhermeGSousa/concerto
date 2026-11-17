@@ -70,13 +70,19 @@ The import picks the importer by file extension:
 | `.ogg` `.wav`        | `AudioImporter` (`audio`) | none / none                     | one `main` audio clip                             |
 
 A texture's `.gasset` holds its **source**, the image file's own PNG or JPEG
-bytes as imported, its **role** (`Color`, `Normal` or `Data`, set by the importer) and its
+bytes as imported, as the file's [editor-only section](#editor-only-data)
+(`TextureSource`). Its payload holds a summary of that source (width, height
+and hash), its **role** (`Color`, `Normal` or `Data`, set by the importer) and its
 **settings**: compression (`Auto`, `Bc7`, `Bc1`, `Bc5`, `Bc4`, `Uncompressed`),
 colour space (sRGB or linear, by default the role's: sRGB for `Color`, linear
 otherwise), max size and mips. Every level the GPU samples is derived data:
 when the texture loads, the levels are derived from the source into
 `derived-cache/`, or read from there, and cooked builds carry them in the
-file. `Auto` is BC7 for a colour texture with alpha below 255, BC1 for an
+file. A load reads the source only when the cache has no levels for it, and a
+cooked build does not hold it. A texture written at version 2, which kept its
+source in the payload, has no section: it loads while `derived-cache/` holds
+its levels, fails to derive otherwise, saying to import its source again, and
+keeps its settings through that re-import. `Auto` is BC7 for a colour texture with alpha below 255, BC1 for an
 opaque one, BC5 for a normal map and BC7 for data. A texture is first fitted
 within its max size, then, when compressed, rounded to a multiple of 4 on each
 side; its mips halve down to 1×1, averaging sRGB colour in linear space and
@@ -89,7 +95,7 @@ metallic-roughness and occlusion textures `Data`. An image a glTF uses both as
 a normal map and as data is `Data`, since BC5 would drop the blue channel the
 data needs. The glTF importer keeps each image's bytes from its buffer view,
 data URI or file, so a 16-bit PNG imports and its derived levels are 8-bit. The loaded
-texture keeps its levels, not its source. On the web there is no encoder, so
+texture keeps its levels and the summary, never the source. On the web there is no encoder, so
 an uncooked run derives uncompressed levels; a cooked build carries the
 compressed ones. A device without BC texture compression (Safari, and some
 GPU and driver combinations on the web) refuses BC textures: each one logs an
@@ -293,7 +299,8 @@ such as `events`, so writing them back keeps those. A sidecar whose
 
 A texture's settings are not in the sidecar but in its own `.gasset`, and a
 re-import keeps them: it refreshes the texture's source bytes and role, and
-takes the settings the previous import, or the editor, wrote there. A texture
+takes the settings the previous import, or the editor, wrote there, reading
+only the payload and not the source section. A texture
 the import creates takes the defaults. An image source's texture is its main
 asset, so its settings are the `image` importer's **asset settings**, a
 `TextureSettings`: given in `ImportSettings::asset_settings`, they replace the
@@ -301,8 +308,9 @@ texture's own; otherwise the texture keeps its own, or takes the defaults when
 new. Only the `image` importer has asset settings; giving them to another
 fails the import, naming the type it expected. A glTF's textures start at the
 defaults and are changed in the texture tab. A texture whose file does not
-decode at this build's `Texture` version, such as one written before textures
-kept their source, takes the defaults as if it were new.
+decode at this build's `Texture` version, such as a version-1 file written
+before textures kept their source, takes the defaults as if it were new; a
+version-2 file decodes and keeps its settings.
 
 A `bvh` source's settings:
 

@@ -7,8 +7,12 @@ use concerto_app::{
     App,
 };
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, content::save_content_asset_into,
-    derived::DerivedDataCache, registry::AssetRegistry, AssetId, ContentAssetRoot,
+    asset_server::AssetServer,
+    asset_store::AssetStore,
+    content::{read_content_asset_header, save_content_asset_into},
+    derived::DerivedDataCache,
+    registry::AssetRegistry,
+    AssetId, ContentAssetRoot,
 };
 use concerto_render::assets::texture::{
     derive_levels, ColorSpace, Compression, MaxSize, SourceEncoding, Texture, TextureFormat,
@@ -269,14 +273,12 @@ impl Drop for TempProject {
 pub(crate) struct Loaded {
     pub(crate) format: Option<TextureFormat>,
     pub(crate) level_count: usize,
-    pub(crate) keeps_source: bool,
 }
 
 pub(crate) fn loaded(texture: &Texture) -> Loaded {
     Loaded {
         format: texture.levels().map(|levels| levels.format),
         level_count: texture.levels().map_or(0, |levels| levels.levels.len()),
-        keeps_source: texture.source.is_some(),
     }
 }
 
@@ -284,14 +286,15 @@ pub(crate) fn loaded(texture: &Texture) -> Loaded {
 fn a_cooked_texture_loads_its_levels_without_deriving() {
     let project = TempProject::new("cooked-texture");
     let mut registry = AssetRegistry::new();
+    let source = png(rgb(8, 8));
     let texture = Texture::imported(
         TextureRole::Color,
         TextureSettings::default().with_compression(Compression::Bc7),
-        png(rgb(8, 8)),
+        &source,
     );
     let id = save_content_asset_into(
         &texture,
-        None,
+        Some(&source),
         &project.root,
         "content/swatch.gasset",
         &mut registry,
@@ -304,6 +307,20 @@ fn a_cooked_texture_loads_its_levels_without_deriving() {
 
     assert_eq!(report.cooked, ["content/swatch.gasset"]);
     assert!(!project.root.join("derived-cache").exists());
+    let uncooked = project.root.join("content/swatch.gasset");
+    assert!(read_content_asset_header(&uncooked)
+        .unwrap()
+        .editor_only
+        .is_some());
+    let cooked = out.join("content/swatch.gasset");
+    assert!(read_content_asset_header(&cooked)
+        .unwrap()
+        .editor_only
+        .is_none());
+    assert!(!std::fs::read(&cooked)
+        .unwrap()
+        .windows(source.bytes.len())
+        .any(|window| window == source.bytes));
     let cache = project.root.join("runtime-cache");
     let mut runtime = TextureRuntime::new(&out, &registry, DerivedDataCache::at(&cache));
     assert_eq!(
@@ -311,7 +328,6 @@ fn a_cooked_texture_loads_its_levels_without_deriving() {
         Some(Loaded {
             format: Some(TextureFormat::Bc7RgbaUnormSrgb),
             level_count: 4,
-            keeps_source: false,
         })
     );
     assert!(!cache.exists(), "a cooked load derives nothing");

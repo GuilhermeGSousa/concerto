@@ -10,7 +10,7 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
 };
-use concerto_render::assets::texture::{Texture, TextureLevels};
+use concerto_render::assets::texture::{Texture, TextureLevels, TextureSource};
 use concerto_ui::{
     material::UIMaterial,
     node::{AlignContent, AlignItems, FlexDirection, UILayout, UINode, UIRect},
@@ -19,16 +19,21 @@ use concerto_ui::{
     transform::UIValue,
 };
 
-use crate::document::TextureTab;
+use crate::document::{TextureDocument, TextureTab};
 
 pub(crate) struct DeriveJob {
     handle: JoinHandle<anyhow::Result<Texture>>,
     asset: AssetId,
 }
 
-fn derived(mut texture: Texture, cache: DerivedDataCache) -> anyhow::Result<Texture> {
+fn derived(
+    document: TextureDocument,
+    source: TextureSource,
+    cache: DerivedDataCache,
+) -> anyhow::Result<Texture> {
     let (name, version) = (Texture::name(), Texture::DERIVED_VERSION);
-    let inputs = DerivedInputs::default();
+    let mut texture = Texture::imported(document.role, document.settings, &source);
+    let inputs = DerivedInputs::default().with_own_editor_only::<Texture>(source);
     let key = texture.derived_key(&inputs)?;
     if let Some(blob) = cache.get(name, version, key) {
         match texture.apply_derived(&blob) {
@@ -104,10 +109,9 @@ pub(crate) fn derive_textures(
         else {
             continue;
         };
-        let texture = Texture::imported(value.role, value.settings, source);
         let cache = server.derived_cache();
         tab.job = Some(DeriveJob {
-            handle: std::thread::spawn(move || derived(texture, cache)),
+            handle: std::thread::spawn(move || derived(value, source, cache)),
             asset: asset.id,
         });
     }

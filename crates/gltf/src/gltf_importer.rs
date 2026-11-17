@@ -29,7 +29,7 @@ use concerto_render::assets::texture::{Texture, TextureRole};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
-use concerto_render::importers::image_importer::imported_texture;
+use concerto_render::importers::image_importer::{ImportedTexture, imported_texture};
 use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
@@ -206,8 +206,9 @@ impl Importer for GltfImporter {
             let bytes =
                 image_bytes(&images[key.image_index], &buffers, source_dir).map_err(unkept)?;
             let name = texture_name(key.image_index, key.srgb);
-            let texture = imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
-            ctx.emit(&name, &texture)?;
+            let ImportedTexture { texture, source } =
+                imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
+            ctx.emit_with(&name, &texture, &source)?;
         }
 
         for (index, material) in materials.iter().enumerate() {

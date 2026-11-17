@@ -108,11 +108,11 @@ impl Content {
         let texture = Texture::imported(
             role,
             TextureSettings::default().with_compression(compression),
-            source,
+            &source,
         );
         save_content_asset_into(
             &texture,
-            None,
+            Some(&source),
             &self.project.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,

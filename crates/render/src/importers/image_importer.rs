@@ -19,6 +19,12 @@ pub fn source_encoding(bytes: &[u8]) -> Result<SourceEncoding, String> {
     }
 }
 
+/// A texture an importer emits, with the source image its file keeps as editor-only data.
+pub struct ImportedTexture {
+    pub texture: Texture,
+    pub source: TextureSource,
+}
+
 /// The texture `name` of `ctx` from image file `bytes`, with `given` settings, else the ones its previous import or the editor gave it, else the defaults; fails when they cannot derive for `role`.
 pub fn imported_texture(
     ctx: &ImportContext,
@@ -26,7 +32,7 @@ pub fn imported_texture(
     role: TextureRole,
     bytes: Vec<u8>,
     given: Option<TextureSettings>,
-) -> Result<Texture, String> {
+) -> Result<ImportedTexture, String> {
     let encoding = source_encoding(&bytes)?;
     let source = TextureSource::new(bytes, encoding).map_err(|err| format!("{err:#}"))?;
     let settings = given
@@ -37,7 +43,10 @@ pub fn imported_texture(
         .unwrap_or_default();
     resolve(role, &settings, false)
         .map_err(|err| format!("texture `{name}` cannot be derived as {role:?}: {err:#}"))?;
-    Ok(Texture::imported(role, settings, source))
+    Ok(ImportedTexture {
+        texture: Texture::imported(role, settings, &source),
+        source,
+    })
 }
 
 impl Importer for ImageImporter {
@@ -72,7 +81,7 @@ impl Importer for ImageImporter {
             source_path: source_path.to_path_buf(),
             message: err.to_string(),
         })?;
-        let texture = imported_texture(
+        let ImportedTexture { texture, source } = imported_texture(
             ctx,
             "main",
             TextureRole::Color,
@@ -80,7 +89,7 @@ impl Importer for ImageImporter {
             asset_settings.copied(),
         )
         .map_err(malformed)?;
-        ctx.emit("main", &texture)
+        ctx.emit_with("main", &texture, &source)
             .map_err(|err| malformed(format!("{err:?}")))?;
         Ok(())
     }

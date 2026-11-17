@@ -65,18 +65,70 @@ impl TextureSource {
             hash: hash.finish(),
         })
     }
+
+    /// What a texture's payload keeps of this source.
+    pub fn summary(&self) -> SourceSummary {
+        SourceSummary {
+            width: self.width,
+            height: self.height,
+            hash: self.hash,
+        }
+    }
 }
 
-/// A texture: an imported source with its settings, whose sampled levels are derived data, or levels built in code.
-#[derive(Asset, Serialize, Deserialize)]
-#[asset(version = 2)]
+/// What a texture's payload keeps of its source: enough for the derive key and the size.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SourceSummary {
+    pub width: u32,
+    pub height: u32,
+    pub hash: u64,
+}
+
+/// A texture: its settings and a summary of its imported source, whose sampled levels are derived data, or levels built in code; the source itself is the file's editor-only data.
+#[derive(Serialize, Deserialize)]
 pub struct Texture {
     pub kind: TextureKind,
     pub role: TextureRole,
     pub settings: TextureSettings,
-    pub source: Option<TextureSource>,
+    pub source: Option<SourceSummary>,
     #[serde(skip)]
     levels: Option<TextureLevels>,
+}
+
+#[derive(Deserialize)]
+struct TextureV2 {
+    kind: TextureKind,
+    role: TextureRole,
+    settings: TextureSettings,
+    source: Option<TextureSource>,
+}
+
+impl Asset for Texture {
+    const FORMAT_VERSION: u32 = 3;
+
+    type EditorOnly = TextureSource;
+
+    fn name() -> &'static str {
+        "Texture"
+    }
+
+    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            version == 2,
+            "{} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            Self::name(),
+            Self::FORMAT_VERSION
+        );
+        let old: TextureV2 =
+            bincode::deserialize(payload).context("failed to decode a version-2 Texture")?;
+        Ok(Self {
+            kind: old.kind,
+            role: old.role,
+            settings: old.settings,
+            source: old.source.as_ref().map(TextureSource::summary),
+            levels: None,
+        })
+    }
 }
 
 impl Texture {
@@ -116,13 +168,13 @@ impl Texture {
         }
     }
 
-    /// An imported texture whose levels are derived from `source` when it loads.
-    pub fn imported(role: TextureRole, settings: TextureSettings, source: TextureSource) -> Self {
+    /// An imported texture whose levels are derived when it loads from `source`, which its file keeps as editor-only data.
+    pub fn imported(role: TextureRole, settings: TextureSettings, source: &TextureSource) -> Self {
         Self {
             kind: TextureKind::Sampled,
             role,
             settings,
-            source: Some(source),
+            source: Some(source.summary()),
             levels: None,
         }
     }
@@ -157,11 +209,11 @@ impl DerivedData for Texture {
     }
 
     fn file_is_derived(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<bool> {
-        if header.kind_version < Self::FORMAT_VERSION {
+        if header.kind_version < 2 {
             return Ok(false);
         }
         anyhow::ensure!(
-            header.kind_version == Self::FORMAT_VERSION,
+            header.kind_version <= Self::FORMAT_VERSION,
             "Texture payload is version {}, newer than this build's version {}",
             header.kind_version,
             Self::FORMAT_VERSION
@@ -190,13 +242,22 @@ impl DerivedData for Texture {
 
     fn derive(
         &self,
-        _inputs: &DerivedInputs,
+        inputs: &DerivedInputs,
         progress: &mut dyn FnMut(usize, usize),
     ) -> anyhow::Result<Vec<u8>> {
-        let source = self
+        let summary = self
             .source
             .as_ref()
             .context("a sampled Texture has no source to derive from")?;
+        let source = inputs
+            .own_editor_only::<Texture>()
+            .context("the texture holds no source image; import its source again")?;
+        anyhow::ensure!(
+            source.hash == summary.hash,
+            "the texture's source image has hash {:016x} but its payload names {:016x}: the file changed while it loaded; load it again",
+            source.hash,
+            summary.hash
+        );
         let settings = if cfg!(target_arch = "wasm32") {
             self.settings.with_compression(Compression::Uncompressed)
         } else {
@@ -209,7 +270,6 @@ impl DerivedData for Texture {
 
     fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
         self.levels = Some(TextureLevels::decode(blob)?);
-        self.source = None;
         Ok(())
     }
 }

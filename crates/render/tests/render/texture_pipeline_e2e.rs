@@ -1,7 +1,9 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
 use concerto_asset_import::{ImportContext, Importer, NoSettings};
-use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
+use concerto_foundation::assets::content::{
+    write_content_asset_with_editor_only, ContentAssetHeader,
+};
 use concerto_foundation::assets::derived::DerivedDataCache;
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::Asset;
@@ -46,7 +48,15 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
     std::fs::create_dir_all(project.root.join("content/swatch")).unwrap();
     std::fs::write(
         project.root.join(address),
-        write_content_asset(&header, &sub_asset.bytes).unwrap(),
+        write_content_asset_with_editor_only(
+            &header,
+            &sub_asset.bytes,
+            sub_asset
+                .editor_only
+                .as_deref()
+                .expect("an imported texture carries its source"),
+        )
+        .unwrap(),
     )
     .unwrap();
     let mut registry = AssetRegistry::new();
@@ -65,7 +75,6 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
         Some(Loaded {
             format: Some(TextureFormat::Bc1RgbaUnormSrgb),
             level_count: 3,
-            keeps_source: false,
         }),
         "a 4x4 opaque colour image derives BC1 with mips down to 1x1"
     );
