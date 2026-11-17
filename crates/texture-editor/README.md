@@ -48,7 +48,11 @@ again, replaces only its settings, and writes it with
 in `SceneSaved` naming the texture, so open scenes and previews reload it, and
 the status reads `Saved <address>` until the next derive. A save requested
 while an import is running or queued waits for the imports to finish, so it
-never writes an older source over a newer one. Discard restores the settings as
+never writes an older source over a newer one, and one requested while a
+derive is running waits for it. While the last derive failed, save is refused
+with `Save failed: Derive failed: <error>; change the settings until the
+texture derives, then save`, which MCP `save` answers as `save_failed`, so no
+file holds settings its texture cannot derive in. Discard restores the settings as
 last read or saved.
 
 A re-import keeps the saved settings, as for every texture; see

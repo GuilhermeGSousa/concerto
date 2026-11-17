@@ -45,7 +45,7 @@ impl TextureDocument {
     }
 }
 
-/// A texture tab's state: the value being edited, the file's as last read or saved, its source, and the derived preview.
+/// A texture tab's state: the value being edited, the file's as last read or saved, its source, and the derived preview or why it failed.
 #[derive(Component, Default)]
 pub struct TextureTab {
     pub value: Option<TextureDocument>,
@@ -54,6 +54,7 @@ pub struct TextureTab {
     pub(crate) source: Option<TextureSource>,
     pub(crate) derive_wanted: bool,
     pub(crate) job: Option<DeriveJob>,
+    pub(crate) derive_error: Option<String>,
 }
 
 /// Opens a `Texture` in a tab that previews its derived levels and edits its settings.

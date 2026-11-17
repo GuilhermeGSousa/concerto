@@ -81,7 +81,8 @@ opaque one, BC5 for a normal map and BC7 for data. A texture is first fitted
 within its max size, then, when compressed, rounded to a multiple of 4 on each
 side; its mips halve down to 1×1, averaging sRGB colour in linear space and
 renormalising normals. BC4 and BC5 have no sRGB form, so a texture set to
-either with an sRGB colour space fails to derive and asks for Linear. The
+either with an sRGB colour space fails to derive and asks for Linear; an
+import whose settings for a texture would do that fails, naming the texture. The
 image importer gives its texture the `Color` role; the glTF importer gives
 base colour and emissive textures `Color`, normal maps `Normal`, and
 metallic-roughness and occlusion textures `Data`. An image a glTF uses both as

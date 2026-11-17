@@ -25,6 +25,9 @@ fn save_document(
 ) -> anyhow::Result<AssetEntry> {
     let asset = document.current.clone().context("No texture is open")?;
     let value = tab.value.context("No texture is open")?;
+    if let Some(error) = &tab.derive_error {
+        anyhow::bail!("{error}; change the settings until the texture derives, then save");
+    }
     let mut texture = read_texture(root, &asset)?;
     texture.settings = value.settings;
     let id = resave_content_asset(&texture, root, &asset.address, assets)?;
@@ -58,6 +61,9 @@ pub(crate) fn save_textures(
         .as_ref()
         .map(|project| project.root.as_path());
     for (entity, mut document, mut tab) in requested.iter() {
+        if tab.derive_wanted || tab.job.is_some() {
+            continue;
+        }
         cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")

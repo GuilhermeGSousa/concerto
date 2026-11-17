@@ -490,4 +490,18 @@ fn texture_sources_keep_their_bytes_and_their_settings_across_reimports() {
     )
     .expect_err("an unknown compression is refused");
     assert!(format!("{refused:#}").contains("bc9"), "{refused:#}");
+
+    let underivable = import_source_into(
+        &gltf,
+        "assets/fresh.gltf",
+        root,
+        &config(),
+        texture_options("compression = \"bc5\""),
+    )
+    .expect_err("settings a colour texture cannot derive in are refused");
+    let message = format!("{underivable:#}");
+    assert!(
+        message.contains("texture/0") && message.contains("sRGB"),
+        "{message}"
+    );
 }

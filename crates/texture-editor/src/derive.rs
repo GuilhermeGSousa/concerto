@@ -71,12 +71,17 @@ fn finish_derive(
     }
     match result {
         Ok(texture) => {
+            tab.derive_error = None;
             if let Some(levels) = texture.levels() {
                 editor.status = size_line(levels);
             }
             tab.preview = Some(server.add(texture));
         }
-        Err(error) => editor.status = format!("Derive failed: {error:#}"),
+        Err(error) => {
+            let message = format!("Derive failed: {error:#}");
+            editor.status = message.clone();
+            tab.derive_error = Some(message);
+        }
     }
 }
 

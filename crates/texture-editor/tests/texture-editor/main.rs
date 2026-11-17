@@ -178,6 +178,7 @@ struct Edited {
     opened: String,
     derived: String,
     role: CallToolResult,
+    refused: CallToolResult,
     saved: String,
     reloaded: String,
 }
@@ -239,6 +240,10 @@ async fn edit_a_texture(client: Client, project: &Path, gltf: String) -> Edited 
         json!({ "target": "Texture", "path": "role", "value": "Normal" }),
     )
     .await;
+    let compression = |value: &str| json!({ "target": "Texture", "path": "settings.compression", "value": value });
+    ok(&client, "set_property", compression("Bc5")).await;
+    let refused = call(&client, "save", json!({})).await;
+    ok(&client, "set_property", compression("Bc7")).await;
     let saved = ok(&client, "save", json!({})).await;
 
     ok(
@@ -262,6 +267,7 @@ async fn edit_a_texture(client: Client, project: &Path, gltf: String) -> Edited 
         opened,
         derived,
         role,
+        refused,
         saved,
         reloaded,
     }
@@ -334,6 +340,12 @@ fn a_texture_tab_changes_compression_saves_and_survives_reimport() {
         text(&edited.role).contains("role is set by the importer"),
         "{}",
         text(&edited.role)
+    );
+    assert_eq!(edited.refused.is_error, Some(true), "{:?}", edited.refused);
+    assert!(
+        text(&edited.refused).contains("sRGB") && text(&edited.refused).contains("then save"),
+        "{}",
+        text(&edited.refused)
     );
     assert!(edited.saved.contains(TEXTURE), "{}", edited.saved);
     assert_eq!(edited.reloaded, "Bc7RgbaUnormSrgb");

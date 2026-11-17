@@ -199,7 +199,9 @@ For a glTF or image source, `texture_settings` sets the textures the import
 creates: `compression` (`auto`, `bc7`, `bc1`, `bc5`, `bc4` or `uncompressed`),
 `color_space` (`srgb` or `linear`; left out, the texture's role decides),
 `max_size` (4096, 2048, 1024 or 512; left out, no cap) and `mips` (a bool, on
-when left out). A texture that already exists keeps its own settings. An
+when left out). A texture that already exists keeps its own settings. Settings
+a texture cannot derive in for its role, such as `bc5` on a colour texture,
+fail the import with `import_failed` naming the texture and the reason. An
 unknown key or value, or `texture_settings` on a source that emits no
 textures, answers `invalid_arguments` naming it.
 Each queued import ends with an `ImportFinished` event, which is what the tool
