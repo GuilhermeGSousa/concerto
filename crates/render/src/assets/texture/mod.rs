@@ -5,7 +5,6 @@ mod settings;
 use anyhow::Context;
 use concerto_foundation::{
     assets::{
-        asset_server::AssetLoadContext,
         content::ContentAssetHeader,
         derived::{DerivedData, DerivedInputs},
         Asset, AssetId, LoadableAsset,
@@ -83,8 +82,13 @@ pub struct Texture {
 }
 
 impl Texture {
-    /// A sampled texture from RGBA8 pixels matching `format`; its mip chain is built when it loads.
+    /// A sampled texture from RGBA8 pixels matching `format`, with its mip chain built from them.
     pub fn new(width: u32, height: u32, format: TextureFormat, data: Vec<u8>) -> Self {
+        let mips = if format.block_copy_size(None) == Some(4) {
+            derive::build_mips(width, height, derive::Texels::of(format), &data)
+        } else {
+            Vec::new()
+        };
         Self {
             kind: TextureKind::Sampled,
             role: if format.is_srgb() {
@@ -98,7 +102,7 @@ impl Texture {
                 format,
                 width,
                 height,
-                levels: vec![data],
+                levels: std::iter::once(data).chain(mips).collect(),
             }),
         }
     }
@@ -172,22 +176,7 @@ fn compression_of(format: TextureFormat) -> Compression {
     }
 }
 
-impl LoadableAsset for Texture {
-    fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
-        if self.source.is_some() {
-            return Ok(());
-        }
-        if let Some(levels) = &mut self.levels {
-            if levels.levels.len() == 1 && levels.format.block_copy_size(None) == Some(4) {
-                let texels = derive::Texels::of(levels.format);
-                let mips =
-                    derive::build_mips(levels.width, levels.height, texels, &levels.levels[0]);
-                levels.levels.extend(mips);
-            }
-        }
-        Ok(())
-    }
-}
+impl LoadableAsset for Texture {}
 
 impl DerivedData for Texture {
     const DERIVED_VERSION: u32 = 1;

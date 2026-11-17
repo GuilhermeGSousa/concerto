@@ -97,8 +97,9 @@ error naming the texture and the fix, and its material samples the dummy
 texture, a transparent black texel, in its place. Set such a texture's
 compression to `Uncompressed` to show it there. The renderer samples the chain trilinearly with up to 16×
 anisotropic filtering, as much as the adapter supports. Code builds a sampled
-RGBA8 texture with `Texture::new`; it builds its mip chain when it loads,
-through `AssetServer::load` or `add`, and never derives.
+RGBA8 texture with `Texture::new`, which builds its mip chain from the pixels;
+it never derives. A texture whose levels were derived keeps exactly those
+levels when added, so `mips: false` stays one level.
 
 ### `content.toml`
 

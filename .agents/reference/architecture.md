@@ -212,8 +212,8 @@ sounds) are imported once, ahead of time. The running game never reads them.
   fits `max_size` (to whole 4×4 blocks for BC), builds the mips and encodes
   each level in BC1, BC4, BC5, BC7 or RGBA8; `apply_derived` keeps the levels
   and drops the source. The encoder is native only, so an uncooked web run
-  derives RGBA8. A texture built with `Texture::new` holds its RGBA8 level and
-  builds its mips in `on_load`; it never derives.
+  derives RGBA8. `Texture::new` builds the mip chain from its RGBA8 level; it
+  never derives, and `Texture` has no `on_load` work.
 - A packaged build can carry the blob in the file. Every `concerto::run`
   binary run as `<game> --cook <out>` calls `concerto::cook`: it builds the
   recipe headless (see Hosts), publishes the embedded registry with the
