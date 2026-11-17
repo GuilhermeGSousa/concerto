@@ -193,8 +193,9 @@ and answers once that import has finished, with `Imported <destination>: N
 assets, M sibling files.` and one `address · kind · id` line per asset written.
 A path with no file answers `unknown_source`; a destination outside the
 project, without a file name, with another extension than the source's, or a
-source no importer handles answers `import_refused` with the dialog's reason;
-an import that fails answers `import_failed` with the status line's reason.
+source no importer handles answers `import_refused` with the dialog's reason,
+and so does a destination whose sidecar `[settings]` do not parse, with the
+parse error; an import that fails answers `import_failed` with the status line's reason.
 `settings` and `asset_settings` change the importer's settings and the
 settings of the asset an image makes, as objects of the fields to change, such
 as `{"scale": 0.5}` for a BVH or `{"compression": "Bc7", "max_size": "S512"}`
@@ -205,7 +206,7 @@ value the project holds, the sidecar's for `settings` and the texture's for
 show, such as clip events, are kept and cannot be given. An unknown field, a
 bad value, or `asset_settings` for a source whose importer has none answers
 `invalid_arguments`, naming the field and showing the current values. A value
-the import itself refuses, such as a BVH `scale` of 0 or `bc5` on a colour
+the import itself refuses, such as a BVH `scale` of 0 or `Bc5` on a colour
 texture, answers `import_failed` with the reason. The answer ends with the
 settings the import used, as TOML: a `[settings]` table and, for an image, an
 `[asset_settings]` table.
