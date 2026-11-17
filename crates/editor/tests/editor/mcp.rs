@@ -1472,8 +1472,26 @@ struct ImportedSource {
     imported: String,
     listed: String,
     picture: String,
+    walk: String,
     errors: Vec<Value>,
 }
+
+const WALK: &str = "HIERARCHY
+ROOT Hips
+{
+\tOFFSET 0.0 90.0 0.0
+\tCHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+\tEnd Site
+\t{
+\t\tOFFSET 0.0 5.0 0.0
+\t}
+}
+MOTION
+Frames: 2
+Frame Time: 0.0333333
+0 90 0 0 0 0
+1 90 0 10 0 0
+";
 
 #[test]
 fn import_source_writes_the_source_and_its_assets_into_the_project() {
@@ -1488,6 +1506,9 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
     let picture = sources.path().join("picture.png");
     RgbaImage::new(8, 8).save(&picture).unwrap();
     let picture = picture.display().to_string();
+    let walk = sources.path().join("walk.bvh");
+    std::fs::write(&walk, WALK).unwrap();
+    let walk = walk.display().to_string();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, move |client| async move {
         until(&client, "state", |state| state.starts_with("project")).await;
@@ -1502,8 +1523,14 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             "import_source",
             json!({
                 "source": picture,
-                "texture_settings": { "compression": "bc7", "max_size": 512 },
+                "asset_settings": { "compression": "Bc7", "max_size": "S512" },
             }),
+        )
+        .await;
+        let walked = ok_with(
+            &client,
+            "import_source",
+            json!({ "source": walk, "settings": { "scale": 0.5 } }),
         )
         .await;
         let face = ok_with(&client, "list_assets", json!({ "query": "square" })).await;
@@ -1530,7 +1557,19 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             error_with(
                 &client,
                 "import_source",
-                json!({ "source": square, "texture_settings": { "mips": false } }),
+                json!({ "source": square, "asset_settings": { "mips": false } }),
+            )
+            .await,
+            error_with(
+                &client,
+                "import_source",
+                json!({ "source": walk, "settings": { "speed": 2.0 } }),
+            )
+            .await,
+            error_with(
+                &client,
+                "import_source",
+                json!({ "source": walk, "settings": { "scale": 0.0 } }),
             )
             .await,
         ];
@@ -1540,6 +1579,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             imported,
             listed,
             picture,
+            walk: walked,
             errors,
         }
     }) else {
@@ -1550,6 +1590,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         imported,
         listed,
         picture,
+        walk,
         errors,
     } = served.result;
     let texture = picture
@@ -1564,6 +1605,15 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             .with_compression(Compression::Bc7)
             .with_max_size(MaxSize::S512)
     );
+    assert!(
+        picture.contains("[asset_settings]") && picture.contains("compression = \"Bc7\""),
+        "{picture}"
+    );
+    let sidecar = std::fs::read_to_string(root.join("assets/walk.bvh.import.toml")).unwrap();
+    assert!(sidecar.contains("scale = 0.5"), "{sidecar}");
+    assert!(walk.contains("[settings]\nscale = 0.5"), "{walk}");
+    let (imported, used) = imported.split_once("\n\n").unwrap();
+    assert!(used.starts_with("[settings]"), "{used}");
     let mut lines = imported.lines();
     let summary = lines.next().unwrap();
     assert!(
@@ -1587,16 +1637,26 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         .collect();
     assert_eq!(
         codes,
-        ["unknown_source", "import_refused", "invalid_arguments"]
+        [
+            "unknown_source",
+            "import_refused",
+            "invalid_arguments",
+            "invalid_arguments",
+            "import_failed"
+        ]
+    );
+    let message = |index: usize| errors[index]["message"].as_str().unwrap().to_owned();
+    assert!(
+        message(2).contains("has no asset_settings; leave out asset_settings"),
+        "{}",
+        message(2)
     );
     assert!(
-        errors[2]["message"]
-            .as_str()
-            .unwrap()
-            .contains("emits no textures; leave out texture_settings"),
+        message(3).contains("speed") && message(3).contains("the fields are scale"),
         "{}",
-        errors[2]
+        message(3)
     );
+    assert!(message(3).contains("{\"scale\":0.5}"), "{}", message(3));
 }
 
 struct Opens {
@@ -2855,6 +2915,7 @@ fn reimported(
             .collect();
         finished.write(ImportFinished {
             destination: "assets/props.gltf".into(),
+            settings: String::new(),
             result: Ok(Imported {
                 assets,
                 siblings: vec![],

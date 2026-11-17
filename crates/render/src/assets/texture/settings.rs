@@ -1,4 +1,4 @@
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use serde::{Deserialize, Serialize};
 
 /// What a texture holds, set by its importer; it picks `Auto`'s compression and the default colour space.
@@ -56,6 +56,7 @@ impl MaxSize {
 
 /// How a texture's sampled levels are derived from its source.
 #[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[reflect(Default)]
 pub struct TextureSettings {
     pub compression: Compression,
     pub color_space: Option<ColorSpace>,

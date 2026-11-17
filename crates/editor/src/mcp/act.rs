@@ -7,6 +7,7 @@ use concerto_ecs::{
     component::name::Name,
     events::event_reader::EventReader,
     query::filter::{With, Without},
+    reflect::AppTypeRegistry,
 };
 use concerto_foundation::{
     assets::{
@@ -18,7 +19,7 @@ use concerto_foundation::{
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
-use concerto_render::assets::texture::{ColorSpace, Compression, MaxSize, TextureSettings};
+use concerto_reflect::{Reflect, TypeRegistry, apply_value, json_to_value, to_json};
 use concerto_scene::scene::Scene;
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -31,7 +32,7 @@ use crate::{
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     import::{
-        ImportFinished, ImportQueue, RowState, has_asset_settings, keep_project_sources_in_place,
+        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, stage_row,
         stage_sources, validate_rows,
     },
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
@@ -80,71 +81,10 @@ pub struct ImportSource {
     pub source: String,
     /// Where the source is copied to in the project, such as assets/props/crate.glb, keeping its extension; assets/<file name> without one, or where it already is when it lies inside the project.
     pub destination: Option<String>,
-    /// Settings for the texture an image source makes; left out, an existing texture keeps its own.
-    pub texture_settings: Option<ImportTextureSettings>,
-}
-
-/// The settings an import gives the textures it creates; each one left out keeps its default.
-#[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ImportTextureSettings {
-    /// auto, bc7, bc1, bc5, bc4 or uncompressed; auto picks from the texture's role and alpha.
-    pub compression: Option<String>,
-    /// srgb or linear; left out, the texture's role decides.
-    pub color_space: Option<String>,
-    /// 4096, 2048, 1024 or 512, the largest side in texels; left out, no cap.
-    pub max_size: Option<i64>,
-    /// Whether to derive mips; on when left out.
-    pub mips: Option<bool>,
-}
-
-impl ImportTextureSettings {
-    fn settings(&self) -> Result<TextureSettings, String> {
-        let mut settings = TextureSettings::default();
-        if let Some(compression) = &self.compression {
-            settings.compression = match compression.as_str() {
-                "auto" => Compression::Auto,
-                "bc7" => Compression::Bc7,
-                "bc1" => Compression::Bc1,
-                "bc5" => Compression::Bc5,
-                "bc4" => Compression::Bc4,
-                "uncompressed" => Compression::Uncompressed,
-                other => {
-                    return Err(format!(
-                        "compression cannot be {other}; use auto, bc7, bc1, bc5, bc4 or uncompressed"
-                    ));
-                }
-            };
-        }
-        if let Some(color_space) = &self.color_space {
-            settings.color_space = Some(match color_space.as_str() {
-                "srgb" => ColorSpace::Srgb,
-                "linear" => ColorSpace::Linear,
-                other => {
-                    return Err(format!(
-                        "color_space cannot be {other}; use srgb or linear, or leave it out for the role's"
-                    ));
-                }
-            });
-        }
-        if let Some(max_size) = self.max_size {
-            settings.max_size = match max_size {
-                4096 => MaxSize::S4096,
-                2048 => MaxSize::S2048,
-                1024 => MaxSize::S1024,
-                512 => MaxSize::S512,
-                other => {
-                    return Err(format!(
-                        "max_size cannot be {other}; use 4096, 2048, 1024 or 512, or leave it out for none"
-                    ));
-                }
-            };
-        }
-        if let Some(mips) = self.mips {
-            settings.mips = mips;
-        }
-        Ok(settings)
-    }
+    /// Changes to the importer's settings, as an object of the fields to change, such as {"scale": 0.5} for a .bvh; the others keep the values the project holds.
+    pub settings: Option<serde_json::Value>,
+    /// Changes to the settings of the asset an image source makes, such as {"compression": "Bc7", "max_size": "S512"}; the others keep the asset's current values.
+    pub asset_settings: Option<serde_json::Value>,
 }
 
 /// Closes an open document.
@@ -615,6 +555,7 @@ fn import_source(
     state: Res<ProjectState>,
     commands: Res<EditorCommands>,
     mut queue: ResMut<ImportQueue>,
+    types: Res<AppTypeRegistry>,
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
@@ -636,32 +577,12 @@ fn import_source(
             ));
             continue;
         }
-        let texture_settings = match &arguments.texture_settings {
-            None => None,
-            Some(_) if !has_asset_settings(&source) => {
-                reply.err(ToolError::new(
-                    "invalid_arguments",
-                    format!(
-                        "{} emits no textures; leave out texture_settings",
-                        arguments.source
-                    ),
-                ));
-                continue;
-            }
-            Some(given) => match given.settings() {
-                Ok(settings) => Some(settings),
-                Err(reason) => {
-                    reply.err(ToolError::new("invalid_arguments", reason));
-                    continue;
-                }
-            },
-        };
         let mut rows = stage_sources(vec![source]);
-        rows[0].texture_settings = texture_settings;
         match &arguments.destination {
             Some(destination) => rows[0].destination = destination.clone(),
             None => keep_project_sources_in_place(&mut rows, &root),
         }
+        stage_row(&mut rows[0], &root);
         validate_rows(&mut rows, &root);
         if let RowState::Rejected(reason) = &rows[0].state {
             reply.err(ToolError::new(
@@ -673,6 +594,35 @@ fn import_source(
             ));
             continue;
         }
+        let Some(Ok(staged)) = rows[0].staged.take() else {
+            continue;
+        };
+        let types = types.read();
+        let settings = patched(
+            "settings",
+            arguments.settings.as_ref(),
+            Some(staged.settings),
+            &types,
+        );
+        let asset_settings = patched(
+            "asset_settings",
+            arguments.asset_settings.as_ref(),
+            staged.asset_settings,
+            &types,
+        );
+        match (settings, asset_settings) {
+            (Ok(settings), Ok(asset_settings)) => {
+                rows[0].settings = settings;
+                rows[0].asset_settings = asset_settings;
+            }
+            (Err(reason), _) | (_, Err(reason)) => {
+                reply.err(ToolError::new(
+                    "invalid_arguments",
+                    format!("{}: {reason}", arguments.source),
+                ));
+                continue;
+            }
+        }
         let destination = rows[0].destination.clone();
         queue.enqueue(rows);
         cmd.spawn((
@@ -680,6 +630,35 @@ fn import_source(
             ImportingSource { destination },
         ));
     }
+}
+
+fn patched(
+    argument: &str,
+    patch: Option<&serde_json::Value>,
+    current: Option<Box<dyn Reflect>>,
+    types: &TypeRegistry,
+) -> Result<Option<Box<dyn Reflect>>, String> {
+    let Some(patch) = patch else {
+        return Ok(None);
+    };
+    let Some(mut value) = current else {
+        return Err(format!(
+            "its importer has no {argument}; leave out {argument}"
+        ));
+    };
+    let shown = to_json(value.as_ref(), types);
+    let refused = |reason: String| {
+        format!(
+            "in {argument}, {reason}; the current {argument} are {shown}. Give an object of the fields to change."
+        )
+    };
+    let type_id = (value.as_ref() as &dyn std::any::Any).type_id();
+    let stored = json_to_value(patch, type_id, types).map_err(&refused)?;
+    let warnings = apply_value(value.as_mut(), &stored);
+    if let Some(warning) = warnings.first() {
+        return Err(refused(warning.to_string()));
+    }
+    Ok(Some(value))
 }
 
 fn answer_imports(
@@ -709,6 +688,9 @@ fn answer_imports(
                         asset.kind,
                         asset.id.simple_hex()
                     ));
+                }
+                if !event.settings.is_empty() {
+                    answer.push_str(&format!("\n\n{}", event.settings.trim_end()));
                 }
                 pending.reply.ok(answer);
             }

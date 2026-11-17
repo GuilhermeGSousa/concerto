@@ -23,7 +23,7 @@ use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{Texture, TextureRole};
 use concerto_render::components::camera::Camera;
@@ -51,6 +51,7 @@ pub struct GltfImporter;
 /// Importer settings read from the `[settings]` table of a glTF source's sidecar.
 #[derive(Reflect, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[reflect(Default)]
 pub struct GltfSettings {
     /// Per emitted clip name, the clip times in seconds of each named event.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

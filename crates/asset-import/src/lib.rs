@@ -10,13 +10,14 @@ pub use import_context::{
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
 
-use concerto_reflect::{GetTypeRegistration, Reflect, TypeRegistry};
+use concerto_reflect::{GetTypeRegistration, Reflect, ReflectDefault, TypeRegistry};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The settings of an importer without any.
 #[derive(Reflect, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[reflect(Default)]
 pub struct NoSettings {}
 
 pub trait Importer: Send + Sync {

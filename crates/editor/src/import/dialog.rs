@@ -5,19 +5,26 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, ResMut,
+    Added, Changed, Component, Entity, IntoSystemConfig, Query, Res, ResMut,
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
     query::{change_detection::DetectChanges, filter::With},
-    signal::On,
+    reflect::AppTypeRegistry,
+    signal::{
+        On,
+        listener::{IntoListener, Listener},
+    },
 };
+use concerto_import::importer_for;
+use concerto_reflect::Reflect;
 use concerto_ui::{
     elements::prelude::*,
     focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
+    items::UIItemSelected,
     list::UIList,
-    node::{UILayout, UINode, UIRect},
+    node::{FlexDirection, UILayout, UINode, UIRect},
     scroll::{SCROLLBAR_WIDTH, UIScrollArea},
     sets::UiSet,
     text::UIText,
@@ -34,11 +41,13 @@ use std::path::PathBuf;
 use crate::actions::{CancelImport, ConfirmImport, ImportDialogContext};
 use crate::guard::UnsavedGuard;
 use crate::import::{
-    ImportQueue, ImportStaging, RowState, StagedImport, destinations_clash, validate_rows,
+    ImportQueue, ImportStaging, RowState, StagedImport, destinations_clash, stage_row,
+    validate_rows,
 };
+use crate::inspector::ReflectRows;
 use crate::project::ProjectState;
 
-const DIALOG_LAYER: i32 = 200;
+const DIALOG_LAYER: i32 = concerto_ui::anchor::UI_PANEL_LAYER - 1;
 const CARD_WIDTH: f32 = 720.0;
 const NAME_WIDTH: f32 = 140.0;
 const STATUS_WIDTH: f32 = 190.0;
@@ -64,6 +73,36 @@ struct DialogStatus(usize);
 #[derive(Component)]
 struct ImportButton;
 
+#[derive(Component, Default)]
+struct SettingsPanel {
+    row: Option<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsKind {
+    Import,
+    Asset,
+}
+
+impl SettingsKind {
+    fn title(self) -> &'static str {
+        match self {
+            SettingsKind::Import => "Import settings",
+            SettingsKind::Asset => "Asset settings",
+        }
+    }
+}
+
+#[derive(Component)]
+struct SettingsSection(SettingsKind);
+
+#[derive(Component)]
+struct SettingsRows {
+    row: usize,
+    kind: SettingsKind,
+    destination: String,
+}
+
 /// Builds the staging dialog and keeps it in step with [`ImportStaging`].
 pub struct DialogPlugin;
 
@@ -71,7 +110,14 @@ impl Plugin for DialogPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(Startup, build_dialog).add_system(
             LateUpdate,
-            (edit_destinations, press_keys, sync_dialog, render_dialog)
+            (
+                edit_destinations,
+                write_settings,
+                press_keys,
+                sync_dialog,
+                show_settings,
+                render_dialog,
+            )
                 .chain()
                 .after(UiSet::Widgets)
                 .before(UiSet::Project),
@@ -149,10 +195,31 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                     .with_flex_shrink(0.0),
                 UIList {
                     row_height: Some(ROW_HEIGHT),
-                    selectable: false,
+                    selectable: true,
                 },
                 DialogView,
             ))
+            .add_child_with(
+                (
+                    theme.column().gap(theme.spacing_sm).hidden(),
+                    SettingsPanel::default(),
+                ),
+                |mut panel| {
+                    for kind in [SettingsKind::Import, SettingsKind::Asset] {
+                        panel.add_child_with(
+                            (theme.column(), SettingsSection(kind)),
+                            |mut section| {
+                                section.add_child(
+                                    theme
+                                        .label(kind.title())
+                                        .single_line()
+                                        .height(UIValue::Px(theme.control_height)),
+                                );
+                            },
+                        );
+                    }
+                },
+            )
             .add_child_with(
                 theme.row().justify(taffy::AlignContent::End),
                 |mut footer| {
@@ -193,6 +260,17 @@ fn press_cancel(on: On<UIClick>, mut staging: ResMut<ImportStaging>) {
     }
 }
 
+fn select_row(index: usize) -> Listener<UIItemSelected> {
+    (move |_: On<UIItemSelected>, panels: Query<&mut SettingsPanel>| {
+        for mut panel in panels.iter() {
+            if panel.row != Some(index) {
+                panel.row = Some(index);
+            }
+        }
+    })
+    .into_listener()
+}
+
 fn edit_destinations(
     mut changes: EventReader<UITextInputChanged>,
     fields: Query<&DialogField>,
@@ -213,11 +291,124 @@ fn edit_destinations(
         return;
     }
     for (index, destination) in edits {
-        if let Some(row) = staging.rows.get_mut(index) {
+        if let Some(row) = staging.rows.get_mut(index)
+            && row.destination != destination
+        {
             row.destination = destination;
+            stage_row(row, &project.root);
         }
     }
     validate_rows(&mut staging.rows, &project.root);
+}
+
+fn write_settings(
+    edited: Query<(Entity, &SettingsRows, &ReflectRows), Changed<ReflectRows>>,
+    shown: Query<Entity, Added<ReflectRows>>,
+    mut staging: ResMut<ImportStaging>,
+) {
+    for (entity, rows, value) in edited.iter() {
+        if shown.contains_entity(entity) {
+            continue;
+        }
+        let Some(row) = staging.rows.get_mut(rows.row) else {
+            continue;
+        };
+        let Some(importer) = row
+            .source
+            .extension()
+            .and_then(|extension| importer_for(&extension.to_string_lossy()))
+        else {
+            continue;
+        };
+        let edit = Some(importer.clone_settings(value.value.as_ref()));
+        match rows.kind {
+            SettingsKind::Import => row.settings = edit,
+            SettingsKind::Asset => row.asset_settings = edit,
+        }
+    }
+}
+
+fn shown_value(row: &StagedImport, kind: SettingsKind) -> Option<Box<dyn Reflect>> {
+    let Some(Ok(staged)) = &row.staged else {
+        return None;
+    };
+    let (edit, current) = match kind {
+        SettingsKind::Import => (row.settings.as_deref(), Some(staged.settings.as_ref())),
+        SettingsKind::Asset => (
+            row.asset_settings.as_deref(),
+            staged.asset_settings.as_deref(),
+        ),
+    };
+    let value = edit.or(current)?;
+    let importer = importer_for(&row.source.extension()?.to_string_lossy())?;
+    Some(importer.clone_settings(value))
+}
+
+fn show_settings(
+    staging: Res<ImportStaging>,
+    types: Res<AppTypeRegistry>,
+    panels: Query<(&mut SettingsPanel, &mut UINode)>,
+    sections: Query<(Entity, &SettingsSection, &mut UINode)>,
+    shown: Query<(Entity, &SettingsRows)>,
+    mut cmd: CommandQueue,
+) {
+    for (mut panel, mut node) in panels.iter() {
+        if !staging.visible && panel.row.is_some() {
+            panel.row = None;
+        }
+        let selected = panel.row.filter(|&index| {
+            staging
+                .rows
+                .get(index)
+                .is_some_and(|row| matches!(row.staged, Some(Ok(_))))
+        });
+        let destination = selected.map(|index| staging.rows[index].destination.as_str());
+        let mut showing = shown.iter().map(|(_, rows)| rows).peekable();
+        let up_to_date = match selected {
+            Some(index) => {
+                showing.peek().is_some()
+                    && showing.all(|rows| {
+                        rows.row == index && Some(rows.destination.as_str()) == destination
+                    })
+            }
+            None => showing.peek().is_none(),
+        };
+        if up_to_date {
+            continue;
+        }
+        for (entity, _) in shown.iter() {
+            cmd.despawn(entity);
+        }
+        let mut visible = false;
+        for (section, kind, mut section_node) in sections.iter() {
+            let value = selected.and_then(|index| shown_value(&staging.rows[index], kind.0));
+            if section_node.visible != value.is_some() {
+                section_node.visible = value.is_some();
+            }
+            let (Some(index), Some(value)) = (selected, value) else {
+                continue;
+            };
+            visible = true;
+            cmd.spawn((
+                UINode::default()
+                    .with_flex_direction(FlexDirection::Column)
+                    .with_flex_shrink(0.0),
+                ReflectRows {
+                    value,
+                    types: types.clone(),
+                },
+                SettingsRows {
+                    row: index,
+                    kind: kind.0,
+                    destination: staging.rows[index].destination.clone(),
+                },
+                ChildOf::new(section),
+            ));
+        }
+        if node.visible != visible {
+            node.visible = visible;
+        }
+    }
 }
 
 fn press_keys(
@@ -329,6 +520,7 @@ fn spawn_row(
             ..Default::default()
         }),
         DialogRow(staged.source.clone()),
+        select_row(index),
         ChildOf::new(list),
     ));
     row.add_child(
@@ -449,10 +641,18 @@ mod tests {
     struct Fixture {
         world: World,
         _project: tempfile::TempDir,
+        _sources: tempfile::TempDir,
     }
 
     fn fixture(files: usize) -> Fixture {
         let project = tempfile::tempdir().expect("tempdir");
+        let sources = tempfile::tempdir().expect("tempdir");
+        let picked: Vec<PathBuf> = (0..files)
+            .map(|index| sources.path().join(format!("file{index}.obj")))
+            .collect();
+        for path in &picked {
+            std::fs::write(path, "").expect("write source");
+        }
         let mut world = World::new();
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
@@ -471,11 +671,7 @@ mod tests {
         });
         world.insert_resource(state);
         world.insert_resource(ImportStaging {
-            rows: stage_sources(
-                (0..files)
-                    .map(|index| PathBuf::from(format!("/picked/file{index}.obj")))
-                    .collect(),
-            ),
+            rows: stage_sources(picked),
             visible: true,
         });
         concerto_ui::list::install_listeners(&mut world);
@@ -484,6 +680,7 @@ mod tests {
         let mut fixture = Fixture {
             world,
             _project: project,
+            _sources: sources,
         };
         fixture.frame();
         fixture

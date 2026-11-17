@@ -7,14 +7,17 @@ use std::path::{Component, Path, PathBuf};
 use std::thread::JoinHandle;
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_ecs::{Event, IntoSystemConfig, ResMut, Resource, events::event_writer::EventWriter};
+use concerto_ecs::{
+    Event, IntoSystemConfig, Res, ResMut, Resource, events::event_writer::EventWriter,
+    reflect::AppTypeRegistry,
+};
 use concerto_foundation::assets::{
     AssetId,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_import::config::ContentConfig;
-use concerto_import::{ImportSettings, ImportedSource, importer_for, importers};
-use concerto_render::assets::texture::TextureSettings;
+use concerto_import::{ImportSettings, ImportedSource, StagedSettings, importer_for, importers};
+use concerto_reflect::{Reflect, TypeRegistry, to_json};
 
 use crate::project::{AssetsWritten, ProjectState};
 
@@ -29,20 +32,47 @@ pub fn import_source_into(
     concerto_import::import_source_into(source, destination, project_root, &config, settings)
 }
 
-/// Whether the importer of `source` takes settings for the asset it makes.
-pub fn has_asset_settings(source: &Path) -> bool {
-    importer_for(&extension_of(source)).is_some_and(|importer| importer.has_asset_settings())
+/// The settings importing `source` to `destination` would use if given none; fails when the sidecar's do not parse.
+pub fn stage_settings(
+    source: &Path,
+    destination: &str,
+    project_root: &Path,
+) -> anyhow::Result<StagedSettings> {
+    let config = ContentConfig::load_or_default(project_root)?;
+    concerto_import::staged_settings(source, destination, project_root, &config)
+}
+
+/// `settings` and `asset_settings` as TOML text, each a table of its reflected fields.
+pub fn settings_text(
+    settings: Option<&dyn Reflect>,
+    asset_settings: Option<&dyn Reflect>,
+    types: &TypeRegistry,
+) -> String {
+    let mut table = toml::Table::new();
+    let mut add = |name: &str, value: Option<&dyn Reflect>| {
+        if let Some(value) =
+            value.and_then(|value| toml::Value::try_from(to_json(value, types)).ok())
+        {
+            table.insert(name.to_owned(), value);
+        }
+    };
+    add("settings", settings);
+    add("asset_settings", asset_settings);
+    toml::to_string(&table).unwrap_or_default()
 }
 
 /// A file chosen for import, and where it will be copied to.
-#[derive(Debug, Clone)]
 pub struct StagedImport {
     pub source: PathBuf,
     /// Project-relative, e.g. `assets/hero.glb`.
     pub destination: String,
     pub state: RowState,
-    /// Settings for the textures this import creates; `None` gives them the defaults.
-    pub texture_settings: Option<TextureSettings>,
+    /// The settings importing to `destination` would use unedited, or why they cannot be read; `None` until [`stage_row`].
+    pub staged: Option<Result<StagedSettings, String>>,
+    /// The importer settings edited for this row; `None` imports with the sidecar's.
+    pub settings: Option<Box<dyn Reflect>>,
+    /// The asset settings edited for this row; `None` keeps the asset's own.
+    pub asset_settings: Option<Box<dyn Reflect>>,
 }
 
 /// What importing a row would do, or why it cannot be imported.
@@ -73,10 +103,22 @@ pub fn stage_sources(sources: Vec<PathBuf>) -> Vec<StagedImport> {
                 destination: format!("assets/{name}"),
                 source,
                 state: RowState::New,
-                texture_settings: None,
+                staged: None,
+                settings: None,
+                asset_settings: None,
             }
         })
         .collect()
+}
+
+/// Reads the settings `row` would import with at its destination, dropping its edits.
+pub fn stage_row(row: &mut StagedImport, project_root: &Path) {
+    row.settings = None;
+    row.asset_settings = None;
+    row.staged = Some(
+        stage_settings(&row.source, &row.destination, project_root)
+            .map_err(|error| format!("{error:#}")),
+    );
 }
 
 /// Re-decides every row's state against the project on disk.
@@ -139,6 +181,9 @@ fn row_state(row: &StagedImport, project_root: &Path, occurrences: usize) -> Row
     if extension_of(Path::new(&row.destination)) != source_extension {
         return RowState::Rejected(format!("extension must stay '.{source_extension}'"));
     }
+    if let Some(Err(error)) = &row.staged {
+        return RowState::Rejected(error.clone());
+    }
     if project_root.join(&row.destination).exists() {
         RowState::Replaces
     } else {
@@ -164,14 +209,22 @@ pub struct ImportStaging {
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ImportFinished {
     pub destination: String,
+    /// The settings the import used, as [`settings_text`] writes them; empty when they could not be read.
+    pub settings: String,
     pub result: Result<ImportedSource, String>,
+}
+
+struct FinishedJob {
+    root: PathBuf,
+    settings: String,
+    result: Result<ImportedSource, String>,
 }
 
 /// Queued imports and the single worker running one of them.
 #[derive(Resource, Default)]
 pub struct ImportQueue {
     pending: VecDeque<QueuedImport>,
-    job: Option<JoinHandle<(PathBuf, Result<ImportedSource, String>)>>,
+    job: Option<JoinHandle<FinishedJob>>,
     current: Option<String>,
     current_destination: Option<String>,
     failures: Vec<(String, String)>,
@@ -254,6 +307,9 @@ pub fn accept_picked(
     };
     let mut rows = stage_sources(sources);
     keep_project_sources_in_place(&mut rows, &root);
+    for row in &mut rows {
+        stage_row(row, &root);
+    }
     validate_rows(&mut rows, &root);
     staging.rows = rows;
     staging.visible = !staging.rows.is_empty();
@@ -313,6 +369,10 @@ pub struct ImportPlugin;
 
 impl Plugin for ImportPlugin {
     fn build(&self, app: &mut App) {
+        let types = app.main_mut().world_mut().type_registry();
+        for importer in importers() {
+            importer.register_types(&mut types.write());
+        }
         app.insert_resource(ImportQueue::default());
         app.insert_resource(ImportStaging::default());
         app.insert_resource(ImportPicker::default());
@@ -323,7 +383,11 @@ impl Plugin for ImportPlugin {
     }
 }
 
-fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>) {
+fn drive_imports(
+    mut queue: ResMut<ImportQueue>,
+    mut state: ResMut<ProjectState>,
+    types: Res<AppTypeRegistry>,
+) {
     let root = state.project.as_ref().map(|project| project.root.clone());
     if let Some(root) = &root {
         queue.bind(root);
@@ -359,12 +423,12 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
     state.status = format!("Importing {name} ({} of {})…", queue.done + 1, queue.total);
     queue.current = Some(name);
     queue.current_destination = Some(row.destination.clone());
+    let types = types.clone();
     queue.job = Some(std::thread::spawn(move || {
+        let used = settings_used(&row, &root, &types);
         let settings = ImportSettings {
-            settings: None,
-            asset_settings: row
-                .texture_settings
-                .map(|settings| Box::new(settings) as Box<dyn concerto_reflect::Reflect>),
+            settings: row.settings,
+            asset_settings: row.asset_settings,
         };
         let result =
             import_source_into(&row.source, &row.destination, &root, settings).map_err(|error| {
@@ -377,8 +441,24 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
                 );
                 failure_summary(&error, &root)
             });
-        (root, result)
+        FinishedJob {
+            root,
+            settings: used,
+            result,
+        }
     }));
+}
+
+fn settings_used(row: &StagedImport, root: &Path, types: &AppTypeRegistry) -> String {
+    let current = stage_settings(&row.source, &row.destination, root).ok();
+    let settings = row
+        .settings
+        .as_deref()
+        .or(current.as_ref().map(|current| current.settings.as_ref()));
+    let asset_settings = row.asset_settings.as_deref().or(current
+        .as_ref()
+        .and_then(|current| current.asset_settings.as_deref()));
+    settings_text(settings, asset_settings, &types.read())
 }
 
 fn finish_import(
@@ -393,21 +473,26 @@ fn finish_import(
     }
     let name = queue.current.take().unwrap_or_default();
     let destination = queue.current_destination.take().unwrap_or_default();
-    let (root, result) = match queue
+    let (root, settings, result) = match queue
         .job
         .take()
         .expect("the job was just observed as finished")
         .join()
     {
-        Ok((root, result)) => (Some(root), result),
+        Ok(job) => (Some(job.root), job.settings, job.result),
         Err(_) => {
             log::error!("the import worker panicked while importing '{name}'");
-            (None, Err("the import worker panicked".into()))
+            (
+                None,
+                String::new(),
+                Err("the import worker panicked".into()),
+            )
         }
     };
     queue.done += 1;
     finished.write(ImportFinished {
         destination,
+        settings,
         result: result.clone(),
     });
     let imported = match result {
@@ -584,7 +669,9 @@ mod tests {
                 source: PathBuf::from(row.source),
                 destination: row.destination.to_string(),
                 state: RowState::New,
-                texture_settings: None,
+                staged: None,
+                settings: None,
+                asset_settings: None,
             })
             .collect();
 

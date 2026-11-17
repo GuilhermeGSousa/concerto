@@ -195,17 +195,22 @@ A path with no file answers `unknown_source`; a destination outside the
 project, without a file name, with another extension than the source's, or a
 source no importer handles answers `import_refused` with the dialog's reason;
 an import that fails answers `import_failed` with the status line's reason.
-For an image source, `texture_settings` sets its texture's settings:
-`compression` (`auto`, `bc7`, `bc1`, `bc5`, `bc4` or `uncompressed`),
-`color_space` (`srgb` or `linear`; left out, the texture's role decides),
-`max_size` (4096, 2048, 1024 or 512; left out, no cap) and `mips` (a bool, on
-when left out). They replace the settings of a texture that already exists;
-left out, it keeps its own. A glTF's textures start at the defaults. Settings
-a texture cannot derive in for its role, such as `bc5` on a colour texture,
-fail the import with `import_failed` naming the texture and the reason. An
-unknown key or value, or `texture_settings` on a source other than an image,
-answers `invalid_arguments` naming it.
-Each queued import ends with an `ImportFinished` event, which is what the tool
+`settings` and `asset_settings` change the importer's settings and the
+settings of the asset an image makes, as objects of the fields to change, such
+as `{"scale": 0.5}` for a BVH or `{"compression": "Bc7", "max_size": "S512"}`
+for an image: enum values are variant names, and a field left out keeps the
+value the project holds, the sidecar's for `settings` and the texture's for
+`asset_settings`. Given `settings` are written whole to the sidecar's
+`[settings]`; left out, the sidecar is not touched. Fields the dialog does not
+show, such as clip events, are kept and cannot be given. An unknown field, a
+bad value, or `asset_settings` for a source whose importer has none answers
+`invalid_arguments`, naming the field and showing the current values. A value
+the import itself refuses, such as a BVH `scale` of 0 or `bc5` on a colour
+texture, answers `import_failed` with the reason. The answer ends with the
+settings the import used, as TOML: a `[settings]` table and, for an image, an
+`[asset_settings]` table.
+Each queued import ends with an `ImportFinished` event carrying the settings it
+used, which is what the tool
 waits for. It needs an open project. `close_document`
 closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
@@ -790,7 +795,14 @@ revealed.
 **Import…** beside the Asset Browser search opens a file picker for glTF, OBJ, BVH, image,
 Ogg and WAV sources; several files can be picked at once. A dialog then lists each
 file with the project-relative destination it will be copied to, which you can
-edit before confirming. Enter confirms and Escape cancels. Files are imported
+edit before confirming. Enter confirms and Escape cancels. Selecting a file
+shows its settings below the list: **Import settings**, the importer's own,
+read from the destination's sidecar or the defaults, and, for an image,
+**Asset settings**, its texture's Compression, Colour space, Max size and Mips,
+read from the texture already there or the defaults. A source with nothing to
+set shows "No settings". Only settings you edit are written; editing a
+file's destination reads its settings again and drops your edits. A file whose
+sidecar `[settings]` do not parse cannot be imported, and its row says why. Files are imported
 one at a time. Each import's assets replace the registry's entries for that
 source in memory as it
 finishes, without a rescan and without closing open tabs. No registry file is
