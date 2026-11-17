@@ -108,7 +108,7 @@ impl Plugin for RenderPlugin {
         app.register_plugin(RenderAssetPlugin::<RenderMesh>::new())
             .register_plugin(RenderAssetPlugin::<RenderTexture>::new());
         app.register_asset::<Mesh>()
-            .register_asset::<Texture>()
+            .register_derived_asset::<Texture>()
             .register_asset::<Skeleton>();
         app.register_type::<Light>()
             .register_type::<Camera>()

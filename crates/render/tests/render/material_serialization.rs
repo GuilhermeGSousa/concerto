@@ -6,7 +6,10 @@ use concerto_color::{Color, LinearRgba};
 use concerto_foundation::assets::content::check_encoding;
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_render::assets::material::StandardMaterial;
-use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
+use concerto_render::assets::texture::{
+    ColorSpace, Compression, MaxSize, SourceEncoding, Texture, TextureRole, TextureSettings,
+    TextureSource,
+};
 use glam::Vec3;
 
 fn encoding_dir() -> &'static Path {
@@ -36,13 +39,21 @@ fn a_material_decodes_with_weak_texture_handles_and_lists_only_its_present_textu
 
 #[test]
 fn texture_encoding_matches_its_fixture() {
-    let mut texture = Texture::new(
-        2,
-        1,
-        TextureFormat::Rgba8Unorm,
-        vec![1, 2, 3, 4, 5, 6, 7, 8],
+    let texture = Texture::imported(
+        TextureRole::Normal,
+        TextureSettings::default()
+            .with_compression(Compression::Bc5)
+            .with_color_space(Some(ColorSpace::Linear))
+            .with_max_size(MaxSize::S1024)
+            .with_mips(false),
+        TextureSource {
+            bytes: vec![1, 2, 3, 4],
+            encoding: SourceEncoding::Jpeg,
+            width: 3,
+            height: 2,
+            hash: 0x0123_4567_89ab_cdef,
+        },
     );
-    texture.kind = TextureKind::RenderTarget;
 
     check_encoding(&texture, encoding_dir());
 }

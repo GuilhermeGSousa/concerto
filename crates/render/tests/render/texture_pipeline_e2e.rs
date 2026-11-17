@@ -1,27 +1,20 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
-use concerto_app::{
-    main_schedule::MainSchedulePlugin,
-    plugins::{AssetManagerPlugin, TimePlugin},
-    App,
-};
 use concerto_asset_import::{ImportContext, Importer};
-use concerto_foundation::assets::asset_server::AssetServer;
-use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
-use concerto_foundation::assets::utils::load_content_asset;
-use concerto_foundation::assets::{Asset, ContentAssetRoot};
-use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
+use concerto_foundation::assets::derived::DerivedDataCache;
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
+use concerto_foundation::assets::Asset;
+use concerto_render::assets::texture::{Texture, TextureFormat};
 use concerto_render::importers::image_importer::ImageImporter;
+
+use crate::texture_derive::{loaded, Loaded, TempProject, TextureRuntime};
 
 #[test]
 fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_address_with_its_mips() {
-    let temp_dir = std::env::temp_dir().join(format!("texture-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
-
-    let source_path = temp_dir.join("swatch.png");
-    let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([9, 9, 9, 255]));
+    let project = TempProject::new("texture-e2e");
+    let source_path = project.root.join("swatch.png");
+    let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([9, 9, 9, 255]));
     img.save(&source_path)
         .expect("failed to save fixture texture");
 
@@ -49,38 +42,30 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
         derived: None,
         embedded: Vec::new(),
     };
-    std::fs::create_dir_all(temp_dir.join("content/swatch")).unwrap();
+    std::fs::create_dir_all(project.root.join("content/swatch")).unwrap();
     std::fs::write(
-        temp_dir.join(address),
+        project.root.join(address),
         write_content_asset(&header, &sub_asset.bytes).unwrap(),
     )
     .unwrap();
+    let mut registry = AssetRegistry::new();
+    registry.insert(AssetEntry {
+        id: sub_asset.asset_id,
+        address: address.to_string(),
+        kind: sub_asset.type_name.to_string(),
+        kind_version: Some(sub_asset.kind_version),
+        provenance: None,
+        embedded_in: None,
+    });
 
-    let texture = pollster::block_on(load_content_asset::<Texture>(
-        &ContentAssetRoot::Directory(temp_dir.clone()),
-        address,
-    ))
-    .expect("the imported texture must load back through the runtime byte path");
-    assert_eq!(texture.width, 2);
-    assert_eq!(texture.height, 2);
-    assert_eq!(texture.format, TextureFormat::Rgba8UnormSrgb);
-    assert_eq!(texture.kind, TextureKind::Sampled);
-    assert_eq!(texture.data, [9, 9, 9, 255].repeat(4));
-
-    let mut app = App::new();
-    app.register_plugin(MainSchedulePlugin)
-        .register_plugin(AssetManagerPlugin)
-        .register_plugin(TimePlugin)
-        .register_asset::<Texture>();
-    app.finish_plugin_build();
-    let handle = app.get_resource::<AssetServer>().unwrap().add(texture);
-    app.update();
-    let loaded = app
-        .get_resource::<AssetStore<Texture>>()
-        .unwrap()
-        .get(&handle)
-        .expect("an added texture reaches its store after one update");
-    assert_eq!(loaded.mip_level_count(), 2, "2x2 loads with a 1x1 mip");
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    let mut runtime = TextureRuntime::new(&project.root, &registry, DerivedDataCache::none());
+    assert_eq!(
+        runtime.load(sub_asset.asset_id, loaded),
+        Some(Loaded {
+            format: Some(TextureFormat::Bc1RgbaUnormSrgb),
+            level_count: 3,
+            keeps_source: false,
+        }),
+        "a 4x4 opaque colour image derives BC1 with mips down to 1x1"
+    );
 }

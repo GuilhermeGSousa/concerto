@@ -9,5 +9,6 @@ mod readback;
 mod required_sync;
 mod scene_component_impls;
 mod skeleton_gizmo;
+mod texture_derive;
 mod texture_pipeline_e2e;
 mod webgl2_shaders;

@@ -25,7 +25,9 @@ use concerto_mesh::vertex::Vertex;
 use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
-use concerto_render::assets::texture::{Texture, TextureFormat};
+use concerto_render::assets::texture::{
+    SourceEncoding, Texture, TextureRole, TextureSettings, TextureSource,
+};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
@@ -190,13 +192,25 @@ impl Importer for GltfImporter {
         }
 
         for key in &needed_textures {
-            let rgba = decoded_images[key.image_index].to_rgba8();
-            let format = if key.srgb {
-                TextureFormat::Rgba8UnormSrgb
-            } else {
-                TextureFormat::Rgba8Unorm
+            let unkept = |message: String| ImportError::MalformedSource {
+                source_path: source_path.to_path_buf(),
+                message: format!("failed to keep GLTF image {}: {message}", key.image_index),
             };
-            let texture = Texture::new(rgba.width(), rgba.height(), format, rgba.into_raw());
+            let mut bytes = Vec::new();
+            decoded_images[key.image_index]
+                .write_to(
+                    &mut std::io::Cursor::new(&mut bytes),
+                    image::ImageFormat::Png,
+                )
+                .map_err(|e| unkept(e.to_string()))?;
+            let source = TextureSource::new(bytes, SourceEncoding::Png)
+                .map_err(|e| unkept(format!("{e:#}")))?;
+            let role = if key.srgb {
+                TextureRole::Color
+            } else {
+                TextureRole::Data
+            };
+            let texture = Texture::imported(role, TextureSettings::default(), source);
             ctx.emit(&texture_name(key.image_index, key.srgb), &texture)?;
         }
 

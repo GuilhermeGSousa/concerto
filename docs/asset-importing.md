@@ -16,7 +16,9 @@ assets/hero.glb.import.toml       (persistent source/output identities)
 ```
 
 - **Source files** live wherever you like (a game's `assets/` by
-  convention). They are never read by the running game.
+  convention). They are never read by the running game. A texture's
+  `.gasset` holds its image, so the file in `assets/` is needed
+  only to import it again.
 - **Content assets** (`*.gasset`) are the game-ready form, each a small
   header plus a `bincode` payload. A source's scene is one file that also
   holds its meshes, materials and skeletons, each still an asset with its own
@@ -67,12 +69,27 @@ The import picks the importer by file extension:
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
 | `.ogg` `.wav`        | `AudioImporter` | one `main` audio clip                             |
 
-A texture's `.gasset` holds only its full-size pixels. When it loads, through
-`AssetServer::load` or `add`, a sampled texture builds its mip chain from them,
-averaging sRGB colour in linear space, and the renderer samples the chain
-trilinearly with up to 16× anisotropic filtering, as much as the adapter
-supports. A texture put straight into `AssetStore` gets no chain. Code builds a
-sampled texture with `Texture::new`.
+A texture's `.gasset` holds its **source**, the image as PNG or JPEG bytes,
+its **role** (`Color`, `Normal` or `Data`, set by the importer) and its
+**settings**: compression (`Auto`, `Bc7`, `Bc1`, `Bc5`, `Bc4`, `Uncompressed`),
+colour space (sRGB or linear, by default the role's: sRGB for `Color`, linear
+otherwise), max size and mips. Every level the GPU samples is derived data:
+when the texture loads, the levels are derived from the source into
+`derived-cache/`, or read from there, and cooked builds carry them in the
+file. `Auto` is BC7 for a colour texture with alpha below 255, BC1 for an
+opaque one, BC5 for a normal map and BC7 for data. A texture is first fitted
+within its max size, then, when compressed, rounded to a multiple of 4 on each
+side; its mips halve down to 1×1, averaging sRGB colour in linear space and
+renormalising normals. BC4 and BC5 have no sRGB form, so a texture set to
+either with an sRGB colour space fails to derive and asks for Linear. The
+image importer gives its texture the `Color` role; the glTF importer gives
+base colour and emissive textures `Color` and the others `Data`. The loaded
+texture keeps its levels, not its source. On the web there is no encoder, so
+an uncooked run derives uncompressed levels; a cooked build carries the
+compressed ones. The renderer samples the chain trilinearly with up to 16×
+anisotropic filtering, as much as the adapter supports. Code builds a sampled
+RGBA8 texture with `Texture::new`; it builds its mip chain when it loads,
+through `AssetServer::load` or `add`, and never derives.
 
 ### `content.toml`
 
