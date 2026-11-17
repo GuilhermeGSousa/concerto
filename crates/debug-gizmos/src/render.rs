@@ -29,7 +29,7 @@ pub(crate) fn extract_gizmos(main: Extracted<Res<GizmoStorage>>, mut render: Res
 pub(crate) fn render_gizmos(
     storage: Res<RenderGizmos>,
     mut device: ResMut<RenderDevice>,
-    pipeline: Res<GizmoPipeline>,
+    mut pipeline: ResMut<GizmoPipeline>,
     render_cameras: Query<&RenderCamera>,
     render_window: Res<RenderWindow>,
     context: Res<RenderContext>,
@@ -76,6 +76,9 @@ pub(crate) fn render_gizmos(
         })
         .collect();
 
+    for render_camera in render_cameras.iter() {
+        pipeline.specialize(&device, render_camera.samples());
+    }
     let encoder = device.command_encoder();
 
     for (render_camera, viewport) in render_cameras.iter().zip(&viewports) {
@@ -83,13 +86,11 @@ pub(crate) fn render_gizmos(
         if rect.is_empty() {
             continue;
         }
-        let swapchain_view = render_window.get_view();
-        let color_view: &wgpu::TextureView = match &render_camera.render_target {
-            Some(rt) => &rt.view,
-            None => match swapchain_view {
-                Some(v) => v,
-                None => continue,
-            },
+        let Some(color_view) = render_camera.color_view(render_window.get_view()) else {
+            continue;
+        };
+        let Some(pipelines) = pipeline.get(render_camera.samples()) else {
+            continue;
         };
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -112,12 +113,12 @@ pub(crate) fn render_gizmos(
 
         render_pass.set_bind_group(0, &render_camera.camera_bind_group, &[]);
         if let Some(lines) = &lines {
-            render_pass.set_pipeline(&pipeline.pipeline);
+            render_pass.set_pipeline(&pipelines.lines);
             render_pass.set_vertex_buffer(0, lines.slice(..));
             render_pass.draw(0..line_count, 0..1);
         }
         if let (Some(wide), Some(viewport)) = (&wide, viewport) {
-            render_pass.set_pipeline(&pipeline.wide_pipeline);
+            render_pass.set_pipeline(&pipelines.wide);
             render_pass.set_bind_group(1, viewport, &[]);
             render_pass.set_vertex_buffer(0, wide.slice(..));
             render_pass.draw(0..wide_count, 0..1);

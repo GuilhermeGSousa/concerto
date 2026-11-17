@@ -113,11 +113,16 @@ registration order:
 app.add_system(LateUpdate, app_widget.after(UiSet::Input).before(UiSet::Layout));
 ```
 
-The render crate exports `RenderSet { Lights, Queue, Shadows, Draw, Overlay, Present }`
-the same way: `Lights`, `Queue`, `Shadows`, `Draw` and `Overlay` are chained in that
-order in `Render`, `Queue` culls and bins mesh instances into each view's draws,
-`Overlay` draws over the finished scene before any pass that samples a
-camera's target, and `Present` runs in `LateRender`, after all of them. The window
+The render crate exports `RenderSet { Lights, Queue, Shadows, Draw, Overlay, Resolve, Present }`
+the same way: `Lights`, `Queue`, `Shadows`, `Draw`, `Overlay` and `Resolve` are chained
+in that order in `Render`, `Queue` culls and bins mesh instances into each view's draws,
+`Overlay` draws over the finished scene into each camera's multisampled texture,
+`Resolve` resolves those textures into each camera's target before any pass that
+samples it or draws over the window unsampled, such as the UI, and `Present` runs
+in `LateRender`, after all of them. A chain orders only sets that have systems: a
+set with none is skipped, so the sets on either side of it are not ordered by
+the chain. Order against the nearest set that always has a system, as the resolve
+pass orders itself `.after(RenderSet::Draw)`. The window
 crate exports `FoldInput`, the set in `First` that folds
 window events into `Input`; a system that decides `InputGate` for the frame runs
 before it.

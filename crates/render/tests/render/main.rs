@@ -4,6 +4,7 @@ mod camera_viewport;
 mod exclusive_camera;
 mod hosted_target;
 mod material_serialization;
+mod msaa;
 mod point_shadows;
 mod readback;
 mod required_sync;

@@ -211,7 +211,7 @@ impl Plugin for UIPlugin {
             .add_system(Extract, extract_text_nodes)
             .add_system(Render, update_text_viewport)
             .add_system(Render, prepare_text_renderer)
-            .add_system(Render, ui_renderpass.after(RenderSet::Overlay));
+            .add_system(Render, ui_renderpass.after(RenderSet::Resolve));
     }
 
     fn finish(&self, app: &mut concerto_app::App) {

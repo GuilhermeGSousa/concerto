@@ -124,6 +124,15 @@ fix the entry in the same commit as the change that made it false.
   it casts shadows, a shadow map. An `App` with no camera has no visible
   light: a test that reads shadow layers or `RenderLights::written` spawns a
   camera.
+- **A camera's scene passes draw into its multisampled texture.** Every camera
+  requires `Msaa`, 4× by default, so `RenderCamera::color_view` is a texture of
+  `RenderCamera::samples()` samples, and a pipeline drawing into it, with its
+  depth texture, must be built for that count: `MaterialPipeline::specialize`
+  and `get` take it. The resolve into the camera's target runs in
+  `RenderSet::Resolve`; a pass that samples the target or draws over the window
+  single-sampled, as the UI does, runs after it. The window's cameras share one
+  texture per sample count, so window cameras with different `Msaa` settings
+  overwrite each other, with a warning.
 - **`RenderPlugin::build` registers the mesh and skeleton requirement,** so
   register the plugin before anything spawns meshes, or the registration
   panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an
