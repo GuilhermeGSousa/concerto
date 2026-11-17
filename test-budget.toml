@@ -36,6 +36,7 @@
 "crates/scene" = 12
 "crates/tasks" = 2
 "crates/terminal-renderer" = 2
+"crates/texture-editor" = 1
 "crates/ui" = 99
 "crates/window" = 31
 "crates/winit" = 8

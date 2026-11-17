@@ -1871,6 +1871,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-texture-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "concerto",
+ "concerto-app",
+ "concerto-color",
+ "concerto-ecs",
+ "concerto-editor",
+ "concerto-foundation",
+ "concerto-mcp",
+ "concerto-reflect",
+ "concerto-render",
+ "concerto-ui",
+ "image",
+ "log",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "concerto-ui"
 version = "0.1.0"
 dependencies = [

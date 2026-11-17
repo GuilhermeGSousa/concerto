@@ -1664,6 +1664,16 @@ at the parameters set in the tab. In a game that doesn't list the crate a clip o
 has no editor, so opening one opens no tab, and a rig opens in the generic
 inspector.
 
+### The texture tab
+
+The editor of a `Texture` is in the crate
+[`concerto-texture-editor`](../texture-editor/README.md), which a game lists
+in its `Cargo.toml`. The tab previews the texture's derived levels, as the GPU
+samples them, under a line giving their size, format, level count and memory,
+and edits its compression settings in the inspector; a save keeps the source and
+reloads the texture in open scenes. In a game that doesn't list the crate a
+texture has no editor, so opening one opens no tab.
+
 ### The timeline
 
 `concerto_editor::timeline::Timeline` is a component on a UI node, which
