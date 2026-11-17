@@ -14,14 +14,16 @@ use concerto_foundation::assets::{
 };
 use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
+use concerto_render::assets::texture::{TextureSettings, texture_settings_options};
 
 use crate::project::{AssetsWritten, ProjectState};
 
-/// Imports a source into the project at `destination`, bringing the files it refers to along.
+/// Imports a source into the project at `destination`, bringing the files it refers to along; the textures it creates take `texture_settings`, or the defaults.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
     project_root: &Path,
+    texture_settings: Option<&TextureSettings>,
 ) -> anyhow::Result<ImportedSource> {
     let config = ContentConfig::load_or_default(project_root)?;
     concerto_import::import_source_into(
@@ -29,7 +31,17 @@ pub fn import_source_into(
         destination,
         project_root,
         &config,
-        toml::Table::new(),
+        texture_settings
+            .map(texture_settings_options)
+            .unwrap_or_default(),
+    )
+}
+
+/// Whether importing `source` can create textures: a glTF or an image.
+pub fn emits_textures(source: &Path) -> bool {
+    matches!(
+        extension_of(source).as_str(),
+        "gltf" | "glb" | "png" | "jpg" | "jpeg"
     )
 }
 
@@ -40,6 +52,8 @@ pub struct StagedImport {
     /// Project-relative, e.g. `assets/hero.glb`.
     pub destination: String,
     pub state: RowState,
+    /// Settings for the textures this import creates; `None` gives them the defaults.
+    pub texture_settings: Option<TextureSettings>,
 }
 
 /// What importing a row would do, or why it cannot be imported.
@@ -70,6 +84,7 @@ pub fn stage_sources(sources: Vec<PathBuf>) -> Vec<StagedImport> {
                 destination: format!("assets/{name}"),
                 source,
                 state: RowState::New,
+                texture_settings: None,
             }
         })
         .collect()
@@ -355,7 +370,13 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
     queue.current = Some(name);
     queue.current_destination = Some(row.destination.clone());
     queue.job = Some(std::thread::spawn(move || {
-        let result = import_source_into(&row.source, &row.destination, &root).map_err(|error| {
+        let result = import_source_into(
+            &row.source,
+            &row.destination,
+            &root,
+            row.texture_settings.as_ref(),
+        )
+        .map_err(|error| {
             let error = format!("{error:#}");
             log::error!(
                 "importing '{}' to '{}' in '{}' failed: {error}",
@@ -542,6 +563,7 @@ mod tests {
             &source.path().join("square.obj"),
             "assets/square.obj",
             project.path(),
+            None,
         )
         .expect("import succeeds");
         assert!(!imported.assets.is_empty());
@@ -590,6 +612,7 @@ mod tests {
                 source: PathBuf::from(row.source),
                 destination: row.destination.to_string(),
                 state: RowState::New,
+                texture_settings: None,
             })
             .collect();
 

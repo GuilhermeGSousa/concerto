@@ -58,6 +58,7 @@ use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::run_with};
 use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::{
+    assets::texture::{Compression, MaxSize, Texture, TextureSettings},
     components::{camera::Camera, light::Light},
     gpu::Gpu,
 };
@@ -1470,6 +1471,7 @@ async fn dirty(client: &Client) {
 struct ImportedSource {
     imported: String,
     listed: String,
+    picture: String,
     errors: Vec<Value>,
 }
 
@@ -1483,6 +1485,9 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         std::fs::copy(fixtures.join(name), sources.path().join(name)).unwrap();
     }
     let square = sources.path().join("square.obj").display().to_string();
+    let picture = sources.path().join("picture.png");
+    RgbaImage::new(8, 8).save(&picture).unwrap();
+    let picture = picture.display().to_string();
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, move |client| async move {
         until(&client, "state", |state| state.starts_with("project")).await;
@@ -1490,6 +1495,15 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             &client,
             "import_source",
             json!({ "source": square, "destination": "assets/props/square.obj" }),
+        )
+        .await;
+        let picture = ok_with(
+            &client,
+            "import_source",
+            json!({
+                "source": picture,
+                "texture_settings": { "compression": "bc7", "max_size": 512 },
+            }),
         )
         .await;
         let face = ok_with(&client, "list_assets", json!({ "query": "square" })).await;
@@ -1513,12 +1527,19 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
                 json!({ "source": square, "destination": "../square.obj" }),
             )
             .await,
+            error_with(
+                &client,
+                "import_source",
+                json!({ "source": square, "texture_settings": { "mips": false } }),
+            )
+            .await,
         ];
         until(&client, "status", |status| status.contains("busy: no")).await;
         client.cancel().await.unwrap();
         ImportedSource {
             imported,
             listed,
+            picture,
             errors,
         }
     }) else {
@@ -1528,8 +1549,21 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
     let ImportedSource {
         imported,
         listed,
+        picture,
         errors,
     } = served.result;
+    let texture = picture
+        .lines()
+        .find(|line| line.contains(" · Texture · "))
+        .unwrap_or_else(|| panic!("no texture in {picture}"));
+    let file = std::fs::read(root.join(texture.split(" · ").next().unwrap())).unwrap();
+    let (_, texture) = decode_content_asset::<Texture>(&file).unwrap();
+    assert_eq!(
+        texture.settings,
+        TextureSettings::default()
+            .with_compression(Compression::Bc7)
+            .with_max_size(MaxSize::S512)
+    );
     let mut lines = imported.lines();
     let summary = lines.next().unwrap();
     assert!(
@@ -1551,7 +1585,18 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         .iter()
         .map(|error| error["code"].as_str().unwrap())
         .collect();
-    assert_eq!(codes, ["unknown_source", "import_refused"]);
+    assert_eq!(
+        codes,
+        ["unknown_source", "import_refused", "invalid_arguments"]
+    );
+    assert!(
+        errors[2]["message"]
+            .as_str()
+            .unwrap()
+            .contains("emits no textures; leave out texture_settings"),
+        "{}",
+        errors[2]
+    );
 }
 
 struct Opens {

@@ -18,6 +18,7 @@ use concerto_foundation::{
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
+use concerto_render::assets::texture::{TextureSettings, initial_texture_settings};
 use concerto_scene::scene::Scene;
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -30,8 +31,8 @@ use crate::{
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     import::{
-        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, stage_sources,
-        validate_rows,
+        ImportFinished, ImportQueue, RowState, emits_textures, keep_project_sources_in_place,
+        stage_sources, validate_rows,
     },
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
     scene::{SaveFailed, SceneOpenFailed, SceneOpened},
@@ -79,6 +80,43 @@ pub struct ImportSource {
     pub source: String,
     /// Where the source is copied to in the project, such as assets/props/crate.glb, keeping its extension; assets/<file name> without one, or where it already is when it lies inside the project.
     pub destination: Option<String>,
+    /// Settings for the textures this import creates, for a glTF or an image source; a texture that already exists keeps its own.
+    pub texture_settings: Option<ImportTextureSettings>,
+}
+
+/// The settings an import gives the textures it creates; each one left out keeps its default.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportTextureSettings {
+    /// auto, bc7, bc1, bc5, bc4 or uncompressed; auto picks from the texture's role and alpha.
+    pub compression: Option<String>,
+    /// srgb or linear; left out, the texture's role decides.
+    pub color_space: Option<String>,
+    /// 4096, 2048, 1024 or 512, the largest side in texels; left out, no cap.
+    pub max_size: Option<i64>,
+    /// Whether to derive mips; on when left out.
+    pub mips: Option<bool>,
+}
+
+impl ImportTextureSettings {
+    fn settings(&self) -> Result<TextureSettings, String> {
+        let mut table = toml::Table::new();
+        if let Some(compression) = &self.compression {
+            table.insert("compression".into(), compression.clone().into());
+        }
+        if let Some(color_space) = &self.color_space {
+            table.insert("color_space".into(), color_space.clone().into());
+        }
+        if let Some(max_size) = self.max_size {
+            table.insert("max_size".into(), max_size.into());
+        }
+        if let Some(mips) = self.mips {
+            table.insert("mips".into(), mips.into());
+        }
+        let mut options = toml::Table::new();
+        options.insert("texture_settings".into(), table.into());
+        initial_texture_settings(&options)
+    }
 }
 
 /// Closes an open document.
@@ -570,7 +608,28 @@ fn import_source(
             ));
             continue;
         }
+        let texture_settings = match &arguments.texture_settings {
+            None => None,
+            Some(_) if !emits_textures(&source) => {
+                reply.err(ToolError::new(
+                    "invalid_arguments",
+                    format!(
+                        "{} emits no textures; leave out texture_settings",
+                        arguments.source
+                    ),
+                ));
+                continue;
+            }
+            Some(given) => match given.settings() {
+                Ok(settings) => Some(settings),
+                Err(reason) => {
+                    reply.err(ToolError::new("invalid_arguments", reason));
+                    continue;
+                }
+            },
+        };
         let mut rows = stage_sources(vec![source]);
+        rows[0].texture_settings = texture_settings;
         match &arguments.destination {
             Some(destination) => rows[0].destination = destination.clone(),
             None => keep_project_sources_in_place(&mut rows, &root),
