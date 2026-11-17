@@ -16,7 +16,9 @@ use concerto_foundation::assets::{
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_import::config::ContentConfig;
-use concerto_import::{ImportSettings, ImportedSource, StagedSettings, importer_for, importers};
+use concerto_import::{
+    ContentScan, ImportSettings, ImportedSource, StagedSettings, importer_for, importers,
+};
 use concerto_reflect::{Reflect, TypeRegistry, to_json};
 
 use crate::project::{AssetsWritten, ProjectState};
@@ -32,14 +34,10 @@ pub fn import_source_into(
     concerto_import::import_source_into(source, destination, project_root, &config, settings)
 }
 
-/// The settings importing `source` to `destination` would use if given none; fails when the sidecar's do not parse.
-pub fn stage_settings(
-    source: &Path,
-    destination: &str,
-    project_root: &Path,
-) -> anyhow::Result<StagedSettings> {
+/// Scans the content of the project at `project_root` once, for staging a batch of rows against it.
+pub fn scan_content(project_root: &Path) -> anyhow::Result<ContentScan> {
     let config = ContentConfig::load_or_default(project_root)?;
-    concerto_import::staged_settings(source, destination, project_root, &config)
+    ContentScan::new(project_root, &config)
 }
 
 /// `settings` and `asset_settings` as TOML text, each a table of its reflected fields.
@@ -111,14 +109,16 @@ pub fn stage_sources(sources: Vec<PathBuf>) -> Vec<StagedImport> {
         .collect()
 }
 
-/// Reads the settings `row` would import with at its destination, dropping its edits.
-pub fn stage_row(row: &mut StagedImport, project_root: &Path) {
+/// Reads the settings `row` would import with at its destination from `scan`, dropping its edits.
+pub fn stage_row(row: &mut StagedImport, scan: &anyhow::Result<ContentScan>) {
     row.settings = None;
     row.asset_settings = None;
-    row.staged = Some(
-        stage_settings(&row.source, &row.destination, project_root)
+    row.staged = Some(match scan {
+        Ok(scan) => scan
+            .staged_settings(&row.source, &row.destination)
             .map_err(|error| format!("{error:#}")),
-    );
+        Err(error) => Err(format!("{error:#}")),
+    });
 }
 
 /// Re-decides every row's state against the project on disk.
@@ -203,6 +203,7 @@ fn extension_of(path: &Path) -> String {
 pub struct ImportStaging {
     pub rows: Vec<StagedImport>,
     pub visible: bool,
+    pub(crate) scan: Option<anyhow::Result<ContentScan>>,
 }
 
 /// A queued import ended: what it wrote to `destination`, or why it failed.
@@ -307,12 +308,14 @@ pub fn accept_picked(
     };
     let mut rows = stage_sources(sources);
     keep_project_sources_in_place(&mut rows, &root);
+    let scan = scan_content(&root);
     for row in &mut rows {
-        stage_row(row, &root);
+        stage_row(row, &scan);
     }
     validate_rows(&mut rows, &root);
     staging.rows = rows;
     staging.visible = !staging.rows.is_empty();
+    staging.scan = Some(scan);
 }
 
 pub(crate) fn keep_project_sources_in_place(rows: &mut [StagedImport], project_root: &Path) {
@@ -425,7 +428,7 @@ fn drive_imports(
     queue.current_destination = Some(row.destination.clone());
     let types = types.clone();
     queue.job = Some(std::thread::spawn(move || {
-        let used = settings_used(&row, &root, &types);
+        let used = settings_used(&row, &types);
         let settings = ImportSettings {
             settings: row.settings,
             asset_settings: row.asset_settings,
@@ -449,15 +452,16 @@ fn drive_imports(
     }));
 }
 
-fn settings_used(row: &StagedImport, root: &Path, types: &AppTypeRegistry) -> String {
-    let current = stage_settings(&row.source, &row.destination, root).ok();
+fn settings_used(row: &StagedImport, types: &AppTypeRegistry) -> String {
+    let staged = row.staged.as_ref().and_then(|staged| staged.as_ref().ok());
     let settings = row
         .settings
         .as_deref()
-        .or(current.as_ref().map(|current| current.settings.as_ref()));
-    let asset_settings = row.asset_settings.as_deref().or(current
-        .as_ref()
-        .and_then(|current| current.asset_settings.as_deref()));
+        .or(staged.map(|staged| staged.settings.as_ref()));
+    let asset_settings = row
+        .asset_settings
+        .as_deref()
+        .or(staged.and_then(|staged| staged.asset_settings.as_deref()));
     settings_text(settings, asset_settings, &types.read())
 }
 

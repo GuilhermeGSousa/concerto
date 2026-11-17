@@ -66,6 +66,55 @@ pub struct StagedSettings {
     pub asset_settings: Option<Box<dyn Reflect>>,
 }
 
+/// A project's content as one scan found it, to stage any number of sources against.
+pub struct ContentScan {
+    project_root: PathBuf,
+    registry: AssetRegistry,
+}
+
+impl ContentScan {
+    /// Scans the content tree of the existing project at `project_root`; fails on a malformed header or a duplicate id.
+    pub fn new(project_root: &Path, config: &ContentConfig) -> anyhow::Result<Self> {
+        config.validate()?;
+        let project_root = project_root
+            .canonicalize()
+            .with_context(|| format!("resolving project '{}'", project_root.display()))?;
+        let registry =
+            AssetRegistry::from_content_tree(&project_root, &config.root, &config.extension)?;
+        Ok(Self {
+            project_root,
+            registry,
+        })
+    }
+
+    /// The settings importing `source` as `destination` would use if given none: the sidecar's, or the defaults, and the main asset's current ones; fails when the sidecar's settings do not parse.
+    pub fn staged_settings(
+        &self,
+        source: &Path,
+        destination: &str,
+    ) -> anyhow::Result<StagedSettings> {
+        let placement = placement(source, destination, &self.project_root)?;
+        let importer = importer_of(&placement.source, &placement.placed)?;
+        let metadata = source_metadata(
+            importer,
+            &placement.placed,
+            &placement.project_root,
+            &self.registry,
+        )?;
+        let settings = sidecar_settings(importer, &metadata, &placement.placed)?;
+        let ctx = ImportContext::new(placement.placed.clone()).with_previous_outputs(
+            previous_outputs(&self.registry, &metadata, &placement.project_root),
+        );
+        let asset_settings = importer
+            .current_asset_settings(&ctx)
+            .or_else(|| importer.default_asset_settings());
+        Ok(StagedSettings {
+            settings,
+            asset_settings,
+        })
+    }
+}
+
 const HOST: &str = "scene";
 
 /// Whether an output of `kind` is stored inside its import's scene file by default.
@@ -165,6 +214,7 @@ pub fn import_source_into(
     settings: ImportSettings,
 ) -> anyhow::Result<ImportedSource> {
     config.validate()?;
+    std::fs::create_dir_all(project_root)?;
     let placement = placement(source, destination, project_root)?;
     import_placed(
         &placement.source,
@@ -173,29 +223,6 @@ pub fn import_source_into(
         config,
         settings,
     )
-}
-
-/// The settings importing `source` as `destination` would use if given none: the sidecar's, or the defaults, and the main asset's current ones; fails when the sidecar's settings do not parse.
-pub fn staged_settings(
-    source: &Path,
-    destination: &str,
-    project_root: &Path,
-    config: &ContentConfig,
-) -> anyhow::Result<StagedSettings> {
-    config.validate()?;
-    let placement = placement(source, destination, project_root)?;
-    let importer = importer_of(&placement.source, &placement.placed)?;
-    let existing = existing(importer, &placement.placed, &placement.project_root, config)?;
-    let settings = sidecar_settings(importer, &existing.metadata, &placement.placed)?;
-    let ctx = ImportContext::new(placement.placed.clone())
-        .with_previous_outputs(previous_outputs(&existing, &placement.project_root));
-    let asset_settings = importer
-        .current_asset_settings(&ctx)
-        .or_else(|| importer.default_asset_settings());
-    Ok(StagedSettings {
-        settings,
-        asset_settings,
-    })
 }
 
 struct Placement {
@@ -222,7 +249,6 @@ fn placement(source: &Path, destination: &str, project_root: &Path) -> anyhow::R
     if extension_of(relative) != extension {
         bail!("destination '{destination}' must keep the source's extension '.{extension}'");
     }
-    std::fs::create_dir_all(project_root)?;
     let project_root = project_root.canonicalize()?;
     let placed = placed_path(&project_root.join(relative));
     if !placed.starts_with(&project_root) {
@@ -295,8 +321,6 @@ fn existing(
     project_root: &Path,
     config: &ContentConfig,
 ) -> anyhow::Result<Existing> {
-    let importer_name = importer.name();
-    let sidecar = sidecar_path(source);
     // Fail on malformed headers and duplicate IDs before touching any output.
     let registry = AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
     let mut files: HashMap<AssetId, ContentAssetHeader> = HashMap::new();
@@ -313,7 +337,23 @@ fn existing(
             .with_context(|| format!("'{}' is not in its file's directory", entry.location()))?;
         headers.insert(entry.id, header);
     }
-    let metadata = if sidecar.try_exists()? {
+    let metadata = source_metadata(importer, source, project_root, &registry)?;
+    Ok(Existing {
+        registry,
+        headers,
+        metadata,
+    })
+}
+
+fn source_metadata(
+    importer: &dyn ErasedImporter,
+    source: &Path,
+    project_root: &Path,
+    registry: &AssetRegistry,
+) -> anyhow::Result<SourceMetadata> {
+    let importer_name = importer.name();
+    let sidecar = sidecar_path(source);
+    Ok(if sidecar.try_exists()? {
         let metadata = SourceMetadata::load(&sidecar)?;
         if metadata.importer != importer_name {
             bail!(
@@ -327,14 +367,14 @@ fn existing(
         // Adopt legacy outputs only through matching provenance, never merely
         // because a generated destination is already occupied.
         let mut outputs = BTreeMap::new();
-        for (id, header) in &headers {
-            if let Some(provenance) = &header.provenance {
+        for entry in registry.iter() {
+            if let Some(provenance) = &entry.provenance {
                 if metadata::provenance_path(&provenance.source, project_root) == source
                     && outputs
                         .insert(
                             provenance.sub_asset.clone(),
                             OutputMetadata {
-                                asset_id: *id,
+                                asset_id: entry.id,
                                 file: false,
                             },
                         )
@@ -355,22 +395,18 @@ fn existing(
             outputs,
             settings: toml::Table::new(),
         }
-    };
-    Ok(Existing {
-        registry,
-        headers,
-        metadata,
     })
 }
 
-fn previous_outputs(existing: &Existing, project_root: &Path) -> PreviousOutputResolver {
-    let located: BTreeMap<String, AssetEntry> = existing
-        .metadata
+fn previous_outputs(
+    registry: &AssetRegistry,
+    metadata: &SourceMetadata,
+    project_root: &Path,
+) -> PreviousOutputResolver {
+    let located: BTreeMap<String, AssetEntry> = metadata
         .outputs
         .iter()
-        .filter_map(|(key, output)| {
-            Some((key.clone(), existing.registry.get(output.asset_id)?.clone()))
-        })
+        .filter_map(|(key, output)| Some((key.clone(), registry.get(output.asset_id)?.clone())))
         .collect();
     let root = project_root.to_path_buf();
     Box::new(move |name| read_asset_record(&root, located.get(name)?).ok())
@@ -404,7 +440,7 @@ fn import_with(
     let provenance_source = relative_source.to_string_lossy().replace('\\', "/");
     let sidecar = sidecar_path(source);
     let existing = existing(importer, source, project_root, config)?;
-    let previous = previous_outputs(&existing, project_root);
+    let previous = previous_outputs(&existing.registry, &existing.metadata, project_root);
     let Existing {
         mut registry,
         headers,

@@ -11,7 +11,7 @@ use concerto_foundation::assets::Asset;
 use concerto_import::config::ContentConfig;
 use concerto_import::metadata::{sidecar_path, SourceMetadata};
 use concerto_import::{
-    import_source_into, staged_settings, ImportSettings, ImportedSource, StagedSettings,
+    import_source_into, ContentScan, ImportSettings, ImportedSource, StagedSettings,
 };
 use concerto_render::assets::texture::{
     Compression, MaxSize, Texture, TextureRole, TextureSettings,
@@ -429,7 +429,9 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     let sidecar =
         std::fs::read_to_string(root.join("assets/picture.png.import.toml")).expect("sidecar");
     assert!(!sidecar.contains("settings"), "{sidecar}");
-    let staged = staged_settings(&picture_path, "assets/picture.png", root, &config())
+    let staged = ContentScan::new(root, &config())
+        .expect("the project scans")
+        .staged_settings(&picture_path, "assets/picture.png")
         .expect("the image stages");
     assert_eq!(
         staged
@@ -547,8 +549,10 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     assert!(metadata.settings.is_empty(), "{:?}", metadata.settings);
     metadata.settings = "[events.walk]\nstep = [0.0]\n".parse().expect("events");
     std::fs::write(&sidecar, toml::to_string(&metadata).expect("encode")).expect("write");
-    let StagedSettings { mut settings, .. } =
-        staged_settings(&walk, "assets/walk.bvh", root, &config()).expect("the BVH stages");
+    let StagedSettings { mut settings, .. } = ContentScan::new(root, &config())
+        .expect("the project scans")
+        .staged_settings(&walk, "assets/walk.bvh")
+        .expect("the BVH stages");
     settings
         .downcast_mut::<BvhSettings>()
         .expect("BVH settings")
@@ -579,7 +583,9 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
             .replace("scale = 0.5", "scale = \"big\""),
     )
     .expect("write");
-    let malformed = staged_settings(&walk, "assets/walk.bvh", root, &config())
+    let malformed = ContentScan::new(root, &config())
+        .expect("the project scans")
+        .staged_settings(&walk, "assets/walk.bvh")
         .err()
         .expect("an unparsable sidecar does not stage");
     assert!(format!("{malformed:#}").contains("scale"), "{malformed:#}");

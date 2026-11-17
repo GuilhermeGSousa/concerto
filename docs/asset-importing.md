@@ -284,9 +284,10 @@ are `events` and `additive`, described under [Clip events](#clip-events) and
 `import_source_into`'s last argument, `ImportSettings`, may carry settings for
 that import. Its `settings`, of the importer's type, are written whole to the
 sidecar's `[settings]`; left `None`, the sidecar's own are used and kept.
-`staged_settings` returns what an import would use when given none: the
-sidecar's settings or the defaults, and the main asset's current asset
-settings. Settings that start from it carry the fields reflection leaves out,
+`ContentScan::new` scans a project's content once, and its `staged_settings`
+returns what an import of a source would use when given none: the sidecar's
+settings or the defaults, and the main asset's current asset settings. One scan
+stages a whole batch of sources; it neither creates nor writes anything. Settings that start from it carry the fields reflection leaves out,
 such as `events`, so writing them back keeps those. A sidecar whose
 `[settings]` does not parse fails both.
 

@@ -41,8 +41,8 @@ use std::path::PathBuf;
 use crate::actions::{CancelImport, ConfirmImport, ImportDialogContext};
 use crate::guard::UnsavedGuard;
 use crate::import::{
-    ImportQueue, ImportStaging, RowState, StagedImport, destinations_clash, stage_row,
-    validate_rows,
+    ImportQueue, ImportStaging, RowState, StagedImport, destinations_clash, scan_content,
+    stage_row, validate_rows,
 };
 use crate::inspector::{FieldCommits, PropertyCommits, ReflectRows, TargetWorld};
 use crate::project::ProjectState;
@@ -142,12 +142,14 @@ pub fn confirm(staging: &mut ImportStaging, queue: &mut ImportQueue) {
     }
     queue.enqueue(std::mem::take(&mut staging.rows));
     staging.visible = false;
+    staging.scan = None;
 }
 
 /// Discards the staged rows and closes the dialog.
 pub fn cancel(staging: &mut ImportStaging) {
     staging.rows.clear();
     staging.visible = false;
+    staging.scan = None;
 }
 
 fn confirm_checked(staging: &mut ImportStaging, queue: &mut ImportQueue, project: &ProjectState) {
@@ -290,15 +292,17 @@ fn edit_destinations(
     if edits.is_empty() {
         return;
     }
+    let ImportStaging { rows, scan, .. } = &mut *staging;
+    let scan = scan.get_or_insert_with(|| scan_content(&project.root));
     for (index, destination) in edits {
-        if let Some(row) = staging.rows.get_mut(index)
+        if let Some(row) = rows.get_mut(index)
             && row.destination != destination
         {
             row.destination = destination;
-            stage_row(row, &project.root);
+            stage_row(row, scan);
         }
     }
-    validate_rows(&mut staging.rows, &project.root);
+    validate_rows(rows, &project.root);
 }
 
 fn write_settings(
@@ -692,6 +696,7 @@ mod tests {
         world.insert_resource(ImportStaging {
             rows: stage_sources(picked),
             visible: true,
+            scan: None,
         });
         concerto_ui::list::install_listeners(&mut world);
         concerto_ui::items::install_listeners(&mut world);

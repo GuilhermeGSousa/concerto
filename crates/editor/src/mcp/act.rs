@@ -16,6 +16,7 @@ use concerto_foundation::{
     },
     transform::{GlobalTransform, Transform},
 };
+use concerto_import::importer_for;
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
@@ -32,8 +33,8 @@ use crate::{
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     import::{
-        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, stage_row,
-        stage_sources, validate_rows,
+        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, scan_content,
+        stage_row, stage_sources, validate_rows,
     },
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
     scene::{SaveFailed, SceneOpenFailed, SceneOpened},
@@ -582,7 +583,7 @@ fn import_source(
             Some(destination) => rows[0].destination = destination.clone(),
             None => keep_project_sources_in_place(&mut rows, &root),
         }
-        stage_row(&mut rows[0], &root);
+        stage_row(&mut rows[0], &scan_content(&root));
         validate_rows(&mut rows, &root);
         if let RowState::Rejected(reason) = &rows[0].state {
             reply.err(ToolError::new(
@@ -594,20 +595,32 @@ fn import_source(
             ));
             continue;
         }
-        let Some(Ok(staged)) = rows[0].staged.take() else {
+        let (Some(Ok(staged)), Some(importer)) = (
+            &rows[0].staged,
+            importer_for(
+                &rows[0]
+                    .source
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+            ),
+        ) else {
             continue;
         };
         let types = types.read();
         let settings = patched(
             "settings",
             arguments.settings.as_ref(),
-            Some(staged.settings),
+            Some(importer.clone_settings(staged.settings.as_ref())),
             &types,
         );
         let asset_settings = patched(
             "asset_settings",
             arguments.asset_settings.as_ref(),
-            staged.asset_settings,
+            staged
+                .asset_settings
+                .as_deref()
+                .map(|value| importer.clone_settings(value)),
             &types,
         );
         match (settings, asset_settings) {
