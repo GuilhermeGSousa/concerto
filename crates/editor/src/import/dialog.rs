@@ -5,7 +5,7 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Added, Changed, Component, Entity, IntoSystemConfig, Query, Res, ResMut,
+    Added, Changed, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
@@ -44,7 +44,7 @@ use crate::import::{
     ImportQueue, ImportStaging, RowState, StagedImport, destinations_clash, stage_row,
     validate_rows,
 };
-use crate::inspector::ReflectRows;
+use crate::inspector::{FieldCommits, PropertyCommits, ReflectRows, TargetWorld};
 use crate::project::ProjectState;
 
 const DIALOG_LAYER: i32 = concerto_ui::anchor::UI_PANEL_LAYER - 1;
@@ -103,11 +103,15 @@ struct SettingsRows {
     destination: String,
 }
 
+#[derive(Resource, Default)]
+struct ConfirmRequested(bool);
+
 /// Builds the staging dialog and keeps it in step with [`ImportStaging`].
 pub struct DialogPlugin;
 
 impl Plugin for DialogPlugin {
     fn build(&self, app: &mut App) {
+        app.insert_resource(ConfirmRequested::default());
         app.add_system(Startup, build_dialog).add_system(
             LateUpdate,
             (
@@ -120,6 +124,7 @@ impl Plugin for DialogPlugin {
             )
                 .chain()
                 .after(UiSet::Widgets)
+                .after(FieldCommits)
                 .before(UiSet::Project),
         );
     }
@@ -243,14 +248,9 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
     );
 }
 
-fn press_confirm(
-    on: On<UIClick>,
-    mut staging: ResMut<ImportStaging>,
-    mut queue: ResMut<ImportQueue>,
-    project: Res<ProjectState>,
-) {
+fn press_confirm(on: On<UIClick>, mut requested: ResMut<ConfirmRequested>) {
     if on.signal().button == MouseButton::Left {
-        confirm_checked(&mut staging, &mut queue, &project);
+        requested.0 = true;
     }
 }
 
@@ -413,6 +413,8 @@ fn show_settings(
 
 fn press_keys(
     mut fired: EventReader<ActionFired>,
+    mut requested: ResMut<ConfirmRequested>,
+    commits: Option<Res<PropertyCommits>>,
     mut staging: ResMut<ImportStaging>,
     mut queue: ResMut<ImportQueue>,
     project: Res<ProjectState>,
@@ -425,9 +427,21 @@ fn press_keys(
         if action.is(CancelImport) {
             cancel(&mut staging);
         } else if action.is(ConfirmImport) {
-            confirm_checked(&mut staging, &mut queue, &project);
+            requested.0 = true;
         }
     }
+    if !requested.0 {
+        return;
+    }
+    if !staging.visible {
+        requested.0 = false;
+        return;
+    }
+    if commits.is_some_and(|commits| commits.holds_for(TargetWorld::Editor)) {
+        return;
+    }
+    requested.0 = false;
+    confirm_checked(&mut staging, &mut queue, &project);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -661,6 +675,7 @@ mod tests {
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(ImportQueue::default());
         world.insert_resource(UnsavedGuard::default());
+        world.insert_resource(ConfirmRequested::default());
         world.insert_resource(EventChannel::<UITextInputChanged>::default());
         world.insert_resource(EventChannel::<ActionFired>::default());
         let mut state = ProjectState::default();
@@ -688,6 +703,7 @@ mod tests {
 
     impl Fixture {
         fn frame(&mut self) {
+            run(&mut self.world, press_keys);
             run(&mut self.world, sync_dialog);
             let mut place = update_lists_system();
             place.initialize(&mut self.world);

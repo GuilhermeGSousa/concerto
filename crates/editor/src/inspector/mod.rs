@@ -3,7 +3,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, SystemSet, World,
     command::CommandQueue,
     component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
@@ -18,6 +18,7 @@ use concerto_ui::{
     interaction::{Interactable, UIDisabled},
     node::{UILayout, UINode, UIRect},
     scroll::{SCROLLBAR_WIDTH, UIScrollArea},
+    sets::UiSet,
     theme::UITheme,
     transform::UIValue,
 };
@@ -104,6 +105,9 @@ pub(crate) use write::{
 
 pub const PANEL_ID: &str = "concerto.ecs";
 
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct FieldCommits;
+
 /// Panel metadata. Component cards and property rows own inspection state in ECS.
 #[derive(Resource, Debug, Default, PartialEq)]
 pub struct InspectorData {
@@ -171,11 +175,18 @@ impl Plugin for InspectorPlugin {
         app.add_system(Update, send_property_commits)
             .add_system(Update, send_value_commits)
             .add_system(Update, send_component_edits);
-        app.add_system(LateUpdate, commit_numeric_fields)
-            .add_system(LateUpdate, cancel_numeric_fields)
-            .add_system(LateUpdate, commit_name_fields)
+        app.add_system(
+            LateUpdate,
+            (
+                commit_numeric_fields,
+                commit_name_fields,
+                commit_text_fields,
+            )
+                .in_set(FieldCommits)
+                .after(UiSet::Widgets),
+        );
+        app.add_system(LateUpdate, cancel_numeric_fields)
             .add_system(LateUpdate, cancel_name_fields)
-            .add_system(LateUpdate, commit_text_fields)
             .add_system(LateUpdate, cancel_text_fields)
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)
