@@ -18,7 +18,7 @@ use concerto_foundation::{
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
-use concerto_render::assets::texture::{TextureSettings, initial_texture_settings};
+use concerto_render::assets::texture::{ColorSpace, Compression, MaxSize, TextureSettings};
 use concerto_scene::scene::Scene;
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -31,7 +31,7 @@ use crate::{
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     import::{
-        ImportFinished, ImportQueue, RowState, emits_textures, keep_project_sources_in_place,
+        ImportFinished, ImportQueue, RowState, has_asset_settings, keep_project_sources_in_place,
         stage_sources, validate_rows,
     },
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
@@ -80,7 +80,7 @@ pub struct ImportSource {
     pub source: String,
     /// Where the source is copied to in the project, such as assets/props/crate.glb, keeping its extension; assets/<file name> without one, or where it already is when it lies inside the project.
     pub destination: Option<String>,
-    /// Settings for the textures this import creates, for a glTF or an image source; a texture that already exists keeps its own.
+    /// Settings for the texture an image source makes; left out, an existing texture keeps its own.
     pub texture_settings: Option<ImportTextureSettings>,
 }
 
@@ -100,22 +100,50 @@ pub struct ImportTextureSettings {
 
 impl ImportTextureSettings {
     fn settings(&self) -> Result<TextureSettings, String> {
-        let mut table = toml::Table::new();
+        let mut settings = TextureSettings::default();
         if let Some(compression) = &self.compression {
-            table.insert("compression".into(), compression.clone().into());
+            settings.compression = match compression.as_str() {
+                "auto" => Compression::Auto,
+                "bc7" => Compression::Bc7,
+                "bc1" => Compression::Bc1,
+                "bc5" => Compression::Bc5,
+                "bc4" => Compression::Bc4,
+                "uncompressed" => Compression::Uncompressed,
+                other => {
+                    return Err(format!(
+                        "compression cannot be {other}; use auto, bc7, bc1, bc5, bc4 or uncompressed"
+                    ));
+                }
+            };
         }
         if let Some(color_space) = &self.color_space {
-            table.insert("color_space".into(), color_space.clone().into());
+            settings.color_space = Some(match color_space.as_str() {
+                "srgb" => ColorSpace::Srgb,
+                "linear" => ColorSpace::Linear,
+                other => {
+                    return Err(format!(
+                        "color_space cannot be {other}; use srgb or linear, or leave it out for the role's"
+                    ));
+                }
+            });
         }
         if let Some(max_size) = self.max_size {
-            table.insert("max_size".into(), max_size.into());
+            settings.max_size = match max_size {
+                4096 => MaxSize::S4096,
+                2048 => MaxSize::S2048,
+                1024 => MaxSize::S1024,
+                512 => MaxSize::S512,
+                other => {
+                    return Err(format!(
+                        "max_size cannot be {other}; use 4096, 2048, 1024 or 512, or leave it out for none"
+                    ));
+                }
+            };
         }
         if let Some(mips) = self.mips {
-            table.insert("mips".into(), mips.into());
+            settings.mips = mips;
         }
-        let mut options = toml::Table::new();
-        options.insert("texture_settings".into(), table.into());
-        initial_texture_settings(&options)
+        Ok(settings)
     }
 }
 
@@ -610,7 +638,7 @@ fn import_source(
         }
         let texture_settings = match &arguments.texture_settings {
             None => None,
-            Some(_) if !emits_textures(&source) => {
+            Some(_) if !has_asset_settings(&source) => {
                 reply.err(ToolError::new(
                     "invalid_arguments",
                     format!(

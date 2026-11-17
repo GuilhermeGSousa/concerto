@@ -329,13 +329,13 @@ impl ClipRange {
 }
 
 /// One clip's `[settings.additive.<clip>]` table in an importer's sidecar.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdditiveSetting {
     pub base: AssetId,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_range: Option<ClipRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub range: Option<ClipRange>,
 }
 

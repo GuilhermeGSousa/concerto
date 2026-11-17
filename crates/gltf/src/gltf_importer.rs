@@ -14,7 +14,7 @@ use base64::Engine;
 use concerto_animation::clip::{
     AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
 };
-use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_color::Color;
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
@@ -25,7 +25,7 @@ use concerto_mesh::vertex::Vertex;
 use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
-use concerto_render::assets::texture::{Texture, TextureRole, initial_texture_settings};
+use concerto_render::assets::texture::{Texture, TextureRole};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
@@ -35,7 +35,7 @@ use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
 use log::warn;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // glTF (KHR_lights_punctual) stores light intensity in photometric units: lux
@@ -49,14 +49,16 @@ const LUMINOUS_EFFICACY: f32 = 683.0;
 pub struct GltfImporter;
 
 /// Importer settings read from the `[settings]` table of a glTF source's sidecar.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Reflect, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GltfSettings {
     /// Per emitted clip name, the clip times in seconds of each named event.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[reflect(skip)]
     pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
     /// Per emitted clip name, the base the clip is additive against.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[reflect(skip)]
     pub additive: BTreeMap<String, AdditiveSetting>,
 }
 
@@ -91,25 +93,28 @@ struct NodePathInfo {
 }
 
 impl Importer for GltfImporter {
+    type Settings = GltfSettings;
+    type AssetSettings = NoSettings;
+
+    fn name(&self) -> &'static str {
+        "gltf"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["gltf", "glb"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
-        let malformed_settings = |message: String| ImportError::MalformedSource {
-            source_path: source_path.to_path_buf(),
-            message,
-        };
-        let settings: GltfSettings = ctx
-            .settings()
-            .clone()
-            .try_into()
-            .map_err(|err: toml::de::Error| malformed_settings(err.to_string()))?;
+    fn import(
+        &self,
+        source_path: &Path,
+        settings: &GltfSettings,
+        _asset_settings: Option<&NoSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
         let malformed = |message: String| ImportError::MalformedSource {
             source_path: source_path.to_path_buf(),
             message,
         };
-        let initial_textures = initial_texture_settings(ctx.options()).map_err(malformed)?;
         let gltf::Gltf { document, blob } =
             gltf::Gltf::open(source_path).map_err(|e| malformed(e.to_string()))?;
         let source_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
@@ -200,8 +205,7 @@ impl Importer for GltfImporter {
             let bytes =
                 image_bytes(&images[key.image_index], &buffers, source_dir).map_err(unkept)?;
             let name = texture_name(key.image_index, key.srgb);
-            let texture =
-                imported_texture(ctx, &name, *role, bytes, initial_textures).map_err(unkept)?;
+            let texture = imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
             ctx.emit(&name, &texture)?;
         }
 
@@ -391,7 +395,7 @@ impl Importer for GltfImporter {
             .keys()
             .find(|name| !animation_names.contains(name))
         {
-            return Err(malformed_settings(format!(
+            return Err(malformed(format!(
                 "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
             )));
         }
@@ -400,7 +404,7 @@ impl Importer for GltfImporter {
             .keys()
             .find(|name| !animation_names.contains(name))
         {
-            return Err(malformed_settings(format!(
+            return Err(malformed(format!(
                 "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
             )));
         }
@@ -463,17 +467,13 @@ impl Importer for GltfImporter {
             if let Some(events) = settings.events.get(animation_name) {
                 animation_clip
                     .add_animation_events(events)
-                    .map_err(|message| {
-                        malformed_settings(format!("clip `{animation_name}`: {message}"))
-                    })?;
+                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
             }
 
             if let Some(additive) = settings.additive.get(animation_name) {
                 let additive = additive
                     .additive(animation_clip.duration(), roots.clone())
-                    .map_err(|message| {
-                        malformed_settings(format!("clip `{animation_name}`: {message}"))
-                    })?;
+                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
                 animation_clip.set_additive(additive);
             }
 

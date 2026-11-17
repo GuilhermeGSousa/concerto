@@ -61,13 +61,13 @@ each content asset it wrote, and the editor adds those entries to its registry.
 
 The import picks the importer by file extension:
 
-| Extensions           | Importer        | Emits                                              |
-|----------------------|-----------------|---------------------------------------------------|
-| `.gltf` `.glb`       | `GltfImporter`  | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/<clip name>`, `scene` |
-| `.obj` (+ its `.mtl`)| `ObjImporter`   | `mesh/*`, one `material/<mtl stem>`, `scene`       |
-| `.bvh`               | `BvhImporter`   | `skeleton/0`, `animation/<file stem>`, `scene`     |
-| `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
-| `.ogg` `.wav`        | `AudioImporter` | one `main` audio clip                             |
+| Extensions           | Importer (name)           | Settings / asset settings       | Emits                                              |
+|----------------------|---------------------------|---------------------------------|---------------------------------------------------|
+| `.gltf` `.glb`       | `GltfImporter` (`gltf`)   | `GltfSettings` / none           | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/<clip name>`, `scene` |
+| `.obj` (+ its `.mtl`)| `ObjImporter` (`obj`)     | none / none                     | `mesh/*`, one `material/<mtl stem>`, `scene`       |
+| `.bvh`               | `BvhImporter` (`bvh`)     | `BvhSettings` / none            | `skeleton/0`, `animation/<file stem>`, `scene`     |
+| `.png` `.jpg` `.jpeg`| `ImageImporter` (`image`) | none / `TextureSettings`        | one `main` texture                                |
+| `.ogg` `.wav`        | `AudioImporter` (`audio`) | none / none                     | one `main` audio clip                             |
 
 A texture's `.gasset` holds its **source**, the image file's own PNG or JPEG
 bytes as imported, its **role** (`Color`, `Normal` or `Data`, set by the importer) and its
@@ -272,33 +272,36 @@ absent and is not written back. Like `[settings]`, it is edited by hand: import
 once, edit, import again. This is how one imported material or mesh becomes a
 file the editor can save on its own.
 
-An optional `[settings]` table holds importer-specific settings. The importer
-that owns the source reads it on every import; a sidecar without one uses the
-importer's defaults, and a first import writes none. The `obj`, `image` and
-`audio` importers read no settings. The `gltf` importer reads only `events` and
-`additive`, described under [Clip events](#clip-events) and
+An optional `[settings]` table holds the importer's settings, its typed
+`Importer::Settings` encoded as TOML. The importer that owns the source reads
+it on every import; a sidecar without one uses the importer's defaults, and a
+first import writes none. The `obj`, `image` and `audio` importers have no
+settings (`NoSettings`), so any key fails their import. The `gltf` importer's
+are `events` and `additive`, described under [Clip events](#clip-events) and
 [Additive clips](#additive-clips), and an unknown key fails its import. The
 `bvh` importer's are described under [BVH motion capture](#bvh-motion-capture).
+
+`import_source_into`'s last argument, `ImportSettings`, may carry settings for
+that import. Its `settings`, of the importer's type, are written whole to the
+sidecar's `[settings]`; left `None`, the sidecar's own are used and kept.
+`staged_settings` returns what an import would use when given none: the
+sidecar's settings or the defaults, and the main asset's current asset
+settings. Settings that start from it carry the fields reflection leaves out,
+such as `events`, so writing them back keeps those. A sidecar whose
+`[settings]` does not parse fails both.
 
 A texture's settings are not in the sidecar but in its own `.gasset`, and a
 re-import keeps them: it refreshes the texture's source bytes and role, and
 takes the settings the previous import, or the editor, wrote there. A texture
-the import creates takes the import's **options**, values given to that one
-import and never written anywhere: `import_source_into`'s last argument, whose
-`texture_settings` table sets the new textures' initial settings:
-
-```toml
-[texture_settings]
-compression = "bc7"    # auto (default), bc7, bc1, bc5, bc4 or uncompressed
-color_space = "linear" # srgb or linear; leave it out for the role's
-max_size = 1024        # 4096, 2048, 1024 or 512; leave it out for none
-mips = true            # default
-```
-
-An unknown key or value fails the import, naming it, even when every texture
-already exists. A texture whose file does not decode at this build's `Texture`
-version, such as one written before textures kept their source, takes the
-initial settings as if it were new.
+the import creates takes the defaults. An image source's texture is its main
+asset, so its settings are the `image` importer's **asset settings**, a
+`TextureSettings`: given in `ImportSettings::asset_settings`, they replace the
+texture's own; otherwise the texture keeps its own, or takes the defaults when
+new. Only the `image` importer has asset settings; giving them to another
+fails the import, naming the type it expected. A glTF's textures start at the
+defaults and are changed in the texture tab. A texture whose file does not
+decode at this build's `Texture` version, such as one written before textures
+kept their source, takes the defaults as if it were new.
 
 A `bvh` source's settings:
 
@@ -1063,16 +1066,29 @@ An importer lives in whatever crate owns the asset types it produces and
 implements `asset_import::Importer`:
 
 ```rust
-use asset_import::{ImportContext, ImportError, Importer};
+use asset_import::{ImportContext, ImportError, Importer, NoSettings};
 
 pub struct MyImporter;
 
 impl Importer for MyImporter {
+    type Settings = MySettings;
+    type AssetSettings = NoSettings;
+
+    fn name(&self) -> &'static str {
+        "myimporter"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["myext"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
+    fn import(
+        &self,
+        source_path: &Path,
+        settings: &MySettings,
+        _asset_settings: Option<&NoSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
         let doc = parse(source_path)?;
 
         // Emit each sub-asset by name. `emit` serializes the value, records
@@ -1095,11 +1111,18 @@ impl Importer for MyImporter {
 }
 ```
 
-Then register it in `crates/import/src/lib.rs::registered_importers()`, give
-its extensions an importer name in the match in `import_placed` there, accept
-that name in the sidecar check in `crates/import/src/metadata.rs`, and add the
-extensions to the editor's file picker, `SUPPORTED_EXTENSIONS` in
-`crates/editor/src/import/mod.rs`.
+`name` is what sidecars persist as `importer`, so it never changes once
+content uses it. `Settings` are the importer's own, read from and written to
+the sidecar's `[settings]`; `AssetSettings` belong to the one asset a source
+makes, such as an image's texture, and are kept in that asset, with
+`current_asset_settings` reading them back from `ctx.previous`. Both derive
+`Reflect`, `Default`, `Clone`, `Serialize` and `Deserialize`; an importer
+without either uses `NoSettings`. A field reflection cannot express is
+`#[reflect(skip)]`: it stays in the sidecar and is kept by every edit.
+
+Then add it to `IMPORTERS` in `crates/import/src/lib.rs`. `importers()` and
+`importer_for(extension)` read that list, as `ErasedImporter`s, for the
+import itself, the sidecar's importer check and the editor's file picker.
 
 `ImportContext::emit<T: Asset>` requires the emitted type to implement
 `Asset` (`Serialize + DeserializeOwned` + a `name()` tag). There is no

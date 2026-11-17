@@ -195,15 +195,16 @@ A path with no file answers `unknown_source`; a destination outside the
 project, without a file name, with another extension than the source's, or a
 source no importer handles answers `import_refused` with the dialog's reason;
 an import that fails answers `import_failed` with the status line's reason.
-For a glTF or image source, `texture_settings` sets the textures the import
-creates: `compression` (`auto`, `bc7`, `bc1`, `bc5`, `bc4` or `uncompressed`),
+For an image source, `texture_settings` sets its texture's settings:
+`compression` (`auto`, `bc7`, `bc1`, `bc5`, `bc4` or `uncompressed`),
 `color_space` (`srgb` or `linear`; left out, the texture's role decides),
 `max_size` (4096, 2048, 1024 or 512; left out, no cap) and `mips` (a bool, on
-when left out). A texture that already exists keeps its own settings. Settings
+when left out). They replace the settings of a texture that already exists;
+left out, it keeps its own. A glTF's textures start at the defaults. Settings
 a texture cannot derive in for its role, such as `bc5` on a colour texture,
 fail the import with `import_failed` naming the texture and the reason. An
-unknown key or value, or `texture_settings` on a source that emits no
-textures, answers `invalid_arguments` naming it.
+unknown key or value, or `texture_settings` on a source other than an image,
+answers `invalid_arguments` naming it.
 Each queued import ends with an `ImportFinished` event, which is what the tool
 waits for. It needs an open project. `close_document`
 closes the document `status` lists as

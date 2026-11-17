@@ -1,6 +1,7 @@
 //! Importing a source from outside the project brings the files it refers to along.
 use std::path::{Path, PathBuf};
 
+use concerto_bvh::bvh_importer::BvhSettings;
 use concerto_foundation::assets::content::{
     decode_content_asset, read_asset_record, read_content_asset, resave_content_asset,
     write_content_asset,
@@ -8,8 +9,13 @@ use concerto_foundation::assets::content::{
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::Asset;
 use concerto_import::config::ContentConfig;
-use concerto_import::{import_source_into, ImportedSource};
-use concerto_render::assets::texture::{Compression, MaxSize, Texture, TextureRole};
+use concerto_import::metadata::{sidecar_path, SourceMetadata};
+use concerto_import::{
+    import_source_into, staged_settings, ImportSettings, ImportedSource, StagedSettings,
+};
+use concerto_render::assets::texture::{
+    Compression, MaxSize, Texture, TextureRole, TextureSettings,
+};
 
 fn fixtures(krate: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -318,12 +324,6 @@ fn copies_keep_the_permissions_of_their_sources() {
     }
 }
 
-fn texture_options(text: &str) -> toml::Table {
-    format!("texture_settings = {{ {text} }}")
-        .parse()
-        .expect("options parse")
-}
-
 fn write_png(path: &Path, shade: u8) -> Vec<u8> {
     image::RgbaImage::from_pixel(8, 8, image::Rgba([shade, 255 - shade, 64, 255]))
         .save(path)
@@ -374,38 +374,79 @@ fn imported_texture(project: &Path, imported: &ImportedSource, name: &str) -> Im
     ImportedTexture { entry, texture }
 }
 
+const WALK: &str = "HIERARCHY
+ROOT Hips
+{
+	OFFSET 0.0 90.0 0.0
+	CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+	End Site
+	{
+		OFFSET 0.0 5.0 0.0
+	}
+}
+MOTION
+Frames: 2
+Frame Time: 0.0333333
+0 90 0 0 0 0
+1 90 0 10 0 0
+";
+
+fn asset_settings(settings: TextureSettings) -> ImportSettings {
+    ImportSettings {
+        settings: None,
+        asset_settings: Some(Box::new(settings)),
+    }
+}
+
 #[test]
-fn texture_sources_keep_their_bytes_and_their_settings_across_reimports() {
+fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     let scratch = tempfile::tempdir().expect("tempdir");
     let project = tempfile::tempdir().expect("tempdir");
     let root = project.path();
     let images: Vec<Vec<u8>> = (0..4)
         .map(|i| write_png(&scratch.path().join(format!("image{i}.png")), 40 * i as u8))
         .collect();
-    let picture = write_png(&scratch.path().join("picture.png"), 200);
+    let picture_path = scratch.path().join("picture.png");
+    let picture = write_png(&picture_path, 200);
     write_material_gltf(scratch.path(), 3);
     let gltf = scratch.path().join("materials.gltf");
+    let given = TextureSettings::default()
+        .with_compression(Compression::Bc7)
+        .with_max_size(MaxSize::S1024);
+
+    let image = import_source_into(
+        &picture_path,
+        "assets/picture.png",
+        root,
+        &config(),
+        asset_settings(given),
+    )
+    .expect("the image imports");
+    let main = imported_texture(root, &image, "main").texture;
+    assert_eq!(main.source.as_ref().unwrap().bytes, picture);
+    assert_eq!(main.role, TextureRole::Color);
+    assert_eq!(main.settings, given);
+    let sidecar =
+        std::fs::read_to_string(root.join("assets/picture.png.import.toml")).expect("sidecar");
+    assert!(!sidecar.contains("settings"), "{sidecar}");
+    let staged = staged_settings(&picture_path, "assets/picture.png", root, &config())
+        .expect("the image stages");
+    assert_eq!(
+        staged
+            .asset_settings
+            .as_deref()
+            .and_then(|settings| settings.downcast_ref::<TextureSettings>()),
+        Some(&given)
+    );
 
     let first = import_source_into(
         &gltf,
         "assets/materials.gltf",
         root,
         &config(),
-        texture_options("max_size = 1024"),
+        ImportSettings::default(),
     )
     .expect("the glTF imports");
-    let image = import_source_into(
-        &scratch.path().join("picture.png"),
-        "assets/picture.png",
-        root,
-        &config(),
-        texture_options("max_size = 1024"),
-    )
-    .expect("the image imports");
-    let main = imported_texture(root, &image, "main").texture;
-    assert_eq!(main.source.as_ref().unwrap().bytes, picture);
-    assert_eq!(main.role, TextureRole::Color);
-    assert_eq!(main.settings.max_size, MaxSize::S1024);
     for (name, image, role) in [
         ("texture/0", 0, TextureRole::Color),
         ("texture/1_linear", 1, TextureRole::Normal),
@@ -418,14 +459,7 @@ fn texture_sources_keep_their_bytes_and_their_settings_across_reimports() {
             "{name}"
         );
         assert_eq!(texture.role, role, "{name}");
-        assert_eq!(texture.settings.max_size, MaxSize::S1024, "{name}");
-    }
-    for sidecar in [
-        "assets/materials.gltf.import.toml",
-        "assets/picture.png.import.toml",
-    ] {
-        let text = std::fs::read_to_string(root.join(sidecar)).expect("sidecar");
-        assert!(!text.contains("max_size"), "{sidecar}: {text}");
+        assert_eq!(texture.settings, TextureSettings::default(), "{name}");
     }
 
     let ImportedTexture {
@@ -446,22 +480,16 @@ fn texture_sources_keep_their_bytes_and_their_settings_across_reimports() {
         "assets/materials.gltf",
         root,
         &config(),
-        texture_options("max_size = 512"),
+        ImportSettings::default(),
     )
     .expect("the glTF imports again");
     let normal = imported_texture(root, &second, "texture/1_linear").texture;
     assert_eq!(normal.settings.compression, Compression::Bc7);
-    assert_eq!(normal.settings.max_size, MaxSize::S1024);
-    let ImportedTexture {
-        entry: color_entry,
-        texture: color,
-    } = imported_texture(root, &second, "texture/0");
-    assert_eq!(color.settings.max_size, MaxSize::S1024);
     let added = imported_texture(root, &second, "texture/3").texture;
-    assert_eq!(added.settings.max_size, MaxSize::S512);
+    assert_eq!(added.settings, TextureSettings::default());
     assert_eq!(added.source.as_ref().unwrap().bytes, images[3]);
 
-    let path = root.join(&color_entry.address);
+    let path = root.join(&normal_entry.address);
     let file = std::fs::read(&path).expect("read");
     let (mut header, payload) = read_content_asset(&file).expect("content asset");
     header.kind_version = Texture::FORMAT_VERSION - 1;
@@ -475,33 +503,84 @@ fn texture_sources_keep_their_bytes_and_their_settings_across_reimports() {
         "assets/materials.gltf",
         root,
         &config(),
-        texture_options("max_size = 512"),
+        ImportSettings::default(),
     )
     .expect("an old texture version re-imports");
-    let color = imported_texture(root, &third, "texture/0").texture;
-    assert_eq!(color.settings.max_size, MaxSize::S512);
+    let normal = imported_texture(root, &third, "texture/1_linear").texture;
+    assert_eq!(normal.settings, TextureSettings::default());
 
-    let refused = import_source_into(
+    let mistyped = import_source_into(
         &gltf,
         "assets/materials.gltf",
         root,
         &config(),
-        texture_options("compression = \"bc9\""),
+        asset_settings(given),
     )
-    .expect_err("an unknown compression is refused");
-    assert!(format!("{refused:#}").contains("bc9"), "{refused:#}");
-
+    .expect_err("a glTF has no asset settings");
+    assert!(
+        format!("{mistyped:#}").contains("NoSettings"),
+        "{mistyped:#}"
+    );
     let underivable = import_source_into(
-        &gltf,
-        "assets/fresh.gltf",
+        &picture_path,
+        "assets/fresh.png",
         root,
         &config(),
-        texture_options("compression = \"bc5\""),
+        asset_settings(TextureSettings::default().with_compression(Compression::Bc5)),
     )
     .expect_err("settings a colour texture cannot derive in are refused");
     let message = format!("{underivable:#}");
-    assert!(
-        message.contains("texture/0") && message.contains("sRGB"),
-        "{message}"
+    assert!(message.contains("sRGB"), "{message}");
+
+    let walk = scratch.path().join("walk.bvh");
+    std::fs::write(&walk, WALK).expect("write bvh");
+    import_source_into(
+        &walk,
+        "assets/walk.bvh",
+        root,
+        &config(),
+        ImportSettings::default(),
+    )
+    .expect("the BVH imports");
+    let sidecar = sidecar_path(&root.join("assets/walk.bvh"));
+    let mut metadata = SourceMetadata::load(&sidecar).expect("sidecar");
+    assert!(metadata.settings.is_empty(), "{:?}", metadata.settings);
+    metadata.settings = "[events.walk]\nstep = [0.0]\n".parse().expect("events");
+    std::fs::write(&sidecar, toml::to_string(&metadata).expect("encode")).expect("write");
+    let StagedSettings { mut settings, .. } =
+        staged_settings(&walk, "assets/walk.bvh", root, &config()).expect("the BVH stages");
+    settings
+        .downcast_mut::<BvhSettings>()
+        .expect("BVH settings")
+        .scale = 0.5;
+    import_source_into(
+        &walk,
+        "assets/walk.bvh",
+        root,
+        &config(),
+        ImportSettings {
+            settings: Some(settings),
+            asset_settings: None,
+        },
+    )
+    .expect("the BVH imports with its settings");
+    let written = SourceMetadata::load(&sidecar).expect("sidecar").settings;
+    assert_eq!(written["scale"].as_float(), Some(0.5), "{written:?}");
+    assert_eq!(
+        written["events"]["walk"]["step"].as_array().map(Vec::len),
+        Some(1),
+        "{written:?}"
     );
+
+    std::fs::write(
+        &sidecar,
+        std::fs::read_to_string(&sidecar)
+            .expect("sidecar")
+            .replace("scale = 0.5", "scale = \"big\""),
+    )
+    .expect("write");
+    let malformed = staged_settings(&walk, "assets/walk.bvh", root, &config())
+        .err()
+        .expect("an unparsable sidecar does not stage");
+    assert!(format!("{malformed:#}").contains("scale"), "{malformed:#}");
 }

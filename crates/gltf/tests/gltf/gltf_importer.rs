@@ -9,7 +9,7 @@ use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
-use concerto_gltf::gltf_importer::GltfImporter;
+use concerto_gltf::gltf_importer::{GltfImporter, GltfSettings};
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
 use concerto_reflect::{Reflect, apply_value};
 use concerto_scene::node_id::NodeId;
@@ -48,8 +48,14 @@ struct Imported {
 }
 
 fn import(name: &str, settings: &str) -> Imported {
-    let mut ctx = ImportContext::new(PathBuf::from(name)).with_settings(settings.parse().unwrap());
-    let result = GltfImporter.import(&fixture(name), &mut ctx);
+    let mut ctx = ImportContext::new(PathBuf::from(name));
+    let result = match toml::from_str::<GltfSettings>(settings) {
+        Ok(settings) => GltfImporter.import(&fixture(name), &settings, None, &mut ctx),
+        Err(error) => Err(ImportError::MalformedSource {
+            source_path: fixture(name),
+            message: error.to_string(),
+        }),
+    };
     Imported {
         result,
         outputs: ctx.into_parts(),

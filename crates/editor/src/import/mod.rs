@@ -12,37 +12,26 @@ use concerto_foundation::assets::{
     AssetId,
     registry::{AssetEntry, AssetRegistry},
 };
-use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
-use concerto_render::assets::texture::{TextureSettings, texture_settings_options};
+use concerto_import::{ImportSettings, ImportedSource, importer_for, importers};
+use concerto_render::assets::texture::TextureSettings;
 
 use crate::project::{AssetsWritten, ProjectState};
 
-/// Imports a source into the project at `destination`, bringing the files it refers to along; the textures it creates take `texture_settings`, or the defaults.
+/// Imports a source into the project at `destination` with `settings`, bringing the files it refers to along.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
     project_root: &Path,
-    texture_settings: Option<&TextureSettings>,
+    settings: ImportSettings,
 ) -> anyhow::Result<ImportedSource> {
     let config = ContentConfig::load_or_default(project_root)?;
-    concerto_import::import_source_into(
-        source,
-        destination,
-        project_root,
-        &config,
-        texture_settings
-            .map(texture_settings_options)
-            .unwrap_or_default(),
-    )
+    concerto_import::import_source_into(source, destination, project_root, &config, settings)
 }
 
-/// Whether importing `source` can create textures: a glTF or an image.
-pub fn emits_textures(source: &Path) -> bool {
-    matches!(
-        extension_of(source).as_str(),
-        "gltf" | "glb" | "png" | "jpg" | "jpeg"
-    )
+/// Whether the importer of `source` takes settings for the asset it makes.
+pub fn has_asset_settings(source: &Path) -> bool {
+    importer_for(&extension_of(source)).is_some_and(|importer| importer.has_asset_settings())
 }
 
 /// A file chosen for import, and where it will be copied to.
@@ -144,7 +133,7 @@ fn row_state(row: &StagedImport, project_root: &Path, occurrences: usize) -> Row
         return RowState::Rejected("listed twice".into());
     }
     let source_extension = extension_of(&row.source);
-    if !concerto_import::supported_extension(&source_extension) {
+    if importer_for(&source_extension).is_none() {
         return RowState::Rejected(format!("no importer for '.{source_extension}'"));
     }
     if extension_of(Path::new(&row.destination)) != source_extension {
@@ -231,10 +220,6 @@ impl ImportQueue {
     }
 }
 
-const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "gltf", "glb", "obj", "bvh", "png", "jpg", "jpeg", "ogg", "wav",
-];
-
 /// The native file picker running on its own thread.
 #[derive(Resource, Default)]
 pub struct ImportPicker {
@@ -311,9 +296,14 @@ fn drive_picker(
     {
         return;
     }
-    picker.job = Some(std::thread::spawn(|| {
+    let extensions: Vec<&str> = importers()
+        .iter()
+        .flat_map(|importer| importer.supported_extensions())
+        .copied()
+        .collect();
+    picker.job = Some(std::thread::spawn(move || {
         rfd::FileDialog::new()
-            .add_filter("Assets", SUPPORTED_EXTENSIONS)
+            .add_filter("Assets", &extensions)
             .pick_files()
     }));
 }
@@ -370,22 +360,23 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
     queue.current = Some(name);
     queue.current_destination = Some(row.destination.clone());
     queue.job = Some(std::thread::spawn(move || {
-        let result = import_source_into(
-            &row.source,
-            &row.destination,
-            &root,
-            row.texture_settings.as_ref(),
-        )
-        .map_err(|error| {
-            let error = format!("{error:#}");
-            log::error!(
-                "importing '{}' to '{}' in '{}' failed: {error}",
-                row.source.display(),
-                row.destination,
-                root.display()
-            );
-            failure_summary(&error, &root)
-        });
+        let settings = ImportSettings {
+            settings: None,
+            asset_settings: row
+                .texture_settings
+                .map(|settings| Box::new(settings) as Box<dyn concerto_reflect::Reflect>),
+        };
+        let result =
+            import_source_into(&row.source, &row.destination, &root, settings).map_err(|error| {
+                let error = format!("{error:#}");
+                log::error!(
+                    "importing '{}' to '{}' in '{}' failed: {error}",
+                    row.source.display(),
+                    row.destination,
+                    root.display()
+                );
+                failure_summary(&error, &root)
+            });
         (root, result)
     }));
 }
@@ -531,25 +522,6 @@ mod tests {
     use concerto_foundation::assets::{content::ImportProvenance, registry::EmbeddedIn};
 
     #[test]
-    fn the_picker_filter_lists_exactly_the_common_extensions_an_importer_handles() {
-        let candidates = [
-            "png", "jpg", "jpeg", "gltf", "glb", "obj", "bmp", "tga", "gif", "webp", "tiff", "tif",
-            "hdr", "exr", "dds", "ktx2", "fbx", "dae", "ply", "stl", "usd", "usdz", "blend", "3ds",
-            "mtl", "bvh", "ogg", "wav",
-        ];
-        for extension in candidates {
-            assert_eq!(
-                SUPPORTED_EXTENSIONS.contains(&extension),
-                concerto_import::supported_extension(extension),
-                "{extension}"
-            );
-        }
-        for extension in SUPPORTED_EXTENSIONS {
-            assert!(candidates.contains(extension), "{extension}");
-        }
-    }
-
-    #[test]
     fn the_project_content_config_decides_where_assets_are_written() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
         let source = tempfile::tempdir().expect("tempdir");
@@ -563,7 +535,7 @@ mod tests {
             &source.path().join("square.obj"),
             "assets/square.obj",
             project.path(),
-            None,
+            ImportSettings::default(),
         )
         .expect("import succeeds");
         assert!(!imported.assets.is_empty());

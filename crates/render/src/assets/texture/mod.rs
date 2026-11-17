@@ -16,10 +16,7 @@ use serde::{Deserialize, Serialize};
 pub use blob::TextureLevels;
 pub use derive::derive_levels;
 pub(crate) use derive::resolve;
-pub use settings::{
-    initial_texture_settings, texture_settings_options, ColorSpace, Compression, MaxSize,
-    TextureRole, TextureSettings,
-};
+pub use settings::{ColorSpace, Compression, MaxSize, TextureRole, TextureSettings};
 pub use wgpu_types::TextureFormat;
 
 pub(crate) use blob::{block_extent, block_row_bytes, block_rows};

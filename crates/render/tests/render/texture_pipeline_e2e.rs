@@ -1,6 +1,6 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
-use concerto_asset_import::{ImportContext, Importer};
+use concerto_asset_import::{ImportContext, Importer, NoSettings};
 use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
 use concerto_foundation::assets::derived::DerivedDataCache;
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
@@ -20,7 +20,7 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
 
     let mut ctx = ImportContext::new(std::path::PathBuf::from("swatch.png"));
     ImageImporter
-        .import(&source_path, &mut ctx)
+        .import(&source_path, &NoSettings::default(), None, &mut ctx)
         .expect("importing the fixture texture must succeed");
     let outputs = ctx.into_parts();
     assert_eq!(
