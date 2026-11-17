@@ -11,6 +11,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     asset_server::AssetServer,
+    asset_store::AssetStore,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mcp::{
@@ -20,6 +21,10 @@ use concerto_mcp::{
 use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
+};
+use concerto_scene::{
+    link::{LinkedNode, SceneLink, SceneLinkState},
+    scene::Scene,
 };
 use image::{ImageFormat, RgbaImage, imageops::FilterType};
 use schemars::JsonSchema;
@@ -41,6 +46,7 @@ use crate::{
         InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
         listed_paths, shown_paths,
     },
+    links::{change_lines, link_row, state_text},
     placement::PlaceableKinds,
     project::ProjectState,
     tools::{
@@ -487,19 +493,47 @@ struct SceneView<'a> {
     name: &'a dyn Fn(Entity) -> Option<&'a str>,
     label: &'a dyn Fn(Entity) -> String,
     components: &'a dyn Fn(Entity) -> Vec<(&'static str, &'static str)>,
+    link: &'a dyn Fn(Entity) -> Option<String>,
+    linked: &'a dyn Fn(Entity) -> bool,
+    links: Links,
+}
+
+enum Links {
+    Expanded,
+    Collapsed { open: Option<Entity> },
 }
 
 impl SceneView<'_> {
     fn line(&self, entity: Entity, label: &str) -> String {
-        let names: Vec<_> = (self.components)(entity)
-            .into_iter()
-            .map(|(short, _)| short)
-            .collect();
-        format!("{} {label} [{}]", entity.to_id_string(), names.join(", "))
+        let id = entity.to_id_string();
+        let mut line = match (self.link)(entity) {
+            Some(link) => format!("{id} {label} {link}"),
+            None => {
+                let names: Vec<_> = (self.components)(entity)
+                    .into_iter()
+                    .map(|(short, _)| short)
+                    .collect();
+                format!("{id} {label} [{}]", names.join(", "))
+            }
+        };
+        if (self.linked)(entity) {
+            line.push_str(" (linked)");
+        }
+        line
+    }
+
+    fn children_of(&self, entity: Entity) -> Vec<Entity> {
+        match self.links {
+            Links::Collapsed { open } if open != Some(entity) && (self.link)(entity).is_some() => {
+                Vec::new()
+            }
+            _ => (self.children)(entity),
+        }
     }
 
     fn subtree(&self, entity: Entity) -> usize {
-        1 + (self.children)(entity)
+        1 + self
+            .children_of(entity)
             .into_iter()
             .map(|child| self.subtree(child))
             .sum::<usize>()
@@ -509,7 +543,8 @@ impl SceneView<'_> {
         if level >= depth {
             return 0;
         }
-        1 + (self.children)(entity)
+        1 + self
+            .children_of(entity)
             .into_iter()
             .map(|child| self.within(child, level + 1, depth))
             .sum::<usize>()
@@ -551,15 +586,23 @@ fn children_of(children: &Query<&Children>, entity: Entity) -> Vec<Entity> {
         .unwrap_or_default()
 }
 
-pub(crate) type SceneEntities =
-    Query<'static, 'static, (Entity, Option<&'static ChildOf>, Option<&'static SceneRoot>)>;
+pub(crate) type SceneEntities = Query<
+    'static,
+    'static,
+    (
+        Entity,
+        Option<&'static ChildOf>,
+        Option<&'static SceneRoot>,
+        Option<&'static LinkedNode>,
+    ),
+>;
 
 fn outside_open_scene(entity: Entity, entities: &SystemInputData<SceneEntities>) -> bool {
-    entities.iter().any(|(_, _, root)| root.is_some())
+    entities.iter().any(|(_, _, root, _)| root.is_some())
         && scene_member_by(entity, |entity| {
             entities
                 .get_entity(entity)
-                .map(|(_, parent, root)| (root.is_some(), parent.map(ChildOf::parent)))
+                .map(|(_, parent, root, _)| (root.is_some(), parent.map(ChildOf::parent)))
         })
         .is_err()
 }
@@ -610,6 +653,8 @@ fn scene_tree(
     entities: EditWorld<SceneEntities>,
     components: EditWorld<ComponentMetadata>,
     documents: StaticSystemInput<EditTargetDocument>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    registry: Option<Res<AssetRegistry>>,
 ) {
     let Some((document, play)) = documents.iter().next() else {
         return;
@@ -620,6 +665,16 @@ fn scene_tree(
     let name = |entity| names.get_entity(entity).map(|name| name.as_str());
     let label = |entity| label_of(entity, &roots, &names, address);
     let carried = |entity| components_of(&components, entity);
+    let link = |entity| {
+        links
+            .get_entity(entity)
+            .map(|(link, state)| link_row(link, state, registry.as_deref()))
+    };
+    let linked = |entity| {
+        entities
+            .get_entity(entity)
+            .is_some_and(|(.., node)| node.is_some())
+    };
     for (arguments, reply) in calls.read() {
         let starts = match &arguments.root {
             Some(id) => match resolve(id, &entities) {
@@ -631,12 +686,21 @@ fn scene_tree(
             },
             None => top_of_scene(playing, &roots, &top_level),
         };
+        let links = match playing {
+            true => Links::Expanded,
+            false => Links::Collapsed {
+                open: arguments.root.is_some().then(|| starts[0]),
+            },
+        };
         let view = SceneView {
             starts,
             children: &kids,
             name: &name,
             label: &label,
             components: &carried,
+            link: &link,
+            linked: &linked,
+            links,
         };
         reply.ok(tree(&view, &arguments));
     }
@@ -650,6 +714,9 @@ fn find_entities(
     names: EditWorld<Query<&Name>>,
     components: EditWorld<ComponentMetadata>,
     documents: StaticSystemInput<EditTargetDocument>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    entities: EditWorld<SceneEntities>,
+    registry: Option<Res<AssetRegistry>>,
 ) {
     let Some((document, play)) = documents.iter().next() else {
         return;
@@ -660,6 +727,16 @@ fn find_entities(
     let name = |entity| names.get_entity(entity).map(|name| name.as_str());
     let label = |entity| label_of(entity, &roots, &names, address);
     let carried = |entity| components_of(&components, entity);
+    let link = |entity| {
+        links
+            .get_entity(entity)
+            .map(|(link, state)| link_row(link, state, registry.as_deref()))
+    };
+    let linked = |entity| {
+        entities
+            .get_entity(entity)
+            .is_some_and(|(.., node)| node.is_some())
+    };
     for (arguments, reply) in calls.read() {
         let view = SceneView {
             starts: top_of_scene(playing, &roots, &top_level),
@@ -667,6 +744,9 @@ fn find_entities(
             name: &name,
             label: &label,
             components: &carried,
+            link: &link,
+            linked: &linked,
+            links: Links::Expanded,
         };
         reply.ok(find(&view, &arguments));
     }
@@ -711,7 +791,7 @@ impl TreeLines<'_, '_> {
         let indent = "  ".repeat(level);
         let line = self.view.line(entity, &(self.view.label)(entity));
         self.lines.push(format!("{indent}{line}"));
-        let children = (self.view.children)(entity);
+        let children = self.view.children_of(entity);
         if children.is_empty() {
             return;
         }
@@ -831,7 +911,7 @@ fn search(
 ) {
     path.push((view.label)(entity));
     visit(entity, path);
-    for child in (view.children)(entity) {
+    for child in view.children_of(entity) {
         search(view, child, path, visit);
     }
     path.pop();
@@ -842,19 +922,31 @@ fn inspect(
     source: EditWorld<InspectionSource>,
     entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    scenes: EditWorld<Option<Res<AssetStore<Scene>>>>,
     registry: Res<InspectorRegistry>,
 ) {
     for (arguments, reply) in calls.read() {
         let (None, Some(entity)) = (&arguments.target, &arguments.entity) else {
             continue;
         };
-        let answer = resolve(entity, &entities)
-            .and_then(|entity| inspection(&source, &registry, &names, entity, &arguments));
+        let answer = resolve(entity, &entities).and_then(|entity| {
+            let link = links.get_entity(entity).map(|(link, state)| LinkLines {
+                state: state_text(state),
+                changes: change_lines(link, state, &source.types(), scenes.as_deref()),
+            });
+            inspection(&source, &registry, &names, entity, &arguments, link)
+        });
         match answer {
             Ok(text) => reply.ok(text),
             Err(error) => reply.err(error),
         }
     }
+}
+
+struct LinkLines {
+    state: String,
+    changes: Vec<String>,
 }
 
 pub(super) fn names_component(short: &str, full: &str, name: &str) -> bool {
@@ -867,6 +959,7 @@ fn inspection(
     names: &Query<&Name>,
     entity: Entity,
     arguments: &Inspect,
+    link: Option<LinkLines>,
 ) -> Result<String, ToolError> {
     let mut carried: Vec<_> = source
         .visible_components(entity)
@@ -918,6 +1011,10 @@ fn inspection(
         answer.insert("name".into(), name.as_str().into());
     }
     answer.insert("components".into(), components.into());
+    if let Some(link) = link {
+        answer.insert("state".into(), link.state.into());
+        answer.insert("changes".into(), link.changes.into());
+    }
     Ok(Value::Object(answer).to_string())
 }
 

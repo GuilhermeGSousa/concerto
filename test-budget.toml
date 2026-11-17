@@ -11,7 +11,7 @@
 "crates/debug-gizmos" = 2
 "crates/director" = 4
 "crates/ecs" = 87
-"crates/editor" = 175
+"crates/editor" = 176
 "crates/foundation" = 65
 "crates/gameplay" = 11
 "crates/gltf" = 7
@@ -29,11 +29,11 @@
 "crates/physics" = 17
 "crates/procedural-animation" = 28
 "crates/procedural-animation-gizmos" = 1
-"crates/project" = 14
+"crates/project" = 15
 "crates/reflect" = 16
 "crates/render" = 76
 "crates/render/macros" = 1
-"crates/scene" = 10
+"crates/scene" = 12
 "crates/tasks" = 2
 "crates/terminal-renderer" = 2
 "crates/ui" = 99

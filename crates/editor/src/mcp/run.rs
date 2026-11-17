@@ -5,9 +5,9 @@ use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res, Resource, With, command::CommandQueue,
     events::event_reader::EventReader,
 };
-use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, ToolCalls, ToolError};
-use concerto_scene::{scene::Scene, spawner::SceneSpawnerComponent};
+use concerto_scene::link::{SceneLink, SceneLinkState};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -228,16 +228,15 @@ fn answer_plays(
 
 fn answer_loaded_plays(
     assets: EditWorld<Option<Res<AssetServer>>>,
-    scenes: EditWorld<Option<Res<AssetStore<Scene>>>>,
-    spawners: EditWorld<Query<&SceneSpawnerComponent>>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
     targets: Query<Entity, With<EditTarget>>,
     waiting: Query<(Entity, &PendingCall, &Starting)>,
     mut cmd: CommandQueue,
 ) {
-    let spawning = scenes.as_deref().is_some_and(|scenes| {
-        spawners
-            .iter()
-            .any(|spawner| scenes.get(&spawner.0).is_some())
+    let spawning = assets.as_deref().is_some_and(|server| {
+        links.iter().any(|(link, state)| {
+            *state == SceneLinkState::Waiting && server.is_loading_or_loaded(link.scene().id())
+        })
     });
     if spawning || assets.as_deref().is_some_and(AssetServer::is_loading) {
         return;

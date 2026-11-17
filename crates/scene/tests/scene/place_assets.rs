@@ -12,7 +12,9 @@ use concerto_foundation::assets::{
     asset_server::AssetServer, content::save_content_asset_into, registry::AssetRegistry, AssetId,
 };
 use concerto_foundation::transform::Transform;
+use concerto_scene::node_id::NodeId;
 use concerto_scene::{
+    link::SceneLinkState,
     plugin::ScenePlugin,
     scene::{Scene, SceneNode},
 };
@@ -20,9 +22,11 @@ use glam::Vec3;
 
 fn node(name: &str, children: Vec<usize>, x: f32) -> SceneNode {
     let mut node = SceneNode {
+        id: NodeId::from_name_path(name),
         name: name.to_string(),
         children,
         components: vec![],
+        link: None,
     };
     node.push_component(&Transform::from_translation(Vec3::new(x, 0.0, 0.0)))
         .unwrap();
@@ -111,6 +115,13 @@ fn placing_a_scene_adds_its_roots_as_children() {
     app.finish_plugin_build();
 
     let placed_scene = place(&mut app, "Scene", scene);
+    app.update();
+    assert_eq!(
+        app.main()
+            .world()
+            .get_component_for_entity::<SceneLinkState>(placed_scene),
+        Some(&SceneLinkState::Spawned)
+    );
     let mut roots = children_of(&app, placed_scene);
     roots.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(

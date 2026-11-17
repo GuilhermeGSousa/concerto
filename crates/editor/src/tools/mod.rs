@@ -51,6 +51,7 @@ pub(crate) fn build_core(app: &mut App) {
     selection::build(app);
     entity_ops::build(app);
     edits::build(app);
+    crate::links::build_tools(app);
     placement::build(app);
 }
 

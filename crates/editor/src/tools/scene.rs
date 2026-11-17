@@ -6,8 +6,13 @@ use concerto_ecs::{
     events::{Event, event_channel::EventChannel},
     signal::{On, Signal},
 };
-use concerto_foundation::transform::Transform;
-use concerto_scene::{capture::capture_scene, scene::Scene, spawner::spawn_scene_in_world};
+use concerto_foundation::{assets::AssetId, transform::Transform};
+use concerto_scene::{
+    capture::capture_scene,
+    link::LinkRoot,
+    scene::Scene,
+    spawner::{SpawnFilter, spawn_scene_in_world},
+};
 
 use crate::tools::selection::Select;
 
@@ -31,8 +36,11 @@ pub struct SceneStatus(pub String);
 #[derive(Event, Clone)]
 pub struct RevealEntity(pub Entity);
 
-/// Replaces whatever scene is open with this one.
-pub struct OpenScene(pub Scene);
+/// Replaces whatever scene is open with `scene`, the document `id` holds; a link in it back to `id` is refused.
+pub struct OpenScene {
+    pub scene: Scene,
+    pub id: Option<AssetId>,
+}
 impl Signal for OpenScene {}
 
 fn open_scene(on: On<OpenScene>, world: &mut World) {
@@ -45,8 +53,14 @@ fn open_scene(on: On<OpenScene>, world: &mut World) {
         world.despawn(root);
     }
     world.register_component::<Transform>();
+    match on.signal().id {
+        Some(id) => world.insert_resource(LinkRoot(id)),
+        None => {
+            world.remove_resource::<LinkRoot>();
+        }
+    }
     let root = world.spawn((Transform::IDENTITY, SceneRoot));
-    spawn_scene_in_world(world, &on.signal().0, root);
+    spawn_scene_in_world(world, &on.signal().scene, root, &SpawnFilter::default());
     world.insert_resource(SceneDirty(false));
     world.trigger(Select(Some(root)));
 }
@@ -121,15 +135,18 @@ mod tests {
     use super::*;
     use crate::tools::selection::Selection;
     use concerto_ecs::component::name::Name;
-    use concerto_foundation::assets::{AssetId, handle::AssetHandle};
+    use concerto_foundation::assets::handle::AssetHandle;
     use concerto_mesh::mesh::MeshComponent;
+    use concerto_scene::node_id::NodeId;
     use concerto_scene::scene::SceneNode;
 
     fn node(name: &str, children: Vec<usize>) -> SceneNode {
         SceneNode {
+            id: NodeId::from_name_path(name),
             name: name.into(),
             children,
             components: vec![],
+            link: None,
         }
     }
 
@@ -152,10 +169,13 @@ mod tests {
         let world = app.main_mut().world_mut();
         world.register_type::<MeshComponent>();
 
-        world.trigger(OpenScene(Scene {
-            nodes: vec![node("parent", vec![1]), node("child", vec![])],
-            referenced_assets: vec![AssetId::new()],
-        }));
+        world.trigger(OpenScene {
+            scene: Scene {
+                nodes: vec![node("parent", vec![1]), node("child", vec![])],
+                referenced_assets: vec![AssetId::new()],
+            },
+            id: None,
+        });
         let root = world
             .query::<(Entity, &SceneRoot), ()>()
             .iter(world)
@@ -188,10 +208,13 @@ mod tests {
         assert!(!dirty(world));
 
         report_edit(world);
-        world.trigger(OpenScene(Scene {
-            nodes: vec![node("alone", vec![])],
-            referenced_assets: vec![],
-        }));
+        world.trigger(OpenScene {
+            scene: Scene {
+                nodes: vec![node("alone", vec![])],
+                referenced_assets: vec![],
+            },
+            id: None,
+        });
         assert!(named(world, "parent").is_empty());
         assert_eq!(named(world, "alone").len(), 1);
         assert!(!dirty(world));

@@ -146,8 +146,8 @@ impl fmt::Display for Report {
     }
 }
 
-/// Parses the arguments after the program name, skipping the `concerto` Cargo passes first.
-pub fn parse<I, S>(args: I) -> Result<Command>
+/// Parses the arguments after the program name, skipping the `concerto` Cargo passes first; `default_engine` is the checkout `new` and `editor` use without `--engine`.
+pub fn parse<I, S>(args: I, default_engine: Option<PathBuf>) -> Result<Command>
 where
     I: IntoIterator<Item = S>,
     S: Into<String>,
@@ -185,7 +185,9 @@ where
     if update {
         return Ok(Command::UpdateEditor(dir, engine));
     }
-    let engine = engine.unwrap_or(Engine::Published);
+    let engine = engine
+        .or(default_engine.map(Engine::Checkout))
+        .unwrap_or(Engine::Published);
     Ok(match command.as_str() {
         "new" => Command::New(dir, engine),
         _ => Command::Editor(dir, engine),
@@ -987,7 +989,7 @@ fn write_editor(game: &Game, checkout: Option<&Path>, report: &mut Report) -> Re
 fn warn_if_published(checkout: Option<&Path>, report: &mut Report) {
     if checkout.is_none() {
         report.warnings.push(format!(
-            "the engine dependencies name version {VERSION} from crates.io; the project builds only against a published release that contains this work, so until one exists pass --engine <path to a Concerto checkout>"
+            "the engine dependencies name version {VERSION} from crates.io; the project builds only against a published release that contains this work, so until one exists pass --engine <path to a Concerto checkout> or set CONCERTO_ENGINE to one"
         ));
     }
 }
@@ -1822,7 +1824,46 @@ mod tests {
             &["build", "--", "--forest"],
             &["new", "x", "--update"],
         ] {
-            assert!(parse(args.iter().copied()).is_err(), "{args:?}");
+            assert!(parse(args.iter().copied(), None).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn an_engine_flag_wins_over_the_default_engine_which_wins_over_the_published_crate() {
+        let flag = || Engine::Checkout(PathBuf::from("flag"));
+        let env = || Some(PathBuf::from("env"));
+        let from_env = || Engine::Checkout(PathBuf::from("env"));
+        let dir = || PathBuf::from("g");
+        let cases = [
+            (
+                &["new", "g"][..],
+                None,
+                Command::New(dir(), Engine::Published),
+            ),
+            (&["new", "g"], env(), Command::New(dir(), from_env())),
+            (
+                &["new", "g", "--engine", "flag"],
+                env(),
+                Command::New(dir(), flag()),
+            ),
+            (&["editor", "g"], env(), Command::Editor(dir(), from_env())),
+            (
+                &["editor", "g", "--update"],
+                env(),
+                Command::UpdateEditor(dir(), None),
+            ),
+            (
+                &["editor", "g", "--update", "--engine", "flag"],
+                env(),
+                Command::UpdateEditor(dir(), Some(flag())),
+            ),
+        ];
+        for (args, default_engine, expected) in cases {
+            assert_eq!(
+                parse(args.iter().copied(), default_engine).unwrap(),
+                expected,
+                "{args:?}"
+            );
         }
     }
 

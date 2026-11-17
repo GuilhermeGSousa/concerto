@@ -215,6 +215,7 @@ pub(crate) struct AssetServerData {
     cook_hooks: RwLock<HashMap<&'static str, CookHook>>,
     derived_cache: RwLock<DerivedDataCache>,
     named: RwLock<HashSet<TypeId>>,
+    loaders: RwLock<HashMap<&'static str, RecordLoader>>,
 }
 
 struct ContentState {
@@ -252,6 +253,7 @@ impl AssetServer {
             cook_hooks: RwLock::new(HashMap::new()),
             derived_cache: RwLock::new(DerivedDataCache::none()),
             named: RwLock::new(HashSet::new()),
+            loaders: RwLock::new(HashMap::new()),
         };
 
         Self {
@@ -531,24 +533,54 @@ impl AssetServer {
         handle
     }
 
+    /// Reads every asset of the file `file` that is loaded or loading again, its host and the assets embedded in it, each replaced once the read lands; an asset of a kind this server never loaded is left as it is.
+    pub fn reload_file(&self, file: AssetId) {
+        let loaders = self.data.loaders.read().unwrap().clone();
+        let (_, registry) = self.content_source();
+        let mut pending = self.data.pending.write().unwrap();
+        for entry in registry.iter().filter(|entry| entry.file() == file) {
+            let id = entry.id;
+            let loaded = pending.assets.contains_key(&id)
+                || self.data.loaded_assets.read().unwrap().contains(&id);
+            let Some(&loader) = loaders.get(entry.kind.as_str()) else {
+                continue;
+            };
+            if loaded {
+                pending.cancel_asset(id);
+                self.start_load_with(id, &entry.kind, loader, &mut pending);
+            }
+        }
+    }
+
     fn start_load<A: LoadableAsset + 'static>(&self, id: AssetId, pending: &mut PendingLoads) {
+        self.data
+            .loaders
+            .write()
+            .unwrap()
+            .insert(A::name(), load_record::<A>);
+        self.start_load_with(id, A::name(), load_record::<A>, pending);
+    }
+
+    fn start_load_with(
+        &self,
+        id: AssetId,
+        kind: &str,
+        load: RecordLoader,
+        pending: &mut PendingLoads,
+    ) {
         let request_cancelled = Arc::new(AtomicBool::new(false));
         pending.assets.insert(id, Arc::clone(&request_cancelled));
         let (root, registry) = self.content_source();
         let Some(entry) = registry.get(id).cloned() else {
-            log::error!(
-                "no content asset registered for AssetId {id:?} (type {})",
-                std::any::type_name::<A>()
-            );
+            log::error!("no content asset registered for AssetId {id:?} (kind {kind})");
             self.fail(id);
             return;
         };
-        if !entry.is::<A>() {
+        if entry.kind != kind {
             log::error!(
-                "content asset '{}' holds a {} but a {} was requested",
+                "content asset '{}' holds a {} but a {kind} was requested",
                 entry.location(),
                 entry.kind,
-                A::name()
             );
             self.fail(id);
             return;
@@ -557,7 +589,7 @@ impl AssetServer {
         let address = entry.address.clone();
         let request = LoadRequest {
             entry,
-            load: load_record::<A>,
+            load,
             cancelled: request_cancelled,
         };
         match pending.files.get_mut(&file) {
@@ -844,8 +876,8 @@ mod tests {
         registry::{AssetEntry, AssetRegistry},
     };
     use concerto_ecs::{
-        component::Component, events::event_cursor::EventCursor, reflect::ReflectSceneComponent,
-        world::World,
+        component::Component, entity::EntityHashMap, events::event_cursor::EventCursor,
+        reflect::ReflectSceneComponent, world::World,
     };
     use concerto_reflect::ReflectDefault;
 
@@ -998,7 +1030,7 @@ mod tests {
         assert!(matches!(holder.empty, AssetHandle::Weak(..)));
         assert!(holder.empty.id().is_nil());
 
-        let mut capture = SceneCapture::new(HashMap::from([(entity, 0)]));
+        let mut capture = SceneCapture::new(EntityHashMap::from_iter([(entity, 0)]));
         let captured = world
             .component_types(entity)
             .next()

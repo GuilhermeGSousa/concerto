@@ -152,6 +152,30 @@ sounds) are imported once, ahead of time. The running game never reads them.
   Asset handles are stored as their `AssetId` and entity references as node
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
+- Each scene node has a `NodeId`, unique within its scene. An importer derives
+  it from the node's name path (`NodeId::from_name_path`), the nodes it adds
+  itself, such as a glTF mesh's `<node>.primitive<k>` children, included, so a
+  re-import keeps it while the name path is unchanged. A spawned entity carries
+  its node's id as `SceneNodeId`, and capture writes it back; an entity without
+  one gets the id of its name path in the captured scene, made unique. The
+  editor gives an entity it creates, duplicates or places a fresh id.
+- A scene node may be a link: the `SceneLink` component names another scene and
+  holds the changes made to its nodes (`Scene` format version 2, `SceneNode::link`).
+  `request_link_spawns` runs in `Update`: once the linked scene has loaded it
+  spawns the scene's nodes under the link's entity, each tagged
+  `LinkedNode { link, node }` with its node's id and kept in the link's
+  `NodeId → Entity` table, applies the changes, each addressed by a `LinkPath`
+  of node ids, one per link level, outermost first, and sets
+  `SceneLinkState::Spawned`, or `Refused` with the reason; a scene still
+  loading leaves it `Waiting`. A reloaded scene
+  sets its links back to `Waiting` in `LateUpdate`, so they spawn again. Placing a scene
+  and a startup scene make links, and the editor's settle waits on `Waiting` ones.
+  The `LinkRoot` resource names the scene a world's top-level links sit in; the
+  editor sets it when a scene opens, so a link that reaches that scene again is
+  `Refused`. A save or an import does not reload anything by itself: the
+  editor's `LinksPlugin` reads `SceneSaved` and `ImportFinished` and calls
+  `HostedApp::reload_files` on every edit, parked and pending `App` but a
+  playing game's, which runs `AssetServer::reload_file` for each rewritten file.
 - An asset that holds trait objects by type name (`AnimationGraph`'s nodes,
   the feature channels of a `MotionDatabase`)
   keeps each one as a data enum: `Stored { type_name, value }` as decoded and

@@ -1811,7 +1811,9 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "glam 0.33.12",
+ "log",
  "serde",
+ "uuid",
 ]
 
 [[package]]

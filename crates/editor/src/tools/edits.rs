@@ -25,6 +25,7 @@ use serde_json::Value;
 
 use crate::{
     inspector::{ComponentTarget, ErasedEditor, PropertyAddress, PropertyTarget},
+    links::{LinkedEdit, refusal},
     tools::{
         entity_ops::in_open_scene,
         scene::{SceneRoot, SceneStatus, report_edit, write},
@@ -251,6 +252,13 @@ impl SetValue {
             return Err(refused("the scene root cannot be changed"));
         }
         in_open_scene(world, self.entity).map_err(refused)?;
+        if let Some(reason) = refusal(
+            world,
+            self.entity,
+            LinkedEdit::SetOwnComponent(self.component),
+        ) {
+            return Err(refused(reason));
+        }
         let mut hook = LiveLeaves::new(world);
         let stored = {
             let live = (component.read)(&ComponentMetadata::new(world), self.entity)
@@ -438,7 +446,17 @@ pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
     let result = target
         .ok_or(EditError::MissingTarget)
         .map_err(|error| error.to_string())
-        .and_then(|target| in_open_scene(world, target.entity).map_err(|error| error.to_string()))
+        .and_then(|target| {
+            in_open_scene(world, target.entity).map_err(|error| error.to_string())?;
+            match refusal(
+                world,
+                target.entity,
+                LinkedEdit::SetOwnComponent(target.component),
+            ) {
+                Some(reason) => Err(reason),
+                None => Ok(()),
+            }
+        })
         .and_then(|()| on.signal().apply(world).map_err(|error| error.to_string()))
         .map_err(|reason| refused(format!("Set {property} failed: {reason}")));
     report(world, &result);

@@ -15,10 +15,10 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, With, Without, World,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, With, Without, World,
     command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
-    events::event_reader::EventReader,
+    events::{event_reader::EventReader, event_writer::EventWriter},
     reflect::{ReflectComponent, ReflectSceneComponent},
     system::input::SystemLocal,
     world::FromWorld,
@@ -30,6 +30,7 @@ use concerto_editor::{
     },
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted, WarmUpLimit},
+    import::ImportFinished,
     inspector::{
         DocumentValue, EditContext, EditError, EditableApp, InspectedValues, PropertyEditor,
         PropertyTarget,
@@ -43,11 +44,16 @@ use concerto_foundation::{
     assets::{
         Asset, AssetId, LoadableAsset,
         asset_server::{AssetLoadContext, AssetServer},
-        content::{ContentAssetHeader, ImportProvenance, write_content_asset},
+        asset_store::AssetStore,
+        content::{
+            ContentAssetHeader, ImportProvenance, decode_content_asset, write_content_asset,
+        },
         handle::AssetHandle,
+        registry::AssetRegistry,
     },
-    transform::{GlobalTransform, Transform},
+    transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
+use concerto_import::ImportedSource as Imported;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::run_with};
 use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -55,7 +61,11 @@ use concerto_render::{
     components::{camera::Camera, light::Light},
     gpu::Gpu,
 };
-use concerto_scene::scene::{Scene, SceneNode};
+use concerto_scene::{
+    link::{LinkedNode, SceneLinkSpawned},
+    node_id::NodeId,
+    scene::{LinkChange, Scene, SceneLinkData, SceneNode},
+};
 use concerto_ui::theme::UITheme;
 use concerto_window::input::{GamepadButton, Input, KeyCode, MouseButton, PhysicalKey};
 use glam::{Vec2, Vec3};
@@ -455,7 +465,19 @@ fn wants_playing(mut calls: ToolCalls<WantsPlaying>, _: Res<NeverInserted>) {
 }
 
 fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u8]) {
-    write_imported(root, address, id, kind, None, payload);
+    write_imported(root, address, id, kind, 1, None, payload);
+}
+
+fn write_scene(root: &Path, address: &str, id: AssetId, scene: &Scene) {
+    write_imported(
+        root,
+        address,
+        id,
+        Scene::name(),
+        Scene::FORMAT_VERSION,
+        None,
+        &bincode::serialize(scene).unwrap(),
+    );
 }
 
 fn write_imported(
@@ -463,6 +485,7 @@ fn write_imported(
     address: &str,
     id: AssetId,
     kind: &str,
+    kind_version: u32,
     provenance: Option<ImportProvenance>,
     payload: &[u8],
 ) {
@@ -470,7 +493,7 @@ fn write_imported(
         asset_id: id,
         references: vec![],
         kind: kind.into(),
-        kind_version: 1,
+        kind_version,
         provenance,
         derived: None,
         embedded: Vec::new(),
@@ -499,9 +522,11 @@ impl Fixture {
         let fixture = Self::without_a_scene();
         let node = |name: &str, children: Vec<usize>| {
             let mut node = SceneNode {
+                id: NodeId::from_name_path(name),
                 name: name.into(),
                 children,
                 components: vec![],
+                link: None,
             };
             node.push_component(&Transform::IDENTITY).unwrap();
             node
@@ -519,13 +544,7 @@ impl Fixture {
             referenced_assets: vec![],
         };
         let id = AssetId::new();
-        write_asset(
-            fixture.directory.path(),
-            "content/level.gasset",
-            id,
-            Scene::name(),
-            &bincode::serialize(&scene).unwrap(),
-        );
+        write_scene(fixture.directory.path(), "content/level.gasset", id, &scene);
         Self {
             scene: id,
             ..fixture
@@ -534,9 +553,11 @@ impl Fixture {
 
     fn add_scene(&self, address: &str) -> AssetId {
         let mut node = SceneNode {
+            id: NodeId::from_name_path("Crate"),
             name: "Crate".into(),
             children: vec![],
             components: vec![],
+            link: None,
         };
         node.push_component(&Transform::IDENTITY).unwrap();
         let scene = Scene {
@@ -544,13 +565,7 @@ impl Fixture {
             referenced_assets: vec![],
         };
         let id = AssetId::new();
-        write_asset(
-            self.directory.path(),
-            address,
-            id,
-            Scene::name(),
-            &bincode::serialize(&scene).unwrap(),
-        );
+        write_scene(self.directory.path(), address, id, &scene);
         id
     }
 
@@ -571,6 +586,7 @@ impl Fixture {
             address,
             id,
             kind,
+            1,
             Some(provenance),
             &[],
         );
@@ -747,9 +763,18 @@ async fn error_with(client: &Client, tool: &'static str, arguments: Value) -> Va
 }
 
 async fn until(client: &Client, tool: &'static str, done: impl Fn(&str) -> bool) -> String {
+    until_with(client, tool, json!({}), done).await
+}
+
+async fn until_with(
+    client: &Client,
+    tool: &'static str,
+    arguments: Value,
+    done: impl Fn(&str) -> bool,
+) -> String {
     let started = Instant::now();
     loop {
-        let answer = ok(client, tool).await;
+        let answer = ok_with(client, tool, arguments.clone()).await;
         if done(&answer) {
             return answer;
         }
@@ -2030,6 +2055,11 @@ fn stale(id: &str) -> String {
     format!("{index}v{}", generation.parse::<u32>().unwrap() + 1)
 }
 
+fn linked_row(tree: &str, name: &str) -> bool {
+    tree.lines()
+        .any(|line| line.split_whitespace().nth(1) == Some(name) && line.ends_with(" (linked)"))
+}
+
 fn second_word(answer: &str) -> String {
     answer.split_whitespace().nth(1).unwrap().to_owned()
 }
@@ -2602,7 +2632,7 @@ fn an_imports_scene_is_read_only_and_is_placed_in_an_authored_scene() {
         let mut discarding = hall;
         discarding["unsaved"] = "discard".into();
         ok_with(&client, "open_asset", discarding).await;
-        let reopened = until(&client, "scene_tree", |tree| tree.contains("MeshComponent")).await;
+        let reopened = until(&client, "scene_tree", |tree| tree.contains("[link → ")).await;
         client.cancel().await.unwrap();
         ImportedScene {
             parts,
@@ -2639,6 +2669,611 @@ fn an_imports_scene_is_read_only_and_is_placed_in_an_authored_scene() {
     assert_eq!(guarded["code"], "save_failed", "{guarded}");
     assert!(untouched);
     assert!(reopened.contains(" triangle "), "{reopened}");
+}
+
+const PROPS: &str = "content/props.gasset";
+const NOTE: &str = "content/note.gasset";
+const WORLD: &str = "content/world.gasset";
+const LOOP: &str = "content/loop.gasset";
+
+fn plain_node(name: &str) -> SceneNode {
+    let mut node = SceneNode {
+        id: NodeId::from_name_path(name),
+        name: name.into(),
+        children: vec![],
+        components: vec![],
+        link: None,
+    };
+    node.push_component(&Transform::IDENTITY).unwrap();
+    node
+}
+
+fn moved_props() -> Scene {
+    let mut scene = props("Pillar");
+    scene.nodes.swap(1, 2);
+    scene.nodes[1].components.clear();
+    scene.nodes[1]
+        .push_component(&Transform::from_translation(Vec3::new(3.0, 0.0, 0.0)))
+        .unwrap();
+    scene
+}
+
+fn props(anchor: &str) -> Scene {
+    let mut lantern = plain_node("Lantern");
+    lantern.push_component(&Light::point_light()).unwrap();
+    Scene {
+        nodes: vec![plain_node(anchor), lantern, plain_node("Helper")],
+        referenced_assets: vec![],
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Note(String);
+
+impl Asset for Note {
+    fn name() -> &'static str {
+        "Note"
+    }
+}
+
+impl LoadableAsset for Note {}
+
+#[derive(Resource)]
+struct NoteLoad(AssetHandle<Note>);
+
+fn load_the_note(server: Res<AssetServer>, mut cmd: CommandQueue) {
+    cmd.insert_resource(NoteLoad(server.load::<Note>(AssetId::from_path(NOTE))));
+}
+
+#[derive(Resource, Default)]
+struct SpawnedAt(Option<f32>);
+
+fn note_spawned_placement(
+    mut spawned: EventReader<SceneLinkSpawned>,
+    linked: Query<(&LinkedNode, &GlobalTransform)>,
+    mut at: ResMut<SpawnedAt>,
+) {
+    for event in spawned.read() {
+        if at.0.is_none() {
+            at.0 = linked
+                .iter()
+                .find(|(node, _)| node.link == event.link)
+                .map(|(_, global)| global.translation().x);
+        }
+    }
+}
+
+fn noted_game(app: &mut App) {
+    game(app);
+    app.register_asset::<Note>()
+        .insert_resource(SpawnedAt::default())
+        .add_system(Startup, load_the_note.at_edit_time())
+        .add_system(
+            LateUpdate,
+            note_spawned_placement
+                .after(propagate_global_transforms)
+                .at_edit_time(),
+        );
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct SpawnedPlacement {}
+
+fn spawned_placement(mut calls: ToolCalls<SpawnedPlacement>, at: EditWorld<Res<SpawnedAt>>) {
+    for (_, reply) in calls.read() {
+        reply.ok(at
+            .0
+            .map_or_else(|| "none".to_owned(), |x| format!("{x:.2}")));
+    }
+}
+
+fn write_note(root: &Path, text: &str) {
+    write_asset(
+        root,
+        NOTE,
+        AssetId::from_path(NOTE),
+        Note::name(),
+        &bincode::serialize(&Note(text.into())).unwrap(),
+    );
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct NoteText {}
+
+fn note_text(
+    mut calls: ToolCalls<NoteText>,
+    load: EditWorld<Option<Res<NoteLoad>>>,
+    notes: EditWorld<Option<Res<AssetStore<Note>>>>,
+) {
+    for (_, reply) in calls.read() {
+        let note = load
+            .as_deref()
+            .zip(notes.as_deref())
+            .and_then(|(load, notes)| notes.get(&load.0));
+        reply.ok(note.map_or("", |note| note.0.as_str()));
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct Reimported {}
+
+fn reimported(
+    mut calls: ToolCalls<Reimported>,
+    registry: Res<AssetRegistry>,
+    mut finished: EventWriter<ImportFinished>,
+) {
+    for (_, reply) in calls.read() {
+        let assets = registry
+            .iter()
+            .filter(|asset| asset.address == PROPS || asset.address == NOTE)
+            .cloned()
+            .collect();
+        finished.write(ImportFinished {
+            destination: "assets/props.gltf".into(),
+            result: Ok(Imported {
+                assets,
+                siblings: vec![],
+                removed: vec![],
+            }),
+        });
+        reply.ok("finished");
+    }
+}
+
+struct SavedLevel {
+    names: Vec<String>,
+    link: SceneLinkData,
+}
+
+fn saved_level(file: &[u8]) -> SavedLevel {
+    let (_, level) = decode_content_asset::<Scene>(file).unwrap();
+    let names = level.nodes.iter().map(|node| node.name.clone()).collect();
+    let mut links = level.nodes.into_iter().filter_map(|node| node.link);
+    let link = links.next().expect("one link node");
+    assert!(links.next().is_none(), "one link node");
+    SavedLevel { names, link }
+}
+
+fn added_gain(link: &SceneLinkData) -> f32 {
+    let mut samples = Samples::default();
+    for change in &link.changes {
+        if let LinkChange::AddComponent { component, .. } = change {
+            concerto_reflect::apply_value(&mut samples, &component.value);
+        }
+    }
+    samples.gain
+}
+
+struct Links {
+    placed: String,
+    spawned_at: String,
+    top: String,
+    expanded: String,
+    own: String,
+    copied: String,
+    refused: Vec<Value>,
+    saved: String,
+    saved_file: Vec<u8>,
+    removed: String,
+    kept: Value,
+    resaved_file: Vec<u8>,
+    reloaded: Value,
+    after_reload: String,
+    note: String,
+    itself: Value,
+    nested_tree: String,
+    nested: Value,
+    inner_removal: Value,
+    world_file: Vec<u8>,
+    refused_tree: String,
+    refused_link: Value,
+    reaching: Value,
+}
+
+#[test]
+fn links_are_placed_edited_saved_and_followed_over_mcp() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    let props_id = AssetId::new();
+    write_scene(&root, PROPS, props_id, &props("Anchor"));
+    write_note(&root, "first");
+    write_scene(
+        &root,
+        WORLD,
+        AssetId::new(),
+        &Scene {
+            nodes: vec![plain_node("Ground")],
+            referenced_assets: vec![],
+        },
+    );
+    let loop_id = AssetId::new();
+    let mut again = plain_node("again");
+    again.link = Some(SceneLinkData {
+        scene: loop_id,
+        changes: vec![],
+    });
+    write_scene(
+        &root,
+        LOOP,
+        loop_id,
+        &Scene {
+            nodes: vec![again],
+            referenced_assets: vec![],
+        },
+    );
+    let level_id = fixture.scene;
+    let log = Log::default();
+    let add_tools = |app: &mut App| {
+        app.add_tool::<Reimported, _>(McpTool::new("reimported"), reimported)
+            .add_tool::<NoteText, _>(
+                McpTool::read_only("note_text").needs(Needs::Scene),
+                note_text,
+            )
+            .add_tool::<SpawnedPlacement, _>(
+                McpTool::read_only("spawned_placement").needs(Needs::Scene),
+                spawned_placement,
+            );
+    };
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        noted_game,
+        add_tools,
+        move |client| async move {
+            open(&client).await;
+            let placed = ok_with(
+                &client,
+                "place_asset",
+                json!({ "asset": PROPS, "position": [5.0, 0.0, 0.0] }),
+            )
+            .await;
+            let link = placed.rsplit(' ').next().unwrap().to_owned();
+            let expanded = until_with(&client, "scene_tree", json!({ "root": link }), |tree| {
+                linked_row(tree, "Helper")
+            })
+            .await;
+            let at = |name: &str| tree_id(&expanded, name);
+            let top = ok(&client, "scene_tree").await;
+            let spawned_at = ok(&client, "spawned_placement").await;
+            ok_with(
+                &client,
+                "add_component",
+                json!({ "entity": at("Anchor"), "component": "editor::mcp::Samples" }),
+            )
+            .await;
+            ok_with(
+                &client,
+                "set_property",
+                json!({ "entity": at("Anchor"), "component": "editor::mcp::Samples", "path": "gain", "value": 2.5 }),
+            )
+            .await;
+            ok_with(
+                &client,
+                "remove_component",
+                json!({ "entity": at("Lantern"), "component": "Light" }),
+            )
+            .await;
+            ok_with(&client, "delete_entity", json!({ "entity": at("Helper") })).await;
+            let own = second_word(
+                &ok_with(&client, "create_entity", json!({ "parent": at("Anchor") })).await,
+            );
+            let duplicated = ok_with(&client, "duplicate_entity", json!({ "entity": own })).await;
+            let copy = duplicated
+                .rsplit(" as ")
+                .next()
+                .and_then(|copy| copy.split_whitespace().next())
+                .unwrap()
+                .to_owned();
+            let copied = ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": copy, "components": ["LinkParent"] }),
+            )
+            .await;
+            let refused = vec![
+                error_with(
+                    &client,
+                    "set_property",
+                    json!({ "entity": at("Anchor"), "component": "Transform", "path": "translation", "value": [1.0, 2.0, 3.0] }),
+                )
+                .await,
+                error_with(
+                    &client,
+                    "rename_entity",
+                    json!({ "entity": at("Anchor"), "name": "Pillar" }),
+                )
+                .await,
+            ];
+            let saved = ok(&client, "save").await;
+            let saved_file = std::fs::read(root.join("content/level.gasset")).unwrap();
+            let removed = ok_with(
+                &client,
+                "remove_link_change",
+                json!({ "entity": link, "index": 1 }),
+            )
+            .await;
+            let respawned = until_with(&client, "scene_tree", json!({ "root": link }), |tree| {
+                tree.lines().any(|line| line.contains(" Lantern [Light"))
+            })
+            .await;
+            let kept = ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": tree_id(&respawned, "Lantern"), "components": ["Light"] }),
+            )
+            .await;
+            ok(&client, "save").await;
+            let resaved_file = std::fs::read(root.join("content/level.gasset")).unwrap();
+            write_scene(&root, PROPS, props_id, &moved_props());
+            write_note(&root, "second");
+            ok(&client, "reimported").await;
+            let reloaded = until_with(
+                &client,
+                "inspect",
+                json!({ "entity": link }),
+                |inspection| inspection.contains("unapplied"),
+            )
+            .await;
+            let after_reload = ok_with(&client, "scene_tree", json!({ "root": link })).await;
+            let note = until(&client, "note_text", |text| text == "second").await;
+            let itself = error_with(
+                &client,
+                "place_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": WORLD, "unsaved": "discard" }),
+            )
+            .await;
+            until(&client, "scene_tree", |tree| tree.contains(" Ground ")).await;
+            let placed_level = ok_with(
+                &client,
+                "place_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            let level_link = placed_level.rsplit(' ').next().unwrap().to_owned();
+            let level_tree = until_with(
+                &client,
+                "scene_tree",
+                json!({ "root": level_link }),
+                |tree| tree.contains(" props [link → "),
+            )
+            .await;
+            let inner_link = tree_id(&level_tree, "props");
+            let nested_tree = until_with(
+                &client,
+                "scene_tree",
+                json!({ "root": inner_link }),
+                |tree| linked_row(tree, "Lantern"),
+            )
+            .await;
+            ok_with(
+                &client,
+                "add_component",
+                json!({ "entity": tree_id(&nested_tree, "Lantern"), "component": "editor::mcp::Samples" }),
+            )
+            .await;
+            let nested = ok_with(&client, "inspect", json!({ "entity": level_link })).await;
+            let inner_removal = error_with(
+                &client,
+                "remove_link_change",
+                json!({ "entity": inner_link, "index": 0 }),
+            )
+            .await;
+            ok(&client, "save").await;
+            let world_file = std::fs::read(root.join(WORLD)).unwrap();
+            let placed_loop = ok_with(&client, "place_asset", json!({ "asset": LOOP })).await;
+            let loop_link = placed_loop.rsplit(' ').next().unwrap().to_owned();
+            let refused_tree = until_with(
+                &client,
+                "scene_tree",
+                json!({ "root": loop_link }),
+                |tree| tree.contains(" — refused: "),
+            )
+            .await;
+            let refused_link = ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": tree_id(&refused_tree, "again") }),
+            )
+            .await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset", "unsaved": "discard" }),
+            )
+            .await;
+            until(&client, "scene_tree", |tree| tree.contains("[link → ")).await;
+            let reaching = error_with(&client, "place_asset", json!({ "asset": WORLD })).await;
+            client.cancel().await.unwrap();
+            Links {
+                placed,
+                spawned_at,
+                top,
+                expanded,
+                own,
+                copied,
+                refused,
+                saved,
+                saved_file,
+                removed,
+                kept: serde_json::from_str(&kept).unwrap(),
+                resaved_file,
+                reloaded: serde_json::from_str(&reloaded).unwrap(),
+                after_reload,
+                note,
+                itself,
+                nested_tree,
+                nested: serde_json::from_str(&nested).unwrap(),
+                inner_removal,
+                world_file,
+                refused_tree,
+                refused_link: serde_json::from_str(&refused_link).unwrap(),
+                reaching,
+            }
+        },
+    ) else {
+        return;
+    };
+
+    let Links {
+        placed,
+        spawned_at,
+        top,
+        expanded,
+        own,
+        copied,
+        refused,
+        saved,
+        saved_file,
+        removed,
+        kept,
+        resaved_file,
+        reloaded,
+        after_reload,
+        note,
+        itself,
+        nested_tree,
+        nested,
+        inner_removal,
+        world_file,
+        refused_tree,
+        refused_link,
+        reaching,
+    } = served.result;
+    assert!(placed.starts_with("placed props as entity "), "{placed}");
+    assert_eq!(spawned_at, "5.00");
+    let link_rows: Vec<&str> = top
+        .lines()
+        .filter(|line| line.contains("[link → "))
+        .collect();
+    assert_eq!(link_rows.len(), 1, "{top}");
+    assert!(
+        link_rows[0].ends_with(" props [link → content/props.gasset] (0 changes)"),
+        "{top}"
+    );
+    assert!(!top.contains("(linked)"), "{top}");
+    for name in ["Anchor", "Lantern", "Helper"] {
+        assert!(linked_row(&expanded, name), "{expanded}");
+    }
+    assert!(
+        copied.contains(&NodeId::from_name_path("Anchor").0.to_string()),
+        "{copied}"
+    );
+    let linked = "Anchor is a linked node of content/props.gasset; add a component to it, or edit content/props.gasset";
+    for error in &refused {
+        assert_eq!(error["code"], "refused", "{error}");
+        assert!(
+            error["message"].as_str().unwrap().contains(linked),
+            "{error}"
+        );
+    }
+    assert_eq!(saved, "Saved content/level.gasset.");
+    let SavedLevel {
+        names,
+        link: saved_link,
+    } = saved_level(&saved_file);
+    assert_eq!(saved_link.scene, props_id);
+    assert_eq!(saved_link.changes.len(), 3, "{:?}", saved_link.changes);
+    assert_eq!(added_gain(&saved_link), 2.5);
+    assert_eq!(names.iter().filter(|name| *name == "Entity").count(), 2);
+    assert!(
+        names
+            .iter()
+            .all(|name| !["Anchor", "Lantern", "Helper"].contains(&name.as_str()))
+    );
+    let (_, level) = decode_content_asset::<Scene>(&saved_file).unwrap();
+    assert!(level.nodes.iter().any(|node| {
+        node.name == "Entity"
+            && node
+                .components
+                .iter()
+                .any(|component| component.type_name.ends_with("LinkParent"))
+    }));
+    assert_eq!(removed, "Removed change 1 from props.");
+    assert_eq!(kept["components"][0]["name"], "Light", "{kept}");
+    let resaved_link = saved_level(&resaved_file).link;
+    assert_eq!(resaved_link.changes.len(), 2, "{:?}", resaved_link.changes);
+    assert_eq!(added_gain(&resaved_link), 2.5);
+    let changes = reloaded["changes"].as_array().unwrap();
+    assert_eq!(changes.len(), 2, "{reloaded}");
+    assert!(
+        changes[0].as_str().unwrap().starts_with(&format!(
+            "0: AddComponent {} [Samples] — unapplied: ",
+            NodeId::from_name_path("Anchor")
+        )),
+        "{reloaded}"
+    );
+    assert_eq!(changes[1], "1: RemoveNode Helper — applied", "{reloaded}");
+    assert!(
+        after_reload.contains(&format!("{own} Entity ")),
+        "{after_reload}"
+    );
+    assert!(!linked_row(&after_reload, "Helper"), "{after_reload}");
+    assert_eq!(note, "second");
+    assert_eq!(itself["code"], "refused", "{itself}");
+    assert!(
+        itself["message"]
+            .as_str()
+            .unwrap()
+            .contains("a scene cannot link itself"),
+        "{itself}"
+    );
+    assert!(linked_row(&nested_tree, "Lantern"), "{nested_tree}");
+    assert_eq!(nested["state"], "spawned", "{nested}");
+    assert_eq!(
+        nested["changes"][0], "0: AddComponent Lantern [Samples] — applied",
+        "{nested}"
+    );
+    assert_eq!(inner_removal["code"], "refused", "{inner_removal}");
+    assert!(
+        inner_removal["message"]
+            .as_str()
+            .unwrap()
+            .contains("props is a linked node of content/level.gasset"),
+        "{inner_removal}"
+    );
+    let props_node = level
+        .nodes
+        .iter()
+        .find(|node| node.link.is_some())
+        .unwrap()
+        .id;
+    let world_link = saved_level(&world_file).link;
+    assert_eq!(world_link.scene, level_id);
+    assert!(
+        matches!(&world_link.changes[..], [LinkChange::AddComponent { path, .. }]
+            if path.ids() == [props_node, NodeId::from_name_path("Lantern")]),
+        "{:?}",
+        world_link.changes
+    );
+    let refused_row = refused_tree
+        .lines()
+        .find(|line| line.contains(" again [link → content/loop.gasset]"))
+        .unwrap_or_else(|| panic!("{refused_tree}"));
+    assert!(
+        refused_row.contains(" — refused: content/loop.gasset links itself through "),
+        "{refused_tree}"
+    );
+    assert!(
+        refused_link["state"]
+            .as_str()
+            .unwrap()
+            .starts_with("refused: content/loop.gasset links itself"),
+        "{refused_link}"
+    );
+    assert_eq!(reaching["code"], "refused", "{reaching}");
+    assert!(
+        reaching["message"]
+            .as_str()
+            .unwrap()
+            .contains("a scene cannot link itself"),
+        "{reaching}"
+    );
 }
 
 struct Saves {

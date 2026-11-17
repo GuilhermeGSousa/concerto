@@ -10,8 +10,9 @@ use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_reflect::{apply_value, to_value, Reflect, ReflectedValue};
 use concerto_render::components::camera::Camera;
 use concerto_scene::capture::{capture_scene, capture_subtree};
+use concerto_scene::node_id::{NodeId, SceneNodeId};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
-use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world};
+use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world, SpawnFilter};
 use glam::Vec3;
 
 fn world() -> World {
@@ -34,9 +35,11 @@ fn transform(x: f32) -> Transform {
 
 fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) -> SceneNode {
     SceneNode {
+        id: NodeId(name.len() as u64),
         name: name.into(),
         children,
         components,
+        link: None,
     }
 }
 
@@ -61,6 +64,7 @@ struct Stored {
 
 #[derive(Debug, PartialEq)]
 struct Comparable {
+    id: NodeId,
     name: String,
     children: Vec<usize>,
     components: Vec<Stored>,
@@ -71,6 +75,7 @@ fn comparable(scene: &Scene) -> Vec<Comparable> {
         .nodes
         .iter()
         .map(|node| Comparable {
+            id: node.id,
             name: node.name.clone(),
             children: node.children.clone(),
             components: node
@@ -89,7 +94,7 @@ fn comparable(scene: &Scene) -> Vec<Comparable> {
 struct Fixture(Scene, Entity);
 
 fn spawn_fixture(mut cmd: CommandQueue, fixture: Res<Fixture>) {
-    spawn_scene(&mut cmd, &fixture.0, fixture.1);
+    spawn_scene(&mut cmd, &fixture.0, fixture.1, &SpawnFilter::default());
 }
 
 fn spawn(world: &mut World, scene: Scene) -> Entity {
@@ -102,17 +107,23 @@ fn spawn(world: &mut World, scene: Scene) -> Entity {
 }
 
 #[test]
-fn the_root_is_not_a_node_and_unnamed_entities_get_an_empty_name() {
+fn the_root_is_not_a_node_and_unnamed_entities_get_an_empty_name_and_a_unique_id() {
     let mut world = world();
     let root = world.spawn((Transform::IDENTITY, Name::new("wrapper")));
     let child = world.spawn(transform(5.0));
+    let kept = NodeId::from_name_path("#0");
+    let holder = world.spawn((Name::new("holder"), SceneNodeId(kept)));
     world.entity_mut(root).add_child(child);
+    world.entity_mut(root).add_child(holder);
 
     let captured = capture_scene(&world, root).unwrap();
 
-    assert_eq!(captured.nodes.len(), 1);
+    assert_eq!(captured.nodes.len(), 2);
     assert_eq!(captured.nodes[0].name, "");
     assert_eq!(captured.nodes[0].components[0].type_name, Transform::name());
+    assert_eq!(captured.nodes[1].id, kept);
+    assert_ne!(captured.nodes[0].id, kept);
+    assert!(captured.nodes[1].components.is_empty());
 }
 
 #[test]
@@ -191,7 +202,7 @@ fn a_scene_spawned_by_command_or_in_the_world_captures_back_to_what_was_spawned(
     let queued = spawn(&mut world, scene.clone());
     let direct = world.spawn(Transform::IDENTITY);
 
-    let spawned = spawn_scene_in_world(&mut world, &scene, direct);
+    let spawned = spawn_scene_in_world(&mut world, &scene, direct, &SpawnFilter::default());
 
     assert_eq!(spawned.node_entities.len(), 4);
     assert_eq!(

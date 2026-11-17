@@ -28,7 +28,7 @@ use concerto_reflect::Reflect;
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{
     scene::Scene,
-    spawner::{SpawnedScene, spawn_scene},
+    spawner::{SpawnFilter, SpawnedScene, spawn_scene},
 };
 use glam::Vec3;
 
@@ -228,7 +228,7 @@ fn show_rig_stage(on: On<ShowRigStage>, mut sides: ResMut<RigSides>, mut cmd: Co
     let scene = stage
         .scene
         .as_ref()
-        .map(|scene| spawn_scene(&mut cmd, scene, root));
+        .map(|scene| spawn_scene(&mut cmd, scene, root, &SpawnFilter::default()));
     side.stage = Some(ShownStage {
         skeleton: Arc::clone(&stage.skeleton),
         skeleton_id: stage.skeleton_id,
@@ -585,6 +585,7 @@ mod tests {
     use concerto_editor::{hosted::testing::plain_recipe, preview::PreviewPlugin};
     use concerto_foundation::{assets::handle::AssetHandle, transform::Transform};
     use concerto_mesh::skeleton::SkeletonComponent;
+    use concerto_scene::node_id::NodeId;
     use concerto_scene::scene::SceneNode;
     use glam::{Mat4, Quat, Vec3};
     use uuid::Uuid;
@@ -675,9 +676,11 @@ mod tests {
     fn scene_of(skeleton_id: AssetId) -> Scene {
         let node = |name: &str, children: Vec<usize>| {
             let mut node = SceneNode {
+                id: NodeId::from_name_path(name),
                 name: name.into(),
                 children,
                 components: vec![],
+                link: None,
             };
             node.push_component(&Transform::IDENTITY).unwrap();
             node

@@ -10,11 +10,19 @@ use concerto_ecs::{
 };
 use concerto_foundation::transform::Transform;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
-use concerto_scene::{capture::capture_subtree, scene::Scene, spawner::spawn_scene_in_world};
+use concerto_scene::{
+    capture::capture_subtree,
+    node_id::{NodeId, SceneNodeId},
+    scene::Scene,
+    spawner::{SpawnFilter, spawn_scene_in_world},
+};
 
-use crate::tools::{
-    scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
-    selection::Select,
+use crate::{
+    links::{LinkedEdit, record_removal, refusal},
+    tools::{
+        scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
+        selection::Select,
+    },
 };
 
 /// A structural change to an open scene, or to a game's world, which has no scene root. Trigger it; one listener applies it.
@@ -102,6 +110,7 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
                 Name::new("Entity"),
                 Transform::IDENTITY,
                 SyncWithRenderWorld,
+                SceneNodeId(NodeId::fresh()),
             ));
             if let Some(parent) = parent {
                 world.entity_mut(*parent).add_child(child);
@@ -110,16 +119,22 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
         }
         EntityEdit::Delete(entity) => {
             let parent = editable(world, *entity)?;
+            record_removal(world, *entity);
             world.despawn(*entity);
             Ok(Applied::Removed(parent))
         }
         EntityEdit::Duplicate(entity) => {
             let parent = editable(world, *entity)?;
-            let scene = capture_subtree(world, *entity)?;
+            refuse_linked(world, *entity, LinkedEdit::Duplicate)?;
+            let mut scene = capture_subtree(world, *entity)?;
+            for node in &mut scene.nodes {
+                node.id = NodeId::fresh();
+            }
             Ok(Applied::Changed(spawn_beside(world, &scene, parent)))
         }
         EntityEdit::Rename { entity, name } => {
             editable(world, *entity)?;
+            refuse_linked(world, *entity, LinkedEdit::Rename)?;
             let name = name.trim();
             if name.is_empty() {
                 bail!("a name cannot be empty");
@@ -131,6 +146,13 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
             }
             Ok(Applied::Changed(None))
         }
+    }
+}
+
+fn refuse_linked(world: &World, entity: Entity, edit: LinkedEdit) -> anyhow::Result<()> {
+    match refusal(world, entity, edit) {
+        Some(reason) => bail!(reason),
+        None => Ok(()),
     }
 }
 
@@ -169,7 +191,7 @@ fn editable(world: &mut World, entity: Entity) -> anyhow::Result<Option<Entity>>
 
 fn spawn_beside(world: &mut World, scene: &Scene, parent: Option<Entity>) -> Option<Entity> {
     let holder = parent.unwrap_or_else(|| world.spawn(()));
-    let spawned = spawn_scene_in_world(world, scene, holder);
+    let spawned = spawn_scene_in_world(world, scene, holder, &SpawnFilter::default());
     if parent.is_none() {
         for root in &spawned.root_entities {
             world.remove_component::<ChildOf>(*root);
@@ -188,7 +210,7 @@ pub(crate) fn in_open_scene(world: &mut World, entity: Entity) -> anyhow::Result
 }
 
 /// Whether `entity` is the scene root; an error if it is not part of an open scene at all.
-fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
+pub(crate) fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
     scene_member_by(entity, |entity| {
         world.entity_is_valid(entity).then(|| {
             (
@@ -262,10 +284,15 @@ mod tests {
         world.register_component::<Children>();
         world.register_component::<Name>();
         let root = world.spawn((Transform::IDENTITY, SceneRoot));
-        let node = world.spawn((Name::new("node"), Transform::IDENTITY));
+        let node = world.spawn((
+            Name::new("node"),
+            Transform::IDENTITY,
+            SceneNodeId(NodeId(1)),
+        ));
         let child = world.spawn((
             Name::new("child"),
             Transform::from_translation(glam::Vec3::X * 7.0),
+            SceneNodeId(NodeId(2)),
         ));
         world.entity_mut(root).add_child(node);
         world.entity_mut(node).add_child(child);
@@ -307,6 +334,11 @@ mod tests {
         fn valid(&mut self, entity: Entity) -> bool {
             self.world().entity_is_valid(entity)
         }
+        fn node_id(&mut self, entity: Entity) -> Option<NodeId> {
+            self.world()
+                .get_component_for_entity::<SceneNodeId>(entity)
+                .map(|id| id.0)
+        }
     }
 
     #[test]
@@ -320,6 +352,10 @@ mod tests {
             .unwrap();
         assert_eq!(f.children(node), [child, created]);
         assert_eq!(f.name(created), "Entity");
+        assert!(
+            f.node_id(created)
+                .is_some_and(|id| id != NodeId(1) && id != NodeId(2))
+        );
         assert!(
             f.world()
                 .get_component_for_entity::<SyncWithRenderWorld>(created)
@@ -340,6 +376,13 @@ mod tests {
         let copied_child = f.children(copy)[0];
         assert_ne!(copied_child, child);
         assert_eq!(f.name(copied_child), "child");
+        let copied = [f.node_id(copy), f.node_id(copied_child)];
+        assert!(
+            copied
+                .iter()
+                .all(|id| id.is_some_and(|id| id != NodeId(1) && id != NodeId(2)))
+        );
+        assert_ne!(copied[0], copied[1]);
         assert_eq!(
             f.world()
                 .get_component_for_entity::<Transform>(copied_child)

@@ -17,6 +17,7 @@ pub mod import_fold;
 pub mod inspected_asset;
 pub mod inspector;
 pub mod joint_picker;
+pub mod links;
 pub mod mcp;
 pub mod name_menu;
 pub mod placement;
@@ -91,6 +92,7 @@ impl Plugin for EditorPlugin {
         });
         app.register_plugin(inspected_asset::InspectedAssetPlugin);
         app.register_plugin(placement::AssetPlacementPlugin);
+        app.register_plugin(links::LinksPlugin);
         app.register_plugin(timeline::TimelinePlugin);
         app.register_plugin(graph_canvas::GraphCanvasPlugin);
         app.register_plugin(drag_drop::DragDropPlugin);

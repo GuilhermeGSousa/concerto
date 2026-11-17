@@ -11,8 +11,10 @@ use concerto_ecs::{
 use concerto_foundation::transform::{GlobalTransform, Transform};
 use concerto_mesh::Ray;
 use concerto_render::components::camera::Camera;
+use concerto_scene::link::LinkedNode;
 use glam::{Mat4, Quat, Vec2, Vec3};
 
+use crate::links::linked_in_open_scene_by;
 use crate::tools::{
     camera::{EditorCamera, FlyCamera, ViewportPointer, fill_pointer_from_window},
     picking::{ray_through, world_to_viewport},
@@ -236,7 +238,11 @@ fn update_gizmo(
     cameras: Query<(Entity, &EditorCamera, &Camera)>,
     roots: Query<&SceneRoot>,
     globals: Query<&GlobalTransform>,
-    parents: Query<&ChildOf>,
+    (parents, linked, members): (
+        Query<&ChildOf>,
+        Query<&LinkedNode>,
+        Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
+    ),
     transforms: Query<&mut Transform>,
     mut state: ResMut<GizmoState>,
     mut gizmos: DebugGizmos,
@@ -248,7 +254,9 @@ fn update_gizmo(
     }
     let mode = state.mode;
     let target = selection.entity().filter(|entity| {
-        roots.get_entity(*entity).is_none() && transforms.get_entity(*entity).is_some()
+        roots.get_entity(*entity).is_none()
+            && transforms.get_entity(*entity).is_some()
+            && linked_in_open_scene_by(*entity, &linked, &members).is_none()
     });
     if state
         .drag

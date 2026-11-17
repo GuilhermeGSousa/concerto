@@ -7,7 +7,10 @@ use concerto_ecs::{Entity, World, component::scene::SceneEntityRef};
 use concerto_foundation::transform::Transform;
 use concerto_name::Name;
 use concerto_navigation::{NavEdge, NavGraph, NavLink, NavLinks, NavPoint, NavigationPlugin};
-use concerto_scene::{capture::capture_scene, spawner::spawn_scene_in_world};
+use concerto_scene::{
+    capture::capture_scene,
+    spawner::{SpawnFilter, spawn_scene_in_world},
+};
 use glam::Vec3;
 
 fn app() -> App {
@@ -60,7 +63,7 @@ fn a_saved_scene_spawns_with_every_link_resolved_to_the_spawned_points() {
     let mut game = app();
     let world = game.main_mut().world_mut();
     let parent = world.spawn(());
-    let spawned = spawn_scene_in_world(world, &scene, parent);
+    let spawned = spawn_scene_in_world(world, &scene, parent, &SpawnFilter::default());
     let [a, b, c] = [
         spawned.node_entities[0],
         spawned.node_entities[1],

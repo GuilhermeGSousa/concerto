@@ -65,17 +65,21 @@ load in the background:
 use concerto::{
     ecs::{CommandQueue, Res},
     foundation::assets::{asset_server::AssetServer, handle::AssetHandle},
-    scene::{scene::Scene, spawner::SceneSpawnerComponent},
+    scene::{link::SceneLink, scene::Scene},
 };
 
 fn spawn_hero(mut cmd: CommandQueue, assets: Res<AssetServer>) {
     let scene: AssetHandle<Scene> = assets.load::<Scene>(HERO);
-    cmd.spawn((SceneSpawnerComponent(scene), Transform::default()));
+    cmd.spawn(SceneLink::new(scene));
 }
 ```
 
-`SceneSpawnerComponent` spawns the scene's entities under its entity once the
-scene has loaded. Other handles go in their own components: a mesh in
+`SceneLink` spawns the scene's entities under its entity once the scene has
+loaded, tags each with `LinkedNode`, and spawns them again whenever the scene
+loads again; `SceneLinkState` says whether it is `Waiting`, `Spawned` or
+`Refused`, and `SceneLinkSpawned` is written each time it spawns. A scene node
+that is itself a link spawns as a `SceneLink` of its own. Other handles go in
+their own components: a mesh in
 `MeshComponent`, a material in `MaterialComponent`, an animation graph in
 `AnimationHandleComponent`.
 A mesh with no material, or with a `MaterialComponent` whose handle

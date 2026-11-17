@@ -197,16 +197,23 @@ as a plain run does. A game that exits with a failure fails the command.
 
 ## Engine dependencies
 
-Without `--engine`, each engine dependency is the tool's own version:
+`new` and `editor` take the checkout from the `CONCERTO_ENGINE` environment
+variable when `--engine` is absent, so `export CONCERTO_ENGINE=~/concerto`
+points every project they create at that checkout. `--engine` wins over it, and
+`editor --update` ignores it, keeping the engine `editor/Cargo.toml` names.
+
+Without `--engine` or `CONCERTO_ENGINE`, each engine dependency is the tool's
+own version:
 
 ```toml
 concerto = "0.1.0"
 ```
 
 That form builds only against a release on crates.io that contains this work,
-and the published 0.1.0 does not, so the tool warns when `--engine` is absent.
+and the published 0.1.0 does not, so the tool warns when neither names a
+checkout.
 
-With `--engine <path>`, a Concerto checkout resolved against the working
+With `--engine <path>` or `CONCERTO_ENGINE`, a Concerto checkout resolved against the working
 directory, each dependency also names its own crate in that checkout: `.` for
 `concerto`, `crates/asset-build` for `concerto-asset-build`, `crates/editor` for
 `concerto-editor`, and `crates/<dir>` for a plugin package `concerto-<dir>`.

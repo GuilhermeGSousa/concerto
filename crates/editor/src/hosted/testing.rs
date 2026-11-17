@@ -29,6 +29,7 @@ use concerto_foundation::{
     },
     transform::Transform,
 };
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
 use concerto_ui::{focus::FocusedWidget, node::UINode, theme::UITheme};
 use concerto_window::{
@@ -50,7 +51,7 @@ use crate::{
         EditorDocument, PreviewSpec, Unsaved,
     },
     guard::UnsavedGuard,
-    hierarchy::HierarchyState,
+    hierarchy::{HierarchyState, RowLooks},
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
     preview::PreviewSignalQueue,
     project::{Project, ProjectState},
@@ -283,9 +284,11 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
         .iter()
         .map(|name| {
             let mut node = SceneNode {
+                id: NodeId::from_name_path(name),
                 name: (*name).into(),
                 children: vec![],
                 components: vec![],
+                link: None,
             };
             node.push_component(&Transform::IDENTITY).unwrap();
             node
@@ -350,6 +353,7 @@ impl SceneFixture {
             clipboard: None,
         });
         world.insert_resource(HierarchyState::default());
+        world.insert_resource(RowLooks::default());
         world.insert_resource(InspectorData::default());
         world.insert_resource(PropertyCommits::default());
         world.insert_resource(ComponentEdits::default());

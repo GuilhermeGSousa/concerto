@@ -281,4 +281,8 @@ pub mod glyph {
     pub const GRAPH: char = '\u{EB58}';
     /// `database` — a motion database.
     pub const DATABASE: char = '\u{E1DE}';
+    /// `link-simple` — a placed scene.
+    pub const LINK_SIMPLE: char = '\u{E2E6}';
+    /// `pencil-simple` — a linked node its link changes.
+    pub const PENCIL_SIMPLE: char = '\u{E3B4}';
 }
