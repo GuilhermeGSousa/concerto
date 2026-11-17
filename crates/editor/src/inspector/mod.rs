@@ -38,6 +38,7 @@ mod name_field;
 mod name_text;
 mod numeric;
 mod paths;
+mod reflect_rows;
 mod registry;
 mod rows;
 mod sync;
@@ -74,6 +75,7 @@ pub(crate) use list::{ListEdit, ListEditor};
 pub(crate) use paths::{
     LIST_LIMIT, ListedPath, ShownPath, cut_note, find_path, listed_paths, shown_paths, unknown_path,
 };
+pub use reflect_rows::{ReflectRows, ReflectRowsPlugin};
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};

@@ -1230,6 +1230,19 @@ while no scene is the edit target. It reaches its document through
 closes its menus on a change of `ActiveEditor`, because `Remove<EditTarget>`
 does not fire between value tabs.
 
+### Rows for any value
+
+A panel that edits a reflected value it holds itself, outside any document,
+puts `ReflectRows { value, types }` on one of its UI entities, with
+`ReflectRowsPlugin` registered after `InspectorPlugin`, as `EditorPlugin` does.
+The entity shows a row per property of `value`, as `InspectorRegistry::collect`
+and the registered property editors give them, with the types of `types`, so a
+type the panel's registry holds needs nothing registered on the editor's `App`.
+An edit in a row is written into `value`, so `Changed<ReflectRows>` tells the
+owner. Inserting another `ReflectRows` shows the new value. A value with no rows
+shows "No settings". The edit does not belong to a document: it reports no
+`Hosted<PropertyCommitted>`, and a refused edit is only logged.
+
 ### Enums and options
 
 A reflected enum is edited with nothing registered on the editor's `App`.

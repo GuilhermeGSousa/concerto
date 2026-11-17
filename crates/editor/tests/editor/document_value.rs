@@ -7,10 +7,11 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Component, Entity, ResMut, Resource, World,
+    Changed, Component, Entity, Query, ResMut, Resource, World,
     command::EntityCommandQueue,
     entity::hierarchy::{ChildOf, Children},
     events::{event_channel::EventChannel, event_reader::EventReader},
+    reflect::AppTypeRegistry,
 };
 use concerto_editor::{
     asset_editor::{
@@ -24,7 +25,8 @@ use concerto_editor::{
     },
     inspector::{
         DocumentValue, InspectedComponent, InspectedValues, PlainRow, PropertyCommits, PropertyRow,
-        PropertyRowValue, PropertyTarget, RefreshInspector, ShownValue, ValueCard,
+        PropertyRowValue, PropertyTarget, ReflectRows, ReflectRowsPlugin, RefreshInspector,
+        ShownValue, ValueCard,
     },
     project::ProjectState,
     tools::{
@@ -44,8 +46,10 @@ use concerto_foundation::assets::{
 use concerto_mesh::Mesh;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_ui::{
+    checkbox::{UICheckbox, UICheckboxChanged},
     focus::FocusedWidget,
     interaction::UIClick,
+    node::UINode,
     text::UIText,
     text_input::{UITextInput, UITextInputSubmitted},
 };
@@ -81,6 +85,13 @@ struct Rates {
 #[derive(Reflect, Default)]
 struct Look {
     mesh: AssetHandle<Mesh>,
+}
+
+#[derive(Reflect, Default, Debug, PartialEq)]
+struct Packing {
+    mode: Mode,
+    limit: Option<f32>,
+    mips: bool,
 }
 
 #[derive(Component)]
@@ -170,6 +181,16 @@ fn count_scene_edits(mut edited: EventReader<Hosted<SceneEdited>>, mut edits: Re
     edits.0 += edited.read().count();
 }
 
+#[derive(Resource, Default)]
+struct RowChanges(usize);
+
+fn count_row_changes(
+    changed: Query<&ReflectRows, Changed<ReflectRows>>,
+    mut changes: ResMut<RowChanges>,
+) {
+    changes.0 += changed.iter().count();
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Notes;
 impl Asset for Notes {
@@ -254,9 +275,12 @@ fn editing() -> Editing {
                 .insert_resource(UnsavedGuard::default())
                 .insert_resource(Reports::default())
                 .insert_resource(SceneEdits::default())
+                .insert_resource(RowChanges::default())
+                .register_plugin(ReflectRowsPlugin)
                 .add_system(Update, process_editor_commands)
                 .add_system(LateUpdate, record_reports)
-                .add_system(LateUpdate, count_scene_edits);
+                .add_system(LateUpdate, count_scene_edits)
+                .add_system(LateUpdate, count_row_changes);
         },
     );
     editor.main_mut().world_mut().insert(
@@ -488,6 +512,24 @@ impl Editing {
         panic!("the row has no text field");
     }
 
+    fn check(&mut self, row: Entity, checked: bool) {
+        let world = self.world();
+        let mut pending = vec![row];
+        while let Some(entity) = pending.pop() {
+            if world
+                .get_component_for_entity::<UICheckbox>(entity)
+                .is_some()
+            {
+                world.trigger_on(entity, UICheckboxChanged { checked });
+                return;
+            }
+            if let Some(children) = world.get_component_for_entity::<Children>(entity) {
+                pending.extend(children.iter().copied());
+            }
+        }
+        panic!("the row has no checkbox");
+    }
+
     fn field_text(&mut self, field: Entity) -> String {
         self.world()
             .get_component_for_entity::<UITextInput>(field)
@@ -658,4 +700,47 @@ fn a_value_edit_keeps_the_rows_so_a_focused_field_keeps_its_text() {
     assert_eq!(w.held(document).rates.fast, 3.0);
     assert_eq!((w.row_entity("fast"), w.row_entity("slow")), (fast, slow));
     assert_eq!(w.field_text(slow_field), "12");
+}
+
+#[test]
+fn reflect_rows_edit_their_value_and_tell_the_owner_by_change_detection() {
+    let mut w = editing();
+    let types = AppTypeRegistry::default();
+    types.write().register::<Packing>();
+    let widget = w.world().spawn((
+        UINode::default(),
+        ReflectRows {
+            value: Box::new(Packing::default()),
+            types,
+        },
+    ));
+    w.editor.update();
+    let changes = w.world().get_resource::<RowChanges>().unwrap().0;
+
+    let mode = w.row_entity("mode");
+    w.click_last_child(mode);
+    w.editor.update();
+    w.click_labelled("Loud");
+    w.editor.update();
+    let limit = w.row_entity("limit");
+    w.check(limit, true);
+    w.editor.update();
+    let mips = w.row_entity("mips");
+    w.check(mips, true);
+    w.editor.update();
+
+    let world = w.world();
+    let rows = world
+        .get_component_for_entity::<ReflectRows>(widget)
+        .unwrap();
+    let value: &dyn std::any::Any = rows.value.as_ref();
+    assert_eq!(
+        value.downcast_ref::<Packing>(),
+        Some(&Packing {
+            mode: Mode::Loud,
+            limit: Some(0.0),
+            mips: true,
+        })
+    );
+    assert_eq!(world.get_resource::<RowChanges>().unwrap().0, changes + 3);
 }
