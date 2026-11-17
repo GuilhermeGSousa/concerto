@@ -310,7 +310,11 @@ fn write_settings(
         if shown.contains_entity(entity) {
             continue;
         }
-        let Some(row) = staging.rows.get_mut(rows.row) else {
+        let Some(row) = staging
+            .rows
+            .get_mut(rows.row)
+            .filter(|row| row.destination == rows.destination)
+        else {
             continue;
         };
         let Some(importer) = row
