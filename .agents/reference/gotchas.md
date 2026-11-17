@@ -303,6 +303,8 @@ fix the entry in the same commit as the change that made it false.
   its key. A change to how a derived input decodes or migrates, made without
   raising `DERIVED_VERSION`, leaves a staged cooked blob (and a cached one)
   derived by the old code; cook again, or delete `derived-cache/`.
+- **Cooked files hold no editor-only section.** A cook drops every one, so a
+  cooked asset whose blob is refused cannot derive: its load fails.
 - **Large scenes take a long time to load in a debug build.** A scene
   such as Sponza can need more than 40 seconds before anything but the clear
   colour and the grid appears. That looks exactly like a broken renderer.

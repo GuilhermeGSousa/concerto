@@ -1,3 +1,5 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::BTreeMap;
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
@@ -29,9 +31,13 @@ use crate::{
 use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
-    content::{decode_content_payload, AssetRecord, ContentFile, DerivedSection, EmbeddedAsset},
+    content::{
+        decode_content_payload, decode_editor_only, AssetRecord, ContentFile, DerivedSection,
+        EditorOnlyBytes, EmbeddedAsset,
+    },
     derived::{
         derived_hook, note_derived_kind, CookedBlob, DerivedData, DerivedDataCache, DerivedHook,
+        DerivedLoad,
     },
     handle::{AssetHandle, AssetLifetimeEvent, AssetLoadFailed},
     registry::{AssetEntry, AssetRegistry},
@@ -40,7 +46,7 @@ use super::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
-    content::asset_record,
+    content::{asset_record, read_content_asset_header, read_editor_only_section},
     derived::{cook_hook, record_is_derived, CookHook, CookReport},
 };
 
@@ -106,6 +112,15 @@ pub(crate) struct AssetInfo {
     handle: Weak<StrongAssetHandle>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+struct CookFile<'a> {
+    root: &'a ContentAssetRoot,
+    dir: &'a Path,
+    address: &'a str,
+    entries: &'a [&'a AssetEntry],
+    hooks: &'a HashMap<&'static str, CookHook>,
+}
+
 struct RecordLoad<'a> {
     id: AssetId,
     location: &'a str,
@@ -149,7 +164,18 @@ fn load_record<A: LoadableAsset>(load: RecordLoad<'_>) -> RecordFuture<'_> {
                     },
                     blob: cooked.blob.to_vec(),
                 });
-                asset = *hook(Box::new(asset), cooked, server)
+                let editor_only = record.editor_only.map(|bytes| EditorOnlyBytes {
+                    kind: record.kind.to_string(),
+                    kind_version: record.kind_version,
+                    bytes: bytes.to_vec(),
+                });
+                let load = DerivedLoad {
+                    id,
+                    asset: Box::new(asset),
+                    cooked,
+                    editor_only,
+                };
+                asset = *hook(load, server)
                     .await?
                     .downcast::<A>()
                     .map_err(|_| anyhow::anyhow!("the derived hook returned another type"))?;
@@ -362,70 +388,152 @@ impl AssetServer {
             .insert(A::name(), cook_hook::<A>);
     }
 
-    /// Whether files of `kind` hold a derived type, whose assets that derive [`cook`](Self::cook) writes.
+    /// Whether files of `kind` hold a derived type, whose assets that derive [`cook`](Self::cook) writes with their blob.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn can_cook(&self, kind: &str) -> bool {
         self.data.cook_hooks.read().unwrap().contains_key(kind)
     }
 
-    /// Writes every asset of the registry that derives to `<out>/<address>` with its derived blob, in address order, stopping at the first error; the report lists only those written.
+    /// Writes to `<out>/<address>` every file of the registry whose asset derives, with its derived blob, and every other file that has an editor-only section, all without their editor-only sections, in address order, stopping at the first error; the report lists only those written.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cook(&self, out: &Path) -> anyhow::Result<CookReport> {
         let (root, registry) = self.content_source();
+        let ContentAssetRoot::Directory(dir) = &root else {
+            anyhow::bail!("a cook reads its content from a directory, and this server's content root is a URL");
+        };
         let hooks = self.data.cook_hooks.read().unwrap().clone();
-        let mut entries: Vec<&AssetEntry> = registry
-            .iter()
-            .filter(|entry| hooks.contains_key(entry.kind.as_str()))
-            .collect();
-        entries.sort_by(|a, b| a.address.cmp(&b.address));
+        let mut files: BTreeMap<&str, Vec<&AssetEntry>> = BTreeMap::new();
+        for entry in registry.iter() {
+            files.entry(entry.address.as_str()).or_default().push(entry);
+        }
         let mut report = CookReport::default();
-        for entry in entries {
-            let hook = hooks[entry.kind.as_str()];
-            let written = self.cook_entry(&root, entry, hook, out).with_context(|| {
-                format!(
-                    "failed to cook the {} at '{}'",
-                    entry.kind,
-                    entry.location()
-                )
-            })?;
+        for (address, entries) in files {
+            let file = CookFile {
+                root: &root,
+                dir,
+                address,
+                entries: &entries,
+                hooks: &hooks,
+            };
+            let written = self
+                .cook_file(file, out)
+                .with_context(|| format!("failed to cook '{address}'"))?;
             if written {
-                report.cooked.push(entry.address.clone());
+                report.cooked.push(address.to_owned());
             }
         }
         Ok(report)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn cook_entry(
-        &self,
-        root: &ContentAssetRoot,
-        entry: &AssetEntry,
-        hook: CookHook,
-        out: &Path,
-    ) -> anyhow::Result<bool> {
-        let file = pollster::block_on(try_read_relative(root, &entry.address))?
-            .with_context(|| format!("no content asset at '{}'", entry.address))?;
-        if let Some(embedded) = &entry.embedded_in {
-            let record = asset_record(&file, Some(&embedded.name))?;
-            if record_is_derived(&entry.kind, &record)? {
-                anyhow::bail!(
-                    "{} is embedded in an import's file; embedded assets cannot be cooked yet",
-                    entry.location()
-                );
-            }
+    fn cook_file(&self, file: CookFile<'_>, out: &Path) -> anyhow::Result<bool> {
+        let CookFile {
+            root,
+            dir,
+            address,
+            entries,
+            hooks,
+        } = file;
+        let has_editor_only = read_content_asset_header(&dir.join(address))?.has_editor_only();
+        let hooked = entries
+            .iter()
+            .any(|entry| hooks.contains_key(entry.kind.as_str()));
+        if !has_editor_only && !hooked {
             return Ok(false);
         }
-        let Some(cooked) = pollster::block_on(hook(entry.id, file, self.clone()))? else {
-            return Ok(false);
+        let stripped = pollster::block_on(try_read_relative(root, address))?
+            .with_context(|| format!("no content asset at '{address}'"))?;
+        let mut cooked = None;
+        for entry in entries {
+            let Some(&hook) = hooks.get(entry.kind.as_str()) else {
+                continue;
+            };
+            match &entry.embedded_in {
+                Some(embedded) => {
+                    let record = asset_record(&stripped, Some(&embedded.name))?;
+                    if record_is_derived(&entry.kind, &record)? {
+                        anyhow::bail!(
+                            "{} is embedded in an import's file; embedded assets cannot be cooked yet",
+                            entry.location()
+                        );
+                    }
+                }
+                None => {
+                    cooked = pollster::block_on(hook(entry.id, stripped.clone(), self.clone()))
+                        .with_context(|| {
+                            format!(
+                                "failed to cook the {} at '{}'",
+                                entry.kind,
+                                entry.location()
+                            )
+                        })?;
+                }
+            }
+        }
+        let bytes = match cooked {
+            Some(cooked) => cooked,
+            None if has_editor_only => stripped,
+            None => return Ok(false),
         };
-        let path = out.join(&entry.address);
+        let path = out.join(address);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create '{}'", parent.display()))?;
         }
-        std::fs::write(&path, cooked)
+        std::fs::write(&path, bytes)
             .with_context(|| format!("failed to write '{}'", path.display()))?;
         Ok(true)
+    }
+
+    /// The editor-only data of the asset `id`, read alone from its file through the published root and registry; `None` when its record has none, as in a cooked file.
+    pub async fn load_editor_only<A: Asset>(
+        &self,
+        id: AssetId,
+    ) -> anyhow::Result<Option<A::EditorOnly>> {
+        let (root, registry) = self.content_source();
+        let entry = registry
+            .get(id)
+            .with_context(|| format!("no content asset registered for AssetId {id:?}"))?;
+        let location = entry.location();
+        let section = match &root {
+            #[cfg(not(target_arch = "wasm32"))]
+            ContentAssetRoot::Directory(dir) => {
+                let path = dir.join(&entry.address);
+                let name = entry.embedded_in.as_ref().map(|held| held.name.clone());
+                blocking::unblock(move || read_editor_only_section(&path, name.as_deref())).await?
+            }
+            _ => {
+                let file = try_read_relative(&root, &entry.address)
+                    .await?
+                    .with_context(|| format!("no content asset at '{}'", entry.address))?;
+                let content = ContentFile::parse(&file)
+                    .with_context(|| format!("malformed content asset '{location}'"))?;
+                let record = match &entry.embedded_in {
+                    None => content.host(),
+                    Some(held) => content
+                        .header()
+                        .embedded
+                        .iter()
+                        .find(|asset| asset.asset_id == id)
+                        .with_context(|| {
+                            format!("it holds no embedded asset '{}' with this id", held.name)
+                        })
+                        .and_then(|asset| content.embedded(asset)),
+                }
+                .with_context(|| format!("malformed content asset '{location}'"))?;
+                record.editor_only.map(|bytes| EditorOnlyBytes {
+                    kind: record.kind.to_string(),
+                    kind_version: record.kind_version,
+                    bytes: bytes.to_vec(),
+                })
+            }
+        };
+        let Some(section) = section else {
+            return Ok(None);
+        };
+        decode_editor_only::<A>(&section.kind, section.kind_version, &section.bytes)
+            .with_context(|| format!("malformed content asset '{location}'"))
+            .map(Some)
     }
 
     /// Replaces the cache derived loads read and write; every clone sees it.

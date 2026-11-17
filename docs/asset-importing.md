@@ -573,9 +573,15 @@ older. A section left by a file of another kind, which only
 read or migrated fails the save and leaves the file as it was.
 
 A section shares its payload's `kind_version`; see
-[Changing an asset type's encoding](#changing-an-asset-types-encoding). How
-loads skip sections, how a derive reads its own, and what a cook does with
-them are described in the sections on loading, derived data and cooking.
+[Changing an asset type's encoding](#changing-an-asset-types-encoding). A load
+never hands a section to the asset; see
+[Loading at runtime](#loading-at-runtime). A derive reads its asset's own
+section on a cache miss; see [Derived data](#derived-data). A cook writes
+every file without its sections; see [Cooking](#cooking).
+`AssetServer::load_editor_only::<A>(id).await` reads and decodes the section
+of the asset `id` through the server's root and registry, for code that has a
+server and no project root: `None` when the record has none, and an error for
+an id the registry does not hold.
 
 ## Changing an asset type's encoding
 
@@ -853,6 +859,13 @@ looks the rest up among that file's embedded assets. A name the file does not
 hold is a compile error that lists the names it does hold. It is also available as
 `concerto_foundation::asset_id!` and `concerto_foundation::assets::asset_id!`.
 
+A native load reads a file around its
+[editor-only sections](#editor-only-data): it reads the header, then seeks
+over each section, so their bytes never leave the disk, and the load sees the
+file as if it had none. An uncooked web build fetches each file whole,
+sections included, and ignores them unless a derive needs one. A cooked build
+has none to skip.
+
 Register the package's content directory for stable Rust build tracking, and
 embed the registry the build writes:
 
@@ -1000,7 +1013,7 @@ content tree. `MotionDatabase` is one: its file is the definition, and its
 | `derived_inputs()` | The content assets the blob is built from; none may itself derive |
 | `further_inputs(&inputs)` | Further content assets named by the first inputs, such as the meshes a scene places; empty unless the type overrides it, and under the same rules as `derived_inputs()` |
 | `derived_key(&inputs)` | A `u64` that is equal for inputs giving an equal blob |
-| `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)` |
+| `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)`; it may read the asset's own editor-only data with `inputs.own_editor_only::<Self>()` |
 | `apply_derived(&blob)` | Takes the blob into the asset's runtime part |
 
 Whether an asset derives is decided per asset, not per type. One whose
@@ -1039,6 +1052,23 @@ handle reads as loaded only once the blob is applied, and a missing input, an
 input that itself derives, first or further, or a failed derive fails the load. `AssetServer::add` derives nothing: code that adds a
 derived asset in memory attaches the computed part itself.
 
+A type with [editor-only data](#editor-only-data) derives from it:
+`inputs.own_editor_only::<Self>()` gives `derive` a reference to the asset's
+own section, decoded. The section is read only after a cache miss, or after a
+cached or cooked blob was refused, and only for a type whose `EditorOnly` is
+not `()`: a native load reads it from the file then, alone, and an uncooked
+web load decodes the bytes its fetch already holds. A cache hit and a cooked
+blob read no section. `derived_key` is always called without it, so the key
+comes from the payload alone, which therefore keeps whatever identifies the
+section, such as a hash of it. `own_editor_only` fails when the file holds no
+section, and in `derived_key`, with an error naming the type and saying that
+a cooked file never holds editor-only data; so a cooked asset whose blob is
+refused fails to load instead of deriving. A native load reads the file and
+the section at two moments, so a type whose section must match its payload
+checks that in `derive`. Code that derives in memory, with no file, hands the
+value over itself:
+`DerivedInputs::default().with_own_editor_only::<A>(value)`.
+
 The key covers the definition and the bytes of its inputs, not code. A change
 to an engine `derive` raises `DERIVED_VERSION`. Code a game registers, such as
 the `extract` of a game's own `FeatureChannel`, is in no key and no version, so
@@ -1059,7 +1089,9 @@ the browser, on the main thread. A cooked build carries the blobs instead.
 ### Cooking
 
 A cook writes the blob of each asset that derives into a copy of its `.gasset` file, as a
-trailing derived section, so a shipped build applies it without deriving. It is
+trailing derived section, so a shipped build applies it without deriving, and
+writes every file that has [editor-only sections](#editor-only-data) without
+them, so a shipped build holds none. It is
 run through the project tool:
 
 ```sh
@@ -1078,24 +1110,32 @@ after `--`.
    `DrawTarget`, runs each plugin's `build` and never its `finish`, and runs no
    frame. It points the `AssetServer` at the project's `content/` and its
    `derived-cache/`, and calls `AssetServer::cook`.
-3. `AssetServer::cook` takes every registry entry whose kind is a registered
-   derived type, in address order. It asks the type's `file_is_derived`
-   first. An asset that doesn't derive is skipped: it isn't decoded, no file is
-   written and the `CookReport` leaves its address out. One that derives is
+3. `AssetServer::cook` takes every file of the registry, in address order,
+   and reads its header from disk. A file with no editor-only section and no
+   asset whose kind is a registered derived type is skipped without being
+   read. Any other is read as a load reads it, without its sections. For a
+   loose or host asset of a derived type the cook asks the type's
+   `file_is_derived` first; one that derives is
    decoded and its `on_load` runs; then it derives or takes a cache hit as a
-   load does, and
-   writes `<out>/<address>`: the original header and payload bytes, unchanged,
-   plus the section. A cached blob that `apply_derived` refuses is derived
-   again, never cooked. An embedded asset that doesn't derive is skipped too;
+   load does, reading its own editor-only section on a miss, and
+   writes `<out>/<address>`: the original header and payload bytes
+   plus the derived section, and no editor-only section. A cached blob that `apply_derived` refuses is derived
+   again, never cooked. An embedded asset that doesn't derive is left as it is;
    one that derives fails the cook, with an error giving its `<address>#<name>`
-   and saying embedded assets cannot be cooked yet. No importer writes one. The
-   first failure stops the cook and fails the command, naming the asset.
+   and saying embedded assets cannot be cooked yet. No importer writes one.
+   A file whose asset doesn't derive, or is of any other kind, is written to
+   `<out>/<address>` when it has an editor-only section, on the host or on an
+   embedded asset, as the same file without its sections; with none, no file
+   is written. The `CookReport` lists the address of every file written, the
+   command prints each as `cooked <address>` and then `cooked <n> files`, and
+   the cook needs a content root that is a directory. The
+   first failure stops the cook and fails the command, naming the file.
 4. The cooked files are *staged*: each is copied over the file at the same
    path in what the build ships, `<exe dir>/<exe stem>-content/` natively,
    or `<dist>/` after `trunk build` for the web. A cooked file whose path the
    build doesn't ship is skipped.
 
-The committed `content/` never holds a section, and `build.rs` and
+The committed `content/` never holds a derived section, and `build.rs` and
 `index.html` don't change. A later `cargo build` that changes `content/` reruns
 `build.rs`, which copies the raw files back over the cooked ones, and the game
 derives at load again. A load applies a cooked blob without checking its key,
