@@ -31,6 +31,8 @@ impl BoneMask {
 }
 
 impl Asset for BoneMask {
+    type EditorOnly = ();
+
     const FORMAT_VERSION: u32 = 1;
 
     fn name() -> &'static str {

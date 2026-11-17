@@ -414,6 +414,8 @@ mod tests {
         size: u32,
     }
     impl Asset for Prop {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "TestProp"
         }
@@ -466,6 +468,7 @@ mod tests {
                 nodes: vec![node("left"), node("right")],
                 referenced_assets: vec![],
             },
+            None,
             &dir,
             "content/props/pair.gasset",
             &mut registry,
@@ -476,6 +479,7 @@ mod tests {
                 vertices: vec![],
                 indices: vec![],
             },
+            None,
             &dir,
             "content/props/crate.gasset",
             &mut registry,
@@ -483,6 +487,7 @@ mod tests {
         .unwrap();
         let prop = save_content_asset_into(
             &Prop { size: 3 },
+            None,
             &dir,
             "content/props/lamp.gasset",
             &mut registry,
@@ -490,6 +495,7 @@ mod tests {
         .unwrap();
         let broken = save_content_asset_into(
             &Prop { size: 4 },
+            None,
             &dir,
             "content/props/broken.gasset",
             &mut registry,

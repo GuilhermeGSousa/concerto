@@ -36,6 +36,8 @@ impl AudioClip {
 }
 
 impl Asset for AudioClip {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "AudioClip"
     }

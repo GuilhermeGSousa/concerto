@@ -188,6 +188,7 @@ impl ClipProject {
     fn save(&mut self, name: &str, clip: &AnimationClip) -> AssetId {
         save_content_asset_into(
             clip,
+            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,

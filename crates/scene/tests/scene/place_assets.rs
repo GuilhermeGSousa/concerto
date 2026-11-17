@@ -96,6 +96,7 @@ fn placing_a_scene_adds_its_roots_as_children() {
             ],
             referenced_assets: vec![],
         },
+        None,
         &root,
         "content/props/pair.gasset",
         &mut registry,

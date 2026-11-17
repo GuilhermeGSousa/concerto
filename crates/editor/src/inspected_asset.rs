@@ -421,6 +421,8 @@ mod tests {
         weight: f32,
     }
     impl Asset for Note {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "TestNote"
         }
@@ -440,6 +442,8 @@ mod tests {
         label: String,
     }
     impl Asset for Tag {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "TestTag"
         }
@@ -462,6 +466,8 @@ mod tests {
         mirror: Option<JointName>,
     }
     impl Asset for Rig {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "TestRig"
         }
@@ -594,7 +600,7 @@ mod tests {
     fn write_asset<A: Asset>(f: &mut SceneFixture, address: &str, asset: &A) -> AssetEntry {
         let root = f.project_root.clone();
         let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-        let id = save_content_asset_into(asset, &root, address, assets).unwrap();
+        let id = save_content_asset_into(asset, None, &root, address, assets).unwrap();
         assets.get(id).unwrap().clone()
     }
 

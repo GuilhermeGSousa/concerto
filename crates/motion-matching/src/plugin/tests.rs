@@ -111,15 +111,30 @@ impl Project {
             AssetId::new().simple_hex()
         ));
         let mut registry = AssetRegistry::new();
-        let skeleton_id =
-            save_content_asset_into(&skeleton(), &root, "content/skeleton.gasset", &mut registry)
-                .unwrap();
-        let walk_id =
-            save_content_asset_into(&walk_forward(), &root, "content/walk.gasset", &mut registry)
-                .unwrap();
-        let turn_id =
-            save_content_asset_into(&turn_left(), &root, "content/turn.gasset", &mut registry)
-                .unwrap();
+        let skeleton_id = save_content_asset_into(
+            &skeleton(),
+            None,
+            &root,
+            "content/skeleton.gasset",
+            &mut registry,
+        )
+        .unwrap();
+        let walk_id = save_content_asset_into(
+            &walk_forward(),
+            None,
+            &root,
+            "content/walk.gasset",
+            &mut registry,
+        )
+        .unwrap();
+        let turn_id = save_content_asset_into(
+            &turn_left(),
+            None,
+            &root,
+            "content/turn.gasset",
+            &mut registry,
+        )
+        .unwrap();
         Self {
             root,
             registry,
@@ -137,6 +152,7 @@ impl Project {
         database.channels = vec![FeatureChannelData::live(Pace { weight })];
         let id = save_content_asset_into(
             &database,
+            None,
             &self.root,
             "content/database.gasset",
             &mut self.registry,

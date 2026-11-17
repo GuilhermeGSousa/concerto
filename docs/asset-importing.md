@@ -520,6 +520,63 @@ of one record, the host for `None` or an embedded asset by name, as
 `EditorOnlyBytes { kind, kind_version, bytes }`; it returns `None` for a record
 with no section and an error for a name the file does not hold.
 
+## Editor-only data
+
+An asset type can keep data in its file that only tools need, such as the
+source an importer derived the asset from. It is the record's editor-only
+section, described in the file format above. Each type declares one
+editor-only type, `Asset::EditorOnly`. A derived type names it next to
+`#[derive(Asset)]`, in the same attribute as the version or in one of its
+own, and gets `()` when it names none; a hand-written `impl Asset` writes
+`type EditorOnly = …;`, or `type EditorOnly = ();` for a type with none:
+
+```rust
+#[derive(Asset, Serialize, Deserialize)]
+#[asset(version = 2, editor_only = GearDrawing)]
+struct Gear {
+    teeth: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GearDrawing {
+    strokes: u32,
+}
+```
+
+A section is optional for each record, also for a type that declares one, so
+readers return an `Option` and writers take one. A value that serializes to
+zero bytes, as `()` does, writes no section.
+
+The section is read on its own, through
+`concerto_foundation::assets::content`:
+
+- `read_editor_only::<A>(project_root, entry)` reads and decodes the section
+  of one registry entry, a loose file or an embedded asset, without reading
+  its payload. It returns `None` for a record with no section.
+- `read_asset_record_without_editor_only(project_root, entry)` returns the
+  same standalone record as `read_asset_record` with no section, and does not
+  read the section from disk. `read_asset_record` returns the record with its
+  section.
+- `decode_editor_only::<A>(kind, version, bytes)` decodes a section's bytes,
+  as `read_editor_only_section` returns them.
+
+It is written by the two save functions of
+[Editor-authored assets](#editor-authored-assets), which take
+`editor_only: Option<&A::EditorOnly>` after the value. `Some` writes that
+value as the file's section. `None` keeps the section of the file being
+replaced, and writes none for a new file or for one that has none, so a save
+that does not hold the data cannot drop it. A kept section is copied as its
+bytes when the file is at the type's `FORMAT_VERSION`, and decoded through
+`migrate_editor_only` and written at the current version when the file is
+older. A section left by a file of another kind, which only
+`save_content_asset_into` can replace, is dropped. A section that cannot be
+read or migrated fails the save and leaves the file as it was.
+
+A section shares its payload's `kind_version`; see
+[Changing an asset type's encoding](#changing-an-asset-types-encoding). How
+loads skip sections, how a derive reads its own, and what a cook does with
+them are described in the sections on loading, derived data and cooking.
+
 ## Changing an asset type's encoding
 
 Each asset type has its own payload version, `Asset::FORMAT_VERSION`, which
@@ -543,10 +600,20 @@ self-describing, so a payload cannot absorb a new field with
 `#[serde(default)]`: any change to a type's serialized fields, their order or
 their types is a new encoding.
 
+A type's [editor-only data](#editor-only-data) has no version of its own. A
+section is written under the same `kind_version` as its payload, and
+`decode_editor_only::<A>` decodes it by the same table, with
+`A::migrate_editor_only(version, bytes)` for an older one, which also rejects
+by default. A change to either the payload's encoding or the editor-only
+type's encoding therefore raises the one `FORMAT_VERSION`.
+
 Each content type's encoding is pinned by a test. `check_encoding(&value, dir)`
 (`concerto_foundation::assets::content`) serializes the value and compares the
 bytes with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`. The checks sit in each
-crate's serialization test, with the fixtures in its `tests/encoding/`:
+crate's serialization test, with the fixtures in its `tests/encoding/`. A type
+with editor-only data pins that too, with
+`check_editor_only_encoding::<A>(&value, dir)`, whose fixture is
+`<dir>/<A::name()>.editor-only.v<A::FORMAT_VERSION>.bin`:
 
 | Test file | Types |
 |---|---|
@@ -596,12 +663,18 @@ When you change one:
    `migrate` matches on the version, decodes the frozen struct with bincode and
    converts it; an older version converts through each newer one in turn.
    Without a migration, older files fail to load with an error that says to
-   re-import their source or re-create them in the editor.
+   re-import their source or re-create them in the editor. A type with
+   editor-only data that writes `migrate` writes `migrate_editor_only` beside
+   it, also when the section's encoding did not change, in which case it
+   decodes the bytes as they are. Without it an older file's payload still
+   migrates, but its section is refused wherever it is decoded, and a save
+   that would keep it fails.
 3. Bless the new fixture with
    `CONCERTO_BLESS_ENCODING=1 cargo test -p <crate> --test <dir>`, where
    `<dir>` is the directory under the crate's `tests/` that holds its
    `main.rs`, run the test again without the variable, and commit the new
-   `.bin` file. Keep the old version's fixture while its `migrate` arm
+   `.bin` file, and the new `.editor-only` one for a type with editor-only
+   data. Keep the old version's fixture while its `migrate` arm
    exists, with a test that passes it through `decode_content_asset` and
    checks the converted value; delete it when you choose rejection.
 4. Migration happens in memory: the file keeps its old version until it is
@@ -1045,12 +1118,15 @@ instance. `save_content_asset_into` writes one directly:
 ```rust
 use concerto_foundation::assets::content::save_content_asset_into;
 
-let id = save_content_asset_into(&scene, project_root, "content/levels/intro.gasset", &mut registry)?;
+let id = save_content_asset_into(&scene, None, project_root, "content/levels/intro.gasset", &mut registry)?;
 ```
 
 It writes the `.gasset` file (with `provenance: None`), keeping the id already
 in that file's header, and upserts the entry in `registry`, an `AssetRegistry`
-in memory. No registry file is written. This API is separate from source
+in memory. The second argument is the asset's
+[editor-only data](#editor-only-data): `None` keeps the section of the file
+being replaced when that file holds the same kind, and `Some(&value)` writes
+`value` in its place. No registry file is written. This API is separate from source
 importing and does not create a source sidecar. The `project_root` is the
 source tree under version control — deliberately *not* the exe-relative
 runtime root, so a save is not overwritten by the next build.
@@ -1063,11 +1139,12 @@ edit to an imported asset and leave it owned by its source,
 ```rust
 use concerto_foundation::assets::content::resave_content_asset;
 
-let id = resave_content_asset(&clip, project_root, "content/walk/animation_walk.gasset", &mut registry)?;
+let id = resave_content_asset(&clip, None, project_root, "content/walk/animation_walk.gasset", &mut registry)?;
 ```
 
 It fails when there is no file at the address or the file holds another kind,
-keeps the header's id and provenance, writes the references and
+keeps the header's id and provenance, keeps the file's editor-only section
+for `None` or replaces it for `Some(&value)`, writes the references and
 `kind_version` of `value`, and upserts the entry in `registry` with the same
 provenance. The next re-import of the source then overwrites the saved edit.
 

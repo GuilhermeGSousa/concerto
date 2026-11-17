@@ -117,6 +117,8 @@ fn input_bytes(inputs: &DerivedInputs, id: AssetId) -> anyhow::Result<&[u8]> {
 }
 
 impl Asset for NavMesh {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "NavMesh"
     }

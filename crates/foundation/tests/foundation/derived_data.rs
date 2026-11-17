@@ -27,6 +27,8 @@ struct Leaf {
 }
 
 impl Asset for Leaf {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "Leaf"
     }
@@ -44,6 +46,8 @@ struct Sum<const V: u32> {
 }
 
 impl<const V: u32> Asset for Sum<V> {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "Sum"
     }
@@ -139,6 +143,8 @@ impl Maybe {
 }
 
 impl Asset for Maybe {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "Maybe"
     }
@@ -201,6 +207,8 @@ struct Pointer {
 }
 
 impl Asset for Pointer {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "Pointer"
     }
@@ -227,6 +235,8 @@ impl Chain {
 }
 
 impl Asset for Chain {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "Chain"
     }
@@ -303,6 +313,7 @@ impl Project {
     fn leaf(&mut self, name: &str, value: u64) -> AssetId {
         save_content_asset_into(
             &Leaf { value },
+            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -318,6 +329,7 @@ impl Project {
                 b,
                 total: None,
             },
+            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -328,6 +340,7 @@ impl Project {
     fn maybe(&mut self, name: &str, value: &Maybe) -> AssetId {
         save_content_asset_into(
             value,
+            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -338,6 +351,7 @@ impl Project {
     fn pointer(&mut self, name: &str, target: AssetId) -> AssetId {
         save_content_asset_into(
             &Pointer { target },
+            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -348,6 +362,7 @@ impl Project {
     fn chain(&mut self, name: &str, tag: &str, pointer: AssetId) -> AssetId {
         save_content_asset_into(
             &Chain::new(tag, pointer),
+            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,

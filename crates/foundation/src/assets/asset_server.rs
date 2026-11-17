@@ -906,6 +906,8 @@ mod tests {
     const REFUSED: u32 = u32::MAX;
 
     impl Asset for FixtureAsset {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "FixtureAsset"
         }
@@ -967,7 +969,7 @@ mod tests {
 
     fn save<A: Asset>(dir: &std::path::Path, value: &A, address: &str) -> Saved {
         let mut registry = AssetRegistry::new();
-        let id = save_content_asset_into(value, dir, address, &mut registry).unwrap();
+        let id = save_content_asset_into(value, None, dir, address, &mut registry).unwrap();
         Saved { id, registry }
     }
 
@@ -1363,6 +1365,8 @@ mod tests {
     }
 
     impl Asset for ProbeAsset {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "ProbeAsset"
         }
@@ -1436,6 +1440,8 @@ mod tests {
     struct GatedAsset(u32);
 
     impl Asset for GatedAsset {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "GatedAsset"
         }

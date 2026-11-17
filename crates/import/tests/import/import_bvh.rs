@@ -146,8 +146,14 @@ fn a_re_import_overwrites_a_resaved_clip_and_rebuilds_its_events_from_the_sideca
     edited
         .add_animation_events(&BTreeMap::from([("edited".to_string(), vec![0.05])]))
         .unwrap();
-    resave_content_asset(&edited, project.path(), address, &mut AssetRegistry::new())
-        .expect("resave");
+    resave_content_asset(
+        &edited,
+        None,
+        project.path(),
+        address,
+        &mut AssetRegistry::new(),
+    )
+    .expect("resave");
 
     import(&source(scratch.path()), project.path()).expect("re-import");
 

@@ -191,7 +191,7 @@ pub(crate) fn definition() -> MotionDatabase {
 pub(crate) fn write_asset<A: Asset>(f: &mut SceneFixture, address: &str, asset: &A) -> AssetEntry {
     let root = f.project_root.clone();
     let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-    let id = save_content_asset_into(asset, &root, address, assets).unwrap();
+    let id = save_content_asset_into(asset, None, &root, address, assets).unwrap();
     assets.get(id).unwrap().clone()
 }
 
@@ -281,10 +281,15 @@ fn install_alone_plays_a_definitions_preview_and_saves_and_discards_in_the_edito
     let root = directory.path();
     let mut assets = AssetRegistry::default();
     let skeleton = skeleton_of(&["Hips", "Spine", "Head"]);
-    let skeleton =
-        save_content_asset_into(&skeleton, root, "content/hero/skeleton.gasset", &mut assets);
+    let skeleton = save_content_asset_into(
+        &skeleton,
+        None,
+        root,
+        "content/hero/skeleton.gasset",
+        &mut assets,
+    );
     let walk = clip_of(10, 0..3);
-    let walk = save_content_asset_into(&walk, root, "content/hero/walk.gasset", &mut assets);
+    let walk = save_content_asset_into(&walk, None, root, "content/hero/walk.gasset", &mut assets);
     let opened = MotionDatabase {
         skeleton: AssetHandle::weak(skeleton.unwrap()),
         entries: vec![MotionEntry {
@@ -294,7 +299,13 @@ fn install_alone_plays_a_definitions_preview_and_saves_and_discards_in_the_edito
         }],
         ..Default::default()
     };
-    let id = save_content_asset_into(&opened, root, "content/hero/database.gasset", &mut assets);
+    let id = save_content_asset_into(
+        &opened,
+        None,
+        root,
+        "content/hero/database.gasset",
+        &mut assets,
+    );
     let asset = assets.get(id.unwrap()).unwrap().clone();
     let mut project = ProjectState::default();
     project.project = Some(Project {

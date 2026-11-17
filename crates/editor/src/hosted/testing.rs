@@ -116,6 +116,8 @@ macro_rules! test_asset {
         pub struct $asset;
 
         impl Asset for $asset {
+            type EditorOnly = ();
+
             fn name() -> &'static str {
                 stringify!($asset)
             }
@@ -821,6 +823,8 @@ impl SceneFixture {
 pub struct GatedAsset;
 
 impl concerto_foundation::assets::Asset for GatedAsset {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "GatedAsset"
     }

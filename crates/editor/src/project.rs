@@ -633,6 +633,8 @@ mod tests {
     struct Versioned;
 
     impl Asset for Versioned {
+        type EditorOnly = ();
+
         const FORMAT_VERSION: u32 = 2;
 
         fn name() -> &'static str {

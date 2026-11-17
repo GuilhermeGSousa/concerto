@@ -437,6 +437,8 @@ impl MotionDatabase {
 }
 
 impl Asset for MotionDatabase {
+    type EditorOnly = ();
+
     const FORMAT_VERSION: u32 = 3;
 
     fn name() -> &'static str {

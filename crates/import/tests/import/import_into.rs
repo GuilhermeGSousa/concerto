@@ -475,7 +475,8 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     );
     let mut registry =
         AssetRegistry::from_content_tree(root, "content", "gasset").expect("registry");
-    resave_content_asset(&edited, root, &normal_entry.address, &mut registry).expect("resave");
+    resave_content_asset(&edited, None, root, &normal_entry.address, &mut registry)
+        .expect("resave");
     write_material_gltf(scratch.path(), 4);
     let second = import_source_into(
         &gltf,

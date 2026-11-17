@@ -323,6 +323,8 @@ impl StandardMaterial {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Asset for StandardMaterial {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "StandardMaterial"
     }

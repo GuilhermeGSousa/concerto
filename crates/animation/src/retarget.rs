@@ -341,6 +341,8 @@ impl RetargetRig {
 }
 
 impl Asset for RetargetRig {
+    type EditorOnly = ();
+
     const FORMAT_VERSION: u32 = 2;
 
     fn name() -> &'static str {

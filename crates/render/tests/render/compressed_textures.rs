@@ -112,6 +112,7 @@ impl Content {
         );
         save_content_asset_into(
             &texture,
+            None,
             &self.project.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,

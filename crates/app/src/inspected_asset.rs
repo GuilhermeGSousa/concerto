@@ -58,7 +58,7 @@ fn create<A: CreatableAsset>(
     address: &str,
     registry: &mut AssetRegistry,
 ) -> anyhow::Result<AssetId> {
-    save_content_asset_into(&A::new_asset(), project_root, address, registry)
+    save_content_asset_into(&A::new_asset(), None, project_root, address, registry)
 }
 
 fn decode<A: Asset + Reflect>(bytes: &[u8]) -> anyhow::Result<DecodedAsset> {
@@ -78,7 +78,7 @@ fn save<A: Asset + Reflect>(
     let value = value
         .downcast_ref::<A>()
         .with_context(|| format!("the value to save is not a {}", A::name()))?;
-    save_content_asset_into(value, project_root, address, registry)
+    save_content_asset_into(value, None, project_root, address, registry)
 }
 
 #[cfg(test)]
@@ -98,6 +98,8 @@ mod tests {
         weight: f32,
     }
     impl Asset for Note {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "TestNote"
         }
@@ -117,6 +119,8 @@ mod tests {
         label: String,
     }
     impl Asset for Tag {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "TestTag"
         }

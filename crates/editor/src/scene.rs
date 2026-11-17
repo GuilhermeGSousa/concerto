@@ -342,7 +342,7 @@ fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Re
         .get_resource_mut::<AssetRegistry>()
         .context("The editor has no asset registry")?;
     let address = source.address;
-    let id = save_content_asset_into(scene, &root, &address, registry)?;
+    let id = save_content_asset_into(scene, None, &root, &address, registry)?;
     let saved = registry
         .get(id)
         .cloned()

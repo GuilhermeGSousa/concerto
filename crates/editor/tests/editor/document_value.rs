@@ -194,6 +194,8 @@ fn count_row_changes(
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Notes;
 impl Asset for Notes {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "Notes"
     }
@@ -202,6 +204,8 @@ impl Asset for Notes {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Sketch;
 impl Asset for Sketch {
+    type EditorOnly = ();
+
     fn name() -> &'static str {
         "Sketch"
     }

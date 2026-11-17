@@ -538,6 +538,8 @@ impl Default for AnimationClip {
 }
 
 impl Asset for AnimationClip {
+    type EditorOnly = ();
+
     const FORMAT_VERSION: u32 = 3;
 
     fn name() -> &'static str {

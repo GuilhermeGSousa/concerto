@@ -760,8 +760,14 @@ fn write_stage(root: &Path) -> AssetId {
         vec![Uuid::from_u128(1), Uuid::from_u128(2)],
     )
     .unwrap();
-    let skeleton =
-        save_content_asset_into(&skeleton, root, "content/skeleton.gasset", &mut registry).unwrap();
+    let skeleton = save_content_asset_into(
+        &skeleton,
+        None,
+        root,
+        "content/skeleton.gasset",
+        &mut registry,
+    )
+    .unwrap();
     let node = |name: &str, children: Vec<usize>| {
         let mut node = SceneNode {
             id: NodeId::from_name_path(name),
@@ -785,12 +791,12 @@ fn write_stage(root: &Path) -> AssetId {
         nodes: vec![armature, node("root", vec![2]), node("driven", vec![])],
         referenced_assets: vec![skeleton],
     };
-    save_content_asset_into(&scene, root, "content/scene.gasset", &mut registry).unwrap();
+    save_content_asset_into(&scene, None, root, "content/scene.gasset", &mut registry).unwrap();
     let bare = Scene {
         nodes: vec![node("prop", vec![])],
         referenced_assets: vec![],
     };
-    save_content_asset_into(&bare, root, "content/bare.gasset", &mut registry).unwrap()
+    save_content_asset_into(&bare, None, root, "content/bare.gasset", &mut registry).unwrap()
 }
 
 async fn previewed_from(client: &Client, node: u32) -> String {
@@ -1161,7 +1167,7 @@ fn nodes_added_and_connected_by_edit_graph_are_saved_into_the_graphs_file() {
     f.add_delivery(save_graphs.into_boxed_system());
     let root = f.project_root.clone();
     let registry = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-    let id = save_content_asset_into(&AnimationGraph::new(), &root, GRAPH, registry).unwrap();
+    let id = save_content_asset_into(&AnimationGraph::new(), None, &root, GRAPH, registry).unwrap();
     let asset = registry.get(id).unwrap().clone();
     f.request(&asset);
     let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();

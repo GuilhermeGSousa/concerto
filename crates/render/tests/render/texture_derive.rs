@@ -291,6 +291,7 @@ fn a_cooked_texture_loads_its_levels_without_deriving() {
     );
     let id = save_content_asset_into(
         &texture,
+        None,
         &project.root,
         "content/swatch.gasset",
         &mut registry,

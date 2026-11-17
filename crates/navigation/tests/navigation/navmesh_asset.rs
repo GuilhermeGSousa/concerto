@@ -56,6 +56,7 @@ impl Project {
     fn save<A: Asset>(&mut self, name: &str, value: &A) -> AssetId {
         save_content_asset_into(
             value,
+            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,

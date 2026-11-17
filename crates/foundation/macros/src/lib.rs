@@ -124,38 +124,63 @@ pub fn asset(input: TokenStream) -> TokenStream {
     impl_asset(&ast)
 }
 
-fn asset_version(ast: &syn::DeriveInput) -> syn::Result<Option<u32>> {
-    let mut version = None;
+#[derive(Default)]
+struct AssetAttributes {
+    version: Option<u32>,
+    editor_only: Option<syn::Type>,
+}
+
+fn asset_attributes(ast: &syn::DeriveInput) -> syn::Result<AssetAttributes> {
+    let mut attributes = AssetAttributes::default();
     for attr in ast
         .attrs
         .iter()
         .filter(|attr| attr.path().is_ident("asset"))
     {
         attr.parse_nested_meta(|meta| {
-            let expected = || meta.error("expected #[asset(version = …)] with an integer literal");
+            if meta.path.is_ident("editor_only") {
+                attributes.editor_only = Some(meta.value()?.parse::<syn::Type>().map_err(|_| {
+                    meta.error("expected #[asset(editor_only = …)] with a type")
+                })?);
+                return Ok(());
+            }
+            let expected = || {
+                meta.error(
+                    "expected #[asset(version = …)] with an integer literal or #[asset(editor_only = …)] with a type",
+                )
+            };
             if !meta.path.is_ident("version") {
                 return Err(expected());
             }
             match meta.value().and_then(|value| value.parse::<syn::Lit>()) {
                 Ok(syn::Lit::Int(int)) => {
-                    version = Some(int.base10_parse::<u32>()?);
+                    attributes.version = Some(int.base10_parse::<u32>()?);
                     Ok(())
                 }
                 _ => Err(expected()),
             }
         })?;
     }
-    Ok(version)
+    Ok(attributes)
 }
 
 fn impl_asset(ast: &syn::DeriveInput) -> TokenStream {
     let name = &ast.ident;
-    let version = match asset_version(ast) {
-        Ok(version) => version.map(|version| quote! { const FORMAT_VERSION: u32 = #version; }),
+    let attributes = match asset_attributes(ast) {
+        Ok(attributes) => attributes,
         Err(error) => return error.to_compile_error().into(),
+    };
+    let version = attributes
+        .version
+        .map(|version| quote! { const FORMAT_VERSION: u32 = #version; });
+    let editor_only = match attributes.editor_only {
+        Some(editor_only) => quote! { #editor_only },
+        None => quote! { () },
     };
     let gen = quote! {
         impl Asset for #name {
+            type EditorOnly = #editor_only;
+
             #version
 
             fn name() -> &'static str {

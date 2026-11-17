@@ -132,6 +132,18 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
         )
     }
 
+    /// Data the asset's file keeps for tools; loads never read it and a cook drops it.
+    type EditorOnly: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static;
+
+    /// Decodes an editor-only section written at `version`, older than `FORMAT_VERSION`; the default rejects it.
+    fn migrate_editor_only(version: u32, _bytes: &[u8]) -> anyhow::Result<Self::EditorOnly> {
+        anyhow::bail!(
+            "the editor-only data of {} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            Self::name(),
+            Self::FORMAT_VERSION
+        )
+    }
+
     /// AssetIds of every sub-asset this one references — the import tool's
     /// reference-integrity pass. Empty for leaf assets.
     fn referenced_sub_assets(&self) -> Vec<AssetId> {

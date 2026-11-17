@@ -1019,6 +1019,8 @@ mod tests {
     }
 
     impl concerto_foundation::assets::Asset for Blob {
+        type EditorOnly = ();
+
         fn name() -> &'static str {
             "Blob"
         }
