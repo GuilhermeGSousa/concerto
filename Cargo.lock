@@ -1418,6 +1418,7 @@ name = "concerto-gltf"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bincode",
  "concerto-animation",
  "concerto-app",
@@ -1433,7 +1434,6 @@ dependencies = [
  "concerto-scene",
  "glam 0.33.12",
  "gltf",
- "image",
  "log",
  "serde",
  "toml",
@@ -1459,6 +1459,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
+ "image",
  "log",
  "proptest",
  "serde",
@@ -1785,6 +1786,7 @@ dependencies = [
  "profiling",
  "send_wrapper",
  "serde",
+ "toml",
  "web-sys",
  "wgpu",
  "wgpu-types",

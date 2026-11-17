@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use concerto_foundation::assets::content::decode_content_asset;
 use concerto_foundation::assets::{Asset, AssetId};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -50,6 +51,9 @@ pub struct ImportOutputs {
 /// (`"<source>#<sub>"`); the `import` tool substitutes content-tree paths.
 pub type SubAssetIdResolver = Box<dyn Fn(&str, Option<&str>) -> AssetId + Send + Sync>;
 
+/// Reads the standalone content record of the output a sub-asset name names, as the content holds it before this import.
+pub type PreviousOutputResolver = Box<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+
 pub struct ImportContext {
     relative_source: PathBuf,
     sub_assets: Vec<EmittedSubAsset>,
@@ -57,6 +61,8 @@ pub struct ImportContext {
     sub_asset_id_resolver: Option<SubAssetIdResolver>,
     renames: BTreeMap<String, String>,
     settings: toml::Table,
+    options: toml::Table,
+    previous_outputs: Option<PreviousOutputResolver>,
 }
 
 impl ImportContext {
@@ -68,6 +74,8 @@ impl ImportContext {
             sub_asset_id_resolver: None,
             renames: BTreeMap::new(),
             settings: toml::Table::new(),
+            options: toml::Table::new(),
+            previous_outputs: None,
         }
     }
 
@@ -86,6 +94,8 @@ impl ImportContext {
             sub_asset_id_resolver: Some(resolver),
             renames: BTreeMap::new(),
             settings: toml::Table::new(),
+            options: toml::Table::new(),
+            previous_outputs: None,
         }
     }
 
@@ -98,6 +108,32 @@ impl ImportContext {
     /// The importer settings from the source's sidecar; empty when it has none.
     pub fn settings(&self) -> &toml::Table {
         &self.settings
+    }
+
+    /// Sets the values given to this import alone, which nothing persists.
+    pub fn with_options(mut self, options: toml::Table) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The values given to this import alone; empty when it was given none.
+    pub fn options(&self) -> &toml::Table {
+        &self.options
+    }
+
+    /// Sets how [`ImportContext::previous`] reads the outputs the content already holds.
+    pub fn with_previous_outputs(mut self, resolver: PreviousOutputResolver) -> Self {
+        self.previous_outputs = Some(resolver);
+        self
+    }
+
+    /// The output `name` as the content holds it before this import, or `None` when there is none or it does not decode at this build's version.
+    pub fn previous<T: Asset>(&self, name: &str) -> Option<T> {
+        let resolve = self.previous_outputs.as_ref()?;
+        let record = resolve(name).or_else(|| resolve(self.renames.get(name)?))?;
+        decode_content_asset::<T>(&record)
+            .map(|(_, value)| value)
+            .ok()
     }
 
     /// Computes the stable AssetId a sub-asset name resolves to *within this

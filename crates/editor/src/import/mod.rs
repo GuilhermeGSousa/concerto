@@ -24,7 +24,13 @@ pub fn import_source_into(
     project_root: &Path,
 ) -> anyhow::Result<ImportedSource> {
     let config = ContentConfig::load_or_default(project_root)?;
-    concerto_import::import_source_into(source, destination, project_root, &config)
+    concerto_import::import_source_into(
+        source,
+        destination,
+        project_root,
+        &config,
+        toml::Table::new(),
+    )
 }
 
 /// A file chosen for import, and where it will be copied to.

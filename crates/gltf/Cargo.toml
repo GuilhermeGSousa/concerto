@@ -21,15 +21,12 @@ concerto-physics.workspace = true
 concerto-scene.workspace = true
 gltf = { version = "1.4.1", features = ["KHR_lights_punctual", "extras"] }
 anyhow = "1.0.97"
+base64 = "0.22"
 glam.workspace = true
 log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 uuid = { version = "1.18.1", features = ["v4", "js"] }
-
-[dependencies.image]
-version = "0.25.5"
-default-features = true
 
 [dev-dependencies]
 bincode = "1.3"

@@ -1,11 +1,39 @@
 use std::path::Path;
 
 use crate::assets::texture::{
-    SourceEncoding, Texture, TextureRole, TextureSettings, TextureSource,
+    initial_texture_settings, SourceEncoding, Texture, TextureRole, TextureSettings, TextureSource,
 };
 use concerto_asset_import::{ImportContext, ImportError, Importer};
 
 pub struct ImageImporter;
+
+/// The encoding of image file `bytes`, read from their signature.
+pub fn source_encoding(bytes: &[u8]) -> Result<SourceEncoding, String> {
+    match image::guess_format(bytes) {
+        Ok(image::ImageFormat::Png) => Ok(SourceEncoding::Png),
+        Ok(image::ImageFormat::Jpeg) => Ok(SourceEncoding::Jpeg),
+        Ok(format) => Err(format!(
+            "{format:?} images cannot be textures; use PNG or JPEG"
+        )),
+        Err(error) => Err(format!("not a PNG or JPEG image: {error}")),
+    }
+}
+
+/// The texture `name` of `ctx` from image file `bytes`, keeping the settings its previous import or the editor gave it, else taking `initial`.
+pub fn imported_texture(
+    ctx: &ImportContext,
+    name: &str,
+    role: TextureRole,
+    bytes: Vec<u8>,
+    initial: TextureSettings,
+) -> Result<Texture, String> {
+    let encoding = source_encoding(&bytes)?;
+    let source = TextureSource::new(bytes, encoding).map_err(|err| format!("{err:#}"))?;
+    let settings = ctx
+        .previous::<Texture>(name)
+        .map_or(initial, |previous| previous.settings);
+    Ok(Texture::imported(role, settings, source))
+}
 
 impl Importer for ImageImporter {
     fn supported_extensions(&self) -> &'static [&'static str] {
@@ -17,20 +45,15 @@ impl Importer for ImageImporter {
             source_path: source_path.to_path_buf(),
             message,
         };
-        let img = image::open(source_path).map_err(|err| malformed(err.to_string()))?;
-        let mut bytes = Vec::new();
-        img.write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .map_err(|err| malformed(err.to_string()))?;
-        let source = TextureSource::new(bytes, SourceEncoding::Png)
-            .map_err(|err| malformed(format!("{err:#}")))?;
-        let texture = Texture::imported(TextureRole::Color, TextureSettings::default(), source);
-
+        let initial = initial_texture_settings(ctx.options()).map_err(malformed)?;
+        let bytes = std::fs::read(source_path).map_err(|err| ImportError::SourceUnreadable {
+            source_path: source_path.to_path_buf(),
+            message: err.to_string(),
+        })?;
+        let texture =
+            imported_texture(ctx, "main", TextureRole::Color, bytes, initial).map_err(malformed)?;
         ctx.emit("main", &texture)
             .map_err(|err| malformed(format!("{err:?}")))?;
-
         Ok(())
     }
 }

@@ -223,8 +223,14 @@ fn a_gltf_import_is_one_scene_file_with_its_textures_and_clips_beside_it() {
     let source = root.join("assets/hero.gltf");
     write_hero(&source, 2);
     let import = || {
-        concerto_import::import_source_into(&source, "assets/hero.gltf", root, &Default::default())
-            .expect("import succeeds")
+        concerto_import::import_source_into(
+            &source,
+            "assets/hero.gltf",
+            root,
+            &Default::default(),
+            Default::default(),
+        )
+        .expect("import succeeds")
     };
     let scene = "content/hero/scene.gasset";
     let packed = [

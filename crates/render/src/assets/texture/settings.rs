@@ -107,3 +107,99 @@ impl TextureSettings {
         })
     }
 }
+
+const OPTIONS_KEY: &str = "texture_settings";
+
+fn compression_name(compression: Compression) -> &'static str {
+    match compression {
+        Compression::Auto => "auto",
+        Compression::Bc7 => "bc7",
+        Compression::Bc1 => "bc1",
+        Compression::Bc5 => "bc5",
+        Compression::Bc4 => "bc4",
+        Compression::Uncompressed => "uncompressed",
+    }
+}
+
+fn color_space_name(color_space: ColorSpace) -> &'static str {
+    match color_space {
+        ColorSpace::Srgb => "srgb",
+        ColorSpace::Linear => "linear",
+    }
+}
+
+/// The settings an import gives the textures it creates, read from its options' `texture_settings` table; the defaults when there is none.
+pub fn initial_texture_settings(options: &toml::Table) -> Result<TextureSettings, String> {
+    let mut settings = TextureSettings::default();
+    let Some(value) = options.get(OPTIONS_KEY) else {
+        return Ok(settings);
+    };
+    let Some(table) = value.as_table() else {
+        return Err(format!(
+            "{OPTIONS_KEY} must be a table of compression, color_space, max_size and mips, not {value}"
+        ));
+    };
+    for (key, value) in table {
+        let refused =
+            |expected: &str| format!("{OPTIONS_KEY}.{key} cannot be {value}; use {expected}");
+        match key.as_str() {
+            "compression" => {
+                settings.compression = match value.as_str() {
+                    Some("auto") => Compression::Auto,
+                    Some("bc7") => Compression::Bc7,
+                    Some("bc1") => Compression::Bc1,
+                    Some("bc5") => Compression::Bc5,
+                    Some("bc4") => Compression::Bc4,
+                    Some("uncompressed") => Compression::Uncompressed,
+                    _ => {
+                        return Err(refused(
+                            "\"auto\", \"bc7\", \"bc1\", \"bc5\", \"bc4\" or \"uncompressed\"",
+                        ))
+                    }
+                }
+            }
+            "color_space" => {
+                settings.color_space = Some(match value.as_str() {
+                    Some("srgb") => ColorSpace::Srgb,
+                    Some("linear") => ColorSpace::Linear,
+                    _ => return Err(refused("\"srgb\" or \"linear\", or leave it out for the role's")),
+                })
+            }
+            "max_size" => {
+                settings.max_size = match value.as_integer() {
+                    Some(4096) => MaxSize::S4096,
+                    Some(2048) => MaxSize::S2048,
+                    Some(1024) => MaxSize::S1024,
+                    Some(512) => MaxSize::S512,
+                    _ => return Err(refused("4096, 2048, 1024 or 512, or leave it out for none")),
+                }
+            }
+            "mips" => settings.mips = value.as_bool().ok_or_else(|| refused("true or false"))?,
+            _ => {
+                return Err(format!(
+                    "{OPTIONS_KEY} has no setting '{key}'; use compression, color_space, max_size or mips"
+                ))
+            }
+        }
+    }
+    Ok(settings)
+}
+
+/// The import options whose `texture_settings` give new textures `settings`; the inverse of [`initial_texture_settings`].
+pub fn texture_settings_options(settings: &TextureSettings) -> toml::Table {
+    let mut table = toml::Table::new();
+    table.insert(
+        "compression".into(),
+        compression_name(settings.compression).into(),
+    );
+    if let Some(color_space) = settings.color_space {
+        table.insert("color_space".into(), color_space_name(color_space).into());
+    }
+    if let Some(pixels) = settings.max_size.pixels() {
+        table.insert("max_size".into(), i64::from(pixels).into());
+    }
+    table.insert("mips".into(), settings.mips.into());
+    let mut options = toml::Table::new();
+    options.insert(OPTIONS_KEY.into(), table.into());
+    options
+}

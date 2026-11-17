@@ -69,8 +69,8 @@ The import picks the importer by file extension:
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
 | `.ogg` `.wav`        | `AudioImporter` | one `main` audio clip                             |
 
-A texture's `.gasset` holds its **source**, the image as PNG or JPEG bytes,
-its **role** (`Color`, `Normal` or `Data`, set by the importer) and its
+A texture's `.gasset` holds its **source**, the image file's own PNG or JPEG
+bytes as imported, its **role** (`Color`, `Normal` or `Data`, set by the importer) and its
 **settings**: compression (`Auto`, `Bc7`, `Bc1`, `Bc5`, `Bc4`, `Uncompressed`),
 colour space (sRGB or linear, by default the role's: sRGB for `Color`, linear
 otherwise), max size and mips. Every level the GPU samples is derived data:
@@ -83,7 +83,11 @@ side; its mips halve down to 1×1, averaging sRGB colour in linear space and
 renormalising normals. BC4 and BC5 have no sRGB form, so a texture set to
 either with an sRGB colour space fails to derive and asks for Linear. The
 image importer gives its texture the `Color` role; the glTF importer gives
-base colour and emissive textures `Color` and the others `Data`. The loaded
+base colour and emissive textures `Color`, normal maps `Normal`, and
+metallic-roughness and occlusion textures `Data`. An image a glTF uses both as
+a normal map and as data is `Data`, since BC5 would drop the blue channel the
+data needs. The glTF importer keeps each image's bytes from its buffer view,
+data URI or file, so a 16-bit PNG imports and its derived levels are 8-bit. The loaded
 texture keeps its levels, not its source. On the web there is no encoder, so
 an uncooked run derives uncompressed levels; a cooked build carries the
 compressed ones. A device without BC texture compression (Safari, and some
@@ -271,6 +275,26 @@ importer's defaults, and a first import writes none. The `obj`, `image` and
 `additive`, described under [Clip events](#clip-events) and
 [Additive clips](#additive-clips), and an unknown key fails its import. The
 `bvh` importer's are described under [BVH motion capture](#bvh-motion-capture).
+
+A texture's settings are not in the sidecar but in its own `.gasset`, and a
+re-import keeps them: it refreshes the texture's source bytes and role, and
+takes the settings the previous import, or the editor, wrote there. A texture
+the import creates takes the import's **options**, values given to that one
+import and never written anywhere: `import_source_into`'s last argument, whose
+`texture_settings` table sets the new textures' initial settings:
+
+```toml
+[texture_settings]
+compression = "bc7"    # auto (default), bc7, bc1, bc5, bc4 or uncompressed
+color_space = "linear" # srgb or linear; leave it out for the role's
+max_size = 1024        # 4096, 2048, 1024 or 512; leave it out for none
+mips = true            # default
+```
+
+An unknown key or value fails the import, naming it, even when every texture
+already exists. A texture whose file does not decode at this build's `Texture`
+version, such as one written before textures kept their source, takes the
+initial settings as if it were new.
 
 A `bvh` source's settings:
 

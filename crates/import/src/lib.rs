@@ -6,10 +6,12 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
-use concerto_asset_import::{DependencyEntry, ImportContext, Importer, SubAssetIdResolver};
+use concerto_asset_import::{
+    DependencyEntry, ImportContext, Importer, PreviousOutputResolver, SubAssetIdResolver,
+};
 use concerto_foundation::assets::content::{
-    read_content_asset_header, write_content_asset, write_content_asset_with_embedded,
-    ContentAssetHeader, EmbeddedPayload, ImportProvenance,
+    read_asset_record, read_content_asset_header, write_content_asset,
+    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
@@ -123,15 +125,16 @@ pub fn import_source(
         .with_context(|| format!("resolving source '{}'", source.display()))?;
     std::fs::create_dir_all(project_root)?;
     let project_root = project_root.canonicalize()?;
-    Ok(import_placed(&source, &source, &project_root, config)?.assets)
+    Ok(import_placed(&source, &source, &project_root, config, toml::Table::new())?.assets)
 }
 
-/// Imports `source` into the project as `destination`, copying it and every file it refers to; nothing is copied unless the import succeeds.
+/// Imports `source` into the project as `destination`, copying it and every file it refers to; nothing is copied unless the import succeeds. `options` are given to this import alone, such as `texture_settings` for the textures it creates.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
     project_root: &Path,
     config: &ContentConfig,
+    options: toml::Table,
 ) -> anyhow::Result<ImportedSource> {
     config.validate()?;
     let source = source
@@ -157,7 +160,7 @@ pub fn import_source_into(
     if !placed.starts_with(&project_root) {
         bail!("destination '{destination}' resolves outside the project");
     }
-    import_placed(&source, &placed, &project_root, config)
+    import_placed(&source, &placed, &project_root, config, options)
 }
 
 fn extension_of(path: &Path) -> String {
@@ -192,6 +195,7 @@ fn import_placed(
     source: &Path,
     project_root: &Path,
     config: &ContentConfig,
+    options: toml::Table,
 ) -> anyhow::Result<ImportedSource> {
     let extension = extension_of(read);
     let importers = registered_importers();
@@ -218,6 +222,7 @@ fn import_placed(
         source,
         project_root,
         config,
+        options,
     )
 }
 
@@ -228,6 +233,7 @@ fn import_with(
     source: &Path,
     project_root: &Path,
     config: &ContentConfig,
+    options: toml::Table,
 ) -> anyhow::Result<ImportedSource> {
     let relative_source = source.strip_prefix(project_root).unwrap_or(source);
     let provenance_source = relative_source.to_string_lossy().replace('\\', "/");
@@ -316,8 +322,18 @@ fn import_with(
         memo.insert(sub_name.to_string(), id);
         id
     });
+    let located: BTreeMap<String, AssetEntry> = metadata
+        .outputs
+        .iter()
+        .filter_map(|(key, output)| Some((key.clone(), registry.get(output.asset_id)?.clone())))
+        .collect();
+    let located_root = project_root.to_path_buf();
+    let previous: PreviousOutputResolver =
+        Box::new(move |name| read_asset_record(&located_root, located.get(name)?).ok());
     let mut ctx = ImportContext::with_sub_asset_id_resolver(source.to_path_buf(), resolver)
-        .with_settings(metadata.settings.clone());
+        .with_settings(metadata.settings.clone())
+        .with_options(options)
+        .with_previous_outputs(previous);
     importer
         .import(read, &mut ctx)
         .map_err(|err| anyhow::anyhow!("{err:?}"))
@@ -932,6 +948,7 @@ mod tests {
                 &self.source,
                 &self.root(),
                 &self.config,
+                toml::Table::new(),
             )
         }
 

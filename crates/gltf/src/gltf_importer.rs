@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use anyhow::{Context, bail};
+use base64::Engine;
 use concerto_animation::clip::{
     AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
 };
@@ -25,17 +25,15 @@ use concerto_mesh::vertex::Vertex;
 use concerto_name::Name;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
-use concerto_render::assets::texture::{
-    SourceEncoding, Texture, TextureRole, TextureSettings, TextureSource,
-};
+use concerto_render::assets::texture::{Texture, TextureRole, initial_texture_settings};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
+use concerto_render::importers::image_importer::imported_texture;
 use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
-use image::ImageBuffer;
 use log::warn;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -107,17 +105,21 @@ impl Importer for GltfImporter {
             .clone()
             .try_into()
             .map_err(|err: toml::de::Error| malformed_settings(err.to_string()))?;
-        let (document, buffers, images) =
-            gltf::import(source_path).map_err(|e| ImportError::MalformedSource {
-                source_path: source_path.to_path_buf(),
-                message: e.to_string(),
-            })?;
+        let malformed = |message: String| ImportError::MalformedSource {
+            source_path: source_path.to_path_buf(),
+            message,
+        };
+        let initial_textures = initial_texture_settings(ctx.options()).map_err(malformed)?;
+        let gltf::Gltf { document, blob } =
+            gltf::Gltf::open(source_path).map_err(|e| malformed(e.to_string()))?;
+        let source_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
+        let buffers = gltf::import_buffers(&document, Some(source_dir), blob)
+            .map_err(|e| malformed(e.to_string()))?;
 
         // Track every external `.bin`/image `uri` the document pulls in, so
         // editing one and re-running `import` regenerates instead of shipping
         // stale imported output. Embedded `data:` URIs need no tracking — a
         // change there changes the `.gltf`'s own hash.
-        let source_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
         for buffer in document.buffers() {
             if let gltf::buffer::Source::Uri(uri) = buffer.source() {
                 track_external(ctx, source_dir, uri);
@@ -129,30 +131,23 @@ impl Importer for GltfImporter {
             }
         }
 
-        // Decode every embedded/external image up front; textures are emitted
-        // later, once the materials loop has recorded which (image, color
-        // space) pairs are actually referenced.
-        let mut decoded_images: Vec<image::DynamicImage> = Vec::new();
-        for (image_index, data) in images.into_iter().enumerate() {
-            let dyn_img =
-                dynamic_image_from_gltf(data).map_err(|e| ImportError::MalformedSource {
-                    source_path: source_path.to_path_buf(),
-                    message: format!("failed to load GLTF image at index {image_index}: {e}"),
-                })?;
-            decoded_images.push(dyn_img);
-        }
-
         // Color textures (base color, emissive) are sRGB-encoded while data
         // textures (normal, metallic-roughness, occlusion) are linear. An
         // image can be referenced in both roles, so texture sub-assets are
         // keyed per (image, color space) pair.
-        let mut needed_textures: BTreeSet<TextureKey> = BTreeSet::new();
+        let mut needed_textures: BTreeMap<TextureKey, TextureRole> = BTreeMap::new();
         let mut materials: Vec<StandardMaterial> = Vec::new();
         {
             let mut texture_ref =
-                |texture: gltf::Texture<'_>, srgb: bool| -> AssetHandle<Texture> {
+                |texture: gltf::Texture<'_>, role: TextureRole| -> AssetHandle<Texture> {
                     let image_index = texture.source().index();
-                    needed_textures.insert(TextureKey { image_index, srgb });
+                    let srgb = role == TextureRole::Color;
+                    let kept = needed_textures
+                        .entry(TextureKey { image_index, srgb })
+                        .or_insert(role);
+                    if role == TextureRole::Data {
+                        *kept = role;
+                    }
                     AssetHandle::weak(ctx.sub_asset_id(&texture_name(image_index, srgb)))
                 };
 
@@ -160,10 +155,10 @@ impl Importer for GltfImporter {
                 let pbr = gltf_material.pbr_metallic_roughness();
                 let mut material = StandardMaterial::new(
                     pbr.base_color_texture()
-                        .map(|info| texture_ref(info.texture(), true)),
+                        .map(|info| texture_ref(info.texture(), TextureRole::Color)),
                     gltf_material
                         .normal_texture()
-                        .map(|info| texture_ref(info.texture(), false)),
+                        .map(|info| texture_ref(info.texture(), TextureRole::Normal)),
                 );
 
                 material.set_base_color_factor(Color::from(pbr.base_color_factor()));
@@ -172,14 +167,17 @@ impl Importer for GltfImporter {
                 material.set_emissive_factor(Vec3::from_array(gltf_material.emissive_factor()));
 
                 if let Some(info) = pbr.metallic_roughness_texture() {
-                    material.set_metallic_roughness_texture(texture_ref(info.texture(), false));
+                    material.set_metallic_roughness_texture(texture_ref(
+                        info.texture(),
+                        TextureRole::Data,
+                    ));
                 }
                 if let Some(info) = gltf_material.emissive_texture() {
-                    material.set_emissive_texture(texture_ref(info.texture(), true));
+                    material.set_emissive_texture(texture_ref(info.texture(), TextureRole::Color));
                 }
                 if let Some(info) = gltf_material.occlusion_texture() {
                     material.set_occlusion_strength(info.strength());
-                    material.set_occlusion_texture(texture_ref(info.texture(), false));
+                    material.set_occlusion_texture(texture_ref(info.texture(), TextureRole::Data));
                 }
 
                 if gltf_material.alpha_mode() == gltf::material::AlphaMode::Mask {
@@ -191,27 +189,20 @@ impl Importer for GltfImporter {
             }
         }
 
-        for key in &needed_textures {
-            let unkept = |message: String| ImportError::MalformedSource {
-                source_path: source_path.to_path_buf(),
-                message: format!("failed to keep GLTF image {}: {message}", key.image_index),
+        let images: Vec<gltf::Image<'_>> = document.images().collect();
+        for (key, role) in &needed_textures {
+            let unkept = |message: String| {
+                malformed(format!(
+                    "failed to keep GLTF image {}: {message}",
+                    key.image_index
+                ))
             };
-            let mut bytes = Vec::new();
-            decoded_images[key.image_index]
-                .write_to(
-                    &mut std::io::Cursor::new(&mut bytes),
-                    image::ImageFormat::Png,
-                )
-                .map_err(|e| unkept(e.to_string()))?;
-            let source = TextureSource::new(bytes, SourceEncoding::Png)
-                .map_err(|e| unkept(format!("{e:#}")))?;
-            let role = if key.srgb {
-                TextureRole::Color
-            } else {
-                TextureRole::Data
-            };
-            let texture = Texture::imported(role, TextureSettings::default(), source);
-            ctx.emit(&texture_name(key.image_index, key.srgb), &texture)?;
+            let bytes =
+                image_bytes(&images[key.image_index], &buffers, source_dir).map_err(unkept)?;
+            let name = texture_name(key.image_index, key.srgb);
+            let texture =
+                imported_texture(ctx, &name, *role, bytes, initial_textures).map_err(unkept)?;
+            ctx.emit(&name, &texture)?;
         }
 
         for (index, material) in materials.iter().enumerate() {
@@ -768,32 +759,34 @@ fn texture_name(image_index: usize, srgb: bool) -> String {
     }
 }
 
-fn dynamic_image_from_gltf(data: gltf::image::Data) -> anyhow::Result<image::DynamicImage> {
-    let (width, height, format) = (data.width, data.height, data.format);
-    let buffer_error = || {
-        format!(
-            "image buffer does not match dimensions {}x{} for format {:?}",
-            width, height, format
-        )
-    };
-
-    let image = match format {
-        gltf::image::Format::R8 => image::DynamicImage::ImageLuma8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        gltf::image::Format::R8G8 => image::DynamicImage::ImageLumaA8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        gltf::image::Format::R8G8B8 => image::DynamicImage::ImageRgb8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        gltf::image::Format::R8G8B8A8 => image::DynamicImage::ImageRgba8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        format => bail!("unsupported GLTF image format {:?}", format),
-    };
-
-    Ok(image)
+fn image_bytes(
+    image: &gltf::Image<'_>,
+    buffers: &[Data],
+    source_dir: &Path,
+) -> Result<Vec<u8>, String> {
+    match image.source() {
+        gltf::image::Source::View { view, .. } => {
+            let buffer = view.buffer().index();
+            buffers[buffer]
+                .get(view.offset()..view.offset() + view.length())
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| format!("its buffer view runs past the end of buffer {buffer}"))
+        }
+        gltf::image::Source::Uri { uri, .. } => match uri.strip_prefix("data:") {
+            Some(data) => {
+                let Some((_, encoded)) = data.split_once(";base64,") else {
+                    return Err("its data URI is not base64".to_string());
+                };
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .map_err(|e| format!("its data URI does not decode: {e}"))
+            }
+            None => {
+                let path = source_dir.join(percent_decode(uri));
+                std::fs::read(&path).map_err(|e| format!("reading '{}': {e}", path.display()))
+            }
+        },
+    }
 }
 
 fn load_primitive(

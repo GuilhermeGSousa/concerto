@@ -33,7 +33,13 @@ Frame Time: 0.0333333
 ";
 
 fn import(source: &Path, destination: &str, project: &Path) -> anyhow::Result<ImportedSource> {
-    import_source_into(source, destination, project, &ContentConfig::default())
+    import_source_into(
+        source,
+        destination,
+        project,
+        &ContentConfig::default(),
+        Default::default(),
+    )
 }
 
 fn ids_by_name(imported: &ImportedSource) -> BTreeMap<String, AssetId> {
