@@ -14,7 +14,8 @@ use concerto_foundation::{
 use serde::{Deserialize, Serialize};
 
 pub use blob::TextureLevels;
-pub use derive::{derive_levels, resolve, ResolvedTexture};
+pub use derive::derive_levels;
+pub(crate) use derive::resolve;
 pub use settings::{
     initial_texture_settings, texture_settings_options, ColorSpace, Compression, MaxSize,
     TextureRole, TextureSettings,
@@ -146,33 +147,6 @@ impl Texture {
             (TextureKind::Sampled, None, Some(source)) => extent(source.width, source.height),
             (TextureKind::Sampled, None, None) => extent(0, 0),
         }
-    }
-
-    /// The compression and format this texture's levels are in, or would be derived in.
-    pub fn resolved(&self) -> anyhow::Result<ResolvedTexture> {
-        if let Some(levels) = &self.levels {
-            return Ok(ResolvedTexture {
-                compression: compression_of(levels.format),
-                format: levels.format,
-            });
-        }
-        let has_alpha = match (self.settings.compression, self.role, &self.source) {
-            (Compression::Auto, TextureRole::Color, Some(source)) => {
-                derive::has_alpha(&derive::decode_source(source)?)
-            }
-            _ => false,
-        };
-        resolve(self.role, &self.settings, has_alpha)
-    }
-}
-
-fn compression_of(format: TextureFormat) -> Compression {
-    match format {
-        TextureFormat::Bc7RgbaUnorm | TextureFormat::Bc7RgbaUnormSrgb => Compression::Bc7,
-        TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => Compression::Bc1,
-        TextureFormat::Bc5RgUnorm => Compression::Bc5,
-        TextureFormat::Bc4RUnorm => Compression::Bc4,
-        _ => Compression::Uncompressed,
     }
 }
 

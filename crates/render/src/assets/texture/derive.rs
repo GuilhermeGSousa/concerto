@@ -9,15 +9,13 @@ use super::{SourceEncoding, TextureSource};
 #[cfg(not(target_arch = "wasm32"))]
 use link_cplusplus as _;
 
-/// The compression and format a texture's levels are derived in, once `Auto` and the colour space are resolved.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ResolvedTexture {
-    pub compression: Compression,
-    pub format: TextureFormat,
+pub(crate) struct ResolvedTexture {
+    pub(crate) compression: Compression,
+    pub(crate) format: TextureFormat,
 }
 
-/// Resolves `settings` for a texture of `role`, whose source has alpha below 255 when `has_alpha`.
-pub fn resolve(
+pub(crate) fn resolve(
     role: TextureRole,
     settings: &TextureSettings,
     has_alpha: bool,
