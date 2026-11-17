@@ -72,7 +72,7 @@ impl Default for AssetId {
 pub const CONTENT_ASSET_MAGIC: [u8; 4] = *b"GRDY";
 
 /// The version of the framing and `ContentAssetHeader`, written before the header; it changes only when they change, never for a payload.
-pub const CONTENT_FORMAT_VERSION: u32 = 7;
+pub const CONTENT_FORMAT_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentAssetHeader {
@@ -90,9 +90,11 @@ pub struct ContentAssetHeader {
     /// Where this content asset came from, if `import` produced it from a
     /// DCC source rather than an editor saving it directly.
     pub provenance: Option<ImportProvenance>,
-    /// The cooked derived data trailing the payload, if any.
+    /// The editor-only bytes that follow the payload, if any.
+    pub editor_only: Option<EditorOnlySection>,
+    /// The cooked derived data trailing the payload and its editor-only section, if any.
     pub derived: Option<DerivedSection>,
-    /// The assets stored in this file after the host's payload and blob, in file order.
+    /// The assets stored in this file after the host's payload, section and blob, in file order.
     pub embedded: Vec<EmbeddedAsset>,
 }
 
@@ -106,6 +108,7 @@ impl ContentAssetHeader {
                 kind: self.kind.clone(),
                 kind_version: self.kind_version,
                 provenance: self.provenance.clone(),
+                editor_only: self.editor_only,
                 derived: self.derived,
                 embedded: Vec::new(),
             });
@@ -114,6 +117,15 @@ impl ContentAssetHeader {
             .iter()
             .find(|asset| asset.name() == name)
             .map(EmbeddedAsset::record_header)
+    }
+
+    /// Whether the host or any embedded asset has an editor-only section.
+    pub fn has_editor_only(&self) -> bool {
+        self.editor_only.is_some()
+            || self
+                .embedded
+                .iter()
+                .any(|asset| asset.editor_only.is_some())
     }
 }
 
@@ -130,11 +142,13 @@ pub struct EmbeddedAsset {
     pub kind_version: u32,
     /// The import output this asset is; its `sub_asset` is the asset's name inside the file.
     pub provenance: ImportProvenance,
-    /// The cooked derived data trailing the payload, if any.
+    /// The editor-only bytes that follow the payload, if any.
+    pub editor_only: Option<EditorOnlySection>,
+    /// The cooked derived data trailing the payload and its editor-only section, if any.
     pub derived: Option<DerivedSection>,
     /// Where the payload starts, in bytes from the end of the file's header.
     pub offset: u64,
-    /// The payload's length in bytes, without the derived blob that follows it.
+    /// The payload's length in bytes, without the editor-only section and the derived blob that follow it.
     pub len: u64,
 }
 
@@ -151,10 +165,33 @@ impl EmbeddedAsset {
             kind: self.kind.clone(),
             kind_version: self.kind_version,
             provenance: Some(self.provenance.clone()),
+            editor_only: self.editor_only,
             derived: self.derived,
             embedded: Vec::new(),
         }
     }
+
+    fn editor_only_len(&self) -> u64 {
+        self.editor_only.map_or(0, |section| section.len)
+    }
+}
+
+/// Describes the editor-only bytes that follow a record's payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorOnlySection {
+    /// The section's length in bytes.
+    pub len: u64,
+}
+
+/// One record's editor-only section read from a file, with the type tag and version it was written under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorOnlyBytes {
+    /// The `Asset::name()` of the type the record holds.
+    pub kind: String,
+    /// The `Asset::FORMAT_VERSION` the record was written with.
+    pub kind_version: u32,
+    /// The section's bytes.
+    pub bytes: Vec<u8>,
 }
 
 /// Describes the derived blob a cook appended after a content asset's payload.
@@ -189,13 +226,15 @@ pub struct CookedSection<'a> {
     pub blob: &'a [u8],
 }
 
-/// A content asset split into its header, payload and optional derived blob.
+/// A content asset split into its header, payload and optional editor-only section and derived blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentAssetParts<'a> {
     /// The decoded header.
     pub header: ContentAssetHeader,
-    /// The payload, without the derived blob.
+    /// The payload, without the editor-only section and the derived blob.
     pub payload: &'a [u8],
+    /// The editor-only bytes the header's `editor_only` section describes, if any.
+    pub editor_only: Option<&'a [u8]>,
     /// The derived blob the header's `derived` section describes, if any.
     pub derived_blob: Option<&'a [u8]>,
 }
@@ -205,10 +244,35 @@ pub struct ContentAssetParts<'a> {
 pub struct EmbeddedPayload<'a> {
     /// The header a loose file of the asset would have; its provenance names the asset inside the file.
     pub header: ContentAssetHeader,
-    /// The payload, without the derived blob.
+    /// The payload, without the editor-only section and the derived blob.
     pub payload: &'a [u8],
+    /// The asset's editor-only bytes, written after its payload; `None` or empty writes no section.
+    pub editor_only: Option<&'a [u8]>,
     /// The derived blob the header's `derived` section describes, if any.
     pub derived_blob: Option<&'a [u8]>,
+}
+
+#[derive(Deserialize)]
+struct HeaderV7 {
+    asset_id: AssetId,
+    references: Vec<AssetId>,
+    kind: String,
+    kind_version: u32,
+    provenance: Option<ImportProvenance>,
+    derived: Option<DerivedSection>,
+    embedded: Vec<EmbeddedAssetV7>,
+}
+
+#[derive(Deserialize)]
+struct EmbeddedAssetV7 {
+    asset_id: AssetId,
+    references: Vec<AssetId>,
+    kind: String,
+    kind_version: u32,
+    provenance: ImportProvenance,
+    derived: Option<DerivedSection>,
+    offset: u64,
+    len: u64,
 }
 
 #[derive(Deserialize)]
@@ -243,9 +307,39 @@ fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
     let version: u32 = bincode::deserialize_from(&mut rest)
         .context("failed to deserialize content asset header")?;
     match version {
-        7 => {
+        8 => {
             let header: ContentAssetHeader =
                 bincode::deserialize(rest).context("failed to deserialize content asset header")?;
+            check_directory(&header, None)?;
+            Ok(header)
+        }
+        7 => {
+            let header: HeaderV7 = bincode::deserialize(rest)
+                .context("failed to deserialize version 7 content asset header")?;
+            let header = ContentAssetHeader {
+                asset_id: header.asset_id,
+                references: header.references,
+                kind: header.kind,
+                kind_version: header.kind_version,
+                provenance: header.provenance,
+                editor_only: None,
+                derived: header.derived,
+                embedded: header
+                    .embedded
+                    .into_iter()
+                    .map(|asset| EmbeddedAsset {
+                        asset_id: asset.asset_id,
+                        references: asset.references,
+                        kind: asset.kind,
+                        kind_version: asset.kind_version,
+                        provenance: asset.provenance,
+                        editor_only: None,
+                        derived: asset.derived,
+                        offset: asset.offset,
+                        len: asset.len,
+                    })
+                    .collect(),
+            };
             check_directory(&header, None)?;
             Ok(header)
         }
@@ -258,6 +352,7 @@ fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
                 kind: header.kind,
                 kind_version: header.kind_version,
                 provenance: header.provenance,
+                editor_only: None,
                 derived: header.derived,
                 embedded: Vec::new(),
             })
@@ -271,6 +366,7 @@ fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
                 kind: header.kind,
                 kind_version: header.kind_version,
                 provenance: header.provenance,
+                editor_only: None,
                 derived: None,
                 embedded: Vec::new(),
             })
@@ -284,12 +380,13 @@ fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
                 kind: header.kind,
                 kind_version: 1,
                 provenance: header.provenance,
+                editor_only: None,
                 derived: None,
                 embedded: Vec::new(),
             })
         }
         other => bail!(
-            "unsupported content asset format version {other} (this build reads versions 4 to 7)"
+            "unsupported content asset format version {other} (this build reads versions 4 to 8)"
         ),
     }
 }
@@ -297,7 +394,10 @@ fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
 fn check_directory(header: &ContentAssetHeader, body_len: Option<u64>) -> anyhow::Result<()> {
     let mut ids = HashSet::from([header.asset_id]);
     let mut names = HashSet::new();
-    let mut cursor = header.derived.map_or(0, |section| section.len);
+    let mut cursor = header
+        .editor_only
+        .map_or(0, |section| section.len)
+        .saturating_add(header.derived.map_or(0, |section| section.len));
     for asset in &header.embedded {
         let name = asset.name();
         if !names.insert(name) {
@@ -317,6 +417,7 @@ fn check_directory(header: &ContentAssetHeader, body_len: Option<u64>) -> anyhow
         let end = asset
             .offset
             .checked_add(asset.len)
+            .and_then(|end| end.checked_add(asset.editor_only_len()))
             .and_then(|end| end.checked_add(asset.derived.map_or(0, |section| section.len)))
             .with_context(|| {
                 format!(
@@ -350,8 +451,34 @@ pub fn write_content_asset(header: &ContentAssetHeader, payload: &[u8]) -> anyho
     if header.derived.is_some() {
         bail!("a content asset header with a derived section needs its blob; write it with write_cooked_content_asset");
     }
+    if header.editor_only.is_some() {
+        bail!("a content asset header with an editor-only section needs its bytes; write it with write_content_asset_with_editor_only");
+    }
     refuse_a_directory(header)?;
     frame_content_asset(header, &[payload])
+}
+
+/// Writes a loose file whose payload is followed by `editor_only`; empty bytes write no section.
+pub fn write_content_asset_with_editor_only(
+    header: &ContentAssetHeader,
+    payload: &[u8],
+    editor_only: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    if header.derived.is_some() {
+        bail!("a content asset written with an editor-only section cannot carry a derived section");
+    }
+    refuse_a_directory(header)?;
+    let header = ContentAssetHeader {
+        editor_only: section_of(editor_only),
+        ..header.clone()
+    };
+    frame_content_asset(&header, &[payload, editor_only])
+}
+
+fn section_of(editor_only: &[u8]) -> Option<EditorOnlySection> {
+    (!editor_only.is_empty()).then_some(EditorOnlySection {
+        len: editor_only.len() as u64,
+    })
 }
 
 fn refuse_a_directory(header: &ContentAssetHeader) -> anyhow::Result<()> {
@@ -361,7 +488,7 @@ fn refuse_a_directory(header: &ContentAssetHeader) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Writes a host file: `header` and `payload`, then each embedded asset's payload and blob, listed in the header's directory.
+/// Writes a host file: `header` and `payload`, then each embedded asset's payload, editor-only section and blob, listed in the header's directory.
 pub fn write_content_asset_with_embedded(
     header: &ContentAssetHeader,
     payload: &[u8],
@@ -372,6 +499,9 @@ pub fn write_content_asset_with_embedded(
     }
     if header.derived.is_some() {
         bail!("a host written with embedded assets cannot carry a derived section");
+    }
+    if header.editor_only.is_some() {
+        bail!("a host written with embedded assets cannot carry an editor-only section");
     }
     let mut directory = Vec::with_capacity(embedded.len());
     let mut pieces = vec![payload];
@@ -392,19 +522,27 @@ pub fn write_content_asset_with_embedded(
         if described != asset.derived_blob.map(|blob| blob.len() as u64) {
             bail!("embedded asset '{name}' has a derived section that does not match its blob");
         }
+        let section = asset.editor_only.unwrap_or(&[]);
+        if asset.header.editor_only.is_some() && asset.header.editor_only != section_of(section) {
+            bail!(
+                "embedded asset '{name}' has an editor-only section that does not match its bytes"
+            );
+        }
         directory.push(EmbeddedAsset {
             asset_id: asset.header.asset_id,
             references: asset.header.references.clone(),
             kind: asset.header.kind.clone(),
             kind_version: asset.header.kind_version,
             provenance: provenance.clone(),
+            editor_only: section_of(section),
             derived: asset.header.derived,
             offset,
             len: asset.payload.len() as u64,
         });
         pieces.push(asset.payload);
+        pieces.push(section);
         pieces.push(blob);
-        offset += (asset.payload.len() + blob.len()) as u64;
+        offset += (asset.payload.len() + section.len() + blob.len()) as u64;
     }
     let header = ContentAssetHeader {
         embedded: directory,
@@ -414,7 +552,7 @@ pub fn write_content_asset_with_embedded(
     frame_content_asset(&header, &pieces)
 }
 
-/// Writes a content asset whose header describes `section` and whose payload is followed by its blob.
+/// Writes a content asset whose header describes `section` and whose payload is followed by its blob, with no editor-only section.
 pub fn write_cooked_content_asset(
     header: &ContentAssetHeader,
     payload: &[u8],
@@ -422,6 +560,7 @@ pub fn write_cooked_content_asset(
 ) -> anyhow::Result<Vec<u8>> {
     refuse_a_directory(header)?;
     let header = ContentAssetHeader {
+        editor_only: None,
         derived: Some(DerivedSection {
             derived_version: section.derived_version,
             key: section.key,
@@ -455,31 +594,75 @@ pub fn read_content_asset(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &
     Ok((parts.header, parts.payload))
 }
 
-/// Reads a content asset's header, its payload and the derived blob trailing it, if any; of a host, the host's own.
+/// Reads a content asset's header, its payload and the editor-only section and derived blob trailing it, if any; of a host, the host's own.
 pub fn read_content_asset_parts(bytes: &[u8]) -> anyhow::Result<ContentAssetParts<'_>> {
     let file = ContentFile::parse(bytes)?;
-    let host = file.host()?;
-    let payload = &file.body[..host.payload.len()];
-    let derived_blob = host
-        .cooked
-        .map(|cooked| &file.body[payload.len()..payload.len() + cooked.blob.len()]);
+    let extent = HostExtent::of(&file.header, file.body.len() as u64)?;
+    let body = file.body;
     Ok(ContentAssetParts {
-        derived_blob,
-        payload,
+        payload: &body[extent.payload()],
+        editor_only: file.header.editor_only.map(|_| &body[extent.editor_only()]),
+        derived_blob: file.header.derived.map(|_| &body[extent.blob()]),
         header: file.header,
     })
 }
 
-/// One asset of a content file, borrowed from it: its type tag, its payload and its derived blob.
+struct HostExtent {
+    payload_end: usize,
+    editor_only_end: usize,
+    host_end: usize,
+}
+
+impl HostExtent {
+    fn of(header: &ContentAssetHeader, body_len: u64) -> anyhow::Result<Self> {
+        let blob_len = header.derived.map_or(0, |section| section.len);
+        let section_len = header.editor_only.map_or(0, |section| section.len);
+        let host_end = header
+            .embedded
+            .first()
+            .map_or(body_len, |first| first.offset.min(body_len));
+        let editor_only_end = host_end.checked_sub(blob_len).with_context(|| {
+            format!(
+                "content asset truncated: derived section claims {blob_len} bytes, only {body_len} follow the header"
+            )
+        })?;
+        let payload_end = editor_only_end.checked_sub(section_len).with_context(|| {
+            format!(
+                "content asset truncated: the host's editor-only section claims {section_len} bytes, only {body_len} follow the header"
+            )
+        })?;
+        Ok(Self {
+            payload_end: payload_end as usize,
+            editor_only_end: editor_only_end as usize,
+            host_end: host_end as usize,
+        })
+    }
+
+    fn payload(&self) -> std::ops::Range<usize> {
+        0..self.payload_end
+    }
+
+    fn editor_only(&self) -> std::ops::Range<usize> {
+        self.payload_end..self.editor_only_end
+    }
+
+    fn blob(&self) -> std::ops::Range<usize> {
+        self.editor_only_end..self.host_end
+    }
+}
+
+/// One asset of a content file, borrowed from it: its type tag, its payload, its editor-only section and its derived blob.
 #[derive(Debug, Clone, Copy)]
 pub struct AssetRecord<'a> {
     /// The `Asset::name()` of the type the payload holds.
     pub kind: &'a str,
     /// The `Asset::FORMAT_VERSION` the payload was written with.
     pub kind_version: u32,
-    /// The payload, without the derived blob.
+    /// The payload, without the editor-only section and the derived blob.
     pub payload: &'a [u8],
-    /// The cooked derived data trailing the payload, if any.
+    /// The editor-only bytes that follow the payload, if any.
+    pub editor_only: Option<&'a [u8]>,
+    /// The cooked derived data trailing the payload and its editor-only section, if any.
     pub cooked: Option<CookedSection<'a>>,
 }
 
@@ -527,27 +710,15 @@ impl<'a> ContentFile<'a> {
     pub fn host(&self) -> anyhow::Result<AssetRecord<'_>> {
         let body = self.body;
         let header = &self.header;
-        let blob_len = header.derived.map_or(0, |section| section.len);
-        let host_end = header
-            .embedded
-            .first()
-            .map_or(body.len(), |first| first.offset as usize);
-        let payload_end = usize::try_from(blob_len)
-            .ok()
-            .and_then(|len| host_end.checked_sub(len))
-            .with_context(|| {
-                format!(
-                    "content asset truncated: derived section claims {blob_len} bytes, only {} follow the header",
-                    body.len()
-                )
-            })?;
+        let extent = HostExtent::of(header, body.len() as u64)?;
         Ok(AssetRecord {
             kind: &header.kind,
             kind_version: header.kind_version,
-            payload: &body[..payload_end],
+            payload: &body[extent.payload()],
+            editor_only: header.editor_only.map(|_| &body[extent.editor_only()]),
             cooked: header
                 .derived
-                .map(|section| section.cooked(&body[payload_end..host_end])),
+                .map(|section| section.cooked(&body[extent.blob()])),
         })
     }
 
@@ -558,24 +729,27 @@ impl<'a> ContentFile<'a> {
     ) -> anyhow::Result<AssetRecord<'file>> {
         let start = asset.offset as usize;
         let payload_end = start + asset.len as usize;
-        let blob_end = payload_end + asset.derived.map_or(0, |section| section.len as usize);
+        let section_end = payload_end + asset.editor_only_len() as usize;
+        let blob_end = section_end + asset.derived.map_or(0, |section| section.len as usize);
         let bytes = self.body.get(start..blob_end).with_context(|| {
             format!(
                 "embedded asset '{}' is not in this file's directory",
                 asset.name()
             )
         })?;
-        let (payload, blob) = bytes.split_at(asset.len as usize);
+        let (payload, rest) = bytes.split_at(asset.len as usize);
+        let (section, blob) = rest.split_at(asset.editor_only_len() as usize);
         Ok(AssetRecord {
             kind: &asset.kind,
             kind_version: asset.kind_version,
             payload,
+            editor_only: asset.editor_only.map(|_| section),
             cooked: asset.derived.map(|section| section.cooked(blob)),
         })
     }
 }
 
-/// The bytes a loose version-7 file of the host (`None`) or of the named embedded asset would have.
+/// The bytes a loose file of the host (`None`) or of the named embedded asset would have.
 pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Vec<u8>> {
     let Some(name) = embedded_as else {
         let parts = read_content_asset_parts(file)?;
@@ -583,34 +757,243 @@ pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Ve
             embedded: Vec::new(),
             ..parts.header
         };
-        return frame_content_asset(&header, &[parts.payload, parts.derived_blob.unwrap_or(&[])]);
-    };
-    let file = ContentFile::parse(file)?;
-    let Some(asset) = file
-        .header
-        .embedded
-        .iter()
-        .find(|asset| asset.name() == name)
-    else {
-        let held: Vec<&str> = file
-            .header
-            .embedded
-            .iter()
-            .map(EmbeddedAsset::name)
-            .collect();
-        bail!(
-            "content asset holds no embedded asset named '{name}'; it holds [{}]",
-            held.join(", ")
+        return frame_content_asset(
+            &header,
+            &[
+                parts.payload,
+                parts.editor_only.unwrap_or(&[]),
+                parts.derived_blob.unwrap_or(&[]),
+            ],
         );
     };
+    let file = ContentFile::parse(file)?;
+    let asset = named_asset(&file.header, name)?;
     let record = file.embedded(asset)?;
     frame_content_asset(
         &asset.record_header(),
         &[
             record.payload,
+            record.editor_only.unwrap_or(&[]),
             record.cooked.map_or(&[], |cooked| cooked.blob),
         ],
     )
+}
+
+fn named_asset<'header>(
+    header: &'header ContentAssetHeader,
+    name: &str,
+) -> anyhow::Result<&'header EmbeddedAsset> {
+    let Some(asset) = header.embedded.iter().find(|asset| asset.name() == name) else {
+        let held: Vec<&str> = header.embedded.iter().map(EmbeddedAsset::name).collect();
+        bail!(
+            "content asset holds no embedded asset named '{name}'; it holds [{}]",
+            held.join(", ")
+        );
+    };
+    Ok(asset)
+}
+
+struct WithoutEditorOnly {
+    header: ContentAssetHeader,
+    kept: Vec<std::ops::Range<u64>>,
+}
+
+impl WithoutEditorOnly {
+    fn of(header: &ContentAssetHeader, body_len: u64) -> anyhow::Result<Self> {
+        let host = HostExtent::of(header, body_len)?;
+        let mut kept = Vec::with_capacity(header.embedded.len() + 1);
+        let mut resumes = host.editor_only_end as u64;
+        kept.push(0..host.payload_end as u64);
+        let mut removed = (host.editor_only_end - host.payload_end) as u64;
+        let mut embedded = Vec::with_capacity(header.embedded.len());
+        for asset in &header.embedded {
+            let section_start = asset.offset + asset.len;
+            kept.push(resumes..section_start);
+            resumes = section_start + asset.editor_only_len();
+            embedded.push(EmbeddedAsset {
+                editor_only: None,
+                offset: asset.offset - removed,
+                ..asset.clone()
+            });
+            removed += asset.editor_only_len();
+        }
+        kept.push(resumes..body_len);
+        Ok(Self {
+            header: ContentAssetHeader {
+                editor_only: None,
+                embedded,
+                ..header.clone()
+            },
+            kept,
+        })
+    }
+}
+
+/// The file with every editor-only section removed and its directory moved to match; a file with none comes back byte for byte.
+pub fn without_editor_only(file: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let parsed = ContentFile::parse(file)?;
+    if !parsed.header.has_editor_only() {
+        return Ok(file.to_vec());
+    }
+    let plan = WithoutEditorOnly::of(&parsed.header, parsed.body.len() as u64)?;
+    let mut out = frame_content_asset(&plan.header, &[])?;
+    for range in plan.kept {
+        out.extend_from_slice(&parsed.body[range.start as usize..range.end as usize]);
+    }
+    Ok(out)
+}
+
+struct OpenedContentAsset {
+    file: std::fs::File,
+    header_bytes: Vec<u8>,
+    body_start: u64,
+    body_len: u64,
+}
+
+impl OpenedContentAsset {
+    fn open(path: &Path) -> anyhow::Result<Self> {
+        use std::io::Read;
+
+        let mut file = std::fs::File::open(path)
+            .with_context(|| format!("failed to open '{}'", path.display()))?;
+
+        let mut prefix = [0u8; 8];
+        file.read_exact(&mut prefix)
+            .with_context(|| format!("'{}' is too short to be a content asset", path.display()))?;
+        if prefix[..4] != CONTENT_ASSET_MAGIC {
+            bail!(
+                "not a content asset: '{}' is missing the GRDY magic prefix",
+                path.display()
+            );
+        }
+
+        let header_len = u32::from_le_bytes(
+            prefix[4..8]
+                .try_into()
+                .expect("slice of exactly 4 bytes is always a [u8; 4]"),
+        );
+        let file_len = file
+            .metadata()
+            .with_context(|| format!("failed to read the size of '{}'", path.display()))?
+            .len();
+        let body_start = prefix.len() as u64 + u64::from(header_len);
+        if file_len < body_start {
+            bail!(
+                "content asset '{}' truncated: header claims {header_len} bytes",
+                path.display()
+            );
+        }
+
+        let mut header_bytes = vec![0u8; header_len as usize];
+        file.read_exact(&mut header_bytes).with_context(|| {
+            format!(
+                "content asset '{}' truncated: header claims {header_len} bytes",
+                path.display()
+            )
+        })?;
+        Ok(Self {
+            file,
+            header_bytes,
+            body_start,
+            body_len: file_len - body_start,
+        })
+    }
+
+    fn header(&self, path: &Path) -> anyhow::Result<ContentAssetHeader> {
+        let header = decode_header(&self.header_bytes)
+            .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
+        if !header.embedded.is_empty() {
+            check_directory(&header, Some(self.body_len))
+                .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
+        }
+        Ok(header)
+    }
+
+    fn read_body(&mut self, range: std::ops::Range<u64>, out: &mut Vec<u8>) -> std::io::Result<()> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let start = out.len();
+        out.resize(start + (range.end - range.start) as usize, 0);
+        self.file
+            .seek(SeekFrom::Start(self.body_start + range.start))?;
+        self.file.read_exact(&mut out[start..])
+    }
+}
+
+/// Reads the file at `path` as [`without_editor_only`] would give it, seeking over each section; a file it cannot understand is read whole.
+pub fn read_content_without_editor_only(path: &Path) -> std::io::Result<Vec<u8>> {
+    let Ok(mut opened) = OpenedContentAsset::open(path) else {
+        return std::fs::read(path);
+    };
+    let plan = decode_header(&opened.header_bytes)
+        .and_then(|header| {
+            check_directory(&header, Some(opened.body_len))?;
+            Ok(header)
+        })
+        .ok()
+        .filter(ContentAssetHeader::has_editor_only)
+        .and_then(|header| WithoutEditorOnly::of(&header, opened.body_len).ok());
+    let Some(plan) = plan else {
+        return std::fs::read(path);
+    };
+    let Ok(mut out) = frame_content_asset(&plan.header, &[]) else {
+        return std::fs::read(path);
+    };
+    for range in plan.kept {
+        opened.read_body(range, &mut out)?;
+    }
+    Ok(out)
+}
+
+/// Reads only the editor-only section of the host (`None`) or of the named embedded asset of the file at `path`; `None` when the record has none.
+pub fn read_editor_only_section(
+    path: &Path,
+    embedded_as: Option<&str>,
+) -> anyhow::Result<Option<EditorOnlyBytes>> {
+    let mut opened = OpenedContentAsset::open(path)?;
+    let header = opened.header(path)?;
+    let in_file = || {
+        format!(
+            "failed to read an editor-only section of '{}'",
+            path.display()
+        )
+    };
+    let record = match embedded_as {
+        None => {
+            let extent = HostExtent::of(&header, opened.body_len).with_context(in_file)?;
+            header.record_header(None).map(|record| SectionAt {
+                record,
+                start: extent.payload_end as u64,
+            })
+        }
+        Some(name) => {
+            let asset = named_asset(&header, name).with_context(in_file)?;
+            Some(SectionAt {
+                record: asset.record_header(),
+                start: asset.offset + asset.len,
+            })
+        }
+    };
+    let Some(SectionAt { record, start }) = record else {
+        return Ok(None);
+    };
+    let Some(section) = record.editor_only else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    opened
+        .read_body(start..start + section.len, &mut bytes)
+        .with_context(in_file)?;
+    Ok(Some(EditorOnlyBytes {
+        kind: record.kind,
+        kind_version: record.kind_version,
+        bytes,
+    }))
+}
+
+struct SectionAt {
+    record: ContentAssetHeader,
+    start: u64,
 }
 
 /// Reads just the header of the content asset at `path`, never the payload.
@@ -619,47 +1002,7 @@ pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Ve
 /// so indexing one by reading every file whole is not viable. This reads the
 /// 8-byte magic-and-length prefix, then exactly `header_len` more bytes.
 pub fn read_content_asset_header(path: &Path) -> anyhow::Result<ContentAssetHeader> {
-    use std::io::Read;
-
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("failed to open '{}'", path.display()))?;
-
-    let mut prefix = [0u8; 8];
-    file.read_exact(&mut prefix)
-        .with_context(|| format!("'{}' is too short to be a content asset", path.display()))?;
-    if prefix[..4] != CONTENT_ASSET_MAGIC {
-        bail!(
-            "not a content asset: '{}' is missing the GRDY magic prefix",
-            path.display()
-        );
-    }
-
-    let header_len = u32::from_le_bytes(
-        prefix[4..8]
-            .try_into()
-            .expect("slice of exactly 4 bytes is always a [u8; 4]"),
-    ) as usize;
-
-    let mut header_bytes = vec![0u8; header_len];
-    file.read_exact(&mut header_bytes).with_context(|| {
-        format!(
-            "content asset '{}' truncated: header claims {header_len} bytes",
-            path.display()
-        )
-    })?;
-
-    let header = decode_header(&header_bytes)
-        .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
-    if !header.embedded.is_empty() {
-        let file_len = file
-            .metadata()
-            .with_context(|| format!("failed to read the size of '{}'", path.display()))?
-            .len();
-        let body_len = file_len.saturating_sub((prefix.len() + header_len) as u64);
-        check_directory(&header, Some(body_len))
-            .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
-    }
-    Ok(header)
+    OpenedContentAsset::open(path)?.header(path)
 }
 
 /// Where an embedded asset is stored: the asset whose file holds it, and its name there.

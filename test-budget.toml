@@ -12,7 +12,7 @@
 "crates/director" = 4
 "crates/ecs" = 87
 "crates/editor" = 176
-"crates/foundation" = 65
+"crates/foundation" = 66
 "crates/gameplay" = 11
 "crates/gltf" = 7
 "crates/import" = 25

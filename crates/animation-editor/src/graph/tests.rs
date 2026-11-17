@@ -151,6 +151,7 @@ fn write_broken_graph(root: &Path) {
         kind: AnimationGraph::name().into(),
         kind_version: AnimationGraph::FORMAT_VERSION,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };

@@ -39,6 +39,7 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
         kind: sub_asset.type_name.to_string(),
         kind_version: sub_asset.kind_version,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };

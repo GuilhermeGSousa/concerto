@@ -61,6 +61,7 @@ pub(crate) fn write_content(project: &Path, name: &str, clip: &EmittedSubAsset) 
         kind: clip.type_name.to_string(),
         kind_version: clip.kind_version,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };

@@ -588,6 +588,7 @@ fn import_with(
                 source: provenance_source.clone(),
                 sub_asset: sub_asset.name.clone(),
             }),
+            editor_only: None,
             derived: None,
             embedded: Vec::new(),
         };
@@ -642,6 +643,7 @@ fn import_with(
             .map(|output| EmbeddedPayload {
                 header: output.header.clone(),
                 payload: output.payload,
+                editor_only: None,
                 derived_blob: None,
             })
             .collect();

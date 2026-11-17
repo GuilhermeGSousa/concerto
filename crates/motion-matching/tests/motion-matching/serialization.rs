@@ -154,6 +154,7 @@ fn content_asset(kind: &str, version: u32, fixture: &str) -> Vec<u8> {
         kind: kind.into(),
         kind_version: version,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };

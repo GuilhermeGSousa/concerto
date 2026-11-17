@@ -496,6 +496,7 @@ fn write_imported(
         kind: kind.into(),
         kind_version,
         provenance,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };

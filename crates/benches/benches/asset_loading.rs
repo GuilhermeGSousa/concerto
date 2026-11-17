@@ -43,6 +43,7 @@ fn header<A: Asset>(name: &str) -> ContentAssetHeader {
             source: "assets/host.glb".into(),
             sub_asset: name.into(),
         }),
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     }
@@ -70,6 +71,7 @@ fn write_project() -> Project {
         .map(|index| EmbeddedPayload {
             header: header::<Part>(&format!("mesh/{index}")),
             payload: &part,
+            editor_only: None,
             derived_blob: None,
         })
         .collect();

@@ -189,7 +189,7 @@ cargo run -p concerto-import --bin pack-imports -- <project directory>
 ```
 
 It follows the project's `.import.toml` sidecars. For each source whose `scene`
-output is a file the import owns, it writes that file at version 7 with the
+output is a file the import owns, it writes that file at version 8 with the
 source's loose meshes, materials and skeletons embedded, then deletes those
 loose files and any folder left empty. An output with `file = true`, an output
 saved from the editor, and every texture and clip stay loose and untouched.
@@ -447,14 +447,15 @@ magic "GRDY" (4 bytes)
 u32   header length, little-endian
       bincode(u32 format version, ContentAssetHeader)
       payload — the asset's own bincode encoding, verbatim
+      editor-only section — `editor_only.len` bytes, only when the header has an `editor_only` section
       derived blob — `derived.len` bytes, only when the header has a `derived` section
-      embedded asset 0 — its payload, then its derived blob if it has one
+      embedded asset 0 — its payload, then its editor-only section and its derived blob if it has them
       embedded asset 1 — …
 ```
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-The format version is `CONTENT_FORMAT_VERSION`, currently `7`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, and version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file. The payload is everything between the header and that blob; `read_content_asset` returns it without the blob, and `read_content_asset_parts` returns both. `write_content_asset` writes no section and refuses a header that has one; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`. Committed content never has a section. A version-4 file reads as kind version 1 and a version-5 file reads with no section; a version-6 file reads with no embedded assets. None needs a re-import, and each moves to version 7 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file, and version 8 adds `editor_only`, the description of the editor-only section between the two. The payload is everything between the header and the section or the blob; `read_content_asset` returns it alone, and `read_content_asset_parts` returns all three. `write_content_asset` writes neither a section nor a blob and refuses a header that describes one; `write_content_asset_with_editor_only` writes the header, the payload and the editor-only bytes it is given, and writes no section for empty bytes; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`, and never an editor-only section. Committed content never has a derived section. A version-4 file reads as kind version 1 and a version-5 file reads with no derived section; a version-6 file reads with no embedded assets, and a version-7 file with no editor-only section. None needs a re-import, and each moves to version 8 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
@@ -465,9 +466,10 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `7`; it changes only w
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
 | `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, kept when `resave_content_asset` writes over it; `None` for editor-authored assets and for an imported asset saved with `save_content_asset_into` |
+| `editor_only`    | `Some(EditorOnlySection { len })` when editor-only bytes follow the payload: data only tools read, `len` bytes long; `None` otherwise, for a cooked file, and for a file older than version 8 |
 | `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
-| `embedded`       | the directory of the assets stored in this file after the host's payload and blob, one `EmbeddedAsset` each, in file order; empty for a loose file, and for a file older than version 7 |
+| `embedded`       | the directory of the assets stored in this file after the host's payload, section and blob, one `EmbeddedAsset` each, in file order; empty for a loose file, and for a file older than version 7 |
 
 The header can be read without touching the payload, which is what lets a
 future tool index a whole content tree cheaply.
@@ -476,28 +478,47 @@ Version 7 lets one file hold several assets. The asset the file is for is the
 **host**; the others are **embedded** in it, and an asset alone in its file is
 **loose**. An `EmbeddedAsset` holds what a loose file's header would hold for
 that asset (`asset_id`, `references`, `kind`, `kind_version`, `provenance`,
-`derived`) and the byte range of its payload: `offset`, counted from the end
-of the header, and `len`. Its derived blob, of `derived.len` bytes, follows its
-payload. Its `provenance` is not optional, because `provenance.sub_asset` is
+`editor_only`, `derived`) and the byte range of its payload: `offset`, counted
+from the end of the header, and `len`. Its editor-only section, of
+`editor_only.len` bytes, follows its payload, and its derived blob, of
+`derived.len` bytes, follows that. Its `provenance` is not optional, because `provenance.sub_asset` is
 its name inside the file (`mesh/0`), which `EmbeddedAsset::name()` returns.
 Embedded assets are stored in directory order, so the host's payload ends
-where the first one starts, less the host's blob. An embedded asset lists no
+where the first one starts, less the host's section and blob. An embedded asset lists no
 embedded assets of its own.
 
 `write_content_asset_with_embedded` writes a host from its header, with an
 empty directory, its payload and one `EmbeddedPayload` per embedded asset, and
-fills the directory. It refuses a host header with a derived section, and an
-embedded asset that has no provenance, lists embedded assets, has a blob its
-header does not describe, or repeats an id or a name. `write_content_asset`
-and `write_cooked_content_asset` refuse a header that lists embedded assets.
+fills the directory. Each asset's editor-only section is the bytes in
+`EmbeddedPayload::editor_only`; `None` or empty bytes write none. It refuses a
+host header with a derived or an editor-only section, and an embedded asset
+that has no provenance, lists embedded assets, has a blob its header does not
+describe, has a header describing a section of another length than its bytes,
+or repeats an id or a name. `write_content_asset`,
+`write_content_asset_with_editor_only` and `write_cooked_content_asset` refuse
+a header that lists embedded assets.
 `read_content_asset` and `read_content_asset_parts` of a host return the
-host's payload and blob, with the directory in the header. `asset_record`
-returns one asset of a file as a standalone record, the bytes a loose
-version-7 file of it would have: the host for `None`, an embedded asset by
-name. `ContentAssetHeader::record_header` gives that record's header without
-reading a payload. Every reader rejects a directory whose ranges overlap, are
-out of order or run past the file, or that repeats an id or a name, with an
-error that names the asset.
+host's payload, section and blob, with the directory in the header.
+`asset_record` returns one asset of a file as a standalone record, the bytes a
+loose file of it would have, its editor-only section included: the host for
+`None`, an embedded asset by name. `ContentAssetHeader::record_header` gives
+that record's header without reading a payload. Every reader rejects a
+directory whose ranges overlap, are out of order or run past the file, or that
+repeats an id or a name, with an error that names the asset; a section counts
+in its asset's range.
+
+Three readers deal with editor-only sections alone.
+`ContentAssetHeader::has_editor_only` says whether the host or any embedded
+asset has one. `without_editor_only` returns a file's bytes with every section
+removed and the directory's offsets moved to match; a file with no section
+comes back byte for byte, whatever its version.
+`read_content_without_editor_only` reads a file from disk as those same bytes
+without reading the sections, by seeking over each; a file it cannot
+understand is read whole, so the parser that follows reports what is wrong
+with it. `read_editor_only_section` reads the header and then only the section
+of one record, the host for `None` or an embedded asset by name, as
+`EditorOnlyBytes { kind, kind_version, bytes }`; it returns `None` for a record
+with no section and an error for a name the file does not hold.
 
 ## Changing an asset type's encoding
 
@@ -627,11 +648,11 @@ such a file still fails when it is loaded.
 
 `CONTENT_FORMAT_VERSION` is a different number. It changes only when the
 framing or `ContentAssetHeader` changes, never for a payload, and a new header
-version keeps the previous ones readable where it can, as version 7 reads
-versions 4, 5 and 6. The version-7 framing is pinned by
-`crates/foundation/tests/encoding/content_asset.v7.bin`, rewritten under
-`CONCERTO_BLESS_ENCODING=1`; `content_asset.v6.bin` stays as it was written,
-with a test that reads it.
+version keeps the previous ones readable where it can, as version 8 reads
+versions 4 to 7. The version-8 framing is pinned by
+`crates/foundation/tests/encoding/content_asset.v8.bin`, rewritten under
+`CONCERTO_BLESS_ENCODING=1`; `content_asset.v6.bin` and `content_asset.v7.bin`
+stay as they were written, each with a test that reads it.
 
 ## The asset registry
 

@@ -117,6 +117,7 @@ fn imported_widget_header(sub_asset: &str) -> ContentAssetHeader {
             source: "assets/wheel.glb".to_string(),
             sub_asset: sub_asset.to_string(),
         }),
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     }
@@ -175,6 +176,7 @@ fn a_file_with_embedded_assets_is_not_overwritten() {
         &[EmbeddedPayload {
             header: imported_widget_header("widget/0"),
             payload: &payload,
+            editor_only: None,
             derived_blob: None,
         }],
     )

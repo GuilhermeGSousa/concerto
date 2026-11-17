@@ -1,6 +1,6 @@
 //! Framing for game-ready content assets: `magic | u32 header_len |
-//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim) | derived blob`, the
-//! blob present only when the header describes one. The header is read
+//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim) | editor-only section |
+//! derived blob`, the section and the blob present only when the header describes them. The header is read
 //! without touching the payload, so a future asset registry can index a
 //! whole content tree by scanning headers alone.
 use std::path::Path;
@@ -12,10 +12,12 @@ use super::{Asset, AssetId};
 
 pub use concerto_asset_format::{
     asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
-    sub_asset_file_stem, write_content_asset, write_content_asset_with_embedded,
-    write_cooked_content_asset, AssetRecord, ContentAssetHeader, ContentAssetParts, ContentFile,
-    CookedSection, DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance,
-    CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
+    read_content_without_editor_only, read_editor_only_section, sub_asset_file_stem,
+    without_editor_only, write_content_asset, write_content_asset_with_editor_only,
+    write_content_asset_with_embedded, write_cooked_content_asset, AssetRecord, ContentAssetHeader,
+    ContentAssetParts, ContentFile, CookedSection, DerivedSection, EditorOnlyBytes,
+    EditorOnlySection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, CONTENT_ASSET_MAGIC,
+    CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
@@ -114,6 +116,7 @@ pub fn save_content_asset_into<A: Asset>(
         kind: A::name().to_string(),
         kind_version: A::FORMAT_VERSION,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -163,6 +166,7 @@ pub fn resave_content_asset<A: Asset>(
         kind: A::name().to_string(),
         kind_version: A::FORMAT_VERSION,
         provenance: existing.provenance,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };

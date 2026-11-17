@@ -366,6 +366,7 @@ impl Project {
                 source: format!("assets/{name}.glb"),
                 sub_asset: sub_asset.to_string(),
             }),
+            editor_only: None,
             derived: None,
             embedded: Vec::new(),
         };
@@ -377,6 +378,7 @@ impl Project {
             &[EmbeddedPayload {
                 header: embedded.clone(),
                 payload: &bincode::serialize(value).unwrap(),
+                editor_only: None,
                 derived_blob: None,
             }],
         )
@@ -592,6 +594,7 @@ fn read_cooked(path: &Path) -> CookedFile {
     let parts = read_content_asset_parts(&bytes).unwrap();
     CookedFile {
         header: ContentAssetHeader {
+            editor_only: None,
             derived: None,
             ..parts.header.clone()
         },
@@ -729,6 +732,7 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
         &[EmbeddedPayload {
             header: parts.header.record_header(Some("leaf/0")).unwrap(),
             payload: &bincode::serialize(&Leaf { value: 9 }).unwrap(),
+            editor_only: None,
             derived_blob: None,
         }],
     )

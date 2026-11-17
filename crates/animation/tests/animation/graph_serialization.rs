@@ -532,6 +532,7 @@ fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
         kind: "AnimationClip".to_string(),
         kind_version: 1,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -558,6 +559,7 @@ fn a_version_2_clip_migrates_to_a_clip_that_is_not_additive() {
         kind: "AnimationClip".to_string(),
         kind_version: 2,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -708,6 +710,7 @@ fn a_version_1_retarget_rig_migrates_to_a_rig_with_no_goals() {
         kind: "RetargetRig".to_string(),
         kind_version: 1,
         provenance: None,
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };

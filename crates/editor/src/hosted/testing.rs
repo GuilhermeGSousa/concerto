@@ -304,6 +304,7 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
         kind: Scene::name().into(),
         kind_version: Scene::FORMAT_VERSION,
         provenance: asset.provenance.clone(),
+        editor_only: None,
         derived: None,
         embedded: Vec::new(),
     };
