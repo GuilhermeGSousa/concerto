@@ -160,8 +160,9 @@ fix the entry in the same commit as the change that made it false.
 - **A BC texture needs `TEXTURE_COMPRESSION_BC` on the device.** `Gpu`
   requests it when the adapter has it, and `RenderCapabilities::bc_textures`
   says whether it did. Without it, preparing a BC texture logs an error naming
-  the texture and binds the dummy texture, a transparent black texel, in its
-  place; nothing decodes BC on the CPU.
+  the texture and binds a `FallbackTextures` stand-in by the texture's role:
+  opaque white for `Color`, a flat normal for `Normal`, white for `Data`.
+  Nothing decodes BC on the CPU.
 - **`Pose::identity` and `AnimationFrame::identity` have zero translation per
   joint.** Applying a pose that was never evaluated collapses every bone to the
   origin and the mesh folds onto itself. A frame from `FramePool::acquire` starts at the skeleton's rest pose,

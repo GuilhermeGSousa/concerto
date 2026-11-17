@@ -93,8 +93,10 @@ texture keeps its levels, not its source. On the web there is no encoder, so
 an uncooked run derives uncompressed levels; a cooked build carries the
 compressed ones. A device without BC texture compression (Safari, and some
 GPU and driver combinations on the web) refuses BC textures: each one logs an
-error naming the texture and the fix, and its material samples the dummy
-texture, a transparent black texel, in its place. Set such a texture's
+error naming the texture and the fix, and its material samples a neutral
+stand-in by the texture's role: opaque white for a colour texture, a flat
+normal for a normal map, and white for a data texture, so metallic-roughness
+and occlusion keep their factors. Set such a texture's
 compression to `Uncompressed` to show it there. The renderer samples the chain trilinearly with up to 16×
 anisotropic filtering, as much as the adapter supports. Code builds a sampled
 RGBA8 texture with `Texture::new`, which builds its mip chain from the pixels;

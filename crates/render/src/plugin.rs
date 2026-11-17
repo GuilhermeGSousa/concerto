@@ -29,7 +29,7 @@ use crate::{
     render_asset::{
         register_render_asset_budget,
         render_mesh::RenderMesh,
-        render_texture::{DummyRenderTexture, RenderTexture},
+        render_texture::{DummyRenderTexture, FallbackTextures, RenderTexture},
         render_window::RenderWindow,
         RenderAssetPlugin,
     },
@@ -257,6 +257,7 @@ impl Plugin for RenderPlugin {
 
         app.render_mut()
             .insert_resource(DummyRenderTexture::new(&device))
+            .insert_resource(FallbackTextures::new(&device, &queue))
             .insert_resource(RenderContext {
                 target,
                 surface_config: config,

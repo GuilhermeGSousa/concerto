@@ -1,5 +1,7 @@
 use crate::{
-    assets::texture::{block_extent, block_row_bytes, block_rows, Texture, TextureKind},
+    assets::texture::{
+        block_extent, block_row_bytes, block_rows, Texture, TextureKind, TextureRole,
+    },
     capabilities::RenderCapabilities,
     device::RenderDevice,
     queue::RenderQueue,
@@ -141,7 +143,7 @@ impl RenderAsset for RenderTexture {
         Res<'static, RenderDevice>,
         Res<'static, RenderQueue>,
         Res<'static, RenderCapabilities>,
-        Res<'static, DummyRenderTexture>,
+        Res<'static, FallbackTextures>,
         Extracted<'static, 'static, Option<Res<'static, AssetServer>>>,
     );
 
@@ -159,7 +161,7 @@ impl RenderAsset for RenderTexture {
             return Err(AssetPreparationError::NotReady);
         }
 
-        let (device, queue, capabilities, dummy, server) = params;
+        let (device, queue, capabilities, fallbacks, server) = params;
         let format = source_asset.levels().map(|levels| levels.format);
         if let Some(format) = format.filter(|format| {
             format
@@ -175,7 +177,7 @@ impl RenderAsset for RenderTexture {
             log::error!(
                 "{location} is {format:?}, but this device has no BC texture compression; set its compression to Uncompressed or use a browser with BC"
             );
-            return Ok(dummy.inner().clone());
+            return Ok(fallbacks.for_role(source_asset.role).clone());
         }
         Ok(RenderTexture::from_texture(source_asset, device, queue))
     }
@@ -233,5 +235,95 @@ impl Deref for DummyRenderTexture {
     type Target = RenderTexture;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+/// The textures a refused BC texture is replaced by, one per role, so its material shades as if the texture were neutral.
+#[derive(Resource)]
+pub struct FallbackTextures {
+    color: RenderTexture,
+    normal: RenderTexture,
+    data: RenderTexture,
+}
+
+impl FallbackTextures {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self {
+            color: solid_texture(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                [255, 255, 255, 255],
+            ),
+            normal: solid_texture(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                [128, 128, 255, 255],
+            ),
+            data: solid_texture(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                [255, 255, 255, 255],
+            ),
+        }
+    }
+
+    /// The stand-in for a texture of `role`: opaque white, a flat normal, or white data.
+    pub fn for_role(&self, role: TextureRole) -> &RenderTexture {
+        match role {
+            TextureRole::Color => &self.color,
+            TextureRole::Normal => &self.normal,
+            TextureRole::Data => &self.data,
+        }
+    }
+}
+
+fn solid_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
+    texel: [u8; 4],
+) -> RenderTexture {
+    let size = wgpu::Extent3d {
+        width: 1,
+        height: 1,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("fallback texture"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            aspect: wgpu::TextureAspect::All,
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+        },
+        &texel,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        size,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("fallback texture sampler"),
+        ..Default::default()
+    });
+    RenderTexture {
+        texture,
+        view,
+        sampler,
     }
 }

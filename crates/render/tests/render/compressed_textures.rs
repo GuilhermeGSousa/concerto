@@ -123,7 +123,10 @@ impl Content {
 #[derive(Clone, Copy)]
 enum Surface {
     Emissive(AssetId),
-    Lit { normal: Option<AssetId> },
+    Lit {
+        base: Option<AssetId>,
+        normal: Option<AssetId>,
+    },
 }
 
 fn material(server: &AssetServer, surface: Surface) -> StandardMaterial {
@@ -135,8 +138,11 @@ fn material(server: &AssetServer, surface: Surface) -> StandardMaterial {
             material.set_emissive_factor(Vec3::ONE);
             material
         }
-        Surface::Lit { normal } => {
+        Surface::Lit { base, normal } => {
             let mut material = StandardMaterial::default();
+            if let Some(id) = base {
+                material.set_base_color_texture(server.load(id));
+            }
             if let Some(id) = normal {
                 material.set_normal_texture(server.load(id));
             }
@@ -297,25 +303,42 @@ fn bc_formats_sample_like_their_uncompressed_source() {
         );
     }
 
-    let bc1 = content
-        .registry
-        .id_for_address("content/bc1.gasset")
-        .unwrap();
-    let black = content.save(
-        "black",
-        TextureRole::Data,
-        Compression::Uncompressed,
-        png(DynamicImage::ImageRgba8(RgbaImage::new(64, 64))),
+    let plain = render(
+        &gpu,
+        &content,
+        true,
+        Surface::Lit {
+            base: None,
+            normal: None,
+        },
     );
-    let refused = render(&gpu, &content, false, Surface::Emissive(bc1));
-    let dummy = render(&gpu, &content, false, Surface::Emissive(black));
-    assert_eq!(max_difference(&refused, &dummy, 4), 0);
+    let color = content.save(
+        "refused_color",
+        TextureRole::Color,
+        Compression::Bc1,
+        png(solid_blocks()),
+    );
+    let refused = render(
+        &gpu,
+        &content,
+        false,
+        Surface::Lit {
+            base: Some(color),
+            normal: None,
+        },
+    );
+    let difference = max_difference(&refused, &plain, 4);
+    assert!(
+        difference <= 2,
+        "a refused colour texture shades {difference}/255 away from no base colour texture"
+    );
     let refusals = WARNINGS
         .lock()
         .unwrap()
         .iter()
         .filter(|message| {
-            message.contains("content/bc1.gasset") && message.contains("no BC texture compression")
+            message.contains("content/refused_color.gasset")
+                && message.contains("no BC texture compression")
         })
         .count();
     assert_eq!(refusals, 1, "the refusal names the texture, once");
@@ -330,11 +353,32 @@ fn bc_formats_sample_like_their_uncompressed_source() {
             Rgb([128, 128, 255]),
         ))),
     );
-    let mapped = render(&gpu, &content, true, Surface::Lit { normal: Some(flat) });
-    let plain = render(&gpu, &content, true, Surface::Lit { normal: None });
+    let mapped = render(
+        &gpu,
+        &content,
+        true,
+        Surface::Lit {
+            base: None,
+            normal: Some(flat),
+        },
+    );
     let difference = max_difference(&mapped, &plain, 3);
     assert!(
         difference <= 2,
         "a flat BC5 normal map shades {difference}/255 away from no normal map"
+    );
+    let refused = render(
+        &gpu,
+        &content,
+        false,
+        Surface::Lit {
+            base: None,
+            normal: Some(flat),
+        },
+    );
+    let difference = max_difference(&refused, &plain, 3);
+    assert!(
+        difference <= 2,
+        "a refused BC5 normal map shades {difference}/255 away from no normal map"
     );
 }
