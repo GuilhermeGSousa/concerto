@@ -1,41 +1,87 @@
 use std::path::Path;
 
-use concerto_asset_import::{ImportContext, ImportError, Importer};
-use image::GenericImageView;
-
-use crate::assets::texture::Texture;
+use crate::assets::texture::{
+    resolve, SourceEncoding, Texture, TextureRole, TextureSettings, TextureSource,
+};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings};
 
 pub struct ImageImporter;
 
+/// The encoding of image file `bytes`, read from their signature.
+pub fn source_encoding(bytes: &[u8]) -> Result<SourceEncoding, String> {
+    match image::guess_format(bytes) {
+        Ok(image::ImageFormat::Png) => Ok(SourceEncoding::Png),
+        Ok(image::ImageFormat::Jpeg) => Ok(SourceEncoding::Jpeg),
+        Ok(format) => Err(format!(
+            "{format:?} images cannot be textures; use PNG or JPEG"
+        )),
+        Err(error) => Err(format!("not a PNG or JPEG image: {error}")),
+    }
+}
+
+/// The texture `name` of `ctx` from image file `bytes`, with `given` settings, else the ones its previous import or the editor gave it, else the defaults; fails when they cannot derive for `role`.
+pub fn imported_texture(
+    ctx: &ImportContext,
+    name: &str,
+    role: TextureRole,
+    bytes: Vec<u8>,
+    given: Option<TextureSettings>,
+) -> Result<Texture, String> {
+    let encoding = source_encoding(&bytes)?;
+    let source = TextureSource::new(bytes, encoding).map_err(|err| format!("{err:#}"))?;
+    let settings = given
+        .or_else(|| {
+            ctx.previous::<Texture>(name)
+                .map(|previous| previous.settings)
+        })
+        .unwrap_or_default();
+    resolve(role, &settings, false)
+        .map_err(|err| format!("texture `{name}` cannot be derived as {role:?}: {err:#}"))?;
+    Ok(Texture::imported(role, settings, source))
+}
+
 impl Importer for ImageImporter {
+    type Settings = NoSettings;
+    type AssetSettings = TextureSettings;
+
+    fn name(&self) -> &'static str {
+        "image"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["png", "jpg", "jpeg"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
-        let img = image::open(source_path).map_err(|err| ImportError::MalformedSource {
+    fn current_asset_settings(&self, ctx: &ImportContext) -> Option<TextureSettings> {
+        ctx.previous::<Texture>("main")
+            .map(|texture| texture.settings)
+    }
+
+    fn import(
+        &self,
+        source_path: &Path,
+        _settings: &NoSettings,
+        asset_settings: Option<&TextureSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
+        let malformed = |message: String| ImportError::MalformedSource {
+            source_path: source_path.to_path_buf(),
+            message,
+        };
+        let bytes = std::fs::read(source_path).map_err(|err| ImportError::SourceUnreadable {
             source_path: source_path.to_path_buf(),
             message: err.to_string(),
         })?;
-
-        let (width, height) = img.dimensions();
-        let texture = Texture::new(
-            width,
-            height,
-            // TODO(asset-import-pipeline): colour space hard-coded sRGB —
-            // standalone linear textures (normal/metallic-roughness .png)
-            // can't be imported correctly yet; needs a per-entry hint in
-            // content.toml or a filename convention.
-            wgpu_types::TextureFormat::Rgba8UnormSrgb,
-            img.to_rgba8().into_raw(),
-        );
-
+        let texture = imported_texture(
+            ctx,
+            "main",
+            TextureRole::Color,
+            bytes,
+            asset_settings.copied(),
+        )
+        .map_err(malformed)?;
         ctx.emit("main", &texture)
-            .map_err(|err| ImportError::MalformedSource {
-                source_path: source_path.to_path_buf(),
-                message: format!("{err:?}"),
-            })?;
-
+            .map_err(|err| malformed(format!("{err:?}")))?;
         Ok(())
     }
 }

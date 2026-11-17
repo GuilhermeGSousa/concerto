@@ -69,7 +69,7 @@ impl Gpu {
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
+                required_features: adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC,
                 required_limits: if cfg!(target_arch = "wasm32") {
                     Limits {
                         max_color_attachments: adapter.limits().max_color_attachments,

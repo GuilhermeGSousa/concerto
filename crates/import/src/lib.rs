@@ -6,13 +6,16 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
-use concerto_asset_import::{DependencyEntry, ImportContext, Importer, SubAssetIdResolver};
+use concerto_asset_import::{
+    DependencyEntry, ErasedImporter, ImportContext, PreviousOutputResolver, SubAssetIdResolver,
+};
 use concerto_foundation::assets::content::{
-    read_content_asset_header, write_content_asset, write_content_asset_with_embedded,
-    ContentAssetHeader, EmbeddedPayload, ImportProvenance,
+    read_asset_record, read_content_asset_header, write_content_asset,
+    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
+use concerto_reflect::Reflect;
 
 pub mod config;
 pub mod metadata;
@@ -23,14 +26,93 @@ pub use pack::{pack_imports, PackReport, PackedSource};
 use config::{content_address, ContentConfig};
 use metadata::{sidecar_path, OutputMetadata, SourceMetadata};
 
-fn registered_importers() -> Vec<Box<dyn Importer>> {
-    vec![
-        Box::new(concerto_render::importers::image_importer::ImageImporter),
-        Box::new(concerto_gltf::gltf_importer::GltfImporter),
-        Box::new(concerto_obj::obj_importer::ObjImporter),
-        Box::new(concerto_bvh::bvh_importer::BvhImporter),
-        Box::new(concerto_audio::AudioImporter),
-    ]
+static IMPORTERS: [&dyn ErasedImporter; 5] = [
+    &concerto_render::importers::image_importer::ImageImporter,
+    &concerto_gltf::gltf_importer::GltfImporter,
+    &concerto_obj::obj_importer::ObjImporter,
+    &concerto_bvh::bvh_importer::BvhImporter,
+    &concerto_audio::AudioImporter,
+];
+
+/// Every importer the import library runs.
+pub fn importers() -> &'static [&'static dyn ErasedImporter] {
+    &IMPORTERS
+}
+
+/// The importer for files with `extension`, given without a dot and in any case.
+pub fn importer_for(extension: &str) -> Option<&'static dyn ErasedImporter> {
+    let extension = extension.to_ascii_lowercase();
+    importers().iter().copied().find(|importer| {
+        importer
+            .supported_extensions()
+            .contains(&extension.as_str())
+    })
+}
+
+/// The settings given to one import; each one left `None` keeps what the project holds.
+#[derive(Default)]
+pub struct ImportSettings {
+    /// The importer's settings, written whole to the sidecar's `[settings]`; `None` imports with the sidecar's.
+    pub settings: Option<Box<dyn Reflect>>,
+    /// The settings of the source's main asset; `None` keeps the asset's own, or gives a new one the defaults.
+    pub asset_settings: Option<Box<dyn Reflect>>,
+}
+
+/// The settings an import of a source would use if given none.
+pub struct StagedSettings {
+    /// The sidecar's importer settings, or the defaults.
+    pub settings: Box<dyn Reflect>,
+    /// The main asset's current settings, or the defaults when it will be new; `None` when the importer has none.
+    pub asset_settings: Option<Box<dyn Reflect>>,
+}
+
+/// A project's content as one scan found it, to stage any number of sources against.
+pub struct ContentScan {
+    project_root: PathBuf,
+    registry: AssetRegistry,
+}
+
+impl ContentScan {
+    /// Scans the content tree of the existing project at `project_root`; fails on a malformed header or a duplicate id.
+    pub fn new(project_root: &Path, config: &ContentConfig) -> anyhow::Result<Self> {
+        config.validate()?;
+        let project_root = project_root
+            .canonicalize()
+            .with_context(|| format!("resolving project '{}'", project_root.display()))?;
+        let registry =
+            AssetRegistry::from_content_tree(&project_root, &config.root, &config.extension)?;
+        Ok(Self {
+            project_root,
+            registry,
+        })
+    }
+
+    /// The settings importing `source` as `destination` would use if given none: the sidecar's, or the defaults, and the main asset's current ones; fails when the sidecar's settings do not parse.
+    pub fn staged_settings(
+        &self,
+        source: &Path,
+        destination: &str,
+    ) -> anyhow::Result<StagedSettings> {
+        let placement = placement(source, destination, &self.project_root)?;
+        let importer = importer_of(&placement.source, &placement.placed)?;
+        let metadata = source_metadata(
+            importer,
+            &placement.placed,
+            &placement.project_root,
+            &self.registry,
+        )?;
+        let settings = sidecar_settings(importer, &metadata, &placement.placed)?;
+        let ctx = ImportContext::new(placement.placed.clone()).with_previous_outputs(
+            previous_outputs(&self.registry, &metadata, &placement.project_root),
+        );
+        let asset_settings = importer
+            .current_asset_settings(&ctx)
+            .or_else(|| importer.default_asset_settings());
+        Ok(StagedSettings {
+            settings,
+            asset_settings,
+        })
+    }
 }
 
 const HOST: &str = "scene";
@@ -38,16 +120,6 @@ const HOST: &str = "scene";
 /// Whether an output of `kind` is stored inside its import's scene file by default.
 pub fn embeds_by_default(kind: &str) -> bool {
     matches!(kind, "Mesh" | "StandardMaterial" | "Skeleton")
-}
-
-/// Whether any registered importer handles this extension, given without a dot.
-pub fn supported_extension(extension: &str) -> bool {
-    let extension = extension.to_ascii_lowercase();
-    registered_importers().iter().any(|importer| {
-        importer
-            .supported_extensions()
-            .contains(&extension.as_str())
-    })
 }
 
 /// What [`import_source_into`] wrote.
@@ -123,17 +195,43 @@ pub fn import_source(
         .with_context(|| format!("resolving source '{}'", source.display()))?;
     std::fs::create_dir_all(project_root)?;
     let project_root = project_root.canonicalize()?;
-    Ok(import_placed(&source, &source, &project_root, config)?.assets)
+    Ok(import_placed(
+        &source,
+        &source,
+        &project_root,
+        config,
+        ImportSettings::default(),
+    )?
+    .assets)
 }
 
-/// Imports `source` into the project as `destination`, copying it and every file it refers to; nothing is copied unless the import succeeds.
+/// Imports `source` into the project as `destination`, copying it and every file it refers to; nothing is copied unless the import succeeds. Given `settings` are written to the sidecar, and given asset settings to the source's main asset.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
     project_root: &Path,
     config: &ContentConfig,
+    settings: ImportSettings,
 ) -> anyhow::Result<ImportedSource> {
     config.validate()?;
+    std::fs::create_dir_all(project_root)?;
+    let placement = placement(source, destination, project_root)?;
+    import_placed(
+        &placement.source,
+        &placement.placed,
+        &placement.project_root,
+        config,
+        settings,
+    )
+}
+
+struct Placement {
+    source: PathBuf,
+    placed: PathBuf,
+    project_root: PathBuf,
+}
+
+fn placement(source: &Path, destination: &str, project_root: &Path) -> anyhow::Result<Placement> {
     let source = source
         .canonicalize()
         .with_context(|| format!("resolving source '{}'", source.display()))?;
@@ -151,13 +249,16 @@ pub fn import_source_into(
     if extension_of(relative) != extension {
         bail!("destination '{destination}' must keep the source's extension '.{extension}'");
     }
-    std::fs::create_dir_all(project_root)?;
     let project_root = project_root.canonicalize()?;
     let placed = placed_path(&project_root.join(relative));
     if !placed.starts_with(&project_root) {
         bail!("destination '{destination}' resolves outside the project");
     }
-    import_placed(&source, &placed, &project_root, config)
+    Ok(Placement {
+        source,
+        placed,
+        project_root,
+    })
 }
 
 fn extension_of(path: &Path) -> String {
@@ -187,55 +288,41 @@ fn placed_path(target: &Path) -> PathBuf {
     }
 }
 
+fn importer_of(read: &Path, source: &Path) -> anyhow::Result<&'static dyn ErasedImporter> {
+    let extension = extension_of(read);
+    importer_for(&extension).with_context(|| {
+        format!(
+            "no importer handles '.{extension}' (source '{}')",
+            source.display()
+        )
+    })
+}
+
 fn import_placed(
     read: &Path,
     source: &Path,
     project_root: &Path,
     config: &ContentConfig,
+    settings: ImportSettings,
 ) -> anyhow::Result<ImportedSource> {
-    let extension = extension_of(read);
-    let importers = registered_importers();
-    let Some(importer) = importers
-        .iter()
-        .find(|i| i.supported_extensions().contains(&extension.as_str()))
-    else {
-        bail!(
-            "no importer handles '.{extension}' (source '{}')",
-            source.display()
-        );
-    };
-    let importer_name = match extension.as_str() {
-        "gltf" | "glb" => "gltf",
-        "obj" => "obj",
-        "bvh" => "bvh",
-        "ogg" | "wav" => "audio",
-        _ => "image",
-    };
-    import_with(
-        importer.as_ref(),
-        importer_name,
-        read,
-        source,
-        project_root,
-        config,
-    )
+    let importer = importer_of(read, source)?;
+    import_with(importer, read, source, project_root, config, settings)
 }
 
-fn import_with(
-    importer: &dyn Importer,
-    importer_name: &str,
-    read: &Path,
+struct Existing {
+    registry: AssetRegistry,
+    headers: HashMap<AssetId, ContentAssetHeader>,
+    metadata: SourceMetadata,
+}
+
+fn existing(
+    importer: &dyn ErasedImporter,
     source: &Path,
     project_root: &Path,
     config: &ContentConfig,
-) -> anyhow::Result<ImportedSource> {
-    let relative_source = source.strip_prefix(project_root).unwrap_or(source);
-    let provenance_source = relative_source.to_string_lossy().replace('\\', "/");
-    let sidecar = sidecar_path(source);
-
+) -> anyhow::Result<Existing> {
     // Fail on malformed headers and duplicate IDs before touching any output.
-    let mut registry =
-        AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
+    let registry = AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
     let mut files: HashMap<AssetId, ContentAssetHeader> = HashMap::new();
     let mut headers = HashMap::new();
     for entry in registry.iter() {
@@ -250,7 +337,23 @@ fn import_with(
             .with_context(|| format!("'{}' is not in its file's directory", entry.location()))?;
         headers.insert(entry.id, header);
     }
-    let mut metadata = if sidecar.try_exists()? {
+    let metadata = source_metadata(importer, source, project_root, &registry)?;
+    Ok(Existing {
+        registry,
+        headers,
+        metadata,
+    })
+}
+
+fn source_metadata(
+    importer: &dyn ErasedImporter,
+    source: &Path,
+    project_root: &Path,
+    registry: &AssetRegistry,
+) -> anyhow::Result<SourceMetadata> {
+    let importer_name = importer.name();
+    let sidecar = sidecar_path(source);
+    Ok(if sidecar.try_exists()? {
         let metadata = SourceMetadata::load(&sidecar)?;
         if metadata.importer != importer_name {
             bail!(
@@ -264,14 +367,14 @@ fn import_with(
         // Adopt legacy outputs only through matching provenance, never merely
         // because a generated destination is already occupied.
         let mut outputs = BTreeMap::new();
-        for (id, header) in &headers {
-            if let Some(provenance) = &header.provenance {
+        for entry in registry.iter() {
+            if let Some(provenance) = &entry.provenance {
                 if metadata::provenance_path(&provenance.source, project_root) == source
                     && outputs
                         .insert(
                             provenance.sub_asset.clone(),
                             OutputMetadata {
-                                asset_id: *id,
+                                asset_id: entry.id,
                                 file: false,
                             },
                         )
@@ -292,8 +395,71 @@ fn import_with(
             outputs,
             settings: toml::Table::new(),
         }
-    };
+    })
+}
+
+fn previous_outputs(
+    registry: &AssetRegistry,
+    metadata: &SourceMetadata,
+    project_root: &Path,
+) -> PreviousOutputResolver {
+    let located: BTreeMap<String, AssetEntry> = metadata
+        .outputs
+        .iter()
+        .filter_map(|(key, output)| Some((key.clone(), registry.get(output.asset_id)?.clone())))
+        .collect();
+    let root = project_root.to_path_buf();
+    Box::new(move |name| read_asset_record(&root, located.get(name)?).ok())
+}
+
+fn sidecar_settings(
+    importer: &dyn ErasedImporter,
+    metadata: &SourceMetadata,
+    source: &Path,
+) -> anyhow::Result<Box<dyn Reflect>> {
+    importer
+        .settings_from_toml(&metadata.settings)
+        .map_err(anyhow::Error::msg)
+        .with_context(|| {
+            format!(
+                "reading the [settings] of '{}'",
+                sidecar_path(source).display()
+            )
+        })
+}
+
+fn import_with(
+    importer: &dyn ErasedImporter,
+    read: &Path,
+    source: &Path,
+    project_root: &Path,
+    config: &ContentConfig,
+    settings: ImportSettings,
+) -> anyhow::Result<ImportedSource> {
+    let relative_source = source.strip_prefix(project_root).unwrap_or(source);
+    let provenance_source = relative_source.to_string_lossy().replace('\\', "/");
+    let sidecar = sidecar_path(source);
+    let existing = existing(importer, source, project_root, config)?;
+    let previous = previous_outputs(&existing.registry, &existing.metadata, project_root);
+    let Existing {
+        mut registry,
+        headers,
+        mut metadata,
+    } = existing;
     validate_ownership(&metadata, &sidecar, source, project_root, config, &headers)?;
+    let ImportSettings {
+        settings: given,
+        asset_settings,
+    } = settings;
+    let settings = match given {
+        Some(settings) => {
+            metadata.settings = importer
+                .settings_to_toml(settings.as_ref())
+                .map_err(anyhow::Error::msg)?;
+            settings
+        }
+        None => sidecar_settings(importer, &metadata, source)?,
+    };
 
     // The callback cannot return errors. All existing identities are validated
     // beforehand; only allocating new identities happens during the import.
@@ -317,9 +483,9 @@ fn import_with(
         id
     });
     let mut ctx = ImportContext::with_sub_asset_id_resolver(source.to_path_buf(), resolver)
-        .with_settings(metadata.settings.clone());
+        .with_previous_outputs(previous);
     importer
-        .import(read, &mut ctx)
+        .import(read, settings.as_ref(), asset_settings.as_deref(), &mut ctx)
         .map_err(|err| anyhow::anyhow!("{err:?}"))
         .with_context(|| format!("importing '{}'", read.display()))?;
     let outputs = ctx.into_parts();
@@ -803,32 +969,42 @@ fn replace(file: tempfile::NamedTempFile, path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concerto_asset_import::{Importer, NoSettings};
 
     struct Extension {
         extension: &'static str,
-        supported: bool,
+        importer: Option<&'static str>,
     }
 
     #[test]
-    fn supported_extensions_are_matched_without_regard_to_case() {
+    fn each_extension_finds_its_importer_without_regard_to_case() {
+        let handled = |extension, importer| Extension {
+            extension,
+            importer: Some(importer),
+        };
         let cases = [
+            handled("gltf", "gltf"),
+            handled("GLB", "gltf"),
+            handled("obj", "obj"),
+            handled("bvh", "bvh"),
+            handled("png", "image"),
+            handled("jpg", "image"),
+            handled("JPEG", "image"),
+            handled("ogg", "audio"),
+            handled("wav", "audio"),
             Extension {
-                extension: "GLB",
-                supported: true,
-            },
-            Extension {
-                extension: "WAV",
-                supported: true,
+                extension: "mtl",
+                importer: None,
             },
             Extension {
                 extension: "txt",
-                supported: false,
+                importer: None,
             },
         ];
         for case in &cases {
             assert_eq!(
-                supported_extension(case.extension),
-                case.supported,
+                importer_for(case.extension).map(|importer| importer.name()),
+                case.importer,
                 "{}",
                 case.extension
             );
@@ -880,6 +1056,13 @@ mod tests {
     struct Scripted(Vec<Emit>);
 
     impl Importer for Scripted {
+        type Settings = NoSettings;
+        type AssetSettings = NoSettings;
+
+        fn name(&self) -> &'static str {
+            "bvh"
+        }
+
         fn supported_extensions(&self) -> &'static [&'static str] {
             &["test"]
         }
@@ -887,6 +1070,8 @@ mod tests {
         fn import(
             &self,
             _source_path: &Path,
+            _settings: &NoSettings,
+            _asset_settings: Option<&NoSettings>,
             ctx: &mut ImportContext,
         ) -> Result<(), concerto_asset_import::ImportError> {
             for emit in &self.0 {
@@ -927,11 +1112,11 @@ mod tests {
         fn import(&self, emits: Vec<Emit>) -> anyhow::Result<ImportedSource> {
             import_with(
                 &Scripted(emits),
-                "bvh",
                 &self.source,
                 &self.source,
                 &self.root(),
                 &self.config,
+                ImportSettings::default(),
             )
         }
 

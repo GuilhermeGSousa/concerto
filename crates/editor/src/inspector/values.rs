@@ -11,6 +11,7 @@ use crate::{
 };
 use concerto_ecs::{
     Changed, With,
+    entity::hierarchy::ChildOf,
     reflect::AppTypeRegistry,
     signal::{Signal, lifecycle::Add},
 };
@@ -299,17 +300,21 @@ pub(super) fn sync_value_cards(
 pub(super) fn build_value_widgets(
     rows: Query<(
         Entity,
+        &ChildOf,
         Option<&PropertyRow>,
         Option<&PropertyRowValue>,
         &BuildPropertyWidget,
     )>,
+    cards: Query<&ValueCard>,
     registry: Res<InspectorRegistry>,
     snapshots: Res<InspectedSnapshots>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, row, value, build) in rows.iter() {
-        if build.world == TargetWorld::Editor {
+    for (entity, parent, row, value, build) in rows.iter() {
+        if build.world == TargetWorld::Editor
+            && cards.iter().any(|card| card.body == parent.parent())
+        {
             let types = row.and_then(|row| snapshots.types_of(&row.address.target));
             let types = types.map(|types| types.read());
             build_row_widgets(

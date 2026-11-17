@@ -56,6 +56,7 @@ const RESERVED: &[&str] = &[
     "concerto_editor",
     "concerto_asset_build",
     "concerto_animation_editor",
+    "concerto_texture_editor",
 ];
 
 /// How to run the tool.
@@ -1426,7 +1427,7 @@ mod tests {
         assert!(editor.contains(&format!("concerto-editor = \"{VERSION}\"")));
         assert_eq!(
             read(published.join("editor/src/main.rs")),
-            "fn main() {\n    concerto_editor::run_with(\n        my_game::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_animation_editor::install],\n    );\n}\n"
+            "fn main() {\n    concerto_editor::run_with(\n        my_game::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[\n            concerto_animation_editor::install,\n            concerto_texture_editor::install,\n        ],\n    );\n}\n"
         );
         assert!(!published_report.warnings.is_empty());
 
@@ -1436,6 +1437,9 @@ mod tests {
         )));
         assert!(read(outside.join("editor/Cargo.toml")).contains(&format!(
             "concerto-animation-editor = {{ version = \"{VERSION}\", path = \"{absolute}/crates/animation-editor\" }}"
+        )));
+        assert!(read(outside.join("editor/Cargo.toml")).contains(&format!(
+            "concerto-texture-editor = {{ version = \"{VERSION}\", path = \"{absolute}/crates/texture-editor\" }}"
         )));
         assert!(outside_report.warnings.is_empty());
         assert!(read(inside.join("Cargo.toml")).contains(&format!(

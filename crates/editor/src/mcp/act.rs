@@ -7,6 +7,7 @@ use concerto_ecs::{
     component::name::Name,
     events::event_reader::EventReader,
     query::filter::{With, Without},
+    reflect::AppTypeRegistry,
 };
 use concerto_foundation::{
     assets::{
@@ -15,9 +16,11 @@ use concerto_foundation::{
     },
     transform::{GlobalTransform, Transform},
 };
+use concerto_import::importer_for;
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
+use concerto_reflect::{Reflect, TypeRegistry, apply_value, json_to_value, to_json};
 use concerto_scene::scene::Scene;
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -30,8 +33,8 @@ use crate::{
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     import::{
-        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, stage_sources,
-        validate_rows,
+        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, scan_content,
+        stage_row, stage_sources, validate_rows,
     },
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
     scene::{SaveFailed, SceneOpenFailed, SceneOpened},
@@ -79,6 +82,10 @@ pub struct ImportSource {
     pub source: String,
     /// Where the source is copied to in the project, such as assets/props/crate.glb, keeping its extension; assets/<file name> without one, or where it already is when it lies inside the project.
     pub destination: Option<String>,
+    /// Changes to the importer's settings, as an object of the fields to change, such as {"scale": 0.5} for a .bvh; the others keep the values the project holds.
+    pub settings: Option<serde_json::Value>,
+    /// Changes to the settings of the asset an image source makes, such as {"compression": "Bc7", "max_size": "S512"}; the others keep the asset's current values.
+    pub asset_settings: Option<serde_json::Value>,
 }
 
 /// Closes an open document.
@@ -549,6 +556,7 @@ fn import_source(
     state: Res<ProjectState>,
     commands: Res<EditorCommands>,
     mut queue: ResMut<ImportQueue>,
+    types: Res<AppTypeRegistry>,
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
@@ -575,6 +583,7 @@ fn import_source(
             Some(destination) => rows[0].destination = destination.clone(),
             None => keep_project_sources_in_place(&mut rows, &root),
         }
+        stage_row(&mut rows[0], &scan_content(&root));
         validate_rows(&mut rows, &root);
         if let RowState::Rejected(reason) = &rows[0].state {
             reply.err(ToolError::new(
@@ -586,6 +595,47 @@ fn import_source(
             ));
             continue;
         }
+        let (Some(Ok(staged)), Some(importer)) = (
+            &rows[0].staged,
+            importer_for(
+                &rows[0]
+                    .source
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+            ),
+        ) else {
+            continue;
+        };
+        let types = types.read();
+        let settings = patched(
+            "settings",
+            arguments.settings.as_ref(),
+            Some(importer.clone_settings(staged.settings.as_ref())),
+            &types,
+        );
+        let asset_settings = patched(
+            "asset_settings",
+            arguments.asset_settings.as_ref(),
+            staged
+                .asset_settings
+                .as_deref()
+                .map(|value| importer.clone_settings(value)),
+            &types,
+        );
+        match (settings, asset_settings) {
+            (Ok(settings), Ok(asset_settings)) => {
+                rows[0].settings = settings;
+                rows[0].asset_settings = asset_settings;
+            }
+            (Err(reason), _) | (_, Err(reason)) => {
+                reply.err(ToolError::new(
+                    "invalid_arguments",
+                    format!("{}: {reason}", arguments.source),
+                ));
+                continue;
+            }
+        }
         let destination = rows[0].destination.clone();
         queue.enqueue(rows);
         cmd.spawn((
@@ -593,6 +643,35 @@ fn import_source(
             ImportingSource { destination },
         ));
     }
+}
+
+fn patched(
+    argument: &str,
+    patch: Option<&serde_json::Value>,
+    current: Option<Box<dyn Reflect>>,
+    types: &TypeRegistry,
+) -> Result<Option<Box<dyn Reflect>>, String> {
+    let Some(patch) = patch else {
+        return Ok(None);
+    };
+    let Some(mut value) = current else {
+        return Err(format!(
+            "its importer has no {argument}; leave out {argument}"
+        ));
+    };
+    let shown = to_json(value.as_ref(), types);
+    let refused = |reason: String| {
+        format!(
+            "in {argument}, {reason}; the current {argument} are {shown}. Give an object of the fields to change."
+        )
+    };
+    let type_id = (value.as_ref() as &dyn std::any::Any).type_id();
+    let stored = json_to_value(patch, type_id, types).map_err(&refused)?;
+    let warnings = apply_value(value.as_mut(), &stored);
+    if let Some(warning) = warnings.first() {
+        return Err(refused(warning.to_string()));
+    }
+    Ok(Some(value))
 }
 
 fn answer_imports(
@@ -622,6 +701,9 @@ fn answer_imports(
                         asset.kind,
                         asset.id.simple_hex()
                     ));
+                }
+                if !event.settings.is_empty() {
+                    answer.push_str(&format!("\n\n{}", event.settings.trim_end()));
                 }
                 pending.reply.ok(answer);
             }

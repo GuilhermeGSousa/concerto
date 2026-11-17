@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use concerto_asset_import::{ImportContext, ImportError, Importer};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings};
 use concerto_color::Color;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::handle::AssetHandle;
@@ -22,11 +22,24 @@ use concerto_scene::scene::{Scene, SceneNode};
 pub struct ObjImporter;
 
 impl Importer for ObjImporter {
+    type Settings = NoSettings;
+    type AssetSettings = NoSettings;
+
+    fn name(&self) -> &'static str {
+        "obj"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["obj"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
+    fn import(
+        &self,
+        source_path: &Path,
+        _settings: &NoSettings,
+        _asset_settings: Option<&NoSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
         let (models, _materials) = tobj::load_obj(
             source_path,
             &tobj::LoadOptions {

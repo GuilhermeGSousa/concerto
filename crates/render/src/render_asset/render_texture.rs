@@ -1,13 +1,18 @@
 use crate::{
-    assets::texture::{Texture, TextureKind},
+    assets::texture::{
+        block_extent, block_row_bytes, block_rows, Texture, TextureKind, TextureRole,
+    },
+    capabilities::RenderCapabilities,
     device::RenderDevice,
     queue::RenderQueue,
     render_asset::{AssetPreparationError, RenderAsset},
 };
+use concerto_app::extractor::Extracted;
 use concerto_ecs::{
     resource::{Res, Resource},
     system::input::SystemInputData,
 };
+use concerto_foundation::assets::{asset_server::AssetServer, AssetId};
 use std::ops::Deref;
 use wgpu::TextureUsages;
 
@@ -30,36 +35,27 @@ impl RenderTexture {
     pub fn from_texture(texture: &Texture, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let usage = match texture.kind {
             TextureKind::Sampled => TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            TextureKind::RenderTarget => {
+            TextureKind::RenderTarget { .. } => {
                 TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING
             }
         };
-        let size = texture.size();
+        let levels = texture.levels();
+        let format = levels.map_or(wgpu::TextureFormat::Rgba8UnormSrgb, |levels| levels.format);
         let wgpu_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture"),
-            size,
-            mip_level_count: texture.mip_level_count(),
+            size: texture.size(),
+            mip_level_count: levels.map_or(1, |levels| levels.levels.len() as u32),
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: texture.format,
+            format,
             usage,
             view_formats: &[],
         });
         let view = wgpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        if !texture.data().is_empty() {
-            // TODO(asset-trait-merge): assumes a 4-byte-per-texel format. Block-compressed
-            // or wide formats would need format.block_copy_size(None) here.
-            debug_assert_eq!(
-                texture.format.block_copy_size(None),
-                Some(4),
-                "bytes_per_row assumes a 4-byte-per-texel format",
-            );
-            let levels =
-                std::iter::once(texture.data()).chain(texture.mips().iter().map(Vec::as_slice));
-            for (mip_level, data) in levels.enumerate() {
-                let width = (size.width >> mip_level).max(1);
-                let height = (size.height >> mip_level).max(1);
+        if let Some(levels) = levels {
+            for (mip_level, data) in levels.levels.iter().enumerate() {
+                let extent = levels.extent(mip_level as u32);
                 queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
                         aspect: wgpu::TextureAspect::All,
@@ -70,14 +66,10 @@ impl RenderTexture {
                     data,
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(4 * width),
-                        rows_per_image: Some(height),
+                        bytes_per_row: block_row_bytes(format, extent),
+                        rows_per_image: Some(block_rows(format, extent)),
                     },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
+                    block_extent(format, extent),
                 );
             }
         }
@@ -147,29 +139,53 @@ impl RenderTexture {
 
 impl RenderAsset for RenderTexture {
     type SourceAsset = Texture;
-    type PreparationParams = (Res<'static, RenderDevice>, Res<'static, RenderQueue>);
+    type PreparationParams = (
+        Res<'static, RenderDevice>,
+        Res<'static, RenderQueue>,
+        Res<'static, RenderCapabilities>,
+        Res<'static, FallbackTextures>,
+        Extracted<'static, 'static, Option<Res<'static, AssetServer>>>,
+    );
 
     fn prepare_asset(
+        id: AssetId,
         source_asset: &Self::SourceAsset,
         params: &mut SystemInputData<Self::PreparationParams>,
     ) -> Result<Self, AssetPreparationError> {
         // Render-target textures (created via Texture::render_target()) carry no
         // CPU data and are managed directly by the camera system.  Skip them here
         // so prepare_render_asset never overwrites the camera's allocation.
-        if matches!(source_asset.kind, TextureKind::RenderTarget) {
+        if matches!(source_asset.kind, TextureKind::RenderTarget { .. })
+            || source_asset.levels().is_none()
+        {
             return Err(AssetPreparationError::NotReady);
         }
 
-        let (device, queue) = params;
+        let (device, queue, capabilities, fallbacks, server) = params;
+        let format = source_asset.levels().map(|levels| levels.format);
+        if let Some(format) = format.filter(|format| {
+            format
+                .required_features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+                && !capabilities.bc_textures
+        }) {
+            let location = (**server)
+                .as_ref()
+                .and_then(|server| server.registry())
+                .and_then(|registry| registry.get(id).map(|entry| entry.location()))
+                .unwrap_or_else(|| format!("{id:?}"));
+            log::error!(
+                "{location} is {format:?}, but this device has no BC texture compression; set its compression to Uncompressed or use a browser with BC"
+            );
+            return Ok(fallbacks.for_role(source_asset.role).clone());
+        }
         Ok(RenderTexture::from_texture(source_asset, device, queue))
     }
 
     fn byte_len(source: &Self::SourceAsset) -> Option<usize> {
         match source.kind {
-            TextureKind::Sampled => {
-                Some(source.data().len() + source.mips().iter().map(Vec::len).sum::<usize>())
-            }
-            TextureKind::RenderTarget => None,
+            TextureKind::Sampled => source.levels().map(|levels| levels.byte_len()),
+            TextureKind::RenderTarget { .. } => None,
         }
     }
 }
@@ -219,5 +235,95 @@ impl Deref for DummyRenderTexture {
     type Target = RenderTexture;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+/// The textures a refused BC texture is replaced by, one per role, so its material shades as if the texture were neutral.
+#[derive(Resource)]
+pub struct FallbackTextures {
+    color: RenderTexture,
+    normal: RenderTexture,
+    data: RenderTexture,
+}
+
+impl FallbackTextures {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self {
+            color: solid_texture(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                [255, 255, 255, 255],
+            ),
+            normal: solid_texture(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                [128, 128, 255, 255],
+            ),
+            data: solid_texture(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                [255, 255, 255, 255],
+            ),
+        }
+    }
+
+    /// The stand-in for a texture of `role`: opaque white, a flat normal, or white data.
+    pub fn for_role(&self, role: TextureRole) -> &RenderTexture {
+        match role {
+            TextureRole::Color => &self.color,
+            TextureRole::Normal => &self.normal,
+            TextureRole::Data => &self.data,
+        }
+    }
+}
+
+fn solid_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
+    texel: [u8; 4],
+) -> RenderTexture {
+    let size = wgpu::Extent3d {
+        width: 1,
+        height: 1,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("fallback texture"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            aspect: wgpu::TextureAspect::All,
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+        },
+        &texel,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        size,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("fallback texture sampler"),
+        ..Default::default()
+    });
+    RenderTexture {
+        texture,
+        view,
+        sampler,
     }
 }

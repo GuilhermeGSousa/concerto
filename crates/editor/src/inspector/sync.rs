@@ -37,7 +37,7 @@ pub struct InspectorHeader {
 
 #[derive(Component)]
 pub(super) struct LabelColumn {
-    body: Entity,
+    pub(super) body: Entity,
 }
 
 #[derive(Component)]
@@ -443,7 +443,7 @@ pub fn standard_row_node(theme: &UITheme) -> UINode {
     theme.row().fixed().gap(theme.spacing_xs).into_bundle()
 }
 
-fn body_node(theme: &UITheme) -> UINode {
+pub(super) fn body_node(theme: &UITheme) -> UINode {
     UINode::default()
         .with_visible(false)
         .with_flex_shrink(0.0)

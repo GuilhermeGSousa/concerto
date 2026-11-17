@@ -205,6 +205,15 @@ sounds) are imported once, ahead of time. The running game never reads them.
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the
   live definition at use.
+- A sampled `Texture` derives from its own payload, with no inputs: its file
+  holds the imported image's bytes (`TextureSource`), its `role` and its
+  `TextureSettings`, and the key is the source's hash, the settings and the
+  role. `derive_levels` decodes the source, resolves `Auto` from the role,
+  fits `max_size` (to whole 4×4 blocks for BC), builds the mips and encodes
+  each level in BC1, BC4, BC5, BC7 or RGBA8; `apply_derived` keeps the levels
+  and drops the source. The encoder is native only, so an uncooked web run
+  derives RGBA8. `Texture::new` builds the mip chain from its RGBA8 level; it
+  never derives, and `Texture` has no `on_load` work.
 - A packaged build can carry the blob in the file. Every `concerto::run`
   binary run as `<game> --cook <out>` calls `concerto::cook`: it builds the
   recipe headless (see Hosts), publishes the embedded registry with the

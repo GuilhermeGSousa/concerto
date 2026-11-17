@@ -23,7 +23,9 @@ pub trait RenderAsset: Send + Sync + Sized + 'static {
     type SourceAsset: Asset;
     type PreparationParams: SystemInput;
 
+    /// The GPU form of the asset `id`, `source_asset`.
     fn prepare_asset(
+        id: AssetId,
         source_asset: &Self::SourceAsset,
         params: &mut SystemInputData<Self::PreparationParams>,
     ) -> Result<Self, AssetPreparationError>;
@@ -131,7 +133,7 @@ pub(crate) fn prepare_render_asset<A: RenderAsset>(
             }
         }
 
-        let prepared_asset = A::prepare_asset(asset, &mut params);
+        let prepared_asset = A::prepare_asset(*asset_id, asset, &mut params);
 
         if let Ok(prepared_asset) = prepared_asset {
             if let Some(limiter) = limiter {
@@ -224,6 +226,7 @@ mod tests {
         type PreparationParams = ();
 
         fn prepare_asset(
+            _id: AssetId,
             source_asset: &Self::SourceAsset,
             _params: &mut SystemInputData<Self::PreparationParams>,
         ) -> Result<Self, AssetPreparationError> {

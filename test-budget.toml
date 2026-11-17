@@ -15,7 +15,7 @@
 "crates/foundation" = 65
 "crates/gameplay" = 11
 "crates/gltf" = 7
-"crates/import" = 24
+"crates/import" = 25
 "crates/mcp" = 10
 "crates/mesh" = 12
 "crates/motion-matching" = 72
@@ -31,11 +31,12 @@
 "crates/procedural-animation-gizmos" = 1
 "crates/project" = 15
 "crates/reflect" = 16
-"crates/render" = 76
+"crates/render" = 79
 "crates/render/macros" = 1
 "crates/scene" = 12
 "crates/tasks" = 2
 "crates/terminal-renderer" = 2
+"crates/texture-editor" = 1
 "crates/ui" = 99
 "crates/window" = 31
 "crates/winit" = 8

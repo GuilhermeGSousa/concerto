@@ -6,17 +6,17 @@ use std::path::Path;
 use concerto_animation::clip::{
     AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
 };
-use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::parser::{self, Bvh, Channel};
@@ -28,20 +28,24 @@ fn default_scale() -> f32 {
 }
 
 /// Importer settings read from the `[settings]` table of a BVH source's sidecar.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Reflect, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[reflect(Default)]
 pub struct BvhSettings {
     /// Multiplier applied to every offset and translation; defaults to 0.01 (centimetres to metres).
     #[serde(default = "default_scale")]
     pub scale: f32,
     /// Frames to keep as `[start, end)`; the whole file when absent.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[reflect(skip)]
     pub frame_range: Option<[usize; 2]>,
     /// Per clip name, the clip times in seconds of each named event.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[reflect(skip)]
     pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
     /// Per clip name, the base the clip is additive against.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[reflect(skip)]
     pub additive: BTreeMap<String, AdditiveSetting>,
 }
 
@@ -56,29 +60,28 @@ impl Default for BvhSettings {
     }
 }
 
-impl BvhSettings {
-    /// Reads and validates the settings table.
-    pub fn from_table(table: &toml::Table) -> Result<Self, String> {
-        let settings: BvhSettings = table.clone().try_into().map_err(|err| err.to_string())?;
-        if !settings.scale.is_finite() || settings.scale <= 0.0 {
-            return Err(format!(
-                "scale must be finite and positive, got {}",
-                settings.scale
-            ));
-        }
-        Ok(settings)
-    }
-}
-
 /// Imports BVH motion capture files.
 pub struct BvhImporter;
 
 impl Importer for BvhImporter {
+    type Settings = BvhSettings;
+    type AssetSettings = NoSettings;
+
+    fn name(&self) -> &'static str {
+        "bvh"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["bvh"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
+    fn import(
+        &self,
+        source_path: &Path,
+        settings: &BvhSettings,
+        _asset_settings: Option<&NoSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
         let malformed = |message: String| ImportError::MalformedSource {
             source_path: source_path.to_path_buf(),
             message,
@@ -89,7 +92,12 @@ impl Importer for BvhImporter {
                 message: err.to_string(),
             })?;
         let bvh = parser::parse(&text).map_err(|err| malformed(err.to_string()))?;
-        let settings = BvhSettings::from_table(ctx.settings()).map_err(malformed)?;
+        if !settings.scale.is_finite() || settings.scale <= 0.0 {
+            return Err(malformed(format!(
+                "scale must be finite and positive, got {}",
+                settings.scale
+            )));
+        }
 
         let frame_count = bvh.frames.len();
         let [start, end] = settings.frame_range.unwrap_or([0, frame_count]);

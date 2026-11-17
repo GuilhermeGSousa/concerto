@@ -2,7 +2,7 @@
 //! and scene sub-assets, reusing the same Scene shape as glTF.
 use std::path::{Path, PathBuf};
 
-use concerto_asset_import::{ImportContext, ImportError, Importer};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings};
 use concerto_obj::obj_importer::ObjImporter;
 use concerto_scene::scene::Scene;
 
@@ -41,7 +41,10 @@ fn a_source_tracks_the_files_it_names_or_reports_the_one_it_cannot_read() {
         let path = fixture(case.source);
         let expected = path.with_file_name(case.dependency);
         let mut ctx = ImportContext::new(PathBuf::from(case.source));
-        match (ObjImporter.import(&path, &mut ctx), case.unreadable) {
+        match (
+            ObjImporter.import(&path, &NoSettings::default(), None, &mut ctx),
+            case.unreadable,
+        ) {
             (Ok(()), false) => {
                 let dependencies = ctx.into_parts().dependencies;
                 assert!(
@@ -65,7 +68,7 @@ fn import_emits_mesh_material_and_flat_scene() {
     let mut ctx = ImportContext::new(PathBuf::from("square.obj"));
 
     ObjImporter
-        .import(&fixture, &mut ctx)
+        .import(&fixture, &NoSettings::default(), None, &mut ctx)
         .expect("importing the square fixture should succeed");
     let outputs = ctx.into_parts();
 

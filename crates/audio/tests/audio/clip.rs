@@ -7,7 +7,7 @@ use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin},
 };
-use concerto_asset_import::{EmittedSubAsset, ImportContext, ImportError, Importer};
+use concerto_asset_import::{EmittedSubAsset, ImportContext, ImportError, Importer, NoSettings};
 use concerto_audio::{AudioBackend, AudioClip, AudioImporter, AudioPlugin};
 use concerto_foundation::assets::{
     Asset, AssetId, ContentAssetRoot,
@@ -40,7 +40,7 @@ pub(crate) fn import(
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
     std::fs::write(&source, bytes).unwrap();
     let mut ctx = ImportContext::new(relative);
-    AudioImporter.import(&source, &mut ctx)?;
+    AudioImporter.import(&source, &NoSettings::default(), None, &mut ctx)?;
     let outputs = ctx.into_parts();
     let [clip] = outputs.sub_assets.as_slice() else {
         panic!(

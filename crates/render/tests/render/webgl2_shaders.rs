@@ -10,6 +10,7 @@ const WEBGL2: RenderCapabilities = RenderCapabilities {
     cube_array_textures: false,
     depth_bias_clamp: false,
     single_layer_texture_arrays: false,
+    bc_textures: false,
 };
 
 struct EntryPoint {

@@ -46,6 +46,7 @@ fn import(source: &Path, project: &Path) -> anyhow::Result<concerto_import::Impo
         "assets/walk.bvh",
         project,
         &ContentConfig::default(),
+        Default::default(),
     )
 }
 

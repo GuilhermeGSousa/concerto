@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
 use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
-use concerto_bvh::bvh_importer::BvhImporter;
+use concerto_bvh::bvh_importer::{BvhImporter, BvhSettings};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
@@ -48,9 +48,13 @@ fn write_source(name: &str, text: &str) -> PathBuf {
 
 fn run(name: &str, text: &str, settings: &str) -> Result<ImportOutputs, ImportError> {
     let path = write_source(name, text);
-    let table: toml::Table = settings.parse().unwrap();
-    let mut ctx = ImportContext::new(PathBuf::from(name)).with_settings(table);
-    BvhImporter.import(&path, &mut ctx)?;
+    let settings: BvhSettings =
+        toml::from_str(settings).map_err(|error| ImportError::MalformedSource {
+            source_path: path.clone(),
+            message: error.to_string(),
+        })?;
+    let mut ctx = ImportContext::new(PathBuf::from(name));
+    BvhImporter.import(&path, &settings, None, &mut ctx)?;
     Ok(ctx.into_parts())
 }
 

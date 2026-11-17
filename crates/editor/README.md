@@ -193,9 +193,25 @@ and answers once that import has finished, with `Imported <destination>: N
 assets, M sibling files.` and one `address · kind · id` line per asset written.
 A path with no file answers `unknown_source`; a destination outside the
 project, without a file name, with another extension than the source's, or a
-source no importer handles answers `import_refused` with the dialog's reason;
-an import that fails answers `import_failed` with the status line's reason.
-Each queued import ends with an `ImportFinished` event, which is what the tool
+source no importer handles answers `import_refused` with the dialog's reason,
+and so does a destination whose sidecar `[settings]` do not parse, with the
+parse error; an import that fails answers `import_failed` with the status line's reason.
+`settings` and `asset_settings` change the importer's settings and the
+settings of the asset an image makes, as objects of the fields to change, such
+as `{"scale": 0.5}` for a BVH or `{"compression": "Bc7", "max_size": "S512"}`
+for an image: enum values are variant names, and a field left out keeps the
+value the project holds, the sidecar's for `settings` and the texture's for
+`asset_settings`. Given `settings` are written whole to the sidecar's
+`[settings]`; left out, the sidecar is not touched. Fields the dialog does not
+show, such as clip events, are kept and cannot be given. An unknown field, a
+bad value, or `asset_settings` for a source whose importer has none answers
+`invalid_arguments`, naming the field and showing the current values. A value
+the import itself refuses, such as a BVH `scale` of 0 or `Bc5` on a colour
+texture, answers `import_failed` with the reason. The answer ends with the
+settings the import used, as TOML: a `[settings]` table and, for an image, an
+`[asset_settings]` table.
+Each queued import ends with an `ImportFinished` event carrying the settings it
+used, which is what the tool
 waits for. It needs an open project. `close_document`
 closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
@@ -780,7 +796,14 @@ revealed.
 **Import…** beside the Asset Browser search opens a file picker for glTF, OBJ, BVH, image,
 Ogg and WAV sources; several files can be picked at once. A dialog then lists each
 file with the project-relative destination it will be copied to, which you can
-edit before confirming. Enter confirms and Escape cancels. Files are imported
+edit before confirming. Enter confirms and Escape cancels. Selecting a file
+shows its settings below the list: **Import settings**, the importer's own,
+read from the destination's sidecar or the defaults, and, for an image,
+**Asset settings**, its texture's Compression, Colour space, Max size and Mips,
+read from the texture already there or the defaults. A source with nothing to
+set shows "No settings". Only settings you edit are written; editing a
+file's destination reads its settings again and drops your edits. A file whose
+sidecar `[settings]` do not parse cannot be imported, and its row says why. Files are imported
 one at a time. Each import's assets replace the registry's entries for that
 source in memory as it
 finishes, without a rescan and without closing open tabs. No registry file is
@@ -1220,6 +1243,19 @@ while no scene is the edit target. It reaches its document through
 closes its menus on a change of `ActiveEditor`, because `Remove<EditTarget>`
 does not fire between value tabs.
 
+### Rows for any value
+
+A panel that edits a reflected value it holds itself, outside any document,
+puts `ReflectRows { value, types }` on one of its UI entities, with
+`ReflectRowsPlugin` registered after `InspectorPlugin`, as `EditorPlugin` does.
+The entity shows a row per property of `value`, as `InspectorRegistry::collect`
+and the registered property editors give them, with the types of `types`, so a
+type the panel's registry holds needs nothing registered on the editor's `App`.
+An edit in a row is written into `value`, so `Changed<ReflectRows>` tells the
+owner. Inserting another `ReflectRows` shows the new value. A value with no rows
+shows "No settings". The edit does not belong to a document: it reports no
+`Hosted<PropertyCommitted>`, and a refused edit is only logged.
+
 ### Enums and options
 
 A reflected enum is edited with nothing registered on the editor's `App`.
@@ -1656,6 +1692,16 @@ inspected and saved, and plays the graph in view on a character in its preview,
 at the parameters set in the tab. In a game that doesn't list the crate a clip or a graph
 has no editor, so opening one opens no tab, and a rig opens in the generic
 inspector.
+
+### The texture tab
+
+The editor of a `Texture` is in the crate
+[`concerto-texture-editor`](../texture-editor/README.md), which a game lists
+in its `Cargo.toml`. The tab previews the texture's derived levels, as the GPU
+samples them, under a line giving their size, format, level count and memory,
+and edits its compression settings in the inspector; a save keeps the source and
+reloads the texture in open scenes. In a game that doesn't list the crate a
+texture has no editor, so opening one opens no tab.
 
 ### The timeline
 

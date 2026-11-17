@@ -7,33 +7,70 @@ use std::path::{Component, Path, PathBuf};
 use std::thread::JoinHandle;
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_ecs::{Event, IntoSystemConfig, ResMut, Resource, events::event_writer::EventWriter};
+use concerto_ecs::{
+    Event, IntoSystemConfig, Res, ResMut, Resource, events::event_writer::EventWriter,
+    reflect::AppTypeRegistry,
+};
 use concerto_foundation::assets::{
     AssetId,
     registry::{AssetEntry, AssetRegistry},
 };
-use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
+use concerto_import::{
+    ContentScan, ImportSettings, ImportedSource, StagedSettings, importer_for, importers,
+};
+use concerto_reflect::{Reflect, TypeRegistry, to_json};
 
 use crate::project::{AssetsWritten, ProjectState};
 
-/// Imports a source into the project at `destination`, bringing the files it refers to along.
+/// Imports a source into the project at `destination` with `settings`, bringing the files it refers to along.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
     project_root: &Path,
+    settings: ImportSettings,
 ) -> anyhow::Result<ImportedSource> {
     let config = ContentConfig::load_or_default(project_root)?;
-    concerto_import::import_source_into(source, destination, project_root, &config)
+    concerto_import::import_source_into(source, destination, project_root, &config, settings)
+}
+
+/// Scans the content of the project at `project_root` once, for staging a batch of rows against it.
+pub fn scan_content(project_root: &Path) -> anyhow::Result<ContentScan> {
+    let config = ContentConfig::load_or_default(project_root)?;
+    ContentScan::new(project_root, &config)
+}
+
+/// `settings` and `asset_settings` as TOML text, each a table of its reflected fields.
+pub fn settings_text(
+    settings: Option<&dyn Reflect>,
+    asset_settings: Option<&dyn Reflect>,
+    types: &TypeRegistry,
+) -> String {
+    let mut table = toml::Table::new();
+    let mut add = |name: &str, value: Option<&dyn Reflect>| {
+        if let Some(value) =
+            value.and_then(|value| toml::Value::try_from(to_json(value, types)).ok())
+        {
+            table.insert(name.to_owned(), value);
+        }
+    };
+    add("settings", settings);
+    add("asset_settings", asset_settings);
+    toml::to_string(&table).unwrap_or_default()
 }
 
 /// A file chosen for import, and where it will be copied to.
-#[derive(Debug, Clone)]
 pub struct StagedImport {
     pub source: PathBuf,
     /// Project-relative, e.g. `assets/hero.glb`.
     pub destination: String,
     pub state: RowState,
+    /// The settings importing to `destination` would use unedited, or why they cannot be read; `None` until [`stage_row`].
+    pub staged: Option<Result<StagedSettings, String>>,
+    /// The importer settings edited for this row; `None` imports with the sidecar's.
+    pub settings: Option<Box<dyn Reflect>>,
+    /// The asset settings edited for this row; `None` keeps the asset's own.
+    pub asset_settings: Option<Box<dyn Reflect>>,
 }
 
 /// What importing a row would do, or why it cannot be imported.
@@ -64,9 +101,24 @@ pub fn stage_sources(sources: Vec<PathBuf>) -> Vec<StagedImport> {
                 destination: format!("assets/{name}"),
                 source,
                 state: RowState::New,
+                staged: None,
+                settings: None,
+                asset_settings: None,
             }
         })
         .collect()
+}
+
+/// Reads the settings `row` would import with at its destination from `scan`, dropping its edits.
+pub fn stage_row(row: &mut StagedImport, scan: &anyhow::Result<ContentScan>) {
+    row.settings = None;
+    row.asset_settings = None;
+    row.staged = Some(match scan {
+        Ok(scan) => scan
+            .staged_settings(&row.source, &row.destination)
+            .map_err(|error| format!("{error:#}")),
+        Err(error) => Err(format!("{error:#}")),
+    });
 }
 
 /// Re-decides every row's state against the project on disk.
@@ -123,11 +175,14 @@ fn row_state(row: &StagedImport, project_root: &Path, occurrences: usize) -> Row
         return RowState::Rejected("listed twice".into());
     }
     let source_extension = extension_of(&row.source);
-    if !concerto_import::supported_extension(&source_extension) {
+    if importer_for(&source_extension).is_none() {
         return RowState::Rejected(format!("no importer for '.{source_extension}'"));
     }
     if extension_of(Path::new(&row.destination)) != source_extension {
         return RowState::Rejected(format!("extension must stay '.{source_extension}'"));
+    }
+    if let Some(Err(error)) = &row.staged {
+        return RowState::Rejected(error.clone());
     }
     if project_root.join(&row.destination).exists() {
         RowState::Replaces
@@ -148,20 +203,29 @@ fn extension_of(path: &Path) -> String {
 pub struct ImportStaging {
     pub rows: Vec<StagedImport>,
     pub visible: bool,
+    pub(crate) scan: Option<anyhow::Result<ContentScan>>,
 }
 
 /// A queued import ended: what it wrote to `destination`, or why it failed.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ImportFinished {
     pub destination: String,
+    /// The settings the import used, as [`settings_text`] writes them; empty when they could not be read.
+    pub settings: String,
     pub result: Result<ImportedSource, String>,
+}
+
+struct FinishedJob {
+    root: PathBuf,
+    settings: String,
+    result: Result<ImportedSource, String>,
 }
 
 /// Queued imports and the single worker running one of them.
 #[derive(Resource, Default)]
 pub struct ImportQueue {
     pending: VecDeque<QueuedImport>,
-    job: Option<JoinHandle<(PathBuf, Result<ImportedSource, String>)>>,
+    job: Option<JoinHandle<FinishedJob>>,
     current: Option<String>,
     current_destination: Option<String>,
     failures: Vec<(String, String)>,
@@ -210,10 +274,6 @@ impl ImportQueue {
     }
 }
 
-const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "gltf", "glb", "obj", "bvh", "png", "jpg", "jpeg", "ogg", "wav",
-];
-
 /// The native file picker running on its own thread.
 #[derive(Resource, Default)]
 pub struct ImportPicker {
@@ -248,9 +308,14 @@ pub fn accept_picked(
     };
     let mut rows = stage_sources(sources);
     keep_project_sources_in_place(&mut rows, &root);
+    let scan = scan_content(&root);
+    for row in &mut rows {
+        stage_row(row, &scan);
+    }
     validate_rows(&mut rows, &root);
     staging.rows = rows;
     staging.visible = !staging.rows.is_empty();
+    staging.scan = Some(scan);
 }
 
 pub(crate) fn keep_project_sources_in_place(rows: &mut [StagedImport], project_root: &Path) {
@@ -290,9 +355,14 @@ fn drive_picker(
     {
         return;
     }
-    picker.job = Some(std::thread::spawn(|| {
+    let extensions: Vec<&str> = importers()
+        .iter()
+        .flat_map(|importer| importer.supported_extensions())
+        .copied()
+        .collect();
+    picker.job = Some(std::thread::spawn(move || {
         rfd::FileDialog::new()
-            .add_filter("Assets", SUPPORTED_EXTENSIONS)
+            .add_filter("Assets", &extensions)
             .pick_files()
     }));
 }
@@ -302,6 +372,10 @@ pub struct ImportPlugin;
 
 impl Plugin for ImportPlugin {
     fn build(&self, app: &mut App) {
+        let types = app.main_mut().world_mut().type_registry();
+        for importer in importers() {
+            importer.register_types(&mut types.write());
+        }
         app.insert_resource(ImportQueue::default());
         app.insert_resource(ImportStaging::default());
         app.insert_resource(ImportPicker::default());
@@ -312,7 +386,11 @@ impl Plugin for ImportPlugin {
     }
 }
 
-fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>) {
+fn drive_imports(
+    mut queue: ResMut<ImportQueue>,
+    mut state: ResMut<ProjectState>,
+    types: Res<AppTypeRegistry>,
+) {
     let root = state.project.as_ref().map(|project| project.root.clone());
     if let Some(root) = &root {
         queue.bind(root);
@@ -348,19 +426,43 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
     state.status = format!("Importing {name} ({} of {})…", queue.done + 1, queue.total);
     queue.current = Some(name);
     queue.current_destination = Some(row.destination.clone());
+    let types = types.clone();
     queue.job = Some(std::thread::spawn(move || {
-        let result = import_source_into(&row.source, &row.destination, &root).map_err(|error| {
-            let error = format!("{error:#}");
-            log::error!(
-                "importing '{}' to '{}' in '{}' failed: {error}",
-                row.source.display(),
-                row.destination,
-                root.display()
-            );
-            failure_summary(&error, &root)
-        });
-        (root, result)
+        let used = settings_used(&row, &types);
+        let settings = ImportSettings {
+            settings: row.settings,
+            asset_settings: row.asset_settings,
+        };
+        let result =
+            import_source_into(&row.source, &row.destination, &root, settings).map_err(|error| {
+                let error = format!("{error:#}");
+                log::error!(
+                    "importing '{}' to '{}' in '{}' failed: {error}",
+                    row.source.display(),
+                    row.destination,
+                    root.display()
+                );
+                failure_summary(&error, &root)
+            });
+        FinishedJob {
+            root,
+            settings: used,
+            result,
+        }
     }));
+}
+
+fn settings_used(row: &StagedImport, types: &AppTypeRegistry) -> String {
+    let staged = row.staged.as_ref().and_then(|staged| staged.as_ref().ok());
+    let settings = row
+        .settings
+        .as_deref()
+        .or(staged.map(|staged| staged.settings.as_ref()));
+    let asset_settings = row
+        .asset_settings
+        .as_deref()
+        .or(staged.and_then(|staged| staged.asset_settings.as_deref()));
+    settings_text(settings, asset_settings, &types.read())
 }
 
 fn finish_import(
@@ -375,21 +477,26 @@ fn finish_import(
     }
     let name = queue.current.take().unwrap_or_default();
     let destination = queue.current_destination.take().unwrap_or_default();
-    let (root, result) = match queue
+    let (root, settings, result) = match queue
         .job
         .take()
         .expect("the job was just observed as finished")
         .join()
     {
-        Ok((root, result)) => (Some(root), result),
+        Ok(job) => (Some(job.root), job.settings, job.result),
         Err(_) => {
             log::error!("the import worker panicked while importing '{name}'");
-            (None, Err("the import worker panicked".into()))
+            (
+                None,
+                String::new(),
+                Err("the import worker panicked".into()),
+            )
         }
     };
     queue.done += 1;
     finished.write(ImportFinished {
         destination,
+        settings,
         result: result.clone(),
     });
     let imported = match result {
@@ -504,25 +611,6 @@ mod tests {
     use concerto_foundation::assets::{content::ImportProvenance, registry::EmbeddedIn};
 
     #[test]
-    fn the_picker_filter_lists_exactly_the_common_extensions_an_importer_handles() {
-        let candidates = [
-            "png", "jpg", "jpeg", "gltf", "glb", "obj", "bmp", "tga", "gif", "webp", "tiff", "tif",
-            "hdr", "exr", "dds", "ktx2", "fbx", "dae", "ply", "stl", "usd", "usdz", "blend", "3ds",
-            "mtl", "bvh", "ogg", "wav",
-        ];
-        for extension in candidates {
-            assert_eq!(
-                SUPPORTED_EXTENSIONS.contains(&extension),
-                concerto_import::supported_extension(extension),
-                "{extension}"
-            );
-        }
-        for extension in SUPPORTED_EXTENSIONS {
-            assert!(candidates.contains(extension), "{extension}");
-        }
-    }
-
-    #[test]
     fn the_project_content_config_decides_where_assets_are_written() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
         let source = tempfile::tempdir().expect("tempdir");
@@ -536,6 +624,7 @@ mod tests {
             &source.path().join("square.obj"),
             "assets/square.obj",
             project.path(),
+            ImportSettings::default(),
         )
         .expect("import succeeds");
         assert!(!imported.assets.is_empty());
@@ -584,6 +673,9 @@ mod tests {
                 source: PathBuf::from(row.source),
                 destination: row.destination.to_string(),
                 state: RowState::New,
+                staged: None,
+                settings: None,
+                asset_settings: None,
             })
             .collect();
 

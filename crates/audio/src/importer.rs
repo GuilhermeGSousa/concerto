@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use concerto_asset_import::{ImportContext, ImportError, Importer};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings};
 use kira::sound::static_sound::StaticSoundData;
 
 use crate::AudioClip;
@@ -10,11 +10,24 @@ use crate::AudioClip;
 pub struct AudioImporter;
 
 impl Importer for AudioImporter {
+    type Settings = NoSettings;
+    type AssetSettings = NoSettings;
+
+    fn name(&self) -> &'static str {
+        "audio"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["ogg", "wav"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
+    fn import(
+        &self,
+        source_path: &Path,
+        _settings: &NoSettings,
+        _asset_settings: Option<&NoSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
         let bytes = std::fs::read(source_path).map_err(|err| ImportError::SourceUnreadable {
             source_path: source_path.to_path_buf(),
             message: err.to_string(),

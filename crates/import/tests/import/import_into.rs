@@ -1,8 +1,21 @@
 //! Importing a source from outside the project brings the files it refers to along.
 use std::path::{Path, PathBuf};
 
+use concerto_bvh::bvh_importer::BvhSettings;
+use concerto_foundation::assets::content::{
+    decode_content_asset, read_asset_record, read_content_asset, resave_content_asset,
+    write_content_asset,
+};
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
+use concerto_foundation::assets::Asset;
 use concerto_import::config::ContentConfig;
-use concerto_import::import_source_into;
+use concerto_import::metadata::{sidecar_path, SourceMetadata};
+use concerto_import::{
+    import_source_into, ContentScan, ImportSettings, ImportedSource, StagedSettings,
+};
+use concerto_render::assets::texture::{
+    Compression, MaxSize, Texture, TextureRole, TextureSettings,
+};
 
 fn fixtures(krate: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -146,8 +159,14 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
         let scratch = tempfile::tempdir().expect("tempdir");
         let project = tempfile::tempdir().expect("tempdir");
         let source = (case.source)(project.path(), scratch.path());
-        let imported = import_source_into(&source, case.destination, project.path(), &config())
-            .unwrap_or_else(|error| panic!("{}: {error:#}", case.destination));
+        let imported = import_source_into(
+            &source,
+            case.destination,
+            project.path(),
+            &config(),
+            Default::default(),
+        )
+        .unwrap_or_else(|error| panic!("{}: {error:#}", case.destination));
 
         assert_eq!(imported.siblings, case.siblings, "{}", case.destination);
         assert_eq!(
@@ -215,8 +234,14 @@ fn an_import_that_cannot_complete_writes_nothing_and_keeps_what_was_there() {
             .iter()
             .map(|file| std::fs::read(project.path().join(file)).expect("seeded"))
             .collect();
-        import_source_into(&source, case.destination, project.path(), &config())
-            .expect_err(case.case);
+        import_source_into(
+            &source,
+            case.destination,
+            project.path(),
+            &config(),
+            Default::default(),
+        )
+        .expect_err(case.case);
         assert_eq!(files_under(project.path()), case.left, "{}", case.case);
         for (file, bytes) in case.left.iter().zip(before) {
             assert_eq!(
@@ -242,14 +267,26 @@ fn importing_again_keeps_every_asset_id_and_replaces_the_copied_files() {
     }
     let project = tempfile::tempdir().expect("tempdir");
     let gltf = source.path().join("triangle_ext.gltf");
-    let first =
-        import_source_into(&gltf, "assets/tri.gltf", project.path(), &config()).expect("first");
+    let first = import_source_into(
+        &gltf,
+        "assets/tri.gltf",
+        project.path(),
+        &config(),
+        Default::default(),
+    )
+    .expect("first");
 
     let mut buffer = std::fs::read(source.path().join("triangle_ext.bin")).expect("read");
     buffer[0] ^= 0x01;
     std::fs::write(source.path().join("triangle_ext.bin"), &buffer).expect("write");
-    let second =
-        import_source_into(&gltf, "assets/tri.gltf", project.path(), &config()).expect("second");
+    let second = import_source_into(
+        &gltf,
+        "assets/tri.gltf",
+        project.path(),
+        &config(),
+        Default::default(),
+    )
+    .expect("second");
 
     assert_eq!(
         std::fs::read(project.path().join("assets/triangle_ext.bin")).expect("read"),
@@ -275,6 +312,7 @@ fn copies_keep_the_permissions_of_their_sources() {
         "assets/tri.gltf",
         project.path(),
         &config(),
+        Default::default(),
     )
     .expect("the import succeeds");
     for name in ["tri.gltf", "triangle_ext.bin"] {
@@ -284,4 +322,271 @@ fn copies_keep_the_permissions_of_their_sources() {
             .mode();
         assert_eq!(mode & 0o777, 0o644, "{name}");
     }
+}
+
+fn write_png(path: &Path, shade: u8) -> Vec<u8> {
+    image::RgbaImage::from_pixel(8, 8, image::Rgba([shade, 255 - shade, 64, 255]))
+        .save(path)
+        .expect("write png");
+    std::fs::read(path).expect("read png")
+}
+
+fn write_material_gltf(dir: &Path, images: usize) {
+    let mut materials = vec![
+        serde_json::json!({
+            "pbrMetallicRoughness": {
+                "baseColorTexture": { "index": 0 },
+                "metallicRoughnessTexture": { "index": 2 }
+            },
+            "normalTexture": { "index": 1 }
+        }),
+        serde_json::json!({ "normalTexture": { "index": 2 } }),
+    ];
+    if images > 3 {
+        materials.push(serde_json::json!({
+            "pbrMetallicRoughness": { "baseColorTexture": { "index": 3 } }
+        }));
+    }
+    let gltf = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "images": (0..images).map(|i| serde_json::json!({ "uri": format!("image{i}.png") })).collect::<Vec<_>>(),
+        "textures": (0..images).map(|i| serde_json::json!({ "source": i })).collect::<Vec<_>>(),
+        "materials": materials,
+    });
+    std::fs::write(dir.join("materials.gltf"), gltf.to_string()).expect("write gltf");
+}
+
+struct ImportedTexture {
+    entry: AssetEntry,
+    texture: Texture,
+}
+
+fn imported_texture(project: &Path, imported: &ImportedSource, name: &str) -> ImportedTexture {
+    let entry = imported
+        .assets
+        .iter()
+        .find(|asset| asset.provenance.as_ref().unwrap().sub_asset == name)
+        .unwrap_or_else(|| panic!("{name} is imported: {:?}", imported.assets))
+        .clone();
+    let record = read_asset_record(project, &entry).expect("record");
+    let (_, texture) = decode_content_asset::<Texture>(&record)
+        .unwrap_or_else(|error| panic!("{name}: {error:#}"));
+    ImportedTexture { entry, texture }
+}
+
+const WALK: &str = "HIERARCHY
+ROOT Hips
+{
+	OFFSET 0.0 90.0 0.0
+	CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+	End Site
+	{
+		OFFSET 0.0 5.0 0.0
+	}
+}
+MOTION
+Frames: 2
+Frame Time: 0.0333333
+0 90 0 0 0 0
+1 90 0 10 0 0
+";
+
+fn asset_settings(settings: TextureSettings) -> ImportSettings {
+    ImportSettings {
+        settings: None,
+        asset_settings: Some(Box::new(settings)),
+    }
+}
+
+#[test]
+fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let project = tempfile::tempdir().expect("tempdir");
+    let root = project.path();
+    let images: Vec<Vec<u8>> = (0..4)
+        .map(|i| write_png(&scratch.path().join(format!("image{i}.png")), 40 * i as u8))
+        .collect();
+    let picture_path = scratch.path().join("picture.png");
+    let picture = write_png(&picture_path, 200);
+    write_material_gltf(scratch.path(), 3);
+    let gltf = scratch.path().join("materials.gltf");
+    let given = TextureSettings::default()
+        .with_compression(Compression::Bc7)
+        .with_max_size(MaxSize::S1024);
+
+    let image = import_source_into(
+        &picture_path,
+        "assets/picture.png",
+        root,
+        &config(),
+        asset_settings(given),
+    )
+    .expect("the image imports");
+    let main = imported_texture(root, &image, "main").texture;
+    assert_eq!(main.source.as_ref().unwrap().bytes, picture);
+    assert_eq!(main.role, TextureRole::Color);
+    assert_eq!(main.settings, given);
+    let sidecar =
+        std::fs::read_to_string(root.join("assets/picture.png.import.toml")).expect("sidecar");
+    assert!(!sidecar.contains("settings"), "{sidecar}");
+    let staged = ContentScan::new(root, &config())
+        .expect("the project scans")
+        .staged_settings(&picture_path, "assets/picture.png")
+        .expect("the image stages");
+    assert_eq!(
+        staged
+            .asset_settings
+            .as_deref()
+            .and_then(|settings| settings.downcast_ref::<TextureSettings>()),
+        Some(&given)
+    );
+
+    let first = import_source_into(
+        &gltf,
+        "assets/materials.gltf",
+        root,
+        &config(),
+        ImportSettings::default(),
+    )
+    .expect("the glTF imports");
+    for (name, image, role) in [
+        ("texture/0", 0, TextureRole::Color),
+        ("texture/1_linear", 1, TextureRole::Normal),
+        ("texture/2_linear", 2, TextureRole::Data),
+    ] {
+        let texture = imported_texture(root, &first, name).texture;
+        assert_eq!(
+            texture.source.as_ref().unwrap().bytes,
+            images[image],
+            "{name}"
+        );
+        assert_eq!(texture.role, role, "{name}");
+        assert_eq!(texture.settings, TextureSettings::default(), "{name}");
+    }
+
+    let ImportedTexture {
+        entry: normal_entry,
+        texture: normal,
+    } = imported_texture(root, &first, "texture/1_linear");
+    let edited = Texture::imported(
+        normal.role,
+        normal.settings.with_compression(Compression::Bc7),
+        normal.source.clone().unwrap(),
+    );
+    let mut registry =
+        AssetRegistry::from_content_tree(root, "content", "gasset").expect("registry");
+    resave_content_asset(&edited, root, &normal_entry.address, &mut registry).expect("resave");
+    write_material_gltf(scratch.path(), 4);
+    let second = import_source_into(
+        &gltf,
+        "assets/materials.gltf",
+        root,
+        &config(),
+        ImportSettings::default(),
+    )
+    .expect("the glTF imports again");
+    let normal = imported_texture(root, &second, "texture/1_linear").texture;
+    assert_eq!(normal.settings.compression, Compression::Bc7);
+    let added = imported_texture(root, &second, "texture/3").texture;
+    assert_eq!(added.settings, TextureSettings::default());
+    assert_eq!(added.source.as_ref().unwrap().bytes, images[3]);
+
+    let path = root.join(&normal_entry.address);
+    let file = std::fs::read(&path).expect("read");
+    let (mut header, payload) = read_content_asset(&file).expect("content asset");
+    header.kind_version = Texture::FORMAT_VERSION - 1;
+    std::fs::write(
+        &path,
+        write_content_asset(&header, payload).expect("encode"),
+    )
+    .expect("write");
+    let third = import_source_into(
+        &gltf,
+        "assets/materials.gltf",
+        root,
+        &config(),
+        ImportSettings::default(),
+    )
+    .expect("an old texture version re-imports");
+    let normal = imported_texture(root, &third, "texture/1_linear").texture;
+    assert_eq!(normal.settings, TextureSettings::default());
+
+    let mistyped = import_source_into(
+        &gltf,
+        "assets/materials.gltf",
+        root,
+        &config(),
+        asset_settings(given),
+    )
+    .expect_err("a glTF has no asset settings");
+    assert!(
+        format!("{mistyped:#}").contains("NoSettings"),
+        "{mistyped:#}"
+    );
+    let underivable = import_source_into(
+        &picture_path,
+        "assets/fresh.png",
+        root,
+        &config(),
+        asset_settings(TextureSettings::default().with_compression(Compression::Bc5)),
+    )
+    .expect_err("settings a colour texture cannot derive in are refused");
+    let message = format!("{underivable:#}");
+    assert!(message.contains("sRGB"), "{message}");
+
+    let walk = scratch.path().join("walk.bvh");
+    std::fs::write(&walk, WALK).expect("write bvh");
+    import_source_into(
+        &walk,
+        "assets/walk.bvh",
+        root,
+        &config(),
+        ImportSettings::default(),
+    )
+    .expect("the BVH imports");
+    let sidecar = sidecar_path(&root.join("assets/walk.bvh"));
+    let mut metadata = SourceMetadata::load(&sidecar).expect("sidecar");
+    assert!(metadata.settings.is_empty(), "{:?}", metadata.settings);
+    metadata.settings = "[events.walk]\nstep = [0.0]\n".parse().expect("events");
+    std::fs::write(&sidecar, toml::to_string(&metadata).expect("encode")).expect("write");
+    let StagedSettings { mut settings, .. } = ContentScan::new(root, &config())
+        .expect("the project scans")
+        .staged_settings(&walk, "assets/walk.bvh")
+        .expect("the BVH stages");
+    settings
+        .downcast_mut::<BvhSettings>()
+        .expect("BVH settings")
+        .scale = 0.5;
+    import_source_into(
+        &walk,
+        "assets/walk.bvh",
+        root,
+        &config(),
+        ImportSettings {
+            settings: Some(settings),
+            asset_settings: None,
+        },
+    )
+    .expect("the BVH imports with its settings");
+    let written = SourceMetadata::load(&sidecar).expect("sidecar").settings;
+    assert_eq!(written["scale"].as_float(), Some(0.5), "{written:?}");
+    assert_eq!(
+        written["events"]["walk"]["step"].as_array().map(Vec::len),
+        Some(1),
+        "{written:?}"
+    );
+
+    std::fs::write(
+        &sidecar,
+        std::fs::read_to_string(&sidecar)
+            .expect("sidecar")
+            .replace("scale = 0.5", "scale = \"big\""),
+    )
+    .expect("write");
+    let malformed = ContentScan::new(root, &config())
+        .expect("the project scans")
+        .staged_settings(&walk, "assets/walk.bvh")
+        .err()
+        .expect("an unparsable sidecar does not stage");
+    assert!(format!("{malformed:#}").contains("scale"), "{malformed:#}");
 }

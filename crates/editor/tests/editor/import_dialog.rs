@@ -1,53 +1,140 @@
-//! Enter in the staging dialog queues the batch and hands the keys back.
-use concerto_app::{App, schedule_groups::LateUpdate};
-use concerto_ecs::events::event_channel::EventChannel;
+//! Enter in the staging dialog queues the batch, with the settings typed into it, and hands the keys back.
+use crate::example;
+
+use concerto_app::{App, plugins::AssetManagerPlugin};
+use concerto_ecs::{
+    Entity, World,
+    entity::hierarchy::{ChildOf, Children},
+    events::event_channel::EventChannel,
+};
 use concerto_editor::{
     actions::{ConfirmImport, ImportDialogContext},
     guard::UnsavedGuard,
-    import::{ImportPlugin, ImportQueue, ImportStaging, stage_sources},
-    project::{Project, ProjectState},
+    import::{ImportPlugin, ImportQueue, ImportStaging, accept_picked},
+    inspector::{PropertyRow, ReflectRowsPlugin},
+    project::{AssetsWritten, Project, ProjectState},
 };
-use concerto_ui::{focus::FocusedWidget, text_input::UITextInputChanged, theme::UITheme};
+use concerto_foundation::assets::registry::AssetRegistry;
+use concerto_ui::{
+    focus::FocusedWidget,
+    items::UIItemSelected,
+    text::UIText,
+    text_input::{UITextInput, UITextInputChanged, UITextInputSubmitted},
+};
 use concerto_window::input::actions::{ActionFired, ActionMap};
+use std::path::{Path, PathBuf};
 
-fn staged(sources: &[&str]) -> ImportStaging {
-    ImportStaging {
-        rows: stage_sources(sources.iter().map(std::path::PathBuf::from).collect()),
-        visible: true,
-    }
+const WALK: &str = "HIERARCHY
+ROOT Hips
+{
+	OFFSET 0.0 90.0 0.0
+	CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+	End Site
+	{
+		OFFSET 0.0 5.0 0.0
+	}
 }
+MOTION
+Frames: 2
+Frame Time: 0.0333333
+0 90 0 0 0 0
+1 90 0 10 0 0
+";
 
-fn editor(project: &std::path::Path, sources: &[&str]) -> App {
-    let mut app = App::new();
-    app.insert_resource(UITheme::default());
-    app.insert_resource(ActionMap::default());
-    app.insert_resource(FocusedWidget::default());
-    app.insert_resource(UnsavedGuard::default());
-    app.register_event::<UITextInputChanged>();
-    app.register_event::<ActionFired>();
-    let mut state = ProjectState::default();
-    state.project = Some(Project {
-        root: project.to_path_buf(),
-        content_root: "content".into(),
-        default_scene: None,
-    });
-    app.insert_resource(state);
-    concerto_ui::list::install_listeners(app.main_mut().world_mut());
-    app.register_plugin(ImportPlugin);
-    app.finish_plugin_build();
-    *app.get_resource_mut::<ImportStaging>().expect("staging") = staged(sources);
-    frame(&mut app);
+fn editor(project: &Path, sources: Vec<PathBuf>) -> App {
+    let (mut app, _) = example::headless_editor(
+        |_| {},
+        |editor| {
+            let mut state = ProjectState::default();
+            state.project = Some(Project {
+                root: project.to_path_buf(),
+                content_root: "content".into(),
+                default_scene: None,
+            });
+            editor
+                .register_plugin(AssetManagerPlugin)
+                .insert_resource(state)
+                .insert_resource(UnsavedGuard::default())
+                .insert_resource(AssetRegistry::default())
+                .register_event::<UITextInputChanged>()
+                .register_event::<AssetsWritten>()
+                .register_plugin(ImportPlugin)
+                .register_plugin(ReflectRowsPlugin);
+            concerto_ui::list::install_listeners(editor.main_mut().world_mut());
+            concerto_ui::items::install_listeners(editor.main_mut().world_mut());
+        },
+    );
+    let world = app.main_mut().world_mut();
+    let mut state = world.remove_resource::<ProjectState>().expect("state");
+    let mut staging = ImportStaging::default();
+    accept_picked(Some(sources), &mut staging, &mut state);
+    world.insert_resource(state);
+    world.insert_resource(staging);
+    app.update();
     app
 }
 
-fn frame(app: &mut App) {
-    app.main_mut().world_mut().run_schedule(LateUpdate);
+fn labelled(world: &mut World, label: &str) -> Entity {
+    let text = world
+        .query::<(Entity, &UIText), ()>()
+        .iter(world)
+        .find(|(_, text)| text.text == label)
+        .map(|(entity, _)| entity)
+        .expect("a label");
+    world
+        .get_component_for_entity::<ChildOf>(text)
+        .expect("a parent")
+        .parent()
+}
+
+fn text_field_of_row(world: &mut World, path: &str) -> Entity {
+    let row = world
+        .query::<(Entity, &PropertyRow), ()>()
+        .iter(world)
+        .find(|(_, row)| row.address.path.to_string() == path)
+        .map(|(entity, _)| entity)
+        .expect("a settings row");
+    let mut pending = vec![row];
+    while let Some(entity) = pending.pop() {
+        if world
+            .get_component_for_entity::<UITextInput>(entity)
+            .is_some()
+        {
+            return entity;
+        }
+        if let Some(children) = world.get_component_for_entity::<Children>(entity) {
+            pending.extend(children.iter().copied());
+        }
+    }
+    panic!("the row has no text field");
+}
+
+fn drain(app: &mut App) {
+    for _ in 0..500 {
+        app.update();
+        let queue = app.get_resource::<ImportQueue>().expect("queue");
+        let staging = app.get_resource::<ImportStaging>().expect("staging");
+        if !staging.visible && queue.remaining() == 0 && !queue.is_running() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the queue never drained");
 }
 
 #[test]
 fn the_confirm_key_queues_the_batch_once_and_releases_the_key_context() {
+    let sources = tempfile::tempdir().expect("tempdir");
+    let picked: Vec<PathBuf> = ["walk.bvh", "run.bvh"]
+        .iter()
+        .map(|name| {
+            let path = sources.path().join(name);
+            std::fs::write(&path, WALK).expect("write bvh");
+            path
+        })
+        .collect();
     let project = tempfile::tempdir().expect("tempdir");
-    let mut app = editor(project.path(), &["/tmp/hero.obj", "/tmp/tree.obj"]);
+    let mut app = editor(project.path(), picked);
     assert!(
         app.get_resource::<ActionMap>()
             .expect("actions")
@@ -55,18 +142,31 @@ fn the_confirm_key_queues_the_batch_once_and_releases_the_key_context() {
         "an open dialog owns Enter and Escape"
     );
 
-    app.get_resource_mut::<EventChannel<ActionFired>>()
+    let world = app.main_mut().world_mut();
+    let walk = labelled(world, "walk.bvh");
+    world.trigger_on(walk, UIItemSelected);
+    app.update();
+    app.update();
+    let world = app.main_mut().world_mut();
+    let scale = text_field_of_row(world, "scale");
+    **world.get_resource_mut::<FocusedWidget>().expect("focus") = Some(scale);
+    world
+        .get_component_for_entity_mut::<UITextInput>(scale)
+        .expect("field")
+        .value = "0.5".into();
+    world
+        .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+        .expect("channel")
+        .push_event(UITextInputSubmitted {
+            entity: scale,
+            value: "0.5".into(),
+        });
+    world
+        .get_resource_mut::<EventChannel<ActionFired>>()
         .expect("channel")
         .push_event(ActionFired::new(ConfirmImport));
-    frame(&mut app);
-    frame(&mut app);
+    drain(&mut app);
 
-    assert_eq!(
-        app.get_resource::<ImportQueue>()
-            .expect("queue")
-            .remaining(),
-        2
-    );
     assert!(
         !app.get_resource::<ImportStaging>()
             .expect("staging")
@@ -77,4 +177,13 @@ fn the_confirm_key_queues_the_batch_once_and_releases_the_key_context() {
             .expect("actions")
             .is_active(ImportDialogContext)
     );
+    let sidecar = |name: &str| {
+        std::fs::read_to_string(project.path().join("assets").join(name)).unwrap_or_default()
+    };
+    assert!(
+        sidecar("walk.bvh.import.toml").contains("scale = 0.5"),
+        "{}",
+        sidecar("walk.bvh.import.toml")
+    );
+    assert!(project.path().join("assets/run.bvh").exists());
 }
