@@ -10,8 +10,9 @@ use concerto_asset_import::{
     DependencyEntry, ErasedImporter, ImportContext, PreviousOutputResolver, SubAssetIdResolver,
 };
 use concerto_foundation::assets::content::{
-    read_asset_record, read_content_asset_header, write_content_asset,
-    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
+    read_asset_record_without_editor_only, read_content_asset_header, write_content_asset,
+    write_content_asset_with_editor_only, write_content_asset_with_embedded, ContentAssetHeader,
+    EmbeddedPayload, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
@@ -141,6 +142,7 @@ struct PlannedFile {
 struct EmbeddedOutput<'a> {
     header: ContentAssetHeader,
     payload: &'a [u8],
+    editor_only: Option<&'a [u8]>,
 }
 
 struct HostOutput<'a> {
@@ -409,7 +411,7 @@ fn previous_outputs(
         .filter_map(|(key, output)| Some((key.clone(), registry.get(output.asset_id)?.clone())))
         .collect();
     let root = project_root.to_path_buf();
-    Box::new(move |name| read_asset_record(&root, located.get(name)?).ok())
+    Box::new(move |name| read_asset_record_without_editor_only(&root, located.get(name)?).ok())
 }
 
 fn sidecar_settings(
@@ -602,8 +604,14 @@ fn import_with(
             embedded.push(EmbeddedOutput {
                 header: header.clone(),
                 payload: &sub_asset.bytes,
+                editor_only: sub_asset.editor_only.as_deref(),
             });
         } else if sub_asset.name == HOST {
+            if sub_asset.editor_only.is_some() {
+                bail!(
+                    "the importer emitted '{HOST}' with editor-only data, which the file that holds an import's embedded assets cannot carry; emit it with `emit`"
+                );
+            }
             host = Some(HostOutput {
                 path: project_root.join(&address),
                 header: header.clone(),
@@ -612,7 +620,14 @@ fn import_with(
         } else {
             plan.push(PlannedFile {
                 path: project_root.join(&address),
-                bytes: write_content_asset(&header, &sub_asset.bytes)?,
+                bytes: match &sub_asset.editor_only {
+                    Some(editor_only) => write_content_asset_with_editor_only(
+                        &header,
+                        &sub_asset.bytes,
+                        editor_only,
+                    )?,
+                    None => write_content_asset(&header, &sub_asset.bytes)?,
+                },
             });
         }
         let entry = AssetEntry {
@@ -643,7 +658,7 @@ fn import_with(
             .map(|output| EmbeddedPayload {
                 header: output.header.clone(),
                 payload: output.payload,
-                editor_only: None,
+                editor_only: output.editor_only,
                 derived_blob: None,
             })
             .collect();
@@ -1019,7 +1034,7 @@ mod tests {
     }
 
     impl concerto_foundation::assets::Asset for Blob {
-        type EditorOnly = ();
+        type EditorOnly = u32;
 
         fn name() -> &'static str {
             "Blob"
@@ -1035,6 +1050,7 @@ mod tests {
         name: &'static str,
         renamed_from: Option<&'static str>,
         refs: Vec<&'static str>,
+        drawing: Option<u32>,
     }
 
     fn emit(name: &'static str) -> Emit {
@@ -1042,12 +1058,18 @@ mod tests {
             name,
             renamed_from: None,
             refs: Vec::new(),
+            drawing: None,
         }
     }
 
     impl Emit {
         fn renamed_from(mut self, old: &'static str) -> Self {
             self.renamed_from = Some(old);
+            self
+        }
+
+        fn with_drawing(mut self, drawing: u32) -> Self {
+            self.drawing = Some(drawing);
             self
         }
 
@@ -1085,7 +1107,10 @@ mod tests {
             }
             for emit in &self.0 {
                 let refs = emit.refs.iter().map(|r| ctx.sub_asset_id(r)).collect();
-                ctx.emit(emit.name, &Blob { refs })?;
+                match &emit.drawing {
+                    Some(drawing) => ctx.emit_with(emit.name, &Blob { refs }, drawing)?,
+                    None => ctx.emit(emit.name, &Blob { refs })?,
+                }
             }
             Ok(())
         }
@@ -1164,7 +1189,9 @@ mod tests {
 
         let second = fixture
             .import(vec![
-                emit("animation/clip").renamed_from("animation/0"),
+                emit("animation/clip")
+                    .renamed_from("animation/0")
+                    .with_drawing(7),
                 emit("scene").referring_to("animation/clip"),
             ])
             .unwrap();
@@ -1174,6 +1201,14 @@ mod tests {
         assert_eq!(renamed.address, old.address);
         let header = read_content_asset_header(&fixture.root().join(&old.address)).unwrap();
         assert_eq!(header.provenance.unwrap().sub_asset, "animation/clip");
+        assert_eq!(
+            concerto_foundation::assets::content::read_editor_only::<Blob>(
+                &fixture.root(),
+                renamed
+            )
+            .unwrap(),
+            Some(7)
+        );
         let outputs = fixture.outputs();
         assert_eq!(outputs.get("animation/clip"), Some(&old.id));
         assert!(!outputs.contains_key("animation/0"));

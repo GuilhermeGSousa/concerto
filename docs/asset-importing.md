@@ -572,6 +572,15 @@ older. A section left by a file of another kind, which only
 `save_content_asset_into` can replace, is dropped. A section that cannot be
 read or migrated fails the save and leaves the file as it was.
 
+An importer writes a section with
+`ImportContext::emit_with(name, &value, &editor_only)`, which takes the
+type's `EditorOnly` after the value; `emit` writes none. The import writes
+the section with the output, loose or embedded in the scene file. The `scene`
+output cannot carry one, and emitting it with one fails the import.
+`ImportContext::previous::<T>` reads the previous output without its section,
+so a re-import never reads one from disk. `pack-imports` keeps the section of
+every asset it embeds.
+
 A section shares its payload's `kind_version`; see
 [Changing an asset type's encoding](#changing-an-asset-types-encoding). A load
 never hands a section to the asset; see
@@ -1236,6 +1245,10 @@ impl Importer for MyImporter {
             ctx.emit(&format!("mesh/{i}"), &mesh_to_engine_mesh(mesh))?;
         }
 
+        // `emit_with` also writes the type's editor-only data beside the
+        // value, such as the source the asset was derived from.
+        ctx.emit_with("gear", &gear, &drawing)?;
+
         // Build same-file cross-references with `sub_asset_id`, so a struct
         // you emit can hold a real `AssetHandle::weak(id)` that resolves to
         // another sub-asset's persistent UUID.
@@ -1266,6 +1279,9 @@ import itself, the sidecar's importer check and the editor's file picker.
 `ImportContext::emit<T: Asset>` requires the emitted type to implement
 `Asset` (`Serialize + DeserializeOwned` + a `name()` tag). There is no
 separate DTO trait — the on-disk form of an asset *is* the asset.
+`ImportContext::emit_with<T: Asset>` takes a `&T::EditorOnly` after the value
+and writes it as the output's editor-only section; see
+[Editor-only data](#editor-only-data).
 
 ## Current limitations
 

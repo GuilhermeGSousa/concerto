@@ -2,7 +2,8 @@
 use std::collections::BTreeMap;
 
 use concerto_foundation::assets::content::{
-    asset_record, read_asset_record, read_content_asset, write_content_asset, ContentAssetHeader,
+    asset_record, read_asset_record, read_content_asset, read_editor_only_section,
+    write_content_asset, write_content_asset_with_editor_only, ContentAssetHeader,
     ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
@@ -73,6 +74,16 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
         .iter()
         .filter(|a| a.embedded_in.is_some())
         .collect();
+    let drawn = embedded[0];
+    let drawing = [7u8, 8, 9];
+    let loose = project.path(&loose_address(HERO, drawn));
+    let file = std::fs::read(&loose).unwrap();
+    let (header, payload) = read_content_asset(&file).unwrap();
+    std::fs::write(
+        &loose,
+        write_content_asset_with_editor_only(&header, payload, &drawing).unwrap(),
+    )
+    .unwrap();
     let old = project.snapshot();
     let old_record = |entry: &AssetEntry| &old[std::path::Path::new(&loose_address(HERO, entry))];
 
@@ -103,6 +114,13 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
             entry.location()
         );
     }
+    let section = read_editor_only_section(
+        &project.path("content/hero/scene.gasset"),
+        Some(&drawn.embedded_in.as_ref().unwrap().name),
+    )
+    .unwrap()
+    .expect("the packed asset keeps its editor-only section");
+    assert_eq!(section.bytes, drawing);
     let host = std::fs::read(project.path("content/hero/scene.gasset")).unwrap();
     assert_eq!(
         asset_record(&host, None).unwrap(),

@@ -16,6 +16,8 @@ pub struct EmittedSubAsset {
     pub type_name: &'static str,
     pub kind_version: u32,
     pub bytes: Vec<u8>,
+    /// The bytes of the editor-only section the output is written with, if it has one.
+    pub editor_only: Option<Vec<u8>>,
     pub references: Vec<AssetId>,
 }
 
@@ -132,21 +134,38 @@ impl ImportContext {
         }
     }
 
+    /// Emits `value` as the output `name`, with no editor-only section.
     pub fn emit<T: Asset>(&mut self, name: &str, value: &T) -> Result<(), ImportError> {
-        let bytes = bincode::serialize(value).map_err(|err| ImportError::SerializationFailed {
-            sub_asset_name: name.to_string(),
-            message: err.to_string(),
-        })?;
+        self.push(name, value, None)
+    }
 
+    /// Emits `value` as the output `name`, with `editor_only` as its editor-only section; a value of zero bytes records none.
+    pub fn emit_with<T: Asset>(
+        &mut self,
+        name: &str,
+        value: &T,
+        editor_only: &T::EditorOnly,
+    ) -> Result<(), ImportError> {
+        let section = serialize(name, editor_only)?;
+        self.push(name, value, Some(section).filter(|bytes| !bytes.is_empty()))
+    }
+
+    fn push<T: Asset>(
+        &mut self,
+        name: &str,
+        value: &T,
+        editor_only: Option<Vec<u8>>,
+    ) -> Result<(), ImportError> {
+        let bytes = serialize(name, value)?;
         self.sub_assets.push(EmittedSubAsset {
             name: name.to_string(),
             asset_id: self.sub_asset_id(name),
             type_name: T::name(),
             kind_version: T::FORMAT_VERSION,
             bytes,
+            editor_only,
             references: value.referenced_sub_assets(),
         });
-
         Ok(())
     }
 
@@ -162,4 +181,11 @@ impl ImportContext {
             renames: self.renames.into_iter().collect(),
         }
     }
+}
+
+fn serialize<T: serde::Serialize>(name: &str, value: &T) -> Result<Vec<u8>, ImportError> {
+    bincode::serialize(value).map_err(|err| ImportError::SerializationFailed {
+        sub_asset_name: name.to_string(),
+        message: err.to_string(),
+    })
 }
