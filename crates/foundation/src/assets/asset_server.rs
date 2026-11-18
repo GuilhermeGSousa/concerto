@@ -495,9 +495,12 @@ impl AssetServer {
         &self,
         id: AssetId,
     ) -> anyhow::Result<Option<EditorOnlyBytes>> {
-        match self.content_source().0 {
+        let (root, registry) = self.content_source();
+        match root {
             #[cfg(not(target_arch = "wasm32"))]
-            ContentAssetRoot::Directory(_) => self.editor_only_section(id).await,
+            ContentAssetRoot::Directory(_) if registry.get(id).is_some() => {
+                self.editor_only_section(id).await
+            }
             _ => Ok(None),
         }
     }

@@ -2,10 +2,10 @@
 //! its id on first save and reusing it on re-save.
 use concerto_foundation::assets::content::{
     read_asset_record, read_asset_record_without_editor_only, read_content_asset,
-    read_content_asset_header, read_content_asset_parts, read_editor_only, resave_content_asset,
-    save_content_asset_into, save_content_asset_with_editor_only,
-    write_content_asset_with_editor_only, write_content_asset_with_embedded, ContentAssetHeader,
-    EmbeddedPayload, ImportProvenance,
+    read_content_asset_header, read_content_asset_parts, read_editor_only,
+    read_editor_only_section, resave_content_asset, save_content_asset_into,
+    save_content_asset_with_editor_only, write_content_asset_with_editor_only,
+    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId, EditorOnly};
@@ -197,9 +197,7 @@ fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHea
         drawing: vec![1, 2],
     })
     .unwrap();
-    let file =
-        write_content_asset_with_editor_only(&header, &payload, Blueprint::VERSION, &blueprint)
-            .unwrap();
+    let file = write_content_asset_with_editor_only(&header, &payload, 2, &blueprint).unwrap();
     std::fs::write(path, file).unwrap();
     header
 }
@@ -234,13 +232,18 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     assert_eq!(entry.kind, "Widget");
     assert_eq!(entry.provenance, original.provenance);
     let entry = entry.clone();
+    let kept = read_editor_only_section(&project_root.join(address), None)
+        .unwrap()
+        .expect("a resave keeps the file's section");
+    assert_eq!(kept.version, 2, "at the version it was written with");
     assert_eq!(
-        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
-        Some(Blueprint {
+        bincode::deserialize::<Blueprint>(&kept.bytes).unwrap(),
+        Blueprint {
             drawing: vec![1, 2]
-        }),
-        "a resave given no section keeps the file's"
+        }
     );
+    read_editor_only::<Blueprint>(&project_root, &entry)
+        .expect_err("a section older than its type's version, with no migration, is refused");
     let redrawn = Blueprint {
         drawing: vec![3, 4, 5],
     };

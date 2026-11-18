@@ -146,17 +146,17 @@ struct EmbeddedOutput<'a> {
     editor_only: Option<&'a [u8]>,
 }
 
+struct HostOutput<'a> {
+    path: PathBuf,
+    header: ContentAssetHeader,
+    payload: &'a [u8],
+}
+
 fn described(section: &EmittedEditorOnly) -> EditorOnlySection {
     EditorOnlySection {
         len: section.bytes.len() as u64,
         version: section.version,
     }
-}
-
-struct HostOutput<'a> {
-    path: PathBuf,
-    header: ContentAssetHeader,
-    payload: &'a [u8],
 }
 
 struct HostFile {
@@ -602,6 +602,10 @@ fn import_with(
             derived: None,
             embedded: Vec::new(),
         };
+        let editor_only = sub_asset
+            .editor_only
+            .as_ref()
+            .filter(|section| !section.bytes.is_empty());
         if embedded_in.is_some() {
             if let Some(loose) = registry
                 .get(sub_asset.asset_id)
@@ -611,17 +615,14 @@ fn import_with(
             }
             embedded.push(EmbeddedOutput {
                 header: ContentAssetHeader {
-                    editor_only: sub_asset.editor_only.as_ref().map(described),
+                    editor_only: editor_only.map(described),
                     ..header.clone()
                 },
                 payload: &sub_asset.bytes,
-                editor_only: sub_asset
-                    .editor_only
-                    .as_ref()
-                    .map(|section| section.bytes.as_slice()),
+                editor_only: editor_only.map(|section| section.bytes.as_slice()),
             });
         } else if sub_asset.name == HOST {
-            if sub_asset.editor_only.is_some() {
+            if editor_only.is_some() {
                 bail!(
                     "the importer emitted '{HOST}' with editor-only data, which the file that holds an import's embedded assets cannot carry; emit it with `emit`"
                 );
@@ -634,7 +635,7 @@ fn import_with(
         } else {
             plan.push(PlannedFile {
                 path: project_root.join(&address),
-                bytes: match &sub_asset.editor_only {
+                bytes: match editor_only {
                     Some(editor_only) => write_content_asset_with_editor_only(
                         &header,
                         &sub_asset.bytes,
