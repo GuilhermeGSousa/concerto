@@ -11,9 +11,10 @@ use concerto_asset_import::{
     SubAssetIdResolver,
 };
 use concerto_foundation::assets::content::{
-    read_asset_record_without_uncooked, read_content_asset_header, write_content_asset,
-    write_content_asset_with_embedded, write_content_asset_with_uncooked, ContentAssetHeader,
-    EmbeddedPayload, ImportProvenance, ImportRecord, SourceFile, UncookedSection,
+    asset_record, read_asset_record_without_uncooked, read_content_asset_header,
+    write_content_asset, write_content_asset_with_embedded, write_content_asset_with_uncooked,
+    ContentAssetHeader, ContentFile, EmbeddedPayload, ImportProvenance, ImportRecord, SourceFile,
+    UncookedSection,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
@@ -367,6 +368,81 @@ pub fn reimport(
         config,
         settings,
     )
+}
+
+/// Moves the embedded asset `id` out of its import's scene file into a loose file at its usual address, keeping its id, provenance and uncooked section.
+pub fn extract_embedded(
+    id: AssetId,
+    project_root: &Path,
+    config: &ContentConfig,
+    registry: &mut AssetRegistry,
+) -> anyhow::Result<AssetEntry> {
+    config.validate()?;
+    let entry = registry
+        .get(id)
+        .with_context(|| format!("no asset {} in the project", id.simple_hex()))?
+        .clone();
+    let (Some(held), Some(provenance)) = (&entry.embedded_in, &entry.provenance) else {
+        bail!("'{}' is a file of its own already", entry.location());
+    };
+    let address = content_address(config, Path::new(&provenance.source), &provenance.sub_asset);
+    let loose_path = project_root.join(&address);
+    if registry.id_for_address(&address).is_some() || loose_path.try_exists()? {
+        bail!(
+            "'{address}' is taken; move or rename it, then extract '{}' again",
+            entry.location()
+        );
+    }
+    let host_path = project_root.join(&entry.address);
+    let bytes =
+        std::fs::read(&host_path).with_context(|| format!("reading '{}'", entry.address))?;
+    let loose = asset_record(&bytes, Some(&held.name))
+        .with_context(|| format!("malformed content asset '{}'", entry.location()))?;
+    let file = ContentFile::parse(&bytes)
+        .with_context(|| format!("malformed content asset '{}'", entry.address))?;
+    let mut kept = Vec::with_capacity(file.header().embedded.len());
+    for asset in file
+        .header()
+        .embedded
+        .iter()
+        .filter(|asset| asset.name() != held.name)
+    {
+        let record = file.embedded(asset)?;
+        kept.push(EmbeddedPayload {
+            header: file
+                .header()
+                .record_header(Some(asset.name()))
+                .context("an embedded asset is missing from its file's directory")?,
+            payload: record.payload,
+            uncooked: record.uncooked.map(|section| section.bytes),
+            derived_blob: record.cooked.map(|cooked| cooked.blob),
+        });
+    }
+    let host_header = ContentAssetHeader {
+        embedded: Vec::new(),
+        ..file.header().clone()
+    };
+    let host = write_content_asset_with_embedded(&host_header, file.host()?.payload, &kept)?;
+    let staged_loose = stage(&loose_path, &loose)?;
+    let staged_host = stage(&host_path, &host)?;
+    replace(staged_loose, &loose_path)?;
+    if let Err(error) = replace(staged_host, &host_path) {
+        if let Err(removal) = std::fs::remove_file(&loose_path) {
+            bail!(
+                "rewriting '{}' without '{}' failed ({error:#}), and deleting '{address}' again failed too ({removal}); delete '{address}', since two files with one id stop the project from opening",
+                entry.address,
+                held.name
+            );
+        }
+        return Err(error);
+    }
+    let extracted = AssetEntry {
+        embedded_in: None,
+        address,
+        ..entry
+    };
+    registry.insert(extracted.clone());
+    Ok(extracted)
 }
 
 fn portable(path: &Path) -> String {

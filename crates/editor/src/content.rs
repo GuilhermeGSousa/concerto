@@ -422,13 +422,14 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
             },
         ))
         .entity();
-    spawn_new_rows(cmd, menu, context_menu, theme, creatable);
+    spawn_new_rows(cmd, menu, context_menu, true, theme, creatable);
 }
 
 fn spawn_new_rows(
     cmd: &mut CommandQueue,
     menu: Entity,
     context_menu: Entity,
+    creates: bool,
     theme: &UITheme,
     kinds: &[&'static str],
 ) {
@@ -452,6 +453,7 @@ fn spawn_new_rows(
                     .pressable()
                     .row()
                     .padding(UIRect::axes(6.0, 8.0))
+                    .node(|node| node.with_visible(creates))
                     .on_click(start_from_menu(kind)),
                 ContentMenuRow,
             ),
@@ -992,14 +994,15 @@ fn rebuild_new_rows(
     editors: Res<AssetEditorRegistry>,
     theme: Res<UITheme>,
     menus: Query<Entity, With<NewMenu>>,
-    context_menus: Query<Entity, With<ContentMenu>>,
+    context_menus: Query<(Entity, &ContentMenu)>,
     rows: Query<Entity, Or<(With<NewRow>, With<ContentMenuRow>)>>,
     mut cmd: CommandQueue,
 ) {
     if !editors.is_changed() {
         return;
     }
-    let (Some(menu), Some(context_menu)) = (menus.iter().next(), context_menus.iter().next())
+    let (Some(menu), Some((context_menu, target))) =
+        (menus.iter().next(), context_menus.iter().next())
     else {
         return;
     };
@@ -1007,7 +1010,8 @@ fn rebuild_new_rows(
         cmd.despawn(row);
     }
     let kinds: Vec<&'static str> = editors.creatable().map(|(kind, _)| kind).collect();
-    spawn_new_rows(&mut cmd, menu, context_menu, &theme, &kinds);
+    let creates = target.asset.is_none();
+    spawn_new_rows(&mut cmd, menu, context_menu, creates, &theme, &kinds);
 }
 
 fn sync_new_items(

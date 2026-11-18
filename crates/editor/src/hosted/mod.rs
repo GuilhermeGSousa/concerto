@@ -202,8 +202,9 @@ impl HostedApp {
         self.app.insert_resource(registry.clone());
     }
 
-    pub(crate) fn reload_files(&self, files: &[AssetId]) {
+    pub(crate) fn reload_files(&self, files: &[AssetId], registry: &AssetRegistry) {
         if let Some(server) = self.app.get_resource::<AssetServer>() {
+            server.publish_registry(registry.clone());
             for &file in files {
                 server.reload_file(file);
             }

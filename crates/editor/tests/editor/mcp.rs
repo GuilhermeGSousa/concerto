@@ -1477,6 +1477,7 @@ struct ImportedSource {
     picture: String,
     walk: String,
     reimported: String,
+    extracted: String,
     errors: Vec<Value>,
 }
 
@@ -1544,6 +1545,12 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             json!({ "asset": "content/walk/scene.gasset" }),
         )
         .await;
+        let extracted = ok_with(
+            &client,
+            "extract_asset",
+            json!({ "asset": "content/walk/scene.gasset#skeleton/0" }),
+        )
+        .await;
         let face = ok_with(&client, "list_assets", json!({ "query": "square" })).await;
         let parts = ok_with(
             &client,
@@ -1589,13 +1596,19 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
                 json!({ "asset": "content/level.gasset" }),
             )
             .await,
+            error_with(
+                &client,
+                "extract_asset",
+                json!({ "asset": "content/walk/skeleton_0.gasset" }),
+            )
+            .await,
         ];
         std::fs::remove_file(&placed_walk).unwrap();
         errors.push(
             error_with(
                 &client,
                 "reimport",
-                json!({ "asset": "content/walk/scene.gasset#skeleton/0" }),
+                json!({ "asset": "content/walk/skeleton_0.gasset" }),
             )
             .await,
         );
@@ -1607,6 +1620,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             picture,
             walk: walked,
             reimported,
+            extracted,
             errors,
         }
     }) else {
@@ -1619,6 +1633,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         picture,
         walk,
         reimported,
+        extracted,
         errors,
     } = served.result;
     let texture = picture
@@ -1679,6 +1694,20 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         kept.starts_with("[settings]\nframe_range = \"None\"\nscale = 0.5"),
         "{kept}"
     );
+    let skeleton = walk
+        .lines()
+        .find_map(|line| line.strip_prefix("content/walk/scene.gasset#skeleton/0 · Skeleton · "))
+        .unwrap_or_else(|| panic!("no skeleton in {walk}"));
+    assert_eq!(
+        extracted,
+        format!("Extracted {skeleton} to content/walk/skeleton_0.gasset.")
+    );
+    assert!(
+        read_content_asset_header(&root.join("content/walk/scene.gasset"))
+            .unwrap()
+            .embedded
+            .is_empty()
+    );
     let (imported, used) = imported.split_once("\n\n").unwrap();
     assert!(used.starts_with("[settings]"), "{used}");
     let mut lines = imported.lines();
@@ -1711,6 +1740,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             "invalid_arguments",
             "import_failed",
             "not_imported",
+            "not_embedded",
             "source_missing"
         ]
     );

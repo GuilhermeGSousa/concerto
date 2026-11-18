@@ -175,9 +175,31 @@ A BVH import is `scene.gasset`, holding the scene and `skeleton/0`, plus the
 clip; an OBJ import is `scene.gasset` alone.
 
 An import builds the host file whole and replaces the old one through a
-temporary file. Nothing else writes into a host. A re-import keeps each output
-where the content holds it: an embedded output stays in the scene file, and a
-loose one stays loose. A scene file that has moved keeps its address.
+temporary file. Nothing else writes into a host but an extraction, which takes
+one asset out of it. A re-import keeps each output where the content holds it:
+an embedded output stays in the scene file, and a loose one stays loose. A
+scene file that has moved keeps its address.
+
+### Extracting an embedded output
+
+An embedded output is made a file of its own by extracting it:
+`extract_embedded(id, project_root, config, &mut registry)` moves the
+embedded asset `id` out of its scene file to the address a loose output of its
+name would have, `content/hero/material_0.gasset` for
+`content/hero/scene.gasset#material/0`, keeping its id, its provenance and its
+uncooked section. It fails before writing when `id` is not embedded (`'<address>'
+is a file of its own already`) or when that address is taken. It stages both
+files, the loose record and the scene file without it, then writes the loose
+file and then the scene file. If the scene file cannot be written, the loose
+file is deleted again and the error returned; if that delete fails too, the
+error names both files and says to delete the loose one, since two files with
+one id stop the project from opening. On success `registry` holds the asset as
+loose. A re-import keeps a loose output loose, so the extraction sticks; there
+is no way to embed it again. Deleting the loose file and re-importing puts a
+new output with a new id back in the scene file. In the editor, **Extract to
+file** on an asset row and the `extract_asset` MCP tool run it;
+[crates/editor/README.md](../crates/editor/README.md#importing) describes
+both.
 
 The import returns an `AssetEntry` for every asset, embedded ones with
 `embedded_in`, and the editor's registry follows the import from those entries.
@@ -1178,8 +1200,11 @@ provenance. The next re-import of the source then overwrites the saved edit.
 
 Both refuse an address whose file holds embedded assets, and leave the file as
 it was. Such a file belongs to an import, which writes it whole; nothing
-rewrites one asset inside it. The error gives the address and says the file
-is read-only.
+rewrites one asset inside it. The error gives the address, says the file is
+read-only, and says to extract the asset first with Extract to file or the
+`extract_asset` MCP tool (see
+[Extracting an embedded output](#extracting-an-embedded-output)), after which
+`resave_content_asset` writes the loose file.
 
 `read_asset_record(project_root, &entry)` reads one asset out of the tree
 whatever way it is stored: the standalone record of a registry entry, loose,
@@ -1297,6 +1322,9 @@ and writes the second as the output's uncooked section; see
   untouched; one saved with `resave_content_asset` keeps its provenance and is
   pruned like any other output. Pruning an output that another asset still
   references logs a warning naming the output and the referrer.
+- **An extracted output cannot be embedded again.** Extracting an embedded
+  output makes it a loose file for good: a re-import keeps it loose. Deleting
+  the file and re-importing embeds a new output with a new id.
 - **A renamed output gets a new id.** Outputs are matched by sub-asset name
   alone, so an output whose name changes, such as a clip renamed in the
   source, is a new output with a new id, and the old one is pruned.

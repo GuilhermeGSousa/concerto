@@ -61,7 +61,7 @@ use crate::{
         EditTarget, EditWorld, EditWorldSignals, HostRole, Hosted, HostedApp, HostedEventsAppExt,
         ParkedEditApp, PendingApp,
     },
-    import::ImportFinished,
+    import::{AssetExtracted, ImportFinished},
     inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard, refused},
     mcp::{SceneEntities, resolve},
     scene::SceneSaved,
@@ -96,7 +96,7 @@ pub(crate) enum LinkedEdit {
     ChangeLink,
 }
 
-/// Shows links and their linked nodes in the tree and the inspector, and reloads, in every `App` but a playing game's, the assets of the files a save or an import rewrote, so the links to their scenes spawn again.
+/// Shows links and their linked nodes in the tree and the inspector, and reloads, in every `App` but a playing game's, the assets of the files a save, an import or an extraction rewrote, so the links to their scenes spawn again.
 pub struct LinksPlugin;
 
 impl Plugin for LinksPlugin {
@@ -831,12 +831,14 @@ pub(crate) fn change_lines(
 fn rewritten_files<'a>(
     saved: impl Iterator<Item = &'a SceneSaved>,
     imported: impl Iterator<Item = &'a ImportFinished>,
+    extracted: impl Iterator<Item = &'a AssetExtracted>,
 ) -> Vec<AssetId> {
     let saved = saved.flat_map(|saved| std::iter::once(&saved.asset).chain(&saved.written));
     let imported = imported
         .filter_map(|finished| finished.result.as_ref().ok())
         .flat_map(|source| &source.assets);
     let mut files: Vec<AssetId> = saved.chain(imported).map(AssetEntry::file).collect();
+    files.extend(extracted.flat_map(|extracted| [extracted.entry.id, extracted.host]));
     files.sort_unstable();
     files.dedup();
     files
@@ -845,11 +847,13 @@ fn rewritten_files<'a>(
 fn reload_rewritten_files(
     mut saved: EventReader<SceneSaved>,
     mut imported: EventReader<ImportFinished>,
+    mut extracted: EventReader<AssetExtracted>,
+    registry: Res<AssetRegistry>,
     hosted: Query<&HostedApp>,
     parked: Query<&ParkedEditApp>,
     pending: Query<&PendingApp>,
 ) {
-    let files = rewritten_files(saved.read(), imported.read());
+    let files = rewritten_files(saved.read(), imported.read(), extracted.read());
     if files.is_empty() {
         return;
     }
@@ -858,6 +862,6 @@ fn reload_rewritten_files(
         .chain(parked.iter().map(|parked| &parked.0))
         .chain(pending.iter().filter_map(PendingApp::held));
     for app in apps.filter(|app| app.role() != HostRole::Game) {
-        app.reload_files(&files);
+        app.reload_files(&files, &registry);
     }
 }

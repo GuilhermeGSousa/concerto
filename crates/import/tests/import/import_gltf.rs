@@ -276,4 +276,33 @@ fn a_gltf_import_is_one_scene_file_with_its_textures_and_clips_beside_it() {
     kept.remove("mesh/1");
     assert_eq!(ids_by_name(&pruned.assets), kept);
     assert_eq!(content_files(root), packed);
+
+    let mut registry = AssetRegistry::from_content_tree(root, "content", "gasset").unwrap();
+    let extract = |registry: &mut AssetRegistry| {
+        concerto_import::extract_embedded(ids["material/0"], root, &Default::default(), registry)
+    };
+    let extracted = extract(&mut registry).expect("the material is extracted");
+    let material = "content/hero/material_0.gasset";
+    assert_eq!(extracted.location(), material);
+    assert_eq!(
+        sorted(&registry),
+        sorted(&AssetRegistry::from_content_tree(root, "content", "gasset").unwrap())
+    );
+    assert_eq!(embedded_names(root, scene), ["mesh/0", "skeleton/0"]);
+    assert!(
+        Runtime::new(root).loads(&extracted),
+        "the extracted material loads"
+    );
+    let reimported = import().assets;
+    assert!(
+        reimported.contains(&extracted),
+        "a re-import keeps the material loose with its id"
+    );
+    assert_eq!(embedded_names(root, scene), ["mesh/0", "skeleton/0"]);
+    let error = extract(&mut registry).expect_err("a loose file is not extracted");
+    assert!(
+        error.to_string().contains("is a file of its own already"),
+        "{error:#}"
+    );
+    assert!(content_files(root).contains(&material.to_string()));
 }

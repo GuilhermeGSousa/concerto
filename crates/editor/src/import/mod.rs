@@ -1,8 +1,10 @@
 //! Importing source files into the open project.
 
 pub mod dialog;
+mod extract;
 mod reimport;
 
+pub use extract::{AssetExtracted, ExtractAsset, ExtractAssetArgs, ExtractionFailed};
 pub use reimport::{ReimportArgs, ReimportAsset, StageReimport};
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -439,7 +441,9 @@ impl Plugin for ImportPlugin {
         app.insert_resource(ImportQueue::default());
         app.insert_resource(ImportStaging::default());
         app.insert_resource(ImportPicker::default());
-        app.register_event::<ImportFinished>();
+        app.register_event::<ImportFinished>()
+            .register_event::<AssetExtracted>()
+            .register_event::<ExtractionFailed>();
         if app.get_resource::<AssetRowMenu>().is_none() {
             app.insert_resource(AssetRowMenu::default());
         }
@@ -449,9 +453,15 @@ impl Plugin for ImportPlugin {
                 "Re-import…",
                 |entry| entry.provenance.is_some(),
                 |asset| StageReimport { asset },
+            )
+            .register(
+                "Extract to file",
+                |entry| entry.embedded_in.is_some(),
+                |asset| ExtractAsset { asset },
             );
         app.add_listener(reimport::stage_reimport)
-            .add_listener(reimport::queue_reimport);
+            .add_listener(reimport::queue_reimport)
+            .add_listener(extract::extract_asset);
         app.register_plugin(dialog::DialogPlugin);
         app.add_system(Update, (finish_import, drive_imports).chain());
         app.add_system(Update, drive_picker);
@@ -465,7 +475,14 @@ impl Plugin for ImportPlugin {
             McpTool::new("reimport").needs(Needs::Project),
             reimport::call_reimport,
         )
-        .add_system(LateUpdate, reimport::answer_reimports);
+        .add_tool::<ExtractAssetArgs, _>(
+            McpTool::new("extract_asset").needs(Needs::Project),
+            extract::call_extract_asset,
+        )
+        .add_system(
+            LateUpdate,
+            (reimport::answer_reimports, extract::answer_extractions),
+        );
     }
 }
 

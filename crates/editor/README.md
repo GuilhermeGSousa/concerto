@@ -229,6 +229,15 @@ missing recorded source with no `source` given answers `source_missing`, naming
 the recorded path; a `source` with no file, or settings that do not fit, answer
 `invalid_arguments`; a re-import that fails, or whose import record cannot be
 used, answers `import_failed` with the reason. It needs an open project.
+`extract_asset` moves an asset embedded in its import's scene file, given as
+an address with its part, such as `content/hero/scene.gasset#material/0`, or
+an id, into a file of its own at its usual address, by triggering the
+`ExtractAsset` signal that Extract to file triggers, and answers `Extracted
+<id> to <address>.`. An asset not in the catalogue answers `unknown_asset`;
+one that is a file of its own already answers `not_embedded`; an extraction
+that fails, such as one whose address is taken or one asked for while an
+import runs, answers `extract_failed` with the reason. It needs an open
+project.
 `close_document`
 closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
@@ -754,8 +763,8 @@ nothing or an asset is selected. Right-clicking a folder opens a menu with the
 same rows, which create in that folder; right-clicking the tree's empty space
 opens it for the content root. Right-clicking an asset opens the asset row
 menu instead: the entries registered in the `AssetRowMenu` resource that are
-offered on that asset, such as Re-import… on an imported one. An asset none is
-offered on opens no menu. Picking a `New <kind>`
+offered on that asset, such as Re-import… on an imported one, and only those.
+An asset none is offered on opens no menu. Picking a `New <kind>`
 row clears the search and the kind
 chip, and puts a row with a focused name field in that folder, ahead of its
 assets, expanding the folders above it and scrolling to it. The field starts as a free name: `New
@@ -856,6 +865,21 @@ which queues the re-import; it ends, as an import does, with `ImportFinished`
 for the recorded source. The menu entry triggers `StageReimport { asset }`,
 which stages the row. `ImportPlugin` registers the entry and owns both
 signals, the `reimport` tool and the dialog row.
+
+**Extract to file** in the menu of an asset row, offered on every asset
+embedded in its import's scene file, moves it into a file of its own at the
+address a loose output of that name would have, such as
+`content/hero/material_0.gasset`, keeping its id, its provenance and its
+uncooked data, and rewrites the scene file without it. A re-import keeps it
+there, and nothing embeds it again; deleting the file and re-importing puts a
+new output with a new id back in the scene file. It is refused while an import
+runs or is queued, and when a file is already at that address. Picking it
+triggers `ExtractAsset { asset }`. Its listener in `ImportPlugin` writes
+`AssetExtracted { entry, host }` and `AssetsWritten { ids: [id, host] }`, or
+`ExtractionFailed { asset, message }` and the reason in the status line. Open
+documents reload the scene file and the new file on `AssetExtracted`, as they
+do after a save or an import, so a scene showing the import keeps showing it.
+The `extract_asset` tool triggers the same signal.
 
 The asset row menu is `ContentPlugin`'s, and knows nothing of what its entries
 do. A plugin adds an entry to the `AssetRowMenu` resource with a label, a test
