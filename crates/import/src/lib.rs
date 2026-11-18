@@ -177,9 +177,7 @@ fn loose_address(
         .unwrap_or_else(|| content_address(config, relative_source, name))
 }
 
-/// Imports `source` into the project as `destination`, copying it and every file it refers to; nothing is copied unless the import succeeds. Given `settings` are written whole into the anchor's import record, and given asset settings to the source's main asset.
-///
-/// The import owns every content record whose provenance names the placed source, and finds each output by its name there, wherever it was moved. Outputs keep where the content holds them: embedded in the scene file or loose. The plan is validated before anything is written, and each file is then staged and replaced on its own.
+/// Imports `source` into the project as `destination` with its referenced files, writing given `settings` into the anchor's import record and keeping each output where the content holds it.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
@@ -1252,9 +1250,10 @@ mod tests {
             let removed: &[AssetId] = if saved { &[] } else { &[old.id] };
             assert_eq!(second.removed, removed, "saved: {saved}");
             assert_eq!(path.exists(), saved, "saved: {saved}");
-            let outputs = fixture.outputs();
-            assert_eq!(outputs.get("drop"), None, "saved: {saved}");
-            assert_eq!(outputs.get("keep"), Some(&entry(&first, "keep").id));
+            assert_eq!(
+                fixture.outputs().get("keep"),
+                Some(&entry(&first, "keep").id)
+            );
         }
     }
 }

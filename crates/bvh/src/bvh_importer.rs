@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip, RangeFit};
+use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
@@ -127,32 +127,16 @@ impl Importer for BvhImporter {
             .collect();
         ctx.emit("skeleton/0", &skeleton)?;
         let output = format!("animation/{clip_name}");
-        keep_authored(ctx, &output, &mut clip, roots);
+        if let Some(previous) = ctx.previous::<AnimationClip>(&output) {
+            let kept = clip.keep_authored(&previous, roots);
+            for warning in kept.warnings(&output, clip.duration()) {
+                warn!("{warning}");
+            }
+        }
         ctx.emit(&output, &clip)?;
         let scene = build_scene(&bvh, &skeleton, ctx.sub_asset_id("skeleton/0"))?;
         ctx.emit("scene", &scene)?;
         Ok(())
-    }
-}
-
-fn keep_authored(ctx: &ImportContext, output: &str, clip: &mut AnimationClip, roots: Vec<Uuid>) {
-    let Some(previous) = ctx.previous::<AnimationClip>(output) else {
-        return;
-    };
-    let kept = clip.keep_authored(&previous, roots);
-    let duration = clip.duration();
-    if kept.events_moved > 0 {
-        warn!(
-            "'{output}': moved {} events past the clip's new end ({duration} s) to its end",
-            kept.events_moved
-        );
-    }
-    match kept.range {
-        RangeFit::Kept => {}
-        RangeFit::Clamped => warn!("'{output}': clamped the additive range to {duration} s"),
-        RangeFit::Dropped => {
-            warn!("'{output}': dropped the additive range, which no longer overlaps the clip")
-        }
     }
 }
 

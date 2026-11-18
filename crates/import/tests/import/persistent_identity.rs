@@ -418,6 +418,34 @@ fn a_reimport_from_the_content_keeps_its_settings_and_follows_a_moved_source() {
     assert_eq!(record.source.path, "assets/moved/walk.bvh");
     assert_eq!(recorded_settings(&record), settings);
 
+    let renamed = project.path("assets/walk.txt");
+    std::fs::write(&renamed, WALK).unwrap();
+    let run = project.walk("assets/run.bvh");
+    project.import(&run);
+    let before = project.snapshot();
+    let refused = |source: &Path| {
+        let error = reimport(
+            id_of("scene"),
+            Some(source),
+            &project.0,
+            &config,
+            ImportSettings::default(),
+        )
+        .expect_err("the source is refused");
+        format!("{error:#}")
+    };
+    let message = refused(&renamed);
+    assert!(
+        message.contains("must have the extension '.bvh' of 'assets/moved/walk.bvh'"),
+        "{message}"
+    );
+    let message = refused(&run);
+    assert!(
+        message.contains("'assets/run.bvh' is already the source of 'content/run/scene.gasset'"),
+        "{message}"
+    );
+    assert_eq!(project.snapshot(), before);
+
     std::fs::remove_file(&moved).unwrap();
     let error = reimport(
         id_of("scene"),
@@ -434,4 +462,38 @@ fn a_reimport_from_the_content_keeps_its_settings_and_follows_a_moved_source() {
         ),
         "{message}"
     );
+
+    let elsewhere = Project::new();
+    let outside = elsewhere.walk("stride.bvh");
+    let copied = reimport(
+        id_of("scene"),
+        Some(&outside),
+        &project.0,
+        &config,
+        ImportSettings::default(),
+    )
+    .expect("re-import from a file outside the project");
+    assert_eq!(
+        locations(&copied.assets)
+            .get(&id_of("scene"))
+            .map(String::as_str),
+        Some("content/walk/scene.gasset")
+    );
+    assert_eq!(
+        std::fs::read(project.path("assets/moved/stride.bvh")).unwrap(),
+        WALK.as_bytes()
+    );
+    let ids: BTreeSet<AssetId> = copied.assets.iter().map(|asset| asset.id).collect();
+    let sources: BTreeSet<String> =
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
+            .unwrap()
+            .iter()
+            .filter(|entry| ids.contains(&entry.id))
+            .filter_map(|entry| Some(entry.provenance.as_ref()?.source.clone()))
+            .collect();
+    assert_eq!(
+        sources,
+        BTreeSet::from(["assets/moved/stride.bvh".to_string()])
+    );
+    assert_eq!(walk_record(&project).source.path, "assets/moved/stride.bvh");
 }

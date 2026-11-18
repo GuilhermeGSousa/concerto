@@ -641,6 +641,7 @@ struct Keep {
     kept_events: &'static [f32],
     kept: Additive,
     kept_authored: KeptAuthored,
+    warnings: &'static [&'static str],
 }
 
 #[test]
@@ -657,6 +658,9 @@ fn keep_authored_takes_the_previous_events_and_base_fitted_to_the_new_duration()
                 events_moved: 2,
                 range: RangeFit::Kept,
             },
+            warnings: &[
+                "'animation/walk': moved 2 events past the clip's new end (1 s) to its end",
+            ],
         },
         Keep {
             case: "a whole-clip base",
@@ -668,6 +672,7 @@ fn keep_authored_takes_the_previous_events_and_base_fitted_to_the_new_duration()
                 events_moved: 0,
                 range: RangeFit::Kept,
             },
+            warnings: &[],
         },
         Keep {
             case: "a range inside the clip",
@@ -679,6 +684,7 @@ fn keep_authored_takes_the_previous_events_and_base_fitted_to_the_new_duration()
                 events_moved: 0,
                 range: RangeFit::Kept,
             },
+            warnings: &[],
         },
         Keep {
             case: "a range past the end",
@@ -690,6 +696,7 @@ fn keep_authored_takes_the_previous_events_and_base_fitted_to_the_new_duration()
                 events_moved: 0,
                 range: RangeFit::Clamped,
             },
+            warnings: &["'animation/walk': clamped the additive range to 1 s"],
         },
         Keep {
             case: "a range that starts at the end",
@@ -701,6 +708,9 @@ fn keep_authored_takes_the_previous_events_and_base_fitted_to_the_new_duration()
                 events_moved: 0,
                 range: RangeFit::Dropped,
             },
+            warnings: &[
+                "'animation/walk': dropped the additive range, which no longer overlaps the clip",
+            ],
         },
     ];
     for case in cases {
@@ -734,6 +744,12 @@ fn keep_authored_takes_the_previous_events_and_base_fitted_to_the_new_duration()
         let kept_authored = imported.keep_authored(&previous, vec![Uuid::from_u128(7)]);
 
         assert_eq!(kept_authored, case.kept_authored, "{}", case.case);
+        assert_eq!(
+            kept_authored.warnings("animation/walk", imported.duration()),
+            case.warnings,
+            "{}",
+            case.case
+        );
         assert_eq!(kept_events(&imported), expected, "{}", case.case);
         assert_eq!(imported.additive(), &case.kept, "{}", case.case);
     }

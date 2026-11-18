@@ -246,8 +246,8 @@ sounds) are imported once, ahead of time. The running game never reads them.
   carries import provenance was saved by the editor with
   `save_content_asset_into` and is not the import's any more; one at the
   address an output is written to fails the import, naming it. An output saved with
-  `resave_content_asset` keeps its provenance, so the next re-import overwrites
-  it.
+  `resave_content_asset` keeps its provenance, so the next re-import rebuilds
+  it from the source, keeping only a clip's events and additive base.
 
 Each example is a self-contained project: its `build.rs` copies `content/` to
 `<exe-dir>/<package>-content/content/`, so examples sharing one `target/` do not

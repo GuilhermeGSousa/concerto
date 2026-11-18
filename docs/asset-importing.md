@@ -1189,14 +1189,17 @@ writes over the existing file instead:
 ```rust
 use concerto_foundation::assets::content::resave_content_asset;
 
-let id = resave_content_asset(&clip, project_root, "content/walk/animation_walk.gasset", &mut registry)?;
+let id = resave_content_asset(&material, project_root, "content/hero/material_0.gasset", &mut registry)?;
 ```
 
 It fails when there is no file at the address or the file holds another kind,
 keeps the header's id, provenance and import record and the file's uncooked section,
 writes the references and
 `kind_version` of `value`, and upserts the entry in `registry` with the same
-provenance. The next re-import of the source then overwrites the saved edit.
+provenance. The next re-import of the source then rebuilds the asset from the
+source and overwrites the saved edit, except a clip's events and additive base,
+which a re-import keeps (see [Clip events](#clip-events) and
+[Additive clips](#additive-clips)).
 
 Both refuse an address whose file holds embedded assets, and leave the file as
 it was. Such a file belongs to an import, which writes it whole; nothing

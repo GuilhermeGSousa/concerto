@@ -11,7 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use base64::Engine;
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip, RangeFit};
+use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_color::Color;
 use concerto_ecs::component::scene::SceneEntityRef;
@@ -429,7 +429,12 @@ impl Importer for GltfImporter {
             }
 
             let output = format!("animation/{animation_name}");
-            keep_authored(ctx, &output, &mut animation_clip, roots.clone());
+            if let Some(previous) = ctx.previous::<AnimationClip>(&output) {
+                let kept = animation_clip.keep_authored(&previous, roots.clone());
+                for warning in kept.warnings(&output, animation_clip.duration()) {
+                    warn!("{warning}");
+                }
+            }
             ctx.emit(&output, &animation_clip)?;
         }
 
@@ -665,27 +670,6 @@ fn push_mesh_components(
             handle: AssetHandle::weak(material_id),
         },
     )
-}
-
-fn keep_authored(ctx: &ImportContext, output: &str, clip: &mut AnimationClip, roots: Vec<Uuid>) {
-    let Some(previous) = ctx.previous::<AnimationClip>(output) else {
-        return;
-    };
-    let kept = clip.keep_authored(&previous, roots);
-    let duration = clip.duration();
-    if kept.events_moved > 0 {
-        warn!(
-            "'{output}': moved {} events past the clip's new end ({duration} s) to its end",
-            kept.events_moved
-        );
-    }
-    match kept.range {
-        RangeFit::Kept => {}
-        RangeFit::Clamped => warn!("'{output}': clamped the additive range to {duration} s"),
-        RangeFit::Dropped => {
-            warn!("'{output}': dropped the additive range, which no longer overlaps the clip")
-        }
-    }
 }
 
 fn track_external(ctx: &mut ImportContext, source_dir: &Path, uri: &str) {

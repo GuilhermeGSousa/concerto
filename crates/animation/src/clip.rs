@@ -334,6 +334,29 @@ pub struct KeptAuthored {
     pub range: RangeFit,
 }
 
+impl KeptAuthored {
+    /// One warning per change made to fit the clip named `clip_name`, now `duration` seconds long.
+    pub fn warnings(&self, clip_name: &str, duration: f32) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.events_moved > 0 {
+            warnings.push(format!(
+                "'{clip_name}': moved {} events past the clip's new end ({duration} s) to its end",
+                self.events_moved
+            ));
+        }
+        match self.range {
+            RangeFit::Kept => {}
+            RangeFit::Clamped => warnings.push(format!(
+                "'{clip_name}': clamped the additive range to {duration} s"
+            )),
+            RangeFit::Dropped => warnings.push(format!(
+                "'{clip_name}': dropped the additive range, which no longer overlaps the clip"
+            )),
+        }
+        warnings
+    }
+}
+
 /// What happened to the additive `range` of the kept base.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RangeFit {
