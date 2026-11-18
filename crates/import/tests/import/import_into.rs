@@ -505,7 +505,7 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     let path = root.join(&normal_entry.address);
     let file = std::fs::read(&path).expect("read");
     let (mut header, payload) = read_content_asset(&file).expect("content asset");
-    header.kind_version = 1;
+    header.kind_version = 0;
     header.uncooked = None;
     std::fs::write(
         &path,
