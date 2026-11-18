@@ -10,11 +10,12 @@ use concerto_ecs::{
 use concerto_editor::{
     actions::{ConfirmImport, ImportDialogContext},
     guard::UnsavedGuard,
-    import::{ImportPlugin, ImportQueue, ImportStaging, accept_picked},
+    import::{ImportPlugin, ImportQueue, ImportStaging, accept_picked, scan_content},
     inspector::{PropertyRow, ReflectRowsPlugin},
     project::{AssetsWritten, Project, ProjectState},
 };
 use concerto_foundation::assets::registry::AssetRegistry;
+use concerto_reflect::ReflectRef;
 use concerto_ui::{
     focus::FocusedWidget,
     items::UIItemSelected,
@@ -177,13 +178,18 @@ fn the_confirm_key_queues_the_batch_once_and_releases_the_key_context() {
             .expect("actions")
             .is_active(ImportDialogContext)
     );
-    let sidecar = |name: &str| {
-        std::fs::read_to_string(project.path().join("assets").join(name)).unwrap_or_default()
+    let staged = scan_content(project.path())
+        .expect("the project scans")
+        .staged_settings(&project.path().join("assets/walk.bvh"), "assets/walk.bvh")
+        .expect("the walk stages from its record");
+    let ReflectRef::Struct(fields) = staged.settings.reflect_ref() else {
+        panic!("BVH settings are a struct");
     };
-    assert!(
-        sidecar("walk.bvh.import.toml").contains("scale = 0.5"),
-        "{}",
-        sidecar("walk.bvh.import.toml")
+    assert_eq!(
+        fields
+            .field("scale")
+            .and_then(|scale| scale.downcast_ref::<f32>()),
+        Some(&0.5)
     );
     assert!(project.path().join("assets/run.bvh").exists());
 }

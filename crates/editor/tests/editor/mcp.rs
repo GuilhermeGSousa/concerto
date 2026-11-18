@@ -46,7 +46,8 @@ use concerto_foundation::{
         asset_server::{AssetLoadContext, AssetServer},
         asset_store::AssetStore,
         content::{
-            ContentAssetHeader, ImportProvenance, decode_content_asset, write_content_asset,
+            ContentAssetHeader, ImportProvenance, decode_content_asset, read_content_asset_header,
+            write_content_asset,
         },
         handle::AssetHandle,
         registry::AssetRegistry,
@@ -56,7 +57,7 @@ use concerto_foundation::{
 use concerto_import::ImportedSource as Imported;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::run_with};
 use concerto_mesh::Aabb;
-use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectRef};
 use concerto_render::{
     assets::texture::{Compression, MaxSize, Texture, TextureSettings},
     components::{camera::Camera, light::Light},
@@ -1611,9 +1612,28 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         picture.contains("[asset_settings]") && picture.contains("compression = \"Bc7\""),
         "{picture}"
     );
-    let sidecar = std::fs::read_to_string(root.join("assets/walk.bvh.import.toml")).unwrap();
-    assert!(sidecar.contains("scale = 0.5"), "{sidecar}");
-    assert!(walk.contains("[settings]\nscale = 0.5"), "{walk}");
+    let record = read_content_asset_header(&root.join("content/walk/scene.gasset"))
+        .unwrap()
+        .import
+        .expect("the walk's scene holds its import record");
+    let recorded = concerto_import::importer_for("bvh")
+        .unwrap()
+        .settings_from_bytes(record.settings_version, &record.settings)
+        .unwrap()
+        .expect("the record is at the importer's settings version");
+    let ReflectRef::Struct(fields) = recorded.reflect_ref() else {
+        panic!("BVH settings are a struct");
+    };
+    assert_eq!(
+        fields
+            .field("scale")
+            .and_then(|scale| scale.downcast_ref::<f32>()),
+        Some(&0.5)
+    );
+    assert!(
+        walk.contains("[settings]\nframe_range = \"None\"\nscale = 0.5"),
+        "{walk}"
+    );
     let (imported, used) = imported.split_once("\n\n").unwrap();
     assert!(used.starts_with("[settings]"), "{used}");
     let mut lines = imported.lines();
@@ -1658,7 +1678,11 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         "{}",
         message(3)
     );
-    assert!(message(3).contains("{\"scale\":0.5}"), "{}", message(3));
+    assert!(
+        message(3).contains("{\"frame_range\":\"None\",\"scale\":0.5}"),
+        "{}",
+        message(3)
+    );
 }
 
 struct Opens {

@@ -113,11 +113,11 @@ sounds) are imported once, ahead of time. The running game never reads them.
   `scene.gasset` that holds the scene with its meshes, materials and skeletons
   embedded, each an asset with its own UUID, and one `.gasset` for each
   texture, clip and other output. A source with no scene writes one file per
-  output. It writes `<source>.import.toml` beside the source to pin each
-  sub-asset's UUID. Only an import, or `pack-imports`, which converts a
-  project's older one-file-per-output imports in place, writes a file with
-  embedded assets; a save over one is refused, so an import's scene is
-  read-only. It returns an `AssetEntry` for each output, and the
+  output. Each output's header carries its provenance, the source and its
+  name in it, and a re-import finds its outputs and their UUIDs by it. The
+  import's anchor, its `scene` or else its `main`, holds the import record.
+  Only an import writes a file with embedded assets; a save over one is
+  refused, so an import's scene is read-only. It returns an `AssetEntry` for each output, and the
   editor adds them to its registry. There is no import command line.
 - Code names an asset with `asset_id!("content/hero/scene.gasset")`, or an
   embedded one with `asset_id!("content/hero/scene.gasset#mesh/0")`, resolved
@@ -244,7 +244,8 @@ sounds) are imported once, ahead of time. The running game never reads them.
   content never carries a section.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor with
-  `save_content_asset_into` and is not rewritten. An output saved with
+  `save_content_asset_into` and is not the import's any more; one at the
+  address an output is written to fails the import, naming it. An output saved with
   `resave_content_asset` keeps its provenance, so the next re-import overwrites
   it.
 

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use concerto_foundation::assets::content::decode_content_asset;
@@ -52,13 +51,12 @@ pub enum ImportError {
 pub struct ImportOutputs {
     pub sub_assets: Vec<EmittedSubAsset>,
     pub dependencies: Vec<DependencyEntry>,
-    pub renames: Vec<(String, String)>,
 }
 
-/// Maps a sub-asset name and its hinted old name to the `AssetId` that references to it should use.
+/// Maps a sub-asset name to the `AssetId` that references to it should use.
 /// The default addresses sub-assets against the source file
 /// (`"<source>#<sub>"`); the `import` tool substitutes content-tree paths.
-pub type SubAssetIdResolver = Box<dyn Fn(&str, Option<&str>) -> AssetId + Send + Sync>;
+pub type SubAssetIdResolver = Box<dyn Fn(&str) -> AssetId + Send + Sync>;
 
 /// Reads the standalone content record of the output a sub-asset name names, as the content holds it before this import.
 pub type PreviousOutputResolver = Box<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
@@ -68,7 +66,6 @@ pub struct ImportContext {
     sub_assets: Vec<EmittedSubAsset>,
     dependencies: Vec<DependencyEntry>,
     sub_asset_id_resolver: Option<SubAssetIdResolver>,
-    renames: BTreeMap<String, String>,
     previous_outputs: Option<PreviousOutputResolver>,
 }
 
@@ -79,7 +76,6 @@ impl ImportContext {
             sub_assets: Vec::new(),
             dependencies: Vec::new(),
             sub_asset_id_resolver: None,
-            renames: BTreeMap::new(),
             previous_outputs: None,
         }
     }
@@ -97,7 +93,6 @@ impl ImportContext {
             sub_assets: Vec::new(),
             dependencies: Vec::new(),
             sub_asset_id_resolver: Some(resolver),
-            renames: BTreeMap::new(),
             previous_outputs: None,
         }
     }
@@ -111,7 +106,7 @@ impl ImportContext {
     /// The output `name` as the content holds it before this import, or `None` when there is none or it does not decode at this build's version.
     pub fn previous<T: Asset>(&self, name: &str) -> Option<T> {
         let resolve = self.previous_outputs.as_ref()?;
-        let record = resolve(name).or_else(|| resolve(self.renames.get(name)?))?;
+        let record = resolve(name)?;
         decode_content_asset::<T>(&record)
             .map(|(_, value)| value)
             .ok()
@@ -128,16 +123,8 @@ impl ImportContext {
     /// instead of the default `"<source>#<sub>"` addressing.
     pub fn sub_asset_id(&self, name: &str) -> AssetId {
         match &self.sub_asset_id_resolver {
-            Some(resolve) => resolve(name, self.renames.get(name).map(String::as_str)),
+            Some(resolve) => resolve(name),
             None => AssetId::from_path(&format!("{}#{}", self.relative_source.display(), name)),
-        }
-    }
-
-    /// Records that `new_name` replaces `old_name` so the sub-asset keeps its id; call it before the first `sub_asset_id` or `emit` for `new_name`.
-    pub fn renamed_from(&mut self, new_name: &str, old_name: &str) {
-        if new_name != old_name {
-            self.renames
-                .insert(new_name.to_string(), old_name.to_string());
         }
     }
 
@@ -188,7 +175,6 @@ impl ImportContext {
         ImportOutputs {
             sub_assets: self.sub_assets,
             dependencies: self.dependencies,
-            renames: self.renames.into_iter().collect(),
         }
     }
 }

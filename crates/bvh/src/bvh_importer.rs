@@ -25,7 +25,7 @@ fn default_scale() -> f32 {
     DEFAULT_SCALE
 }
 
-/// Importer settings read from the `[settings]` table of a BVH source's sidecar.
+/// A BVH import's settings, kept in its import record.
 #[derive(Reflect, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[reflect(Default)]
@@ -33,10 +33,9 @@ pub struct BvhSettings {
     /// Multiplier applied to every offset and translation; defaults to 0.01 (centimetres to metres).
     #[serde(default = "default_scale")]
     pub scale: f32,
-    /// Frames to keep as `[start, end)`; the whole file when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[reflect(skip)]
-    pub frame_range: Option<[usize; 2]>,
+    /// The frames to keep; the whole file when `None`.
+    #[serde(default)]
+    pub frame_range: Option<FrameRange>,
 }
 
 impl Default for BvhSettings {
@@ -46,6 +45,15 @@ impl Default for BvhSettings {
             frame_range: None,
         }
     }
+}
+
+/// Frames `start` up to but not including `end`.
+#[derive(Reflect, Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[reflect(Default)]
+pub struct FrameRange {
+    pub start: u32,
+    pub end: u32,
 }
 
 /// Imports BVH motion capture files.
@@ -88,7 +96,12 @@ impl Importer for BvhImporter {
         }
 
         let frame_count = bvh.frames.len();
-        let [start, end] = settings.frame_range.unwrap_or([0, frame_count]);
+        let range = settings.frame_range.unwrap_or(FrameRange {
+            start: 0,
+            end: u32::try_from(frame_count).unwrap_or(u32::MAX),
+        });
+        let start = range.start as usize;
+        let end = range.end as usize;
         if start >= end || end > frame_count {
             return Err(malformed(format!(
                 "frame_range [{start}, {end}) must satisfy start < end <= {frame_count} frames"
@@ -113,9 +126,6 @@ impl Importer for BvhImporter {
             .map(|(_, id)| *id)
             .collect();
         ctx.emit("skeleton/0", &skeleton)?;
-        if clip_name != "0" {
-            ctx.renamed_from(&format!("animation/{clip_name}"), "animation/0");
-        }
         let output = format!("animation/{clip_name}");
         keep_authored(ctx, &output, &mut clip, roots);
         ctx.emit(&output, &clip)?;

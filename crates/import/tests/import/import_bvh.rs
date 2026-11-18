@@ -3,15 +3,17 @@ use std::path::Path;
 
 use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
 use concerto_animation::event::AnimationEvent;
+use concerto_bvh::bvh_importer::{BvhSettings, FrameRange};
 use concerto_foundation::assets::content::{
-    decode_content_asset, read_asset_record, resave_content_asset,
+    decode_content_asset, read_asset_record, read_content_asset_header, resave_content_asset,
+    ImportRecord,
 };
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::assets::AssetId;
+use concerto_foundation::hash::Fnv1a;
 use concerto_import::config::ContentConfig;
-use concerto_import::import_source_into;
-use concerto_import::metadata::{sidecar_path, SourceMetadata};
+use concerto_import::{import_source_into, importer_for, ImportSettings};
 use concerto_mesh::Skeleton;
 use concerto_reflect::ReflectedValue;
 
@@ -45,13 +47,43 @@ fn source(dir: &Path) -> std::path::PathBuf {
 }
 
 fn import(source: &Path, project: &Path) -> anyhow::Result<concerto_import::ImportedSource> {
+    import_with(source, project, None)
+}
+
+fn import_with(
+    source: &Path,
+    project: &Path,
+    settings: Option<BvhSettings>,
+) -> anyhow::Result<concerto_import::ImportedSource> {
     import_source_into(
         source,
         "assets/walk.bvh",
         project,
         &ContentConfig::default(),
-        Default::default(),
+        ImportSettings {
+            settings: settings.map(|settings| Box::new(settings) as _),
+            asset_settings: None,
+        },
     )
+}
+
+fn record(project: &Path) -> ImportRecord {
+    read_content_asset_header(&project.join("content/walk/scene.gasset"))
+        .unwrap()
+        .import
+        .expect("the scene is the anchor and holds the import record")
+}
+
+fn recorded_settings(record: &ImportRecord) -> BvhSettings {
+    let importer = importer_for("bvh").unwrap();
+    assert_eq!(record.importer, importer.name());
+    importer
+        .settings_from_bytes(record.settings_version, &record.settings)
+        .unwrap()
+        .expect("the record is at the importer's settings version")
+        .downcast_ref::<BvhSettings>()
+        .unwrap()
+        .clone()
 }
 
 fn read(project: &Path, address: &str) -> Vec<u8> {
@@ -59,7 +91,7 @@ fn read(project: &Path, address: &str) -> Vec<u8> {
 }
 
 #[test]
-fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_under_the_same_ids() {
+fn a_bvh_imports_its_outputs_and_a_record_whose_settings_a_re_import_keeps_under_the_same_ids() {
     let scratch = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let first = import(&source(scratch.path()), project.path()).expect("import succeeds");
@@ -74,8 +106,12 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
             "content/walk/scene.gasset#skeleton/0",
         ]
     );
-    let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
-    let mut metadata = SourceMetadata::load(&sidecar).expect("sidecar written");
+    let recorded = record(project.path());
+    assert_eq!(recorded.source.path, "assets/walk.bvh");
+    let mut hash = Fnv1a::new();
+    hash.raw(WALK.as_bytes());
+    assert_eq!(recorded.source.hash, hash.finish());
+    assert_eq!(recorded_settings(&recorded), BvhSettings::default());
 
     let skeleton = first
         .assets
@@ -85,17 +121,25 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
     let clip = "content/walk/animation_walk.gasset";
     let skeleton_before = read_asset_record(project.path(), skeleton).unwrap();
     let clip_before = read(project.path(), clip);
-    metadata
-        .settings
-        .insert("scale".to_string(), toml::Value::Float(0.5));
-    std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
+    let half = BvhSettings {
+        scale: 0.5,
+        ..BvhSettings::default()
+    };
 
-    let second = import(&source(scratch.path()), project.path()).expect("re-import");
-    assert_ne!(
-        read_asset_record(project.path(), skeleton).unwrap(),
-        skeleton_before
-    );
+    let second = import_with(&source(scratch.path()), project.path(), Some(half.clone()))
+        .expect("re-import");
+    let skeleton_after = read_asset_record(project.path(), skeleton).unwrap();
+    assert_ne!(skeleton_after, skeleton_before);
     assert_ne!(read(project.path(), clip), clip_before);
+    assert_eq!(recorded_settings(&record(project.path())), half);
+
+    let third = import(&source(scratch.path()), project.path()).expect("re-import");
+    assert_eq!(
+        read_asset_record(project.path(), skeleton).unwrap(),
+        skeleton_after,
+        "a re-import with no settings keeps the recorded ones"
+    );
+    assert_eq!(recorded_settings(&record(project.path())), half);
     let ids = |imported: &concerto_import::ImportedSource| {
         imported
             .assets
@@ -108,6 +152,7 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
         ids(&first),
         "asset identities survive a re-import"
     );
+    assert_eq!(ids(&third), ids(&first));
 }
 
 #[derive(Debug, PartialEq)]
@@ -169,15 +214,15 @@ fn a_resaved_clip_keeps_its_events_and_additive_base_across_re_imports_fitted_to
     assert_eq!(stored_events(&kept), stored_events(&edited));
     assert_eq!(kept.additive(), &rooted(ClipRange::new(0.02, 0.06)));
 
-    let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
-    let mut metadata = SourceMetadata::load(&sidecar).unwrap();
-    metadata.settings.insert(
-        "frame_range".to_string(),
-        toml::Value::Array(vec![toml::Value::Integer(0), toml::Value::Integer(2)]),
-    );
-    std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
-
-    import(&source(scratch.path()), project.path()).expect("re-import with a shorter range");
+    import_with(
+        &source(scratch.path()),
+        project.path(),
+        Some(BvhSettings {
+            frame_range: Some(FrameRange { start: 0, end: 2 }),
+            ..BvhSettings::default()
+        }),
+    )
+    .expect("re-import with a shorter range");
 
     let fitted = clip_at(project.path(), address);
     let end = fitted.duration();

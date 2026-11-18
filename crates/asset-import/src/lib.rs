@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 pub struct NoSettings {}
 
 pub trait Importer: Send + Sync {
-    /// The importer's own settings, kept in the `[settings]` table of each source's sidecar.
+    /// The importer's own settings, kept as bincode in the import record of the import's anchor; no serde attribute that needs a self-describing format.
     type Settings: Reflect + GetTypeRegistration + Default + Clone + Serialize + DeserializeOwned;
     /// The settings of the one asset a source makes, kept in that asset; [`NoSettings`] for an importer without them.
     type AssetSettings: Reflect
@@ -31,7 +31,10 @@ pub trait Importer: Send + Sync {
         + Serialize
         + DeserializeOwned;
 
-    /// The name sidecars persist for this importer.
+    /// The version of the encoding of [`Importer::Settings`]; a record written at another version is imported with the defaults.
+    const SETTINGS_VERSION: u32 = 1;
+
+    /// The name import records keep for this importer.
     fn name(&self) -> &'static str;
 
     fn supported_extensions(&self) -> &'static [&'static str];
@@ -56,7 +59,7 @@ pub trait Importer: Send + Sync {
 
 /// An [`Importer`] whose settings types are erased behind [`Reflect`].
 pub trait ErasedImporter: Send + Sync {
-    /// The name sidecars persist for this importer.
+    /// The name import records keep for this importer.
     fn name(&self) -> &'static str;
 
     fn supported_extensions(&self) -> &'static [&'static str];
@@ -70,11 +73,18 @@ pub trait ErasedImporter: Send + Sync {
     /// The default asset settings, or `None` when the importer has none.
     fn default_asset_settings(&self) -> Option<Box<dyn Reflect>>;
 
-    /// Reads importer settings from a sidecar's `[settings]` table.
-    fn settings_from_toml(&self, table: &toml::Table) -> Result<Box<dyn Reflect>, String>;
+    /// Decodes settings written at `version`; another version than this importer's gives `Ok(None)`.
+    fn settings_from_bytes(
+        &self,
+        version: u32,
+        bytes: &[u8],
+    ) -> Result<Option<Box<dyn Reflect>>, String>;
 
-    /// Writes importer settings as a sidecar's `[settings]` table.
-    fn settings_to_toml(&self, settings: &dyn Reflect) -> Result<toml::Table, String>;
+    /// Encodes settings of this importer's type, at its `SETTINGS_VERSION`.
+    fn settings_to_bytes(&self, settings: &dyn Reflect) -> Result<Vec<u8>, String>;
+
+    /// This importer's `SETTINGS_VERSION`.
+    fn settings_version(&self) -> u32;
 
     /// A copy of this importer's settings or asset settings.
     fn clone_settings(&self, settings: &dyn Reflect) -> Box<dyn Reflect>;
@@ -133,15 +143,20 @@ impl<I: Importer> ErasedImporter for I {
             .then(|| Box::new(I::AssetSettings::default()) as Box<dyn Reflect>)
     }
 
-    fn settings_from_toml(&self, table: &toml::Table) -> Result<Box<dyn Reflect>, String> {
-        table
-            .clone()
-            .try_into::<I::Settings>()
-            .map(|settings| Box::new(settings) as Box<dyn Reflect>)
+    fn settings_from_bytes(
+        &self,
+        version: u32,
+        bytes: &[u8],
+    ) -> Result<Option<Box<dyn Reflect>>, String> {
+        if version != I::SETTINGS_VERSION {
+            return Ok(None);
+        }
+        bincode::deserialize::<I::Settings>(bytes)
+            .map(|settings| Some(Box::new(settings) as Box<dyn Reflect>))
             .map_err(|err| err.to_string())
     }
 
-    fn settings_to_toml(&self, settings: &dyn Reflect) -> Result<toml::Table, String> {
+    fn settings_to_bytes(&self, settings: &dyn Reflect) -> Result<Vec<u8>, String> {
         let settings = settings.downcast_ref::<I::Settings>().ok_or_else(|| {
             format!(
                 "settings must be a {}, not a {}",
@@ -149,7 +164,11 @@ impl<I: Importer> ErasedImporter for I {
                 settings.type_name()
             )
         })?;
-        toml::Table::try_from(settings).map_err(|err| err.to_string())
+        bincode::serialize(settings).map_err(|err| err.to_string())
+    }
+
+    fn settings_version(&self) -> u32 {
+        I::SETTINGS_VERSION
     }
 
     fn clone_settings(&self, settings: &dyn Reflect) -> Box<dyn Reflect> {

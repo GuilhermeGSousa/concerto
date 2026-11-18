@@ -414,8 +414,7 @@ pub struct SourceFile {
 /// without re-deriving it from the address string.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportProvenance {
-    /// Project-relative source path, or an absolute path for external sources.
-    /// Older assets can retain the path spelling used by the original importer.
+    /// The source's path relative to the project root, with `/` separators.
     pub source: String,
     /// The sub-asset name within that source, e.g. `"mesh/0"`.
     pub sub_asset: String,

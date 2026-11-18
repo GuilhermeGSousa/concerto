@@ -67,7 +67,7 @@ pub struct StagedImport {
     pub state: RowState,
     /// The settings importing to `destination` would use unedited, or why they cannot be read; `None` until [`stage_row`].
     pub staged: Option<Result<StagedSettings, String>>,
-    /// The importer settings edited for this row; `None` imports with the sidecar's.
+    /// The importer settings edited for this row; `None` imports with the import record's.
     pub settings: Option<Box<dyn Reflect>>,
     /// The asset settings edited for this row; `None` keeps the asset's own.
     pub asset_settings: Option<Box<dyn Reflect>>,

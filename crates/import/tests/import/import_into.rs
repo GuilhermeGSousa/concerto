@@ -3,14 +3,13 @@ use std::path::{Path, PathBuf};
 
 use concerto_bvh::bvh_importer::BvhSettings;
 use concerto_foundation::assets::content::{
-    decode_content_asset, read_asset_record, read_content_asset, read_uncooked,
-    resave_content_asset, write_content_asset,
+    decode_content_asset, read_asset_record, read_content_asset, read_content_asset_header,
+    read_uncooked, resave_content_asset, write_content_asset, ImportRecord,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_import::config::ContentConfig;
-use concerto_import::metadata::{sidecar_path, SourceMetadata};
 use concerto_import::{
-    import_source_into, ContentScan, ImportSettings, ImportedSource, StagedSettings,
+    import_source_into, importer_for, ContentScan, ImportSettings, ImportedSource, StagedSettings,
 };
 use concerto_render::assets::texture::{
     Compression, MaxSize, Texture, TextureRole, TextureSettings, TextureSource,
@@ -121,11 +120,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
             source: external,
             destination: "assets/models/tri.gltf",
             siblings: &["assets/models/triangle_ext.bin"],
-            files: &[
-                "assets/models/tri.gltf",
-                "assets/models/tri.gltf.import.toml",
-                "assets/models/triangle_ext.bin",
-            ],
+            files: &["assets/models/tri.gltf", "assets/models/triangle_ext.bin"],
             content: "content/models/tri/scene.gasset",
             sub_asset: "mesh/0",
         },
@@ -133,11 +128,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
             source: external_obj,
             destination: "assets/unread_texture.obj",
             siblings: &["assets/unread_texture.mtl"],
-            files: &[
-                "assets/unread_texture.mtl",
-                "assets/unread_texture.obj",
-                "assets/unread_texture.obj.import.toml",
-            ],
+            files: &["assets/unread_texture.mtl", "assets/unread_texture.obj"],
             content: "content/unread_texture/scene.gasset",
             sub_asset: "scene",
         },
@@ -145,11 +136,7 @@ fn a_source_imported_into_the_project_brings_the_files_it_refers_to_and_nothing_
             source: already_in_place,
             destination: "assets/triangle_ext.gltf",
             siblings: &[],
-            files: &[
-                "assets/triangle_ext.bin",
-                "assets/triangle_ext.gltf",
-                "assets/triangle_ext.gltf.import.toml",
-            ],
+            files: &["assets/triangle_ext.bin", "assets/triangle_ext.gltf"],
             content: "content/triangle_ext/scene.gasset",
             sub_asset: "mesh/0",
         },
@@ -407,7 +394,7 @@ fn asset_settings(settings: TextureSettings) -> ImportSettings {
 }
 
 #[test]
-fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
+fn typed_settings_reach_their_record_and_texture_settings_survive_reimports() {
     let scratch = tempfile::tempdir().expect("tempdir");
     let project = tempfile::tempdir().expect("tempdir");
     let root = project.path();
@@ -438,9 +425,9 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     assert_eq!(main_source.bytes, picture);
     assert_eq!(main.role, TextureRole::Color);
     assert_eq!(main.settings, given);
-    let sidecar =
-        std::fs::read_to_string(root.join("assets/picture.png.import.toml")).expect("sidecar");
-    assert!(!sidecar.contains("settings"), "{sidecar}");
+    let recorded = record_of(root, "content/picture/main.gasset");
+    assert_eq!(recorded.importer, "image");
+    assert_eq!(recorded.source.path, "assets/picture.png");
     let staged = ContentScan::new(root, &config())
         .expect("the project scans")
         .staged_settings(&picture_path, "assets/picture.png")
@@ -556,9 +543,11 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
         ImportSettings::default(),
     )
     .expect("the BVH imports");
-    let sidecar = sidecar_path(&root.join("assets/walk.bvh"));
-    let metadata = SourceMetadata::load(&sidecar).expect("sidecar");
-    assert!(metadata.settings.is_empty(), "{:?}", metadata.settings);
+    let anchor = "content/walk/scene.gasset";
+    assert_eq!(
+        bvh_settings(&record_of(root, anchor)),
+        BvhSettings::default()
+    );
     let StagedSettings { mut settings, .. } = ContentScan::new(root, &config())
         .expect("the project scans")
         .staged_settings(&walk, "assets/walk.bvh")
@@ -578,20 +567,38 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
         },
     )
     .expect("the BVH imports with its settings");
-    let written = SourceMetadata::load(&sidecar).expect("sidecar").settings;
-    assert_eq!(written["scale"].as_float(), Some(0.5), "{written:?}");
+    assert_eq!(bvh_settings(&record_of(root, anchor)).scale, 0.5);
 
+    let mut header = read_content_asset_header(&root.join(anchor)).expect("header");
+    header.import.as_mut().expect("record").settings = vec![1];
+    header.embedded.clear();
     std::fs::write(
-        &sidecar,
-        std::fs::read_to_string(&sidecar)
-            .expect("sidecar")
-            .replace("scale = 0.5", "scale = \"big\""),
+        root.join(anchor),
+        write_content_asset(&header, b"").expect("encode"),
     )
     .expect("write");
     let malformed = ContentScan::new(root, &config())
         .expect("the project scans")
         .staged_settings(&walk, "assets/walk.bvh")
         .err()
-        .expect("an unparsable sidecar does not stage");
-    assert!(format!("{malformed:#}").contains("scale"), "{malformed:#}");
+        .expect("an undecodable record does not stage");
+    assert!(format!("{malformed:#}").contains(anchor), "{malformed:#}");
+}
+
+fn record_of(root: &Path, anchor: &str) -> ImportRecord {
+    read_content_asset_header(&root.join(anchor))
+        .expect("header")
+        .import
+        .expect("the anchor holds the import record")
+}
+
+fn bvh_settings(record: &ImportRecord) -> BvhSettings {
+    importer_for("bvh")
+        .unwrap()
+        .settings_from_bytes(record.settings_version, &record.settings)
+        .expect("the record decodes")
+        .expect("the record is at the importer's settings version")
+        .downcast_ref::<BvhSettings>()
+        .expect("BVH settings")
+        .clone()
 }

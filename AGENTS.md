@@ -72,7 +72,6 @@ cargo concerto editor <dir> --update [--engine <path>]
 cargo concerto build <dir> [--cook] [--release] [--target wasm32-unknown-unknown]
 cargo concerto run <dir> [--cook] [--release] [-- <game args>]
 cargo concerto build ../tech-demo --cook --release --target wasm32-unknown-unknown --public-url ./ --dist <dir>
-cargo run -p concerto-import --bin pack-imports -- <scratch copy of a project>
 ```
 
 The engine's only example is `ui-showcase`. A game may have an `editor/`
@@ -281,10 +280,10 @@ editor's MCP tools.
 - An entity reaches the renderer only if it has `SyncWithRenderWorld`. Camera,
   light, mesh, material and UI layout components require it; a new extracted
   component declares `#[require(SyncWithRenderWorld)]`.
-- `content/` trees and `<source>.import.toml` files are committed. Never run a
-  flow that saves, imports or converts against `examples/*` or the sibling game
-  repositories `../tech-demo` and `../one-more-night`; copy the project's
-  `content/` somewhere disposable first.
+- `content/` trees are committed. Never run a flow that saves, imports or
+  converts against `examples/*` or the sibling game repositories `../tech-demo`
+  and `../one-more-night`; copy the project's `content/` and `assets/`
+  somewhere disposable first, since a re-import there needs both.
 
 ## Git
 

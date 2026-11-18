@@ -18,11 +18,10 @@ concerto-render.workspace = true
 concerto-reflect.workspace = true
 anyhow = "1.0.97"
 log = "0.4.27"
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
 tempfile = "3"
 
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
 proptest.workspace = true
 concerto-animation.workspace = true
 concerto-scene.workspace = true

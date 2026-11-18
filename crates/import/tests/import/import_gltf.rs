@@ -10,7 +10,6 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::content::{read_content_asset_header, save_content_asset_into};
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId, ContentAssetRoot, LoadableAsset};
-use concerto_import::metadata::{sidecar_path, SourceMetadata};
 use concerto_mesh::mesh::Mesh;
 use concerto_mesh::skeleton::Skeleton;
 use concerto_render::assets::material::StandardMaterial;
@@ -47,9 +46,15 @@ fn an_imports_returned_entries_bring_a_scanned_registry_up_to_date() {
     let mut registry =
         AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("scan");
 
-    let written =
-        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
-            .expect("import succeeds");
+    let written = concerto_import::import_source_into(
+        &fixture(&project_root),
+        "assets/triangle.gltf",
+        &project_root,
+        &Default::default(),
+        Default::default(),
+    )
+    .expect("import succeeds")
+    .assets;
     for entry in &written {
         registry.insert(entry.clone());
     }
@@ -70,7 +75,7 @@ fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
 
 const PIXEL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-pub(crate) fn write_hero(source: &Path, meshes: usize) {
+fn write_hero(source: &Path, meshes: usize) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gltf/tests/fixtures/skinned.gltf");
     let mut gltf: serde_json::Value =
         serde_json::from_slice(&std::fs::read(fixture).unwrap()).unwrap();
@@ -103,7 +108,7 @@ pub(crate) fn write_hero(source: &Path, meshes: usize) {
     std::fs::write(source, serde_json::to_vec(&gltf).unwrap()).unwrap();
 }
 
-pub(crate) fn content_files(project_root: &Path) -> Vec<String> {
+fn content_files(project_root: &Path) -> Vec<String> {
     let mut pending = vec![project_root.join("content")];
     let mut files = Vec::new();
     while let Some(dir) = pending.pop() {
@@ -150,20 +155,13 @@ fn embedded_names(project_root: &Path, address: &str) -> Vec<String> {
         .collect()
 }
 
-fn set_file(source: &Path, output: &str, file: bool) {
-    let sidecar = sidecar_path(source);
-    let mut metadata = SourceMetadata::load(&sidecar).unwrap();
-    metadata.outputs.get_mut(output).unwrap().file = file;
-    std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
-}
-
-pub(crate) struct Runtime {
+struct Runtime {
     server: AssetServer,
     world: World,
 }
 
 impl Runtime {
-    pub(crate) fn new(project_root: &Path) -> Self {
+    fn new(project_root: &Path) -> Self {
         let server =
             AssetServer::with_content_root(ContentAssetRoot::Directory(project_root.to_path_buf()));
         server.publish_registry(
@@ -203,7 +201,7 @@ impl Runtime {
         false
     }
 
-    pub(crate) fn loads(&mut self, entry: &AssetEntry) -> bool {
+    fn loads(&mut self, entry: &AssetEntry) -> bool {
         match entry.kind.as_str() {
             "Scene" => self.loads_as::<Scene>(entry.id),
             "Mesh" => self.loads_as::<Mesh>(entry.id),
@@ -263,19 +261,8 @@ fn a_gltf_import_is_one_scene_file_with_its_textures_and_clips_beside_it() {
         .references
         .contains(&ids["mesh/0"]));
 
-    set_file(&source, "material/0", true);
-    let loose = import().assets;
-    let material = loose.iter().find(|entry| entry.kind == "StandardMaterial");
-    let material = material.unwrap();
-    assert_eq!(material.location(), "content/hero/material_0.gasset");
-    assert_eq!(ids_by_name(&loose), ids);
-    assert!(root.join(&material.address).is_file());
-    assert!(!embedded_names(root, scene).contains(&"material/0".to_string()));
-    assert!(Runtime::new(root).loads(material));
-
-    set_file(&source, "material/0", false);
     let again = import().assets;
-    assert_eq!(again, first, "removing the key embeds the material again");
+    assert_eq!(again, first, "a re-import keeps every id and place");
     assert_eq!(content_files(root), packed);
 
     write_hero(&source, 1);

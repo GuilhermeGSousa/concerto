@@ -192,7 +192,10 @@ fn a_source_and_its_settings_import_or_are_refused() {
         ),
         setting("an unknown key", "scal = 1.0"),
         setting("a scale that is not positive", "scale = 0"),
-        setting("a frame range outside the frames", "frame_range = [0, 4]"),
+        setting(
+            "a frame range outside the frames",
+            "frame_range = { start = 0, end = 4 }",
+        ),
     ];
     for case in &cases {
         let result = run("events.bvh", &case.source, case.settings);
@@ -384,7 +387,11 @@ Frame Time: 1
 
 #[test]
 fn a_frame_range_trims_the_clip_and_rebases_its_times() {
-    let Imported { skeleton, clip } = import_ok("trim.bvh", TWO_JOINTS, "frame_range = [1, 3]");
+    let Imported { skeleton, clip } = import_ok(
+        "trim.bvh",
+        TWO_JOINTS,
+        "frame_range = { start = 1, end = 3 }",
+    );
     let spine = skeleton.bone_ids[1];
     let first = sample(&clip, &spine, 0.0);
     let last = sample(&clip, &spine, FRAME_TIME);

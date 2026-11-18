@@ -12,25 +12,24 @@ assets/hero.glb  ──import──▶  content/hero/scene.gasset
                                 and skeletons embedded in it
                               content/hero/texture_0.gasset
                               content/hero/animation_Idle_Loop.gasset
-assets/hero.glb.import.toml
 ```
 
 Import with **Import…** in the editor. There is no import command line.
 
 A glTF yields meshes, materials, textures, skeletons, animations and one
 scene (each animation is named after its glTF clip, a BVH one after its file); an OBJ yields meshes, a material and a scene; an image yields a
-texture. A skeleton asset holds bone names, parent indices (parents first), inverse bind poses, the rest pose and the bone ids. A glTF skin whose joints are not ordered parents-first is rejected. Commit `content/` and every
-`<source>.import.toml`: the import file pins each sub-asset's id, so importing
-again after the artist changes the source keeps every reference intact.
+texture. A skeleton asset holds bone names, parent indices (parents first), inverse bind poses, the rest pose and the bone ids. A glTF skin whose joints are not ordered parents-first is rejected. Commit `content/`: each
+output's header names its source and its name there, and the scene file, or an
+image's one texture, records the importer, its settings and the files it read,
+so importing again after the artist changes the source keeps every id and
+every reference intact.
 
 A source that yields a scene writes one `scene.gasset`, and its meshes,
 materials and skeletons are stored inside that file. Each is still an asset
 with its own id, named by the file, `#`, and its name in the source:
 `content/hero/scene.gasset#mesh/0`. Textures, animations and the outputs of a
 source with no scene are a file each. The scene file belongs to the import and
-is read-only; to build on it, place it in a scene of your own. A project
-imported before this, with a file per mesh, is converted by
-`cargo run -p concerto-import --bin pack-imports -- <project directory>`.
+is read-only; to build on it, place it in a scene of your own.
 
 ## Naming an asset in code
 
