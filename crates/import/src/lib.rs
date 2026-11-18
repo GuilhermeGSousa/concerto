@@ -598,6 +598,7 @@ fn import_with(
                 source: provenance_source.clone(),
                 sub_asset: sub_asset.name.clone(),
             }),
+            import: None,
             uncooked: None,
             derived: None,
             embedded: Vec::new(),

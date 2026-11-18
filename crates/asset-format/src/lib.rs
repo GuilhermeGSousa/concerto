@@ -72,7 +72,7 @@ impl Default for AssetId {
 pub const CONTENT_ASSET_MAGIC: [u8; 4] = *b"GRDY";
 
 /// The version of the framing and `ContentAssetHeader`, written before the header; it changes only when they change, never for a payload.
-pub const CONTENT_FORMAT_VERSION: u32 = 8;
+pub const CONTENT_FORMAT_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentAssetHeader {
@@ -90,6 +90,8 @@ pub struct ContentAssetHeader {
     /// Where this content asset came from, if `import` produced it from a
     /// DCC source rather than an editor saving it directly.
     pub provenance: Option<ImportProvenance>,
+    /// What the import that wrote this file needs to run again; only on an import's anchor, and never in a cooked file.
+    pub import: Option<ImportRecord>,
     /// The record's uncooked bytes at the end of the file, if any.
     pub uncooked: Option<UncookedSection>,
     /// The cooked derived data trailing the payload, if any.
@@ -108,6 +110,7 @@ impl ContentAssetHeader {
                 kind: self.kind.clone(),
                 kind_version: self.kind_version,
                 provenance: self.provenance.clone(),
+                import: self.import.clone(),
                 uncooked: self.uncooked,
                 derived: self.derived,
                 embedded: Vec::new(),
@@ -165,6 +168,7 @@ impl EmbeddedAsset {
             kind: self.kind.clone(),
             kind_version: self.kind_version,
             provenance: Some(self.provenance.clone()),
+            import: None,
             uncooked: self.uncooked,
             derived: self.derived,
             embedded: Vec::new(),
@@ -263,143 +267,35 @@ pub struct EmbeddedPayload<'a> {
     pub derived_blob: Option<&'a [u8]>,
 }
 
-#[derive(Deserialize)]
-struct HeaderV7 {
-    asset_id: AssetId,
-    references: Vec<AssetId>,
-    kind: String,
-    kind_version: u32,
-    provenance: Option<ImportProvenance>,
-    derived: Option<DerivedSection>,
-    embedded: Vec<EmbeddedAssetV7>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddedAssetV7 {
-    asset_id: AssetId,
-    references: Vec<AssetId>,
-    kind: String,
-    kind_version: u32,
-    provenance: ImportProvenance,
-    derived: Option<DerivedSection>,
-    offset: u64,
-    len: u64,
-}
-
-#[derive(Deserialize)]
-struct HeaderV6 {
-    asset_id: AssetId,
-    references: Vec<AssetId>,
-    kind: String,
-    kind_version: u32,
-    provenance: Option<ImportProvenance>,
-    derived: Option<DerivedSection>,
-}
-
-#[derive(Deserialize)]
-struct HeaderV5 {
-    asset_id: AssetId,
-    references: Vec<AssetId>,
-    kind: String,
-    kind_version: u32,
-    provenance: Option<ImportProvenance>,
-}
-
-#[derive(Deserialize)]
-struct HeaderV4 {
-    asset_id: AssetId,
-    references: Vec<AssetId>,
-    kind: String,
-    provenance: Option<ImportProvenance>,
-}
-
-fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
+fn decode_header(bytes: &[u8], path: Option<&Path>) -> anyhow::Result<ContentAssetHeader> {
+    let file = || {
+        path.map_or_else(
+            || "the file".to_string(),
+            |path| format!("'{}'", path.display()),
+        )
+    };
     let mut rest = bytes;
-    let version: u32 = bincode::deserialize_from(&mut rest)
-        .context("failed to deserialize content asset header")?;
-    match version {
-        8 => {
-            let header: ContentAssetHeader =
-                bincode::deserialize(rest).context("failed to deserialize content asset header")?;
-            check_directory(&header, None)?;
-            Ok(header)
-        }
-        7 => {
-            let header: HeaderV7 = bincode::deserialize(rest)
-                .context("failed to deserialize version 7 content asset header")?;
-            let header = ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: header.derived,
-                embedded: header
-                    .embedded
-                    .into_iter()
-                    .map(|asset| EmbeddedAsset {
-                        asset_id: asset.asset_id,
-                        references: asset.references,
-                        kind: asset.kind,
-                        kind_version: asset.kind_version,
-                        provenance: asset.provenance,
-                        uncooked: None,
-                        derived: asset.derived,
-                        offset: asset.offset,
-                        len: asset.len,
-                    })
-                    .collect(),
-            };
-            check_directory(&header, None)?;
-            Ok(header)
-        }
-        6 => {
-            let header: HeaderV6 = bincode::deserialize(rest)
-                .context("failed to deserialize version 6 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: header.derived,
-                embedded: Vec::new(),
-            })
-        }
-        5 => {
-            let header: HeaderV5 = bincode::deserialize(rest)
-                .context("failed to deserialize version 5 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            })
-        }
-        4 => {
-            let header: HeaderV4 = bincode::deserialize(rest)
-                .context("failed to deserialize version 4 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: 1,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            })
-        }
-        other => bail!(
-            "unsupported content asset format version {other} (this build reads versions 4 to 8)"
-        ),
+    let version: u32 = bincode::deserialize_from(&mut rest).with_context(|| {
+        format!(
+            "failed to deserialize the content asset header of {}",
+            file()
+        )
+    })?;
+    if version != CONTENT_FORMAT_VERSION {
+        bail!(
+            "{} is content format {version}; this build reads only {CONTENT_FORMAT_VERSION}. Import its source again, or re-create it if it was authored in the editor.",
+            file()
+        );
     }
+    let header: ContentAssetHeader = bincode::deserialize(rest).with_context(|| {
+        format!(
+            "failed to deserialize the content asset header of {}",
+            file()
+        )
+    })?;
+    check_directory(&header, None)
+        .with_context(|| format!("failed to read the header of {}", file()))?;
+    Ok(header)
 }
 
 fn check_directory(header: &ContentAssetHeader, body_len: Option<u64>) -> anyhow::Result<()> {
@@ -487,6 +383,30 @@ fn section_start(
         .map(EmbeddedAsset::uncooked_len)
         .sum();
     Ok(start + header.uncooked_len() + before)
+}
+
+/// An import's settings and the files it read, kept on its anchor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportRecord {
+    /// The importer's `name()`.
+    pub importer: String,
+    /// The `Importer::SETTINGS_VERSION` that `settings` were written at.
+    pub settings_version: u32,
+    /// bincode of the importer's `Settings`.
+    pub settings: Vec<u8>,
+    /// The source, as read by this import.
+    pub source: SourceFile,
+    /// Every dependency the importer tracked that could be read, in tracking order.
+    pub dependencies: Vec<SourceFile>,
+}
+
+/// A file an import read, by path and content hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceFile {
+    /// Relative to the project root with `/` separators; a dependency outside the project starts with `../`.
+    pub path: String,
+    /// Fnv1a 64 of the file's bytes.
+    pub hash: u64,
 }
 
 /// The offline source (and sub-asset within it) that `import` produced a
@@ -756,7 +676,7 @@ impl<'a> ContentFile<'a> {
             );
         }
 
-        let header = decode_header(&bytes[8..header_end])?;
+        let header = decode_header(&bytes[8..header_end], None)?;
         let body = &bytes[header_end..];
         check_directory(&header, Some(body.len() as u64))?;
         Ok(Self { header, body })
@@ -891,6 +811,19 @@ pub fn without_uncooked(file: &[u8]) -> anyhow::Result<Vec<u8>> {
     frame_content_asset(&without_sections(&parsed.header), &[&parsed.body[..kept]])
 }
 
+/// The file with its header's import record removed; a file without one comes back byte for byte.
+pub fn without_import_record(file: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let parsed = ContentFile::parse(file)?;
+    if parsed.header.import.is_none() {
+        return Ok(file.to_vec());
+    }
+    let header = ContentAssetHeader {
+        import: None,
+        ..parsed.header
+    };
+    frame_content_asset(&header, &[parsed.body])
+}
+
 struct OpenedContentAsset {
     file: std::fs::File,
     header_bytes: Vec<u8>,
@@ -948,8 +881,7 @@ impl OpenedContentAsset {
     }
 
     fn header(&self, path: &Path) -> anyhow::Result<ContentAssetHeader> {
-        let header = decode_header(&self.header_bytes)
-            .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
+        let header = decode_header(&self.header_bytes, Some(path))?;
         if !header.embedded.is_empty() {
             check_directory(&header, Some(self.body_len))
                 .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
@@ -974,7 +906,7 @@ pub fn read_content_without_uncooked(path: &Path) -> std::io::Result<Vec<u8>> {
         return std::fs::read(path);
     };
     let body_len = opened.body_len;
-    let stripped = decode_header(&opened.header_bytes)
+    let stripped = decode_header(&opened.header_bytes, None)
         .ok()
         .filter(ContentAssetHeader::has_uncooked)
         .and_then(|header| {

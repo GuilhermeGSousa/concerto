@@ -284,6 +284,7 @@ fn write_scene_header(path: &Path, id: AssetId, source: &str) {
             source: source.into(),
             sub_asset: "scene".into(),
         }),
+        import: None,
         uncooked: None,
         derived: None,
         embedded: Vec::new(),

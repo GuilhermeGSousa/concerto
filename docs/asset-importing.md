@@ -464,7 +464,7 @@ u32   header length, little-endian
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file, and version 8 adds `uncooked`, the description of the uncooked section at the end of the file. The payload is everything between the header and the blob or the section; `read_content_asset` returns it alone, and `read_content_asset_parts` returns all three. `write_content_asset` writes neither a section nor a blob and refuses a header that describes one; `write_content_asset_with_uncooked` writes the header, the payload and the uncooked bytes it is given as a section, also when they are empty; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`, and never an uncooked section. Committed content never has a derived section. A version-4 file reads as kind version 1 and a version-5 file reads with no derived section; a version-6 file reads with no embedded assets, and a version-7 file with no uncooked section. None needs a re-import, and each moves to version 8 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `9`; it changes only when the framing or the header changes, never for a payload. The payload is everything between the header and the blob or the section; `read_content_asset` returns it alone, and `read_content_asset_parts` returns all three. `write_content_asset` writes neither a section nor a blob and refuses a header that describes one; `write_content_asset_with_uncooked` writes the header, the payload and the uncooked bytes it is given as a section, also when they are empty; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`, and never an uncooked section. Committed content never has a derived section. Version 9 is the only version any reader accepts, `build.rs` and `asset_id!` included. A file at another version fails with `'<path>' is content format <n>; this build reads only 9. Import its source again, or re-create it if it was authored in the editor.`, or with `the file is …` where the reader has bytes and no path. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
@@ -473,21 +473,22 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only w
 | `asset_id`       | Persistent UUID, minted once and reused from source metadata; legacy UUIDs are preserved |
 | `references`     | the `AssetId`s this asset points at, so a tree can be integrity-checked by scanning headers alone |
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
-| `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
+| `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, kept when `resave_content_asset` writes over it; `None` for editor-authored assets and for an imported asset saved with `save_content_asset_into` |
-| `uncooked`    | `Some(UncookedSection { len, version })` when the record has uncooked bytes at the end of the file: data a cooked build never needs, `len` bytes long, written at the `UncookedData::VERSION` of its type; `None` otherwise, for a cooked file, and for a file older than version 8 |
-| `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
-
-| `embedded`       | the directory of the assets stored in this file after the host's payload and blob, one `EmbeddedAsset` each, in file order; empty for a loose file, and for a file older than version 7 |
+| `import`         | `Some(ImportRecord { importer, settings_version, settings, source, dependencies })` on an import's anchor: the importer's name, its settings as bincode at `settings_version`, and the source and each dependency it read as a `SourceFile { path, hash }`, the path relative to the project root (`../` for a dependency outside it) and the hash Fnv1a 64 of its bytes. Kept when `resave_content_asset` writes over the file; `None` on every other record, after `save_content_asset_into`, and in a cooked file |
+| `uncooked`    | `Some(UncookedSection { len, version })` when the record has uncooked bytes at the end of the file: data a cooked build never needs, `len` bytes long, written at the `UncookedData::VERSION` of its type; `None` otherwise, and for a cooked file |
+| `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise |
+| `embedded`       | the directory of the assets stored in this file after the host's payload and blob, one `EmbeddedAsset` each, in file order; empty for a loose file |
 
 The header can be read without touching the payload, which is what lets a
 future tool index a whole content tree cheaply.
 
-Version 7 lets one file hold several assets. The asset the file is for is the
+One file can hold several assets. The asset the file is for is the
 **host**; the others are **embedded** in it, and an asset alone in its file is
 **loose**. An `EmbeddedAsset` holds what a loose file's header would hold for
 that asset (`asset_id`, `references`, `kind`, `kind_version`, `provenance`,
-`uncooked`, `derived`) and the byte range of its payload: `offset`, counted
+`uncooked`, `derived`), but no `import`, since an embedded asset is never an
+import's anchor, and the byte range of its payload: `offset`, counted
 from the end of the header, and `len`. Its derived blob, of `derived.len`
 bytes, follows its payload. Its uncooked section, of `uncooked.len` bytes, is
 not in that range: every section of a file sits after the last embedded
@@ -526,7 +527,7 @@ Three readers deal with uncooked sections alone.
 `ContentAssetHeader::has_uncooked` says whether the host or any embedded
 asset has one. `without_uncooked` returns a file's bytes with every section
 removed: the file cut where the sections start, under a header that describes
-none; a file with no section comes back byte for byte, whatever its version.
+none; a file with no section comes back byte for byte.
 `read_content_without_uncooked` reads a file from disk as those same bytes
 without reading the sections, by stopping where they start; a file it cannot
 understand is read whole, so the parser that follows reports what is wrong
@@ -758,12 +759,10 @@ opened project. A kind the game's recipe does not register is not reported;
 such a file still fails when it is loaded.
 
 `CONTENT_FORMAT_VERSION` is a different number. It changes only when the
-framing or `ContentAssetHeader` changes, never for a payload, and a new header
-version keeps the previous ones readable where it can, as version 8 reads
-versions 4 to 7. The version-8 framing is pinned by
-`crates/foundation/tests/encoding/content_asset.v8.bin`, rewritten under
-`CONCERTO_BLESS_ENCODING=1`; `content_asset.v6.bin` and `content_asset.v7.bin`
-stay as they were written, each with a test that reads it.
+framing or `ContentAssetHeader` changes, never for a payload. Version 9 reads
+no older version. The version-9 framing is pinned by
+`crates/foundation/tests/encoding/content_asset.v9.bin`, rewritten under
+`CONCERTO_BLESS_ENCODING=1`.
 
 ## The asset registry
 
@@ -1122,8 +1121,8 @@ the browser, on the main thread. A cooked build carries the blobs instead.
 
 A cook writes the blob of each asset that derives into a copy of its `.gasset` file, as a
 trailing derived section, so a shipped build applies it without deriving, and
-writes every file that has [uncooked sections](#uncooked-data) without
-them, so a shipped build holds none. It is
+writes every file that has [uncooked sections](#uncooked-data) or an import
+record without them, so a shipped build holds none. It is
 run through the project tool:
 
 ```sh
@@ -1143,22 +1142,23 @@ after `--`.
    frame. It points the `AssetServer` at the project's `content/` and its
    `derived-cache/`, and calls `AssetServer::cook`.
 3. `AssetServer::cook` takes every file of the registry, in address order,
-   and reads its header from disk. A file with no uncooked section and no
-   asset whose kind is a registered derived type is skipped without being
-   read. Any other is read as a load reads it, without its sections. For a
+   and reads its header from disk. A file with no uncooked section, no import
+   record and no asset whose kind is a registered derived type is skipped
+   without being read. Any other is read as a load reads it, without its sections. For a
    loose or host asset of a derived type the cook asks the type's
    `file_is_derived` first; one that derives is
    decoded and its `on_load` runs; then it derives or takes a cache hit as a
    load does, reading its own uncooked section on a miss, and
-   writes `<out>/<address>`: the original header and payload bytes
-   plus the derived section, and no uncooked section. A cached blob that `apply_derived` refuses is derived
+   writes `<out>/<address>`: the original header without its import record,
+   the payload bytes plus the derived section, and no uncooked section. A cached blob that `apply_derived` refuses is derived
    again, never cooked. An embedded asset that doesn't derive is left as it is;
    one that derives fails the cook, with an error giving its `<address>#<name>`
    and saying embedded assets cannot be cooked yet. No importer writes one.
    A file whose asset doesn't derive, or is of any other kind, is written to
    `<out>/<address>` when it has an uncooked section, on the host or on an
-   embedded asset, as the same file without its sections; with none, no file
-   is written. The `CookReport` lists the address of every file written, the
+   embedded asset, or an import record, as the same file without its sections
+   and with `import: None`; its provenance stays. With neither, no file is
+   written. The `CookReport` lists the address of every file written, the
    command prints each as `cooked <address>` and then `cooked <n> files`, and
    the cook needs a content root that is a directory. The
    first failure stops the cook and fails the command, naming the file.

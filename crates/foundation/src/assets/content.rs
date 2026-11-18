@@ -12,11 +12,13 @@ use super::{Asset, AssetId, UncookedData};
 
 pub use concerto_asset_format::{
     asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
-    read_content_without_uncooked, read_uncooked_section, sub_asset_file_stem, without_uncooked,
-    write_content_asset, write_content_asset_with_embedded, write_content_asset_with_uncooked,
+    read_content_without_uncooked, read_uncooked_section, sub_asset_file_stem,
+    without_import_record, without_uncooked, write_content_asset,
+    write_content_asset_with_embedded, write_content_asset_with_uncooked,
     write_cooked_content_asset, AssetRecord, ContentAssetHeader, ContentAssetParts, ContentFile,
-    CookedSection, DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, UncookedBytes,
-    UncookedSection, UncookedSlice, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
+    CookedSection, DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, ImportRecord,
+    SourceFile, UncookedBytes, UncookedSection, UncookedSlice, CONTENT_ASSET_MAGIC,
+    CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
@@ -281,6 +283,7 @@ fn save_into<A: Asset>(
         kind: A::name().to_string(),
         kind_version: A::FORMAT_VERSION,
         provenance: None,
+        import: None,
         uncooked: None,
         derived: None,
         embedded: Vec::new(),
@@ -307,7 +310,7 @@ fn save_into<A: Asset>(
     Ok(asset_id)
 }
 
-/// Writes `value` over the content asset at `address`, keeping its id, its import provenance and its uncooked section, and upserts its registry entry.
+/// Writes `value` over the content asset at `address`, keeping its id, its import provenance and record and its uncooked section, and upserts its registry entry.
 pub fn resave_content_asset<A: Asset>(
     value: &A,
     project_root: &Path,
@@ -332,6 +335,7 @@ pub fn resave_content_asset<A: Asset>(
         kind: A::name().to_string(),
         kind_version: A::FORMAT_VERSION,
         provenance: existing.provenance,
+        import: existing.import,
         uncooked: None,
         derived: None,
         embedded: Vec::new(),

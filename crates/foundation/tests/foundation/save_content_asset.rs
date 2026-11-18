@@ -5,7 +5,7 @@ use concerto_foundation::assets::content::{
     read_content_asset_header, read_content_asset_parts, read_uncooked, read_uncooked_section,
     resave_content_asset, save_content_asset_into, save_content_asset_with_uncooked,
     write_content_asset_with_embedded, write_content_asset_with_uncooked, ContentAssetHeader,
-    EmbeddedPayload, ImportProvenance,
+    EmbeddedPayload, ImportProvenance, ImportRecord, SourceFile,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId, UncookedData};
@@ -183,6 +183,7 @@ fn imported_widget_header(sub_asset: &str) -> ContentAssetHeader {
             source: "assets/wheel.glb".to_string(),
             sub_asset: sub_asset.to_string(),
         }),
+        import: None,
         uncooked: None,
         derived: None,
         embedded: Vec::new(),
@@ -190,7 +191,19 @@ fn imported_widget_header(sub_asset: &str) -> ContentAssetHeader {
 }
 
 fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHeader {
-    let header = imported_widget_header("widget/0");
+    let header = ContentAssetHeader {
+        import: Some(ImportRecord {
+            importer: "gltf".to_string(),
+            settings_version: 1,
+            settings: vec![4, 2],
+            source: SourceFile {
+                path: "assets/wheel.glb".to_string(),
+                hash: 0xfeed,
+            },
+            dependencies: Vec::new(),
+        }),
+        ..imported_widget_header("widget/0")
+    };
     let payload = bincode::serialize(&Widget { spokes }).unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let blueprint = bincode::serialize(&Blueprint {
@@ -203,7 +216,7 @@ fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHea
 }
 
 #[test]
-fn a_resave_keeps_the_id_and_the_import_provenance() {
+fn a_resave_keeps_the_id_and_the_import_provenance_and_record_and_a_save_drops_them() {
     let project_root = std::env::temp_dir().join(format!("resave-content-{}", std::process::id()));
     let address = "content/widgets/wheel.gasset";
     let original = write_imported_widget(&project_root.join(address), 32);
@@ -217,6 +230,7 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     let (header, payload) = read_content_asset(&written).unwrap();
     assert_eq!(header.asset_id, original.asset_id);
     assert_eq!(header.provenance, original.provenance);
+    assert_eq!(header.import, original.import);
     assert_eq!(
         header.references,
         vec![AssetId::from_path("content/parts/spoke.gasset")]
@@ -260,6 +274,12 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
         Some(redrawn),
         "a save given a section replaces the file's"
     );
+    let saved = read_content_asset_header(&project_root.join(address)).unwrap();
+    assert_eq!(
+        saved.provenance, None,
+        "a save from the editor drops the provenance"
+    );
+    assert_eq!(saved.import, None, "and the import record");
 
     std::fs::remove_dir_all(&project_root).ok();
 }

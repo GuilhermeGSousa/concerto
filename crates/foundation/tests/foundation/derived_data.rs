@@ -12,8 +12,9 @@ use concerto_foundation::assets::{
     content::{
         read_asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
         save_content_asset_into, save_content_asset_with_uncooked, without_uncooked,
-        write_content_asset_with_embedded, write_cooked_content_asset, ContentAssetHeader,
-        CookedSection, DerivedSection, EmbeddedPayload, ImportProvenance,
+        write_content_asset, write_content_asset_with_embedded, write_cooked_content_asset,
+        ContentAssetHeader, CookedSection, DerivedSection, EmbeddedPayload, ImportProvenance,
+        ImportRecord, SourceFile,
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
@@ -433,6 +434,7 @@ impl Project {
                 source: format!("assets/{name}.glb"),
                 sub_asset: sub_asset.to_string(),
             }),
+            import: None,
             uncooked: None,
             derived: None,
             embedded: Vec::new(),
@@ -1228,7 +1230,8 @@ fn a_cook_reads_further_inputs() {
 }
 
 #[test]
-fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section() {
+fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section_and_import_record()
+{
     let tag = "uncooked";
     let mut project = Project::new(tag);
     let parts = Parts {
@@ -1257,6 +1260,27 @@ fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section
     )
     .unwrap();
     project.leaf("plain", 9);
+    let plain_path = project.root.join("content/plain.gasset");
+    let plain_file = std::fs::read(&plain_path).unwrap();
+    let (plain, payload) = read_content_asset(&plain_file).unwrap();
+    let anchor = ContentAssetHeader {
+        provenance: Some(ImportProvenance {
+            source: "assets/plain.bvh".to_string(),
+            sub_asset: "scene".to_string(),
+        }),
+        import: Some(ImportRecord {
+            importer: "bvh".to_string(),
+            settings_version: 1,
+            settings: vec![7],
+            source: SourceFile {
+                path: "assets/plain.bvh".to_string(),
+                hash: 0xbeef,
+            },
+            dependencies: Vec::new(),
+        }),
+        ..plain
+    };
+    std::fs::write(&plain_path, write_content_asset(&anchor, payload).unwrap()).unwrap();
     let cache = project.cache_dir();
 
     let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
@@ -1276,7 +1300,11 @@ fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section
         .unwrap();
     assert_eq!(
         report.cooked,
-        vec!["content/noted.gasset", "content/sourced.gasset"]
+        vec![
+            "content/noted.gasset",
+            "content/plain.gasset",
+            "content/sourced.gasset"
+        ]
     );
     let mut files = cache_files(&out);
     files.sort();
@@ -1284,8 +1312,17 @@ fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section
         files,
         vec![
             out.join("content/noted.gasset"),
+            out.join("content/plain.gasset"),
             out.join("content/sourced.gasset")
         ]
+    );
+    assert_eq!(
+        read_content_asset_header(&out.join("content/plain.gasset")).unwrap(),
+        ContentAssetHeader {
+            import: None,
+            ..anchor
+        },
+        "a cooked anchor keeps its provenance and loses its import record"
     );
     assert_cooked_from(
         &project,

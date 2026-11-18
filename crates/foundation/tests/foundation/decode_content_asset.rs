@@ -54,6 +54,7 @@ fn content_asset(kind: &str, kind_version: u32, payload: &[u8]) -> Vec<u8> {
         kind: kind.to_string(),
         kind_version,
         provenance: None,
+        import: None,
         uncooked: None,
         derived: None,
         embedded: Vec::new(),

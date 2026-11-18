@@ -46,7 +46,9 @@ use super::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
-    content::{asset_record, read_content_asset_header, read_uncooked_section},
+    content::{
+        asset_record, read_content_asset_header, read_uncooked_section, without_import_record,
+    },
     derived::{cook_hook, record_is_derived, CookHook, CookReport},
 };
 
@@ -390,7 +392,7 @@ impl AssetServer {
         self.data.cook_hooks.read().unwrap().contains_key(kind)
     }
 
-    /// Writes to `<out>/<address>` every file of the registry whose asset derives, with its derived blob, and every other file that has an uncooked section, all without their uncooked sections, in address order, stopping at the first error; the report lists only those written.
+    /// Writes to `<out>/<address>` every file of the registry whose asset derives, with its derived blob, and every other file that has an uncooked section or an import record, all without their uncooked sections and import records, in address order, stopping at the first error; the report lists only those written.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cook(&self, out: &Path) -> anyhow::Result<CookReport> {
         let (root, registry) = self.content_source();
@@ -430,11 +432,12 @@ impl AssetServer {
             entries,
             hooks,
         } = file;
-        let has_uncooked = read_content_asset_header(&dir.join(address))?.has_uncooked();
+        let header = read_content_asset_header(&dir.join(address))?;
+        let needs_stripping = header.has_uncooked() || header.import.is_some();
         let hooked = entries
             .iter()
             .any(|entry| hooks.contains_key(entry.kind.as_str()));
-        if !has_uncooked && !hooked {
+        if !needs_stripping && !hooked {
             return Ok(false);
         }
         let stripped = pollster::block_on(try_read_relative(root, address))?
@@ -467,8 +470,8 @@ impl AssetServer {
             }
         }
         let bytes = match cooked {
-            Some(cooked) => cooked,
-            None if has_uncooked => stripped,
+            Some(cooked) => without_import_record(&cooked)?,
+            None if needs_stripping => without_import_record(&stripped)?,
             None => return Ok(false),
         };
         let path = out.join(address);

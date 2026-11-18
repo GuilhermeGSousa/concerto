@@ -5,7 +5,8 @@ use concerto_foundation::assets::content::{
     read_content_without_uncooked, read_uncooked_section, without_uncooked, write_content_asset,
     write_content_asset_with_embedded, write_content_asset_with_uncooked,
     write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection, EmbeddedAsset,
-    EmbeddedPayload, ImportProvenance, UncookedBytes, UncookedSection, CONTENT_ASSET_MAGIC,
+    EmbeddedPayload, ImportProvenance, ImportRecord, SourceFile, UncookedBytes, UncookedSection,
+    CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 use concerto_foundation::assets::AssetId;
 use proptest::prelude::*;
@@ -22,6 +23,7 @@ fn header() -> ContentAssetHeader {
         kind: "Mesh".to_string(),
         kind_version: 3,
         provenance: None,
+        import: None,
         uncooked: None,
         derived: None,
         embedded: Vec::new(),
@@ -58,41 +60,9 @@ fn written_loose(
 }
 
 #[derive(Serialize)]
-struct HeaderV8<'a> {
+struct AtVersion<'a> {
     format_version: u32,
     header: &'a ContentAssetHeader,
-}
-
-#[derive(Serialize)]
-struct HeaderV5 {
-    format_version: u32,
-    asset_id: AssetId,
-    references: Vec<AssetId>,
-    kind: String,
-    kind_version: u32,
-    provenance: Option<ImportProvenance>,
-}
-
-#[derive(Serialize)]
-struct HeaderV4 {
-    format_version: u32,
-    asset_id: AssetId,
-    references: Vec<AssetId>,
-    kind: String,
-    provenance: Option<ImportProvenance>,
-}
-
-fn version_4_header() -> HeaderV4 {
-    HeaderV4 {
-        format_version: 4,
-        asset_id: AssetId::from_path("content/hero/idle.gasset"),
-        references: vec![AssetId::from_path("content/hero/skeleton.gasset")],
-        kind: "AnimationClip".to_string(),
-        provenance: Some(ImportProvenance {
-            source: "assets/hero.glb".to_string(),
-            sub_asset: "anim/idle".to_string(),
-        }),
-    }
 }
 
 fn framed(header: &impl Serialize, payload: &[u8]) -> Vec<u8> {
@@ -121,12 +91,31 @@ prop_compose! {
 }
 
 prop_compose! {
+    fn any_source_file()(path in "[a-z/.]{0,16}", hash in any::<u64>()) -> SourceFile {
+        SourceFile { path, hash }
+    }
+}
+
+prop_compose! {
+    fn any_import()(
+        importer in "[a-z]{0,8}",
+        settings_version in any::<u32>(),
+        settings in proptest::collection::vec(any::<u8>(), 0..16),
+        source in any_source_file(),
+        dependencies in proptest::collection::vec(any_source_file(), 0..3),
+    ) -> ImportRecord {
+        ImportRecord { importer, settings_version, settings, source, dependencies }
+    }
+}
+
+prop_compose! {
     fn any_header()(
         id in any::<[u8; 16]>(),
         references in proptest::collection::vec(any::<[u8; 16]>(), 0..4),
         kind in "[A-Za-z]{1,12}",
         kind_version in any::<u32>(),
         provenance in proptest::option::of(any_provenance()),
+        import in proptest::option::of(any_import()),
     ) -> ContentAssetHeader {
         ContentAssetHeader {
             asset_id: AssetId::from_bytes(id),
@@ -134,6 +123,7 @@ prop_compose! {
             kind,
             kind_version,
             provenance,
+            import,
             uncooked: None,
             derived: None,
             embedded: Vec::new(),
@@ -205,6 +195,7 @@ impl StoredAsset {
                 source: "assets/hero.glb".to_string(),
                 sub_asset: format!("mesh/{index}"),
             }),
+            import: None,
             uncooked: described(&self.uncooked),
             derived: self.blob.as_ref().map(|blob| DerivedSection {
                 derived_version: self.derived_version,
@@ -380,8 +371,8 @@ fn host_file_with_sections(
         ..header()
     };
     framed(
-        &HeaderV8 {
-            format_version: 8,
+        &AtVersion {
+            format_version: CONTENT_FORMAT_VERSION,
             header: &header,
         },
         body,
@@ -446,8 +437,8 @@ fn a_malformed_directory_is_rejected() {
         Malformed {
             name: "a loose file shorter than its blob and its section",
             bytes: framed(
-                &HeaderV8 {
-                    format_version: 8,
+                &AtVersion {
+                    format_version: CONTENT_FORMAT_VERSION,
                     header: &ContentAssetHeader {
                         uncooked: sectioned(4),
                         derived: Some(DerivedSection {
@@ -553,27 +544,22 @@ fn refused(fragments: &[&str]) -> Result<ContentAssetHeader, Vec<String>> {
 }
 
 #[test]
-fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
-    let v4 = version_4_header();
-    let v5 = HeaderV5 {
-        format_version: 5,
-        asset_id: AssetId::from_path("content/hero/body.gasset"),
-        references: vec![AssetId::from_path("content/hero/skin.gasset")],
-        kind: "Mesh".to_string(),
-        kind_version: 3,
-        provenance: None,
-    };
+fn each_reader_reads_version_9_and_refuses_anything_else() {
     let written = write_content_asset(&header(), b"payload").unwrap();
     let mut no_magic = written.clone();
     no_magic[0] = b'X';
     let version = |format_version: u32| {
-        let mut old = version_4_header();
-        old.format_version = format_version;
-        framed(&old, b"payload")
+        framed(
+            &AtVersion {
+                format_version,
+                header: &header(),
+            },
+            b"payload",
+        )
     };
     let cases = [
         Read {
-            name: "a version 8 cooked file",
+            name: "a cooked file",
             bytes: write_cooked_content_asset(&header(), b"payload", section(b"blob")).unwrap(),
             expected: Ok(ContentAssetHeader {
                 derived: Some(DerivedSection {
@@ -586,62 +572,27 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
             header_from_file: true,
         },
         Read {
-            name: "the version 7 fixture has no uncooked section",
-            bytes: std::fs::read(fixture_dir().join("content_asset.v7.bin"))
-                .expect("the version 7 fixture"),
-            expected: Ok(ContentAssetHeader {
-                embedded: vec![EmbeddedAsset {
-                    asset_id: AssetId::from_bytes([0x5a; 16]),
-                    references: Vec::new(),
-                    kind: "Mesh".to_string(),
-                    kind_version: 2,
-                    provenance: ImportProvenance {
-                        source: "assets/hero.glb".to_string(),
-                        sub_asset: "mesh/0".to_string(),
-                    },
-                    uncooked: None,
-                    derived: Some(fixture_derived()),
-                    offset: 7,
-                    len: 8,
-                }],
-                ..fixture_host()
-            }),
+            name: "the fixture's host",
+            bytes: asset_record(
+                &std::fs::read(fixture_dir().join("content_asset.v9.bin")).expect("the fixture"),
+                None,
+            )
+            .unwrap(),
+            expected: Ok(fixture_host()),
             header_from_file: true,
         },
         Read {
-            name: "a version 5 header has no derived section",
-            bytes: framed(&v5, b"payload"),
-            expected: Ok(ContentAssetHeader {
-                asset_id: v5.asset_id,
-                references: v5.references.clone(),
-                kind: v5.kind.clone(),
-                kind_version: 3,
-                provenance: None,
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            }),
+            name: "version 8",
+            bytes: version(8),
+            expected: refused(&[
+                "is content format 8; this build reads only 9. Import its source again, or re-create it if it was authored in the editor.",
+            ]),
             header_from_file: true,
         },
         Read {
-            name: "a version 4 header reads as kind version 1",
-            bytes: framed(&v4, b"payload"),
-            expected: Ok(ContentAssetHeader {
-                asset_id: v4.asset_id,
-                references: v4.references.clone(),
-                kind: v4.kind.clone(),
-                kind_version: 1,
-                provenance: v4.provenance.clone(),
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            }),
-            header_from_file: true,
-        },
-        Read {
-            name: "version 9",
-            bytes: version(9),
-            expected: refused(&[]),
+            name: "version 10",
+            bytes: version(10),
+            expected: refused(&["is content format 10; this build reads only 9."]),
             header_from_file: true,
         },
         Read {
@@ -718,6 +669,7 @@ fn fixture_header() -> ContentAssetHeader {
             source: "assets/hero.glb".to_string(),
             sub_asset: "anim/idle".to_string(),
         }),
+        import: None,
         uncooked: None,
         derived: None,
         embedded: Vec::new(),
@@ -731,27 +683,26 @@ fn fixture_host() -> ContentAssetHeader {
             source: "assets/hero.glb".to_string(),
             sub_asset: "scene".to_string(),
         }),
+        import: Some(ImportRecord {
+            importer: "gltf".to_string(),
+            settings_version: 1,
+            settings: vec![1, 2, 3],
+            source: SourceFile {
+                path: "assets/hero.glb".to_string(),
+                hash: 0x0123_4567_89ab_cdef,
+            },
+            dependencies: vec![SourceFile {
+                path: "../shared/hero.png".to_string(),
+                hash: 0xfedc_ba98_7654_3210,
+            }],
+        }),
         ..fixture_header()
     }
 }
 
 #[test]
-fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
+fn the_framing_matches_its_fixture() {
     let dir = fixture_dir();
-
-    let version_6 = std::fs::read(dir.join("content_asset.v6.bin")).expect("the version 6 fixture");
-    let parts = read_content_asset_parts(&version_6).expect("read version 6");
-    assert_eq!(
-        parts.header,
-        ContentAssetHeader {
-            derived: Some(fixture_derived()),
-            ..fixture_header()
-        }
-    );
-    assert_eq!(parts.payload, b"payload");
-    assert_eq!(parts.uncooked, None);
-    assert_eq!(parts.derived_blob, Some(&b"derived"[..]));
-
     let mesh = ContentAssetHeader {
         asset_id: AssetId::from_bytes([0x5a; 16]),
         references: Vec::new(),
@@ -761,6 +712,7 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
             source: "assets/hero.glb".to_string(),
             sub_asset: "mesh/0".to_string(),
         }),
+        import: None,
         uncooked: Some(UncookedSection { len: 6, version: 4 }),
         derived: Some(fixture_derived()),
         embedded: Vec::new(),
@@ -777,7 +729,7 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
     )
     .expect("write");
 
-    let path = dir.join("content_asset.v8.bin");
+    let path = dir.join("content_asset.v9.bin");
     if std::env::var("CONCERTO_BLESS_ENCODING").as_deref() == Ok("1") {
         std::fs::create_dir_all(dir)
             .unwrap_or_else(|error| panic!("failed to create '{}': {error}", dir.display()));
@@ -787,12 +739,12 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
     }
     let Ok(fixture) = std::fs::read(&path) else {
         panic!(
-            "no encoding fixture for the content asset framing version 8 at {}; run this test with CONCERTO_BLESS_ENCODING=1 to write it",
+            "no encoding fixture for the content asset framing version 9 at {}; run this test with CONCERTO_BLESS_ENCODING=1 to write it",
             path.display()
         );
     };
     assert!(
         fixture == bytes,
-        "the content asset framing changed but CONTENT_FORMAT_VERSION is still 8: raise it to 9 and read version 8 files as before, then run with CONCERTO_BLESS_ENCODING=1"
+        "the content asset framing changed but CONTENT_FORMAT_VERSION is still 9: raise it to 10, then run with CONCERTO_BLESS_ENCODING=1"
     );
 }

@@ -210,6 +210,12 @@ sounds) are imported once, ahead of time. The running game never reads them.
   read it, a derive reads its own on a cache
   miss through `DerivedInputs::own_uncooked`, tools read it with
   `read_uncooked`, and a cook drops it.
+- Every reader accepts content format 9 only, and fails on any other version
+  naming the file. An import's anchor (its `scene`, else its `main`) carries an
+  `ImportRecord` in its header: the importer, its settings as versioned
+  bincode, and the source and dependencies it read with their hashes.
+  `resave_content_asset` keeps it, `save_content_asset_into` writes none, and a
+  cook drops it.
 - A sampled `Texture` derives from its own file, with no inputs: its payload
   holds its `role`, its `TextureSettings` and a `SourceSummary` (width, height,
   hash) of the imported image, whose bytes (`TextureSource`) are the file's
@@ -231,8 +237,9 @@ sounds) are imported once, ahead of time. The running game never reads them.
   `<out>` (refusing a non-empty directory that holds no `.concerto-cook` marker
   from an earlier cook), and has `AssetServer::cook` write each registry entry of a
   registered derived kind whose asset derives to `<out>/<address>`, skipping
-  and leaving out of the report one that doesn't: the committed header and
-  payload byte for byte, plus a trailing derived section with the blob. It
+  and leaving out of the report one that doesn't: the committed header without
+  its import record and the payload byte for byte, plus a trailing derived
+  section with the blob. It
   prints each address and a total, or the error, and exits 0 or 1. A load that
   finds a section of the type's current `DERIVED_VERSION` applies it without
   reading the inputs; any other section falls back to deriving. Committed
