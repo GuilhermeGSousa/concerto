@@ -1234,6 +1234,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-scene",
  "glam 0.33.12",
+ "log",
  "serde",
  "toml",
  "uuid",

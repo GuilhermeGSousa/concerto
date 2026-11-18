@@ -1,14 +1,18 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
+use concerto_animation::event::AnimationEvent;
 use concerto_foundation::assets::content::{
     decode_content_asset, read_asset_record, resave_content_asset,
 };
+use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::assets::registry::AssetRegistry;
+use concerto_foundation::assets::AssetId;
 use concerto_import::config::ContentConfig;
 use concerto_import::import_source_into;
 use concerto_import::metadata::{sidecar_path, SourceMetadata};
+use concerto_mesh::Skeleton;
 use concerto_reflect::ReflectedValue;
 
 const WALK: &str = "HIERARCHY
@@ -124,34 +128,64 @@ fn stored_events(clip: &AnimationClip) -> Vec<StoredEvent> {
         .collect()
 }
 
+fn clip_at(project: &Path, address: &str) -> AnimationClip {
+    decode_content_asset::<AnimationClip>(&read(project, address))
+        .expect("the clip decodes")
+        .1
+}
+
 #[test]
-fn a_re_import_overwrites_a_resaved_clip_and_rebuilds_its_events_from_the_sidecar() {
+fn a_resaved_clip_keeps_its_events_and_additive_base_across_re_imports_fitted_to_a_shorter_clip() {
     let scratch = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    import(&source(scratch.path()), project.path()).expect("first import");
-    let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
-    let mut metadata = SourceMetadata::load(&sidecar).unwrap();
-    metadata.settings.insert(
-        "events".to_string(),
-        toml::Value::Table(toml::from_str("walk = { step = [0.03] }").unwrap()),
-    );
-    std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
-    import(&source(scratch.path()), project.path()).expect("import with events");
-    let address = "content/walk/animation_walk.gasset";
-    let (_, imported) = decode_content_asset::<AnimationClip>(&read(project.path(), address))
-        .expect("the clip decodes");
-    let imported_events = stored_events(&imported);
-
-    let mut edited = imported;
-    edited
-        .add_animation_events(&BTreeMap::from([("edited".to_string(), vec![0.05])]))
+    let first = import(&source(scratch.path()), project.path()).expect("first import");
+    let skeleton = first
+        .assets
+        .iter()
+        .find(|asset| asset.embedded_in.is_some())
         .unwrap();
+    let (_, skeleton) =
+        decode_content_asset::<Skeleton>(&read_asset_record(project.path(), skeleton).unwrap())
+            .expect("the skeleton decodes");
+    let address = "content/walk/animation_walk.gasset";
+    let mut edited = clip_at(project.path(), address);
+    edited.add_event(0.01, AnimationEvent::default());
+    edited.add_event(0.06, AnimationEvent::default());
+    let base = AdditiveBase::new(AssetHandle::weak(AssetId::new()))
+        .with_base_range(ClipRange::new(0.0, 1.0))
+        .with_range(ClipRange::new(0.02, 0.06));
+    edited.set_additive(Additive::LocalSpace(base.clone()));
     resave_content_asset(&edited, project.path(), address, &mut AssetRegistry::new())
         .expect("resave");
+    let rooted = |range: ClipRange| {
+        let mut base = base.clone().with_root(skeleton.bone_ids[0]);
+        base.range = Some(range);
+        Additive::LocalSpace(base)
+    };
 
     import(&source(scratch.path()), project.path()).expect("re-import");
 
-    let (_, reimported) = decode_content_asset::<AnimationClip>(&read(project.path(), address))
-        .expect("the re-imported clip decodes");
-    assert_eq!(stored_events(&reimported), imported_events);
+    let kept = clip_at(project.path(), address);
+    assert_eq!(stored_events(&kept), stored_events(&edited));
+    assert_eq!(kept.additive(), &rooted(ClipRange::new(0.02, 0.06)));
+
+    let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
+    let mut metadata = SourceMetadata::load(&sidecar).unwrap();
+    metadata.settings.insert(
+        "frame_range".to_string(),
+        toml::Value::Array(vec![toml::Value::Integer(0), toml::Value::Integer(2)]),
+    );
+    std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
+
+    import(&source(scratch.path()), project.path()).expect("re-import with a shorter range");
+
+    let fitted = clip_at(project.path(), address);
+    let end = fitted.duration();
+    assert!(end < 0.06, "{end}");
+    let times: Vec<f32> = stored_events(&fitted)
+        .iter()
+        .map(|event| event.time)
+        .collect();
+    assert_eq!(times, [0.01, end]);
+    assert_eq!(fitted.additive(), &rooted(ClipRange::new(0.02, end)));
 }

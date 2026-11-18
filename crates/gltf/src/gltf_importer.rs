@@ -11,9 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use base64::Engine;
-use concerto_animation::clip::{
-    AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
-};
+use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip, RangeFit};
 use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_color::Color;
 use concerto_ecs::component::scene::SceneEntityRef;
@@ -23,7 +21,7 @@ use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
 use concerto_name::Name;
-use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{Texture, TextureRole};
 use concerto_render::components::camera::Camera;
@@ -35,7 +33,6 @@ use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
 use log::warn;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // glTF (KHR_lights_punctual) stores light intensity in photometric units: lux
@@ -47,21 +44,6 @@ use uuid::Uuid;
 const LUMINOUS_EFFICACY: f32 = 683.0;
 
 pub struct GltfImporter;
-
-/// Importer settings read from the `[settings]` table of a glTF source's sidecar.
-#[derive(Reflect, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[reflect(Default)]
-pub struct GltfSettings {
-    /// Per emitted clip name, the clip times in seconds of each named event.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[reflect(skip)]
-    pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
-    /// Per emitted clip name, the base the clip is additive against.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[reflect(skip)]
-    pub additive: BTreeMap<String, AdditiveSetting>,
-}
 
 /// One emitted primitive of a glTF mesh: the sub-asset indices of its imported
 /// `mesh/*` geometry and the `material/*` it draws with.
@@ -94,7 +76,7 @@ struct NodePathInfo {
 }
 
 impl Importer for GltfImporter {
-    type Settings = GltfSettings;
+    type Settings = NoSettings;
     type AssetSettings = NoSettings;
 
     fn name(&self) -> &'static str {
@@ -108,7 +90,7 @@ impl Importer for GltfImporter {
     fn import(
         &self,
         source_path: &Path,
-        settings: &GltfSettings,
+        _settings: &NoSettings,
         _asset_settings: Option<&NoSettings>,
         ctx: &mut ImportContext,
     ) -> Result<(), ImportError> {
@@ -392,24 +374,6 @@ impl Importer for GltfImporter {
         let requested_clip_names: Vec<Option<&str>> =
             document.animations().map(|a| a.name()).collect();
         let animation_names = clip_names(&requested_clip_names);
-        if let Some(name) = settings
-            .events
-            .keys()
-            .find(|name| !animation_names.contains(name))
-        {
-            return Err(malformed(format!(
-                "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
-            )));
-        }
-        if let Some(name) = settings
-            .additive
-            .keys()
-            .find(|name| !animation_names.contains(name))
-        {
-            return Err(malformed(format!(
-                "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
-            )));
-        }
         let roots: Vec<Uuid> = roots.into_iter().collect();
         for (animation_index, (animation, animation_name)) in
             document.animations().zip(&animation_names).enumerate()
@@ -466,27 +430,13 @@ impl Importer for GltfImporter {
                 }
             }
 
-            if let Some(events) = settings.events.get(animation_name) {
-                animation_clip
-                    .add_animation_events(events)
-                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
-            }
-
-            if let Some(additive) = settings.additive.get(animation_name) {
-                let additive = additive
-                    .additive(animation_clip.duration(), roots.clone())
-                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
-                animation_clip.set_additive(additive);
-            }
-
+            let output = format!("animation/{animation_name}");
             let index_name = animation_index.to_string();
             if !animation_names.contains(&index_name) {
-                ctx.renamed_from(
-                    &format!("animation/{animation_name}"),
-                    &format!("animation/{index_name}"),
-                );
+                ctx.renamed_from(&output, &format!("animation/{index_name}"));
             }
-            ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
+            keep_authored(ctx, &output, &mut animation_clip, roots.clone());
+            ctx.emit(&output, &animation_clip)?;
         }
 
         // Node walk. `document.nodes()` yields nodes in index order, so the
@@ -721,6 +671,27 @@ fn push_mesh_components(
             handle: AssetHandle::weak(material_id),
         },
     )
+}
+
+fn keep_authored(ctx: &ImportContext, output: &str, clip: &mut AnimationClip, roots: Vec<Uuid>) {
+    let Some(previous) = ctx.previous::<AnimationClip>(output) else {
+        return;
+    };
+    let kept = clip.keep_authored(&previous, roots);
+    let duration = clip.duration();
+    if kept.events_moved > 0 {
+        warn!(
+            "'{output}': moved {} events past the clip's new end ({duration} s) to its end",
+            kept.events_moved
+        );
+    }
+    match kept.range {
+        RangeFit::Kept => {}
+        RangeFit::Clamped => warn!("'{output}': clamped the additive range to {duration} s"),
+        RangeFit::Dropped => {
+            warn!("'{output}': dropped the additive range, which no longer overlaps the clip")
+        }
+    }
 }
 
 fn track_external(ctx: &mut ImportContext, source_dir: &Path, uri: &str) {

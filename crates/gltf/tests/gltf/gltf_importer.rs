@@ -2,18 +2,22 @@
 //! mesh, material, and scene sub-assets (this fixture has no textures),
 //! with the scene's node referencing the mesh/material by stable AssetId
 //! through serialized component payloads.
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
 use concerto_animation::event::AnimationEvent;
-use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
+use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer, NoSettings};
 use concerto_ecs::component::Component;
-use concerto_foundation::assets::{AssetId, handle::AssetHandle};
-use concerto_gltf::gltf_importer::{GltfImporter, GltfSettings};
+use concerto_foundation::assets::content::{ContentAssetHeader, write_content_asset};
+use concerto_foundation::assets::{Asset, AssetId, handle::AssetHandle};
+use concerto_gltf::gltf_importer::GltfImporter;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
+use concerto_name::Name;
 use concerto_reflect::{Reflect, apply_value};
 use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
+use uuid::Uuid;
 
 fn decode<T: Reflect + Default>(component: &SerializedComponent) -> T {
     let mut value = T::default();
@@ -49,7 +53,7 @@ struct Imported {
 
 fn import(name: &str, settings: &str) -> Imported {
     let mut ctx = ImportContext::new(PathBuf::from(name));
-    let result = match toml::from_str::<GltfSettings>(settings) {
+    let result = match toml::from_str::<NoSettings>(settings) {
         Ok(settings) => GltfImporter.import(&fixture(name), &settings, None, &mut ctx),
         Err(error) => Err(ImportError::MalformedSource {
             source_path: fixture(name),
@@ -149,12 +153,6 @@ fn a_source_and_its_settings_import_their_sub_assets_or_are_refused() {
             &[],
         ),
         refuses("scale = 0.01\n".to_string()),
-        refuses("[events.Wobble]\nhit = [0.5]\n".to_string()),
-        refuses("[events.Wiggle]\nhit = [1.5]\n".to_string()),
-        refuses("[additive.Wiggle]\nbase = \"not-an-id\"\n".to_string()),
-        refuses(format!(
-            "[additive.Wiggle]\nbase = \"{BASE_ID}\"\nrange = [0.0, 1.5]\n"
-        )),
     ];
     for case in &cases {
         let Imported { result, outputs } = import(case.source, &case.settings);
@@ -351,37 +349,71 @@ fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<NamedKey> {
         .collect()
 }
 
-#[test]
-fn event_settings_add_sorted_animation_events_to_the_named_clip() {
-    let outputs = imported(
-        "animations_named.gltf",
-        "[events.Wiggle_2]\nhit = [0.75, 0.25, 0.75]\nstart = [0.0]\n[events.1]\nend = [1.0]\n",
-    );
-    assert_eq!(
-        event_keys(&outputs, "animation/Wiggle_2"),
-        [
-            named_key(0.0, "start"),
-            named_key(0.25, "hit"),
-            named_key(0.75, "hit"),
-        ]
-    );
-    assert_eq!(event_keys(&outputs, "animation/1"), [named_key(1.0, "end")]);
+fn record(clip: &AnimationClip) -> Vec<u8> {
+    let header = ContentAssetHeader {
+        asset_id: AssetId::new(),
+        references: Vec::new(),
+        kind: <AnimationClip as Asset>::name().to_string(),
+        kind_version: AnimationClip::FORMAT_VERSION,
+        provenance: None,
+        import: None,
+        uncooked: None,
+        derived: None,
+        embedded: Vec::new(),
+    };
+    write_content_asset(&header, &bincode::serialize(clip).unwrap()).unwrap()
 }
 
 #[test]
-fn an_additive_table_makes_only_the_named_clip_additive_against_its_base() {
-    let outputs = imported(
-        "animations_named.gltf",
-        &format!(
-            "[additive.Wiggle_2]\nbase = \"{BASE_ID}\"\nbase_range = [0.5, 1.5]\nrange = {{ start = 0.25, end = 0.75 }}\n"
-        ),
-    );
-    let skeleton: Skeleton = emitted(&outputs, "skeleton/0");
-    let mut expected = AdditiveBase::new(AssetHandle::weak(
+fn a_re_import_keeps_each_clips_events_and_additive_base_with_the_skins_roots() {
+    let first = imported("animations_named.gltf", "");
+    let skeleton: Skeleton = emitted(&first, "skeleton/0");
+    let base = AdditiveBase::new(AssetHandle::weak(
         AssetId::from_simple_hex(BASE_ID).unwrap(),
     ))
     .with_base_range(ClipRange::new(0.5, 1.5))
     .with_range(ClipRange::new(0.25, 0.75));
+    let mut wiggle: AnimationClip = emitted(&first, "animation/Wiggle_2");
+    wiggle.add_event(
+        0.25,
+        AnimationEvent {
+            name: Name::new("hit"),
+        },
+    );
+    wiggle.set_additive(Additive::LocalSpace(
+        base.clone().with_root(Uuid::from_u128(99)),
+    ));
+    let mut one: AnimationClip = emitted(&first, "animation/1");
+    one.add_event(
+        1.0,
+        AnimationEvent {
+            name: Name::new("end"),
+        },
+    );
+    let previous = HashMap::from([
+        ("animation/Wiggle_2".to_string(), record(&wiggle)),
+        ("animation/1".to_string(), record(&one)),
+    ]);
+    let mut ctx = ImportContext::new(PathBuf::from("animations_named.gltf"))
+        .with_previous_outputs(Box::new(move |name| previous.get(name).cloned()));
+
+    GltfImporter
+        .import(
+            &fixture("animations_named.gltf"),
+            &NoSettings::default(),
+            None,
+            &mut ctx,
+        )
+        .expect("the re-import should succeed");
+    let outputs = ctx.into_parts();
+
+    assert_eq!(
+        event_keys(&outputs, "animation/Wiggle_2"),
+        [named_key(0.25, "hit")]
+    );
+    assert_eq!(event_keys(&outputs, "animation/1"), [named_key(1.0, "end")]);
+    assert_eq!(event_keys(&outputs, "animation/Wiggle"), []);
+    let mut expected = base;
     for (parent, id) in skeleton.parents.iter().zip(skeleton.bone_ids.iter()) {
         if parent.is_none() {
             expected = expected.with_root(*id);

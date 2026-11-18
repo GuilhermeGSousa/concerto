@@ -557,10 +557,8 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     )
     .expect("the BVH imports");
     let sidecar = sidecar_path(&root.join("assets/walk.bvh"));
-    let mut metadata = SourceMetadata::load(&sidecar).expect("sidecar");
+    let metadata = SourceMetadata::load(&sidecar).expect("sidecar");
     assert!(metadata.settings.is_empty(), "{:?}", metadata.settings);
-    metadata.settings = "[events.walk]\nstep = [0.0]\n".parse().expect("events");
-    std::fs::write(&sidecar, toml::to_string(&metadata).expect("encode")).expect("write");
     let StagedSettings { mut settings, .. } = ContentScan::new(root, &config())
         .expect("the project scans")
         .staged_settings(&walk, "assets/walk.bvh")
@@ -582,11 +580,6 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     .expect("the BVH imports with its settings");
     let written = SourceMetadata::load(&sidecar).expect("sidecar").settings;
     assert_eq!(written["scale"].as_float(), Some(0.5), "{written:?}");
-    assert_eq!(
-        written["events"]["walk"]["step"].as_array().map(Vec::len),
-        Some(1),
-        "{written:?}"
-    );
 
     std::fs::write(
         &sidecar,

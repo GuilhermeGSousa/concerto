@@ -63,7 +63,7 @@ The import picks the importer by file extension:
 
 | Extensions           | Importer (name)           | Settings / asset settings       | Emits                                              |
 |----------------------|---------------------------|---------------------------------|---------------------------------------------------|
-| `.gltf` `.glb`       | `GltfImporter` (`gltf`)   | `GltfSettings` / none           | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/<clip name>`, `scene` |
+| `.gltf` `.glb`       | `GltfImporter` (`gltf`)   | none / none                     | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/<clip name>`, `scene` |
 | `.obj` (+ its `.mtl`)| `ObjImporter` (`obj`)     | none / none                     | `mesh/*`, one `material/<mtl stem>`, `scene`       |
 | `.bvh`               | `BvhImporter` (`bvh`)     | `BvhSettings` / none            | `skeleton/0`, `animation/<file stem>`, `scene`     |
 | `.png` `.jpg` `.jpeg`| `ImageImporter` (`image`) | none / `TextureSettings`        | one `main` texture                                |
@@ -278,11 +278,11 @@ file the editor can save on its own.
 An optional `[settings]` table holds the importer's settings, its typed
 `Importer::Settings` encoded as TOML. The importer that owns the source reads
 it on every import; a sidecar without one uses the importer's defaults, and a
-first import writes none. The `obj`, `image` and `audio` importers have no
-settings (`NoSettings`), so any key fails their import. The `gltf` importer's
-are `events` and `additive`, described under [Clip events](#clip-events) and
-[Additive clips](#additive-clips), and an unknown key fails its import. The
-`bvh` importer's are described under [BVH motion capture](#bvh-motion-capture).
+first import writes none. The `gltf`, `obj`, `image` and `audio` importers
+have no settings (`NoSettings`), so any key fails their import. The `bvh`
+importer's are described under [BVH motion capture](#bvh-motion-capture). A
+clip's events and additive base are not settings: the clip owns them, as
+[Clip events](#clip-events) and [Additive clips](#additive-clips) describe.
 
 `import_source_into`'s last argument, `ImportSettings`, may carry settings for
 that import. Its `settings`, of the importer's type, are written whole to the
@@ -291,7 +291,7 @@ sidecar's `[settings]`; left `None`, the sidecar's own are used and kept.
 returns what an import of a source would use when given none: the sidecar's
 settings or the defaults, and the main asset's current asset settings. One scan
 stages a whole batch of sources; it neither creates nor writes anything. Settings that start from it carry the fields reflection leaves out,
-such as `events`, so writing them back keeps those. A sidecar whose
+such as the `bvh` importer's `frame_range`, so writing them back keeps those. A sidecar whose
 `[settings]` does not parse fails both.
 
 A texture's settings are not in the sidecar but in its own `.gasset`, and a
@@ -314,13 +314,6 @@ A `bvh` source's settings:
 [settings]
 scale = 0.01
 frame_range = [10, 250]
-```
-
-A `gltf` source whose `animation/Run` clip gets two footsteps:
-
-```toml
-[settings.events.Run]
-footstep = [0.2, 0.55]
 ```
 
 Settings are edited by hand. To change them: import the source once, edit the
@@ -367,82 +360,59 @@ Settings, in the sidecar's `[settings]` table:
 |---------------|---------|---------|
 | `scale`       | `0.01`  | Multiplier applied to every offset and translation. The default turns the centimetres most BVH files use into metres. Must be finite and positive. |
 | `frame_range` | whole file | `[start, end)` frame indices to keep. Needs `start < end <= frame count` and at least two frames. Keys are timed from the first kept frame. |
-| `events`      | none    | Named events on the clip, as described under [Clip events](#clip-events). The table is `[settings.events.<name>]`, where `<name>` is the clip's sanitised name, the `<name>` of its `animation/<name>` output: `Walk#Cycle.bvh` gives `Walk_Cycle`. Times count from the first kept frame. |
-| `additive`    | none    | Makes the clip additive against a base clip, as described under [Additive clips](#additive-clips). The table is `[settings.additive.<name>]`, with `<name>` as for `events`. `range` counts from the first kept frame. |
 
 A `frame_range` outside the file, an empty or one-frame range, a bad `scale`,
-bad `events` or `additive`, or an unknown key fails the import. The file's own timing is
+or an unknown key fails the import. The file's own timing is
 kept; there is no resampling setting.
 
 ## Clip events
 
-The `gltf` and `bvh` importers put named events on the clips they emit, read
-from `[settings.events.<clip>]` tables:
+A clip owns its events. An imported clip starts with none, and a re-import of
+its source keeps the events of the clip it replaces, read from the clip's
+current `.gasset`: every `ClipEventKey`, `AnimationEvent`s and other event types
+alike, at its saved time. An event past the re-imported clip's end, for
+example after a shorter BVH `frame_range`, moves to the end, and the import
+logs `'animation/<name>': moved <n> events past the clip's new end (<d> s) to
+its end`. The clip is found by its output name, `animation/<name>`, after the
+importer has sanitised the name and made it unique. An importer that emits
+clips does this with `ImportContext::previous` and
+`AnimationClip::keep_authored`.
 
-```toml
-[settings.events.walk]
-footstep_left = [0.12, 0.62]
-footstep_right = [0.37, 0.87]
-```
-
-- `<clip>` is the `<name>` of the clip's `animation/<name>` output, after the
-  importer has sanitised it and made it unique, not the raw glTF animation
-  name or file stem.
-- Each key is an event name, and its list holds clip times in seconds. Each
-  time becomes an `AnimationEvent { name }` at that time; a time listed twice
-  under one name adds one event.
-- A table for a clip the source does not emit, or a time that is negative,
-  not finite, or past the clip's duration, fails the import.
-
-A clip's `AnimationEvent`s can also be added, moved, renamed and removed in the
+A clip's `AnimationEvent`s are added, moved, renamed and removed in the
 editor's clip tab (see `crates/animation-editor/README.md`), and Save writes
 them into the clip's `.gasset` with `resave_content_asset`. Other event types
-show there read-only and are saved as they are. The save keeps the clip's
-import provenance, so the clip stays owned by its source: the next re-import
-of the source rebuilds the clip and its events from `[settings.events]`, and
-the edits saved from the editor are lost. To keep an event across re-imports,
-put it in `[settings.events]`. An authored clip, with no provenance, keeps its
-saved events.
+show there read-only and are saved as they are. Setting events over MCP is
+#607. In code, `AnimationClip::add_event` or `replace_events` followed by
+`resave_content_asset` does the same.
 
 ## Additive clips
 
-The `gltf` and `bvh` importers make a clip additive against a base clip, its
-matched neutral take, from a `[settings.additive.<clip>]` table:
+A clip owns its additive base too: `Additive::LocalSpace` with the base clip,
+its matched neutral take, the optional `base_range` and `range`, and the root
+bones. An imported clip starts plain, `Additive::None`. A re-import keeps the
+base of the clip it replaces, as for events:
 
-```toml
-[settings.additive.Cold_Walk]
-base = "6f1c2a3e-9d1b-4c84-a1a7-0b6f3a1d2e44"
-base_range = [0.0, 4.2]
-range = { start = 0.1, end = 4.3 }
-```
+- the base clip and `base_range` are kept as they are;
+- `range` is clamped to the re-imported clip's duration, with the warning
+  `'animation/<name>': clamped the additive range to <d> s`, and dropped, so
+  the whole clip is used, when nothing of it is left, with the warning
+  `'animation/<name>': dropped the additive range, which no longer overlaps
+  the clip`;
+- the root bones, whose translation the delta leaves out, are taken from the
+  skeletons the source emits: every bone with no parent in one of them.
 
-- `<clip>` is the `<name>` of the clip's `animation/<name>` output, as for
-  [Clip events](#clip-events).
-- `base` is the base clip's asset id, as written in the
-  `[outputs."animation/<name>"]` table of the base source's sidecar. A value
-  that isn't an asset id fails the import.
-- `base_range` and `range` are optional spans in seconds of the base clip and of
-  this clip, each written as a two-element array `[start, end]` or as a
-  `{ start, end }` table. The whole clip is used when one is unset. An extra key
-  in a `{ start, end }` table fails the import.
-- `range` is checked against this clip: a `range` that is not finite, whose
-  `start` is negative or not below its `end`, or whose `end` is past the clip's
-  duration fails the import. `base_range` is checked when the clip loads, once
-  the base is read.
-- The clip's root bones, whose translation the delta leaves out, come from the
-  skeletons the source emits: every bone with no parent in one of them. The
-  sidecar doesn't set them.
-- A table for a clip the source does not emit, or an unknown key, fails the
-  import.
+`base_range` and `range` are spans in seconds of the base clip and of this
+clip; the whole clip is used when one is unset. Until #607 lands, the base is
+set only in code: `AnimationClip::set_additive` with an `AdditiveBase`,
+then `resave_content_asset`. Setting `Additive::None` the same way makes the
+clip plain again.
 
 The import doesn't read the base or check that it exists, so the clip and its
 base import in any order. The delta between the two is
 [derived data](#derived-data), built when the clip loads: a missing base, a
-`base_range` that doesn't fit the base, or any other failed derive fails the
-clip's load, with an error naming the clip and the reason. A clip with no table
-is plain, `Additive::None`; removing the table and importing again makes the
-clip plain again. A clip added in code with `AssetServer::add` derives nothing,
-and has no delta.
+`range` or `base_range` that doesn't fit its clip, or any other failed derive
+fails the clip's load, with an error naming the clip and the reason. A clip
+added in code with `AssetServer::add` derives nothing, and has no delta.
 
 ## The `.gasset` file format
 

@@ -1,12 +1,12 @@
 "." = 3
-"crates/animation" = 94
+"crates/animation" = 95
 "crates/animation-editor" = 23
 "crates/app" = 17
 "crates/asset-build" = 4
 "crates/asset-format" = 6
 "crates/asset-import" = 2
 "crates/audio" = 4
-"crates/bvh" = 9
+"crates/bvh" = 8
 "crates/color" = 3
 "crates/debug-gizmos" = 2
 "crates/director" = 4
@@ -14,7 +14,7 @@
 "crates/editor" = 176
 "crates/foundation" = 67
 "crates/gameplay" = 11
-"crates/gltf" = 7
+"crates/gltf" = 6
 "crates/import" = 25
 "crates/mcp" = 10
 "crates/mesh" = 12

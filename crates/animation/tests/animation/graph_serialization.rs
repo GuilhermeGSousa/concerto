@@ -3,7 +3,7 @@ use std::path::Path;
 use concerto_animation::TransitionBlender;
 use concerto_animation::clip::{
     Additive, AdditiveBase, AnimationChanelOutput, AnimationChannel, AnimationClip, ClipEventData,
-    ClipRange,
+    ClipRange, KeptAuthored, RangeFit,
 };
 use concerto_animation::evaluation::AnimationGraphContext;
 use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
@@ -594,6 +594,149 @@ fn a_clip_added_to_the_asset_server_makes_its_stored_events_live_with_their_hand
         .pose;
     assert!(matches!(pose, AssetHandle::Strong(..)));
     assert_eq!(pose.id(), AssetId::from_path("impact_pose"));
+}
+
+fn clip_lasting(duration: f32) -> AnimationClip {
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        Uuid::from_u128(7),
+        AnimationChannel::new(
+            vec![0.0, duration],
+            AnimationChanelOutput::Translation(vec![glam::Vec3::ZERO, glam::Vec3::X]),
+        ),
+    );
+    clip
+}
+
+fn based(range: Option<ClipRange>, root: u128) -> Additive {
+    let mut base = AdditiveBase::new(clip("base"))
+        .with_base_range(ClipRange::new(0.5, 1.5))
+        .with_root(Uuid::from_u128(root));
+    base.range = range;
+    Additive::LocalSpace(base)
+}
+
+#[derive(Debug, PartialEq)]
+struct KeptEvent {
+    time: f32,
+    type_name: String,
+    value: ReflectedValue,
+}
+
+fn kept_events(clip: &AnimationClip) -> Vec<KeptEvent> {
+    clip.events()
+        .iter()
+        .map(|key| KeptEvent {
+            time: key.time,
+            type_name: key.event.type_name().to_owned(),
+            value: key.event.value().unwrap().into_owned(),
+        })
+        .collect()
+}
+
+struct Keep {
+    case: &'static str,
+    events: &'static [f32],
+    previous: Additive,
+    kept_events: &'static [f32],
+    kept: Additive,
+    kept_authored: KeptAuthored,
+}
+
+#[test]
+fn keep_authored_takes_the_previous_events_and_base_fitted_to_the_new_duration() {
+    let range = |start, end| Some(ClipRange::new(start, end));
+    let cases = [
+        Keep {
+            case: "events before, at and past the end, on a plain clip",
+            events: &[0.25, 1.0, 1.5, 2.0],
+            previous: Additive::None,
+            kept_events: &[0.25, 1.0, 1.0, 1.0],
+            kept: Additive::None,
+            kept_authored: KeptAuthored {
+                events_moved: 2,
+                range: RangeFit::Kept,
+            },
+        },
+        Keep {
+            case: "a whole-clip base",
+            events: &[],
+            previous: based(None, 99),
+            kept_events: &[],
+            kept: based(None, 7),
+            kept_authored: KeptAuthored {
+                events_moved: 0,
+                range: RangeFit::Kept,
+            },
+        },
+        Keep {
+            case: "a range inside the clip",
+            events: &[0.5],
+            previous: based(range(0.25, 0.75), 99),
+            kept_events: &[0.5],
+            kept: based(range(0.25, 0.75), 7),
+            kept_authored: KeptAuthored {
+                events_moved: 0,
+                range: RangeFit::Kept,
+            },
+        },
+        Keep {
+            case: "a range past the end",
+            events: &[],
+            previous: based(range(0.5, 1.5), 99),
+            kept_events: &[],
+            kept: based(range(0.5, 1.0), 7),
+            kept_authored: KeptAuthored {
+                events_moved: 0,
+                range: RangeFit::Clamped,
+            },
+        },
+        Keep {
+            case: "a range that starts at the end",
+            events: &[],
+            previous: based(range(1.0, 1.5), 99),
+            kept_events: &[],
+            kept: based(None, 7),
+            kept_authored: KeptAuthored {
+                events_moved: 0,
+                range: RangeFit::Dropped,
+            },
+        },
+    ];
+    for case in cases {
+        let mut previous = clip_lasting(2.0);
+        for (index, &time) in case.events.iter().enumerate() {
+            previous.add_event(
+                time,
+                AnimationEvent {
+                    name: Name::new(&format!("e{index}")),
+                },
+            );
+        }
+        previous.add_event(
+            0.1,
+            Impact {
+                pose: clip("impact_pose"),
+            },
+        );
+        previous.set_additive(case.previous);
+        let previous = round_trip_clip(&previous);
+        let mut expected = kept_events(&previous);
+        for (event, &time) in expected
+            .iter_mut()
+            .filter(|event| event.type_name != std::any::type_name::<Impact>())
+            .zip(case.kept_events)
+        {
+            event.time = time;
+        }
+
+        let mut imported = clip_lasting(1.0);
+        let kept_authored = imported.keep_authored(&previous, vec![Uuid::from_u128(7)]);
+
+        assert_eq!(kept_authored, case.kept_authored, "{}", case.case);
+        assert_eq!(kept_events(&imported), expected, "{}", case.case);
+        assert_eq!(imported.additive(), &case.kept, "{}", case.case);
+    }
 }
 
 #[test]

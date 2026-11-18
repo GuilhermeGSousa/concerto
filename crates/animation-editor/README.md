@@ -186,10 +186,10 @@ Discard puts back the events of the clip as last opened or saved, and clears
 the selection. Opening another clip in a tab with unsaved edits raises the
 editor's unsaved-changes prompt, as for any `Unsaved` document.
 
-An imported clip stays owned by its source after a save: the next re-import of
-that source rebuilds the clip and its events from the import settings'
-`[settings.events]`, and the edits saved from the tab are lost. See Clip events
-in `docs/asset-importing.md`.
+An imported clip stays owned by its source after a save, and the saved events
+survive a re-import of that source: it keeps them, moving any past the
+re-imported clip's end to its end. See Clip events in
+`docs/asset-importing.md`.
 
 The preview plays the clip's keys and never fires its events.
 

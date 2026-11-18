@@ -1,11 +1,8 @@
-use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use concerto_animation::clip::{
-    AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
-};
+use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip, RangeFit};
 use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
@@ -16,6 +13,7 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -39,14 +37,6 @@ pub struct BvhSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[reflect(skip)]
     pub frame_range: Option<[usize; 2]>,
-    /// Per clip name, the clip times in seconds of each named event.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[reflect(skip)]
-    pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
-    /// Per clip name, the base the clip is additive against.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[reflect(skip)]
-    pub additive: BTreeMap<String, AdditiveSetting>,
 }
 
 impl Default for BvhSettings {
@@ -54,8 +44,6 @@ impl Default for BvhSettings {
         Self {
             scale: DEFAULT_SCALE,
             frame_range: None,
-            events: BTreeMap::new(),
-            additive: BTreeMap::new(),
         }
     }
 }
@@ -117,14 +105,6 @@ impl Importer for BvhImporter {
         let mut clip = build_clip(&bvh, settings.scale, start..end, &bone_ids);
         let stem = source_path.file_stem().and_then(|stem| stem.to_str());
         let clip_name = clip_names(&[stem]).remove(0);
-        for (name, events) in &settings.events {
-            if *name != clip_name {
-                return Err(malformed(format!(
-                    "events are set for clip `{name}`, but the only clip is `{clip_name}`"
-                )));
-            }
-            clip.add_animation_events(events).map_err(malformed)?;
-        }
         let roots: Vec<Uuid> = skeleton
             .parents
             .iter()
@@ -132,26 +112,37 @@ impl Importer for BvhImporter {
             .filter(|(parent, _)| parent.is_none())
             .map(|(_, id)| *id)
             .collect();
-        for (name, additive) in &settings.additive {
-            if *name != clip_name {
-                return Err(malformed(format!(
-                    "additive is set for clip `{name}`, but the only clip is `{clip_name}`"
-                )));
-            }
-            clip.set_additive(
-                additive
-                    .additive(clip.duration(), roots.clone())
-                    .map_err(malformed)?,
-            );
-        }
         ctx.emit("skeleton/0", &skeleton)?;
         if clip_name != "0" {
             ctx.renamed_from(&format!("animation/{clip_name}"), "animation/0");
         }
-        ctx.emit(&format!("animation/{clip_name}"), &clip)?;
+        let output = format!("animation/{clip_name}");
+        keep_authored(ctx, &output, &mut clip, roots);
+        ctx.emit(&output, &clip)?;
         let scene = build_scene(&bvh, &skeleton, ctx.sub_asset_id("skeleton/0"))?;
         ctx.emit("scene", &scene)?;
         Ok(())
+    }
+}
+
+fn keep_authored(ctx: &ImportContext, output: &str, clip: &mut AnimationClip, roots: Vec<Uuid>) {
+    let Some(previous) = ctx.previous::<AnimationClip>(output) else {
+        return;
+    };
+    let kept = clip.keep_authored(&previous, roots);
+    let duration = clip.duration();
+    if kept.events_moved > 0 {
+        warn!(
+            "'{output}': moved {} events past the clip's new end ({duration} s) to its end",
+            kept.events_moved
+        );
+    }
+    match kept.range {
+        RangeFit::Kept => {}
+        RangeFit::Clamped => warn!("'{output}': clamped the additive range to {duration} s"),
+        RangeFit::Dropped => {
+            warn!("'{output}': dropped the additive range, which no longer overlaps the clip")
+        }
     }
 }
 

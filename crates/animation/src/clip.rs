@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, hash_map::Keys};
+use std::collections::{HashMap, hash_map::Keys};
 use std::ops::Range;
 
 use anyhow::Context;
@@ -12,7 +12,6 @@ use concerto_foundation::assets::{Asset, AssetId, LoadableAsset};
 use concerto_foundation::hash::Fnv1a;
 use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_mesh::Skeleton;
-use concerto_name::Name;
 use concerto_reflect::{
     EncodeError, FromType, Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value,
 };
@@ -21,7 +20,7 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
+use crate::event::{ClipEvent, ReflectClipEvent};
 use crate::graph::{Stored, StoredRef};
 use crate::inertialization::PoseVelocity;
 use crate::pose::JointPose;
@@ -328,30 +327,19 @@ impl ClipRange {
     }
 }
 
-/// One clip's `[settings.additive.<clip>]` table in an importer's sidecar.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AdditiveSetting {
-    pub base: AssetId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_range: Option<ClipRange>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub range: Option<ClipRange>,
+/// What `keep_authored` changed to fit the clip; the importer turns it into warnings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeptAuthored {
+    pub events_moved: usize,
+    pub range: RangeFit,
 }
 
-impl AdditiveSetting {
-    /// Checks `range` against a clip of `duration` seconds and builds the clip's [`Additive::LocalSpace`] with `roots`.
-    pub fn additive(&self, duration: f32, roots: Vec<Uuid>) -> Result<Additive, String> {
-        if self.range.is_some() {
-            checked_range(self.range, duration, "range").map_err(|err| err.to_string())?;
-        }
-        Ok(Additive::LocalSpace(AdditiveBase {
-            clip: AssetHandle::weak(self.base),
-            base_range: self.base_range,
-            range: self.range,
-            roots,
-        }))
-    }
+/// What happened to the additive `range` of the kept base.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeFit {
+    Kept,
+    Clamped,
+    Dropped,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -599,6 +587,71 @@ impl AnimationClip {
         self.delta = None;
     }
 
+    /// Takes `previous`'s events and additive base onto this freshly imported clip, fitted to this clip's duration, with `roots` as the additive roots.
+    pub fn keep_authored(&mut self, previous: &AnimationClip, roots: Vec<Uuid>) -> KeptAuthored {
+        let duration = self.duration;
+        let mut events_moved = 0;
+        self.events = previous
+            .events
+            .iter()
+            .filter_map(|key| {
+                let value = match key.event.value() {
+                    Ok(value) => value.into_owned(),
+                    Err(err) => {
+                        warn!(
+                            "event `{}` at {} not kept: {err}",
+                            key.event.type_name(),
+                            key.time
+                        );
+                        return None;
+                    }
+                };
+                let time = if key.time > duration {
+                    events_moved += 1;
+                    duration
+                } else {
+                    key.time
+                };
+                Some(ClipEventKey {
+                    time,
+                    event: ClipEventData::Stored {
+                        type_name: key.event.type_name().to_owned(),
+                        value,
+                    },
+                })
+            })
+            .collect();
+        let mut range_fit = RangeFit::Kept;
+        let additive = match &previous.additive {
+            Additive::None => Additive::None,
+            Additive::LocalSpace(base) => {
+                let range = base.range.and_then(|range| {
+                    if range.end <= duration {
+                        return Some(range);
+                    }
+                    if range.start < duration {
+                        range_fit = RangeFit::Clamped;
+                        Some(ClipRange::new(range.start, duration))
+                    } else {
+                        range_fit = RangeFit::Dropped;
+                        None
+                    }
+                });
+                Additive::LocalSpace(AdditiveBase {
+                    clip: AssetHandle::weak(base.clip.id()),
+                    base_range: base.base_range,
+                    range,
+                    roots,
+                })
+            }
+        };
+        self.set_additive(additive);
+        KeptAuthored {
+            events_moved,
+            range: range_fit,
+        }
+    }
+
     /// The additive delta of `bone` at `time`, clamped to the delta's span; identity for a bone with no delta, a plain clip, or a delta not yet built.
     pub fn sample_additive(&self, time: f32, bone: &Uuid) -> JointPose {
         self.delta
@@ -820,35 +873,6 @@ impl AnimationClip {
         };
         let end = self.events.partition_point(|key| key.time <= to);
         start..end.max(start)
-    }
-
-    /// Adds an [`AnimationEvent`] per name and distinct time, failing on a time that is negative, non-finite or past the clip's end.
-    pub fn add_animation_events(
-        &mut self,
-        events: &BTreeMap<String, Vec<f32>>,
-    ) -> Result<(), String> {
-        for (name, times) in events {
-            let mut times = times.clone();
-            for &time in &times {
-                if !time.is_finite() || time < 0.0 || time > self.duration {
-                    return Err(format!(
-                        "event `{name}` at {time} must be finite and within the clip's 0 to {} seconds",
-                        self.duration
-                    ));
-                }
-            }
-            times.sort_by(f32::total_cmp);
-            times.dedup();
-            for time in times {
-                self.add_event(
-                    time,
-                    AnimationEvent {
-                        name: Name::new(name),
-                    },
-                );
-            }
-        }
-        Ok(())
     }
 
     /// Builds every stored event from the registry, loading handles through `server`; an event that cannot be built is dropped and leaves a warning naming its type.

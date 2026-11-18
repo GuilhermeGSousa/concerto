@@ -16,6 +16,7 @@ concerto-name.workspace = true
 concerto-reflect.workspace = true
 concerto-scene.workspace = true
 glam.workspace = true
+log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 
