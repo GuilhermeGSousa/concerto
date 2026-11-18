@@ -2,3 +2,4 @@
 /dist
 content/.registry.toml
 derived-cache/
+/assets/

@@ -1421,6 +1421,7 @@ mod tests {
         let ignored = read(published.join(".gitignore"));
         assert!(ignored.lines().any(|line| line == "content/.registry.toml"));
         assert!(ignored.lines().any(|line| line == "derived-cache/"));
+        assert!(ignored.lines().any(|line| line == "/assets/"));
         let editor = read(published.join("editor/Cargo.toml"));
         assert!(editor.contains("name = \"my-game-editor\""));
         assert!(editor.contains("my-game = { path = \"..\" }"));

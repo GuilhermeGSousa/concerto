@@ -40,8 +40,10 @@ It writes:
 - `content/.gitkeep`, so `content/` exists.
 - `index.html` and `Trunk.toml`, so `trunk serve` runs the game in a browser.
 - `.gitignore`: `/target`, `/dist`, `content/.registry.toml`, so a registry
-  file from an older engine is never committed, and `derived-cache/`, the
-  local cache of derived data.
+  file from an older engine is never committed, `derived-cache/`, the
+  local cache of derived data, and `/assets/`, the import sources. The
+  content keeps everything a re-import needs but the source files, so a
+  machine without `assets/` picks each source again when it re-imports.
 
 There is no scene and no startup scene.
 
