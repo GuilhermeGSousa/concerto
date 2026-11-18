@@ -20,9 +20,5 @@ anyhow = "1.0.97"
 glam.workspace = true
 serde = { version = "1", features = ["derive"] }
 
-[dependencies.image]
-version = "0.25.5"
-default-features = true
-
 [dev-dependencies]
 bincode = "1.3"
