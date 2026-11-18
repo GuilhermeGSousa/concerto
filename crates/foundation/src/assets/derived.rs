@@ -17,12 +17,12 @@ use super::{
 use super::{
     asset_server::AssetServer,
     content::{
-        asset_record, decode_content_asset, decode_content_payload, decode_editor_only,
-        read_content_asset_parts, ContentAssetHeader, DerivedSection, EditorOnlyBytes,
+        asset_record, decode_content_asset, decode_content_payload, decode_uncooked,
+        read_content_asset_parts, ContentAssetHeader, DerivedSection, UncookedBytes,
     },
     registry::{AssetEntry, AssetRegistry},
     utils::try_read_relative,
-    Asset, AssetId, ContentAssetRoot, EditorOnly, LoadableAsset,
+    Asset, AssetId, ContentAssetRoot, LoadableAsset, UncookedData,
 };
 
 /// An asset whose runtime part is a blob derived from other content assets, cached by a key it defines.
@@ -89,7 +89,7 @@ pub(crate) fn record_is_derived(kind: &str, record: &[u8]) -> anyhow::Result<boo
 pub struct DerivedInputs {
     files: HashMap<AssetId, Arc<Vec<u8>>>,
     records: HashMap<AssetId, Arc<Vec<u8>>>,
-    own_editor_only: Option<EditorOnlyBytes>,
+    own_uncooked: Option<UncookedBytes>,
 }
 
 impl DerivedInputs {
@@ -124,25 +124,25 @@ impl DerivedInputs {
         Ok(())
     }
 
-    /// Inputs that carry `value` as the deriving asset's own editor-only data.
-    pub fn with_own_editor_only<E: EditorOnly>(mut self, value: &E) -> anyhow::Result<Self> {
-        self.own_editor_only = Some(EditorOnlyBytes {
+    /// Inputs that carry `value` as the deriving asset's own uncooked data.
+    pub fn with_own_uncooked<E: UncookedData>(mut self, value: &E) -> anyhow::Result<Self> {
+        self.own_uncooked = Some(UncookedBytes {
             kind: E::Asset::name().to_string(),
             version: E::VERSION,
-            bytes: bincode::serialize(value).context("failed to serialize editor-only data")?,
+            bytes: bincode::serialize(value).context("failed to serialize uncooked data")?,
         });
         Ok(self)
     }
 
-    /// The deriving asset's own editor-only data, decoded as `E`; only `derive` may ask, and it fails for a file that holds none.
-    pub fn own_editor_only<E: EditorOnly>(&self) -> anyhow::Result<E> {
-        let section = self.own_editor_only.as_ref().with_context(|| {
+    /// The deriving asset's own uncooked data, decoded as `E`; only `derive` may ask, and it fails for a file that holds none.
+    pub fn own_uncooked<E: UncookedData>(&self) -> anyhow::Result<E> {
+        let section = self.own_uncooked.as_ref().with_context(|| {
             format!(
-                "the file of this {name} holds no editor-only data, and a cooked file never does; only `derive` may ask for it, since `derived_key` must come from the payload",
+                "the file of this {name} holds no uncooked data, and a cooked file never does; only `derive` may ask for it, since `derived_key` must come from the payload",
                 name = E::Asset::name()
             )
         })?;
-        decode_editor_only::<E>(&section.kind, section.version, &section.bytes)
+        decode_uncooked::<E>(&section.kind, section.version, &section.bytes)
     }
 
     /// The whole file of a loose input `id`, or the bytes a loose file of a host or an embedded one would have.
@@ -291,7 +291,7 @@ pub(crate) type CookHook = fn(id: AssetId, file: Vec<u8>, server: AssetServer) -
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CookReport {
-    /// The address of every file written under the output directory: one whose asset derives, with its blob, and any other that had an editor-only section, without it.
+    /// The address of every file written under the output directory: one whose asset derives, with its blob, and any other that had an uncooked section, without it.
     pub cooked: Vec<String>,
 }
 
@@ -310,7 +310,7 @@ pub(crate) struct DerivedLoad {
     pub(crate) id: AssetId,
     pub(crate) asset: Box<dyn Any + Send>,
     pub(crate) cooked: Option<CookedBlob>,
-    pub(crate) editor_only: Option<EditorOnlyBytes>,
+    pub(crate) uncooked: Option<UncookedBytes>,
 }
 
 pub(crate) type DerivedHook = fn(load: DerivedLoad, server: AssetServer) -> DerivedFuture;
@@ -318,7 +318,7 @@ pub(crate) type DerivedHook = fn(load: DerivedLoad, server: AssetServer) -> Deri
 pub(crate) async fn derive_and_apply<A: DerivedData>(
     asset: &mut A,
     id: AssetId,
-    editor_only: Option<EditorOnlyBytes>,
+    uncooked: Option<UncookedBytes>,
     server: &AssetServer,
 ) -> anyhow::Result<DerivedBlob> {
     let (root, registry) = server.content_source();
@@ -336,9 +336,9 @@ pub(crate) async fn derive_and_apply<A: DerivedData>(
             ),
         }
     }
-    inputs.own_editor_only = match editor_only {
+    inputs.own_uncooked = match uncooked {
         Some(section) => Some(section),
-        None => server.skipped_editor_only(id).await?,
+        None => server.skipped_uncooked(id).await?,
     };
     let blob = asset
         .derive(&inputs, &mut |_, _| {})
@@ -386,7 +386,7 @@ pub(crate) fn derived_hook<A: DerivedData>(
             id,
             asset,
             cooked,
-            editor_only,
+            uncooked,
         } = load;
         let mut asset = *asset
             .downcast::<A>()
@@ -405,7 +405,7 @@ pub(crate) fn derived_hook<A: DerivedData>(
                 return Ok(Box::new(asset) as Box<dyn Any + Send>);
             }
         }
-        derive_and_apply(&mut asset, id, editor_only, &server).await?;
+        derive_and_apply(&mut asset, id, uncooked, &server).await?;
         Ok(Box::new(asset) as Box<dyn Any + Send>)
     })
 }

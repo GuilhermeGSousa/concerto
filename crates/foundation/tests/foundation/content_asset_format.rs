@@ -1,11 +1,11 @@
 //! The on-disk framing for game-ready content assets: magic, a
-//! length-prefixed bincode header, the payload verbatim, an optional editor-only section and derived blob, then the embedded assets.
+//! length-prefixed bincode header, the payload verbatim, an optional uncooked section and derived blob, then the embedded assets.
 use concerto_foundation::assets::content::{
     asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
-    read_content_without_editor_only, read_editor_only_section, without_editor_only,
-    write_content_asset, write_content_asset_with_editor_only, write_content_asset_with_embedded,
-    write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection, EditorOnlyBytes,
-    EditorOnlySection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, CONTENT_ASSET_MAGIC,
+    read_content_without_uncooked, read_uncooked_section, without_uncooked, write_content_asset,
+    write_content_asset_with_embedded, write_content_asset_with_uncooked,
+    write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection, EmbeddedAsset,
+    EmbeddedPayload, ImportProvenance, UncookedBytes, UncookedSection, CONTENT_ASSET_MAGIC,
 };
 use concerto_foundation::assets::AssetId;
 use proptest::prelude::*;
@@ -22,7 +22,7 @@ fn header() -> ContentAssetHeader {
         kind: "Mesh".to_string(),
         kind_version: 3,
         provenance: None,
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     }
@@ -38,15 +38,23 @@ fn section(blob: &[u8]) -> CookedSection<'_> {
 
 const SECTION_VERSION: u32 = 7;
 
-fn described(editor_only: &[u8]) -> Option<EditorOnlySection> {
-    (!editor_only.is_empty()).then_some(EditorOnlySection {
-        len: editor_only.len() as u64,
+fn described(uncooked: &Option<Vec<u8>>) -> Option<UncookedSection> {
+    uncooked.as_ref().map(|bytes| UncookedSection {
+        len: bytes.len() as u64,
         version: SECTION_VERSION,
     })
 }
 
-fn held(editor_only: &[u8]) -> Option<&[u8]> {
-    (!editor_only.is_empty()).then_some(editor_only)
+fn written_loose(
+    header: &ContentAssetHeader,
+    payload: &[u8],
+    uncooked: &Option<Vec<u8>>,
+) -> Vec<u8> {
+    match uncooked {
+        Some(bytes) => write_content_asset_with_uncooked(header, payload, SECTION_VERSION, bytes),
+        None => write_content_asset(header, payload),
+    }
+    .unwrap()
 }
 
 #[derive(Serialize)]
@@ -126,7 +134,7 @@ prop_compose! {
             kind,
             kind_version,
             provenance,
-            editor_only: None,
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         }
@@ -138,7 +146,7 @@ proptest! {
     fn a_written_asset_reads_back_its_header_payload_and_derived_blob(
         header in any_header(),
         payload in proptest::collection::vec(any::<u8>(), 0..64),
-        editor_only in proptest::collection::vec(any::<u8>(), 0..32),
+        uncooked in proptest::option::of(proptest::collection::vec(any::<u8>(), 0..32)),
         blob in proptest::option::of(proptest::collection::vec(any::<u8>(), 0..32)),
         derived_version in any::<u32>(),
         key in any::<u64>(),
@@ -149,15 +157,12 @@ proptest! {
                 &payload,
                 CookedSection { derived_version, key, blob },
             ),
-            None => write_content_asset_with_editor_only(&header, &payload, SECTION_VERSION, &editor_only),
+            None => Ok(written_loose(&header, &payload, &uncooked)),
         }
         .unwrap();
-        let editor_only = match &blob {
-            Some(_) => &[],
-            None => &editor_only[..],
-        };
+        let uncooked = uncooked.filter(|_| blob.is_none());
         let expected = ContentAssetHeader {
-            editor_only: described(editor_only),
+            uncooked: described(&uncooked),
             derived: blob.as_ref().map(|blob| DerivedSection {
                 derived_version,
                 key,
@@ -170,7 +175,7 @@ proptest! {
         let parts = read_content_asset_parts(&bytes).unwrap();
         prop_assert_eq!(&parts.header, &expected);
         prop_assert_eq!(parts.payload, &payload[..]);
-        prop_assert_eq!(parts.editor_only, held(editor_only));
+        prop_assert_eq!(parts.uncooked, uncooked.as_deref());
         prop_assert_eq!(parts.derived_blob, blob.as_deref());
         let read = read_content_asset(&bytes).unwrap();
         prop_assert_eq!(read.0, expected);
@@ -182,7 +187,7 @@ proptest! {
 #[derive(Debug)]
 struct StoredAsset {
     payload: Vec<u8>,
-    editor_only: Vec<u8>,
+    uncooked: Option<Vec<u8>>,
     blob: Option<Vec<u8>>,
     derived_version: u32,
     key: u64,
@@ -200,7 +205,7 @@ impl StoredAsset {
                 source: "assets/hero.glb".to_string(),
                 sub_asset: format!("mesh/{index}"),
             }),
-            editor_only: described(&self.editor_only),
+            uncooked: described(&self.uncooked),
             derived: self.blob.as_ref().map(|blob| DerivedSection {
                 derived_version: self.derived_version,
                 key: self.key,
@@ -214,18 +219,18 @@ impl StoredAsset {
         EmbeddedPayload {
             header: self.header(index),
             payload: &self.payload,
-            editor_only: held(&self.editor_only),
+            uncooked: self.uncooked.as_deref(),
             derived_blob: self.blob.as_deref(),
         }
     }
 
-    fn without_editor_only(&self, index: usize) -> EmbeddedPayload<'_> {
+    fn without_uncooked(&self, index: usize) -> EmbeddedPayload<'_> {
         EmbeddedPayload {
             header: ContentAssetHeader {
-                editor_only: None,
+                uncooked: None,
                 ..self.header(index)
             },
-            editor_only: None,
+            uncooked: None,
             ..self.embedded(index)
         }
     }
@@ -242,13 +247,13 @@ fn embedded(stored: &[StoredAsset]) -> Vec<EmbeddedPayload<'_>> {
 prop_compose! {
     fn any_stored_asset()(
         payload in proptest::collection::vec(any::<u8>(), 0..64),
-        editor_only in proptest::collection::vec(any::<u8>(), 0..32),
+        uncooked in proptest::option::of(proptest::collection::vec(any::<u8>(), 0..32)),
         blob in proptest::option::of(proptest::collection::vec(any::<u8>(), 0..32)),
         derived_version in any::<u32>(),
         key in any::<u64>(),
         kind_version in any::<u32>(),
     ) -> StoredAsset {
-        StoredAsset { payload, editor_only, blob, derived_version, key, kind_version }
+        StoredAsset { payload, uncooked, blob, derived_version, key, kind_version }
     }
 }
 
@@ -285,16 +290,16 @@ proptest! {
             prop_assert_eq!(&parts.header, &asset.header(index));
             prop_assert_eq!(whole.header.record_header(Some(&name)), Some(asset.header(index)));
             prop_assert_eq!(parts.payload, &asset.payload[..]);
-            prop_assert_eq!(parts.editor_only, held(&asset.editor_only));
+            prop_assert_eq!(parts.uncooked, asset.uncooked.as_deref());
             prop_assert_eq!(parts.derived_blob, asset.blob.as_deref());
         }
     }
 
     #[test]
-    fn a_file_without_its_editor_only_sections_is_the_file_written_without_them(
+    fn a_file_without_its_uncooked_sections_is_the_file_written_without_them(
         host in any_header(),
         host_payload in proptest::collection::vec(any::<u8>(), 0..64),
-        host_editor_only in proptest::collection::vec(any::<u8>(), 0..32),
+        host_uncooked in proptest::option::of(proptest::collection::vec(any::<u8>(), 0..32)),
         stored in proptest::collection::vec(any_stored_asset(), 0..=5),
     ) {
         let host = ContentAssetHeader {
@@ -304,41 +309,41 @@ proptest! {
         let plain: Vec<EmbeddedPayload<'_>> = stored
             .iter()
             .enumerate()
-            .map(|(index, asset)| asset.without_editor_only(index))
+            .map(|(index, asset)| asset.without_uncooked(index))
             .collect();
         let packed =
             write_content_asset_with_embedded(&host, &host_payload, &embedded(&stored)).unwrap();
         let packed_plain = write_content_asset_with_embedded(&host, &host_payload, &plain).unwrap();
         let loose =
-            write_content_asset_with_editor_only(&host, &host_payload, SECTION_VERSION, &host_editor_only).unwrap();
+            written_loose(&host, &host_payload, &host_uncooked);
         let loose_plain = write_content_asset(&host, &host_payload).unwrap();
 
-        prop_assert_eq!(&without_editor_only(&packed).unwrap(), &packed_plain);
-        prop_assert_eq!(&without_editor_only(&packed_plain).unwrap(), &packed_plain);
-        prop_assert_eq!(&without_editor_only(&loose).unwrap(), &loose_plain);
+        prop_assert_eq!(&without_uncooked(&packed).unwrap(), &packed_plain);
+        prop_assert_eq!(&without_uncooked(&packed_plain).unwrap(), &packed_plain);
+        prop_assert_eq!(&without_uncooked(&loose).unwrap(), &loose_plain);
 
         let path = written_to_disk("packed", &packed);
-        prop_assert_eq!(&read_content_without_editor_only(&path).unwrap(), &packed_plain);
-        prop_assert_eq!(read_editor_only_section(&path, None).unwrap(), None);
+        prop_assert_eq!(&read_content_without_uncooked(&path).unwrap(), &packed_plain);
+        prop_assert_eq!(read_uncooked_section(&path, None).unwrap(), None);
         for (index, asset) in stored.iter().enumerate() {
             let name = format!("mesh/{index}");
-            let expected = held(&asset.editor_only).map(|bytes| EditorOnlyBytes {
+            let expected = asset.uncooked.as_ref().map(|bytes| UncookedBytes {
                 kind: "Mesh".to_string(),
                 version: SECTION_VERSION,
                 bytes: bytes.to_vec(),
             });
-            prop_assert_eq!(read_editor_only_section(&path, Some(&name)).unwrap(), expected);
+            prop_assert_eq!(read_uncooked_section(&path, Some(&name)).unwrap(), expected);
         }
-        prop_assert!(read_editor_only_section(&path, Some("mesh/9")).is_err());
+        prop_assert!(read_uncooked_section(&path, Some("mesh/9")).is_err());
 
         std::fs::write(&path, &loose).unwrap();
-        prop_assert_eq!(&read_content_without_editor_only(&path).unwrap(), &loose_plain);
-        let expected = held(&host_editor_only).map(|bytes| EditorOnlyBytes {
+        prop_assert_eq!(&read_content_without_uncooked(&path).unwrap(), &loose_plain);
+        let expected = host_uncooked.as_ref().map(|bytes| UncookedBytes {
             kind: host.kind.clone(),
             version: SECTION_VERSION,
             bytes: bytes.to_vec(),
         });
-        prop_assert_eq!(read_editor_only_section(&path, None).unwrap(), expected);
+        prop_assert_eq!(read_uncooked_section(&path, None).unwrap(), expected);
         std::fs::remove_file(&path).ok();
     }
 }
@@ -353,7 +358,7 @@ fn listed(name: &str, id: u8, offset: u64, len: u64) -> EmbeddedAsset {
             source: "assets/hero.glb".to_string(),
             sub_asset: name.to_string(),
         },
-        editor_only: None,
+        uncooked: None,
         derived: None,
         offset,
         len,
@@ -398,11 +403,11 @@ fn a_malformed_directory_is_rejected() {
             the_host_reads: false,
         },
         Malformed {
-            name: "an editor-only section past the end",
+            name: "an uncooked section past the end",
             bytes: host_file(vec![
                 listed("mesh/0", 1, 4, 4),
                 EmbeddedAsset {
-                    editor_only: Some(EditorOnlySection {
+                    uncooked: Some(UncookedSection {
                         len: 40,
                         version: SECTION_VERSION,
                     }),
@@ -450,14 +455,14 @@ fn a_malformed_directory_is_rejected() {
             case.name
         );
         assert_eq!(
-            without_editor_only(&case.bytes).is_ok(),
+            without_uncooked(&case.bytes).is_ok(),
             case.the_host_reads,
             "{}",
             case.name
         );
         let path = written_to_disk("malformed", &case.bytes);
         assert_eq!(
-            read_content_without_editor_only(&path).unwrap(),
+            read_content_without_uncooked(&path).unwrap(),
             case.bytes,
             "{}",
             case.name
@@ -514,7 +519,7 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
             header_from_file: true,
         },
         Read {
-            name: "the version 7 fixture has no editor-only section",
+            name: "the version 7 fixture has no uncooked section",
             bytes: std::fs::read(fixture_dir().join("content_asset.v7.bin"))
                 .expect("the version 7 fixture"),
             expected: Ok(ContentAssetHeader {
@@ -527,7 +532,7 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
                         source: "assets/hero.glb".to_string(),
                         sub_asset: "mesh/0".to_string(),
                     },
-                    editor_only: None,
+                    uncooked: None,
                     derived: Some(fixture_derived()),
                     offset: 7,
                     len: 8,
@@ -545,7 +550,7 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
                 kind: v5.kind.clone(),
                 kind_version: 3,
                 provenance: None,
-                editor_only: None,
+                uncooked: None,
                 derived: None,
                 embedded: Vec::new(),
             }),
@@ -560,7 +565,7 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
                 kind: v4.kind.clone(),
                 kind_version: 1,
                 provenance: v4.provenance.clone(),
-                editor_only: None,
+                uncooked: None,
                 derived: None,
                 embedded: Vec::new(),
             }),
@@ -597,7 +602,7 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
         }
         if case.expected.is_ok() {
             assert_eq!(
-                without_editor_only(&case.bytes).unwrap(),
+                without_uncooked(&case.bytes).unwrap(),
                 case.bytes,
                 "{}",
                 case.name
@@ -646,7 +651,7 @@ fn fixture_header() -> ContentAssetHeader {
             source: "assets/hero.glb".to_string(),
             sub_asset: "anim/idle".to_string(),
         }),
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     }
@@ -677,7 +682,7 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
         }
     );
     assert_eq!(parts.payload, b"payload");
-    assert_eq!(parts.editor_only, None);
+    assert_eq!(parts.uncooked, None);
     assert_eq!(parts.derived_blob, Some(&b"derived"[..]));
 
     let mesh = ContentAssetHeader {
@@ -689,7 +694,7 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
             source: "assets/hero.glb".to_string(),
             sub_asset: "mesh/0".to_string(),
         }),
-        editor_only: Some(EditorOnlySection { len: 6, version: 4 }),
+        uncooked: Some(UncookedSection { len: 6, version: 4 }),
         derived: Some(fixture_derived()),
         embedded: Vec::new(),
     };
@@ -699,7 +704,7 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
         &[EmbeddedPayload {
             header: mesh,
             payload: b"embedded",
-            editor_only: Some(b"source"),
+            uncooked: Some(b"source"),
             derived_blob: Some(b"derived"),
         }],
     )

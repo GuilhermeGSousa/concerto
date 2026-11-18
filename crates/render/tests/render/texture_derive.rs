@@ -9,7 +9,7 @@ use concerto_app::{
 use concerto_foundation::assets::{
     asset_server::AssetServer,
     asset_store::AssetStore,
-    content::{read_content_asset_header, save_content_asset_with_editor_only},
+    content::{read_content_asset_header, save_content_asset_with_uncooked},
     derived::DerivedDataCache,
     registry::AssetRegistry,
     AssetId, ContentAssetRoot,
@@ -292,7 +292,7 @@ fn a_cooked_texture_loads_its_levels_without_deriving() {
         TextureSettings::default().with_compression(Compression::Bc7),
         &source,
     );
-    let id = save_content_asset_with_editor_only(
+    let id = save_content_asset_with_uncooked(
         &texture,
         &source,
         &project.root,
@@ -310,12 +310,12 @@ fn a_cooked_texture_loads_its_levels_without_deriving() {
     let uncooked = project.root.join("content/swatch.gasset");
     assert!(read_content_asset_header(&uncooked)
         .unwrap()
-        .editor_only
+        .uncooked
         .is_some());
     let cooked = out.join("content/swatch.gasset");
     assert!(read_content_asset_header(&cooked)
         .unwrap()
-        .editor_only
+        .uncooked
         .is_none());
     assert!(!std::fs::read(&cooked)
         .unwrap()

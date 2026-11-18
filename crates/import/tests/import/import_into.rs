@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use concerto_bvh::bvh_importer::BvhSettings;
 use concerto_foundation::assets::content::{
-    decode_content_asset, read_asset_record, read_content_asset, read_editor_only,
+    decode_content_asset, read_asset_record, read_content_asset, read_uncooked,
     resave_content_asset, write_content_asset,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
@@ -371,7 +371,7 @@ fn imported_texture(project: &Path, imported: &ImportedSource, name: &str) -> Im
     let record = read_asset_record(project, &entry).expect("record");
     let (_, texture) = decode_content_asset::<Texture>(&record)
         .unwrap_or_else(|error| panic!("{name}: {error:#}"));
-    let source = read_editor_only::<TextureSource>(project, &entry)
+    let source = read_uncooked::<TextureSource>(project, &entry)
         .unwrap_or_else(|error| panic!("{name}: {error:#}"))
         .unwrap_or_else(|| panic!("{name} has a source section"));
     assert_eq!(texture.source, Some(source.summary()), "{name}");
@@ -506,7 +506,7 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     let file = std::fs::read(&path).expect("read");
     let (mut header, payload) = read_content_asset(&file).expect("content asset");
     header.kind_version = 1;
-    header.editor_only = None;
+    header.uncooked = None;
     std::fs::write(
         &path,
         write_content_asset(&header, payload).expect("encode"),

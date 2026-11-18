@@ -32,8 +32,8 @@ use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
     content::{
-        decode_content_payload, decode_editor_only, AssetRecord, ContentFile, DerivedSection,
-        EditorOnlyBytes, EmbeddedAsset,
+        decode_content_payload, decode_uncooked, AssetRecord, ContentFile, DerivedSection,
+        EmbeddedAsset, UncookedBytes,
     },
     derived::{
         derived_hook, note_derived_kind, CookedBlob, DerivedData, DerivedDataCache, DerivedHook,
@@ -42,11 +42,11 @@ use super::{
     handle::{AssetHandle, AssetLifetimeEvent, AssetLoadFailed},
     registry::{AssetEntry, AssetRegistry},
     utils::try_read_relative,
-    Asset, AssetId, ContentAssetRoot, EditorOnly,
+    Asset, AssetId, ContentAssetRoot, UncookedData,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
-    content::{asset_record, read_content_asset_header, read_editor_only_section},
+    content::{asset_record, read_content_asset_header, read_uncooked_section},
     derived::{cook_hook, record_is_derived, CookHook, CookReport},
 };
 
@@ -164,12 +164,12 @@ fn load_record<A: LoadableAsset>(load: RecordLoad<'_>) -> RecordFuture<'_> {
                     },
                     blob: cooked.blob.to_vec(),
                 });
-                let editor_only = record.editor_only_section();
+                let uncooked = record.uncooked_section();
                 let load = DerivedLoad {
                     id,
                     asset: Box::new(asset),
                     cooked,
-                    editor_only,
+                    uncooked,
                 };
                 asset = *hook(load, server)
                     .await?
@@ -390,7 +390,7 @@ impl AssetServer {
         self.data.cook_hooks.read().unwrap().contains_key(kind)
     }
 
-    /// Writes to `<out>/<address>` every file of the registry whose asset derives, with its derived blob, and every other file that has an editor-only section, all without their editor-only sections, in address order, stopping at the first error; the report lists only those written.
+    /// Writes to `<out>/<address>` every file of the registry whose asset derives, with its derived blob, and every other file that has an uncooked section, all without their uncooked sections, in address order, stopping at the first error; the report lists only those written.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cook(&self, out: &Path) -> anyhow::Result<CookReport> {
         let (root, registry) = self.content_source();
@@ -430,11 +430,11 @@ impl AssetServer {
             entries,
             hooks,
         } = file;
-        let has_editor_only = read_content_asset_header(&dir.join(address))?.has_editor_only();
+        let has_uncooked = read_content_asset_header(&dir.join(address))?.has_uncooked();
         let hooked = entries
             .iter()
             .any(|entry| hooks.contains_key(entry.kind.as_str()));
-        if !has_editor_only && !hooked {
+        if !has_uncooked && !hooked {
             return Ok(false);
         }
         let stripped = pollster::block_on(try_read_relative(root, address))?
@@ -468,7 +468,7 @@ impl AssetServer {
         }
         let bytes = match cooked {
             Some(cooked) => cooked,
-            None if has_editor_only => stripped,
+            None if has_uncooked => stripped,
             None => return Ok(false),
         };
         let path = out.join(address);
@@ -481,31 +481,31 @@ impl AssetServer {
         Ok(true)
     }
 
-    /// The editor-only data of the asset `id`, read alone from its file through the published root and registry; `None` when its record has none, as in a cooked file.
-    pub async fn load_editor_only<E: EditorOnly>(&self, id: AssetId) -> anyhow::Result<Option<E>> {
-        let Some(section) = self.editor_only_section(id).await? else {
+    /// The uncooked data of the asset `id`, read alone from its file through the published root and registry; `None` when its record has none, as in a cooked file.
+    pub async fn load_uncooked<E: UncookedData>(&self, id: AssetId) -> anyhow::Result<Option<E>> {
+        let Some(section) = self.uncooked_section(id).await? else {
             return Ok(None);
         };
-        decode_editor_only::<E>(&section.kind, section.version, &section.bytes)
-            .with_context(|| format!("malformed editor-only data of AssetId {id:?}"))
+        decode_uncooked::<E>(&section.kind, section.version, &section.bytes)
+            .with_context(|| format!("malformed uncooked data of AssetId {id:?}"))
             .map(Some)
     }
 
-    pub(crate) async fn skipped_editor_only(
+    pub(crate) async fn skipped_uncooked(
         &self,
         id: AssetId,
-    ) -> anyhow::Result<Option<EditorOnlyBytes>> {
+    ) -> anyhow::Result<Option<UncookedBytes>> {
         let (root, registry) = self.content_source();
         match root {
             #[cfg(not(target_arch = "wasm32"))]
             ContentAssetRoot::Directory(_) if registry.get(id).is_some() => {
-                self.editor_only_section(id).await
+                self.uncooked_section(id).await
             }
             _ => Ok(None),
         }
     }
 
-    async fn editor_only_section(&self, id: AssetId) -> anyhow::Result<Option<EditorOnlyBytes>> {
+    async fn uncooked_section(&self, id: AssetId) -> anyhow::Result<Option<UncookedBytes>> {
         let (root, registry) = self.content_source();
         let entry = registry
             .get(id)
@@ -516,7 +516,7 @@ impl AssetServer {
             ContentAssetRoot::Directory(dir) => {
                 let path = dir.join(&entry.address);
                 let name = entry.embedded_in.as_ref().map(|held| held.name.clone());
-                blocking::unblock(move || read_editor_only_section(&path, name.as_deref())).await
+                blocking::unblock(move || read_uncooked_section(&path, name.as_deref())).await
             }
             _ => {
                 let file = try_read_relative(&root, &entry.address)
@@ -537,7 +537,7 @@ impl AssetServer {
                         .and_then(|asset| content.embedded(asset)),
                 }
                 .with_context(|| format!("malformed content asset '{location}'"))?;
-                Ok(record.editor_only_section())
+                Ok(record.uncooked_section())
             }
         }
     }

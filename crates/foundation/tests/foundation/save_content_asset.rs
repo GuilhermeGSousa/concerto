@@ -1,14 +1,14 @@
 //! save_content_asset_into writes a content asset into a project tree, minting
 //! its id on first save and reusing it on re-save.
 use concerto_foundation::assets::content::{
-    read_asset_record, read_asset_record_without_editor_only, read_content_asset,
-    read_content_asset_header, read_content_asset_parts, read_editor_only,
-    read_editor_only_section, resave_content_asset, save_content_asset_into,
-    save_content_asset_with_editor_only, write_content_asset_with_editor_only,
-    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
+    read_asset_record, read_asset_record_without_uncooked, read_content_asset,
+    read_content_asset_header, read_content_asset_parts, read_uncooked, read_uncooked_section,
+    resave_content_asset, save_content_asset_into, save_content_asset_with_uncooked,
+    write_content_asset_with_embedded, write_content_asset_with_uncooked, ContentAssetHeader,
+    EmbeddedPayload, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
-use concerto_foundation::assets::{Asset, AssetId, EditorOnly};
+use concerto_foundation::assets::{Asset, AssetId, UncookedData};
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 struct Widget {
@@ -20,7 +20,7 @@ struct Blueprint {
     drawing: Vec<u8>,
 }
 
-impl EditorOnly for Blueprint {
+impl UncookedData for Blueprint {
     type Asset = Widget;
 
     const VERSION: u32 = 3;
@@ -68,7 +68,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         drawing: vec![7, 8, 9],
     };
 
-    let id = save_content_asset_with_editor_only(
+    let id = save_content_asset_with_uncooked(
         &widget,
         &blueprint,
         &project_root,
@@ -102,26 +102,26 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     );
     let entry = registry.get(id).unwrap().clone();
     assert_eq!(
-        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
+        read_uncooked::<Blueprint>(&project_root, &entry).unwrap(),
         Some(Blueprint {
             drawing: vec![7, 8, 9]
         }),
-        "a save writes the editor-only section it is given"
+        "a save writes the uncooked section it is given"
     );
     let whole = read_asset_record(&project_root, &entry).unwrap();
     assert_eq!(
         read_content_asset_parts(&whole)
             .unwrap()
             .header
-            .editor_only
+            .uncooked
             .map(|section| section.version),
         Some(3),
         "the section is written at its own type's version"
     );
-    let stripped = read_asset_record_without_editor_only(&project_root, &entry).unwrap();
+    let stripped = read_asset_record_without_uncooked(&project_root, &entry).unwrap();
     let parts = read_content_asset_parts(&stripped).unwrap();
-    assert_eq!(parts.editor_only, None);
-    assert_eq!(parts.header.editor_only, None);
+    assert_eq!(parts.uncooked, None);
+    assert_eq!(parts.header.uncooked, None);
     assert_eq!(
         bincode::deserialize::<Widget>(parts.payload).unwrap(),
         widget
@@ -139,7 +139,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         id
     );
     assert_eq!(
-        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
+        read_uncooked::<Blueprint>(&project_root, &entry).unwrap(),
         Some(Blueprint {
             drawing: vec![7, 8, 9]
         }),
@@ -165,7 +165,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     assert_eq!(
         read_content_asset_header(&project_root.join(address))
             .unwrap()
-            .editor_only,
+            .uncooked,
         None,
         "a section of another kind is dropped"
     );
@@ -183,7 +183,7 @@ fn imported_widget_header(sub_asset: &str) -> ContentAssetHeader {
             source: "assets/wheel.glb".to_string(),
             sub_asset: sub_asset.to_string(),
         }),
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     }
@@ -197,7 +197,7 @@ fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHea
         drawing: vec![1, 2],
     })
     .unwrap();
-    let file = write_content_asset_with_editor_only(&header, &payload, 2, &blueprint).unwrap();
+    let file = write_content_asset_with_uncooked(&header, &payload, 2, &blueprint).unwrap();
     std::fs::write(path, file).unwrap();
     header
 }
@@ -232,7 +232,7 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     assert_eq!(entry.kind, "Widget");
     assert_eq!(entry.provenance, original.provenance);
     let entry = entry.clone();
-    let kept = read_editor_only_section(&project_root.join(address), None)
+    let kept = read_uncooked_section(&project_root.join(address), None)
         .unwrap()
         .expect("a resave keeps the file's section");
     assert_eq!(kept.version, 2, "at the version it was written with");
@@ -242,12 +242,12 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
             drawing: vec![1, 2]
         }
     );
-    read_editor_only::<Blueprint>(&project_root, &entry)
+    read_uncooked::<Blueprint>(&project_root, &entry)
         .expect_err("a section older than its type's version, with no migration, is refused");
     let redrawn = Blueprint {
         drawing: vec![3, 4, 5],
     };
-    save_content_asset_with_editor_only(
+    save_content_asset_with_uncooked(
         &Widget { spokes: 6 },
         &redrawn,
         &project_root,
@@ -256,7 +256,7 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     )
     .expect("save");
     assert_eq!(
-        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
+        read_uncooked::<Blueprint>(&project_root, &entry).unwrap(),
         Some(redrawn),
         "a save given a section replaces the file's"
     );
@@ -276,7 +276,7 @@ fn a_file_with_embedded_assets_is_not_overwritten() {
         &[EmbeddedPayload {
             header: imported_widget_header("widget/0"),
             payload: &payload,
-            editor_only: None,
+            uncooked: None,
             derived_blob: None,
         }],
     )

@@ -11,14 +11,14 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     content::{
         read_asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
-        save_content_asset_into, save_content_asset_with_editor_only, without_editor_only,
+        save_content_asset_into, save_content_asset_with_uncooked, without_uncooked,
         write_content_asset_with_embedded, write_cooked_content_asset, ContentAssetHeader,
         CookedSection, DerivedSection, EmbeddedPayload, ImportProvenance,
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry, EmbeddedIn},
-    Asset, AssetId, ContentAssetRoot, EditorOnly, LoadableAsset,
+    Asset, AssetId, ContentAssetRoot, LoadableAsset, UncookedData,
 };
 use serde::{Deserialize, Serialize};
 
@@ -282,7 +282,7 @@ struct Parts {
     values: Vec<u64>,
 }
 
-impl EditorOnly for Parts {
+impl UncookedData for Parts {
     type Asset = Sourced;
 }
 
@@ -313,7 +313,7 @@ impl DerivedData for Sourced {
         _progress: &mut dyn FnMut(usize, usize),
     ) -> anyhow::Result<Vec<u8>> {
         with_probe(&self.tag, |probe| probe.derives += 1);
-        let parts = inputs.own_editor_only::<Parts>()?;
+        let parts = inputs.own_uncooked::<Parts>()?;
         let total: u64 = parts.values.iter().sum();
         Ok(total.to_le_bytes().to_vec())
     }
@@ -337,7 +337,7 @@ struct Note {
     text: String,
 }
 
-impl EditorOnly for Note {
+impl UncookedData for Note {
     type Asset = Noted;
 }
 
@@ -433,7 +433,7 @@ impl Project {
                 source: format!("assets/{name}.glb"),
                 sub_asset: sub_asset.to_string(),
             }),
-            editor_only: None,
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         };
@@ -445,7 +445,7 @@ impl Project {
             &[EmbeddedPayload {
                 header: embedded.clone(),
                 payload: &bincode::serialize(value).unwrap(),
-                editor_only: None,
+                uncooked: None,
                 derived_blob: None,
             }],
         )
@@ -694,7 +694,7 @@ fn read_cooked(path: &Path) -> CookedFile {
     let parts = read_content_asset_parts(&bytes).unwrap();
     CookedFile {
         header: ContentAssetHeader {
-            editor_only: None,
+            uncooked: None,
             derived: None,
             ..parts.header.clone()
         },
@@ -832,7 +832,7 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
         &[EmbeddedPayload {
             header: parts.header.record_header(Some("leaf/0")).unwrap(),
             payload: &bincode::serialize(&Leaf { value: 9 }).unwrap(),
-            editor_only: None,
+            uncooked: None,
             derived_blob: None,
         }],
     )
@@ -1228,13 +1228,13 @@ fn a_cook_reads_further_inputs() {
 }
 
 #[test]
-fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_section() {
-    let tag = "editor-only";
+fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section() {
+    let tag = "uncooked";
     let mut project = Project::new(tag);
     let parts = Parts {
         values: vec![3, 4, 5],
     };
-    let sourced = save_content_asset_with_editor_only(
+    let sourced = save_content_asset_with_uncooked(
         &Sourced {
             tag: tag.to_string(),
             hash: 0xfeed,
@@ -1246,7 +1246,7 @@ fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_sect
         &mut project.registry,
     )
     .unwrap();
-    save_content_asset_with_editor_only(
+    save_content_asset_with_uncooked(
         &Noted { value: 1 },
         &Note {
             text: "a note".to_string(),
@@ -1263,10 +1263,10 @@ fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_sect
     assert_eq!(runtime.load_sourced(sourced), Some(12));
     assert_eq!(derives(tag), 1);
     assert_eq!(
-        pollster::block_on(runtime.server.load_editor_only::<Parts>(sourced)).unwrap(),
+        pollster::block_on(runtime.server.load_uncooked::<Parts>(sourced)).unwrap(),
         Some(parts)
     );
-    pollster::block_on(runtime.server.load_editor_only::<Parts>(AssetId::new()))
+    pollster::block_on(runtime.server.load_uncooked::<Parts>(AssetId::new()))
         .expect_err("an id the registry does not hold is an error");
 
     let out = project.root.join("cooked");
@@ -1296,11 +1296,11 @@ fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_sect
     );
     for address in ["content/noted.gasset", "content/sourced.gasset"] {
         let header = read_content_asset_header(&out.join(address)).unwrap();
-        assert!(!header.has_editor_only(), "{address}");
+        assert!(!header.has_uncooked(), "{address}");
     }
     assert_eq!(
         std::fs::read(out.join("content/noted.gasset")).unwrap(),
-        without_editor_only(&std::fs::read(project.root.join("content/noted.gasset")).unwrap())
+        without_uncooked(&std::fs::read(project.root.join("content/noted.gasset")).unwrap())
             .unwrap()
     );
     assert_eq!(derives(tag), 2);
@@ -1312,13 +1312,13 @@ fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_sect
     let mut runtime = Runtime::<1>::new(&cooked, DerivedDataCache::none());
     assert_eq!(runtime.load_sourced(sourced), Some(12));
     assert_eq!(
-        pollster::block_on(runtime.server.load_editor_only::<Parts>(sourced)).unwrap(),
+        pollster::block_on(runtime.server.load_uncooked::<Parts>(sourced)).unwrap(),
         None
     );
     assert_eq!(derives(tag), 2);
 
     let path = project.root.join("content/sourced.gasset");
-    let stripped = without_editor_only(&std::fs::read(&path).unwrap()).unwrap();
+    let stripped = without_uncooked(&std::fs::read(&path).unwrap()).unwrap();
     std::fs::write(&path, stripped).unwrap();
     let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
     assert_eq!(runtime.load_sourced(sourced), Some(12));

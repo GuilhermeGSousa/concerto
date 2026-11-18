@@ -204,7 +204,7 @@ fn pack(host: &Host, content_root: &Path) -> anyhow::Result<()> {
         embedded.push(EmbeddedPayload {
             header: parts.header,
             payload: parts.payload,
-            editor_only: parts.editor_only,
+            uncooked: parts.uncooked,
             derived_blob: parts.derived_blob,
         });
     }

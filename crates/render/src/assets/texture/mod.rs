@@ -7,7 +7,7 @@ use concerto_foundation::{
     assets::{
         content::ContentAssetHeader,
         derived::{DerivedData, DerivedInputs},
-        Asset, AssetId, EditorOnly, LoadableAsset,
+        Asset, AssetId, LoadableAsset, UncookedData,
     },
     hash::Fnv1a,
 };
@@ -84,7 +84,7 @@ pub struct SourceSummary {
     pub hash: u64,
 }
 
-/// A texture: its settings and a summary of its imported source, whose sampled levels are derived data, or levels built in code; the source itself is the file's editor-only data.
+/// A texture: its settings and a summary of its imported source, whose sampled levels are derived data, or levels built in code; the source itself is the file's uncooked data.
 #[derive(Serialize, Deserialize)]
 pub struct Texture {
     pub kind: TextureKind,
@@ -129,7 +129,7 @@ impl Asset for Texture {
     }
 }
 
-impl EditorOnly for TextureSource {
+impl UncookedData for TextureSource {
     type Asset = Texture;
 }
 
@@ -170,7 +170,7 @@ impl Texture {
         }
     }
 
-    /// An imported texture whose levels are derived when it loads from `source`, which its file keeps as editor-only data.
+    /// An imported texture whose levels are derived when it loads from `source`, which its file keeps as uncooked data.
     pub fn imported(role: TextureRole, settings: TextureSettings, source: &TextureSource) -> Self {
         Self {
             kind: TextureKind::Sampled,
@@ -252,7 +252,7 @@ impl DerivedData for Texture {
             .as_ref()
             .context("a sampled Texture has no source to derive from")?;
         let source = inputs
-            .own_editor_only::<TextureSource>()
+            .own_uncooked::<TextureSource>()
             .context("the texture holds no source image; import its source again")?;
         anyhow::ensure!(
             source.hash == summary.hash,

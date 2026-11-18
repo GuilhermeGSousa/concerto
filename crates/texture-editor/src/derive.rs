@@ -33,7 +33,7 @@ fn derived(
 ) -> anyhow::Result<Texture> {
     let (name, version) = (Texture::name(), Texture::DERIVED_VERSION);
     let mut texture = Texture::imported(document.role, document.settings, &source);
-    let inputs = DerivedInputs::default().with_own_editor_only(&source)?;
+    let inputs = DerivedInputs::default().with_own_uncooked(&source)?;
     let key = texture.derived_key(&inputs)?;
     if let Some(blob) = cache.get(name, version, key) {
         match texture.apply_derived(&blob) {

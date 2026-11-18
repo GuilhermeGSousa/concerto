@@ -1,9 +1,7 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
 use concerto_asset_import::{ImportContext, Importer, NoSettings};
-use concerto_foundation::assets::content::{
-    write_content_asset_with_editor_only, ContentAssetHeader,
-};
+use concerto_foundation::assets::content::{write_content_asset_with_uncooked, ContentAssetHeader};
 use concerto_foundation::assets::derived::DerivedDataCache;
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::Asset;
@@ -41,24 +39,19 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
         kind: sub_asset.type_name.to_string(),
         kind_version: sub_asset.kind_version,
         provenance: None,
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };
     std::fs::create_dir_all(project.root.join("content/swatch")).unwrap();
     let source = sub_asset
-        .editor_only
+        .uncooked
         .as_ref()
         .expect("an imported texture carries its source");
     std::fs::write(
         project.root.join(address),
-        write_content_asset_with_editor_only(
-            &header,
-            &sub_asset.bytes,
-            source.version,
-            &source.bytes,
-        )
-        .unwrap(),
+        write_content_asset_with_uncooked(&header, &sub_asset.bytes, source.version, &source.bytes)
+            .unwrap(),
     )
     .unwrap();
     let mut registry = AssetRegistry::new();

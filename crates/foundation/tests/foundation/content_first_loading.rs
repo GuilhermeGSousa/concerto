@@ -47,7 +47,7 @@ fn write_pebble(dir: &std::path::Path, address: &str) {
         kind: Pebble::name().to_string(),
         kind_version: Pebble::FORMAT_VERSION,
         provenance: None,
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -156,7 +156,7 @@ fn embedded_header<A: Asset>(id: AssetId, name: &str) -> ContentAssetHeader {
             source: "assets/cairn.glb".into(),
             sub_asset: name.into(),
         }),
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     }
@@ -174,13 +174,13 @@ fn embedded_assets_load_by_id() {
             EmbeddedPayload {
                 header: embedded_header::<Pebble>(pebble, "pebble/0"),
                 payload: &bincode::serialize(&Pebble { weight: 3 }).unwrap(),
-                editor_only: None,
+                uncooked: None,
                 derived_blob: None,
             },
             EmbeddedPayload {
                 header: embedded_header::<Boulder>(boulder, "boulder/0"),
                 payload: &bincode::serialize(&Boulder { weight: 900 }).unwrap(),
-                editor_only: None,
+                uncooked: None,
                 derived_blob: None,
             },
         ],

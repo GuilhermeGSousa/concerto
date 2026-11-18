@@ -205,15 +205,15 @@ sounds) are imported once, ahead of time. The running game never reads them.
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the
   live definition at use.
-- A record may carry an editor-only section, a type that implements
-  `EditorOnly` and names its asset, with a version of its own: loads never
+- A record may carry an uncooked section, a type that implements
+  `UncookedData` and names its asset, with a version of its own: loads never
   read it, a derive reads its own on a cache
-  miss through `DerivedInputs::own_editor_only`, tools read it with
-  `read_editor_only`, and a cook drops it.
+  miss through `DerivedInputs::own_uncooked`, tools read it with
+  `read_uncooked`, and a cook drops it.
 - A sampled `Texture` derives from its own file, with no inputs: its payload
   holds its `role`, its `TextureSettings` and a `SourceSummary` (width, height,
   hash) of the imported image, whose bytes (`TextureSource`) are the file's
-  editor-only section. The key is the summary's hash, the settings and the
+  uncooked section. The key is the summary's hash, the settings and the
   role, so a cache hit or a cooked blob never reads the source. On a miss
   `derive` takes the section, refuses one whose hash differs from the
   summary's, and `derive_levels` decodes it, resolves `Auto` from the role,

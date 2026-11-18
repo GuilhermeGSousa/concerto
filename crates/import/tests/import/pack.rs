@@ -2,9 +2,8 @@
 use std::collections::BTreeMap;
 
 use concerto_foundation::assets::content::{
-    asset_record, read_asset_record, read_content_asset, read_editor_only_section,
-    write_content_asset, write_content_asset_with_editor_only, ContentAssetHeader,
-    ImportProvenance,
+    asset_record, read_asset_record, read_content_asset, read_uncooked_section,
+    write_content_asset, write_content_asset_with_uncooked, ContentAssetHeader, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
@@ -81,7 +80,7 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
     let (header, payload) = read_content_asset(&file).unwrap();
     std::fs::write(
         &loose,
-        write_content_asset_with_editor_only(&header, payload, 2, &drawing).unwrap(),
+        write_content_asset_with_uncooked(&header, payload, 2, &drawing).unwrap(),
     )
     .unwrap();
     let old = project.snapshot();
@@ -114,12 +113,12 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
             entry.location()
         );
     }
-    let section = read_editor_only_section(
+    let section = read_uncooked_section(
         &project.path("content/hero/scene.gasset"),
         Some(&drawn.embedded_in.as_ref().unwrap().name),
     )
     .unwrap()
-    .expect("the packed asset keeps its editor-only section");
+    .expect("the packed asset keeps its uncooked section");
     assert_eq!(section.bytes, drawing);
     assert_eq!(section.version, 2);
     let host = std::fs::read(project.path("content/hero/scene.gasset")).unwrap();

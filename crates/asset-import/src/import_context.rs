@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use concerto_foundation::assets::content::decode_content_asset;
-use concerto_foundation::assets::{Asset, AssetId, EditorOnly};
+use concerto_foundation::assets::{Asset, AssetId, UncookedData};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DependencyEntry {
@@ -16,14 +16,14 @@ pub struct EmittedSubAsset {
     pub type_name: &'static str,
     pub kind_version: u32,
     pub bytes: Vec<u8>,
-    /// The editor-only section the output is written with, if it has one.
-    pub editor_only: Option<EmittedEditorOnly>,
+    /// The uncooked section the output is written with, if it has one.
+    pub uncooked: Option<EmittedUncooked>,
     pub references: Vec<AssetId>,
 }
 
-/// The editor-only section an importer emitted with an output: its bytes and the version of their encoding.
+/// The uncooked section an importer emitted with an output: its bytes and the version of their encoding.
 #[derive(Debug, Clone)]
-pub struct EmittedEditorOnly {
+pub struct EmittedUncooked {
     pub version: u32,
     pub bytes: Vec<u8>,
 }
@@ -141,34 +141,30 @@ impl ImportContext {
         }
     }
 
-    /// Emits `value` as the output `name`, with no editor-only section.
+    /// Emits `value` as the output `name`, with no uncooked section.
     pub fn emit<T: Asset>(&mut self, name: &str, value: &T) -> Result<(), ImportError> {
         self.push(name, value, None)
     }
 
-    /// Emits `value` as the output `name`, with `editor_only` as its editor-only section; a value of zero bytes records none.
-    pub fn emit_with<E: EditorOnly>(
+    /// Emits `value` as the output `name`, with `uncooked` as its uncooked section.
+    pub fn emit_with<E: UncookedData>(
         &mut self,
         name: &str,
         value: &E::Asset,
-        editor_only: &E,
+        uncooked: &E,
     ) -> Result<(), ImportError> {
-        let section = EmittedEditorOnly {
+        let section = EmittedUncooked {
             version: E::VERSION,
-            bytes: serialize(name, editor_only)?,
+            bytes: serialize(name, uncooked)?,
         };
-        self.push(
-            name,
-            value,
-            Some(section).filter(|section| !section.bytes.is_empty()),
-        )
+        self.push(name, value, Some(section))
     }
 
     fn push<T: Asset>(
         &mut self,
         name: &str,
         value: &T,
-        editor_only: Option<EmittedEditorOnly>,
+        uncooked: Option<EmittedUncooked>,
     ) -> Result<(), ImportError> {
         let bytes = serialize(name, value)?;
         self.sub_assets.push(EmittedSubAsset {
@@ -177,7 +173,7 @@ impl ImportContext {
             type_name: T::name(),
             kind_version: T::FORMAT_VERSION,
             bytes,
-            editor_only,
+            uncooked,
             references: value.referenced_sub_assets(),
         });
         Ok(())

@@ -402,7 +402,7 @@ mod tests {
                     source: "assets/model.glb".into(),
                     sub_asset: name.into(),
                 }),
-                editor_only: None,
+                uncooked: None,
                 derived: None,
                 embedded: Vec::new(),
             };
@@ -423,7 +423,7 @@ mod tests {
             kind: kind.into(),
             kind_version: 1,
             provenance: None,
-            editor_only: None,
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         };

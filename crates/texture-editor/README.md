@@ -19,7 +19,7 @@ editor and opening one opens no tab.
 
 Opening a texture, by double-clicking it in the Asset Browser or with MCP
 `open_asset`, reads its `.gasset`: the payload, and the source image, which is
-the file's editor-only section. A texture whose file holds no source image,
+the file's uncooked section. A texture whose file holds no source image,
 such as one written before the source moved to that section, fails to open,
 saying to import its source again.
 
@@ -38,7 +38,7 @@ saying to import its source again.
   source again to change it".
 
 An edit to the settings marks the tab unsaved and derives the levels again on a
-worker thread, from the source the tab read from the file's editor-only
+worker thread, from the source the tab read from the file's uncooked
 section when it opened, through the
 project's derived-data cache, so a later load of the same settings hits the
 cache. While it runs the document carries `BackgroundWork` and MCP `status`
@@ -48,7 +48,7 @@ dropped.
 Save, with Ctrl+S, the unsaved-changes prompt or MCP `save`, reads the file's
 payload again, replaces only its settings, and writes it with
 `resave_content_asset`, keeping its id and import provenance and copying its
-editor-only section, so the source stays as it was. It ends
+uncooked section, so the source stays as it was. It ends
 in `SceneSaved` naming the texture, so open scenes and previews reload it, and
 the status reads `Saved <address>` until the next derive. A save requested
 while an import is running or queued waits for the imports to finish, so it

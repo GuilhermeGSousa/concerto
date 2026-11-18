@@ -20,7 +20,7 @@ fn write_asset(path: &Path, id: AssetId, kind: &str, provenance: Option<ImportPr
         kind: kind.to_string(),
         kind_version: 1,
         provenance,
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -295,7 +295,7 @@ fn host(path: &Path, id: AssetId, embedded: AssetId) -> Vec<u8> {
             source: "assets/hero.glb".into(),
             sub_asset: sub_asset.into(),
         }),
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -305,7 +305,7 @@ fn host(path: &Path, id: AssetId, embedded: AssetId) -> Vec<u8> {
         &[EmbeddedPayload {
             header: header(embedded, "Mesh", "mesh/0"),
             payload: b"mesh payload",
-            editor_only: None,
+            uncooked: None,
             derived_blob: None,
         }],
     )

@@ -203,7 +203,7 @@ mod tests {
             kind: AnimationClip::name().to_owned(),
             kind_version: AnimationClip::FORMAT_VERSION,
             provenance: provenance.clone(),
-            editor_only: None,
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         };

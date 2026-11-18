@@ -70,7 +70,7 @@ The import picks the importer by file extension:
 | `.ogg` `.wav`        | `AudioImporter` (`audio`) | none / none                     | one `main` audio clip                             |
 
 A texture's `.gasset` holds its **source**, the image file's own PNG or JPEG
-bytes as imported, as the file's [editor-only section](#editor-only-data)
+bytes as imported, as the file's [uncooked section](#uncooked-data)
 (`TextureSource`). Its payload holds a summary of that source (width, height
 and hash), its **role** (`Color`, `Normal` or `Data`, set by the importer) and its
 **settings**: compression (`Auto`, `Bc7`, `Bc1`, `Bc5`, `Bc4`, `Uncompressed`),
@@ -456,15 +456,15 @@ magic "GRDY" (4 bytes)
 u32   header length, little-endian
       bincode(u32 format version, ContentAssetHeader)
       payload — the asset's own bincode encoding, verbatim
-      editor-only section — `editor_only.len` bytes, only when the header has an `editor_only` section
       derived blob — `derived.len` bytes, only when the header has a `derived` section
-      embedded asset 0 — its payload, then its editor-only section and its derived blob if it has them
+      embedded asset 0 — its payload, then its derived blob if it has one
       embedded asset 1 — …
+      uncooked sections — the host's, then each embedded asset's in directory order, for those whose header has an `uncooked` section
 ```
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file, and version 8 adds `editor_only`, the description of the editor-only section between the two. The payload is everything between the header and the section or the blob; `read_content_asset` returns it alone, and `read_content_asset_parts` returns all three. `write_content_asset` writes neither a section nor a blob and refuses a header that describes one; `write_content_asset_with_editor_only` writes the header, the payload and the editor-only bytes it is given, and writes no section for empty bytes; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`, and never an editor-only section. Committed content never has a derived section. A version-4 file reads as kind version 1 and a version-5 file reads with no derived section; a version-6 file reads with no embedded assets, and a version-7 file with no editor-only section. None needs a re-import, and each moves to version 8 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file, and version 8 adds `uncooked`, the description of the uncooked section between the two. The payload is everything between the header and the section or the blob; `read_content_asset` returns it alone, and `read_content_asset_parts` returns all three. `write_content_asset` writes neither a section nor a blob and refuses a header that describes one; `write_content_asset_with_uncooked` writes the header, the payload and the uncooked bytes it is given, and writes no section for empty bytes; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`, and never an uncooked section. Committed content never has a derived section. A version-4 file reads as kind version 1 and a version-5 file reads with no derived section; a version-6 file reads with no embedded assets, and a version-7 file with no uncooked section. None needs a re-import, and each moves to version 8 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
@@ -475,7 +475,7 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only w
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
 | `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, kept when `resave_content_asset` writes over it; `None` for editor-authored assets and for an imported asset saved with `save_content_asset_into` |
-| `editor_only`    | `Some(EditorOnlySection { len, version })` when editor-only bytes follow the payload: data only tools read, `len` bytes long, written at the `EditorOnly::VERSION` of its type; `None` otherwise, for a cooked file, and for a file older than version 8 |
+| `uncooked`    | `Some(UncookedSection { len, version })` when uncooked bytes follow the payload: data only tools read, `len` bytes long, written at the `UncookedData::VERSION` of its type; `None` otherwise, for a cooked file, and for a file older than version 8 |
 | `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
 | `embedded`       | the directory of the assets stored in this file after the host's payload, section and blob, one `EmbeddedAsset` each, in file order; empty for a loose file, and for a file older than version 7 |
@@ -487,58 +487,62 @@ Version 7 lets one file hold several assets. The asset the file is for is the
 **host**; the others are **embedded** in it, and an asset alone in its file is
 **loose**. An `EmbeddedAsset` holds what a loose file's header would hold for
 that asset (`asset_id`, `references`, `kind`, `kind_version`, `provenance`,
-`editor_only`, `derived`) and the byte range of its payload: `offset`, counted
-from the end of the header, and `len`. Its editor-only section, of
-`editor_only.len` bytes, follows its payload, and its derived blob, of
-`derived.len` bytes, follows that. Its `provenance` is not optional, because `provenance.sub_asset` is
+`uncooked`, `derived`) and the byte range of its payload: `offset`, counted
+from the end of the header, and `len`. Its derived blob, of `derived.len`
+bytes, follows its payload. Its uncooked section, of `uncooked.len` bytes, is
+not in that range: every section of a file sits after the last embedded
+asset, the host's first and then each embedded asset's in directory order, so
+everything a load reads is one run of bytes from the start of the file. Its `provenance` is not optional, because `provenance.sub_asset` is
 its name inside the file (`mesh/0`), which `EmbeddedAsset::name()` returns.
 Embedded assets are stored in directory order, so the host's payload ends
-where the first one starts, less the host's section and blob. An embedded asset lists no
+where the first one starts, less the host's blob. An embedded asset lists no
 embedded assets of its own.
 
 `write_content_asset_with_embedded` writes a host from its header, with an
 empty directory, its payload and one `EmbeddedPayload` per embedded asset, and
-fills the directory. Each asset's editor-only section is the bytes in
-`EmbeddedPayload::editor_only`, described by its header's `editor_only`,
-which gives their version; `None` or empty bytes write none. It refuses a
-host header with a derived or an editor-only section, and an embedded asset
+fills the directory. Each asset's uncooked section is the bytes in
+`EmbeddedPayload::uncooked`, described by its header's `uncooked`,
+which gives their version; `None` writes none. It refuses a
+host header with a derived or an uncooked section, and an embedded asset
 that has no provenance, lists embedded assets, has a blob its header does not
 describe, has section bytes its header does not describe or describes with
 another length, or repeats an id or a name.
-`write_content_asset_with_editor_only(header, payload, version, bytes)` writes
+`write_content_asset_with_uncooked(header, payload, version, bytes)` writes
 a loose file with a section at `version`. `write_content_asset`,
-`write_content_asset_with_editor_only` and `write_cooked_content_asset` refuse
+`write_content_asset_with_uncooked` and `write_cooked_content_asset` refuse
 a header that lists embedded assets.
 `read_content_asset` and `read_content_asset_parts` of a host return the
 host's payload, section and blob, with the directory in the header.
 `asset_record` returns one asset of a file as a standalone record, the bytes a
-loose file of it would have, its editor-only section included: the host for
+loose file of it would have, its uncooked section included: the host for
 `None`, an embedded asset by name. `ContentAssetHeader::record_header` gives
 that record's header without reading a payload. Every reader rejects a
 directory whose ranges overlap, are out of order or run past the file, or that
-repeats an id or a name, with an error that names the asset; a section counts
-in its asset's range.
+repeats an id or a name, with an error that names the asset, and a file too
+short for the sections its header describes.
 
-Three readers deal with editor-only sections alone.
-`ContentAssetHeader::has_editor_only` says whether the host or any embedded
-asset has one. `without_editor_only` returns a file's bytes with every section
-removed and the directory's offsets moved to match; a file with no section
-comes back byte for byte, whatever its version.
-`read_content_without_editor_only` reads a file from disk as those same bytes
-without reading the sections, by seeking over each; a file it cannot
+Three readers deal with uncooked sections alone.
+`ContentAssetHeader::has_uncooked` says whether the host or any embedded
+asset has one. `without_uncooked` returns a file's bytes with every section
+removed: the file cut where the sections start, under a header that describes
+none; a file with no section comes back byte for byte, whatever its version.
+`read_content_without_uncooked` reads a file from disk as those same bytes
+without reading the sections, by stopping where they start; a file it cannot
 understand is read whole, so the parser that follows reports what is wrong
-with it. `read_editor_only_section` reads the header and then only the section
+with it. `read_uncooked_section` reads the header and then only the section
 of one record, the host for `None` or an embedded asset by name, as
-`EditorOnlyBytes { kind, version, bytes }`, the record's kind and the
+`UncookedBytes { kind, version, bytes }`, the record's kind and the
 section's own version; it returns `None` for a record
 with no section and an error for a name the file does not hold.
 
-## Editor-only data
+## Uncooked data
 
-An asset type can keep data in its file that only tools need, such as the
-source an importer derived the asset from. It is the record's editor-only
-section, described in the file format above. The data is a type of its own
-that implements `EditorOnly` and names the asset type whose files carry it;
+An asset type can keep data in its file that a cooked build never needs, such
+as the source an importer derived the asset from. It is the record's uncooked
+section, described in the file format above: the editor and the importer read
+it, an uncooked run reads it when a derive misses its cache, and a cook drops
+it. The data is a type of its own
+that implements `UncookedData` and names the asset type whose files carry it;
 the asset type declares nothing:
 
 ```rust
@@ -553,37 +557,38 @@ struct GearDrawing {
     strokes: u32,
 }
 
-impl EditorOnly for GearDrawing {
+impl UncookedData for GearDrawing {
     type Asset = Gear;
 }
 ```
 
-`EditorOnly::VERSION`, `1` by default, is the version of the data's own
+`UncookedData::VERSION`, `1` by default, is the version of the data's own
 encoding, stored with each section, so it changes apart from the asset's
 `FORMAT_VERSION`. A file has one section per record; nothing stops two types
 from naming the same asset, so keep to one: a reader that asks for another
 type than the one written fails or decodes nonsense.
 
-A section is optional for each record, so readers return an `Option`. A value
-that serializes to zero bytes writes no section.
+A section is optional for each record, so readers return an `Option`. A
+record has one exactly when a writer was given one, also when the value
+serializes to zero bytes.
 
 The section is read on its own, through
 `concerto_foundation::assets::content`:
 
-- `read_editor_only::<E>(project_root, entry)` reads and decodes the section
+- `read_uncooked::<E>(project_root, entry)` reads and decodes the section
   of one registry entry, a loose file or an embedded asset, without reading
   its payload. It returns `None` for a record with no section.
-- `read_asset_record_without_editor_only(project_root, entry)` returns the
+- `read_asset_record_without_uncooked(project_root, entry)` returns the
   same standalone record as `read_asset_record` with no section, and does not
   read the section from disk. `read_asset_record` returns the record with its
   section.
-- `decode_editor_only::<E>(kind, version, bytes)` decodes a section's bytes,
-  as `read_editor_only_section` returns them, and rejects a record whose
+- `decode_uncooked::<E>(kind, version, bytes)` decodes a section's bytes,
+  as `read_uncooked_section` returns them, and rejects a record whose
   `kind` is not `E::Asset`'s.
 
 It is written by
-`save_content_asset_with_editor_only(&value, &editor_only, project_root, address, &mut registry)`,
-which saves as `save_content_asset_into` does and writes `editor_only` as the
+`save_content_asset_with_uncooked(&value, &uncooked, project_root, address, &mut registry)`,
+which saves as `save_content_asset_into` does and writes `uncooked` as the
 file's section. The two save functions of
 [Editor-authored assets](#editor-authored-assets) take no section and keep
 the one of the file being replaced, copying its bytes and its version as they
@@ -593,8 +598,8 @@ dropped. A section that cannot be read fails the save and leaves the file as
 it was.
 
 An importer writes a section with
-`ImportContext::emit_with(name, &value, &editor_only)`, which takes a value
-of an `EditorOnly` type after its asset; `emit` writes none. The import writes
+`ImportContext::emit_with(name, &value, &uncooked)`, which takes a value
+of an `UncookedData` type after its asset; `emit` writes none. The import writes
 the section with the output, loose or embedded in the scene file. The `scene`
 output cannot carry one, and emitting it with one fails the import.
 `ImportContext::previous::<T>` reads the previous output without its section,
@@ -607,7 +612,7 @@ never hands a section to the asset; see
 [Loading at runtime](#loading-at-runtime). A derive reads its asset's own
 section on a cache miss; see [Derived data](#derived-data). A cook writes
 every file without its sections; see [Cooking](#cooking).
-`AssetServer::load_editor_only::<E>(id).await` reads and decodes the section
+`AssetServer::load_uncooked::<E>(id).await` reads and decodes the section
 of the asset `id` through the server's root and registry, for code that has a
 server and no project root: `None` when the record has none, and an error for
 an id the registry does not hold.
@@ -635,20 +640,20 @@ self-describing, so a payload cannot absorb a new field with
 `#[serde(default)]`: any change to a type's serialized fields, their order or
 their types is a new encoding.
 
-An asset's [editor-only data](#editor-only-data) is versioned apart from its
-payload: a section is written under its type's `EditorOnly::VERSION`, and
-`decode_editor_only::<E>` decodes it by the same table, with
+An asset's [uncooked data](#uncooked-data) is versioned apart from its
+payload: a section is written under its type's `UncookedData::VERSION`, and
+`decode_uncooked::<E>` decodes it by the same table, with
 `E::migrate(version, bytes)` for an older one, which also rejects by default.
 A change to the payload's encoding leaves sections alone, and a change to the
-editor-only type's encoding raises only its own `VERSION`.
+uncooked type's encoding raises only its own `VERSION`.
 
 Each content type's encoding is pinned by a test. `check_encoding(&value, dir)`
 (`concerto_foundation::assets::content`) serializes the value and compares the
 bytes with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`. The checks sit in each
 crate's serialization test, with the fixtures in its `tests/encoding/`. An
-editor-only type is pinned the same way, with
-`check_editor_only_encoding(&value, dir)`, whose fixture is
-`<dir>/<E::Asset::name()>.editor-only.v<E::VERSION>.bin`:
+uncooked type is pinned the same way, with
+`check_uncooked_encoding(&value, dir)`, whose fixture is
+`<dir>/<E::Asset::name()>.uncooked.v<E::VERSION>.bin`:
 
 | Test file | Types |
 |---|---|
@@ -698,15 +703,15 @@ When you change one:
    `migrate` matches on the version, decodes the frozen struct with bincode and
    converts it; an older version converts through each newer one in turn.
    Without a migration, older files fail to load with an error that says to
-   re-import their source or re-create them in the editor. An editor-only
-   type whose encoding changes raises its `EditorOnly::VERSION` and overrides
-   `EditorOnly::migrate` the same way; without it an older section is refused
+   re-import their source or re-create them in the editor. An uncooked
+   type whose encoding changes raises its `UncookedData::VERSION` and overrides
+   `UncookedData::migrate` the same way; without it an older section is refused
    wherever it is decoded, while saves still keep it as it is.
 3. Bless the new fixture with
    `CONCERTO_BLESS_ENCODING=1 cargo test -p <crate> --test <dir>`, where
    `<dir>` is the directory under the crate's `tests/` that holds its
    `main.rs`, run the test again without the variable, and commit the new
-   `.bin` file, or the new `.editor-only` one for an editor-only type. Keep the old version's fixture while its `migrate` arm
+   `.bin` file, or the new `.uncooked` one for an uncooked type. Keep the old version's fixture while its `migrate` arm
    exists, with a test that passes it through `decode_content_asset` and
    checks the converted value; delete it when you choose rejection.
 4. Migration happens in memory: the file keeps its old version until it is
@@ -886,8 +891,8 @@ hold is a compile error that lists the names it does hold. It is also available 
 `concerto_foundation::asset_id!` and `concerto_foundation::assets::asset_id!`.
 
 A native load reads a file around its
-[editor-only sections](#editor-only-data): it reads the header, then seeks
-over each section, so their bytes never leave the disk, and the load sees the
+[uncooked sections](#uncooked-data): it reads the header, then the file up
+to where the sections start, so their bytes never leave the disk, and the load sees the
 file as if it had none. An uncooked web build fetches each file whole,
 sections included, and ignores them unless a derive needs one. A cooked build
 has none to skip.
@@ -1039,7 +1044,7 @@ content tree. `MotionDatabase` is one: its file is the definition, and its
 | `derived_inputs()` | The content assets the blob is built from; none may itself derive |
 | `further_inputs(&inputs)` | Further content assets named by the first inputs, such as the meshes a scene places; empty unless the type overrides it, and under the same rules as `derived_inputs()` |
 | `derived_key(&inputs)` | A `u64` that is equal for inputs giving an equal blob |
-| `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)`; it may read the asset's own editor-only data with `inputs.own_editor_only::<E>()` |
+| `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)`; it may read the asset's own uncooked data with `inputs.own_uncooked::<E>()` |
 | `apply_derived(&blob)` | Takes the blob into the asset's runtime part |
 
 Whether an asset derives is decided per asset, not per type. One whose
@@ -1078,22 +1083,22 @@ handle reads as loaded only once the blob is applied, and a missing input, an
 input that itself derives, first or further, or a failed derive fails the load. `AssetServer::add` derives nothing: code that adds a
 derived asset in memory attaches the computed part itself.
 
-A type with [editor-only data](#editor-only-data) derives from it:
-`inputs.own_editor_only::<E>()` decodes the asset's own section as `E` and
+A type with [uncooked data](#uncooked-data) derives from it:
+`inputs.own_uncooked::<E>()` decodes the asset's own section as `E` and
 returns it. The section is read only after a cache miss, or after a
 cached or cooked blob was refused, and only when the file holds one: a native
 load reads the file's header and the section then, alone, and an uncooked
 web load uses the bytes its fetch already holds. A cache hit and a cooked
 blob read no section. `derived_key` is always called without it, so the key
 comes from the payload alone, which therefore keeps whatever identifies the
-section, such as a hash of it. `own_editor_only` fails when the file holds no
+section, such as a hash of it. `own_uncooked` fails when the file holds no
 section, and in `derived_key`, with an error naming the type and saying that
-a cooked file never holds editor-only data; so a cooked asset whose blob is
+a cooked file never holds uncooked data; so a cooked asset whose blob is
 refused fails to load instead of deriving. A native load reads the file and
 the section at two moments, so a type whose section must match its payload
 checks that in `derive`. Code that derives in memory, with no file, hands the
 value over itself:
-`DerivedInputs::default().with_own_editor_only(&value)?`.
+`DerivedInputs::default().with_own_uncooked(&value)?`.
 
 The key covers the definition and the bytes of its inputs, not code. A change
 to an engine `derive` raises `DERIVED_VERSION`. Code a game registers, such as
@@ -1116,7 +1121,7 @@ the browser, on the main thread. A cooked build carries the blobs instead.
 
 A cook writes the blob of each asset that derives into a copy of its `.gasset` file, as a
 trailing derived section, so a shipped build applies it without deriving, and
-writes every file that has [editor-only sections](#editor-only-data) without
+writes every file that has [uncooked sections](#uncooked-data) without
 them, so a shipped build holds none. It is
 run through the project tool:
 
@@ -1137,20 +1142,20 @@ after `--`.
    frame. It points the `AssetServer` at the project's `content/` and its
    `derived-cache/`, and calls `AssetServer::cook`.
 3. `AssetServer::cook` takes every file of the registry, in address order,
-   and reads its header from disk. A file with no editor-only section and no
+   and reads its header from disk. A file with no uncooked section and no
    asset whose kind is a registered derived type is skipped without being
    read. Any other is read as a load reads it, without its sections. For a
    loose or host asset of a derived type the cook asks the type's
    `file_is_derived` first; one that derives is
    decoded and its `on_load` runs; then it derives or takes a cache hit as a
-   load does, reading its own editor-only section on a miss, and
+   load does, reading its own uncooked section on a miss, and
    writes `<out>/<address>`: the original header and payload bytes
-   plus the derived section, and no editor-only section. A cached blob that `apply_derived` refuses is derived
+   plus the derived section, and no uncooked section. A cached blob that `apply_derived` refuses is derived
    again, never cooked. An embedded asset that doesn't derive is left as it is;
    one that derives fails the cook, with an error giving its `<address>#<name>`
    and saying embedded assets cannot be cooked yet. No importer writes one.
    A file whose asset doesn't derive, or is of any other kind, is written to
-   `<out>/<address>` when it has an editor-only section, on the host or on an
+   `<out>/<address>` when it has an uncooked section, on the host or on an
    embedded asset, as the same file without its sections; with none, no file
    is written. The `CookReport` lists the address of every file written, the
    command prints each as `cooked <address>` and then `cooked <n> files`, and
@@ -1189,9 +1194,9 @@ let id = save_content_asset_into(&scene, project_root, "content/levels/intro.gas
 
 It writes the `.gasset` file (with `provenance: None`), keeping the id already
 in that file's header, and upserts the entry in `registry`, an `AssetRegistry`
-in memory. It keeps the [editor-only section](#editor-only-data) of the file
+in memory. It keeps the [uncooked section](#uncooked-data) of the file
 being replaced when that file holds the same kind;
-`save_content_asset_with_editor_only` writes one. No registry file is written. This API is separate from source
+`save_content_asset_with_uncooked` writes one. No registry file is written. This API is separate from source
 importing and does not create a source sidecar. The `project_root` is the
 source tree under version control — deliberately *not* the exe-relative
 runtime root, so a save is not overwritten by the next build.
@@ -1208,7 +1213,7 @@ let id = resave_content_asset(&clip, project_root, "content/walk/animation_walk.
 ```
 
 It fails when there is no file at the address or the file holds another kind,
-keeps the header's id and provenance and the file's editor-only section,
+keeps the header's id and provenance and the file's uncooked section,
 writes the references and
 `kind_version` of `value`, and upserts the entry in `registry` with the same
 provenance. The next re-import of the source then overwrites the saved edit.
@@ -1261,7 +1266,7 @@ impl Importer for MyImporter {
             ctx.emit(&format!("mesh/{i}"), &mesh_to_engine_mesh(mesh))?;
         }
 
-        // `emit_with` also writes the type's editor-only data beside the
+        // `emit_with` also writes the type's uncooked data beside the
         // value, such as the source the asset was derived from.
         ctx.emit_with("gear", &gear, &drawing)?;
 
@@ -1295,9 +1300,9 @@ import itself, the sidecar's importer check and the editor's file picker.
 `ImportContext::emit<T: Asset>` requires the emitted type to implement
 `Asset` (`Serialize + DeserializeOwned` + a `name()` tag). There is no
 separate DTO trait — the on-disk form of an asset *is* the asset.
-`ImportContext::emit_with<E: EditorOnly>` takes an `&E::Asset` and an `&E`
-and writes the second as the output's editor-only section; see
-[Editor-only data](#editor-only-data).
+`ImportContext::emit_with<E: UncookedData>` takes an `&E::Asset` and an `&E`
+and writes the second as the output's uncooked section; see
+[Uncooked data](#uncooked-data).
 
 ## Current limitations
 

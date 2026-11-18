@@ -139,8 +139,8 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
     }
 }
 
-/// Data an asset's file keeps for tools in a section after its payload; loads never read it and a cook drops it.
-pub trait EditorOnly:
+/// Data an asset's file keeps in a section of its own, for tools and for a derive that misses its cache; loads never read it and a cook drops it.
+pub trait UncookedData:
     Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned
 {
     /// The asset type whose files carry this data.
@@ -152,7 +152,7 @@ pub trait EditorOnly:
     /// Decodes a section written at `version`, older than `VERSION`; the default rejects it.
     fn migrate(version: u32, _bytes: &[u8]) -> anyhow::Result<Self> {
         anyhow::bail!(
-            "the editor-only data of {} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            "the uncooked data of {} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
             <Self::Asset as Asset>::name(),
             Self::VERSION
         )

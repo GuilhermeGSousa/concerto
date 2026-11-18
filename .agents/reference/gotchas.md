@@ -303,7 +303,7 @@ fix the entry in the same commit as the change that made it false.
   its key. A change to how a derived input decodes or migrates, made without
   raising `DERIVED_VERSION`, leaves a staged cooked blob (and a cached one)
   derived by the old code; cook again, or delete `derived-cache/`.
-- **Cooked files hold no editor-only section.** A cook drops every one, so a
+- **Cooked files hold no uncooked section.** A cook drops every one, so a
   cooked asset whose blob is refused cannot derive: its load fails. A cook
   writes a payload as it is, so a version-2 `Texture`, whose payload holds its
   source, ships it until its source is imported again; the cook warns.

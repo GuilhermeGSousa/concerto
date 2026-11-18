@@ -11,7 +11,7 @@ fn write_asset(path: &Path, id: AssetId, kind: &str) {
         kind: kind.into(),
         kind_version: 1,
         provenance: None,
-        editor_only: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };

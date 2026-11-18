@@ -97,7 +97,7 @@ fn cook_arg(args: impl IntoIterator<Item = String>) -> CookArg {
 #[cfg(not(target_arch = "wasm32"))]
 const COOK_MARKER: &str = ".concerto-cook";
 
-/// Builds the `App` that `build` makes, with no GPU and no window, and writes to `out` every file of `content` whose asset derives, with its derived blob, and every other file that has an editor-only section, all without those sections; `out` must be missing, empty, or a previous cook output, which it replaces.
+/// Builds the `App` that `build` makes, with no GPU and no window, and writes to `out` every file of `content` whose asset derives, with its derived blob, and every other file that has an uncooked section, all without those sections; `out` must be missing, empty, or a previous cook output, which it replaces.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn cook(
     build: impl FnOnce(&mut App),

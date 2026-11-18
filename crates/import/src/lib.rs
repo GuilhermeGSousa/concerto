@@ -7,13 +7,13 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
 use concerto_asset_import::{
-    DependencyEntry, EmittedEditorOnly, ErasedImporter, ImportContext, PreviousOutputResolver,
+    DependencyEntry, EmittedUncooked, ErasedImporter, ImportContext, PreviousOutputResolver,
     SubAssetIdResolver,
 };
 use concerto_foundation::assets::content::{
-    read_asset_record_without_editor_only, read_content_asset_header, write_content_asset,
-    write_content_asset_with_editor_only, write_content_asset_with_embedded, ContentAssetHeader,
-    EditorOnlySection, EmbeddedPayload, ImportProvenance,
+    read_asset_record_without_uncooked, read_content_asset_header, write_content_asset,
+    write_content_asset_with_embedded, write_content_asset_with_uncooked, ContentAssetHeader,
+    EmbeddedPayload, ImportProvenance, UncookedSection,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
@@ -143,7 +143,7 @@ struct PlannedFile {
 struct EmbeddedOutput<'a> {
     header: ContentAssetHeader,
     payload: &'a [u8],
-    editor_only: Option<&'a [u8]>,
+    uncooked: Option<&'a [u8]>,
 }
 
 struct HostOutput<'a> {
@@ -152,8 +152,8 @@ struct HostOutput<'a> {
     payload: &'a [u8],
 }
 
-fn described(section: &EmittedEditorOnly) -> EditorOnlySection {
-    EditorOnlySection {
+fn described(section: &EmittedUncooked) -> UncookedSection {
+    UncookedSection {
         len: section.bytes.len() as u64,
         version: section.version,
     }
@@ -419,7 +419,7 @@ fn previous_outputs(
         .filter_map(|(key, output)| Some((key.clone(), registry.get(output.asset_id)?.clone())))
         .collect();
     let root = project_root.to_path_buf();
-    Box::new(move |name| read_asset_record_without_editor_only(&root, located.get(name)?).ok())
+    Box::new(move |name| read_asset_record_without_uncooked(&root, located.get(name)?).ok())
 }
 
 fn sidecar_settings(
@@ -598,14 +598,11 @@ fn import_with(
                 source: provenance_source.clone(),
                 sub_asset: sub_asset.name.clone(),
             }),
-            editor_only: None,
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         };
-        let editor_only = sub_asset
-            .editor_only
-            .as_ref()
-            .filter(|section| !section.bytes.is_empty());
+        let uncooked = sub_asset.uncooked.as_ref();
         if embedded_in.is_some() {
             if let Some(loose) = registry
                 .get(sub_asset.asset_id)
@@ -615,16 +612,16 @@ fn import_with(
             }
             embedded.push(EmbeddedOutput {
                 header: ContentAssetHeader {
-                    editor_only: editor_only.map(described),
+                    uncooked: uncooked.map(described),
                     ..header.clone()
                 },
                 payload: &sub_asset.bytes,
-                editor_only: editor_only.map(|section| section.bytes.as_slice()),
+                uncooked: uncooked.map(|section| section.bytes.as_slice()),
             });
         } else if sub_asset.name == HOST {
-            if editor_only.is_some() {
+            if uncooked.is_some() {
                 bail!(
-                    "the importer emitted '{HOST}' with editor-only data, which the file that holds an import's embedded assets cannot carry; emit it with `emit`"
+                    "the importer emitted '{HOST}' with uncooked data, which the file that holds an import's embedded assets cannot carry; emit it with `emit`"
                 );
             }
             host = Some(HostOutput {
@@ -635,12 +632,12 @@ fn import_with(
         } else {
             plan.push(PlannedFile {
                 path: project_root.join(&address),
-                bytes: match editor_only {
-                    Some(editor_only) => write_content_asset_with_editor_only(
+                bytes: match uncooked {
+                    Some(uncooked) => write_content_asset_with_uncooked(
                         &header,
                         &sub_asset.bytes,
-                        editor_only.version,
-                        &editor_only.bytes,
+                        uncooked.version,
+                        &uncooked.bytes,
                     )?,
                     None => write_content_asset(&header, &sub_asset.bytes)?,
                 },
@@ -674,7 +671,7 @@ fn import_with(
             .map(|output| EmbeddedPayload {
                 header: output.header.clone(),
                 payload: output.payload,
-                editor_only: output.editor_only,
+                uncooked: output.uncooked,
                 derived_blob: None,
             })
             .collect();
@@ -1054,7 +1051,7 @@ mod tests {
         strokes: u32,
     }
 
-    impl concerto_foundation::assets::EditorOnly for Drawing {
+    impl concerto_foundation::assets::UncookedData for Drawing {
         type Asset = Blob;
     }
 
@@ -1227,7 +1224,7 @@ mod tests {
         let header = read_content_asset_header(&fixture.root().join(&old.address)).unwrap();
         assert_eq!(header.provenance.unwrap().sub_asset, "animation/clip");
         assert_eq!(
-            concerto_foundation::assets::content::read_editor_only::<Drawing>(
+            concerto_foundation::assets::content::read_uncooked::<Drawing>(
                 &fixture.root(),
                 renamed
             )

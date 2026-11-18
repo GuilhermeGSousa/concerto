@@ -9,7 +9,7 @@ use concerto_editor::hosted::EditWorld;
 use concerto_foundation::assets::{
     AssetId,
     asset_store::AssetStore,
-    content::{decode_content_asset, read_content_asset, read_editor_only},
+    content::{decode_content_asset, read_content_asset, read_uncooked},
     handle::AssetHandle,
     registry::AssetRegistry,
 };
@@ -361,7 +361,7 @@ fn a_texture_tab_changes_compression_saves_and_survives_reimport() {
             .with_max_size(MaxSize::S512)
     );
     let registry = AssetRegistry::from_content_tree(&root, "content", "gasset").unwrap();
-    let source = read_editor_only::<TextureSource>(&root, registry.get(header.asset_id).unwrap())
+    let source = read_uncooked::<TextureSource>(&root, registry.get(header.asset_id).unwrap())
         .unwrap()
         .expect("a save keeps the source section");
     assert_eq!(source.bytes, colour);

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use concerto_color::{Color, LinearRgba};
-use concerto_foundation::assets::content::{check_editor_only_encoding, check_encoding};
+use concerto_foundation::assets::content::{check_encoding, check_uncooked_encoding};
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{
@@ -54,7 +54,7 @@ fn texture_encoding_matches_its_fixture() {
     let texture = Texture::imported(TextureRole::Normal, settings, &source);
 
     check_encoding(&texture, encoding_dir());
-    check_editor_only_encoding(&source, encoding_dir());
+    check_uncooked_encoding(&source, encoding_dir());
 
     let version_2 = std::fs::read(encoding_dir().join("Texture.v2.bin")).unwrap();
     let migrated = Texture::migrate(2, &version_2).unwrap();

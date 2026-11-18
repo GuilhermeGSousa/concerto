@@ -11,8 +11,8 @@ use concerto_color::Color;
 use concerto_foundation::{
     assets::{
         asset_server::AssetServer, asset_store::AssetStore,
-        content::save_content_asset_with_editor_only, derived::DerivedDataCache,
-        handle::AssetHandle, registry::AssetRegistry, AssetId, ContentAssetRoot,
+        content::save_content_asset_with_uncooked, derived::DerivedDataCache, handle::AssetHandle,
+        registry::AssetRegistry, AssetId, ContentAssetRoot,
     },
     transform::Transform,
 };
@@ -110,7 +110,7 @@ impl Content {
             TextureSettings::default().with_compression(compression),
             &source,
         );
-        save_content_asset_with_editor_only(
+        save_content_asset_with_uncooked(
             &texture,
             &source,
             &self.project.root,

@@ -19,7 +19,7 @@ pub fn source_encoding(bytes: &[u8]) -> Result<SourceEncoding, String> {
     }
 }
 
-/// A texture an importer emits, with the source image its file keeps as editor-only data.
+/// A texture an importer emits, with the source image its file keeps as uncooked data.
 pub struct ImportedTexture {
     pub texture: Texture,
     pub source: TextureSource,
