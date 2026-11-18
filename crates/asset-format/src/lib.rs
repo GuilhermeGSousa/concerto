@@ -94,7 +94,7 @@ pub struct ContentAssetHeader {
     pub uncooked: Option<UncookedSection>,
     /// The cooked derived data trailing the payload, if any.
     pub derived: Option<DerivedSection>,
-    /// The assets stored in this file after the host's payload, section and blob, in file order.
+    /// The assets stored in this file after the host's payload and blob, in file order.
     pub embedded: Vec<EmbeddedAsset>,
 }
 
@@ -442,6 +442,14 @@ fn check_directory(header: &ContentAssetHeader, body_len: Option<u64>) -> anyhow
         }
         cursor = end;
     }
+    let gap = limit
+        .filter(|_| !header.embedded.is_empty() && header.has_uncooked())
+        .map_or(0, |limit| limit - cursor);
+    if gap != 0 {
+        bail!(
+            "content asset directory is malformed: {gap} bytes lie between the last embedded asset and the uncooked sections"
+        );
+    }
     Ok(())
 }
 
@@ -469,10 +477,13 @@ fn section_start(
     let Some(name) = embedded_as else {
         return Ok(start);
     };
-    let before: u64 = header
+    let index = header
         .embedded
         .iter()
-        .take_while(|asset| asset.name() != name)
+        .position(|asset| asset.name() == name)
+        .with_context(|| format!("content asset holds no embedded asset named '{name}'"))?;
+    let before: u64 = header.embedded[..index]
+        .iter()
         .map(EmbeddedAsset::uncooked_len)
         .sum();
     Ok(start + header.uncooked_len() + before)
@@ -780,6 +791,7 @@ impl<'a> ContentFile<'a> {
         &'file self,
         asset: &'file EmbeddedAsset,
     ) -> anyhow::Result<AssetRecord<'file>> {
+        let asset = named_asset(&self.header, asset.name())?;
         let outside = || {
             format!(
                 "embedded asset '{}' is not in this file's directory",
@@ -875,7 +887,7 @@ pub fn without_uncooked(file: &[u8]) -> anyhow::Result<Vec<u8>> {
     if !parsed.header.has_uncooked() {
         return Ok(file.to_vec());
     }
-    let kept = sections_start(&parsed.header, parsed.body.len() as u64)? as usize;
+    let kept = HostExtent::of(&parsed.header, parsed.body.len() as u64)?.section_start;
     frame_content_asset(&without_sections(&parsed.header), &[&parsed.body[..kept]])
 }
 
@@ -967,7 +979,7 @@ pub fn read_content_without_uncooked(path: &Path) -> std::io::Result<Vec<u8>> {
         .filter(ContentAssetHeader::has_uncooked)
         .and_then(|header| {
             check_directory(&header, Some(body_len)).ok()?;
-            let kept = sections_start(&header, body_len).ok()?;
+            let kept = HostExtent::of(&header, body_len).ok()?.section_start as u64;
             let framed = frame_content_asset(&without_sections(&header), &[]).ok()?;
             Some(Stripped { framed, kept })
         });

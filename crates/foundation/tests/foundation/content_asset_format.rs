@@ -1,5 +1,5 @@
 //! The on-disk framing for game-ready content assets: magic, a
-//! length-prefixed bincode header, the payload verbatim, an optional uncooked section and derived blob, then the embedded assets.
+//! length-prefixed bincode header, the payload verbatim, an optional derived blob, the embedded assets, then the uncooked sections.
 use concerto_foundation::assets::content::{
     asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
     read_content_without_uncooked, read_uncooked_section, without_uncooked, write_content_asset,
@@ -366,7 +366,16 @@ fn listed(name: &str, id: u8, offset: u64, len: u64) -> EmbeddedAsset {
 }
 
 fn host_file(embedded: Vec<EmbeddedAsset>) -> Vec<u8> {
+    host_file_with_sections(None, embedded, b"hostAAAABBBB")
+}
+
+fn host_file_with_sections(
+    uncooked: Option<UncookedSection>,
+    embedded: Vec<EmbeddedAsset>,
+    body: &[u8],
+) -> Vec<u8> {
     let header = ContentAssetHeader {
+        uncooked,
         embedded,
         ..header()
     };
@@ -375,8 +384,25 @@ fn host_file(embedded: Vec<EmbeddedAsset>) -> Vec<u8> {
             format_version: 8,
             header: &header,
         },
-        b"hostAAAABBBB",
+        body,
     )
+}
+
+fn sectioned(len: u64) -> Option<UncookedSection> {
+    Some(UncookedSection {
+        len,
+        version: SECTION_VERSION,
+    })
+}
+
+fn sectioned_assets() -> Vec<EmbeddedAsset> {
+    vec![
+        listed("mesh/0", 1, 4, 4),
+        EmbeddedAsset {
+            uncooked: sectioned(3),
+            ..listed("mesh/1", 2, 8, 4)
+        },
+    ]
 }
 
 struct Malformed {
@@ -395,7 +421,48 @@ fn a_malformed_directory_is_rejected() {
             .1,
         b"BBBB"
     );
+    let sectioned_host =
+        host_file_with_sections(sectioned(2), sectioned_assets(), b"hostAAAABBBBhsbbb");
+    let parts = read_content_asset_parts(&sectioned_host).unwrap();
+    assert_eq!(parts.payload, b"host");
+    assert_eq!(parts.uncooked, Some(&b"hs"[..]));
+    let record = asset_record(&sectioned_host, Some("mesh/1")).unwrap();
+    let parts = read_content_asset_parts(&record).unwrap();
+    assert_eq!(parts.payload, b"BBBB");
+    assert_eq!(parts.uncooked, Some(&b"bbb"[..]));
+    let record = asset_record(&sectioned_host, Some("mesh/0")).unwrap();
+    assert_eq!(read_content_asset_parts(&record).unwrap().uncooked, None);
     let cases = [
+        Malformed {
+            name: "bytes between the last asset and the sections",
+            bytes: host_file_with_sections(
+                sectioned(2),
+                sectioned_assets(),
+                b"hostAAAABBBBzzhsbbb",
+            ),
+            asked: "mesh/0",
+            the_host_reads: false,
+        },
+        Malformed {
+            name: "a loose file shorter than its blob and its section",
+            bytes: framed(
+                &HeaderV8 {
+                    format_version: 8,
+                    header: &ContentAssetHeader {
+                        uncooked: sectioned(4),
+                        derived: Some(DerivedSection {
+                            derived_version: 1,
+                            key: 7,
+                            len: 4,
+                        }),
+                        ..header()
+                    },
+                },
+                b"7 bytes",
+            ),
+            asked: "mesh/0",
+            the_host_reads: false,
+        },
         Malformed {
             name: "a range past the end",
             bytes: host_file(vec![listed("mesh/0", 1, 4, 4), listed("mesh/1", 2, 8, 40)]),
