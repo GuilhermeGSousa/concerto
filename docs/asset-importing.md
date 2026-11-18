@@ -82,7 +82,8 @@ file. A load reads the source only when the cache has no levels for it, and a
 cooked build does not hold it. A texture written at version 2, which kept its
 source in the payload, has no section: it loads while `derived-cache/` holds
 its levels, fails to derive otherwise, saying to import its source again, and
-keeps its settings through that re-import. `Auto` is BC7 for a colour texture with alpha below 255, BC1 for an
+keeps its settings through that re-import. Until then a cook writes its
+payload as it is, source included, and warns. `Auto` is BC7 for a colour texture with alpha below 255, BC1 for an
 opaque one, BC5 for a normal map and BC7 for data. A texture is first fitted
 within its max size, then, when compressed, rounded to a multiple of 4 on each
 side; its mips halve down to 1×1, averaging sRGB colour in linear space and

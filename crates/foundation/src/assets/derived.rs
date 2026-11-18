@@ -445,6 +445,14 @@ pub(crate) fn cook_hook<A: DerivedData>(
         )?;
         asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
         let derived = derive_and_apply(&mut asset, id, None, &server).await?;
+        if parts.header.kind_version < A::FORMAT_VERSION {
+            log::warn!(
+                "cooking {id:?} with its version-{} {} payload as it is, this build's is version {}; import its source or save it again so the cooked file holds only what that version keeps",
+                parts.header.kind_version,
+                A::name(),
+                A::FORMAT_VERSION
+            );
+        }
         write_cooked_content_asset(
             &parts.header,
             parts.payload,
