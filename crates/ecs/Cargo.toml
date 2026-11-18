@@ -20,7 +20,7 @@ any_vec = "0.14.0"
 typle = "0.10.6"
 log = "0.4.27"
 petgraph = { version = "0.8" }
-derive_more = { version = "2", features = ["full"] }
+derive_more = { version = "2", features = ["deref", "deref_mut", "from"] }
 fixedbitset = "0.5.7"
 concurrent-queue = { version = "2.5.0", optional = true }
 crossbeam-channel = "0.5.0"
