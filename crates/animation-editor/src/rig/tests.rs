@@ -128,7 +128,7 @@ pub(super) fn rig_fixture() -> SceneFixture {
 pub(super) fn write<A: Asset>(f: &mut SceneFixture, address: &str, asset: &A) -> AssetEntry {
     let root = f.project_root.clone();
     let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-    let id = save_content_asset_into(asset, None, &root, address, assets).unwrap();
+    let id = save_content_asset_into(asset, &root, address, assets).unwrap();
     assets.get(id).unwrap().clone()
 }
 

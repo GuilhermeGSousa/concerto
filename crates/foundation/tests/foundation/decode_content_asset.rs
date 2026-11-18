@@ -27,8 +27,6 @@ struct WheelV1 {
 }
 
 impl Asset for Wheel {
-    type EditorOnly = ();
-
     const FORMAT_VERSION: u32 = 2;
 
     fn name() -> &'static str {

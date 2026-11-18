@@ -475,7 +475,7 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only w
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
 | `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, kept when `resave_content_asset` writes over it; `None` for editor-authored assets and for an imported asset saved with `save_content_asset_into` |
-| `editor_only`    | `Some(EditorOnlySection { len })` when editor-only bytes follow the payload: data only tools read, `len` bytes long; `None` otherwise, for a cooked file, and for a file older than version 8 |
+| `editor_only`    | `Some(EditorOnlySection { len, version })` when editor-only bytes follow the payload: data only tools read, `len` bytes long, written at the `EditorOnly::VERSION` of its type; `None` otherwise, for a cooked file, and for a file older than version 8 |
 | `derived`        | `Some(DerivedSection { derived_version, key, len })` for a cooked file: the type's `DERIVED_VERSION` and `derived_key` at cook time and the blob's length in bytes; `None` otherwise, and for a file older than version 6 |
 
 | `embedded`       | the directory of the assets stored in this file after the host's payload, section and blob, one `EmbeddedAsset` each, in file order; empty for a loose file, and for a file older than version 7 |
@@ -499,11 +499,14 @@ embedded assets of its own.
 `write_content_asset_with_embedded` writes a host from its header, with an
 empty directory, its payload and one `EmbeddedPayload` per embedded asset, and
 fills the directory. Each asset's editor-only section is the bytes in
-`EmbeddedPayload::editor_only`; `None` or empty bytes write none. It refuses a
+`EmbeddedPayload::editor_only`, described by its header's `editor_only`,
+which gives their version; `None` or empty bytes write none. It refuses a
 host header with a derived or an editor-only section, and an embedded asset
 that has no provenance, lists embedded assets, has a blob its header does not
-describe, has a header describing a section of another length than its bytes,
-or repeats an id or a name. `write_content_asset`,
+describe, has section bytes its header does not describe or describes with
+another length, or repeats an id or a name.
+`write_content_asset_with_editor_only(header, payload, version, bytes)` writes
+a loose file with a section at `version`. `write_content_asset`,
 `write_content_asset_with_editor_only` and `write_cooked_content_asset` refuse
 a header that lists embedded assets.
 `read_content_asset` and `read_content_asset_parts` of a host return the
@@ -526,22 +529,21 @@ without reading the sections, by seeking over each; a file it cannot
 understand is read whole, so the parser that follows reports what is wrong
 with it. `read_editor_only_section` reads the header and then only the section
 of one record, the host for `None` or an embedded asset by name, as
-`EditorOnlyBytes { kind, kind_version, bytes }`; it returns `None` for a record
+`EditorOnlyBytes { kind, version, bytes }`, the record's kind and the
+section's own version; it returns `None` for a record
 with no section and an error for a name the file does not hold.
 
 ## Editor-only data
 
 An asset type can keep data in its file that only tools need, such as the
 source an importer derived the asset from. It is the record's editor-only
-section, described in the file format above. Each type declares one
-editor-only type, `Asset::EditorOnly`. A derived type names it next to
-`#[derive(Asset)]`, in the same attribute as the version or in one of its
-own, and gets `()` when it names none; a hand-written `impl Asset` writes
-`type EditorOnly = …;`, or `type EditorOnly = ();` for a type with none:
+section, described in the file format above. The data is a type of its own
+that implements `EditorOnly` and names the asset type whose files carry it;
+the asset type declares nothing:
 
 ```rust
 #[derive(Asset, Serialize, Deserialize)]
-#[asset(version = 2, editor_only = GearDrawing)]
+#[asset(version = 2)]
 struct Gear {
     teeth: u32,
 }
@@ -550,53 +552,62 @@ struct Gear {
 struct GearDrawing {
     strokes: u32,
 }
+
+impl EditorOnly for GearDrawing {
+    type Asset = Gear;
+}
 ```
 
-A section is optional for each record, also for a type that declares one, so
-readers return an `Option` and writers take one. A value that serializes to
-zero bytes, as `()` does, writes no section.
+`EditorOnly::VERSION`, `1` by default, is the version of the data's own
+encoding, stored with each section, so it changes apart from the asset's
+`FORMAT_VERSION`. A file has one section per record; nothing stops two types
+from naming the same asset, so keep to one: a reader that asks for another
+type than the one written fails or decodes nonsense.
+
+A section is optional for each record, so readers return an `Option`. A value
+that serializes to zero bytes writes no section.
 
 The section is read on its own, through
 `concerto_foundation::assets::content`:
 
-- `read_editor_only::<A>(project_root, entry)` reads and decodes the section
+- `read_editor_only::<E>(project_root, entry)` reads and decodes the section
   of one registry entry, a loose file or an embedded asset, without reading
   its payload. It returns `None` for a record with no section.
 - `read_asset_record_without_editor_only(project_root, entry)` returns the
   same standalone record as `read_asset_record` with no section, and does not
   read the section from disk. `read_asset_record` returns the record with its
   section.
-- `decode_editor_only::<A>(kind, version, bytes)` decodes a section's bytes,
-  as `read_editor_only_section` returns them.
+- `decode_editor_only::<E>(kind, version, bytes)` decodes a section's bytes,
+  as `read_editor_only_section` returns them, and rejects a record whose
+  `kind` is not `E::Asset`'s.
 
-It is written by the two save functions of
-[Editor-authored assets](#editor-authored-assets), which take
-`editor_only: Option<&A::EditorOnly>` after the value. `Some` writes that
-value as the file's section. `None` keeps the section of the file being
-replaced, and writes none for a new file or for one that has none, so a save
-that does not hold the data cannot drop it. A kept section is copied as its
-bytes when the file is at the type's `FORMAT_VERSION`, and decoded through
-`migrate_editor_only` and written at the current version when the file is
-older. A section left by a file of another kind, which only
-`save_content_asset_into` can replace, is dropped. A section that cannot be
-read or migrated fails the save and leaves the file as it was.
+It is written by
+`save_content_asset_with_editor_only(&value, &editor_only, project_root, address, &mut registry)`,
+which saves as `save_content_asset_into` does and writes `editor_only` as the
+file's section. The two save functions of
+[Editor-authored assets](#editor-authored-assets) take no section and keep
+the one of the file being replaced, copying its bytes and its version as they
+are, so a save that does not hold the data cannot drop it. A section left by
+a file of another kind, which only `save_content_asset_into` can replace, is
+dropped. A section that cannot be read fails the save and leaves the file as
+it was.
 
 An importer writes a section with
-`ImportContext::emit_with(name, &value, &editor_only)`, which takes the
-type's `EditorOnly` after the value; `emit` writes none. The import writes
+`ImportContext::emit_with(name, &value, &editor_only)`, which takes a value
+of an `EditorOnly` type after its asset; `emit` writes none. The import writes
 the section with the output, loose or embedded in the scene file. The `scene`
 output cannot carry one, and emitting it with one fails the import.
 `ImportContext::previous::<T>` reads the previous output without its section,
 so a re-import never reads one from disk. `pack-imports` keeps the section of
 every asset it embeds.
 
-A section shares its payload's `kind_version`; see
+A section has a version of its own; see
 [Changing an asset type's encoding](#changing-an-asset-types-encoding). A load
 never hands a section to the asset; see
 [Loading at runtime](#loading-at-runtime). A derive reads its asset's own
 section on a cache miss; see [Derived data](#derived-data). A cook writes
 every file without its sections; see [Cooking](#cooking).
-`AssetServer::load_editor_only::<A>(id).await` reads and decodes the section
+`AssetServer::load_editor_only::<E>(id).await` reads and decodes the section
 of the asset `id` through the server's root and registry, for code that has a
 server and no project root: `None` when the record has none, and an error for
 an id the registry does not hold.
@@ -624,20 +635,20 @@ self-describing, so a payload cannot absorb a new field with
 `#[serde(default)]`: any change to a type's serialized fields, their order or
 their types is a new encoding.
 
-A type's [editor-only data](#editor-only-data) has no version of its own. A
-section is written under the same `kind_version` as its payload, and
-`decode_editor_only::<A>` decodes it by the same table, with
-`A::migrate_editor_only(version, bytes)` for an older one, which also rejects
-by default. A change to either the payload's encoding or the editor-only
-type's encoding therefore raises the one `FORMAT_VERSION`.
+An asset's [editor-only data](#editor-only-data) is versioned apart from its
+payload: a section is written under its type's `EditorOnly::VERSION`, and
+`decode_editor_only::<E>` decodes it by the same table, with
+`E::migrate(version, bytes)` for an older one, which also rejects by default.
+A change to the payload's encoding leaves sections alone, and a change to the
+editor-only type's encoding raises only its own `VERSION`.
 
 Each content type's encoding is pinned by a test. `check_encoding(&value, dir)`
 (`concerto_foundation::assets::content`) serializes the value and compares the
 bytes with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`. The checks sit in each
-crate's serialization test, with the fixtures in its `tests/encoding/`. A type
-with editor-only data pins that too, with
-`check_editor_only_encoding::<A>(&value, dir)`, whose fixture is
-`<dir>/<A::name()>.editor-only.v<A::FORMAT_VERSION>.bin`:
+crate's serialization test, with the fixtures in its `tests/encoding/`. An
+editor-only type is pinned the same way, with
+`check_editor_only_encoding(&value, dir)`, whose fixture is
+`<dir>/<E::Asset::name()>.editor-only.v<E::VERSION>.bin`:
 
 | Test file | Types |
 |---|---|
@@ -687,18 +698,15 @@ When you change one:
    `migrate` matches on the version, decodes the frozen struct with bincode and
    converts it; an older version converts through each newer one in turn.
    Without a migration, older files fail to load with an error that says to
-   re-import their source or re-create them in the editor. A type with
-   editor-only data that writes `migrate` writes `migrate_editor_only` beside
-   it, also when the section's encoding did not change, in which case it
-   decodes the bytes as they are. Without it an older file's payload still
-   migrates, but its section is refused wherever it is decoded, and a save
-   that would keep it fails.
+   re-import their source or re-create them in the editor. An editor-only
+   type whose encoding changes raises its `EditorOnly::VERSION` and overrides
+   `EditorOnly::migrate` the same way; without it an older section is refused
+   wherever it is decoded, while saves still keep it as it is.
 3. Bless the new fixture with
    `CONCERTO_BLESS_ENCODING=1 cargo test -p <crate> --test <dir>`, where
    `<dir>` is the directory under the crate's `tests/` that holds its
    `main.rs`, run the test again without the variable, and commit the new
-   `.bin` file, and the new `.editor-only` one for a type with editor-only
-   data. Keep the old version's fixture while its `migrate` arm
+   `.bin` file, or the new `.editor-only` one for an editor-only type. Keep the old version's fixture while its `migrate` arm
    exists, with a test that passes it through `decode_content_asset` and
    checks the converted value; delete it when you choose rejection.
 4. Migration happens in memory: the file keeps its old version until it is
@@ -1031,7 +1039,7 @@ content tree. `MotionDatabase` is one: its file is the definition, and its
 | `derived_inputs()` | The content assets the blob is built from; none may itself derive |
 | `further_inputs(&inputs)` | Further content assets named by the first inputs, such as the meshes a scene places; empty unless the type overrides it, and under the same rules as `derived_inputs()` |
 | `derived_key(&inputs)` | A `u64` that is equal for inputs giving an equal blob |
-| `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)`; it may read the asset's own editor-only data with `inputs.own_editor_only::<Self>()` |
+| `derive(&inputs, progress)` | Builds the blob, calling `progress(finished, total)`; it may read the asset's own editor-only data with `inputs.own_editor_only::<E>()` |
 | `apply_derived(&blob)` | Takes the blob into the asset's runtime part |
 
 Whether an asset derives is decided per asset, not per type. One whose
@@ -1071,11 +1079,11 @@ input that itself derives, first or further, or a failed derive fails the load. 
 derived asset in memory attaches the computed part itself.
 
 A type with [editor-only data](#editor-only-data) derives from it:
-`inputs.own_editor_only::<Self>()` gives `derive` a reference to the asset's
-own section, decoded. The section is read only after a cache miss, or after a
-cached or cooked blob was refused, and only for a type whose `EditorOnly` is
-not `()`: a native load reads it from the file then, alone, and an uncooked
-web load decodes the bytes its fetch already holds. A cache hit and a cooked
+`inputs.own_editor_only::<E>()` decodes the asset's own section as `E` and
+returns it. The section is read only after a cache miss, or after a
+cached or cooked blob was refused, and only when the file holds one: a native
+load reads the file's header and the section then, alone, and an uncooked
+web load uses the bytes its fetch already holds. A cache hit and a cooked
 blob read no section. `derived_key` is always called without it, so the key
 comes from the payload alone, which therefore keeps whatever identifies the
 section, such as a hash of it. `own_editor_only` fails when the file holds no
@@ -1085,7 +1093,7 @@ refused fails to load instead of deriving. A native load reads the file and
 the section at two moments, so a type whose section must match its payload
 checks that in `derive`. Code that derives in memory, with no file, hands the
 value over itself:
-`DerivedInputs::default().with_own_editor_only::<A>(value)`.
+`DerivedInputs::default().with_own_editor_only(&value)?`.
 
 The key covers the definition and the bytes of its inputs, not code. A change
 to an engine `derive` raises `DERIVED_VERSION`. Code a game registers, such as
@@ -1176,15 +1184,14 @@ instance. `save_content_asset_into` writes one directly:
 ```rust
 use concerto_foundation::assets::content::save_content_asset_into;
 
-let id = save_content_asset_into(&scene, None, project_root, "content/levels/intro.gasset", &mut registry)?;
+let id = save_content_asset_into(&scene, project_root, "content/levels/intro.gasset", &mut registry)?;
 ```
 
 It writes the `.gasset` file (with `provenance: None`), keeping the id already
 in that file's header, and upserts the entry in `registry`, an `AssetRegistry`
-in memory. The second argument is the asset's
-[editor-only data](#editor-only-data): `None` keeps the section of the file
-being replaced when that file holds the same kind, and `Some(&value)` writes
-`value` in its place. No registry file is written. This API is separate from source
+in memory. It keeps the [editor-only section](#editor-only-data) of the file
+being replaced when that file holds the same kind;
+`save_content_asset_with_editor_only` writes one. No registry file is written. This API is separate from source
 importing and does not create a source sidecar. The `project_root` is the
 source tree under version control — deliberately *not* the exe-relative
 runtime root, so a save is not overwritten by the next build.
@@ -1197,12 +1204,12 @@ edit to an imported asset and leave it owned by its source,
 ```rust
 use concerto_foundation::assets::content::resave_content_asset;
 
-let id = resave_content_asset(&clip, None, project_root, "content/walk/animation_walk.gasset", &mut registry)?;
+let id = resave_content_asset(&clip, project_root, "content/walk/animation_walk.gasset", &mut registry)?;
 ```
 
 It fails when there is no file at the address or the file holds another kind,
-keeps the header's id and provenance, keeps the file's editor-only section
-for `None` or replaces it for `Some(&value)`, writes the references and
+keeps the header's id and provenance and the file's editor-only section,
+writes the references and
 `kind_version` of `value`, and upserts the entry in `registry` with the same
 provenance. The next re-import of the source then overwrites the saved edit.
 
@@ -1288,8 +1295,8 @@ import itself, the sidecar's importer check and the editor's file picker.
 `ImportContext::emit<T: Asset>` requires the emitted type to implement
 `Asset` (`Serialize + DeserializeOwned` + a `name()` tag). There is no
 separate DTO trait — the on-disk form of an asset *is* the asset.
-`ImportContext::emit_with<T: Asset>` takes a `&T::EditorOnly` after the value
-and writes it as the output's editor-only section; see
+`ImportContext::emit_with<E: EditorOnly>` takes an `&E::Asset` and an `&E`
+and writes the second as the output's editor-only section; see
 [Editor-only data](#editor-only-data).
 
 ## Current limitations

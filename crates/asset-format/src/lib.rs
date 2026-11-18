@@ -181,17 +181,28 @@ impl EmbeddedAsset {
 pub struct EditorOnlySection {
     /// The section's length in bytes.
     pub len: u64,
+    /// The `EditorOnly::VERSION` the section's bytes were written with.
+    pub version: u32,
 }
 
-/// One record's editor-only section read from a file, with the type tag and version it was written under.
+/// One record's editor-only section read from a file, with the record's type tag and the version the section was written under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorOnlyBytes {
     /// The `Asset::name()` of the type the record holds.
     pub kind: String,
-    /// The `Asset::FORMAT_VERSION` the record was written with.
-    pub kind_version: u32,
+    /// The `EditorOnly::VERSION` the section was written with.
+    pub version: u32,
     /// The section's bytes.
     pub bytes: Vec<u8>,
+}
+
+/// One record's editor-only section, borrowed from its file, with the version it was written under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorOnlySlice<'a> {
+    /// The `EditorOnly::VERSION` the section was written with.
+    pub version: u32,
+    /// The section's bytes.
+    pub bytes: &'a [u8],
 }
 
 /// Describes the derived blob a cook appended after a content asset's payload.
@@ -458,10 +469,11 @@ pub fn write_content_asset(header: &ContentAssetHeader, payload: &[u8]) -> anyho
     frame_content_asset(header, &[payload])
 }
 
-/// Writes a loose file whose payload is followed by `editor_only`; empty bytes write no section.
+/// Writes a loose file whose payload is followed by `editor_only`, encoded at `version`; empty bytes write no section.
 pub fn write_content_asset_with_editor_only(
     header: &ContentAssetHeader,
     payload: &[u8],
+    version: u32,
     editor_only: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
     if header.derived.is_some() {
@@ -469,15 +481,16 @@ pub fn write_content_asset_with_editor_only(
     }
     refuse_a_directory(header)?;
     let header = ContentAssetHeader {
-        editor_only: section_of(editor_only),
+        editor_only: section_of(version, editor_only),
         ..header.clone()
     };
     frame_content_asset(&header, &[payload, editor_only])
 }
 
-fn section_of(editor_only: &[u8]) -> Option<EditorOnlySection> {
+fn section_of(version: u32, editor_only: &[u8]) -> Option<EditorOnlySection> {
     (!editor_only.is_empty()).then_some(EditorOnlySection {
         len: editor_only.len() as u64,
+        version,
     })
 }
 
@@ -523,7 +536,8 @@ pub fn write_content_asset_with_embedded(
             bail!("embedded asset '{name}' has a derived section that does not match its blob");
         }
         let section = asset.editor_only.unwrap_or(&[]);
-        if asset.header.editor_only.is_some() && asset.header.editor_only != section_of(section) {
+        let described = asset.header.editor_only.map(|described| described.len);
+        if described != (!section.is_empty()).then_some(section.len() as u64) {
             bail!(
                 "embedded asset '{name}' has an editor-only section that does not match its bytes"
             );
@@ -534,7 +548,7 @@ pub fn write_content_asset_with_embedded(
             kind: asset.header.kind.clone(),
             kind_version: asset.header.kind_version,
             provenance: provenance.clone(),
-            editor_only: section_of(section),
+            editor_only: asset.header.editor_only,
             derived: asset.header.derived,
             offset,
             len: asset.payload.len() as u64,
@@ -660,10 +674,21 @@ pub struct AssetRecord<'a> {
     pub kind_version: u32,
     /// The payload, without the editor-only section and the derived blob.
     pub payload: &'a [u8],
-    /// The editor-only bytes that follow the payload, if any.
-    pub editor_only: Option<&'a [u8]>,
+    /// The editor-only section that follows the payload, if any.
+    pub editor_only: Option<EditorOnlySlice<'a>>,
     /// The cooked derived data trailing the payload and its editor-only section, if any.
     pub cooked: Option<CookedSection<'a>>,
+}
+
+impl AssetRecord<'_> {
+    /// The record's editor-only section as owned bytes, with the record's type tag.
+    pub fn editor_only_section(&self) -> Option<EditorOnlyBytes> {
+        self.editor_only.map(|section| EditorOnlyBytes {
+            kind: self.kind.to_string(),
+            version: section.version,
+            bytes: section.bytes.to_vec(),
+        })
+    }
 }
 
 /// A content file with its header parsed once; the host's record and each embedded asset's are slices of it.
@@ -715,7 +740,10 @@ impl<'a> ContentFile<'a> {
             kind: &header.kind,
             kind_version: header.kind_version,
             payload: &body[extent.payload()],
-            editor_only: header.editor_only.map(|_| &body[extent.editor_only()]),
+            editor_only: header.editor_only.map(|section| EditorOnlySlice {
+                version: section.version,
+                bytes: &body[extent.editor_only()],
+            }),
             cooked: header
                 .derived
                 .map(|section| section.cooked(&body[extent.blob()])),
@@ -743,7 +771,10 @@ impl<'a> ContentFile<'a> {
             kind: &asset.kind,
             kind_version: asset.kind_version,
             payload,
-            editor_only: asset.editor_only.map(|_| section),
+            editor_only: asset.editor_only.map(|described| EditorOnlySlice {
+                version: described.version,
+                bytes: section,
+            }),
             cooked: asset.derived.map(|section| section.cooked(blob)),
         })
     }
@@ -773,7 +804,7 @@ pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Ve
         &asset.record_header(),
         &[
             record.payload,
-            record.editor_only.unwrap_or(&[]),
+            record.editor_only.map_or(&[], |section| section.bytes),
             record.cooked.map_or(&[], |cooked| cooked.blob),
         ],
     )
@@ -986,7 +1017,7 @@ pub fn read_editor_only_section(
         .with_context(in_file)?;
     Ok(Some(EditorOnlyBytes {
         kind: record.kind,
-        kind_version: record.kind_version,
+        version: section.version,
         bytes,
     }))
 }

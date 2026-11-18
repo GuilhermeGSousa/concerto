@@ -165,8 +165,6 @@ const GATED_ADDRESS: &str = "content/gated.gasset";
 struct GatedAsset;
 
 impl Asset for GatedAsset {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "GatedAsset"
     }
@@ -2819,8 +2817,6 @@ fn props(anchor: &str) -> Scene {
 struct Note(String);
 
 impl Asset for Note {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Note"
     }
@@ -4220,8 +4216,6 @@ fn list_elements_are_listed_written_pushed_and_removed() {
 struct Chime;
 
 impl Asset for Chime {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Chime"
     }
@@ -4451,8 +4445,6 @@ fn open_project_answers_busy_while_one_opens_waits_for_the_project_and_reports_a
 struct Tune;
 
 impl Asset for Tune {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Tune"
     }

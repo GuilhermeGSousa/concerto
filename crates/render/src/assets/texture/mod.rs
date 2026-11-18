@@ -7,7 +7,7 @@ use concerto_foundation::{
     assets::{
         content::ContentAssetHeader,
         derived::{DerivedData, DerivedInputs},
-        Asset, AssetId, LoadableAsset,
+        Asset, AssetId, EditorOnly, LoadableAsset,
     },
     hash::Fnv1a,
 };
@@ -106,8 +106,6 @@ struct TextureV2 {
 impl Asset for Texture {
     const FORMAT_VERSION: u32 = 3;
 
-    type EditorOnly = TextureSource;
-
     fn name() -> &'static str {
         "Texture"
     }
@@ -129,6 +127,10 @@ impl Asset for Texture {
             levels: None,
         })
     }
+}
+
+impl EditorOnly for TextureSource {
+    type Asset = Texture;
 }
 
 impl Texture {
@@ -250,7 +252,7 @@ impl DerivedData for Texture {
             .as_ref()
             .context("a sampled Texture has no source to derive from")?;
         let source = inputs
-            .own_editor_only::<Texture>()
+            .own_editor_only::<TextureSource>()
             .context("the texture holds no source image; import its source again")?;
         anyhow::ensure!(
             source.hash == summary.hash,
@@ -263,7 +265,7 @@ impl DerivedData for Texture {
         } else {
             self.settings
         };
-        let levels = derive_levels(source, self.role, &settings)?;
+        let levels = derive_levels(&source, self.role, &settings)?;
         progress(1, 1);
         levels.encode()
     }

@@ -181,8 +181,6 @@ mod tests {
         size: u32,
     }
     impl Asset for Prop {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "TestProp"
         }
@@ -231,7 +229,6 @@ mod tests {
         let mut registry = AssetRegistry::new();
         let first = save_content_asset_into(
             &Prop { size: 3 },
-            None,
             &root,
             "content/props/first.gasset",
             &mut registry,
@@ -240,7 +237,6 @@ mod tests {
         let without_second = registry.clone();
         let second = save_content_asset_into(
             &Prop { size: 4 },
-            None,
             &root,
             "content/props/second.gasset",
             &mut registry,

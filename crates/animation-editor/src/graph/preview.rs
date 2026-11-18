@@ -566,7 +566,6 @@ mod tests {
         let mut registry = AssetRegistry::new();
         let idle = save_content_asset_into(
             &AnimationGraph::from_node(AnimationClipNode::new(AssetHandle::weak(filed_clip))),
-            None,
             directory.path(),
             "content/Idle.gasset",
             &mut registry,

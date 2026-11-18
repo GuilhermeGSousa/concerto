@@ -46,15 +46,17 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
         embedded: Vec::new(),
     };
     std::fs::create_dir_all(project.root.join("content/swatch")).unwrap();
+    let source = sub_asset
+        .editor_only
+        .as_ref()
+        .expect("an imported texture carries its source");
     std::fs::write(
         project.root.join(address),
         write_content_asset_with_editor_only(
             &header,
             &sub_asset.bytes,
-            sub_asset
-                .editor_only
-                .as_deref()
-                .expect("an imported texture carries its source"),
+            source.version,
+            &source.bytes,
         )
         .unwrap(),
     )

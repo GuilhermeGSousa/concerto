@@ -36,9 +36,12 @@ fn section(blob: &[u8]) -> CookedSection<'_> {
     }
 }
 
+const SECTION_VERSION: u32 = 7;
+
 fn described(editor_only: &[u8]) -> Option<EditorOnlySection> {
     (!editor_only.is_empty()).then_some(EditorOnlySection {
         len: editor_only.len() as u64,
+        version: SECTION_VERSION,
     })
 }
 
@@ -146,7 +149,7 @@ proptest! {
                 &payload,
                 CookedSection { derived_version, key, blob },
             ),
-            None => write_content_asset_with_editor_only(&header, &payload, &editor_only),
+            None => write_content_asset_with_editor_only(&header, &payload, SECTION_VERSION, &editor_only),
         }
         .unwrap();
         let editor_only = match &blob {
@@ -307,7 +310,7 @@ proptest! {
             write_content_asset_with_embedded(&host, &host_payload, &embedded(&stored)).unwrap();
         let packed_plain = write_content_asset_with_embedded(&host, &host_payload, &plain).unwrap();
         let loose =
-            write_content_asset_with_editor_only(&host, &host_payload, &host_editor_only).unwrap();
+            write_content_asset_with_editor_only(&host, &host_payload, SECTION_VERSION, &host_editor_only).unwrap();
         let loose_plain = write_content_asset(&host, &host_payload).unwrap();
 
         prop_assert_eq!(&without_editor_only(&packed).unwrap(), &packed_plain);
@@ -321,7 +324,7 @@ proptest! {
             let name = format!("mesh/{index}");
             let expected = held(&asset.editor_only).map(|bytes| EditorOnlyBytes {
                 kind: "Mesh".to_string(),
-                kind_version: asset.kind_version,
+                version: SECTION_VERSION,
                 bytes: bytes.to_vec(),
             });
             prop_assert_eq!(read_editor_only_section(&path, Some(&name)).unwrap(), expected);
@@ -332,7 +335,7 @@ proptest! {
         prop_assert_eq!(&read_content_without_editor_only(&path).unwrap(), &loose_plain);
         let expected = held(&host_editor_only).map(|bytes| EditorOnlyBytes {
             kind: host.kind.clone(),
-            kind_version: host.kind_version,
+            version: SECTION_VERSION,
             bytes: bytes.to_vec(),
         });
         prop_assert_eq!(read_editor_only_section(&path, None).unwrap(), expected);
@@ -399,7 +402,10 @@ fn a_malformed_directory_is_rejected() {
             bytes: host_file(vec![
                 listed("mesh/0", 1, 4, 4),
                 EmbeddedAsset {
-                    editor_only: Some(EditorOnlySection { len: 40 }),
+                    editor_only: Some(EditorOnlySection {
+                        len: 40,
+                        version: SECTION_VERSION,
+                    }),
                     ..listed("mesh/1", 2, 8, 4)
                 },
             ]),
@@ -683,7 +689,7 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
             source: "assets/hero.glb".to_string(),
             sub_asset: "mesh/0".to_string(),
         }),
-        editor_only: Some(EditorOnlySection { len: 6 }),
+        editor_only: Some(EditorOnlySection { len: 6, version: 4 }),
         derived: Some(fixture_derived()),
         embedded: Vec::new(),
     };

@@ -3,11 +3,12 @@
 use concerto_foundation::assets::content::{
     read_asset_record, read_asset_record_without_editor_only, read_content_asset,
     read_content_asset_header, read_content_asset_parts, read_editor_only, resave_content_asset,
-    save_content_asset_into, write_content_asset_with_editor_only,
-    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
+    save_content_asset_into, save_content_asset_with_editor_only,
+    write_content_asset_with_editor_only, write_content_asset_with_embedded, ContentAssetHeader,
+    EmbeddedPayload, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
-use concerto_foundation::assets::{Asset, AssetId};
+use concerto_foundation::assets::{Asset, AssetId, EditorOnly};
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 struct Widget {
@@ -19,9 +20,13 @@ struct Blueprint {
     drawing: Vec<u8>,
 }
 
-impl Asset for Widget {
-    type EditorOnly = Blueprint;
+impl EditorOnly for Blueprint {
+    type Asset = Widget;
 
+    const VERSION: u32 = 3;
+}
+
+impl Asset for Widget {
     fn name() -> &'static str {
         "Widget"
     }
@@ -36,8 +41,6 @@ struct Axle {
 }
 
 impl Asset for Axle {
-    type EditorOnly = ();
-
     const FORMAT_VERSION: u32 = 4;
 
     fn name() -> &'static str {
@@ -65,9 +68,9 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         drawing: vec![7, 8, 9],
     };
 
-    let id = save_content_asset_into(
+    let id = save_content_asset_with_editor_only(
         &widget,
-        Some(&blueprint),
+        &blueprint,
         &project_root,
         address,
         &mut registry,
@@ -99,17 +102,22 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     );
     let entry = registry.get(id).unwrap().clone();
     assert_eq!(
-        read_editor_only::<Widget>(&project_root, &entry).unwrap(),
+        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
         Some(Blueprint {
             drawing: vec![7, 8, 9]
         }),
         "a save writes the editor-only section it is given"
     );
     let whole = read_asset_record(&project_root, &entry).unwrap();
-    assert!(read_content_asset_parts(&whole)
-        .unwrap()
-        .editor_only
-        .is_some());
+    assert_eq!(
+        read_content_asset_parts(&whole)
+            .unwrap()
+            .header
+            .editor_only
+            .map(|section| section.version),
+        Some(3),
+        "the section is written at its own type's version"
+    );
     let stripped = read_asset_record_without_editor_only(&project_root, &entry).unwrap();
     let parts = read_content_asset_parts(&stripped).unwrap();
     assert_eq!(parts.editor_only, None);
@@ -119,14 +127,8 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         widget
     );
     assert_eq!(
-        save_content_asset_into(
-            &Widget { spokes: 4 },
-            None,
-            &project_root,
-            address,
-            &mut registry
-        )
-        .unwrap(),
+        save_content_asset_into(&Widget { spokes: 4 }, &project_root, address, &mut registry)
+            .unwrap(),
         id,
         "a re-save keeps the identity"
     );
@@ -137,7 +139,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         id
     );
     assert_eq!(
-        read_editor_only::<Widget>(&project_root, &entry).unwrap(),
+        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
         Some(Blueprint {
             drawing: vec![7, 8, 9]
         }),
@@ -145,14 +147,8 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     );
 
     let axle = "content/axles/front.gasset";
-    let id = save_content_asset_into(
-        &Axle { length: 2 },
-        Some(&()),
-        &project_root,
-        axle,
-        &mut registry,
-    )
-    .expect("save");
+    let id = save_content_asset_into(&Axle { length: 2 }, &project_root, axle, &mut registry)
+        .expect("save");
     assert_eq!(
         read_content_asset_header(&project_root.join(axle))
             .unwrap()
@@ -164,21 +160,8 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         registry.get(id).and_then(|entry| entry.kind_version),
         Some(4)
     );
-    assert_eq!(
-        read_content_asset_header(&project_root.join(axle))
-            .unwrap()
-            .editor_only,
-        None,
-        "a value of zero bytes writes no section"
-    );
-    save_content_asset_into(
-        &Axle { length: 3 },
-        None,
-        &project_root,
-        address,
-        &mut registry,
-    )
-    .expect("save over another kind");
+    save_content_asset_into(&Axle { length: 3 }, &project_root, address, &mut registry)
+        .expect("save over another kind");
     assert_eq!(
         read_content_asset_header(&project_root.join(address))
             .unwrap()
@@ -214,7 +197,9 @@ fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHea
         drawing: vec![1, 2],
     })
     .unwrap();
-    let file = write_content_asset_with_editor_only(&header, &payload, &blueprint).unwrap();
+    let file =
+        write_content_asset_with_editor_only(&header, &payload, Blueprint::VERSION, &blueprint)
+            .unwrap();
     std::fs::write(path, file).unwrap();
     header
 }
@@ -226,14 +211,8 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     let original = write_imported_widget(&project_root.join(address), 32);
     let mut registry = AssetRegistry::new();
 
-    let id = resave_content_asset(
-        &Widget { spokes: 6 },
-        None,
-        &project_root,
-        address,
-        &mut registry,
-    )
-    .expect("resave");
+    let id = resave_content_asset(&Widget { spokes: 6 }, &project_root, address, &mut registry)
+        .expect("resave");
 
     assert_eq!(id, original.asset_id);
     let written = std::fs::read(project_root.join(address)).unwrap();
@@ -256,7 +235,7 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     assert_eq!(entry.provenance, original.provenance);
     let entry = entry.clone();
     assert_eq!(
-        read_editor_only::<Widget>(&project_root, &entry).unwrap(),
+        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
         Some(Blueprint {
             drawing: vec![1, 2]
         }),
@@ -265,18 +244,18 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     let redrawn = Blueprint {
         drawing: vec![3, 4, 5],
     };
-    resave_content_asset(
+    save_content_asset_with_editor_only(
         &Widget { spokes: 6 },
-        Some(&redrawn),
+        &redrawn,
         &project_root,
         address,
         &mut registry,
     )
-    .expect("resave");
+    .expect("save");
     assert_eq!(
-        read_editor_only::<Widget>(&project_root, &entry).unwrap(),
+        read_editor_only::<Blueprint>(&project_root, &entry).unwrap(),
         Some(redrawn),
-        "a resave given a section replaces the file's"
+        "a save given a section replaces the file's"
     );
 
     std::fs::remove_dir_all(&project_root).ok();
@@ -306,8 +285,8 @@ fn a_file_with_embedded_assets_is_not_overwritten() {
     let widget = Widget { spokes: 6 };
 
     let refusals = [
-        save_content_asset_into(&widget, None, &project_root, address, &mut registry),
-        resave_content_asset(&widget, None, &project_root, address, &mut registry),
+        save_content_asset_into(&widget, &project_root, address, &mut registry),
+        resave_content_asset(&widget, &project_root, address, &mut registry),
     ];
 
     for refusal in refusals {

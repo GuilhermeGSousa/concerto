@@ -81,7 +81,7 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
     let (header, payload) = read_content_asset(&file).unwrap();
     std::fs::write(
         &loose,
-        write_content_asset_with_editor_only(&header, payload, &drawing).unwrap(),
+        write_content_asset_with_editor_only(&header, payload, 2, &drawing).unwrap(),
     )
     .unwrap();
     let old = project.snapshot();
@@ -121,6 +121,7 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
     .unwrap()
     .expect("the packed asset keeps its editor-only section");
     assert_eq!(section.bytes, drawing);
+    assert_eq!(section.version, 2);
     let host = std::fs::read(project.path("content/hero/scene.gasset")).unwrap();
     assert_eq!(
         asset_record(&host, None).unwrap(),

@@ -7,12 +7,13 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
 use concerto_asset_import::{
-    DependencyEntry, ErasedImporter, ImportContext, PreviousOutputResolver, SubAssetIdResolver,
+    DependencyEntry, EmittedEditorOnly, ErasedImporter, ImportContext, PreviousOutputResolver,
+    SubAssetIdResolver,
 };
 use concerto_foundation::assets::content::{
     read_asset_record_without_editor_only, read_content_asset_header, write_content_asset,
     write_content_asset_with_editor_only, write_content_asset_with_embedded, ContentAssetHeader,
-    EmbeddedPayload, ImportProvenance,
+    EditorOnlySection, EmbeddedPayload, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
@@ -143,6 +144,13 @@ struct EmbeddedOutput<'a> {
     header: ContentAssetHeader,
     payload: &'a [u8],
     editor_only: Option<&'a [u8]>,
+}
+
+fn described(section: &EmittedEditorOnly) -> EditorOnlySection {
+    EditorOnlySection {
+        len: section.bytes.len() as u64,
+        version: section.version,
+    }
 }
 
 struct HostOutput<'a> {
@@ -602,9 +610,15 @@ fn import_with(
                 superseded.push(project_root.join(&loose.address));
             }
             embedded.push(EmbeddedOutput {
-                header: header.clone(),
+                header: ContentAssetHeader {
+                    editor_only: sub_asset.editor_only.as_ref().map(described),
+                    ..header.clone()
+                },
                 payload: &sub_asset.bytes,
-                editor_only: sub_asset.editor_only.as_deref(),
+                editor_only: sub_asset
+                    .editor_only
+                    .as_ref()
+                    .map(|section| section.bytes.as_slice()),
             });
         } else if sub_asset.name == HOST {
             if sub_asset.editor_only.is_some() {
@@ -624,7 +638,8 @@ fn import_with(
                     Some(editor_only) => write_content_asset_with_editor_only(
                         &header,
                         &sub_asset.bytes,
-                        editor_only,
+                        editor_only.version,
+                        &editor_only.bytes,
                     )?,
                     None => write_content_asset(&header, &sub_asset.bytes)?,
                 },
@@ -1033,9 +1048,16 @@ mod tests {
         refs: Vec<AssetId>,
     }
 
-    impl concerto_foundation::assets::Asset for Blob {
-        type EditorOnly = u32;
+    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    struct Drawing {
+        strokes: u32,
+    }
 
+    impl concerto_foundation::assets::EditorOnly for Drawing {
+        type Asset = Blob;
+    }
+
+    impl concerto_foundation::assets::Asset for Blob {
         fn name() -> &'static str {
             "Blob"
         }
@@ -1108,7 +1130,9 @@ mod tests {
             for emit in &self.0 {
                 let refs = emit.refs.iter().map(|r| ctx.sub_asset_id(r)).collect();
                 match &emit.drawing {
-                    Some(drawing) => ctx.emit_with(emit.name, &Blob { refs }, drawing)?,
+                    Some(strokes) => {
+                        ctx.emit_with(emit.name, &Blob { refs }, &Drawing { strokes: *strokes })?
+                    }
                     None => ctx.emit(emit.name, &Blob { refs })?,
                 }
             }
@@ -1202,12 +1226,12 @@ mod tests {
         let header = read_content_asset_header(&fixture.root().join(&old.address)).unwrap();
         assert_eq!(header.provenance.unwrap().sub_asset, "animation/clip");
         assert_eq!(
-            concerto_foundation::assets::content::read_editor_only::<Blob>(
+            concerto_foundation::assets::content::read_editor_only::<Drawing>(
                 &fixture.root(),
                 renamed
             )
             .unwrap(),
-            Some(7)
+            Some(Drawing { strokes: 7 })
         );
         let outputs = fixture.outputs();
         assert_eq!(outputs.get("animation/clip"), Some(&old.id));

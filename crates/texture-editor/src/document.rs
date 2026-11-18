@@ -153,7 +153,7 @@ pub(crate) fn read_texture_payload(root: &Path, asset: &AssetEntry) -> anyhow::R
 
 pub(crate) fn read_texture(root: &Path, asset: &AssetEntry) -> anyhow::Result<OpenedTexture> {
     let texture = read_texture_payload(root, asset)?;
-    let source = read_editor_only::<Texture>(root, asset)
+    let source = read_editor_only::<TextureSource>(root, asset)
         .with_context(|| format!("Cannot read the source image of {}", asset.location()))?
         .with_context(|| {
             format!(

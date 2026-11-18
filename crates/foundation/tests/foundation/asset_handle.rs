@@ -7,8 +7,6 @@ use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 #[derive(serde::Serialize, serde::Deserialize)]
 struct FakeAsset;
 impl Asset for FakeAsset {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "FakeAsset"
     }

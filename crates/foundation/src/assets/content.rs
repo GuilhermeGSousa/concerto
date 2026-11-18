@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::Context;
 
 use super::registry::{AssetEntry, AssetRegistry};
-use super::{Asset, AssetId};
+use super::{Asset, AssetId, EditorOnly};
 
 pub use concerto_asset_format::{
     asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
@@ -16,8 +16,8 @@ pub use concerto_asset_format::{
     without_editor_only, write_content_asset, write_content_asset_with_editor_only,
     write_content_asset_with_embedded, write_cooked_content_asset, AssetRecord, ContentAssetHeader,
     ContentAssetParts, ContentFile, CookedSection, DerivedSection, EditorOnlyBytes,
-    EditorOnlySection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, CONTENT_ASSET_MAGIC,
-    CONTENT_FORMAT_VERSION,
+    EditorOnlySection, EditorOnlySlice, EmbeddedAsset, EmbeddedPayload, ImportProvenance,
+    CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
@@ -56,35 +56,29 @@ pub(crate) fn decode_content_payload<A: Asset>(
     Ok(value)
 }
 
-/// Decodes an editor-only section as `A`'s, checking its kind and type version and migrating an older version.
-pub fn decode_editor_only<A: Asset>(
+/// Decodes an editor-only section of a record of type `kind` as `E`, checking the kind and the section's version and migrating an older version.
+pub fn decode_editor_only<E: EditorOnly>(
     kind: &str,
     version: u32,
     bytes: &[u8],
-) -> anyhow::Result<A::EditorOnly> {
-    if kind != A::name() {
+) -> anyhow::Result<E> {
+    let name = E::Asset::name();
+    if kind != name {
         anyhow::bail!(
-            "content asset holds the editor-only data of a {kind} but a {}'s was requested",
-            A::name()
+            "content asset holds the editor-only data of a {kind} but a {name}'s was requested"
         );
     }
-    let current = A::FORMAT_VERSION;
+    let current = E::VERSION;
     let value = match version.cmp(&current) {
-        std::cmp::Ordering::Equal => bincode::deserialize(bytes).with_context(|| {
+        std::cmp::Ordering::Equal => bincode::deserialize(bytes)
+            .with_context(|| format!("failed to deserialize the editor-only data of a {name}"))?,
+        std::cmp::Ordering::Less => E::migrate(version, bytes).with_context(|| {
             format!(
-                "failed to deserialize the editor-only data of a {}",
-                A::name()
-            )
-        })?,
-        std::cmp::Ordering::Less => A::migrate_editor_only(version, bytes).with_context(|| {
-            format!(
-                "{name} editor-only data is version {version}; this build's {name} is version {current}",
-                name = A::name()
+                "{name} editor-only data is version {version}; this build's is version {current}"
             )
         })?,
         std::cmp::Ordering::Greater => anyhow::bail!(
-            "{} editor-only data is version {version}, newer than this build's version {current}",
-            A::name()
+            "{name} editor-only data is version {version}, newer than this build's version {current}"
         ),
     };
     Ok(value)
@@ -98,24 +92,24 @@ pub fn check_encoding<A: Asset>(value: &A, dir: &Path) {
         name: A::name(),
         version: A::FORMAT_VERSION,
         what: "encoding",
+        constant: "FORMAT_VERSION",
         file: format!("{}.v{}.bin", A::name(), A::FORMAT_VERSION),
     }
     .check(&bytes, dir);
 }
 
-/// Compares the editor-only encoding of `value` with `<dir>/<A::name()>.editor-only.v<A::FORMAT_VERSION>.bin`, for a crate's encoding test.
-pub fn check_editor_only_encoding<A: Asset>(value: &A::EditorOnly, dir: &Path) {
+/// Compares `value`'s encoding with `<dir>/<E::Asset::name()>.editor-only.v<E::VERSION>.bin`, for a crate's encoding test.
+pub fn check_editor_only_encoding<E: EditorOnly>(value: &E, dir: &Path) {
+    let name = E::Asset::name();
     let bytes = bincode::serialize(value).unwrap_or_else(|error| {
-        panic!(
-            "failed to serialize the editor-only data of {}: {error}",
-            A::name()
-        )
+        panic!("failed to serialize the editor-only data of {name}: {error}")
     });
     EncodingFixture {
-        name: A::name(),
-        version: A::FORMAT_VERSION,
+        name,
+        version: E::VERSION,
         what: "editor-only encoding",
-        file: format!("{}.editor-only.v{}.bin", A::name(), A::FORMAT_VERSION),
+        constant: "editor-only type's VERSION",
+        file: format!("{name}.editor-only.v{}.bin", E::VERSION),
     }
     .check(&bytes, dir);
 }
@@ -124,6 +118,7 @@ struct EncodingFixture {
     name: &'static str,
     version: u32,
     what: &'static str,
+    constant: &'static str,
     file: String,
 }
 
@@ -133,6 +128,7 @@ impl EncodingFixture {
             name,
             version,
             what,
+            constant,
             file,
         } = self;
         let path = dir.join(file);
@@ -151,7 +147,7 @@ impl EncodingFixture {
         };
         if fixture != bytes {
             panic!(
-                "the {what} of {name} changed but its FORMAT_VERSION is still {version}: raise it to {next}, add a migration from {version}, in `migrate` and, for a type with editor-only data, in `migrate_editor_only`, or accept that version-{version} files are rejected (docs/asset-importing.md, \"Changing an asset type's encoding\"), then run with CONCERTO_BLESS_ENCODING=1",
+                "the {what} of {name} changed but its {constant} is still {version}: raise it to {next}, add a migration from {version}, or accept that version-{version} files are rejected (docs/asset-importing.md, \"Changing an asset type's encoding\"), then run with CONCERTO_BLESS_ENCODING=1",
                 next = version + 1
             );
         }
@@ -182,52 +178,85 @@ pub fn read_asset_record_without_editor_only(
 }
 
 /// The editor-only data of `entry`, read alone from `<project_root>/<entry.address>`; `None` when its record has none.
-pub fn read_editor_only<A: Asset>(
+pub fn read_editor_only<E: EditorOnly>(
     project_root: &Path,
     entry: &AssetEntry,
-) -> anyhow::Result<Option<A::EditorOnly>> {
+) -> anyhow::Result<Option<E>> {
     let path = project_root.join(&entry.address);
     let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
     let Some(section) = read_editor_only_section(&path, name)? else {
         return Ok(None);
     };
-    decode_editor_only::<A>(&section.kind, section.kind_version, &section.bytes)
+    decode_editor_only::<E>(&section.kind, section.version, &section.bytes)
         .with_context(|| format!("malformed content asset '{}'", entry.location()))
         .map(Some)
 }
 
-fn editor_only_to_write<A: Asset>(
-    given: Option<&A::EditorOnly>,
-    path: &Path,
-    existing: Option<&ContentAssetHeader>,
-) -> anyhow::Result<Vec<u8>> {
-    if let Some(value) = given {
-        return bincode::serialize(value).context("failed to serialize editor-only data");
-    }
-    let kept = existing.filter(|header| header.kind == A::name() && header.editor_only.is_some());
-    if kept.is_none() {
-        return Ok(Vec::new());
-    }
-    let Some(section) = read_editor_only_section(path, None)? else {
-        return Ok(Vec::new());
-    };
-    if section.kind_version == A::FORMAT_VERSION {
-        return Ok(section.bytes);
-    }
-    let migrated = decode_editor_only::<A>(&section.kind, section.kind_version, &section.bytes)
-        .with_context(|| {
-            format!(
-                "failed to keep the editor-only data of '{}'",
-                path.display()
-            )
-        })?;
-    bincode::serialize(&migrated).context("failed to serialize editor-only data")
+struct SectionToWrite {
+    version: u32,
+    bytes: Vec<u8>,
 }
 
-/// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header; `editor_only` of `None` keeps the file's editor-only section.
+impl SectionToWrite {
+    fn none() -> Self {
+        Self {
+            version: 0,
+            bytes: Vec::new(),
+        }
+    }
+
+    fn of<E: EditorOnly>(value: &E) -> anyhow::Result<Self> {
+        Ok(Self {
+            version: E::VERSION,
+            bytes: bincode::serialize(value).context("failed to serialize editor-only data")?,
+        })
+    }
+
+    fn kept(
+        path: &Path,
+        existing: Option<&ContentAssetHeader>,
+        kind: &str,
+    ) -> anyhow::Result<Self> {
+        let holds =
+            existing.is_some_and(|header| header.kind == kind && header.editor_only.is_some());
+        if !holds {
+            return Ok(Self::none());
+        }
+        Ok(match read_editor_only_section(path, None)? {
+            Some(section) => Self {
+                version: section.version,
+                bytes: section.bytes,
+            },
+            None => Self::none(),
+        })
+    }
+}
+
+/// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header and keeping the file's editor-only section.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
-    editor_only: Option<&A::EditorOnly>,
+    project_root: &Path,
+    address: &str,
+    registry: &mut AssetRegistry,
+) -> anyhow::Result<AssetId> {
+    save_into(value, None, project_root, address, registry)
+}
+
+/// Writes `value` as [`save_content_asset_into`] does, with `editor_only` as the file's editor-only section.
+pub fn save_content_asset_with_editor_only<E: EditorOnly>(
+    value: &E::Asset,
+    editor_only: &E,
+    project_root: &Path,
+    address: &str,
+    registry: &mut AssetRegistry,
+) -> anyhow::Result<AssetId> {
+    let section = SectionToWrite::of(editor_only)?;
+    save_into(value, Some(section), project_root, address, registry)
+}
+
+fn save_into<A: Asset>(
+    value: &A,
+    section: Option<SectionToWrite>,
     project_root: &Path,
     address: &str,
     registry: &mut AssetRegistry,
@@ -244,7 +273,10 @@ pub fn save_content_asset_into<A: Asset>(
     let asset_id = existing
         .as_ref()
         .map_or_else(AssetId::new, |existing| existing.asset_id);
-    let editor_only = editor_only_to_write::<A>(editor_only, &path, existing.as_ref())?;
+    let section = match section {
+        Some(section) => section,
+        None => SectionToWrite::kept(&path, existing.as_ref(), A::name())?,
+    };
     let header = ContentAssetHeader {
         asset_id,
         references: value.referenced_sub_assets(),
@@ -257,7 +289,8 @@ pub fn save_content_asset_into<A: Asset>(
     };
     let kind = header.kind.clone();
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;
-    let bytes = write_content_asset_with_editor_only(&header, &payload, &editor_only)?;
+    let bytes =
+        write_content_asset_with_editor_only(&header, &payload, section.version, &section.bytes)?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -277,10 +310,9 @@ pub fn save_content_asset_into<A: Asset>(
     Ok(asset_id)
 }
 
-/// Writes `value` over the content asset at `address`, keeping its id and import provenance, and upserts its registry entry; `editor_only` of `None` keeps the file's editor-only section.
+/// Writes `value` over the content asset at `address`, keeping its id, its import provenance and its editor-only section, and upserts its registry entry.
 pub fn resave_content_asset<A: Asset>(
     value: &A,
-    editor_only: Option<&A::EditorOnly>,
     project_root: &Path,
     address: &str,
     registry: &mut AssetRegistry,
@@ -296,7 +328,7 @@ pub fn resave_content_asset<A: Asset>(
             A::name()
         );
     }
-    let editor_only = editor_only_to_write::<A>(editor_only, &path, Some(&existing))?;
+    let section = SectionToWrite::kept(&path, Some(&existing), A::name())?;
     let header = ContentAssetHeader {
         asset_id: existing.asset_id,
         references: value.referenced_sub_assets(),
@@ -308,7 +340,8 @@ pub fn resave_content_asset<A: Asset>(
         embedded: Vec::new(),
     };
     let payload = bincode::serialize(value).context("failed to serialize content asset payload")?;
-    let bytes = write_content_asset_with_editor_only(&header, &payload, &editor_only)?;
+    let bytes =
+        write_content_asset_with_editor_only(&header, &payload, section.version, &section.bytes)?;
     std::fs::write(&path, bytes)
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 

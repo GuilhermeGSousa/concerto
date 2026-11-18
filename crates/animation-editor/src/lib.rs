@@ -514,7 +514,7 @@ mod tests {
     ) -> AssetEntry {
         let root = f.project_root.clone();
         let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-        let id = save_content_asset_into(clip, None, &root, address, assets).unwrap();
+        let id = save_content_asset_into(clip, &root, address, assets).unwrap();
         assets.get(id).unwrap().clone()
     }
 
@@ -632,7 +632,6 @@ mod tests {
         let mut assets = AssetRegistry::default();
         let id = save_content_asset_into(
             &clip_of(10),
-            None,
             directory.path(),
             "content/walk.gasset",
             &mut assets,

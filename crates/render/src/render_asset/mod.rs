@@ -214,8 +214,6 @@ mod tests {
     struct Payload(Option<usize>, bool);
 
     impl Asset for Payload {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "Payload"
         }

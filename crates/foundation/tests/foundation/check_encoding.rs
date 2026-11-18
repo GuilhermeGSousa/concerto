@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
 use concerto_foundation::assets::content::{check_editor_only_encoding, check_encoding};
-use concerto_foundation::assets::{Asset, AssetId};
+use concerto_foundation::assets::{Asset, AssetId, EditorOnly};
 use serde::{Deserialize, Serialize};
 
 #[derive(Asset, Serialize, Deserialize)]
-#[asset(version = 2, editor_only = GearDrawing)]
+#[asset(version = 2)]
 struct Gear {
     teeth: u32,
 }
@@ -13,6 +13,12 @@ struct Gear {
 #[derive(Serialize, Deserialize)]
 struct GearDrawing {
     strokes: u32,
+}
+
+impl EditorOnly for GearDrawing {
+    type Asset = Gear;
+
+    const VERSION: u32 = 5;
 }
 
 fn fixture_dir(test: &str) -> PathBuf {
@@ -63,14 +69,14 @@ fn check_encoding_passes_only_on_identical_bytes() {
                 strokes: fixture.teeth,
             };
             std::fs::write(
-                dir.join("Gear.editor-only.v2.bin"),
+                dir.join("Gear.editor-only.v5.bin"),
                 bincode::serialize(&drawing).unwrap(),
             )
             .unwrap();
         }
         let result = std::panic::catch_unwind(|| check_encoding(&Gear { teeth: 12 }, &dir));
         let editor_only = std::panic::catch_unwind(|| {
-            check_editor_only_encoding::<Gear>(&GearDrawing { strokes: 12 }, &dir)
+            check_editor_only_encoding(&GearDrawing { strokes: 12 }, &dir)
         });
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(result.is_err(), case.panics, "{}", case.name);

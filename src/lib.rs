@@ -259,8 +259,6 @@ mod cook_tests {
     }
 
     impl Asset for Doubled {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "Doubled"
         }
@@ -314,7 +312,6 @@ mod cook_tests {
                     value: 21,
                     doubled: None,
                 },
-                None,
                 dir.path(),
                 "content/doubled.gasset",
                 &mut registry,

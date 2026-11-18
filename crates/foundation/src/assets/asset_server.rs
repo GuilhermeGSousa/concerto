@@ -42,7 +42,7 @@ use super::{
     handle::{AssetHandle, AssetLifetimeEvent, AssetLoadFailed},
     registry::{AssetEntry, AssetRegistry},
     utils::try_read_relative,
-    Asset, AssetId, ContentAssetRoot,
+    Asset, AssetId, ContentAssetRoot, EditorOnly,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
@@ -164,11 +164,7 @@ fn load_record<A: LoadableAsset>(load: RecordLoad<'_>) -> RecordFuture<'_> {
                     },
                     blob: cooked.blob.to_vec(),
                 });
-                let editor_only = record.editor_only.map(|bytes| EditorOnlyBytes {
-                    kind: record.kind.to_string(),
-                    kind_version: record.kind_version,
-                    bytes: bytes.to_vec(),
-                });
+                let editor_only = record.editor_only_section();
                 let load = DerivedLoad {
                     id,
                     asset: Box::new(asset),
@@ -486,21 +482,38 @@ impl AssetServer {
     }
 
     /// The editor-only data of the asset `id`, read alone from its file through the published root and registry; `None` when its record has none, as in a cooked file.
-    pub async fn load_editor_only<A: Asset>(
+    pub async fn load_editor_only<E: EditorOnly>(&self, id: AssetId) -> anyhow::Result<Option<E>> {
+        let Some(section) = self.editor_only_section(id).await? else {
+            return Ok(None);
+        };
+        decode_editor_only::<E>(&section.kind, section.version, &section.bytes)
+            .with_context(|| format!("malformed editor-only data of AssetId {id:?}"))
+            .map(Some)
+    }
+
+    pub(crate) async fn skipped_editor_only(
         &self,
         id: AssetId,
-    ) -> anyhow::Result<Option<A::EditorOnly>> {
+    ) -> anyhow::Result<Option<EditorOnlyBytes>> {
+        match self.content_source().0 {
+            #[cfg(not(target_arch = "wasm32"))]
+            ContentAssetRoot::Directory(_) => self.editor_only_section(id).await,
+            _ => Ok(None),
+        }
+    }
+
+    async fn editor_only_section(&self, id: AssetId) -> anyhow::Result<Option<EditorOnlyBytes>> {
         let (root, registry) = self.content_source();
         let entry = registry
             .get(id)
             .with_context(|| format!("no content asset registered for AssetId {id:?}"))?;
         let location = entry.location();
-        let section = match &root {
+        match &root {
             #[cfg(not(target_arch = "wasm32"))]
             ContentAssetRoot::Directory(dir) => {
                 let path = dir.join(&entry.address);
                 let name = entry.embedded_in.as_ref().map(|held| held.name.clone());
-                blocking::unblock(move || read_editor_only_section(&path, name.as_deref())).await?
+                blocking::unblock(move || read_editor_only_section(&path, name.as_deref())).await
             }
             _ => {
                 let file = try_read_relative(&root, &entry.address)
@@ -521,19 +534,9 @@ impl AssetServer {
                         .and_then(|asset| content.embedded(asset)),
                 }
                 .with_context(|| format!("malformed content asset '{location}'"))?;
-                record.editor_only.map(|bytes| EditorOnlyBytes {
-                    kind: record.kind.to_string(),
-                    kind_version: record.kind_version,
-                    bytes: bytes.to_vec(),
-                })
+                Ok(record.editor_only_section())
             }
-        };
-        let Some(section) = section else {
-            return Ok(None);
-        };
-        decode_editor_only::<A>(&section.kind, section.kind_version, &section.bytes)
-            .with_context(|| format!("malformed content asset '{location}'"))
-            .map(Some)
+        }
     }
 
     /// Replaces the cache derived loads read and write; every clone sees it.
@@ -1014,8 +1017,6 @@ mod tests {
     const REFUSED: u32 = u32::MAX;
 
     impl Asset for FixtureAsset {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "FixtureAsset"
         }
@@ -1077,7 +1078,7 @@ mod tests {
 
     fn save<A: Asset>(dir: &std::path::Path, value: &A, address: &str) -> Saved {
         let mut registry = AssetRegistry::new();
-        let id = save_content_asset_into(value, None, dir, address, &mut registry).unwrap();
+        let id = save_content_asset_into(value, dir, address, &mut registry).unwrap();
         Saved { id, registry }
     }
 
@@ -1473,8 +1474,6 @@ mod tests {
     }
 
     impl Asset for ProbeAsset {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "ProbeAsset"
         }
@@ -1548,8 +1547,6 @@ mod tests {
     struct GatedAsset(u32);
 
     impl Asset for GatedAsset {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "GatedAsset"
         }

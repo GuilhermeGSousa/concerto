@@ -249,8 +249,6 @@ mod tests {
     }
 
     impl concerto_foundation::assets::Asset for Note {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "Note"
         }
@@ -269,8 +267,8 @@ mod tests {
         let note = Note {
             text: "hello".into(),
         };
-        let id = save_content_asset_into(&note, None, &root, "content/note.gasset", &mut scanned)
-            .unwrap();
+        let id =
+            save_content_asset_into(&note, &root, "content/note.gasset", &mut scanned).unwrap();
         let mut app = App::new();
         app.register_plugin(crate::main_schedule::MainSchedulePlugin)
             .register_plugin(TimePlugin)

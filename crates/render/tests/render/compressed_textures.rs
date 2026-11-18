@@ -10,9 +10,9 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_foundation::{
     assets::{
-        asset_server::AssetServer, asset_store::AssetStore, content::save_content_asset_into,
-        derived::DerivedDataCache, handle::AssetHandle, registry::AssetRegistry, AssetId,
-        ContentAssetRoot,
+        asset_server::AssetServer, asset_store::AssetStore,
+        content::save_content_asset_with_editor_only, derived::DerivedDataCache,
+        handle::AssetHandle, registry::AssetRegistry, AssetId, ContentAssetRoot,
     },
     transform::Transform,
 };
@@ -110,9 +110,9 @@ impl Content {
             TextureSettings::default().with_compression(compression),
             &source,
         );
-        save_content_asset_into(
+        save_content_asset_with_editor_only(
             &texture,
-            Some(&source),
+            &source,
             &self.project.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,

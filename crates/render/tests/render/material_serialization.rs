@@ -54,7 +54,7 @@ fn texture_encoding_matches_its_fixture() {
     let texture = Texture::imported(TextureRole::Normal, settings, &source);
 
     check_encoding(&texture, encoding_dir());
-    check_editor_only_encoding::<Texture>(&source, encoding_dir());
+    check_editor_only_encoding(&source, encoding_dir());
 
     let version_2 = std::fs::read(encoding_dir().join("Texture.v2.bin")).unwrap();
     let migrated = Texture::migrate(2, &version_2).unwrap();

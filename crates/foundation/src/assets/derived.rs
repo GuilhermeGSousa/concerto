@@ -1,5 +1,5 @@
 use std::{
-    any::{Any, TypeId},
+    any::Any,
     collections::{BTreeMap, HashMap},
     future::Future,
     path::{Path, PathBuf},
@@ -22,7 +22,7 @@ use super::{
     },
     registry::{AssetEntry, AssetRegistry},
     utils::try_read_relative,
-    Asset, AssetId, ContentAssetRoot, LoadableAsset,
+    Asset, AssetId, ContentAssetRoot, EditorOnly, LoadableAsset,
 };
 
 /// An asset whose runtime part is a blob derived from other content assets, cached by a key it defines.
@@ -89,13 +89,7 @@ pub(crate) fn record_is_derived(kind: &str, record: &[u8]) -> anyhow::Result<boo
 pub struct DerivedInputs {
     files: HashMap<AssetId, Arc<Vec<u8>>>,
     records: HashMap<AssetId, Arc<Vec<u8>>>,
-    own_editor_only: Option<OwnEditorOnly>,
-}
-
-#[derive(Debug)]
-struct OwnEditorOnly {
-    asset: TypeId,
-    value: Box<dyn Any + Send + Sync>,
+    own_editor_only: Option<EditorOnlyBytes>,
 }
 
 impl DerivedInputs {
@@ -131,26 +125,24 @@ impl DerivedInputs {
     }
 
     /// Inputs that carry `value` as the deriving asset's own editor-only data.
-    pub fn with_own_editor_only<A: Asset>(mut self, value: A::EditorOnly) -> Self {
-        self.own_editor_only = Some(OwnEditorOnly {
-            asset: TypeId::of::<A>(),
-            value: Box::new(value),
+    pub fn with_own_editor_only<E: EditorOnly>(mut self, value: &E) -> anyhow::Result<Self> {
+        self.own_editor_only = Some(EditorOnlyBytes {
+            kind: E::Asset::name().to_string(),
+            version: E::VERSION,
+            bytes: bincode::serialize(value).context("failed to serialize editor-only data")?,
         });
-        self
+        Ok(self)
     }
 
-    /// The deriving asset's own editor-only data; only `derive` may ask, and it fails for a file that holds none.
-    pub fn own_editor_only<A: Asset>(&self) -> anyhow::Result<&A::EditorOnly> {
-        self.own_editor_only
-            .as_ref()
-            .filter(|own| own.asset == TypeId::of::<A>())
-            .and_then(|own| own.value.downcast_ref::<A::EditorOnly>())
-            .with_context(|| {
-                format!(
-                    "the file of this {name} holds no editor-only data, and a cooked file never does; only `derive` may ask for it, since `derived_key` must come from the payload",
-                    name = A::name()
-                )
-            })
+    /// The deriving asset's own editor-only data, decoded as `E`; only `derive` may ask, and it fails for a file that holds none.
+    pub fn own_editor_only<E: EditorOnly>(&self) -> anyhow::Result<E> {
+        let section = self.own_editor_only.as_ref().with_context(|| {
+            format!(
+                "the file of this {name} holds no editor-only data, and a cooked file never does; only `derive` may ask for it, since `derived_key` must come from the payload",
+                name = E::Asset::name()
+            )
+        })?;
+        decode_editor_only::<E>(&section.kind, section.version, &section.bytes)
     }
 
     /// The whole file of a loose input `id`, or the bytes a loose file of a host or an embedded one would have.
@@ -344,19 +336,10 @@ pub(crate) async fn derive_and_apply<A: DerivedData>(
             ),
         }
     }
-    if TypeId::of::<A::EditorOnly>() != TypeId::of::<()>() {
-        let own = match editor_only {
-            Some(section) => Some(decode_editor_only::<A>(
-                &section.kind,
-                section.kind_version,
-                &section.bytes,
-            )?),
-            None => server.load_editor_only::<A>(id).await?,
-        };
-        if let Some(own) = own {
-            inputs = inputs.with_own_editor_only::<A>(own);
-        }
-    }
+    inputs.own_editor_only = match editor_only {
+        Some(section) => Some(section),
+        None => server.skipped_editor_only(id).await?,
+    };
     let blob = asset
         .derive(&inputs, &mut |_, _| {})
         .with_context(|| format!("failed to derive {}", A::name()))?;

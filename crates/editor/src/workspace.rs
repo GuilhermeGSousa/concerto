@@ -278,8 +278,6 @@ mod tests {
     #[derive(Serialize, Deserialize)]
     struct Notes;
     impl Asset for Notes {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "Notes"
         }

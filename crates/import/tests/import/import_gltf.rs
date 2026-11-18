@@ -39,7 +39,6 @@ fn an_imports_returned_entries_bring_a_scanned_registry_up_to_date() {
             nodes: Vec::new(),
             referenced_assets: Vec::new(),
         },
-        None,
         &project_root,
         "content/authored.gasset",
         &mut AssetRegistry::new(),

@@ -593,8 +593,6 @@ mod tests {
     struct Note;
 
     impl Asset for Note {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "Note"
         }

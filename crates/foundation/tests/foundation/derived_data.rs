@@ -11,14 +11,14 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     content::{
         read_asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
-        save_content_asset_into, without_editor_only, write_content_asset_with_embedded,
-        write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection,
-        EmbeddedPayload, ImportProvenance,
+        save_content_asset_into, save_content_asset_with_editor_only, without_editor_only,
+        write_content_asset_with_embedded, write_cooked_content_asset, ContentAssetHeader,
+        CookedSection, DerivedSection, EmbeddedPayload, ImportProvenance,
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry, EmbeddedIn},
-    Asset, AssetId, ContentAssetRoot, LoadableAsset,
+    Asset, AssetId, ContentAssetRoot, EditorOnly, LoadableAsset,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +28,6 @@ struct Leaf {
 }
 
 impl Asset for Leaf {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Leaf"
     }
@@ -47,8 +45,6 @@ struct Sum<const V: u32> {
 }
 
 impl<const V: u32> Asset for Sum<V> {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Sum"
     }
@@ -144,8 +140,6 @@ impl Maybe {
 }
 
 impl Asset for Maybe {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Maybe"
     }
@@ -208,8 +202,6 @@ struct Pointer {
 }
 
 impl Asset for Pointer {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Pointer"
     }
@@ -236,8 +228,6 @@ impl Chain {
 }
 
 impl Asset for Chain {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "Chain"
     }
@@ -292,8 +282,11 @@ struct Parts {
     values: Vec<u64>,
 }
 
+impl EditorOnly for Parts {
+    type Asset = Sourced;
+}
+
 #[derive(Asset, Serialize, Deserialize)]
-#[asset(editor_only = Parts)]
 struct Sourced {
     tag: String,
     hash: u64,
@@ -320,7 +313,7 @@ impl DerivedData for Sourced {
         _progress: &mut dyn FnMut(usize, usize),
     ) -> anyhow::Result<Vec<u8>> {
         with_probe(&self.tag, |probe| probe.derives += 1);
-        let parts = inputs.own_editor_only::<Self>()?;
+        let parts = inputs.own_editor_only::<Parts>()?;
         let total: u64 = parts.values.iter().sum();
         Ok(total.to_le_bytes().to_vec())
     }
@@ -335,9 +328,17 @@ impl DerivedData for Sourced {
 }
 
 #[derive(Asset, Serialize, Deserialize)]
-#[asset(editor_only = String)]
 struct Noted {
     value: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Note {
+    text: String,
+}
+
+impl EditorOnly for Note {
+    type Asset = Noted;
 }
 
 impl LoadableAsset for Noted {}
@@ -369,7 +370,6 @@ impl Project {
     fn leaf(&mut self, name: &str, value: u64) -> AssetId {
         save_content_asset_into(
             &Leaf { value },
-            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -385,7 +385,6 @@ impl Project {
                 b,
                 total: None,
             },
-            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -396,7 +395,6 @@ impl Project {
     fn maybe(&mut self, name: &str, value: &Maybe) -> AssetId {
         save_content_asset_into(
             value,
-            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -407,7 +405,6 @@ impl Project {
     fn pointer(&mut self, name: &str, target: AssetId) -> AssetId {
         save_content_asset_into(
             &Pointer { target },
-            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -418,7 +415,6 @@ impl Project {
     fn chain(&mut self, name: &str, tag: &str, pointer: AssetId) -> AssetId {
         save_content_asset_into(
             &Chain::new(tag, pointer),
-            None,
             &self.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,
@@ -1238,21 +1234,23 @@ fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_sect
     let parts = Parts {
         values: vec![3, 4, 5],
     };
-    let sourced = save_content_asset_into(
+    let sourced = save_content_asset_with_editor_only(
         &Sourced {
             tag: tag.to_string(),
             hash: 0xfeed,
             total: None,
         },
-        Some(&parts),
+        &parts,
         &project.root,
         "content/sourced.gasset",
         &mut project.registry,
     )
     .unwrap();
-    save_content_asset_into(
+    save_content_asset_with_editor_only(
         &Noted { value: 1 },
-        Some(&"a note".to_string()),
+        &Note {
+            text: "a note".to_string(),
+        },
         &project.root,
         "content/noted.gasset",
         &mut project.registry,
@@ -1265,10 +1263,10 @@ fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_sect
     assert_eq!(runtime.load_sourced(sourced), Some(12));
     assert_eq!(derives(tag), 1);
     assert_eq!(
-        pollster::block_on(runtime.server.load_editor_only::<Sourced>(sourced)).unwrap(),
+        pollster::block_on(runtime.server.load_editor_only::<Parts>(sourced)).unwrap(),
         Some(parts)
     );
-    pollster::block_on(runtime.server.load_editor_only::<Sourced>(AssetId::new()))
+    pollster::block_on(runtime.server.load_editor_only::<Parts>(AssetId::new()))
         .expect_err("an id the registry does not hold is an error");
 
     let out = project.root.join("cooked");
@@ -1314,7 +1312,7 @@ fn a_derive_reads_its_own_editor_only_data_on_a_miss_and_a_cook_drops_every_sect
     let mut runtime = Runtime::<1>::new(&cooked, DerivedDataCache::none());
     assert_eq!(runtime.load_sourced(sourced), Some(12));
     assert_eq!(
-        pollster::block_on(runtime.server.load_editor_only::<Sourced>(sourced)).unwrap(),
+        pollster::block_on(runtime.server.load_editor_only::<Parts>(sourced)).unwrap(),
         None
     );
     assert_eq!(derives(tag), 2);

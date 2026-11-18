@@ -9,7 +9,7 @@ use concerto_app::{
 use concerto_foundation::assets::{
     asset_server::AssetServer,
     asset_store::AssetStore,
-    content::{read_content_asset_header, save_content_asset_into},
+    content::{read_content_asset_header, save_content_asset_with_editor_only},
     derived::DerivedDataCache,
     registry::AssetRegistry,
     AssetId, ContentAssetRoot,
@@ -292,9 +292,9 @@ fn a_cooked_texture_loads_its_levels_without_deriving() {
         TextureSettings::default().with_compression(Compression::Bc7),
         &source,
     );
-    let id = save_content_asset_into(
+    let id = save_content_asset_with_editor_only(
         &texture,
-        Some(&source),
+        &source,
         &project.root,
         "content/swatch.gasset",
         &mut registry,

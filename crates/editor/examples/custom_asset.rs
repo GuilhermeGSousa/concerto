@@ -57,8 +57,6 @@ pub struct Dialogue {
     pub spin_speed: f32,
 }
 impl Asset for Dialogue {
-    type EditorOnly = ();
-
     fn name() -> &'static str {
         "ExampleDialogue"
     }
@@ -99,7 +97,6 @@ pub fn write_project(root: &Path) -> Result<AssetId> {
     std::fs::create_dir_all(root.join("content"))?;
     save_content_asset_into(
         &Scene::new_asset(),
-        None,
         root,
         "content/level.gasset",
         &mut AssetRegistry::default(),

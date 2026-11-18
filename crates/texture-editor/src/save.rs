@@ -30,7 +30,7 @@ fn save_document(
     }
     let mut texture = read_texture_payload(root, &asset)?;
     texture.settings = value.settings;
-    let id = resave_content_asset(&texture, None, root, &asset.address, assets)?;
+    let id = resave_content_asset(&texture, root, &asset.address, assets)?;
     let saved = assets
         .get(id)
         .cloned()

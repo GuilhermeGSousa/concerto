@@ -371,7 +371,7 @@ fn imported_texture(project: &Path, imported: &ImportedSource, name: &str) -> Im
     let record = read_asset_record(project, &entry).expect("record");
     let (_, texture) = decode_content_asset::<Texture>(&record)
         .unwrap_or_else(|error| panic!("{name}: {error:#}"));
-    let source = read_editor_only::<Texture>(project, &entry)
+    let source = read_editor_only::<TextureSource>(project, &entry)
         .unwrap_or_else(|error| panic!("{name}: {error:#}"))
         .unwrap_or_else(|| panic!("{name} has a source section"));
     assert_eq!(texture.source, Some(source.summary()), "{name}");
@@ -486,8 +486,7 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     );
     let mut registry =
         AssetRegistry::from_content_tree(root, "content", "gasset").expect("registry");
-    resave_content_asset(&edited, None, root, &normal_entry.address, &mut registry)
-        .expect("resave");
+    resave_content_asset(&edited, root, &normal_entry.address, &mut registry).expect("resave");
     write_material_gltf(scratch.path(), 4);
     let second = import_source_into(
         &gltf,

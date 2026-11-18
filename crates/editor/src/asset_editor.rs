@@ -130,7 +130,7 @@ impl AssetEditorRegistry {
         self.creators.insert(
             T::name(),
             Creator(Box::new(|root, address, registry| {
-                save_content_asset_into(&T::new_asset(), None, root, address, registry)
+                save_content_asset_into(&T::new_asset(), root, address, registry)
             })),
         );
         Ok(())
@@ -487,8 +487,6 @@ mod tests {
     #[derive(serde::Serialize, serde::Deserialize)]
     struct TestAsset;
     impl Asset for TestAsset {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "TestAsset"
         }

@@ -124,8 +124,6 @@ mod tests {
     struct Pebble;
 
     impl Asset for Pebble {
-        type EditorOnly = ();
-
         fn name() -> &'static str {
             "Pebble"
         }

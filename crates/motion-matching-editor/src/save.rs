@@ -29,7 +29,7 @@ pub(crate) fn save_document(
         .address
         .clone();
     let definition = state.definition()?;
-    let id = save_content_asset_into(&definition, None, root, &address, assets)?;
+    let id = save_content_asset_into(&definition, root, &address, assets)?;
     let saved = assets
         .get(id)
         .cloned()

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use concerto_foundation::assets::content::decode_content_asset;
-use concerto_foundation::assets::{Asset, AssetId};
+use concerto_foundation::assets::{Asset, AssetId, EditorOnly};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DependencyEntry {
@@ -16,9 +16,16 @@ pub struct EmittedSubAsset {
     pub type_name: &'static str,
     pub kind_version: u32,
     pub bytes: Vec<u8>,
-    /// The bytes of the editor-only section the output is written with, if it has one.
-    pub editor_only: Option<Vec<u8>>,
+    /// The editor-only section the output is written with, if it has one.
+    pub editor_only: Option<EmittedEditorOnly>,
     pub references: Vec<AssetId>,
+}
+
+/// The editor-only section an importer emitted with an output: its bytes and the version of their encoding.
+#[derive(Debug, Clone)]
+pub struct EmittedEditorOnly {
+    pub version: u32,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,21 +147,28 @@ impl ImportContext {
     }
 
     /// Emits `value` as the output `name`, with `editor_only` as its editor-only section; a value of zero bytes records none.
-    pub fn emit_with<T: Asset>(
+    pub fn emit_with<E: EditorOnly>(
         &mut self,
         name: &str,
-        value: &T,
-        editor_only: &T::EditorOnly,
+        value: &E::Asset,
+        editor_only: &E,
     ) -> Result<(), ImportError> {
-        let section = serialize(name, editor_only)?;
-        self.push(name, value, Some(section).filter(|bytes| !bytes.is_empty()))
+        let section = EmittedEditorOnly {
+            version: E::VERSION,
+            bytes: serialize(name, editor_only)?,
+        };
+        self.push(
+            name,
+            value,
+            Some(section).filter(|section| !section.bytes.is_empty()),
+        )
     }
 
     fn push<T: Asset>(
         &mut self,
         name: &str,
         value: &T,
-        editor_only: Option<Vec<u8>>,
+        editor_only: Option<EmittedEditorOnly>,
     ) -> Result<(), ImportError> {
         let bytes = serialize(name, value)?;
         self.sub_assets.push(EmittedSubAsset {

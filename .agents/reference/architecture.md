@@ -205,8 +205,9 @@ sounds) are imported once, ahead of time. The running game never reads them.
   applies it before `Loaded`. The blob holds computed data only: values a user
   can tune without re-deriving, such as a channel's weight, are read from the
   live definition at use.
-- A record may carry an editor-only section of the type its asset declares as
-  `Asset::EditorOnly`: loads never read it, a derive reads its own on a cache
+- A record may carry an editor-only section, a type that implements
+  `EditorOnly` and names its asset, with a version of its own: loads never
+  read it, a derive reads its own on a cache
   miss through `DerivedInputs::own_editor_only`, tools read it with
   `read_editor_only`, and a cook drops it.
 - A sampled `Texture` derives from its own file, with no inputs: its payload

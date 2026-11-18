@@ -56,7 +56,7 @@ fn save_clip_document(
     check_times(&state.events, clip.duration()).map_err(anyhow::Error::msg)?;
     let keys = write_events(&state.events).map_err(anyhow::Error::msg)?;
     clip.replace_events(keys).map_err(anyhow::Error::msg)?;
-    let id = resave_content_asset(&clip, None, root, &current.address, assets)?;
+    let id = resave_content_asset(&clip, root, &current.address, assets)?;
     let saved = assets
         .get(id)
         .cloned()
