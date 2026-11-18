@@ -3,18 +3,17 @@ use std::path::{Path, PathBuf};
 
 use concerto_bvh::bvh_importer::BvhSettings;
 use concerto_foundation::assets::content::{
-    decode_content_asset, read_asset_record, read_content_asset, resave_content_asset,
-    write_content_asset,
+    decode_content_asset, read_asset_record, read_content_asset, read_uncooked,
+    resave_content_asset, write_content_asset,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
-use concerto_foundation::assets::Asset;
 use concerto_import::config::ContentConfig;
 use concerto_import::metadata::{sidecar_path, SourceMetadata};
 use concerto_import::{
     import_source_into, ContentScan, ImportSettings, ImportedSource, StagedSettings,
 };
 use concerto_render::assets::texture::{
-    Compression, MaxSize, Texture, TextureRole, TextureSettings,
+    Compression, MaxSize, Texture, TextureRole, TextureSettings, TextureSource,
 };
 
 fn fixtures(krate: &str) -> PathBuf {
@@ -359,6 +358,7 @@ fn write_material_gltf(dir: &Path, images: usize) {
 struct ImportedTexture {
     entry: AssetEntry,
     texture: Texture,
+    source: TextureSource,
 }
 
 fn imported_texture(project: &Path, imported: &ImportedSource, name: &str) -> ImportedTexture {
@@ -371,7 +371,15 @@ fn imported_texture(project: &Path, imported: &ImportedSource, name: &str) -> Im
     let record = read_asset_record(project, &entry).expect("record");
     let (_, texture) = decode_content_asset::<Texture>(&record)
         .unwrap_or_else(|error| panic!("{name}: {error:#}"));
-    ImportedTexture { entry, texture }
+    let source = read_uncooked::<TextureSource>(project, &entry)
+        .unwrap_or_else(|error| panic!("{name}: {error:#}"))
+        .unwrap_or_else(|| panic!("{name} has a source section"));
+    assert_eq!(texture.source, Some(source.summary()), "{name}");
+    ImportedTexture {
+        entry,
+        texture,
+        source,
+    }
 }
 
 const WALK: &str = "HIERARCHY
@@ -422,8 +430,12 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
         asset_settings(given),
     )
     .expect("the image imports");
-    let main = imported_texture(root, &image, "main").texture;
-    assert_eq!(main.source.as_ref().unwrap().bytes, picture);
+    let ImportedTexture {
+        texture: main,
+        source: main_source,
+        ..
+    } = imported_texture(root, &image, "main");
+    assert_eq!(main_source.bytes, picture);
     assert_eq!(main.role, TextureRole::Color);
     assert_eq!(main.settings, given);
     let sidecar =
@@ -454,12 +466,10 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
         ("texture/1_linear", 1, TextureRole::Normal),
         ("texture/2_linear", 2, TextureRole::Data),
     ] {
-        let texture = imported_texture(root, &first, name).texture;
-        assert_eq!(
-            texture.source.as_ref().unwrap().bytes,
-            images[image],
-            "{name}"
-        );
+        let ImportedTexture {
+            texture, source, ..
+        } = imported_texture(root, &first, name);
+        assert_eq!(source.bytes, images[image], "{name}");
         assert_eq!(texture.role, role, "{name}");
         assert_eq!(texture.settings, TextureSettings::default(), "{name}");
     }
@@ -467,11 +477,12 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     let ImportedTexture {
         entry: normal_entry,
         texture: normal,
+        source: normal_source,
     } = imported_texture(root, &first, "texture/1_linear");
     let edited = Texture::imported(
         normal.role,
         normal.settings.with_compression(Compression::Bc7),
-        normal.source.clone().unwrap(),
+        &normal_source,
     );
     let mut registry =
         AssetRegistry::from_content_tree(root, "content", "gasset").expect("registry");
@@ -487,14 +498,15 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
     .expect("the glTF imports again");
     let normal = imported_texture(root, &second, "texture/1_linear").texture;
     assert_eq!(normal.settings.compression, Compression::Bc7);
-    let added = imported_texture(root, &second, "texture/3").texture;
-    assert_eq!(added.settings, TextureSettings::default());
-    assert_eq!(added.source.as_ref().unwrap().bytes, images[3]);
+    let added = imported_texture(root, &second, "texture/3");
+    assert_eq!(added.texture.settings, TextureSettings::default());
+    assert_eq!(added.source.bytes, images[3]);
 
     let path = root.join(&normal_entry.address);
     let file = std::fs::read(&path).expect("read");
     let (mut header, payload) = read_content_asset(&file).expect("content asset");
-    header.kind_version = Texture::FORMAT_VERSION - 1;
+    header.kind_version = 1;
+    header.uncooked = None;
     std::fs::write(
         &path,
         write_content_asset(&header, payload).expect("encode"),

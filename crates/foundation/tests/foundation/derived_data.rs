@@ -10,14 +10,15 @@ use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
     content::{
-        read_asset_record, read_content_asset, read_content_asset_parts, save_content_asset_into,
+        read_asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
+        save_content_asset_into, save_content_asset_with_uncooked, without_uncooked,
         write_content_asset_with_embedded, write_cooked_content_asset, ContentAssetHeader,
         CookedSection, DerivedSection, EmbeddedPayload, ImportProvenance,
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry, EmbeddedIn},
-    Asset, AssetId, ContentAssetRoot, LoadableAsset,
+    Asset, AssetId, ContentAssetRoot, LoadableAsset, UncookedData,
 };
 use serde::{Deserialize, Serialize};
 
@@ -276,6 +277,72 @@ impl DerivedData for Chain {
     }
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+struct Parts {
+    values: Vec<u64>,
+}
+
+impl UncookedData for Parts {
+    type Asset = Sourced;
+}
+
+#[derive(Asset, Serialize, Deserialize)]
+struct Sourced {
+    tag: String,
+    hash: u64,
+    #[serde(skip)]
+    total: Option<u64>,
+}
+
+impl LoadableAsset for Sourced {}
+
+impl DerivedData for Sourced {
+    const DERIVED_VERSION: u32 = 1;
+
+    fn derived_inputs(&self) -> Vec<AssetId> {
+        Vec::new()
+    }
+
+    fn derived_key(&self, _inputs: &DerivedInputs) -> anyhow::Result<u64> {
+        Ok(self.hash)
+    }
+
+    fn derive(
+        &self,
+        inputs: &DerivedInputs,
+        _progress: &mut dyn FnMut(usize, usize),
+    ) -> anyhow::Result<Vec<u8>> {
+        with_probe(&self.tag, |probe| probe.derives += 1);
+        let parts = inputs.own_uncooked::<Parts>()?;
+        let total: u64 = parts.values.iter().sum();
+        Ok(total.to_le_bytes().to_vec())
+    }
+
+    fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+        let bytes: [u8; 8] = blob
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("a sourced blob is 8 bytes, not {}", blob.len()))?;
+        self.total = Some(u64::from_le_bytes(bytes));
+        Ok(())
+    }
+}
+
+#[derive(Asset, Serialize, Deserialize)]
+struct Noted {
+    value: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Note {
+    text: String,
+}
+
+impl UncookedData for Note {
+    type Asset = Noted;
+}
+
+impl LoadableAsset for Noted {}
+
 struct Project {
     root: PathBuf,
     registry: AssetRegistry,
@@ -366,6 +433,7 @@ impl Project {
                 source: format!("assets/{name}.glb"),
                 sub_asset: sub_asset.to_string(),
             }),
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         };
@@ -377,6 +445,7 @@ impl Project {
             &[EmbeddedPayload {
                 header: embedded.clone(),
                 payload: &bincode::serialize(value).unwrap(),
+                uncooked: None,
                 derived_blob: None,
             }],
         )
@@ -441,6 +510,10 @@ impl<const V: u32> Runtime<V> {
         let maybes = AssetStore::<Maybe>::new();
         let pointers = AssetStore::<Pointer>::new();
         let chains = AssetStore::<Chain>::new();
+        let sourced = AssetStore::<Sourced>::new();
+        let noted = AssetStore::<Noted>::new();
+        server.register_derived_asset(&sourced);
+        server.register_asset(&noted);
         server.register_asset(&leaves);
         server.register_derived_asset(&sums);
         server.register_derived_asset(&maybes);
@@ -454,6 +527,8 @@ impl<const V: u32> Runtime<V> {
         world.insert_resource(maybes);
         world.insert_resource(pointers);
         world.insert_resource(chains);
+        world.insert_resource(sourced);
+        world.insert_resource(noted);
         world.insert_resource(server.clone());
         Self { server, world }
     }
@@ -533,6 +608,33 @@ impl Runtime<1> {
     }
 }
 
+impl Runtime<1> {
+    fn load_sourced(&mut self, id: AssetId) -> Option<u64> {
+        let handle = self.server.load::<Sourced>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            if let Some(sourced) = self
+                .world
+                .get_resource::<AssetStore<Sourced>>()
+                .unwrap()
+                .get(&handle)
+            {
+                return Some(
+                    sourced
+                        .total
+                        .expect("a loaded sourced has its blob applied"),
+                );
+            }
+            if !self.server.is_loading() {
+                return None;
+            }
+            assert!(Instant::now() < deadline, "load timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
 fn chain_inputs(project: &Project, chain: &Chain) -> anyhow::Result<DerivedInputs> {
     let root = project.content_root();
     let mut inputs = pollster::block_on(DerivedInputs::read(
@@ -592,6 +694,7 @@ fn read_cooked(path: &Path) -> CookedFile {
     let parts = read_content_asset_parts(&bytes).unwrap();
     CookedFile {
         header: ContentAssetHeader {
+            uncooked: None,
             derived: None,
             ..parts.header.clone()
         },
@@ -729,6 +832,7 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
         &[EmbeddedPayload {
             header: parts.header.record_header(Some("leaf/0")).unwrap(),
             payload: &bincode::serialize(&Leaf { value: 9 }).unwrap(),
+            uncooked: None,
             derived_blob: None,
         }],
     )
@@ -1121,4 +1225,104 @@ fn a_cook_reads_further_inputs() {
         &7u64.to_le_bytes(),
     );
     assert_eq!(derives(tag), 1);
+}
+
+#[test]
+fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section() {
+    let tag = "uncooked";
+    let mut project = Project::new(tag);
+    let parts = Parts {
+        values: vec![3, 4, 5],
+    };
+    let sourced = save_content_asset_with_uncooked(
+        &Sourced {
+            tag: tag.to_string(),
+            hash: 0xfeed,
+            total: None,
+        },
+        &parts,
+        &project.root,
+        "content/sourced.gasset",
+        &mut project.registry,
+    )
+    .unwrap();
+    save_content_asset_with_uncooked(
+        &Noted { value: 1 },
+        &Note {
+            text: "a note".to_string(),
+        },
+        &project.root,
+        "content/noted.gasset",
+        &mut project.registry,
+    )
+    .unwrap();
+    project.leaf("plain", 9);
+    let cache = project.cache_dir();
+
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load_sourced(sourced), Some(12));
+    assert_eq!(derives(tag), 1);
+    assert_eq!(
+        pollster::block_on(runtime.server.load_uncooked::<Parts>(sourced)).unwrap(),
+        Some(parts)
+    );
+    pollster::block_on(runtime.server.load_uncooked::<Parts>(AssetId::new()))
+        .expect_err("an id the registry does not hold is an error");
+
+    let out = project.root.join("cooked");
+    let report = Runtime::<1>::new(&project, DerivedDataCache::none())
+        .server
+        .cook(&out)
+        .unwrap();
+    assert_eq!(
+        report.cooked,
+        vec!["content/noted.gasset", "content/sourced.gasset"]
+    );
+    let mut files = cache_files(&out);
+    files.sort();
+    assert_eq!(
+        files,
+        vec![
+            out.join("content/noted.gasset"),
+            out.join("content/sourced.gasset")
+        ]
+    );
+    assert_cooked_from(
+        &project,
+        &out,
+        "content/sourced.gasset",
+        0xfeed,
+        &12u64.to_le_bytes(),
+    );
+    for address in ["content/noted.gasset", "content/sourced.gasset"] {
+        let header = read_content_asset_header(&out.join(address)).unwrap();
+        assert!(!header.has_uncooked(), "{address}");
+    }
+    assert_eq!(
+        std::fs::read(out.join("content/noted.gasset")).unwrap(),
+        without_uncooked(&std::fs::read(project.root.join("content/noted.gasset")).unwrap())
+            .unwrap()
+    );
+    assert_eq!(derives(tag), 2);
+
+    let cooked = Project {
+        root: out.clone(),
+        registry: project.registry.clone(),
+    };
+    let mut runtime = Runtime::<1>::new(&cooked, DerivedDataCache::none());
+    assert_eq!(runtime.load_sourced(sourced), Some(12));
+    assert_eq!(
+        pollster::block_on(runtime.server.load_uncooked::<Parts>(sourced)).unwrap(),
+        None
+    );
+    assert_eq!(derives(tag), 2);
+
+    let path = project.root.join("content/sourced.gasset");
+    let stripped = without_uncooked(&std::fs::read(&path).unwrap()).unwrap();
+    std::fs::write(&path, stripped).unwrap();
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::at(&cache));
+    assert_eq!(runtime.load_sourced(sourced), Some(12));
+    assert_eq!(derives(tag), 2);
+    let mut runtime = Runtime::<1>::new(&project, DerivedDataCache::none());
+    assert_eq!(runtime.load_sourced(sourced), None);
 }

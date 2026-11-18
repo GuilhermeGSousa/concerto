@@ -7,11 +7,13 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
 use concerto_asset_import::{
-    DependencyEntry, ErasedImporter, ImportContext, PreviousOutputResolver, SubAssetIdResolver,
+    DependencyEntry, EmittedUncooked, ErasedImporter, ImportContext, PreviousOutputResolver,
+    SubAssetIdResolver,
 };
 use concerto_foundation::assets::content::{
-    read_asset_record, read_content_asset_header, write_content_asset,
-    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
+    read_asset_record_without_uncooked, read_content_asset_header, write_content_asset,
+    write_content_asset_with_embedded, write_content_asset_with_uncooked, ContentAssetHeader,
+    EmbeddedPayload, ImportProvenance, UncookedSection,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
@@ -141,12 +143,20 @@ struct PlannedFile {
 struct EmbeddedOutput<'a> {
     header: ContentAssetHeader,
     payload: &'a [u8],
+    uncooked: Option<&'a [u8]>,
 }
 
 struct HostOutput<'a> {
     path: PathBuf,
     header: ContentAssetHeader,
     payload: &'a [u8],
+}
+
+fn described(section: &EmittedUncooked) -> UncookedSection {
+    UncookedSection {
+        len: section.bytes.len() as u64,
+        version: section.version,
+    }
 }
 
 struct HostFile {
@@ -409,7 +419,7 @@ fn previous_outputs(
         .filter_map(|(key, output)| Some((key.clone(), registry.get(output.asset_id)?.clone())))
         .collect();
     let root = project_root.to_path_buf();
-    Box::new(move |name| read_asset_record(&root, located.get(name)?).ok())
+    Box::new(move |name| read_asset_record_without_uncooked(&root, located.get(name)?).ok())
 }
 
 fn sidecar_settings(
@@ -588,9 +598,11 @@ fn import_with(
                 source: provenance_source.clone(),
                 sub_asset: sub_asset.name.clone(),
             }),
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         };
+        let uncooked = sub_asset.uncooked.as_ref();
         if embedded_in.is_some() {
             if let Some(loose) = registry
                 .get(sub_asset.asset_id)
@@ -599,10 +611,19 @@ fn import_with(
                 superseded.push(project_root.join(&loose.address));
             }
             embedded.push(EmbeddedOutput {
-                header: header.clone(),
+                header: ContentAssetHeader {
+                    uncooked: uncooked.map(described),
+                    ..header.clone()
+                },
                 payload: &sub_asset.bytes,
+                uncooked: uncooked.map(|section| section.bytes.as_slice()),
             });
         } else if sub_asset.name == HOST {
+            if uncooked.is_some() {
+                bail!(
+                    "the importer emitted '{HOST}' with uncooked data, which the file that holds an import's embedded assets cannot carry; emit it with `emit`"
+                );
+            }
             host = Some(HostOutput {
                 path: project_root.join(&address),
                 header: header.clone(),
@@ -611,7 +632,15 @@ fn import_with(
         } else {
             plan.push(PlannedFile {
                 path: project_root.join(&address),
-                bytes: write_content_asset(&header, &sub_asset.bytes)?,
+                bytes: match uncooked {
+                    Some(uncooked) => write_content_asset_with_uncooked(
+                        &header,
+                        &sub_asset.bytes,
+                        uncooked.version,
+                        &uncooked.bytes,
+                    )?,
+                    None => write_content_asset(&header, &sub_asset.bytes)?,
+                },
             });
         }
         let entry = AssetEntry {
@@ -642,6 +671,7 @@ fn import_with(
             .map(|output| EmbeddedPayload {
                 header: output.header.clone(),
                 payload: output.payload,
+                uncooked: output.uncooked,
                 derived_blob: None,
             })
             .collect();
@@ -1016,6 +1046,15 @@ mod tests {
         refs: Vec<AssetId>,
     }
 
+    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    struct Drawing {
+        strokes: u32,
+    }
+
+    impl concerto_foundation::assets::UncookedData for Drawing {
+        type Asset = Blob;
+    }
+
     impl concerto_foundation::assets::Asset for Blob {
         fn name() -> &'static str {
             "Blob"
@@ -1031,6 +1070,7 @@ mod tests {
         name: &'static str,
         renamed_from: Option<&'static str>,
         refs: Vec<&'static str>,
+        drawing: Option<u32>,
     }
 
     fn emit(name: &'static str) -> Emit {
@@ -1038,12 +1078,18 @@ mod tests {
             name,
             renamed_from: None,
             refs: Vec::new(),
+            drawing: None,
         }
     }
 
     impl Emit {
         fn renamed_from(mut self, old: &'static str) -> Self {
             self.renamed_from = Some(old);
+            self
+        }
+
+        fn with_drawing(mut self, drawing: u32) -> Self {
+            self.drawing = Some(drawing);
             self
         }
 
@@ -1081,7 +1127,12 @@ mod tests {
             }
             for emit in &self.0 {
                 let refs = emit.refs.iter().map(|r| ctx.sub_asset_id(r)).collect();
-                ctx.emit(emit.name, &Blob { refs })?;
+                match &emit.drawing {
+                    Some(strokes) => {
+                        ctx.emit_with(emit.name, &Blob { refs }, &Drawing { strokes: *strokes })?
+                    }
+                    None => ctx.emit(emit.name, &Blob { refs })?,
+                }
             }
             Ok(())
         }
@@ -1160,7 +1211,9 @@ mod tests {
 
         let second = fixture
             .import(vec![
-                emit("animation/clip").renamed_from("animation/0"),
+                emit("animation/clip")
+                    .renamed_from("animation/0")
+                    .with_drawing(7),
                 emit("scene").referring_to("animation/clip"),
             ])
             .unwrap();
@@ -1170,6 +1223,14 @@ mod tests {
         assert_eq!(renamed.address, old.address);
         let header = read_content_asset_header(&fixture.root().join(&old.address)).unwrap();
         assert_eq!(header.provenance.unwrap().sub_asset, "animation/clip");
+        assert_eq!(
+            concerto_foundation::assets::content::read_uncooked::<Drawing>(
+                &fixture.root(),
+                renamed
+            )
+            .unwrap(),
+            Some(Drawing { strokes: 7 })
+        );
         let outputs = fixture.outputs();
         assert_eq!(outputs.get("animation/clip"), Some(&old.id));
         assert!(!outputs.contains_key("animation/0"));

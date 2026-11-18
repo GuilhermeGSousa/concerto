@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use concerto_color::{Color, LinearRgba};
-use concerto_foundation::assets::content::check_encoding;
+use concerto_foundation::assets::content::{check_encoding, check_uncooked_encoding};
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{
@@ -39,23 +39,28 @@ fn a_material_decodes_with_weak_texture_handles_and_lists_only_its_present_textu
 
 #[test]
 fn texture_encoding_matches_its_fixture() {
-    let texture = Texture::imported(
-        TextureRole::Normal,
-        TextureSettings::default()
-            .with_compression(Compression::Bc5)
-            .with_color_space(Some(ColorSpace::Linear))
-            .with_max_size(MaxSize::S1024)
-            .with_mips(false),
-        TextureSource {
-            bytes: vec![1, 2, 3, 4],
-            encoding: SourceEncoding::Jpeg,
-            width: 3,
-            height: 2,
-            hash: 0x0123_4567_89ab_cdef,
-        },
-    );
+    let settings = TextureSettings::default()
+        .with_compression(Compression::Bc5)
+        .with_color_space(Some(ColorSpace::Linear))
+        .with_max_size(MaxSize::S1024)
+        .with_mips(false);
+    let source = TextureSource {
+        bytes: vec![1, 2, 3, 4],
+        encoding: SourceEncoding::Jpeg,
+        width: 3,
+        height: 2,
+        hash: 0x0123_4567_89ab_cdef,
+    };
+    let texture = Texture::imported(TextureRole::Normal, settings, &source);
 
     check_encoding(&texture, encoding_dir());
+    check_uncooked_encoding(&source, encoding_dir());
+
+    let version_2 = std::fs::read(encoding_dir().join("Texture.v2.bin")).unwrap();
+    let migrated = Texture::migrate(2, &version_2).unwrap();
+    assert_eq!(migrated.role, TextureRole::Normal);
+    assert_eq!(migrated.settings, settings);
+    assert_eq!(migrated.source, Some(source.summary()));
 }
 
 #[test]

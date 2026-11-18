@@ -17,12 +17,12 @@ use super::{
 use super::{
     asset_server::AssetServer,
     content::{
-        asset_record, decode_content_asset, decode_content_payload, read_content_asset_parts,
-        ContentAssetHeader, DerivedSection,
+        asset_record, decode_content_asset, decode_content_payload, decode_uncooked,
+        read_content_asset_parts, ContentAssetHeader, DerivedSection, UncookedBytes,
     },
     registry::{AssetEntry, AssetRegistry},
     utils::try_read_relative,
-    Asset, AssetId, ContentAssetRoot, LoadableAsset,
+    Asset, AssetId, ContentAssetRoot, LoadableAsset, UncookedData,
 };
 
 /// An asset whose runtime part is a blob derived from other content assets, cached by a key it defines.
@@ -89,6 +89,7 @@ pub(crate) fn record_is_derived(kind: &str, record: &[u8]) -> anyhow::Result<boo
 pub struct DerivedInputs {
     files: HashMap<AssetId, Arc<Vec<u8>>>,
     records: HashMap<AssetId, Arc<Vec<u8>>>,
+    own_uncooked: Option<UncookedBytes>,
 }
 
 impl DerivedInputs {
@@ -121,6 +122,27 @@ impl DerivedInputs {
             self.records.insert(id, record);
         }
         Ok(())
+    }
+
+    /// Inputs that carry `value` as the deriving asset's own uncooked data.
+    pub fn with_own_uncooked<E: UncookedData>(mut self, value: &E) -> anyhow::Result<Self> {
+        self.own_uncooked = Some(UncookedBytes {
+            kind: E::Asset::name().to_string(),
+            version: E::VERSION,
+            bytes: bincode::serialize(value).context("failed to serialize uncooked data")?,
+        });
+        Ok(self)
+    }
+
+    /// The deriving asset's own uncooked data, decoded as `E`; only `derive` may ask, and it fails for a file that holds none.
+    pub fn own_uncooked<E: UncookedData>(&self) -> anyhow::Result<E> {
+        let section = self.own_uncooked.as_ref().with_context(|| {
+            format!(
+                "the file of this {name} holds no uncooked data, and a cooked file never does; only `derive` may ask for it, since `derived_key` must come from the payload",
+                name = E::Asset::name()
+            )
+        })?;
+        decode_uncooked::<E>(&section.kind, section.version, &section.bytes)
     }
 
     /// The whole file of a loose input `id`, or the bytes a loose file of a host or an embedded one would have.
@@ -265,11 +287,11 @@ pub(crate) type CookFuture = Pin<Box<dyn Future<Output = anyhow::Result<Option<V
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type CookHook = fn(id: AssetId, file: Vec<u8>, server: AssetServer) -> CookFuture;
 
-/// The addresses a cook wrote, in the order it wrote them.
+/// The files a cook wrote, in the order it wrote them.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CookReport {
-    /// The content addresses written under the output directory.
+    /// The address of every file written under the output directory: one whose asset derives, with its blob, and any other that had an uncooked section, without it.
     pub cooked: Vec<String>,
 }
 
@@ -284,14 +306,19 @@ pub(crate) struct DerivedBlob {
     pub(crate) blob: Vec<u8>,
 }
 
-pub(crate) type DerivedHook = fn(
-    asset: Box<dyn Any + Send>,
-    cooked: Option<CookedBlob>,
-    server: AssetServer,
-) -> DerivedFuture;
+pub(crate) struct DerivedLoad {
+    pub(crate) id: AssetId,
+    pub(crate) asset: Box<dyn Any + Send>,
+    pub(crate) cooked: Option<CookedBlob>,
+    pub(crate) uncooked: Option<UncookedBytes>,
+}
+
+pub(crate) type DerivedHook = fn(load: DerivedLoad, server: AssetServer) -> DerivedFuture;
 
 pub(crate) async fn derive_and_apply<A: DerivedData>(
     asset: &mut A,
+    id: AssetId,
+    uncooked: Option<UncookedBytes>,
     server: &AssetServer,
 ) -> anyhow::Result<DerivedBlob> {
     let (root, registry) = server.content_source();
@@ -309,6 +336,10 @@ pub(crate) async fn derive_and_apply<A: DerivedData>(
             ),
         }
     }
+    inputs.own_uncooked = match uncooked {
+        Some(section) => Some(section),
+        None => server.skipped_uncooked(id).await?,
+    };
     let blob = asset
         .derive(&inputs, &mut |_, _| {})
         .with_context(|| format!("failed to derive {}", A::name()))?;
@@ -347,11 +378,16 @@ fn apply_cooked<A: DerivedData>(asset: &mut A, cooked: CookedBlob) -> bool {
 }
 
 pub(crate) fn derived_hook<A: DerivedData>(
-    asset: Box<dyn Any + Send>,
-    cooked: Option<CookedBlob>,
+    load: DerivedLoad,
     server: AssetServer,
 ) -> DerivedFuture {
     Box::pin(async move {
+        let DerivedLoad {
+            id,
+            asset,
+            cooked,
+            uncooked,
+        } = load;
         let mut asset = *asset
             .downcast::<A>()
             .map_err(|_| anyhow::anyhow!("the derived hook for {} got another type", A::name()))?;
@@ -369,7 +405,7 @@ pub(crate) fn derived_hook<A: DerivedData>(
                 return Ok(Box::new(asset) as Box<dyn Any + Send>);
             }
         }
-        derive_and_apply(&mut asset, &server).await?;
+        derive_and_apply(&mut asset, id, uncooked, &server).await?;
         Ok(Box::new(asset) as Box<dyn Any + Send>)
     })
 }
@@ -391,7 +427,15 @@ pub(crate) fn cook_hook<A: DerivedData>(
             parts.payload,
         )?;
         asset.on_load(&AssetLoadContext::new(server.clone(), id))?;
-        let derived = derive_and_apply(&mut asset, &server).await?;
+        let derived = derive_and_apply(&mut asset, id, None, &server).await?;
+        if parts.header.kind_version < A::FORMAT_VERSION {
+            log::warn!(
+                "cooking {id:?} with its version-{} {} payload as it is, this build's is version {}; import its source or save it again so the cooked file holds only what that version keeps",
+                parts.header.kind_version,
+                A::name(),
+                A::FORMAT_VERSION
+            );
+        }
         write_cooked_content_asset(
             &parts.header,
             parts.payload,

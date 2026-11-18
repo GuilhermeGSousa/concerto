@@ -159,7 +159,8 @@ The steps, each run only when the options call for it:
 2. Cook: runs `<exe> --cook <target>/cooked/<pkg>`. Every game that calls
    `concerto::run` accepts `--cook <out>`: it builds the game's `App` with no
    window and no GPU and writes each derived asset to `<out>/<address>`, its
-   committed file plus the derived blob. A derive that fails fails the build,
+   committed file plus the derived blob, and each file that holds uncooked
+   data without it, then prints `cooked <n> files`. A derive that fails fails the build,
    naming the asset. The cook refuses an `<out>` that is not empty and was not
    written by an earlier cook, which leaves a `.concerto-cook` file in it.
 3. Trunk: `trunk build` in `<dir>`, with `--release` and `--public-url <url>`

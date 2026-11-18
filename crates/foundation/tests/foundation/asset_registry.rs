@@ -45,6 +45,7 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id_and_follows_a_moved_f
             kind: kind.to_string(),
             kind_version: 1,
             provenance: provenance.clone(),
+            uncooked: None,
             derived: None,
             embedded: Vec::new(),
         };
@@ -103,6 +104,7 @@ fn header(id: AssetId, kind: &str, sub_asset: &str) -> ContentAssetHeader {
             source: "assets/hero.glb".into(),
             sub_asset: sub_asset.into(),
         }),
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     }
@@ -136,11 +138,13 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
                 EmbeddedPayload {
                     header: header(mesh, "Mesh", "mesh/0"),
                     payload: b"mesh",
+                    uncooked: None,
                     derived_blob: None,
                 },
                 EmbeddedPayload {
                     header: header(material, "StandardMaterial", "material/steel"),
                     payload: b"material",
+                    uncooked: None,
                     derived_blob: None,
                 },
             ],

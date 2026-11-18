@@ -1364,8 +1364,8 @@ name = "concerto-foundation"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-fs",
  "bincode",
+ "blocking",
  "bytemuck",
  "cfg-if",
  "concerto-asset-format",

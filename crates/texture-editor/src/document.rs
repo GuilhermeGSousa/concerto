@@ -17,7 +17,7 @@ use concerto_editor::{
     tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
-    content::{decode_content_asset, read_asset_record},
+    content::{decode_content_asset, read_asset_record_without_uncooked, read_uncooked},
     handle::AssetHandle,
     registry::AssetEntry,
 };
@@ -134,8 +134,13 @@ impl PropertyTarget for TextureTarget {
     }
 }
 
-pub(crate) fn read_texture(root: &Path, asset: &AssetEntry) -> anyhow::Result<Texture> {
-    let bytes = read_asset_record(root, asset)
+pub(crate) struct OpenedTexture {
+    pub(crate) texture: Texture,
+    pub(crate) source: TextureSource,
+}
+
+pub(crate) fn read_texture_payload(root: &Path, asset: &AssetEntry) -> anyhow::Result<Texture> {
+    let bytes = read_asset_record_without_uncooked(root, asset)
         .with_context(|| format!("Cannot read {}", asset.location()))?;
     let (header, texture) = decode_content_asset::<Texture>(&bytes)?;
     anyhow::ensure!(
@@ -143,25 +148,34 @@ pub(crate) fn read_texture(root: &Path, asset: &AssetEntry) -> anyhow::Result<Te
         "{} holds another asset's id",
         asset.address
     );
-    anyhow::ensure!(
-        texture.source.is_some(),
-        "{} holds no source image; import its source again",
-        asset.address
-    );
     Ok(texture)
 }
 
-pub(crate) fn hold_texture(tab: &mut TextureTab, texture: Texture) {
-    let value = TextureDocument::of(&texture);
-    if tab.source.as_ref().map(|source| source.hash)
-        != texture.source.as_ref().map(|source| source.hash)
-        || tab.value != Some(value)
-    {
+pub(crate) fn read_texture(root: &Path, asset: &AssetEntry) -> anyhow::Result<OpenedTexture> {
+    let texture = read_texture_payload(root, asset)?;
+    let source = read_uncooked::<TextureSource>(root, asset)
+        .with_context(|| format!("Cannot read the source image of {}", asset.location()))?
+        .with_context(|| {
+            format!(
+                "{} holds no source image; import its source again",
+                asset.address
+            )
+        })?;
+    Ok(OpenedTexture { texture, source })
+}
+
+pub(crate) fn hold_document(tab: &mut TextureTab, texture: &Texture) {
+    let value = TextureDocument::of(texture);
+    if tab.value != Some(value) {
         tab.derive_wanted = true;
     }
     tab.value = Some(value);
     tab.loaded = Some(value);
-    tab.source = texture.source;
+}
+
+pub(crate) fn hold_texture(tab: &mut TextureTab, opened: OpenedTexture) {
+    hold_document(tab, &opened.texture);
+    tab.source = Some(opened.source);
 }
 
 pub(crate) fn load_textures(
@@ -177,8 +191,8 @@ pub(crate) fn load_textures(
             continue;
         };
         match read_texture(&root, &asset) {
-            Ok(texture) => {
-                hold_texture(&mut tab, texture);
+            Ok(opened) => {
+                hold_texture(&mut tab, opened);
                 tab.derive_wanted = true;
                 cmd.remove::<Unsaved>(entity);
                 cmd.trigger(RefreshInspector);

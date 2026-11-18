@@ -3,7 +3,7 @@ mod import_context;
 
 pub use clip_names::clip_names;
 pub use import_context::{
-    DependencyEntry, EmittedSubAsset, ImportContext, ImportError, ImportOutputs,
+    DependencyEntry, EmittedSubAsset, EmittedUncooked, ImportContext, ImportError, ImportOutputs,
     PreviousOutputResolver, SubAssetIdResolver,
 };
 

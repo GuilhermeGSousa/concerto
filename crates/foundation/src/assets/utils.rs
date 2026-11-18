@@ -1,6 +1,8 @@
 use anyhow::Context;
 use cfg_if::cfg_if;
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::content::read_content_without_uncooked;
 use super::{content::decode_content_asset, Asset, ContentAssetRoot};
 
 /// Loads the content asset at `<root>/<address>` as `A`, through [`decode_content_asset`](crate::assets::content::decode_content_asset).
@@ -16,7 +18,8 @@ pub async fn load_content_asset<A: Asset>(
     Ok(asset)
 }
 
-/// Reads `<root>/<relative>`, returning `Ok(None)` when it simply is not
+/// Reads `<root>/<relative>`, natively without its uncooked sections,
+/// returning `Ok(None)` when it simply is not
 /// there (a missing file natively, a non-success status on wasm) so the
 /// caller can turn absence into its own error message. Any other failure
 /// is a real error.
@@ -32,7 +35,11 @@ pub(crate) async fn try_read_relative(
                     let _ = path;
                     Ok(None)
                 } else {
-                    match async_fs::read(&path).await {
+                    let read = {
+                        let path = path.clone();
+                        blocking::unblock(move || read_content_without_uncooked(&path)).await
+                    };
+                    match read {
                         Ok(bytes) => Ok(Some(bytes)),
                         Err(err)
                             if matches!(

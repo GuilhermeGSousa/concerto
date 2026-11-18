@@ -10,9 +10,9 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_foundation::{
     assets::{
-        asset_server::AssetServer, asset_store::AssetStore, content::save_content_asset_into,
-        derived::DerivedDataCache, handle::AssetHandle, registry::AssetRegistry, AssetId,
-        ContentAssetRoot,
+        asset_server::AssetServer, asset_store::AssetStore,
+        content::save_content_asset_with_uncooked, derived::DerivedDataCache, handle::AssetHandle,
+        registry::AssetRegistry, AssetId, ContentAssetRoot,
     },
     transform::Transform,
 };
@@ -108,10 +108,11 @@ impl Content {
         let texture = Texture::imported(
             role,
             TextureSettings::default().with_compression(compression),
-            source,
+            &source,
         );
-        save_content_asset_into(
+        save_content_asset_with_uncooked(
             &texture,
+            &source,
             &self.project.root,
             &format!("content/{name}.gasset"),
             &mut self.registry,

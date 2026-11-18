@@ -26,6 +26,7 @@ fn write_asset(project: &Path, id: AssetId) {
         kind: "Fixture".into(),
         kind_version: 1,
         provenance: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -48,6 +49,7 @@ fn write_host(project: &Path, embedded: AssetId) {
             source: "assets/fixture.glb".into(),
             sub_asset: sub_asset.into(),
         }),
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };
@@ -60,11 +62,13 @@ fn write_host(project: &Path, embedded: AssetId) {
                 EmbeddedPayload {
                     header: header(AssetId::new(), "Fixture", "mesh/0"),
                     payload: b"first",
+                    uncooked: None,
                     derived_blob: None,
                 },
                 EmbeddedPayload {
                     header: header(embedded, "Fixture", "mesh/a#b"),
                     payload: b"second",
+                    uncooked: None,
                     derived_blob: None,
                 },
             ],
@@ -208,6 +212,7 @@ fn write_asset_at(project: &Path, address: &str, id: AssetId) {
         kind: "Fixture".into(),
         kind_version: 1,
         provenance: None,
+        uncooked: None,
         derived: None,
         embedded: Vec::new(),
     };

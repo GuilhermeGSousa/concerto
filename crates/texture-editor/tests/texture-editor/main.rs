@@ -9,12 +9,13 @@ use concerto_editor::hosted::EditWorld;
 use concerto_foundation::assets::{
     AssetId,
     asset_store::AssetStore,
-    content::{decode_content_asset, read_content_asset},
+    content::{decode_content_asset, read_content_asset, read_uncooked},
     handle::AssetHandle,
+    registry::AssetRegistry,
 };
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::run_with};
 use concerto_render::{
-    assets::texture::{Compression, MaxSize, Texture, TextureRole, TextureSettings},
+    assets::texture::{Compression, MaxSize, Texture, TextureRole, TextureSettings, TextureSource},
     gpu::Gpu,
 };
 use rmcp::{
@@ -359,5 +360,10 @@ fn a_texture_tab_changes_compression_saves_and_survives_reimport() {
             .with_compression(Compression::Bc7)
             .with_max_size(MaxSize::S512)
     );
-    assert_eq!(texture.source.unwrap().bytes, colour);
+    let registry = AssetRegistry::from_content_tree(&root, "content", "gasset").unwrap();
+    let source = read_uncooked::<TextureSource>(&root, registry.get(header.asset_id).unwrap())
+        .unwrap()
+        .expect("a save keeps the source section");
+    assert_eq!(source.bytes, colour);
+    assert_eq!(texture.source, Some(source.summary()));
 }

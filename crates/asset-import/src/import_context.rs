@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use concerto_foundation::assets::content::decode_content_asset;
-use concerto_foundation::assets::{Asset, AssetId};
+use concerto_foundation::assets::{Asset, AssetId, UncookedData};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DependencyEntry {
@@ -16,7 +16,16 @@ pub struct EmittedSubAsset {
     pub type_name: &'static str,
     pub kind_version: u32,
     pub bytes: Vec<u8>,
+    /// The uncooked section the output is written with, if it has one.
+    pub uncooked: Option<EmittedUncooked>,
     pub references: Vec<AssetId>,
+}
+
+/// The uncooked section an importer emitted with an output: its bytes and the version of their encoding.
+#[derive(Debug, Clone)]
+pub struct EmittedUncooked {
+    pub version: u32,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,21 +141,41 @@ impl ImportContext {
         }
     }
 
+    /// Emits `value` as the output `name`, with no uncooked section.
     pub fn emit<T: Asset>(&mut self, name: &str, value: &T) -> Result<(), ImportError> {
-        let bytes = bincode::serialize(value).map_err(|err| ImportError::SerializationFailed {
-            sub_asset_name: name.to_string(),
-            message: err.to_string(),
-        })?;
+        self.push(name, value, None)
+    }
 
+    /// Emits `value` as the output `name`, with `uncooked` as its uncooked section.
+    pub fn emit_with<E: UncookedData>(
+        &mut self,
+        name: &str,
+        value: &E::Asset,
+        uncooked: &E,
+    ) -> Result<(), ImportError> {
+        let section = EmittedUncooked {
+            version: E::VERSION,
+            bytes: serialize(name, uncooked)?,
+        };
+        self.push(name, value, Some(section))
+    }
+
+    fn push<T: Asset>(
+        &mut self,
+        name: &str,
+        value: &T,
+        uncooked: Option<EmittedUncooked>,
+    ) -> Result<(), ImportError> {
+        let bytes = serialize(name, value)?;
         self.sub_assets.push(EmittedSubAsset {
             name: name.to_string(),
             asset_id: self.sub_asset_id(name),
             type_name: T::name(),
             kind_version: T::FORMAT_VERSION,
             bytes,
+            uncooked,
             references: value.referenced_sub_assets(),
         });
-
         Ok(())
     }
 
@@ -162,4 +191,11 @@ impl ImportContext {
             renames: self.renames.into_iter().collect(),
         }
     }
+}
+
+fn serialize<T: serde::Serialize>(name: &str, value: &T) -> Result<Vec<u8>, ImportError> {
+    bincode::serialize(value).map_err(|err| ImportError::SerializationFailed {
+        sub_asset_name: name.to_string(),
+        message: err.to_string(),
+    })
 }

@@ -139,6 +139,26 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
     }
 }
 
+/// Data an asset's file keeps in a section of its own, for tools and for a derive that misses its cache; loads never read it and a cook drops it.
+pub trait UncookedData:
+    Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned
+{
+    /// The asset type whose files carry this data.
+    type Asset: Asset;
+
+    /// The version of this type's encoding, stored with each section.
+    const VERSION: u32 = 1;
+
+    /// Decodes a section written at `version`, older than `VERSION`; the default rejects it.
+    fn migrate(version: u32, _bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::bail!(
+            "the uncooked data of {} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            <Self::Asset as Asset>::name(),
+            Self::VERSION
+        )
+    }
+}
+
 /// An asset the editor can create from nothing.
 pub trait CreatableAsset: Asset {
     fn new_asset() -> Self;
