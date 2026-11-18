@@ -15,10 +15,3 @@ concerto-mesh.workspace = true
 concerto-color.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }
 serde    = { version = "1", features = ["derive"] }
-wgpu     = { version = "30.0.2", default-features = false, features = [
-    "wgsl",
-    "std",
-    "metal",
-    "naga-ir",
-    "fragile-send-sync-non-atomic-wasm",
-] }

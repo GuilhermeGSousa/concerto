@@ -13,8 +13,6 @@ concerto-render.workspace = true
 concerto-ecs.workspace = true
 concerto-reflect.workspace = true
 glam.workspace = true
-serde = { version = "1", features = ["derive"] }
-log = "0.4.27"
 
 [dev-dependencies]
 concerto-scene.workspace = true

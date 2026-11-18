@@ -10,7 +10,6 @@ license.workspace = true
 concerto-app.workspace = true
 concerto-director.workspace = true
 concerto-foundation.workspace = true
-concerto-render.workspace = true
 concerto-window.workspace = true
 concerto-ecs.workspace = true
 concerto-physics.workspace = true
