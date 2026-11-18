@@ -213,7 +213,23 @@ settings the import used, as TOML: a `[settings]` table and, for an image, an
 `[asset_settings]` table.
 Each queued import ends with an `ImportFinished` event carrying the settings it
 used, which is what the tool
-waits for. It needs an open project. `close_document`
+waits for. It needs an open project. `reimport` imports again the import that
+`asset` belongs to, given as an address or an id as `list_assets` shows them, a
+part included, by triggering the `ReimportAsset` signal that confirming
+Re-import… triggers. It reads the source from the path the import record names,
+or reads `source` instead, which becomes the import's source: a file inside the
+project is used where it is, and one outside it is copied beside the recorded
+source. Every asset keeps its id and its address. `settings` and
+`asset_settings` work as in `import_source`, a field left out keeping the value
+the project holds. It answers `Re-imported <source>: N assets, M sibling
+files.`, one `address · kind · id` line per asset, and the settings it used as
+TOML. An asset not in the catalogue answers `unknown_asset`; one with no
+provenance, such as a scene made in the editor, answers `not_imported`; a
+missing recorded source with no `source` given answers `source_missing`, naming
+the recorded path; a `source` with no file, or settings that do not fit, answer
+`invalid_arguments`; a re-import that fails, or whose import record cannot be
+used, answers `import_failed` with the reason. It needs an open project.
+`close_document`
 closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
@@ -736,7 +752,10 @@ ships. The rows follow the registry, so the game's inspected kinds join them
 once a scene's edit `App` has built. It creates in the selected folder, or in the content root when
 nothing or an asset is selected. Right-clicking a folder opens a menu with the
 same rows, which create in that folder; right-clicking the tree's empty space
-opens it for the content root. Right-clicking an asset opens no menu. Picking a
+opens it for the content root. Right-clicking an asset opens the asset row
+menu instead: the entries registered in the `AssetRowMenu` resource that are
+offered on that asset, such as Re-import… on an imported one. An asset none is
+offered on opens no menu. Picking a `New <kind>`
 row clears the search and the kind
 chip, and puts a row with a focused name field in that folder, ahead of its
 assets, expanding the folders above it and scrolling to it. The field starts as a free name: `New
@@ -824,6 +843,40 @@ fails the import. If one that can be read would land outside the project, the
 import fails and nothing is copied; pick a destination deeper inside the
 project. Chatter names the first failure of a
 batch; the log has every one in full.
+
+**Re-import…** in the menu of an asset row, offered on every asset with
+provenance, an import's face and its parts included, opens the same dialog
+with one row staged from the import record: the recorded source as source and
+destination, which cannot be edited, the record's settings, and for an image
+its texture's settings. When the recorded source is missing, the row reads
+`Source missing` and has a **Pick source…** button, whose file becomes the
+row's source and then the import's, as the `reimport` tool's `source` does.
+Confirming triggers `ReimportAsset { asset, source, settings, asset_settings }`,
+which queues the re-import; it ends, as an import does, with `ImportFinished`
+for the recorded source. The menu entry triggers `StageReimport { asset }`,
+which stages the row. `ImportPlugin` registers the entry and owns both
+signals, the `reimport` tool and the dialog row.
+
+The asset row menu is `ContentPlugin`'s, and knows nothing of what its entries
+do. A plugin adds an entry to the `AssetRowMenu` resource with a label, a test
+on the row's `AssetEntry`, and a function that makes the signal picking it
+triggers from the asset's id; it inserts the resource when it is missing, as
+`ImportPlugin` does:
+
+```rust,ignore
+use concerto_editor::content::AssetRowMenu;
+
+if app.get_resource::<AssetRowMenu>().is_none() {
+    app.insert_resource(AssetRowMenu::default());
+}
+app.get_resource_mut::<AssetRowMenu>()
+    .expect("inserted above")
+    .register(
+        "Re-import…",
+        |entry| entry.provenance.is_some(),
+        |asset| StageReimport { asset },
+    );
+```
 
 ## Playing
 

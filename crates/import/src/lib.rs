@@ -279,7 +279,94 @@ fn import_placed(
     settings: ImportSettings,
 ) -> anyhow::Result<ImportedSource> {
     let importer = importer_of(read, source)?;
-    import_with(importer, read, source, project_root, config, settings)
+    let owner = provenance_source(source, project_root);
+    import_with(
+        importer,
+        read,
+        source,
+        &owner,
+        project_root,
+        config,
+        settings,
+    )
+}
+
+/// Imports again the source of the import that `asset` belongs to: from the anchor's recorded path, or from `source` when given, which becomes the import's source.
+pub fn reimport(
+    asset: AssetId,
+    source: Option<&Path>,
+    project_root: &Path,
+    config: &ContentConfig,
+    settings: ImportSettings,
+) -> anyhow::Result<ImportedSource> {
+    config.validate()?;
+    let project_root = project_root
+        .canonicalize()
+        .with_context(|| format!("resolving project '{}'", project_root.display()))?;
+    let registry =
+        AssetRegistry::from_content_tree(&project_root, &config.root, &config.extension)?;
+    let entry = registry
+        .get(asset)
+        .with_context(|| format!("no asset {} in the project", asset.simple_hex()))?;
+    let Some(provenance) = &entry.provenance else {
+        bail!("'{}' was not imported; it has no source", entry.location());
+    };
+    let recorded = provenance.source.clone();
+    let recorded_path = project_root.join(&recorded);
+    let (read, placed) = match source {
+        None => {
+            if !recorded_path.is_file() {
+                let outputs = found(&registry, &recorded, &project_root)?.outputs;
+                let anchor = anchor_of(&outputs).unwrap_or(entry).location();
+                bail!("'{recorded}', the source of '{anchor}', is missing; re-import it with a source");
+            }
+            (recorded_path.clone(), recorded_path)
+        }
+        Some(source) => {
+            let read = source
+                .canonicalize()
+                .with_context(|| format!("resolving source '{}'", source.display()))?;
+            let extension = extension_of(&recorded_path);
+            if extension_of(&read) != extension {
+                bail!(
+                    "'{}' must have the extension '.{extension}' of '{recorded}'",
+                    read.display()
+                );
+            }
+            let placed = if read.starts_with(&project_root) {
+                read.clone()
+            } else {
+                let name = read.file_name().context("source has no file name")?;
+                placed_path(
+                    &recorded_path
+                        .parent()
+                        .context("the recorded source has no parent directory")?
+                        .join(name),
+                )
+            };
+            (read, placed)
+        }
+    };
+    let placed_source = provenance_source(&placed, &project_root);
+    if placed_source != recorded {
+        let other = found(&registry, &placed_source, &project_root)?.outputs;
+        if let Some(other) = anchor_of(&other).or_else(|| other.values().next()) {
+            bail!(
+                "'{placed_source}' is already the source of '{}'; re-import that one, or pick another file",
+                other.location()
+            );
+        }
+    }
+    let importer = importer_of(&read, &placed)?;
+    import_with(
+        importer,
+        &read,
+        &placed,
+        &recorded,
+        &project_root,
+        config,
+        settings,
+    )
 }
 
 fn portable(path: &Path) -> String {
@@ -343,11 +430,7 @@ fn found(registry: &AssetRegistry, source: &str, project_root: &Path) -> anyhow:
             );
         }
     }
-    let anchor = outputs
-        .get(HOST)
-        .or_else(|| outputs.get(MAIN))
-        .filter(|entry| entry.embedded_in.is_none());
-    let recorded = match anchor {
+    let recorded = match anchor_of(&outputs) {
         Some(anchor) => read_content_asset_header(&project_root.join(&anchor.address))?
             .import
             .map(|record| Recorded {
@@ -357,6 +440,13 @@ fn found(registry: &AssetRegistry, source: &str, project_root: &Path) -> anyhow:
         None => None,
     };
     Ok(Found { outputs, recorded })
+}
+
+fn anchor_of(outputs: &BTreeMap<String, AssetEntry>) -> Option<&AssetEntry> {
+    outputs
+        .get(HOST)
+        .or_else(|| outputs.get(MAIN))
+        .filter(|entry| entry.embedded_in.is_none())
 }
 
 fn settings_for(
@@ -412,6 +502,7 @@ fn import_with(
     importer: &dyn ErasedImporter,
     read: &Path,
     source: &Path,
+    owner: &str,
     project_root: &Path,
     config: &ContentConfig,
     settings: ImportSettings,
@@ -422,12 +513,12 @@ fn import_with(
         mut registry,
         headers,
     } = existing(project_root, config)?;
-    let found = found(&registry, &provenance_source, project_root)?;
+    let found = found(&registry, owner, project_root)?;
     let ImportSettings {
         settings: given,
         asset_settings,
     } = settings;
-    let settings = settings_for(importer, given, &found, &provenance_source)?;
+    let settings = settings_for(importer, given, &found, owner)?;
     let encoded_settings = importer
         .settings_to_bytes(settings.as_ref())
         .map_err(anyhow::Error::msg)?;
@@ -1025,6 +1116,7 @@ mod tests {
                 &Scripted(emits),
                 &self.source,
                 &self.source,
+                "assets/a.test",
                 &self.root(),
                 &self.config,
                 ImportSettings::default(),

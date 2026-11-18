@@ -41,8 +41,8 @@ use std::path::PathBuf;
 use crate::actions::{CancelImport, ConfirmImport, ImportDialogContext};
 use crate::guard::UnsavedGuard;
 use crate::import::{
-    ImportQueue, ImportStaging, RowState, StagedImport, destinations_clash, scan_content,
-    stage_row, validate_rows,
+    ImportPicker, ImportQueue, ImportStaging, ReimportAsset, RowState, StagedImport,
+    destinations_clash, scan_content, stage_row, validate_rows,
 };
 use crate::inspector::{FieldCommits, PropertyCommits, ReflectRows, TargetWorld};
 use crate::project::ProjectState;
@@ -135,12 +135,24 @@ pub fn can_confirm(staging: &ImportStaging) -> bool {
     staging.rows.iter().any(StagedImport::importable) && !destinations_clash(&staging.rows)
 }
 
-/// Queues every importable row and closes the dialog; does nothing while [`can_confirm`] is false.
-pub fn confirm(staging: &mut ImportStaging, queue: &mut ImportQueue) {
+/// Queues every importable row, triggering [`ReimportAsset`] for a row that imports an import again, and closes the dialog; does nothing while [`can_confirm`] is false.
+pub fn confirm(staging: &mut ImportStaging, queue: &mut ImportQueue, cmd: &mut CommandQueue) {
     if !can_confirm(staging) {
         return;
     }
-    queue.enqueue(std::mem::take(&mut staging.rows));
+    let mut imports = Vec::new();
+    for row in std::mem::take(&mut staging.rows) {
+        match row.reimport {
+            Some(asset) if row.importable() => cmd.trigger(ReimportAsset {
+                asset,
+                source: Some(row.source),
+                settings: row.settings,
+                asset_settings: row.asset_settings,
+            }),
+            _ => imports.push(row),
+        }
+    }
+    queue.enqueue(imports);
     staging.visible = false;
     staging.scan = None;
 }
@@ -152,12 +164,17 @@ pub fn cancel(staging: &mut ImportStaging) {
     staging.scan = None;
 }
 
-fn confirm_checked(staging: &mut ImportStaging, queue: &mut ImportQueue, project: &ProjectState) {
+fn confirm_checked(
+    staging: &mut ImportStaging,
+    queue: &mut ImportQueue,
+    project: &ProjectState,
+    cmd: &mut CommandQueue,
+) {
     let root = project.project.as_ref().map(|project| &project.root);
     if let Some(root) = root {
         validate_rows(&mut staging.rows, root);
     }
-    confirm(staging, queue);
+    confirm(staging, queue, cmd);
     if let Some(root) = root {
         queue.bind(root);
     }
@@ -262,6 +279,15 @@ fn press_cancel(on: On<UIClick>, mut staging: ResMut<ImportStaging>) {
     }
 }
 
+fn pick_source(index: usize) -> Listener<UIClick> {
+    (move |on: On<UIClick>, mut picker: ResMut<ImportPicker>| {
+        if on.signal().button == MouseButton::Left {
+            picker.request_source(index);
+        }
+    })
+    .into_listener()
+}
+
 fn select_row(index: usize) -> Listener<UIItemSelected> {
     (move |_: On<UIItemSelected>, panels: Query<&mut SettingsPanel>| {
         for mut panel in panels.iter() {
@@ -296,6 +322,7 @@ fn edit_destinations(
     let scan = scan.get_or_insert_with(|| scan_content(&project.root));
     for (index, destination) in edits {
         if let Some(row) = rows.get_mut(index)
+            && row.reimport.is_none()
             && row.destination != destination
         {
             row.destination = destination;
@@ -427,6 +454,7 @@ fn press_keys(
     mut queue: ResMut<ImportQueue>,
     project: Res<ProjectState>,
     guard: Res<UnsavedGuard>,
+    mut cmd: CommandQueue,
 ) {
     for action in fired.read() {
         if !staging.visible || guard.asking() {
@@ -449,7 +477,7 @@ fn press_keys(
         return;
     }
     requested.0 = false;
-    confirm_checked(&mut staging, &mut queue, &project);
+    confirm_checked(&mut staging, &mut queue, &project, &mut cmd);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -553,18 +581,28 @@ fn spawn_row(
             .width(UIValue::Px(NAME_WIDTH))
             .fixed(),
     );
-    let field = row
-        .spawn_child((
+    let mut field = row.spawn_child((
+        theme
+            .text_field("assets/…")
+            .single_line()
+            .value(staged.destination.clone())
+            .grow()
+            .shrink(1.0)
+            .min_width(UIValue::Px(0.0)),
+        DialogField(index),
+    ));
+    if staged.reimport.is_some() {
+        field.insert(UIDisabled);
+    }
+    let field = field.entity();
+    if staged.state == RowState::SourceMissing {
+        row.add_child(
             theme
-                .text_field("assets/…")
-                .single_line()
-                .value(staged.destination.clone())
-                .grow()
-                .shrink(1.0)
-                .min_width(UIValue::Px(0.0)),
-            DialogField(index),
-        ))
-        .entity();
+                .button("Pick source…")
+                .fixed()
+                .on_click(pick_source(index)),
+        );
+    }
     let (status, color) = status_of(&staged.state, theme);
     row.add_child((
         theme
@@ -582,6 +620,7 @@ fn spawn_row(
 fn status_of<'a>(state: &'a RowState, theme: &UITheme) -> (&'a str, Color) {
     match state {
         RowState::Replaces => ("replaces existing", theme.warning),
+        RowState::SourceMissing => ("Source missing", theme.error),
         RowState::Rejected(reason) => (reason.as_str(), theme.error),
         RowState::New => ("", theme.text_muted),
     }

@@ -15,7 +15,7 @@
 "crates/foundation" = 67
 "crates/gameplay" = 11
 "crates/gltf" = 6
-"crates/import" = 16
+"crates/import" = 17
 "crates/mcp" = 10
 "crates/mesh" = 12
 "crates/motion-matching" = 71

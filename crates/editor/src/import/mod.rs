@@ -1,12 +1,18 @@
 //! Importing source files into the open project.
 
 pub mod dialog;
+mod reimport;
+
+pub use reimport::{ReimportArgs, ReimportAsset, StageReimport};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::thread::JoinHandle;
 
-use concerto_app::{App, Plugin, schedule_groups::Update};
+use concerto_app::{
+    App, Plugin,
+    schedule_groups::{LateUpdate, Update},
+};
 use concerto_ecs::{
     Event, IntoSystemConfig, Res, ResMut, Resource, events::event_writer::EventWriter,
     reflect::AppTypeRegistry,
@@ -19,8 +25,10 @@ use concerto_import::config::ContentConfig;
 use concerto_import::{
     ContentScan, ImportSettings, ImportedSource, StagedSettings, importer_for, importers,
 };
+use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolRegistry};
 use concerto_reflect::{Reflect, TypeRegistry, to_json};
 
+use crate::content::AssetRowMenu;
 use crate::project::{AssetsWritten, ProjectState};
 
 /// Imports a source into the project at `destination` with `settings`, bringing the files it refers to along.
@@ -32,6 +40,16 @@ pub fn import_source_into(
 ) -> anyhow::Result<ImportedSource> {
     let config = ContentConfig::load_or_default(project_root)?;
     concerto_import::import_source_into(source, destination, project_root, &config, settings)
+}
+
+fn reimport_into(
+    asset: AssetId,
+    source: Option<&Path>,
+    project_root: &Path,
+    settings: ImportSettings,
+) -> anyhow::Result<ImportedSource> {
+    let config = ContentConfig::load_or_default(project_root)?;
+    concerto_import::reimport(asset, source, project_root, &config, settings)
 }
 
 /// Scans the content of the project at `project_root` once, for staging a batch of rows against it.
@@ -71,6 +89,8 @@ pub struct StagedImport {
     pub settings: Option<Box<dyn Reflect>>,
     /// The asset settings edited for this row; `None` keeps the asset's own.
     pub asset_settings: Option<Box<dyn Reflect>>,
+    /// The asset whose import this row imports again, with `destination` its recorded source; `None` for a new import.
+    pub reimport: Option<AssetId>,
 }
 
 /// What importing a row would do, or why it cannot be imported.
@@ -78,13 +98,14 @@ pub struct StagedImport {
 pub enum RowState {
     New,
     Replaces,
+    SourceMissing,
     Rejected(String),
 }
 
 impl StagedImport {
     /// Whether this row may be queued.
     pub fn importable(&self) -> bool {
-        !matches!(self.state, RowState::Rejected(_))
+        !matches!(self.state, RowState::Rejected(_) | RowState::SourceMissing)
     }
 }
 
@@ -104,6 +125,7 @@ pub fn stage_sources(sources: Vec<PathBuf>) -> Vec<StagedImport> {
                 staged: None,
                 settings: None,
                 asset_settings: None,
+                reimport: None,
             }
         })
         .collect()
@@ -173,6 +195,9 @@ fn row_state(row: &StagedImport, project_root: &Path, occurrences: usize) -> Row
     }
     if occurrences > 1 {
         return RowState::Rejected("listed twice".into());
+    }
+    if row.reimport.is_some() && !row.source.is_file() {
+        return RowState::SourceMissing;
     }
     let source_extension = extension_of(&row.source);
     if importer_for(&source_extension).is_none() {
@@ -278,13 +303,22 @@ impl ImportQueue {
 #[derive(Resource, Default)]
 pub struct ImportPicker {
     job: Option<JoinHandle<Option<Vec<PathBuf>>>>,
+    job_row: Option<usize>,
     requested: bool,
+    requested_row: Option<usize>,
 }
 
 impl ImportPicker {
     /// Asks for a picker on the next frame.
     pub fn request(&mut self) {
         self.requested = true;
+        self.requested_row = None;
+    }
+
+    /// Asks for a picker on the next frame whose one file becomes the source of the staged row at `row`.
+    pub fn request_source(&mut self, row: usize) {
+        self.requested = true;
+        self.requested_row = Some(row);
     }
 
     /// Whether a picker is currently open.
@@ -318,6 +352,27 @@ pub fn accept_picked(
     staging.scan = Some(scan);
 }
 
+fn accept_picked_source(
+    picked: Option<Vec<PathBuf>>,
+    index: usize,
+    staging: &mut ImportStaging,
+    state: &ProjectState,
+) {
+    let (Some(source), Some(root)) = (
+        picked.and_then(|picked| picked.into_iter().next()),
+        state.project.as_ref().map(|project| &project.root),
+    ) else {
+        return;
+    };
+    let ImportStaging { rows, scan, .. } = staging;
+    let Some(row) = rows.get_mut(index) else {
+        return;
+    };
+    row.source = source;
+    stage_row(row, scan.get_or_insert_with(|| scan_content(root)));
+    validate_rows(rows, root);
+}
+
 pub(crate) fn keep_project_sources_in_place(rows: &mut [StagedImport], project_root: &Path) {
     let Ok(root) = project_root.canonicalize() else {
         return;
@@ -343,27 +398,32 @@ fn drive_picker(
             .take()
             .expect("the job was just observed as finished")
             .join();
-        match finished {
-            Ok(picked) => accept_picked(picked, &mut staging, &mut state),
-            Err(_) => state.status = "The file picker failed.".into(),
+        match (finished, picker.job_row.take()) {
+            (Ok(picked), None) => accept_picked(picked, &mut staging, &mut state),
+            (Ok(picked), Some(row)) => accept_picked_source(picked, row, &mut staging, &state),
+            (Err(_), _) => state.status = "The file picker failed.".into(),
         }
     }
-    if !std::mem::take(&mut picker.requested)
-        || picker.job.is_some()
-        || staging.visible
-        || state.project.is_none()
-    {
+    if !std::mem::take(&mut picker.requested) || picker.job.is_some() || state.project.is_none() {
         return;
     }
-    let extensions: Vec<&str> = importers()
-        .iter()
-        .flat_map(|importer| importer.supported_extensions())
-        .copied()
-        .collect();
+    let row = picker.requested_row.take();
+    let extensions: Vec<String> = match row.and_then(|index| staging.rows.get(index)) {
+        Some(staged) if staging.visible => vec![extension_of(Path::new(&staged.destination))],
+        None if row.is_none() && !staging.visible => importers()
+            .iter()
+            .flat_map(|importer| importer.supported_extensions())
+            .map(|extension| extension.to_string())
+            .collect(),
+        _ => return,
+    };
+    picker.job_row = row;
     picker.job = Some(std::thread::spawn(move || {
-        rfd::FileDialog::new()
-            .add_filter("Assets", &extensions)
-            .pick_files()
+        let dialog = rfd::FileDialog::new().add_filter("Assets", &extensions);
+        match row {
+            Some(_) => dialog.pick_file().map(|picked| vec![picked]),
+            None => dialog.pick_files(),
+        }
     }));
 }
 
@@ -380,9 +440,32 @@ impl Plugin for ImportPlugin {
         app.insert_resource(ImportStaging::default());
         app.insert_resource(ImportPicker::default());
         app.register_event::<ImportFinished>();
+        if app.get_resource::<AssetRowMenu>().is_none() {
+            app.insert_resource(AssetRowMenu::default());
+        }
+        app.get_resource_mut::<AssetRowMenu>()
+            .expect("inserted above")
+            .register(
+                "Re-import…",
+                |entry| entry.provenance.is_some(),
+                |asset| StageReimport { asset },
+            );
+        app.add_listener(reimport::stage_reimport)
+            .add_listener(reimport::queue_reimport);
         app.register_plugin(dialog::DialogPlugin);
         app.add_system(Update, (finish_import, drive_imports).chain());
         app.add_system(Update, drive_picker);
+    }
+
+    fn finish(&self, app: &mut App) {
+        if app.get_resource::<ToolRegistry>().is_none() {
+            return;
+        }
+        app.add_tool::<ReimportArgs, _>(
+            McpTool::new("reimport").needs(Needs::Project),
+            reimport::call_reimport,
+        )
+        .add_system(LateUpdate, reimport::answer_reimports);
     }
 }
 
@@ -433,17 +516,23 @@ fn drive_imports(
             settings: row.settings,
             asset_settings: row.asset_settings,
         };
-        let result =
-            import_source_into(&row.source, &row.destination, &root, settings).map_err(|error| {
-                let error = format!("{error:#}");
-                log::error!(
-                    "importing '{}' to '{}' in '{}' failed: {error}",
-                    row.source.display(),
-                    row.destination,
-                    root.display()
-                );
-                failure_summary(&error, &root)
-            });
+        let result = match row.reimport {
+            Some(asset) => {
+                let picked = (row.source != root.join(&row.destination)).then_some(&row.source);
+                reimport_into(asset, picked.map(PathBuf::as_path), &root, settings)
+            }
+            None => import_source_into(&row.source, &row.destination, &root, settings),
+        }
+        .map_err(|error| {
+            let error = format!("{error:#}");
+            log::error!(
+                "importing '{}' to '{}' in '{}' failed: {error}",
+                row.source.display(),
+                row.destination,
+                root.display()
+            );
+            failure_summary(&error, &root)
+        });
         FinishedJob {
             root,
             settings: used,
@@ -676,6 +765,7 @@ mod tests {
                 staged: None,
                 settings: None,
                 asset_settings: None,
+                reimport: None,
             })
             .collect();
 

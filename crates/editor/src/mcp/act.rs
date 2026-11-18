@@ -16,7 +16,7 @@ use concerto_foundation::{
     },
     transform::{GlobalTransform, Transform},
 };
-use concerto_import::importer_for;
+use concerto_import::{ImportedSource, importer_for};
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
@@ -226,14 +226,14 @@ pub(super) fn build(app: &mut App) {
         );
 }
 
-fn busy() -> ToolError {
+pub(crate) fn busy() -> ToolError {
     ToolError::new(
         "busy",
         "A project is opening; call status until it says busy: no, then try again.",
     )
 }
 
-fn project_opening(state: &ProjectState, commands: &EditorCommands) -> bool {
+pub(crate) fn project_opening(state: &ProjectState, commands: &EditorCommands) -> bool {
     state.busy()
         || commands
             .0
@@ -318,7 +318,7 @@ fn answer_project_opens(
     }
 }
 
-pub(super) fn find_asset<'a>(
+pub(crate) fn find_asset<'a>(
     registry: &'a AssetRegistry,
     asset: &str,
 ) -> Result<&'a AssetEntry, ToolError> {
@@ -645,7 +645,7 @@ fn import_source(
     }
 }
 
-fn patched(
+pub(crate) fn patched(
     argument: &str,
     patch: Option<&serde_json::Value>,
     current: Option<Box<dyn Reflect>>,
@@ -687,26 +687,11 @@ fn answer_imports(
             continue;
         };
         match &event.result {
-            Ok(imported) => {
-                let mut answer = format!(
-                    "Imported {}: {}, {}.",
-                    event.destination,
-                    counted(imported.assets.len(), "asset"),
-                    counted(imported.siblings.len(), "sibling file")
-                );
-                for asset in &imported.assets {
-                    answer.push_str(&format!(
-                        "\n{} · {} · {}",
-                        asset.location(),
-                        asset.kind,
-                        asset.id.simple_hex()
-                    ));
-                }
-                if !event.settings.is_empty() {
-                    answer.push_str(&format!("\n\n{}", event.settings.trim_end()));
-                }
-                pending.reply.ok(answer);
-            }
+            Ok(imported) => pending.reply.ok(imported_answer(
+                &format!("Imported {}", event.destination),
+                imported,
+                &event.settings,
+            )),
             Err(reason) => pending.reply.err(ToolError::new(
                 "import_failed",
                 format!("{} was not imported: {reason}", event.destination),
@@ -714,6 +699,26 @@ fn answer_imports(
         }
         cmd.despawn(entity);
     }
+}
+
+pub(crate) fn imported_answer(done: &str, imported: &ImportedSource, settings: &str) -> String {
+    let mut answer = format!(
+        "{done}: {}, {}.",
+        counted(imported.assets.len(), "asset"),
+        counted(imported.siblings.len(), "sibling file")
+    );
+    for asset in &imported.assets {
+        answer.push_str(&format!(
+            "\n{} · {} · {}",
+            asset.location(),
+            asset.kind,
+            asset.id.simple_hex()
+        ));
+    }
+    if !settings.is_empty() {
+        answer.push_str(&format!("\n\n{}", settings.trim_end()));
+    }
+    answer
 }
 
 pub(super) fn unknown_document(id: &str) -> ToolError {

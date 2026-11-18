@@ -162,10 +162,47 @@ struct PendingField;
 #[derive(Component)]
 struct ContentMenu {
     folder: String,
+    asset: Option<AssetId>,
 }
 
 #[derive(Component)]
 struct ContentMenuRow;
+
+#[derive(Component)]
+struct AssetMenuRow;
+
+struct AssetRowEntry {
+    label: &'static str,
+    offered: fn(&AssetEntry) -> bool,
+    trigger: Box<dyn Fn(&mut CommandQueue, AssetId) + Send + Sync>,
+}
+
+/// The entries of the menu that right-clicking an asset row in the Asset Browser opens, which plugins register; a row that no entry is offered on opens no menu.
+#[derive(Resource, Default)]
+pub struct AssetRowMenu {
+    entries: Vec<AssetRowEntry>,
+}
+
+impl AssetRowMenu {
+    /// Adds an entry labelled `label`, offered on the rows whose asset `offered` accepts, that triggers the signal `signal` makes for the row's asset.
+    pub fn register<S: Signal>(
+        &mut self,
+        label: &'static str,
+        offered: fn(&AssetEntry) -> bool,
+        signal: fn(AssetId) -> S,
+    ) -> &mut Self {
+        self.entries.push(AssetRowEntry {
+            label,
+            offered,
+            trigger: Box::new(move |cmd: &mut CommandQueue, asset| cmd.trigger(signal(asset))),
+        });
+        self
+    }
+
+    fn offers(&self, entry: &AssetEntry) -> bool {
+        self.entries.iter().any(|item| (item.offered)(entry))
+    }
+}
 
 /// Creates an asset of a creatable `kind` named `name` in `folder`, or in the content root without one, as the Asset Browser's New does; `open` opens it in its editor.
 pub struct CreateAsset {
@@ -191,6 +228,9 @@ impl Plugin for ContentPlugin {
         app.insert_resource(ContentState::default());
         if app.get_resource::<AssetIcons>().is_none() {
             app.insert_resource(AssetIcons::default());
+        }
+        if app.get_resource::<AssetRowMenu>().is_none() {
+            app.insert_resource(AssetRowMenu::default());
         }
         app.register_event::<AssetCreation>();
         app.track_removals::<UISelected>();
@@ -219,6 +259,7 @@ impl Plugin for ContentPlugin {
             )
             .add_system(LateUpdate, rebuild_new_rows)
             .add_system(LateUpdate, sync_new_items.after(rebuild_new_rows))
+            .add_system(LateUpdate, sync_menu_rows.after(rebuild_new_rows))
             .add_system(
                 LateUpdate,
                 sync_content_items
@@ -377,6 +418,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
                 .padding(theme.spacing_xs),
             ContentMenu {
                 folder: String::new(),
+                asset: None,
             },
         ))
         .entity();
@@ -605,10 +647,97 @@ fn open_content_menu(
         if menu.folder != folder {
             menu.folder = folder.clone();
         }
+        if menu.asset.is_some() {
+            menu.asset = None;
+        }
         panel.target = UIAnchorTarget::from_point(position);
         panel.owner = owner;
         panel.open = true;
     }
+}
+
+fn open_asset_menu(id: AssetId) -> Listener<UIItemContextMenu> {
+    (move |on: On<UIItemContextMenu>,
+           project: Res<ProjectState>,
+           registry: Res<AssetRegistry>,
+           row_menu: Res<AssetRowMenu>,
+           menus: Query<(&mut ContentMenu, &mut UIAnchoredPanel)>| {
+        if project.busy() || !registry.get(id).is_some_and(|entry| row_menu.offers(entry)) {
+            return;
+        }
+        for (mut menu, mut panel) in menus.iter() {
+            if menu.asset != Some(id) {
+                menu.asset = Some(id);
+            }
+            panel.target = UIAnchorTarget::from_point(on.signal().position);
+            panel.owner = Some(on.entity());
+            panel.open = true;
+        }
+    })
+    .into_listener()
+}
+
+fn sync_menu_rows(
+    menus: Query<(Entity, &ContentMenu), Changed<ContentMenu>>,
+    new_rows: Query<&mut UINode, With<ContentMenuRow>>,
+    asset_rows: Query<Entity, With<AssetMenuRow>>,
+    registry: Res<AssetRegistry>,
+    row_menu: Res<AssetRowMenu>,
+    theme: Res<UITheme>,
+    mut cmd: CommandQueue,
+) {
+    for (menu, target) in menus.iter() {
+        let creates = target.asset.is_none();
+        for mut node in new_rows.iter() {
+            if node.visible != creates {
+                node.visible = creates;
+            }
+        }
+        for row in asset_rows.iter() {
+            cmd.despawn(row);
+        }
+        let Some(entry) = target.asset.and_then(|id| registry.get(id)) else {
+            continue;
+        };
+        for (index, item) in row_menu.entries.iter().enumerate() {
+            if !(item.offered)(entry) {
+                continue;
+            }
+            cmd.entity(menu).add_child_with(
+                (
+                    theme
+                        .pressable()
+                        .row()
+                        .padding(UIRect::axes(6.0, 8.0))
+                        .on_click(press_asset_row(index, entry.id)),
+                    AssetMenuRow,
+                ),
+                |mut row| {
+                    row.add_child(theme.label(item.label).font_size(12.5).no_wrap());
+                },
+            );
+        }
+    }
+}
+
+fn press_asset_row(index: usize, asset: AssetId) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           row_menu: Res<AssetRowMenu>,
+           menus: Query<&mut UIAnchoredPanel, With<ContentMenu>>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        for mut panel in menus.iter() {
+            if panel.open {
+                panel.open = false;
+            }
+        }
+        if let Some(item) = row_menu.entries.get(index) {
+            (item.trigger)(&mut cmd, asset);
+        }
+    })
+    .into_listener()
 }
 
 fn start_new(
@@ -1086,7 +1215,7 @@ fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: E
         .entity();
     match &entry.key {
         ContentKey::Folder(key) => cmd.insert(open_folder_menu(key.clone()), item),
-        ContentKey::Asset(id) => cmd.insert(ContentAsset { id: *id }, item),
+        ContentKey::Asset(id) => cmd.insert((ContentAsset { id: *id }, open_asset_menu(*id)), item),
         ContentKey::Pending { .. } => {}
     }
     for content in [icon_node, label] {

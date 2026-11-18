@@ -308,6 +308,37 @@ before writing outputs. An unreadable existing header is an error; it never
 silently causes a replacement UUID. Individual files are replaced using
 temporary files. The entire import is not a crash-safe multi-file transaction.
 
+### Re-importing from the content
+
+A re-import starts from the content, not from the source: the anchor's record
+says where the source is and how it was imported, so the `assets/` tree holds
+nothing but source bytes. `reimport(asset, source, project_root, config,
+settings)` imports again the import that `asset` belongs to, given as any of
+its outputs. Without `source`, it reads the file at the provenance's `source`
+path. With `source`, that file is imported instead and becomes the import's
+source: a file inside the project is used where it is, and one outside it is
+copied, with the files it refers to, under its own name into the directory of
+the recorded source, whose extension it must have. Every output keeps its id
+and its address, and its provenance is rewritten to name the new source. A
+source that was moved inside the project is therefore re-imported by giving
+its new path. `settings` follow the table above, so a re-import given none
+keeps the record's.
+
+`reimport` fails before writing anything when:
+
+- `asset` has no provenance: `'<address>' was not imported; it has no
+  source`.
+- no `source` is given and the recorded one is missing: `'<path>', the source
+  of '<anchor>', is missing; re-import it with a source`.
+- the new source is already another import's source: `'<path>' is already the
+  source of '<address>'; re-import that one, or pick another file`.
+
+`import_source_into` stays the entry point for a file the user picks: when the
+placed path is an existing import's source, it is a re-import of that import.
+In the editor, **Re-import…** on an asset row and the `reimport` MCP tool run
+`reimport`; [crates/editor/README.md](../crates/editor/README.md#importing)
+describes both.
+
 ## BVH motion capture
 
 `BvhImporter` reads a `.bvh` file's `HIERARCHY` and `MOTION` sections and emits:

@@ -1,13 +1,17 @@
 //! End-to-end identity and ownership guarantees for the offline import workflow.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use concerto_bvh::bvh_importer::{BvhSettings, FrameRange};
 use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, write_content_asset, ContentAssetHeader,
     ImportProvenance, ImportRecord, SourceFile,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
+use concerto_foundation::hash::Fnv1a;
+use concerto_import::config::ContentConfig;
+use concerto_import::{importer_for, reimport, ImportSettings};
 use concerto_scene::scene::Scene;
 
 struct Project(PathBuf);
@@ -31,6 +35,13 @@ impl Project {
             &source,
         )
         .unwrap();
+        source
+    }
+
+    fn walk(&self, relative: &str) -> PathBuf {
+        let source = self.path(relative);
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, WALK).unwrap();
         source
     }
 
@@ -249,7 +260,7 @@ fn recorded_by_another_importer(project: &Project) -> PathBuf {
     project.source("assets/triangle.gltf")
 }
 
-const WALK: &str = "HIERARCHY\nROOT Hips\n{\n\tOFFSET 0 0 0\n\tCHANNELS 1 Xposition\n}\nMOTION\nFrames: 2\nFrame Time: 0.1\n0\n1\n";
+const WALK: &str = "HIERARCHY\nROOT Hips\n{\n\tOFFSET 0 0 0\n\tCHANNELS 1 Xposition\n}\nMOTION\nFrames: 3\nFrame Time: 0.1\n0\n1\n2\n";
 
 fn an_undecodable_record(project: &Project) -> PathBuf {
     write_header(
@@ -260,10 +271,7 @@ fn an_undecodable_record(project: &Project) -> PathBuf {
             ..scene_of("assets/walk.bvh")
         },
     );
-    let source = project.path("assets/walk.bvh");
-    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-    std::fs::write(&source, WALK).unwrap();
-    source
+    project.walk("assets/walk.bvh")
 }
 
 struct Refusal {
@@ -312,4 +320,118 @@ fn an_import_that_would_lose_an_identity_or_break_a_setting_writes_nothing() {
         assert!(message.contains(case.reason), "{}: {message}", case.case);
         assert_eq!(project.snapshot(), before, "{}", case.case);
     }
+}
+
+fn locations(assets: &[AssetEntry]) -> BTreeMap<AssetId, String> {
+    assets
+        .iter()
+        .map(|asset| (asset.id, asset.location()))
+        .collect()
+}
+
+fn walk_record(project: &Project) -> ImportRecord {
+    read_content_asset_header(&project.path("content/walk/scene.gasset"))
+        .unwrap()
+        .import
+        .expect("the scene holds the import record")
+}
+
+fn recorded_settings(record: &ImportRecord) -> BvhSettings {
+    importer_for("bvh")
+        .unwrap()
+        .settings_from_bytes(record.settings_version, &record.settings)
+        .unwrap()
+        .expect("the record is at the importer's settings version")
+        .downcast_ref::<BvhSettings>()
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn a_reimport_from_the_content_keeps_its_settings_and_follows_a_moved_source() {
+    let project = Project::new();
+    let config = ContentConfig::default();
+    let source = project.walk("assets/walk.bvh");
+    let settings = BvhSettings {
+        scale: 0.5,
+        frame_range: Some(FrameRange { start: 1, end: 3 }),
+    };
+    let first = concerto_import::import_source_into(
+        &source,
+        "assets/walk.bvh",
+        &project.0,
+        &config,
+        ImportSettings {
+            settings: Some(Box::new(settings.clone())),
+            asset_settings: None,
+        },
+    )
+    .expect("import succeeds");
+    let id_of = |sub_asset: &str| {
+        first
+            .assets
+            .iter()
+            .find(|asset| sub_asset_of(asset).starts_with(sub_asset))
+            .unwrap()
+            .id
+    };
+
+    let again = reimport(
+        id_of("scene"),
+        None,
+        &project.0,
+        &config,
+        ImportSettings::default(),
+    )
+    .expect("re-import from the recorded source");
+    assert_eq!(locations(&again.assets), locations(&first.assets));
+    let record = walk_record(&project);
+    assert_eq!(recorded_settings(&record), settings);
+    assert_eq!(record.source.path, "assets/walk.bvh");
+    let mut hash = Fnv1a::new();
+    hash.raw(WALK.as_bytes());
+    assert_eq!(record.source.hash, hash.finish());
+
+    let moved = project.path("assets/moved/walk.bvh");
+    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    std::fs::rename(&source, &moved).unwrap();
+    let followed = reimport(
+        id_of("animation/"),
+        Some(&moved),
+        &project.0,
+        &config,
+        ImportSettings::default(),
+    )
+    .expect("re-import from the moved source");
+    assert_eq!(locations(&followed.assets), locations(&first.assets));
+    let sources: BTreeSet<String> =
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
+            .unwrap()
+            .iter()
+            .filter_map(|entry| Some(entry.provenance.as_ref()?.source.clone()))
+            .collect();
+    assert_eq!(
+        sources,
+        BTreeSet::from(["assets/moved/walk.bvh".to_string()])
+    );
+    let record = walk_record(&project);
+    assert_eq!(record.source.path, "assets/moved/walk.bvh");
+    assert_eq!(recorded_settings(&record), settings);
+
+    std::fs::remove_file(&moved).unwrap();
+    let error = reimport(
+        id_of("scene"),
+        None,
+        &project.0,
+        &config,
+        ImportSettings::default(),
+    )
+    .expect_err("the source is gone");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(
+            "'assets/moved/walk.bvh', the source of 'content/walk/scene.gasset', is missing"
+        ),
+        "{message}"
+    );
 }

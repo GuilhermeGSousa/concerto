@@ -1476,6 +1476,7 @@ struct ImportedSource {
     listed: String,
     picture: String,
     walk: String,
+    reimported: String,
     errors: Vec<Value>,
 }
 
@@ -1512,6 +1513,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
     let walk = sources.path().join("walk.bvh");
     std::fs::write(&walk, WALK).unwrap();
     let walk = walk.display().to_string();
+    let placed_walk = root.join("assets/walk.bvh");
     let log = Log::default();
     let Some(served) = serve(&fixture, &log, move |client| async move {
         until(&client, "state", |state| state.starts_with("project")).await;
@@ -1536,6 +1538,12 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             json!({ "source": walk, "settings": { "scale": 0.5 } }),
         )
         .await;
+        let reimported = ok_with(
+            &client,
+            "reimport",
+            json!({ "asset": "content/walk/scene.gasset" }),
+        )
+        .await;
         let face = ok_with(&client, "list_assets", json!({ "query": "square" })).await;
         let parts = ok_with(
             &client,
@@ -1544,7 +1552,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         )
         .await;
         let listed = format!("{face}\n{parts}");
-        let errors = vec![
+        let mut errors = vec![
             error_with(
                 &client,
                 "import_source",
@@ -1575,7 +1583,22 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
                 json!({ "source": walk, "settings": { "scale": 0.0 } }),
             )
             .await,
+            error_with(
+                &client,
+                "reimport",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await,
         ];
+        std::fs::remove_file(&placed_walk).unwrap();
+        errors.push(
+            error_with(
+                &client,
+                "reimport",
+                json!({ "asset": "content/walk/scene.gasset#skeleton/0" }),
+            )
+            .await,
+        );
         until(&client, "status", |status| status.contains("busy: no")).await;
         client.cancel().await.unwrap();
         ImportedSource {
@@ -1583,6 +1606,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             listed,
             picture,
             walk: walked,
+            reimported,
             errors,
         }
     }) else {
@@ -1594,6 +1618,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         listed,
         picture,
         walk,
+        reimported,
         errors,
     } = served.result;
     let texture = picture
@@ -1634,6 +1659,26 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         walk.contains("[settings]\nframe_range = \"None\"\nscale = 0.5"),
         "{walk}"
     );
+    let (reimported, kept) = reimported.split_once("\n\n").unwrap();
+    let mut reimported = reimported.lines();
+    assert_eq!(
+        reimported.next(),
+        Some("Re-imported assets/walk.bvh: 3 assets, 0 sibling files."),
+    );
+    assert_eq!(
+        reimported.collect::<Vec<_>>(),
+        walk.split("\n\n")
+            .next()
+            .unwrap()
+            .lines()
+            .skip(1)
+            .collect::<Vec<_>>(),
+        "a re-import keeps every address and id"
+    );
+    assert!(
+        kept.starts_with("[settings]\nframe_range = \"None\"\nscale = 0.5"),
+        "{kept}"
+    );
     let (imported, used) = imported.split_once("\n\n").unwrap();
     assert!(used.starts_with("[settings]"), "{used}");
     let mut lines = imported.lines();
@@ -1664,7 +1709,9 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             "import_refused",
             "invalid_arguments",
             "invalid_arguments",
-            "import_failed"
+            "import_failed",
+            "not_imported",
+            "source_missing"
         ]
     );
     let message = |index: usize| errors[index]["message"].as_str().unwrap().to_owned();

@@ -6,6 +6,7 @@ mod observe;
 mod run;
 mod value;
 
+pub(crate) use act::{busy, find_asset, imported_answer, patched, project_opening};
 pub(crate) use observe::{SceneEntities, resolve};
 pub use run::PlayTimeout;
 
