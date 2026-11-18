@@ -55,12 +55,6 @@ fn texture_encoding_matches_its_fixture() {
 
     check_encoding(&texture, encoding_dir());
     check_uncooked_encoding(&source, encoding_dir());
-
-    let version_2 = std::fs::read(encoding_dir().join("Texture.v2.bin")).unwrap();
-    let migrated = Texture::migrate(2, &version_2).unwrap();
-    assert_eq!(migrated.role, TextureRole::Normal);
-    assert_eq!(migrated.settings, settings);
-    assert_eq!(migrated.source, Some(source.summary()));
 }
 
 #[test]

@@ -29,9 +29,7 @@ use concerto_ecs::world::World;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::asset_server::{AssetServer, handle_asset_load_events};
 use concerto_foundation::assets::asset_store::AssetStore;
-use concerto_foundation::assets::content::{
-    ContentAssetHeader, check_encoding, decode_content_asset, write_content_asset,
-};
+use concerto_foundation::assets::content::check_encoding;
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
@@ -523,63 +521,6 @@ fn animation_clip_encoding_matches_its_fixture() {
     check_encoding(&clip, encoding_dir());
 }
 
-#[test]
-fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
-    let payload = std::fs::read(encoding_dir().join("AnimationClip.v1.bin")).unwrap();
-    let header = ContentAssetHeader {
-        asset_id: AssetId::from_path("content/clips/turn.gasset"),
-        references: Vec::new(),
-        kind: "AnimationClip".to_string(),
-        kind_version: 1,
-        provenance: None,
-        import: None,
-        uncooked: None,
-        derived: None,
-        embedded: Vec::new(),
-    };
-    let bytes = write_content_asset(&header, &payload).unwrap();
-
-    let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
-
-    assert_eq!(clip.additive(), &Additive::None);
-    assert!(clip.events().is_empty());
-    assert_eq!(clip.duration(), 0.5);
-    assert_eq!(clip.frame_rate(), Some(30.0));
-    assert_eq!(
-        clip.get_channels(&Uuid::from_u128(7)).map(Vec::len),
-        Some(1)
-    );
-}
-
-#[test]
-fn a_version_2_clip_migrates_to_a_clip_that_is_not_additive() {
-    let payload = std::fs::read(encoding_dir().join("AnimationClip.v2.bin")).unwrap();
-    let header = ContentAssetHeader {
-        asset_id: AssetId::from_path("content/clips/turn.gasset"),
-        references: Vec::new(),
-        kind: "AnimationClip".to_string(),
-        kind_version: 2,
-        provenance: None,
-        import: None,
-        uncooked: None,
-        derived: None,
-        embedded: Vec::new(),
-    };
-    let bytes = write_content_asset(&header, &payload).unwrap();
-
-    let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
-
-    assert_eq!(clip.additive(), &Additive::None);
-    assert_eq!(clip.events().len(), 1);
-    assert_eq!(clip.events()[0].time, 0.25);
-    assert_eq!(clip.duration(), 0.5);
-    assert_eq!(clip.frame_rate(), Some(30.0));
-    assert_eq!(
-        clip.get_channels(&Uuid::from_u128(7)).map(Vec::len),
-        Some(1)
-    );
-}
-
 fn round_trip_clip(clip: &AnimationClip) -> AnimationClip {
     bincode::deserialize(&bincode::serialize(clip).unwrap()).unwrap()
 }
@@ -677,8 +618,9 @@ fn bone_mask_encoding_matches_its_fixture() {
     check_encoding(&mask, encoding_dir());
 }
 
-fn version_1_rig() -> RetargetRig {
-    RetargetRig::new()
+#[test]
+fn retarget_rig_encoding_matches_its_fixture() {
+    let rig = RetargetRig::new()
         .with_skeleton(AssetHandle::weak(AssetId::from_bytes(
             Uuid::from_u128(13).into_bytes(),
         )))
@@ -694,35 +636,9 @@ fn version_1_rig() -> RetargetRig {
             "upperarm_l",
             glam::Quat::from_xyzw(0.0, 0.0, 0.5, 0.75),
         ))
-}
-
-#[test]
-fn retarget_rig_encoding_matches_its_fixture() {
-    let rig = version_1_rig().with_goal(RetargetGoal::new("foot_l", "foot_l"));
+        .with_goal(RetargetGoal::new("foot_l", "foot_l"));
 
     check_encoding(&rig, encoding_dir());
-}
-
-#[test]
-fn a_version_1_retarget_rig_migrates_to_a_rig_with_no_goals() {
-    let payload = std::fs::read(encoding_dir().join("RetargetRig.v1.bin")).unwrap();
-    let header = ContentAssetHeader {
-        asset_id: AssetId::from_path("content/rigs/ual1.gasset"),
-        references: Vec::new(),
-        kind: "RetargetRig".to_string(),
-        kind_version: 1,
-        provenance: None,
-        import: None,
-        uncooked: None,
-        derived: None,
-        embedded: Vec::new(),
-    };
-    let bytes = write_content_asset(&header, &payload).unwrap();
-
-    let (_, rig) = decode_content_asset::<RetargetRig>(&bytes).expect("migrates");
-
-    assert_eq!(rig, version_1_rig());
-    assert!(rig.goals.is_empty());
 }
 
 struct Refusal {

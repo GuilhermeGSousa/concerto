@@ -92,7 +92,7 @@ pub struct Scene {
 }
 
 impl Asset for Scene {
-    const FORMAT_VERSION: u32 = 2;
+    const FORMAT_VERSION: u32 = 1;
 
     fn name() -> &'static str {
         "Scene"

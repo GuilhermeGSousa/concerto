@@ -538,75 +538,10 @@ impl Default for AnimationClip {
 }
 
 impl Asset for AnimationClip {
-    const FORMAT_VERSION: u32 = 3;
+    const FORMAT_VERSION: u32 = 1;
 
     fn name() -> &'static str {
         "AnimationClip"
-    }
-
-    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
-        match version {
-            1 => {
-                let old: legacy::AnimationClipV1 = bincode::deserialize(payload)?;
-                Ok(legacy::AnimationClipV2::from(old).into())
-            }
-            2 => {
-                let old: legacy::AnimationClipV2 = bincode::deserialize(payload)?;
-                Ok(old.into())
-            }
-            _ => anyhow::bail!(
-                "AnimationClip version {version} has no migration to version {}; re-import its source",
-                Self::FORMAT_VERSION
-            ),
-        }
-    }
-}
-
-mod legacy {
-    use std::collections::HashMap;
-
-    use serde::Deserialize;
-    use uuid::Uuid;
-
-    use super::{Additive, AnimationChannel, AnimationClip, ClipEventKey};
-
-    #[derive(Deserialize)]
-    pub(super) struct AnimationClipV1 {
-        channels: HashMap<Uuid, Vec<AnimationChannel>>,
-        duration: f32,
-        frame_rate: Option<f32>,
-    }
-
-    #[derive(Deserialize)]
-    pub(super) struct AnimationClipV2 {
-        channels: HashMap<Uuid, Vec<AnimationChannel>>,
-        duration: f32,
-        frame_rate: Option<f32>,
-        events: Vec<ClipEventKey>,
-    }
-
-    impl From<AnimationClipV1> for AnimationClipV2 {
-        fn from(old: AnimationClipV1) -> Self {
-            Self {
-                channels: old.channels,
-                duration: old.duration,
-                frame_rate: old.frame_rate,
-                events: Vec::new(),
-            }
-        }
-    }
-
-    impl From<AnimationClipV2> for AnimationClip {
-        fn from(old: AnimationClipV2) -> Self {
-            Self {
-                additive: Additive::None,
-                channels: old.channels,
-                duration: old.duration,
-                frame_rate: old.frame_rate,
-                events: old.events,
-                delta: None,
-            }
-        }
     }
 }
 
@@ -989,9 +924,6 @@ impl DerivedData for AnimationClip {
     }
 
     fn file_is_derived(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<bool> {
-        if header.kind_version < 3 {
-            return Ok(false);
-        }
         anyhow::ensure!(
             header.kind_version <= Self::FORMAT_VERSION,
             "AnimationClip payload is version {}, newer than this build's version {}",

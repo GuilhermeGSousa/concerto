@@ -437,16 +437,10 @@ impl MotionDatabase {
 }
 
 impl Asset for MotionDatabase {
-    const FORMAT_VERSION: u32 = 3;
+    const FORMAT_VERSION: u32 = 1;
 
     fn name() -> &'static str {
         "MotionDatabase"
-    }
-
-    fn migrate(version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
-        anyhow::bail!(
-            "MotionDatabase version {version} is a bake; a baked motion database is now derived from its definition; delete this file"
-        )
     }
 }
 

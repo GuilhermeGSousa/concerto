@@ -341,55 +341,10 @@ impl RetargetRig {
 }
 
 impl Asset for RetargetRig {
-    const FORMAT_VERSION: u32 = 2;
+    const FORMAT_VERSION: u32 = 1;
 
     fn name() -> &'static str {
         "RetargetRig"
-    }
-
-    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
-        match version {
-            1 => {
-                let old: legacy::RetargetRigV1 = bincode::deserialize(payload)?;
-                Ok(old.into())
-            }
-            _ => anyhow::bail!(
-                "RetargetRig version {version} has no migration to version {}; re-create the rig in the editor",
-                Self::FORMAT_VERSION
-            ),
-        }
-    }
-}
-
-mod legacy {
-    use concerto_foundation::assets::handle::AssetHandle;
-    use concerto_mesh::{JointName, Skeleton};
-    use serde::Deserialize;
-
-    use super::{BoneCorrection, ReferencePose, RetargetChain, RetargetRig};
-
-    #[derive(Deserialize)]
-    pub(super) struct RetargetRigV1 {
-        skeleton: AssetHandle<Skeleton>,
-        root: JointName,
-        motion_root: Option<JointName>,
-        chains: Vec<RetargetChain>,
-        reference: ReferencePose,
-        corrections: Vec<BoneCorrection>,
-    }
-
-    impl From<RetargetRigV1> for RetargetRig {
-        fn from(old: RetargetRigV1) -> Self {
-            Self {
-                skeleton: old.skeleton,
-                root: old.root,
-                motion_root: old.motion_root,
-                chains: old.chains,
-                reference: old.reference,
-                corrections: old.corrections,
-                goals: Vec::new(),
-            }
-        }
     }
 }
 

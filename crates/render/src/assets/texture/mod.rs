@@ -95,37 +95,11 @@ pub struct Texture {
     levels: Option<TextureLevels>,
 }
 
-#[derive(Deserialize)]
-struct TextureV2 {
-    kind: TextureKind,
-    role: TextureRole,
-    settings: TextureSettings,
-    source: Option<TextureSource>,
-}
-
 impl Asset for Texture {
-    const FORMAT_VERSION: u32 = 3;
+    const FORMAT_VERSION: u32 = 1;
 
     fn name() -> &'static str {
         "Texture"
-    }
-
-    fn migrate(version: u32, payload: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            version == 2,
-            "{} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
-            Self::name(),
-            Self::FORMAT_VERSION
-        );
-        let old: TextureV2 =
-            bincode::deserialize(payload).context("failed to decode a version-2 Texture")?;
-        Ok(Self {
-            kind: old.kind,
-            role: old.role,
-            settings: old.settings,
-            source: old.source.as_ref().map(TextureSource::summary),
-            levels: None,
-        })
     }
 }
 
@@ -211,9 +185,6 @@ impl DerivedData for Texture {
     }
 
     fn file_is_derived(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<bool> {
-        if header.kind_version < 2 {
-            return Ok(false);
-        }
         anyhow::ensure!(
             header.kind_version <= Self::FORMAT_VERSION,
             "Texture payload is version {}, newer than this build's version {}",

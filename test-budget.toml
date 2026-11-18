@@ -1,5 +1,5 @@
 "." = 3
-"crates/animation" = 97
+"crates/animation" = 94
 "crates/animation-editor" = 23
 "crates/app" = 17
 "crates/asset-build" = 4
@@ -18,7 +18,7 @@
 "crates/import" = 25
 "crates/mcp" = 10
 "crates/mesh" = 12
-"crates/motion-matching" = 72
+"crates/motion-matching" = 71
 "crates/motion-matching-editor" = 11
 "crates/motion-matching-gizmos" = 1
 "crates/name" = 3

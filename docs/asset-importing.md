@@ -79,11 +79,7 @@ otherwise), max size and mips. Every level the GPU samples is derived data:
 when the texture loads, the levels are derived from the source into
 `derived-cache/`, or read from there, and cooked builds carry them in the
 file. A load reads the source only when the cache has no levels for it, and a
-cooked build does not hold it. A texture written at version 2, which kept its
-source in the payload, has no section: it loads while `derived-cache/` holds
-its levels, fails to derive otherwise, saying to import its source again, and
-keeps its settings through that re-import. Until then a cook writes its
-payload as it is, source included, and warns. `Auto` is BC7 for a colour texture with alpha below 255, BC1 for an
+cooked build does not hold it. `Auto` is BC7 for a colour texture with alpha below 255, BC1 for an
 opaque one, BC5 for a normal map and BC7 for data. A texture is first fitted
 within its max size, then, when compressed, rounded to a multiple of 4 on each
 side; its mips halve down to 1×1, averaging sRGB colour in linear space and
@@ -309,9 +305,8 @@ texture's own; otherwise the texture keeps its own, or takes the defaults when
 new. Only the `image` importer has asset settings; giving them to another
 fails the import, naming the type it expected. A glTF's textures start at the
 defaults and are changed in the texture tab. A texture whose file does not
-decode at this build's `Texture` version, such as a version-1 file written
-before textures kept their source, takes the defaults as if it were new; a
-version-2 file decodes and keeps its settings.
+decode at this build's `Texture` version takes the defaults as if it were
+new.
 
 A `bvh` source's settings:
 
@@ -622,8 +617,9 @@ an id the registry does not hold.
 ## Changing an asset type's encoding
 
 Each asset type has its own payload version, `Asset::FORMAT_VERSION`, which
-starts at 1 and is written to `kind_version` in every header. Version 1 of a
-type is its encoding as committed at header version 4. Header scans
+starts at 1 and is written to `kind_version` in every header. Every type is
+at version 1, its encoding as of content format 9, and none has a migration:
+the versions restarted when format 9 stopped reading older files. Header scans
 (`scan_content`, `asset_id!`, the build script, project open and import) never
 check it; a file is checked only when it is decoded. Every decode goes through
 `decode_content_asset::<A>`, or `utils::load_content_asset::<A>` for a file
@@ -726,28 +722,14 @@ When you change one:
    and test go with it, and the PR says so. After that, files at that version are
    rejected.
 
-`AnimationClip` is at version 3. Version 2 adds the clip's events, and
-version 3 adds `additive`, an `Additive` stored as the payload's first field:
-`None` for a plain clip, or `LocalSpace` with the base clip's asset id, the
-optional `base_range` and `range`, and the root bones. Its `migrate` reads a
-version-2 payload through `legacy::AnimationClipV2`
-(`crates/animation/src/clip.rs`) as a clip that isn't additive, and a version-1
-payload through `legacy::AnimationClipV1`, which becomes an `AnimationClipV2`
-with no events and then the current clip. `AnimationClip.v1.bin` and
-`AnimationClip.v2.bin` stay, each with a test that decodes it. The clips committed
-in the tech demo's repository under `content/UAL1/` and
-`content/lafan1/animations/` are still version 1: they
-migrate in memory on every load, and the editor reports them as outdated until
-they are re-imported. Like a graph's nodes, each event is stored as its Rust
-type name and reflected fields. A clip makes its events live when it loads; an
-event whose type is not registered with `register_clip_event`, or whose stored
-value leaves a warning, is dropped with a warning naming the clip and the type.
-
-`Scene` is at version 2, which gives each node an `id` and adds `link`:
-`None`, or the `AssetId` of a linked scene and the changes made to its nodes.
-It has no migration: a Scene file before version 2 is refused, so an imported
-scene must be re-imported from its source, and one authored in the editor
-re-created.
+`AnimationClip` stores `additive`, an `Additive`, as the payload's first field,
+so `file_is_derived` reads it without decoding the clip: `None` for a plain
+clip, or `LocalSpace` with the base clip's asset id, the optional `base_range`
+and `range`, and the root bones. Like a graph's nodes, each event is stored as
+its Rust type name and reflected fields. A clip makes its events live when it
+loads; an event whose type is not registered with `register_clip_event`, or
+whose stored value leaves a warning, is dropped with a warning naming the clip
+and the type.
 
 The editor reports outdated files when the first scene of a project opens.
 It compares each entry's `kind_version` with the `FORMAT_VERSION` that the

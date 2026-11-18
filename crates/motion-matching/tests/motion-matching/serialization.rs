@@ -1,10 +1,8 @@
 use std::path::Path;
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_foundation::assets::content::{
-    check_encoding, decode_content_asset, write_content_asset, ContentAssetHeader,
-};
-use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
+use concerto_foundation::assets::content::check_encoding;
+use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
@@ -144,27 +142,4 @@ fn a_baked_database_encodes_as_its_definition() {
     assert!(database.is_baked());
 
     check_encoding(&database, encoding_dir());
-}
-
-fn content_asset(kind: &str, version: u32, fixture: &str) -> Vec<u8> {
-    let payload = std::fs::read(encoding_dir().join(fixture)).unwrap();
-    let header = ContentAssetHeader {
-        asset_id: AssetId::new(),
-        references: Vec::new(),
-        kind: kind.into(),
-        kind_version: version,
-        provenance: None,
-        import: None,
-        uncooked: None,
-        derived: None,
-        embedded: Vec::new(),
-    };
-    write_content_asset(&header, &payload).unwrap()
-}
-
-#[test]
-fn a_version_2_bake_is_rejected() {
-    let bytes = content_asset(MotionDatabase::name(), 2, "MotionDatabase.v2.bin");
-
-    assert!(decode_content_asset::<MotionDatabase>(&bytes).is_err());
 }

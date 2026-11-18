@@ -160,7 +160,7 @@ sounds) are imported once, ahead of time. The running game never reads them.
   one gets the id of its name path in the captured scene, made unique. The
   editor gives an entity it creates, duplicates or places a fresh id.
 - A scene node may be a link: the `SceneLink` component names another scene and
-  holds the changes made to its nodes (`Scene` format version 2, `SceneNode::link`).
+  holds the changes made to its nodes (`SceneNode::link`).
   `request_link_spawns` runs in `Update`: once the linked scene has loaded it
   spawns the scene's nodes under the link's entity, each tagged
   `LinkedNode { link, node }` with its node's id and kept in the link's
@@ -225,9 +225,7 @@ sounds) are imported once, ahead of time. The running game never reads them.
   summary's, and `derive_levels` decodes it, resolves `Auto` from the role,
   fits `max_size` (to whole 4×4 blocks for BC), builds the mips and encodes
   each level in BC1, BC4, BC5, BC7 or RGBA8; `apply_derived` keeps the levels
-  and the summary. A version-2 file, with its source in the payload, migrates
-  to the summary and has no section, so it derives only from a cached blob
-  until it is imported again. The encoder is native only, so an uncooked web run
+  and the summary. The encoder is native only, so an uncooked web run
   derives RGBA8. `Texture::new` builds the mip chain from its RGBA8 level; it
   never derives, and `Texture` has no `on_load` work.
 - A packaged build can carry the blob in the file. Every `concerto::run`

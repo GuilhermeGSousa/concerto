@@ -304,9 +304,7 @@ fix the entry in the same commit as the change that made it false.
   raising `DERIVED_VERSION`, leaves a staged cooked blob (and a cached one)
   derived by the old code; cook again, or delete `derived-cache/`.
 - **Cooked files hold no uncooked section.** A cook drops every one, so a
-  cooked asset whose blob is refused cannot derive: its load fails. A cook
-  writes a payload as it is, so a version-2 `Texture`, whose payload holds its
-  source, ships it until its source is imported again; the cook warns.
+  cooked asset whose blob is refused cannot derive: its load fails.
 - **Large scenes take a long time to load in a debug build.** A scene
   such as Sponza can need more than 40 seconds before anything but the clear
   colour and the grid appears. That looks exactly like a broken renderer.
