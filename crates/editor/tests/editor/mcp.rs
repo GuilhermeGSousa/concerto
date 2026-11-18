@@ -1477,6 +1477,7 @@ struct ImportedSource {
     picture: String,
     walk: String,
     reimported: String,
+    rescaled: String,
     extracted: String,
     errors: Vec<Value>,
 }
@@ -1543,6 +1544,12 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             &client,
             "reimport",
             json!({ "asset": "content/walk/scene.gasset" }),
+        )
+        .await;
+        let rescaled = ok_with(
+            &client,
+            "reimport",
+            json!({ "asset": "content/walk/scene.gasset", "settings": { "scale": 0.25 } }),
         )
         .await;
         let extracted = ok_with(
@@ -1620,6 +1627,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
             picture,
             walk: walked,
             reimported,
+            rescaled,
             extracted,
             errors,
         }
@@ -1633,6 +1641,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         picture,
         walk,
         reimported,
+        rescaled,
         extracted,
         errors,
     } = served.result;
@@ -1668,7 +1677,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         fields
             .field("scale")
             .and_then(|scale| scale.downcast_ref::<f32>()),
-        Some(&0.5)
+        Some(&0.25)
     );
     assert!(
         walk.contains("[settings]\nframe_range = \"None\"\nscale = 0.5"),
@@ -1693,6 +1702,10 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
     assert!(
         kept.starts_with("[settings]\nframe_range = \"None\"\nscale = 0.5"),
         "{kept}"
+    );
+    assert!(
+        rescaled.contains("\n\n[settings]\nframe_range = \"None\"\nscale = 0.25"),
+        "{rescaled}"
     );
     let skeleton = walk
         .lines()
@@ -1756,7 +1769,7 @@ fn import_source_writes_the_source_and_its_assets_into_the_project() {
         message(3)
     );
     assert!(
-        message(3).contains("{\"frame_range\":\"None\",\"scale\":0.5}"),
+        message(3).contains("{\"frame_range\":\"None\",\"scale\":0.25}"),
         "{}",
         message(3)
     );
@@ -3018,6 +3031,7 @@ fn reimported(
             .collect();
         finished.write(ImportFinished {
             destination: "assets/props.gltf".into(),
+            waiter: None,
             settings: String::new(),
             result: Ok(Imported {
                 assets,

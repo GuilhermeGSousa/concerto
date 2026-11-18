@@ -16,7 +16,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Event, IntoSystemConfig, Res, ResMut, Resource, events::event_writer::EventWriter,
+    Entity, Event, IntoSystemConfig, Res, ResMut, Resource, events::event_writer::EventWriter,
     reflect::AppTypeRegistry,
 };
 use concerto_foundation::assets::{
@@ -237,6 +237,8 @@ pub struct ImportStaging {
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ImportFinished {
     pub destination: String,
+    /// The entity the import was queued for with [`ImportQueue::enqueue_for`]; `None` for one queued without.
+    pub waiter: Option<Entity>,
     /// The settings the import used, as [`settings_text`] writes them; empty when they could not be read.
     pub settings: String,
     pub result: Result<ImportedSource, String>,
@@ -255,6 +257,7 @@ pub struct ImportQueue {
     job: Option<JoinHandle<FinishedJob>>,
     current: Option<String>,
     current_destination: Option<String>,
+    current_waiter: Option<Entity>,
     failures: Vec<(String, String)>,
     done: usize,
     total: usize,
@@ -263,11 +266,21 @@ pub struct ImportQueue {
 struct QueuedImport {
     row: StagedImport,
     root: Option<PathBuf>,
+    waiter: Option<Entity>,
 }
 
 impl ImportQueue {
     /// Queues every importable row; rejected rows are dropped.
     pub fn enqueue(&mut self, rows: Vec<StagedImport>) {
+        self.push(rows, None);
+    }
+
+    /// Queues `row` as [`Self::enqueue`] does, its [`ImportFinished`] naming `waiter`.
+    pub fn enqueue_for(&mut self, row: StagedImport, waiter: Entity) {
+        self.push(vec![row], Some(waiter));
+    }
+
+    fn push(&mut self, rows: Vec<StagedImport>, waiter: Option<Entity>) {
         let rows: Vec<_> = rows.into_iter().filter(StagedImport::importable).collect();
         if rows.is_empty() {
             return;
@@ -279,7 +292,11 @@ impl ImportQueue {
         }
         self.total += rows.len();
         self.pending
-            .extend(rows.into_iter().map(|row| QueuedImport { row, root: None }));
+            .extend(rows.into_iter().map(|row| QueuedImport {
+                row,
+                root: None,
+                waiter,
+            }));
     }
 
     pub(crate) fn bind(&mut self, project_root: &Path) {
@@ -515,7 +532,8 @@ fn drive_imports(
         log::warn!("{}", state.status);
         return;
     }
-    let (Some(root), Some(QueuedImport { row, .. })) = (root, queue.pending.pop_front()) else {
+    let (Some(root), Some(QueuedImport { row, waiter, .. })) = (root, queue.pending.pop_front())
+    else {
         return;
     };
     let name = row
@@ -526,6 +544,7 @@ fn drive_imports(
     state.status = format!("Importing {name} ({} of {})…", queue.done + 1, queue.total);
     queue.current = Some(name);
     queue.current_destination = Some(row.destination.clone());
+    queue.current_waiter = waiter;
     let types = types.clone();
     queue.job = Some(std::thread::spawn(move || {
         let used = settings_used(&row, &types);
@@ -583,6 +602,7 @@ fn finish_import(
     }
     let name = queue.current.take().unwrap_or_default();
     let destination = queue.current_destination.take().unwrap_or_default();
+    let waiter = queue.current_waiter.take();
     let (root, settings, result) = match queue
         .job
         .take()
@@ -602,6 +622,7 @@ fn finish_import(
     queue.done += 1;
     finished.write(ImportFinished {
         destination,
+        waiter,
         settings,
         result: result.clone(),
     });

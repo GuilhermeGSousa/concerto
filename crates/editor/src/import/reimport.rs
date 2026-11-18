@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, command::CommandQueue,
-    events::event_reader::EventReader, reflect::AppTypeRegistry, signal::On, signal::Signal,
+    Component, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
+    query::filter::With, reflect::AppTypeRegistry, signal::On, signal::Signal,
 };
 use concerto_foundation::assets::{AssetId, registry::AssetRegistry};
 use concerto_import::importer_for;
@@ -51,9 +51,7 @@ pub struct ReimportArgs {
 }
 
 #[derive(Component)]
-pub(super) struct Reimporting {
-    destination: String,
-}
+pub(super) struct Reimporting;
 
 fn reimport_row(
     registry: &AssetRegistry,
@@ -115,6 +113,7 @@ pub(super) fn queue_reimport(
         );
         return;
     };
+    stage_row(&mut row, &scan_content(&root));
     if let Some(importer) = importer_for(&extension_of(Path::new(&row.destination))) {
         row.settings = request
             .settings
@@ -125,7 +124,6 @@ pub(super) fn queue_reimport(
             .as_deref()
             .map(|settings| importer.clone_settings(settings));
     }
-    stage_row(&mut row, &scan_content(&root));
     queue.enqueue(vec![row]);
 }
 
@@ -135,6 +133,7 @@ pub(super) fn call_reimport(
     commands: Res<EditorCommands>,
     registry: Res<AssetRegistry>,
     types: Res<AppTypeRegistry>,
+    mut queue: ResMut<ImportQueue>,
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
@@ -187,7 +186,7 @@ pub(super) fn call_reimport(
             }
             _ => {}
         }
-        let Some(mut row) = reimport_row(&registry, &root, entry.id, source.clone()) else {
+        let Some(mut row) = reimport_row(&registry, &root, entry.id, source) else {
             continue;
         };
         stage_row(&mut row, &scan_content(&root));
@@ -221,8 +220,11 @@ pub(super) fn call_reimport(
                 .map(|value| importer.clone_settings(value)),
             &types,
         );
-        let (settings, asset_settings) = match (settings, asset_settings) {
-            (Ok(settings), Ok(asset_settings)) => (settings, asset_settings),
+        match (settings, asset_settings) {
+            (Ok(settings), Ok(asset_settings)) => {
+                row.settings = settings;
+                row.asset_settings = asset_settings;
+            }
             (Err(reason), _) | (_, Err(reason)) => {
                 reply.err(ToolError::new(
                     "invalid_arguments",
@@ -230,31 +232,26 @@ pub(super) fn call_reimport(
                 ));
                 continue;
             }
-        };
-        cmd.trigger(ReimportAsset {
-            asset: entry.id,
-            source,
-            settings,
-            asset_settings,
-        });
-        cmd.spawn((
-            PendingCall::new(reply, "the re-import to finish"),
-            Reimporting {
-                destination: row.destination,
-            },
-        ));
+        }
+        let waiter = cmd
+            .spawn((
+                PendingCall::new(reply, "the re-import to finish"),
+                Reimporting,
+            ))
+            .entity();
+        queue.enqueue_for(row, waiter);
     }
 }
 
 pub(super) fn answer_reimports(
     mut finished: EventReader<ImportFinished>,
-    waiting: Query<(Entity, &PendingCall, &Reimporting)>,
+    waiting: Query<&PendingCall, With<Reimporting>>,
     mut cmd: CommandQueue,
 ) {
     for event in finished.read() {
-        let Some((entity, pending, _)) = waiting
-            .iter()
-            .find(|(_, _, reimporting)| reimporting.destination == event.destination)
+        let Some((entity, pending)) = event
+            .waiter
+            .and_then(|waiter| Some((waiter, waiting.get_entity(waiter)?)))
         else {
             continue;
         };

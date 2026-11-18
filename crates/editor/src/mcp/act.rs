@@ -163,9 +163,7 @@ struct CreatingAsset {
 }
 
 #[derive(Component)]
-struct ImportingSource {
-    destination: String,
-}
+struct ImportingSource;
 
 #[derive(Component)]
 struct ClosingDocument(Entity);
@@ -636,12 +634,13 @@ fn import_source(
                 continue;
             }
         }
-        let destination = rows[0].destination.clone();
-        queue.enqueue(rows);
-        cmd.spawn((
-            PendingCall::new(reply, "the import to finish"),
-            ImportingSource { destination },
-        ));
+        let waiter = cmd
+            .spawn((
+                PendingCall::new(reply, "the import to finish"),
+                ImportingSource,
+            ))
+            .entity();
+        queue.enqueue_for(rows.remove(0), waiter);
     }
 }
 
@@ -676,13 +675,13 @@ pub(crate) fn patched(
 
 fn answer_imports(
     mut finished: EventReader<ImportFinished>,
-    waiting: Query<(Entity, &PendingCall, &ImportingSource)>,
+    waiting: Query<&PendingCall, With<ImportingSource>>,
     mut cmd: CommandQueue,
 ) {
     for event in finished.read() {
-        let Some((entity, pending, _)) = waiting
-            .iter()
-            .find(|(_, _, importing)| importing.destination == event.destination)
+        let Some((entity, pending)) = event
+            .waiter
+            .and_then(|waiter| Some((waiter, waiting.get_entity(waiter)?)))
         else {
             continue;
         };

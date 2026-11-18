@@ -668,9 +668,7 @@ fn open_asset_menu(id: AssetId) -> Listener<UIItemContextMenu> {
             return;
         }
         for (mut menu, mut panel) in menus.iter() {
-            if menu.asset != Some(id) {
-                menu.asset = Some(id);
-            }
+            menu.asset = Some(id);
             panel.target = UIAnchorTarget::from_point(on.signal().position);
             panel.owner = Some(on.entity());
             panel.open = true;

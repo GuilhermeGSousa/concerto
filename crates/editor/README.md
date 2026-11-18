@@ -212,11 +212,12 @@ texture, answers `import_failed` with the reason. The answer ends with the
 settings the import used, as TOML: a `[settings]` table and, for an image, an
 `[asset_settings]` table.
 Each queued import ends with an `ImportFinished` event carrying the settings it
-used, which is what the tool
-waits for. It needs an open project. `reimport` imports again the import that
+used and, for an import queued with `ImportQueue::enqueue_for`, the entity
+waiting on it, which is how each call finds its own answer when two wait on one
+source. It needs an open project. `reimport` imports again the import that
 `asset` belongs to, given as an address or an id as `list_assets` shows them, a
-part included, by triggering the `ReimportAsset` signal that confirming
-Re-import… triggers. It reads the source from the path the import record names,
+part included, staging the row Re-import… stages and queuing it as confirming
+does. It reads the source from the path the import record names,
 or reads `source` instead, which becomes the import's source: a file inside the
 project is used where it is, and one outside it is copied beside the recorded
 source. Every asset keeps its id and its address. `settings` and
