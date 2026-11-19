@@ -10,6 +10,6 @@ pub use mesh::{Aabb, Mesh, MeshComponent};
 pub use ray::Ray;
 pub use skeleton::{
     JointName, JointPose, ReflectSkeletonSource, Skeleton, SkeletonComponent, SkeletonError,
-    SkeletonGizmo, SkeletonSource,
+    SkeletonSource,
 };
 pub use vertex::Vertex;

@@ -41,8 +41,11 @@ other editors that play a clip. `clip_playback` holds the clip, the time, the
 rate, playing and looping, advances the time, writes `ClipPreviewProgress`, and
 listens for `ShowClip`, `ClearClip`, `SetClipTransport` and `SeekClip`; it poses
 nothing. `preview_stage` is the stage a preview plays on: the scene
-`ShowClipScene` gives it, the bones `SetSkeletonGizmo` draws, and the orbit
-camera following the first rooted skeleton. `clip_preview` calls both and adds
+`ShowClipScene` gives it, the bones, and the orbit camera following the first
+rooted skeleton. It registers the `Skeleton` component gizmo with
+`register_component_gizmo` and sets it to Always, so every skeleton's bones
+show without a selection; `SetSkeletonGizmo(false)` sets it back to Selected,
+which in a preview draws nothing. `clip_preview` calls both and adds
 the posing: every rooted skeleton, root motion and `ClipPreviewBones`.
 `concerto-motion-matching-editor` uses them, with no need for this crate's
 `install`. `events` holds `TabEvent`, the event as the tab edits it, with
@@ -87,8 +90,9 @@ stage when there is none. The tab's `left` host, titled Preview, has:
 - the scene picker, showing the shown scene's name or `None`. It lists the
   project's Scene assets, and picking one shows it for the rest of the tab's
   life, whichever clip is open in it. The pick is not saved;
-- the Skeleton checkbox, which draws the skeleton's bones. A BVH scene has no
-  mesh, so with it off the stage shows nothing;
+- the Skeleton checkbox, on by default, which draws the skeleton's bones: it
+  sets the `Skeleton` gizmo to Always or back. A BVH scene has no mesh, so with
+  it off the stage shows nothing;
 - under them, the error of a scene that failed to load. The clip still plays,
   on an empty stage.
 

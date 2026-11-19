@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, Query,
+    component::scene::SceneEntityRef,
     entity::hierarchy::ChildOf,
     system::input::{ReadOnlySystemInput, SystemInputData},
 };
@@ -9,10 +12,7 @@ use concerto_mesh::{Aabb, SkeletonComponent};
 use concerto_render::components::{Camera, Light, light::LightType};
 use glam::Vec3;
 
-use crate::{
-    DebugGizmos,
-    skeleton::{BoneStyle, draw_skeleton},
-};
+use crate::DebugGizmos;
 
 /// The length, in metres, drawn for anything unbounded.
 pub const REACH: f32 = 5.0;
@@ -48,11 +48,8 @@ pub struct CameraGizmo;
 const BOUNDS_COLOR: Color = Color::srgba(0.569, 0.518, 0.851, 1.0);
 const LIGHT_COLOR: Color = Color::srgba(1.0, 0.9, 0.4, 1.0);
 const CAMERA_COLOR: Color = Color::srgba(0.85, 0.85, 0.85, 1.0);
-const BONES: BoneStyle = BoneStyle {
-    color: Color::srgba(1.0, 0.8, 0.2, 1.0),
-    joint_size: 0.02,
-    axes: false,
-};
+const BONE_COLOR: Color = Color::srgba(1.0, 0.8, 0.2, 1.0);
+const JOINT_SIZE: f32 = 0.02;
 
 impl ComponentGizmo for BoundsGizmo {
     type Component = Aabb;
@@ -97,7 +94,28 @@ impl ComponentGizmo for SkeletonGizmo {
         bones: &SystemInputData<'_, '_, Self::Input>,
         gizmos: &mut DebugGizmos,
     ) {
-        draw_skeleton(skeleton, bones, &BONES, gizmos);
+        let entities: Vec<Entity> = skeleton
+            .bones()
+            .iter()
+            .filter_map(|bone| SceneEntityRef::entity(*bone))
+            .collect();
+        let members: HashSet<Entity> = entities.iter().copied().collect();
+        for bone in entities {
+            let Some((global, parent)) = bones.get_entity(bone) else {
+                continue;
+            };
+            let joint = global.translation();
+            gizmos.sphere(joint, JOINT_SIZE, BONE_COLOR);
+            let Some(parent) = parent
+                .map(ChildOf::parent)
+                .filter(|parent| members.contains(parent))
+            else {
+                continue;
+            };
+            if let Some((parent_global, _)) = bones.get_entity(parent) {
+                gizmos.line(parent_global.translation(), joint, BONE_COLOR);
+            }
+        }
     }
 }
 

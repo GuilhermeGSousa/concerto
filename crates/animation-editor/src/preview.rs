@@ -7,9 +7,9 @@ use concerto_app::{
     edit_time::AtPreviewTime,
     schedule_groups::{LateUpdate, Update},
 };
-use concerto_debug_gizmos::DebugGizmosPlugin;
+use concerto_debug_gizmos::{ComponentGizmo, DebugGizmosPlugin, component::SkeletonGizmo};
 use concerto_ecs::{
-    Added, Component, Entity, Event, IntoSystemConfig, Query, Res, ResMut, Resource, With, World,
+    Component, Entity, Event, IntoSystemConfig, Query, Res, ResMut, Resource, With, World,
     command::CommandQueue,
     entity::hierarchy::ChildOf,
     events::event_writer::EventWriter,
@@ -17,16 +17,16 @@ use concerto_ecs::{
     system::input::SystemLocal,
     world::FromWorld,
 };
-use concerto_editor::preview::OrbitCamera;
+use concerto_editor::{
+    preview::OrbitCamera,
+    tools::component_gizmos::{ComponentGizmosAppExt, SetGizmoAlways},
+};
 use concerto_foundation::{
     assets::asset_store::AssetStore,
     time::Time,
     transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
-use concerto_mesh::{
-    SkeletonGizmo,
-    skeleton::{Skeleton, SkeletonComponent},
-};
+use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{
@@ -57,19 +57,9 @@ impl Default for ClipPlayback {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(super) struct ClipPosing {
     pub(super) root_motion: bool,
-    pub(super) skeleton_gizmo: bool,
-}
-
-impl Default for ClipPosing {
-    fn default() -> Self {
-        Self {
-            root_motion: false,
-            skeleton_gizmo: true,
-        }
-    }
 }
 
 /// The entity a preview's scene is spawned under, which root motion moves.
@@ -373,26 +363,6 @@ fn report_bones(
     }
 }
 
-fn apply_skeleton_gizmo(cmd: &mut CommandQueue, skeleton: Entity, shown: bool) {
-    if shown {
-        cmd.insert(SkeletonGizmo::default(), skeleton);
-    } else {
-        cmd.remove::<SkeletonGizmo>(skeleton);
-    }
-}
-
-fn gizmo_new_skeletons(
-    posing: Res<ClipPosing>,
-    skeletons: Query<(Entity, &SkeletonComponent), Added<SkeletonComponent>>,
-    mut cmd: CommandQueue,
-) {
-    for (entity, skeleton) in skeletons.iter() {
-        if skeleton.root().is_some() {
-            apply_skeleton_gizmo(&mut cmd, entity, posing.skeleton_gizmo);
-        }
-    }
-}
-
 fn show_clip(on: On<ShowClip>, mut preview: ResMut<ClipPlayback>) {
     preview.clip = Some(Arc::clone(&on.signal().0));
     preview.time = 0.0;
@@ -432,19 +402,11 @@ fn set_root_motion(on: On<SetRootMotion>, mut posing: ResMut<ClipPosing>) {
     posing.root_motion = on.signal().0;
 }
 
-fn set_skeleton_gizmo(
-    on: On<SetSkeletonGizmo>,
-    mut posing: ResMut<ClipPosing>,
-    skeletons: Query<(Entity, &SkeletonComponent)>,
-    mut cmd: CommandQueue,
-) {
-    let shown = on.signal().0;
-    posing.skeleton_gizmo = shown;
-    for (entity, skeleton) in skeletons.iter() {
-        if skeleton.root().is_some() {
-            apply_skeleton_gizmo(&mut cmd, entity, shown);
-        }
-    }
+fn set_skeleton_gizmo(on: On<SetSkeletonGizmo>, mut cmd: CommandQueue) {
+    cmd.trigger(SetGizmoAlways {
+        kind: SkeletonGizmo::NAME.to_owned(),
+        always: on.signal().0,
+    });
 }
 
 /// Adds clip playback to `app`: it plays the clip [`ShowClip`] gives it and reports [`ClipPreviewProgress`], posing nothing.
@@ -464,8 +426,12 @@ pub fn preview_stage(app: &mut App) {
     if app.is_plugin_added::<RenderPlugin>() && !app.is_plugin_added::<DebugGizmosPlugin>() {
         app.register_plugin(DebugGizmosPlugin);
     }
+    app.register_component_gizmo::<SkeletonGizmo>();
+    app.main_mut().world_mut().trigger(SetGizmoAlways {
+        kind: SkeletonGizmo::NAME.to_owned(),
+        always: true,
+    });
     app.insert_resource(ClipPosing::default())
-        .add_system(Update, gizmo_new_skeletons.at_preview_time())
         .add_system(
             LateUpdate,
             follow_root
@@ -504,15 +470,13 @@ mod tests {
     use concerto_editor::{
         hosted::testing::plain_recipe,
         preview::{OrbitCamera, PreviewPlugin},
+        tools::component_gizmos::ComponentGizmos,
     };
     use concerto_foundation::{
         assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
         transform::Transform,
     };
-    use concerto_mesh::{
-        SkeletonGizmo,
-        skeleton::{JointPose, Skeleton, SkeletonComponent},
-    };
+    use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
     use glam::{Mat4, Quat, Vec3};
     use std::f32::consts::FRAC_PI_2;
     use uuid::Uuid;
@@ -633,7 +597,6 @@ mod tests {
     }
 
     struct Rig {
-        owner: Entity,
         root: Entity,
         driven: Entity,
         still: Entity,
@@ -652,13 +615,12 @@ mod tests {
         world.entity_mut(parent).add_child(root);
         world.entity_mut(root).add_child(driven);
         world.entity_mut(driven).add_child(still);
-        let owner = world.spawn(SkeletonComponent::new(
+        world.spawn(SkeletonComponent::new(
             AssetHandle::weak(id),
             [root, driven, still].map(SceneEntityRef::Entity).to_vec(),
             Some(SceneEntityRef::Entity(root)),
         ));
         Rig {
-            owner,
             root,
             driven,
             still,
@@ -681,6 +643,11 @@ mod tests {
             .next()
             .unwrap()
             .target
+    }
+
+    fn skeleton_always(app: &App) -> bool {
+        app.get_resource::<ComponentGizmos>()
+            .is_some_and(|gizmos| gizmos.always("Skeleton"))
     }
 
     fn written<E: Event + Clone + 'static>(app: &App) -> Vec<E> {
@@ -727,12 +694,7 @@ mod tests {
             held.translation
         );
         assert!(held.rotation.abs_diff_eq(turned(), NEAR));
-        assert!(
-            app.main()
-                .world()
-                .get_component_for_entity::<SkeletonGizmo>(rig.owner)
-                .is_some()
-        );
+        assert!(skeleton_always(&app), "the preview draws its bones");
         let progress = written::<ClipPreviewProgress>(&app);
         assert_eq!(
             progress.last(),
@@ -747,8 +709,12 @@ mod tests {
         assert_eq!(shown.driven, 2);
         let before = camera_target(&mut app);
 
-        app.main_mut().world_mut().trigger(SetRootMotion(true));
+        let world = app.main_mut().world_mut();
+        world.trigger(SetRootMotion(true));
+        world.trigger(SetSkeletonGizmo(false));
         app.update();
+
+        assert!(!skeleton_always(&app), "the toggle hides the bones");
 
         assert!(
             transform(&app, rig.root)

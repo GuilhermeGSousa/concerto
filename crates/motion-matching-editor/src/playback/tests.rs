@@ -9,12 +9,13 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     hosted::testing::plain_recipe, preview::PreviewPlugin, timeline::TimelineScrubbed,
+    tools::component_gizmos::ComponentGizmos,
 };
 use concerto_foundation::{
     assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
     transform::Transform,
 };
-use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
+use concerto_mesh::{Skeleton, SkeletonComponent};
 use concerto_motion_matching::{
     BonePositions, FeatureChannelData, JointAxis, MotionDatabase, MotionEntry, TimeRange, bake,
 };
@@ -113,7 +114,6 @@ fn baked() -> BakedPlayback {
 }
 
 struct Rig {
-    owner: Entity,
     root: Entity,
     spine: Entity,
 }
@@ -132,12 +132,12 @@ fn spawn_rig(world: &mut World) -> Rig {
     world.entity_mut(parent).add_child(root);
     world.entity_mut(root).add_child(spine);
     world.entity_mut(spine).add_child(head);
-    let owner = world.spawn(SkeletonComponent::new(
+    world.spawn(SkeletonComponent::new(
         AssetHandle::weak(id),
         [root, spine, head].map(SceneEntityRef::Entity).to_vec(),
         Some(SceneEntityRef::Entity(root)),
     ));
-    Rig { owner, root, spine }
+    Rig { root, spine }
 }
 
 struct Step {
@@ -297,8 +297,9 @@ fn a_preview_app_poses_the_sought_entry_with_the_root_placed_by_the_simulation_b
     );
     assert!(
         world
-            .get_component_for_entity::<SkeletonGizmo>(rig.owner)
-            .is_some()
+            .get_resource::<ComponentGizmos>()
+            .is_some_and(|gizmos| gizmos.always("Skeleton")),
+        "the preview draws its bones"
     );
 }
 
