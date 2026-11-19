@@ -90,4 +90,6 @@ inspector edits them and the editor's MCP tools reach every setting:
 3. `set_property` on the light's `Transform` rotation to move the sun, or on
    `Sun`'s `atmosphere` and `Sky`'s night terms to tune them.
 
-The game shows the result in Play.
+The viewport shows the result while editing, because the editor camera mirrors
+the scene camera's `Sky` and `CameraEnvironment`, and the game shows it in
+Play.

@@ -409,7 +409,10 @@ fix the entry in the same commit as the change that made it false.
 - **Only the editor camera draws in an edit `App`.** The viewport tools insert
   `ExclusiveCamera` naming it at `Startup`, and `extract_cameras` skips every
   other camera while the resource exists, so a scene camera never gets a render
-  camera. Nothing removes one afterwards.
+  camera. Nothing removes one afterwards. A scene camera's `Sky` and
+  `CameraEnvironment` reach the viewport only because `ViewportEnvironmentPlugin`
+  copies them onto the editor camera; another per-camera setting a scene camera
+  holds does not show while editing unless it is mirrored the same way.
 - **The scene root in the hierarchy is the editor's wrapper,** not part of the
   scene. It cannot be deleted, duplicated, or renamed.
 - **Entity edits pick their rules from whether the world has a `SceneRoot`.**

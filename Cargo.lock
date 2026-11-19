@@ -1336,6 +1336,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
+ "concerto-skybox",
  "concerto-ui",
  "concerto-window",
  "concerto-winit",
