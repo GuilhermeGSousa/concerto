@@ -96,6 +96,23 @@ pub struct SceneRecipe {
     pub recipe: fn(&mut App),
     pub gpu: Option<Gpu>,
     pub clipboard: Option<fn(&mut WindowClipboard)>,
+    /// Built into every edit and play `App`, in order, after the scene tools.
+    pub scene_plugins: Vec<fn(&mut App)>,
+}
+
+pub trait SceneToolsAppExt {
+    /// Adds `plugin` to every edit and play `App`, after the scene tools.
+    fn add_scene_tools_plugin(&mut self, plugin: fn(&mut App)) -> &mut Self;
+}
+
+impl SceneToolsAppExt for App {
+    fn add_scene_tools_plugin(&mut self, plugin: fn(&mut App)) -> &mut Self {
+        self.get_resource_mut::<SceneRecipe>()
+            .expect("add_scene_tools_plugin requires ScenePlugin")
+            .scene_plugins
+            .push(plugin);
+        self
+    }
 }
 
 #[derive(Component, Default)]
@@ -155,6 +172,7 @@ impl Plugin for ScenePlugin {
             recipe: self.recipe,
             gpu,
             clipboard: self.clipboard,
+            scene_plugins: Vec::new(),
         });
         app.register_creatable_asset_editor::<Scene, SceneEditor>()
             .expect("ScenePlugin requires the asset-editor registry")
@@ -487,10 +505,14 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
         role: HostRole::Game,
         clipboard: recipe.clipboard,
     };
+    let plugins = recipe.scene_plugins.clone();
     let pending = hosted::begin(
         request,
         move |app| {
             app.register_plugin(EditToolsCorePlugin);
+            for plugin in plugins {
+                plugin(app);
+            }
             app.set_startup_scene(scene);
         },
         |_| {},
@@ -715,6 +737,9 @@ pub(crate) fn update_scenes(
                             request,
                             |app| {
                                 app.register_plugin(EditToolsPlugin);
+                                for plugin in &recipe.scene_plugins {
+                                    plugin(app);
+                                }
                             },
                             move |hosted| {
                                 hosted.trigger(OpenScene { scene, id });
@@ -1111,18 +1136,35 @@ mod tests {
             .collect()
     }
 
+    #[derive(Resource, Debug, PartialEq)]
+    struct ScenePluginBuilt {
+        after_scene_tools: bool,
+    }
+
+    fn mark_scene_tools(app: &mut App) {
+        let after_scene_tools = app.is_plugin_added::<EditToolsCorePlugin>();
+        app.insert_resource(ScenePluginBuilt { after_scene_tools });
+    }
+
     #[test]
-    fn the_recipes_clipboard_opener_reaches_the_edit_app_and_the_play_app() {
+    fn the_recipes_clipboard_opener_and_scene_plugins_reach_the_edit_app_and_the_play_app() {
         let mut f = SceneFixture::new();
-        f.world.get_resource_mut::<SceneRecipe>().unwrap().clipboard = Some(mark_clipboard);
+        let recipe = f.world.get_resource_mut::<SceneRecipe>().unwrap();
+        recipe.clipboard = Some(mark_clipboard);
+        recipe.scene_plugins.push(mark_scene_tools);
         let document = f.open();
+        let built = ScenePluginBuilt {
+            after_scene_tools: true,
+        };
 
         assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
+        assert_eq!(f.scene_world(document).get_resource(), Some(&built));
 
         play(&mut f, document);
         f.frames_until_playing(document);
         assert!(!f.hosted_is_editing(document));
         assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
+        assert_eq!(f.scene_world(document).get_resource(), Some(&built));
     }
 
     #[test]

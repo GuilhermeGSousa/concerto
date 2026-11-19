@@ -1149,6 +1149,7 @@ fn nodes_added_and_connected_by_edit_graph_are_saved_into_the_graphs_file() {
         recipe: animated_recipe,
         gpu: None,
         clipboard: None,
+        scene_plugins: Vec::new(),
     });
     f.world
         .get_resource_mut::<AssetEditorRegistry>()

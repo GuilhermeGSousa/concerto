@@ -352,6 +352,7 @@ impl SceneFixture {
             recipe: fixture_recipe,
             gpu: None,
             clipboard: None,
+            scene_plugins: Vec::new(),
         });
         world.insert_resource(HierarchyState::default());
         world.insert_resource(RowLooks::default());

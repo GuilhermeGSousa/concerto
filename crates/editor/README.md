@@ -58,6 +58,38 @@ own: an extension tool named as an editor tool, or as another extension's, is
 refused when the `App` is built under `--mcp`, with the panic
 ``MCP tool `<name>` is added twice``, so the editor never starts with it.
 
+`install` runs on the editor's `App`, and the scenes are edited and played in
+`App`s of their own, built from the game's recipe and the scene tools. To add
+to those, an extension calls
+`app.add_scene_tools_plugin(plugin)` (`concerto_editor::scene::SceneToolsAppExt`)
+with a `fn(&mut App)`. Every edit and play `App` opened afterwards runs each
+such plugin, in the order they were added, after the scene tools, so it can
+call `register_component_gizmo`. A preview does not run them. It panics in an
+`App` without `ScenePlugin`, which `EditorPlugin` registers.
+
+A game draws a component of its own the same way. The game crate implements
+`ComponentGizmo` against `concerto-debug-gizmos`, since it never depends on the
+editor, and its `<game>-editor` crate registers it with a plugin passed to
+`run_with`:
+
+```rust
+use concerto_editor::{scene::SceneToolsAppExt, tools::component_gizmos::ComponentGizmosAppExt};
+
+fn door_gizmos(app: &mut App) {
+    app.add_scene_tools_plugin(|app| {
+        app.register_component_gizmo::<my_game::DoorGizmo>();
+    });
+}
+
+fn main() {
+    concerto_editor::run_with(
+        my_game::game,
+        concat!(env!("CARGO_MANIFEST_DIR"), "/.."),
+        &[door_gizmos],
+    );
+}
+```
+
 An extension crate's tests can use the `testing` feature, which exposes
 `hosted::testing` and its `SceneFixture` and `forwarding`, the system that
 re-writes a hosted event for a fixture's delivery, `inspector::value_systems`, the
