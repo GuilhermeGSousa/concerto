@@ -3,11 +3,14 @@ use concerto_app::{
     plugins::AssetManagerPlugin,
     schedule_groups::{First, LateUpdate, Update},
 };
-use concerto_debug_gizmos::{DebugGizmosPlugin, GizmoStorage};
+use concerto_debug_gizmos::{ComponentGizmo, DebugGizmos, DebugGizmosPlugin, GizmoStorage};
 use concerto_ecs::{
-    Entity, World,
+    Entity, IntoSystem, Query, System, World,
     component::scene::SceneEntityRef,
-    system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
+    system::{
+        executor::single_thread::SingleThreadedExecutor, input::StaticSystemInput,
+        schedule::Schedules,
+    },
 };
 use concerto_foundation::{
     assets::asset_server::AssetServer,
@@ -19,7 +22,7 @@ use concerto_navigation::{
 };
 use glam::{Mat4, Vec3};
 
-use crate::{NavigationGizmos, NavigationGizmosPlugin};
+use crate::{NavMeshGizmo, NavigationGizmos, NavigationGizmosPlugin};
 
 fn two_quads() -> NavMeshData {
     NavMeshData {
@@ -98,11 +101,34 @@ impl Stage {
         self.tick();
     }
 
+    fn draw_nav_mesh_gizmos(&mut self) {
+        let world = self.world();
+        let mut system = draw_nav_mesh_gizmos.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+    }
+
     fn segments(&mut self) -> usize {
         self.world()
             .get_resource::<GizmoStorage>()
             .unwrap()
             .segment_count()
+    }
+}
+
+fn draw_nav_mesh_gizmos(
+    navmeshes: Query<(Entity, &NavMeshComponent)>,
+    input: StaticSystemInput<<NavMeshGizmo as ComponentGizmo>::Input>,
+    mut gizmos: DebugGizmos,
+) {
+    for (entity, navmesh) in navmeshes.iter() {
+        NavMeshGizmo::draw(
+            entity,
+            navmesh,
+            &GlobalTransform::new(Mat4::IDENTITY),
+            &input,
+            &mut gizmos,
+        );
     }
 }
 
@@ -150,4 +176,11 @@ fn each_layer_is_drawn_from_its_data_while_its_flag_is_on_and_not_when_off() {
 
     stage.show(NOTHING);
     assert_eq!(stage.segments(), 0);
+
+    stage.draw_nav_mesh_gizmos();
+    assert_eq!(
+        stage.segments(),
+        7,
+        "the navmesh gizmo draws each edge, the shared one once"
+    );
 }

@@ -26,7 +26,7 @@ game adds itself when it needs them.
 | | `world-grid` | the ground grid | `world_grid` |
 | | `debug-gizmos` | immediate-mode debug lines and shapes | add `concerto-debug-gizmos` |
 | | `motion-matching-gizmos` | `MotionMatchingGizmos`, which draws a running character's motion matching, and the drawing the database preview shares | add `concerto-motion-matching-gizmos` |
-| | `navigation-gizmos` | `NavigationGizmosPlugin`, which draws the nav graph's points and links, each agent's route and each loaded navmesh's polygons, in the game and the editor's scene view | add `concerto-navigation-gizmos` |
+| | `navigation-gizmos` | `NavigationGizmosPlugin`, which draws the nav graph's points and links, in the game and the editor's scene view, and each agent's route and each loaded navmesh's polygons in the game; and `NavMeshGizmo`, the navmesh's gizmo in the editor | add `concerto-navigation-gizmos` |
 | | `procedural-animation-gizmos` | `FootLockGizmos`, which draws each foot lock of a running player's `FootLockNode` | add `concerto-procedural-animation-gizmos` |
 | | `terminal-renderer` | a renderer that draws into a terminal | |
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
@@ -43,6 +43,7 @@ game adds itself when it needs them.
 | | `ui` | the UI: layout, text, theme, widgets | `ui` |
 | Tooling | `editor` | the editor, as a library | add `concerto-editor` in the `editor/` crate |
 | | `animation-editor` | the editor's tab for an animation clip | list it in the game's `Cargo.toml` |
+| | `navigation-editor` | the editor's navmesh gizmo, drawn while a navmesh's entity is selected | list it in the game's `Cargo.toml` |
 | | `project` | `cargo concerto` | install with `cargo install --path crates/project` |
 | | `mcp` | an MCP server over any `App`, whose tools are systems; the editor's `--mcp` uses it | |
 
