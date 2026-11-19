@@ -55,13 +55,17 @@ use crate::{
 // meshes that use material type `M`:
 //
 // * Registers `M` as an asset type and `MaterialComponent<M>` for reflection.
-// * Creates a `wgpu::RenderPipeline` whose layout is built from `M`'s own bind
-//   group layout plus whichever engine bind groups `M` declares it needs via
-//   [`Material::needs_camera`], [`Material::needs_lighting`] and
-//   [`Material::needs_skeleton`].
+// * Creates an opaque and a blended `wgpu::RenderPipeline` whose layout is built
+//   from `M`'s own bind group layout plus whichever engine bind groups `M`
+//   declares it needs via [`Material::needs_camera`],
+//   [`Material::needs_lighting`] and [`Material::needs_skeleton`].
 // * Adds `queue_material_meshes<M>`, which culls and bins the mesh entities
-//   carrying [`MaterialComponent<M>`] for each camera, and a render pass
-//   (`material_renderpass<M>`) that draws those batches.
+//   carrying [`MaterialComponent<M>`] for each camera, opaque ones by key and
+//   `AlphaMode::Blend` ones back to front, and two render passes that draw
+//   them: `material_renderpass<M>` in `RenderSet::Draw` and
+//   `material_transparent_renderpass<M>` in `RenderSet::Transparent`.
+// * Adds `flag_blended_instances<M>`, which keeps blended instances out of
+//   the shadow maps.
 //
 // # Using a custom material
 //
@@ -88,7 +92,7 @@ pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl
 
 // ─── MaterialPipeline ─────────────────────────────────────────────────────────
 
-// Stores the wgpu render pipeline and material bind-group layout for `M`.
+// Stores the wgpu render pipelines and material bind-group layout for `M`.
 //
 // Inserted as a resource by [`MaterialPlugin<M>::finish`].
 pub struct MaterialPipeline<M: 'static> {

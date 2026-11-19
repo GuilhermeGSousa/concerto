@@ -59,6 +59,7 @@ pub(crate) struct BatchedInstanceBuffers {
 pub(crate) struct Batch<K> {
     pub(crate) key: K,
     pub(crate) skeleton_offset: u32,
+    pub(crate) skinned: bool,
     pub(crate) instances: Range<u32>,
 }
 
@@ -174,7 +175,7 @@ impl<K> ViewBins<K> {
                 if let Some(batch) = self
                     .batches
                     .last_mut()
-                    .filter(|batch| batch.key == candidate.key)
+                    .filter(|batch| batch.key == candidate.key && !batch.skinned)
                 {
                     batch.instances.end = index + 1;
                     continue;
@@ -187,6 +188,7 @@ impl<K> ViewBins<K> {
                 } else {
                     0
                 },
+                skinned,
                 instances: index..index + 1,
             });
         }
@@ -475,6 +477,25 @@ mod tests {
                     Vec3::new(0.0, 0.0, -15.0),
                     Vec3::new(0.0, 0.0, -10.0),
                 ],
+            },
+            Binning {
+                case: "an unskinned instance never joins a skinned batch",
+                candidates: vec![
+                    at(4, 0.0, 0.0, -10.0),
+                    Candidate {
+                        skeleton_offset: Some(256),
+                        ..at(4, 0.0, 0.0, -20.0)
+                    },
+                ],
+                stats: stats(2, 0),
+                batches: vec![
+                    Batch {
+                        skeleton_offset: 256,
+                        ..batch(4, 0..1)
+                    },
+                    batch(4, 1..2),
+                ],
+                drawn: vec![Vec3::new(0.0, 0.0, -20.0), Vec3::new(0.0, 0.0, -10.0)],
             },
             Binning {
                 case: "equal distances in key order",

@@ -261,7 +261,8 @@ or it is culled whenever its vertices' box is out of view. The world grid requir
 Blended surfaces, those whose material's alpha mode is `Blend`, are drawn
 after every opaque surface of their material type, farthest from the camera
 first, measured to the centre of each mesh's `Aabb`, or to its position while
-it has none. They are culled like any
+it has none; a skinned mesh with no `Aabb` is measured from the world origin.
+They are culled like any
 other mesh, but two of them merge into one draw call only when they share a
 mesh and a material and come one after the other in that order. They
 receive shadows but cast none.
