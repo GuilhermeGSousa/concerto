@@ -59,6 +59,7 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 - Linux system packages: `libasound2-dev libudev-dev libwayland-dev`.
 - The wasm target: `rustup target add wasm32-unknown-unknown`.
 - `trunk` to run a game in a browser.
+- `cargo-deny` for the done gate: `cargo install cargo-deny --locked`.
 
 ## Commands
 
@@ -88,8 +89,9 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 ```sh
 cargo fmt --all -- --check
 python3 .github/scripts/test_budget.py
-cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo deny check bans
+CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo test --locked --workspace
 cargo test --locked -p concerto-physics --no-default-features --features force-rapier
 cargo build --locked --target wasm32-unknown-unknown
@@ -98,6 +100,14 @@ cargo build --locked --target wasm32-unknown-unknown
 CI installs the latest stable Rust, and each clippy release adds lints, so
 run `rustup update stable` before the gate; an older local toolchain passes
 code that CI's clippy rejects.
+
+`CARGO_BUILD_WARNINGS=deny` makes cargo's own warnings fail clippy, among them
+a dependency that no target of its crate uses: remove it, or make it optional
+behind the feature that enables the targets using it, as `concerto-benches`
+does with `run`. `cargo deny check bans` fails when the lockfile holds two
+versions of one crate. When an upstream crate brings the second version, add
+it to `skip` in `deny.toml` with a `reason` naming that crate; delete the entry
+once cargo-deny reports it unmatched.
 
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. Neither CI runner, Ubuntu or Windows, has an adapter, so GPU tests skip in CI; run them locally on a machine with a GPU.
 

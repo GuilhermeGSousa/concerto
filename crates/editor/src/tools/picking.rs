@@ -1,11 +1,5 @@
 //! Selecting scene entities by clicking them in the viewport.
-use concerto_app::{
-    App,
-    edit_time::AtEditTime,
-    schedule_groups::{LateUpdate, Update},
-};
-use concerto_color::Color;
-use concerto_debug_gizmos::DebugGizmos;
+use concerto_app::{App, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_ecs::{
     Entity, IntoSystemConfig, Query, Res, ResMut, Resource, command::CommandQueue,
     entity::hierarchy::Children, events::event_writer::EventWriter,
@@ -23,12 +17,11 @@ use crate::tools::{
     camera::{EditorCamera, FlyCamera, ViewportPointer, fill_pointer_from_window, subtree},
     gizmo::GizmoState,
     scene::{RevealEntity, SceneRoot},
-    selection::{Select, Selection},
+    selection::Select,
 };
 
 /// How far the pointer may travel between press and release and still count as a click.
 const CLICK_SLOP: f32 = 4.0;
-const SELECTION_BOX: Color = Color::srgba(0.569, 0.518, 0.851, 1.0);
 
 #[derive(Resource, Default)]
 pub(crate) struct PickPress(Option<Vec2>);
@@ -39,7 +32,6 @@ pub(crate) fn build(app: &mut App) {
         Update,
         pick_on_click.after(fill_pointer_from_window).at_edit_time(),
     );
-    app.add_system(LateUpdate, draw_selection_bounds.at_edit_time());
 }
 
 /// The world-space ray under `pointer`, or `None` when it is outside a picture of `size`.
@@ -196,78 +188,10 @@ pub(crate) fn pick_on_click(
     }
 }
 
-/// The corners of the box that marks `entity` as selected.
-fn selection_corners(
-    entity: Entity,
-    roots: &Query<&SceneRoot>,
-    bounds: &Query<(&Aabb, &GlobalTransform)>,
-    children: &Query<&Children>,
-) -> Option<[Vec3; 8]> {
-    if roots.get_entity(entity).is_some() {
-        return None;
-    }
-    if let Some((aabb, transform)) = bounds.get_entity(entity) {
-        return Some(corners(*aabb).map(|corner| transform.matrix().transform_point3(corner)));
-    }
-    subtree(entity, children)
-        .into_iter()
-        .filter_map(|descendant| bounds.get_entity(descendant))
-        .map(|(aabb, transform)| aabb.transformed(transform.matrix()))
-        .reduce(|a, b| Aabb {
-            min: a.min.min(b.min),
-            max: a.max.max(b.max),
-        })
-        .map(corners)
-}
-
-fn corners(aabb: Aabb) -> [Vec3; 8] {
-    std::array::from_fn(|index| {
-        Vec3::new(
-            if index & 1 == 0 {
-                aabb.min.x
-            } else {
-                aabb.max.x
-            },
-            if index & 2 == 0 {
-                aabb.min.y
-            } else {
-                aabb.max.y
-            },
-            if index & 4 == 0 {
-                aabb.min.z
-            } else {
-                aabb.max.z
-            },
-        )
-    })
-}
-
-fn draw_selection_bounds(
-    selection: Res<Selection>,
-    roots: Query<&SceneRoot>,
-    bounds: Query<(&Aabb, &GlobalTransform)>,
-    children: Query<&Children>,
-    mut gizmos: DebugGizmos,
-) {
-    let Some(corners) = selection
-        .entity()
-        .and_then(|entity| selection_corners(entity, &roots, &bounds, &children))
-    else {
-        return;
-    };
-    for from in 0..8_usize {
-        for axis in [1, 2, 4] {
-            if from & axis == 0 {
-                gizmos.line(corners[from], corners[from | axis], SELECTION_BOX);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_debug_gizmos::GizmoStorage;
+    use crate::tools::selection::Selection;
     use concerto_ecs::{
         IntoSystem, System, World,
         entity::hierarchy::ChildOf,
@@ -317,7 +241,6 @@ mod tests {
         world.insert_resource(GizmoState::default());
         world.insert_resource(Input::new());
         world.insert_resource(ViewportPointer::default());
-        world.insert_resource(GizmoStorage::default());
         let root = world.spawn(SceneRoot);
         Fixture { world, root, mesh }
     }
@@ -371,16 +294,6 @@ mod tests {
         fn click(&mut self, pressed: Vec2, released: Vec2) {
             self.point_at(pressed, true, true);
             self.point_at(released, false, false);
-        }
-        fn segments(&mut self) -> usize {
-            self.world.insert_resource(GizmoStorage::default());
-            let mut system = draw_selection_bounds.into_system();
-            system.initialize(&mut self.world);
-            system.run_and_apply((), &mut self.world);
-            self.world
-                .get_resource::<GizmoStorage>()
-                .unwrap()
-                .segment_count()
         }
     }
 
@@ -538,22 +451,5 @@ mod tests {
             None,
             "a press on a gizmo handle is not a pick"
         );
-    }
-
-    #[test]
-    fn the_selection_box_is_drawn_for_meshes_and_groups_but_not_the_scene_root() {
-        let mut f = fixture();
-        let group = f.world.spawn(());
-        f.world.entity_mut(f.root).add_child(group);
-        let cube = f.cube(group, Mat4::IDENTITY);
-        f.cube(group, Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)));
-
-        f.world.trigger(Select(Some(cube)));
-        assert_eq!(f.segments(), 12);
-        f.world.trigger(Select(Some(group)));
-        assert_eq!(f.segments(), 12);
-        let root = f.root;
-        f.world.trigger(Select(Some(root)));
-        assert_eq!(f.segments(), 0);
     }
 }

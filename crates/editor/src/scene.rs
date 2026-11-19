@@ -96,6 +96,23 @@ pub struct SceneRecipe {
     pub recipe: fn(&mut App),
     pub gpu: Option<Gpu>,
     pub clipboard: Option<fn(&mut WindowClipboard)>,
+    /// Built into every edit and play `App`, in order, after the scene tools.
+    pub scene_plugins: Vec<fn(&mut App)>,
+}
+
+pub trait SceneToolsAppExt {
+    /// Adds `plugin` to every edit and play `App`, after the scene tools.
+    fn add_scene_tools_plugin(&mut self, plugin: fn(&mut App)) -> &mut Self;
+}
+
+impl SceneToolsAppExt for App {
+    fn add_scene_tools_plugin(&mut self, plugin: fn(&mut App)) -> &mut Self {
+        self.get_resource_mut::<SceneRecipe>()
+            .expect("add_scene_tools_plugin requires ScenePlugin")
+            .scene_plugins
+            .push(plugin);
+        self
+    }
 }
 
 #[derive(Component, Default)]
@@ -155,6 +172,7 @@ impl Plugin for ScenePlugin {
             recipe: self.recipe,
             gpu,
             clipboard: self.clipboard,
+            scene_plugins: Vec::new(),
         });
         app.register_creatable_asset_editor::<Scene, SceneEditor>()
             .expect("ScenePlugin requires the asset-editor registry")
@@ -487,10 +505,14 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
         role: HostRole::Game,
         clipboard: recipe.clipboard,
     };
+    let plugins = recipe.scene_plugins.clone();
     let pending = hosted::begin(
         request,
         move |app| {
             app.register_plugin(EditToolsCorePlugin);
+            for plugin in plugins {
+                plugin(app);
+            }
             app.set_startup_scene(scene);
         },
         |_| {},
@@ -715,6 +737,9 @@ pub(crate) fn update_scenes(
                             request,
                             |app| {
                                 app.register_plugin(EditToolsPlugin);
+                                for plugin in &recipe.scene_plugins {
+                                    plugin(app);
+                                }
                             },
                             move |hosted| {
                                 hosted.trigger(OpenScene { scene, id });
@@ -760,8 +785,9 @@ pub(crate) fn update_scenes(
 mod tests {
     use super::*;
     use crate::{
+        gizmo_choices::{GizmoChoices, apply_gizmo_choices},
         hosted::{PlayStarted, PlayState, PlayStopped, testing::SceneFixture},
-        tools::entity_ops::EntityEdit,
+        tools::{component_gizmos::ComponentGizmos, entity_ops::EntityEdit},
     };
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_ecs::{
@@ -1111,18 +1137,64 @@ mod tests {
             .collect()
     }
 
+    #[derive(Resource, Debug, PartialEq)]
+    struct ScenePluginBuilt {
+        after_scene_tools: bool,
+    }
+
+    fn mark_scene_tools(app: &mut App) {
+        let after_scene_tools = app.is_plugin_added::<EditToolsCorePlugin>();
+        app.insert_resource(ScenePluginBuilt { after_scene_tools });
+    }
+
+    fn always(world: &World) -> Vec<&'static str> {
+        world
+            .get_resource::<ComponentGizmos>()
+            .unwrap()
+            .kinds()
+            .iter()
+            .filter(|kind| kind.always)
+            .map(|kind| kind.name)
+            .collect()
+    }
+
+    fn choose(f: &mut SceneFixture, kind: &str, always: bool) {
+        f.world
+            .get_resource_mut::<GizmoChoices>()
+            .unwrap()
+            .set(kind, always);
+    }
+
     #[test]
-    fn the_recipes_clipboard_opener_reaches_the_edit_app_and_the_play_app() {
+    fn the_clipboard_opener_scene_plugins_and_gizmo_choices_reach_the_edit_and_play_apps() {
         let mut f = SceneFixture::new();
-        f.world.get_resource_mut::<SceneRecipe>().unwrap().clipboard = Some(mark_clipboard);
+        let recipe = f.world.get_resource_mut::<SceneRecipe>().unwrap();
+        recipe.clipboard = Some(mark_clipboard);
+        recipe.scene_plugins.push(mark_scene_tools);
+        f.world.insert_resource(GizmoChoices::default());
+        f.add_delivery(apply_gizmo_choices.into_boxed_system());
+        choose(&mut f, "Bounds", true);
         let document = f.open();
+        let built = ScenePluginBuilt {
+            after_scene_tools: true,
+        };
 
         assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
+        assert_eq!(f.scene_world(document).get_resource(), Some(&built));
+        assert_eq!(always(f.scene_world(document)), ["Bounds"]);
 
         play(&mut f, document);
         f.frames_until_playing(document);
         assert!(!f.hosted_is_editing(document));
         assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
+        assert_eq!(f.scene_world(document).get_resource(), Some(&built));
+        assert_eq!(always(f.scene_world(document)), ["Bounds"]);
+
+        choose(&mut f, "Bounds", false);
+        choose(&mut f, "Light", true);
+        f.frame();
+        assert_eq!(always(f.scene_world(document)), ["Light"]);
+        assert_eq!(always(f.parked_world(document)), ["Light"]);
     }
 
     #[test]

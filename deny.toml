@@ -1,0 +1,27 @@
+[bans]
+multiple-versions = "deny"
+wildcards = "allow"
+skip = [
+    { crate = "base64@0.23.1", reason = "rmcp and hyper-util use base64 0.23; reqwest and the engine use 0.22" },
+    { crate = "codespan-reporting@0.12.0", reason = "naga_oil 0.23 uses codespan-reporting 0.12; naga 30 uses 0.13" },
+    { crate = "core-foundation@0.9.4", reason = "system-configuration, under reqwest on macOS, uses core-foundation 0.9" },
+    { crate = "downcast-rs@1.2.1", reason = "wayland-backend uses downcast-rs 1; parry3d uses 2" },
+    { crate = "foldhash@0.1.5", reason = "hashbrown 0.15, under petgraph, uses foldhash 0.1" },
+    { crate = "font-types@0.11.3", reason = "cosmic-text 0.19 uses skrifa 0.40; swash uses 0.44" },
+    { crate = "read-fonts@0.37.0", reason = "cosmic-text 0.19 uses skrifa 0.40; swash uses 0.44" },
+    { crate = "skrifa@0.40.0", reason = "cosmic-text 0.19 uses skrifa 0.40; swash uses 0.44" },
+    { crate = "glam@0.34.3", reason = "kira 0.12 uses glam 0.34; the engine, rapier and the navigation crates use 0.33" },
+    { crate = "hashbrown@0.15.5", reason = "petgraph 0.8 uses hashbrown 0.15" },
+    { crate = "hashbrown@0.16.1", reason = "gpu-allocator and spade use hashbrown 0.16" },
+    { crate = "jni-sys@0.3.1", reason = "ndk 0.9 uses jni-sys 0.3; jni uses 0.4" },
+    { crate = "libloading@0.9.0", reason = "x11rb 0.14, under winit, uses libloading 0.9; wgpu-hal uses 0.8" },
+    { crate = "miniz_oxide@0.8.9", reason = "png uses miniz_oxide 0.8; flate2 uses 0.9" },
+    { crate = "redox_syscall@0.5.18", reason = "parking_lot_core uses redox_syscall 0.5; libredox uses 0.9" },
+    { crate = "rstar@0.12.2", reason = "geo, under polyanya, uses rstar 0.12; parry3d and polyanya use 0.13" },
+    { crate = "rustc-hash@1.1.0", reason = "naga and wgpu-core 30 use rustc-hash 1; cosmic-text uses 2" },
+    { crate = "syn@2.0.119", reason = "proc-macro crates are moving from syn 2 to syn 3, and the engine's macros still use 2" },
+    { crate = "thiserror@1.0.69", reason = "ndk 0.9 uses thiserror 1" },
+    { crate = "thiserror-impl@1.0.69", reason = "ndk 0.9 uses thiserror 1" },
+    { crate = "x11rb@0.13.2", reason = "arboard uses x11rb 0.13; winit uses 0.14" },
+    { crate = "x11rb-protocol@0.13.2", reason = "arboard uses x11rb 0.13; winit uses 0.14" },
+]

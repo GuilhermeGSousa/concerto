@@ -144,8 +144,8 @@ warning.
 
 `database_preview` adds `clip_preview` to the game's recipe, so a definition's
 preview has the same stage as a clip's. It shows the scene named `scene` in the
-skeleton's folder, read again whenever the skeleton changes, with a
-`SkeletonGizmo` on each rooted skeleton. A folder with no such scene leaves the
+skeleton's folder, read again whenever the skeleton changes, with its bones
+drawn by the `Skeleton` gizmo set to Always. A folder with no such scene leaves the
 stage empty, and a scene that cannot be read says why under the skeleton picker.
 
 The derive's worker also decodes what the database needs to play from the inputs

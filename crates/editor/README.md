@@ -58,6 +58,36 @@ own: an extension tool named as an editor tool, or as another extension's, is
 refused when the `App` is built under `--mcp`, with the panic
 ``MCP tool `<name>` is added twice``, so the editor never starts with it.
 
+`install` runs on the editor's `App`, and the scenes are edited and played in
+`App`s of their own, built from the game's recipe and the scene tools. To add
+to those, an extension calls
+`app.add_scene_tools_plugin(plugin)` (`concerto_editor::scene::SceneToolsAppExt`)
+with a `fn(&mut App)`. Every edit and play `App` opened afterwards runs each
+such plugin, in the order they were added, after the scene tools, so it can
+call `register_component_gizmo`. A preview does not run them. It panics in an
+`App` without `ScenePlugin`, which `EditorPlugin` registers.
+
+A game draws a component of its own the same way. The game crate implements
+`ComponentGizmo` against `concerto-debug-gizmos`, since it never depends on the
+editor. A small crate of the game's, which may depend on the editor, registers
+it:
+
+```rust
+use concerto_editor::{scene::SceneToolsAppExt, tools::component_gizmos::ComponentGizmosAppExt};
+
+pub fn install(app: &mut App) {
+    app.add_scene_tools_plugin(|app| {
+        app.register_component_gizmo::<my_game::DoorGizmo>();
+    });
+}
+```
+
+The game lists that crate with a `path` under
+`[package.metadata.concerto.editor]`, as the project tool's
+[README](../project/README.md#editor-plugins) describes, so `editor --update`
+keeps it; a plugin written into `editor/src/main.rs` by hand is lost on the
+next update.
+
 An extension crate's tests can use the `testing` feature, which exposes
 `hosted::testing` and its `SceneFixture` and `forwarding`, the system that
 re-writes a hosted event for a fixture's delivery, `inspector::value_systems`, the
@@ -232,6 +262,15 @@ position, yaw, pitch and the direction it looks along, once the edit `App` has
 stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
 no editor camera. All three need an open scene.
+
+`gizmos` lists the component gizmo kinds of the edited scene's `App`, or of the
+game while it plays, one `Bounds · selected` or `Navmesh · always` line per
+kind: drawn for the selection and its descendants, or for every entity. With
+`kind`, ignoring case, and `always` it sets that kind for every edit and play
+`App`, as the viewport's Gizmos menu does, and answers the list as it reads
+with the change. A kind the scene does not have answers `unknown_gizmo`, listing
+the kinds it has, and `kind` without `always`, or `always` without `kind`,
+answers `invalid_arguments`. It needs an open scene.
 
 `set_panel_size` sets the size of `panel`, one of `left`, `right`, `bottom`
 and `browser`, to `size` logical pixels: a width, or for `bottom` the strip's
@@ -485,7 +524,7 @@ A failed call is a tool result marked `isError` whose text is
 
 | Code | Meaning |
 | --- | --- |
-| `invalid_arguments` | The arguments do not match the tool's input schema, or `target`, `entity`, `component` and `components` are given in a combination the tool does not take |
+| `invalid_arguments` | The arguments do not match the tool's input schema, or `target`, `entity`, `component` and `components`, or `kind` and `always`, are given in a combination the tool does not take |
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
 | `busy` | `open_project` while a project is opening, `save` of a scene still loading, or `screenshot` of a picture not drawn yet |
 | `unknown_entity`, `stale_entity` | The id names no live entity of the open scene, such as the editor's camera, or of the game while it plays; or a slot that now holds a newer one |
@@ -499,6 +538,7 @@ A failed call is a tool result marked `isError` whose text is
 | `not_a_list` | `list_push` or `list_remove` on a path that is not a list, or on a `Vec` with an editor registered for its exact type |
 | `index_out_of_range` | `list_remove` with an index past the end; the message names the length |
 | `unknown_asset` | The asset is not in the catalogue |
+| `unknown_gizmo` | The scene has no gizmo kind of that name; the message lists those it has |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
 | `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
@@ -546,8 +586,8 @@ steps, and drops. The crate has three parts:
   `finish_plugin_build`, so a game's own `RenderAssetBytesPerFrame` does not
   apply in the editor.
 - `src/tools/` is everything that runs inside an edit `App`: the editor camera,
-  the grid, picking, the selection box, the gizmo, and the listeners that apply
-  each edit. `EditToolsPlugin` installs it. The half that edits and captures a
+  the grid, picking, the component gizmos (`component_gizmos.rs`), the
+  transform gizmo, and the listeners that apply each edit. `EditToolsPlugin` installs it. The half that edits and captures a
   scene needs no renderer; the viewport half is added when the recipe has one.
   In that half, `ViewportEnvironmentPlugin` mirrors the scene's environment
   onto the editor camera: each frame it copies `Sky` and `CameraEnvironment`
@@ -557,8 +597,8 @@ steps, and drops. The crate has three parts:
   and drawn as the level's camera sees it in Play, and an agent changes it
   through `add_component`, `set_property` and `remove_component` on that
   camera.
-- The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
-  editor's `App`.
+- The panels (hierarchy, inspector, viewport, tabs, content, dock) and the
+  viewport's Gizmos menu (`gizmo_choices.rs`) run in the editor's `App`.
 
 The dock (`src/dock.rs`) tiles the window; nothing is drawn over anything
 else. From the top: a bar with the brand, the tabs, the stats and the window
@@ -1030,7 +1070,8 @@ declares `Component` without `Default`, such as `Camera`, is edited and removed
 but never offered.
 
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
-to it, and draws a box around it; clicking empty space clears the selection. A
+to it, and shows its component gizmos, among them a box around its bounds;
+clicking empty space clears the selection. A
 press that moves more than a few pixels is not a click. Picking tests the
 mesh's triangles, so a mesh seen through a gap in another is the one selected.
 Limits: a skinned mesh is picked and boxed in its bind pose; a click selects
@@ -1045,6 +1086,32 @@ one. Drag a handle with the left button. A ring seen nearly edge-on cannot be
 dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
 while the camera is being flown, and is not shown for the scene root. A drag
 marks the scene dirty when it ends.
+
+Component gizmos draw a component while its entity, or one of its ancestors,
+is selected: selecting a parent, or the scene root, shows the gizmos of
+everything under it. A gizmo is a type implementing
+`concerto_debug_gizmos::ComponentGizmo`, which names its component, the inputs
+it reads, and its kind's `NAME`, and draws one entity at a time. The scene
+tools (`src/tools/component_gizmos.rs`) register the engine's in every edit and
+play `App`: `Bounds` boxes each `Aabb`, `Skeleton` joins each bone to its
+parent, `Light` shows a light's reach (`range`, or 5 m when it is 0) and
+`Camera` a camera's frustum cut at 5 m. `app.register_component_gizmo::<G>()`
+registers another in a hosted `App`; it lists the kind in that `App`'s
+`ComponentGizmos` resource, and draws it only when the `App` has
+`DebugGizmosPlugin`. Two gizmo types with one `NAME` panic. The
+`SetGizmoAlways { kind, always }` signal draws a kind for every entity, or
+again only for the selection; an unknown kind changes nothing. The editor's own
+camera and grid are `EditorHelper`s and never draw a gizmo.
+
+The Gizmos button on the viewport's top-right corner, shown while a scene is
+edited or played, opens a menu with a checkbox per kind of the `App` in front,
+or "No gizmos"; a checked kind is drawn for every entity. The choice is the
+editor's `GizmoChoices`, one set for every scene, kept for the session:
+`ComponentGizmosPlugin` (`src/gizmo_choices.rs`) sets each kind to it in every
+edit and play `App`, in front, in a background tab, parked while its game plays,
+or still building, by triggering `SetGizmoAlways`. A preview keeps its own. The
+`gizmos` tool reads and sets the same choices. Without the plugin every kind is
+drawn for the selection.
 
 Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the

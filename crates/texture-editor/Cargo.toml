@@ -21,7 +21,7 @@ log = "0.4"
 [dev-dependencies]
 concerto = { path = "../.." }
 concerto-mcp.workspace = true
-image = "0.25.5"
+image = { version = "0.25.5", default-features = false, features = ["png"] }
 rmcp = { version = "3.5", features = ["client", "transport-io"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

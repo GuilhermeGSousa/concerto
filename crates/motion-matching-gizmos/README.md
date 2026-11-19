@@ -22,9 +22,7 @@ world.insert(MotionMatchingGizmos::default(), character);
 ```
 
 The plugin registers `DebugGizmosPlugin` if the `App` has a renderer and nothing
-has registered it yet, which also brings `draw_skeleton_gizmos`, so a
-`SkeletonGizmo` kept in a game's scene starts drawing in play. An `App` without a
-renderer builds and draws nothing.
+has registered it yet. An `App` without a renderer builds and draws nothing.
 
 The trail is a private field, so start from `default()` and set the toggles
 afterwards.

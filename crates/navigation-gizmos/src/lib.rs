@@ -3,7 +3,8 @@
 mod gizmos;
 
 pub use gizmos::{
-    NavigationGizmos, NavigationGizmosPlugin, draw_nav_graph, draw_nav_mesh, draw_nav_routes,
+    NavMeshGizmo, NavigationGizmos, NavigationGizmosPlugin, draw_nav_graph, draw_nav_mesh,
+    draw_nav_routes,
 };
 
 #[cfg(test)]

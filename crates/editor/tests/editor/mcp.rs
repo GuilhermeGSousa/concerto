@@ -855,10 +855,13 @@ struct StatusReads {
     after: String,
     cleared: String,
     none: String,
+    gizmos: String,
+    unknown_gizmo: Value,
+    bounds_always: String,
 }
 
 #[test]
-fn status_reports_the_project_documents_and_the_selection_that_select_sets_and_clears() {
+fn status_reports_the_documents_and_selection_and_gizmos_lists_and_sets_the_gizmo_kinds() {
     let fixture = Fixture::new();
     let root = fixture.root().canonicalize().unwrap();
     let log = Log::default();
@@ -871,6 +874,19 @@ fn status_reports_the_project_documents_and_the_selection_that_select_sets_and_c
         let after = ok(&client, "status").await;
         let cleared = ok(&client, "select").await;
         let none = ok(&client, "status").await;
+        let gizmos = ok(&client, "gizmos").await;
+        let unknown_gizmo = error_with(
+            &client,
+            "gizmos",
+            json!({ "kind": "Navmesh", "always": true }),
+        )
+        .await;
+        let bounds_always = ok_with(
+            &client,
+            "gizmos",
+            json!({ "kind": "Bounds", "always": true }),
+        )
+        .await;
         client.cancel().await.unwrap();
         StatusReads {
             before,
@@ -879,6 +895,9 @@ fn status_reports_the_project_documents_and_the_selection_that_select_sets_and_c
             after,
             cleared,
             none,
+            gizmos,
+            unknown_gizmo,
+            bounds_always,
         }
     }) else {
         return;
@@ -891,6 +910,9 @@ fn status_reports_the_project_documents_and_the_selection_that_select_sets_and_c
         after,
         cleared,
         none,
+        gizmos,
+        unknown_gizmo,
+        bounds_always,
     } = served.result;
     assert_eq!(line(&before, "project: "), root.display().to_string());
     let document = document_id(&before);
@@ -907,6 +929,22 @@ fn status_reports_the_project_documents_and_the_selection_that_select_sets_and_c
     assert_eq!(line(&after, "selection: "), format!("{hero} Hero"));
     assert_eq!(cleared, "Selection cleared.");
     assert_eq!(line(&none, "selection: "), "none");
+    assert!(
+        gizmos.lines().any(|kind| kind == "Bounds · selected"),
+        "{gizmos}"
+    );
+    assert_eq!(unknown_gizmo["code"], "unknown_gizmo");
+    assert!(
+        unknown_gizmo["message"]
+            .as_str()
+            .unwrap()
+            .contains("Bounds"),
+        "{unknown_gizmo}"
+    );
+    assert!(
+        bounds_always.lines().any(|kind| kind == "Bounds · always"),
+        "{bounds_always}"
+    );
 }
 
 struct Resized {

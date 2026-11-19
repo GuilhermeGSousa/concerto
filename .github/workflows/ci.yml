@@ -101,9 +101,23 @@ jobs:
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
       - name: Run clippy
         run: cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+        env:
+          CARGO_BUILD_WARNINGS: deny
       - name: Run clippy on the Rapier physics backend
         run: cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+        env:
+          CARGO_BUILD_WARNINGS: deny
         
+  dependencies:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans
+
   test_budget:
     name: Test budget
     runs-on: ubuntu-latest
