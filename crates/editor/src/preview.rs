@@ -630,6 +630,7 @@ mod tests {
                 recipe: plain_recipe,
                 gpu: None,
                 clipboard: None,
+                scene_plugins: Vec::new(),
             })
             .insert_resource(ViewportShown(Some(crate::hosted::input::ViewportView {
                 origin: Vec2::ZERO,

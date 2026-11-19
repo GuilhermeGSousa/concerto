@@ -252,13 +252,12 @@ fn draw_targets(mut gizmos: DebugGizmos, targets: Query<&GlobalTransform, With<E
 
 Gizmos are immediate mode: draw them every frame you want them seen.
 
-`SkeletonGizmo`, from `concerto::mesh`, draws a skeleton without a mesh. Put it
-on an entity with a `SkeletonComponent`, or add it through the editor's
-inspector, and every frame it draws a line from each bone to its parent bone and
-a sphere at each joint. Its fields set the colour, the joint size, and whether
-each bone's axes are drawn. Every game built on `DefaultPlugins` keeps it in a
-scene. It is drawn wherever `DebugGizmosPlugin` runs: in the editor's edit
-viewport, and not while playing unless the game adds the plugin.
+A skeleton without a mesh shows in the editor through the `Skeleton` component
+gizmo, `SkeletonGizmo` in `concerto-debug-gizmos`: while the entity holding the
+`SkeletonComponent`, or one of its ancestors, is selected, it draws a line from
+each bone to its parent bone and a sphere at each joint. The clip, graph and
+motion-matching previews draw every skeleton's bones this way, unasked. A game
+does not draw them.
 
 `MotionMatchingGizmos`, from the `concerto-motion-matching-gizmos` crate, draws
 what motion matching compares on a running character: the simulation bone, the

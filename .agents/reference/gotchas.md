@@ -367,7 +367,8 @@ fix the entry in the same commit as the change that made it false.
   there for its hooks to fire. A tool's system or listener must be marked
   `.at_edit_time()`, or it is a stand-in or is dropped there. A play `App`
   gets only `EditToolsCorePlugin`, the tools that select, edit, and capture,
-  so nothing from the viewport half runs in a game. Changes made while
+  and the component gizmos, with `DebugGizmosPlugin` when the game has a
+  renderer, so nothing else from the viewport half runs in a game. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
 - **A placeable asset kind is registered in the game's recipe, not in the

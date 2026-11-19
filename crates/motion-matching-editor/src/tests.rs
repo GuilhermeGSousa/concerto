@@ -125,6 +125,7 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
         recipe,
         gpu: None,
         clipboard: None,
+        scene_plugins: Vec::new(),
     });
     f.world
         .get_resource_mut::<AssetEditorRegistry>()

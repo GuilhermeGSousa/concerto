@@ -21,10 +21,18 @@ The plugin registers `DebugGizmosPlugin` if the `App` has a renderer and nothing
 has registered it yet. An `App` without a renderer builds and draws nothing.
 
 The systems run in `LateUpdate`, `draw_nav_graph` and `draw_nav_routes` after
-`rebuild_nav_graph`. `draw_nav_graph` and `draw_nav_mesh` also run at edit
-time, so the editor's scene view shows the graph while points are authored and
-the navmesh a level holds. `draw_nav_routes` runs in game time only, which
-includes Play in the editor.
+`rebuild_nav_graph`. `draw_nav_graph` also runs at edit time, so the editor's
+scene view shows the graph while points are authored. `draw_nav_routes` and
+`draw_nav_mesh` run in game time only, which includes Play in the editor.
+
+## In the editor
+
+`NavMeshGizmo` is the navmesh's component gizmo: it draws the edges of a
+`NavMeshComponent`'s loaded navmesh, as the `mesh` layer does, for one entity.
+The editor draws it while that entity or one of its ancestors is selected, or
+always with Navmesh set to Always, once the game lists
+[`concerto-navigation-editor`](../navigation-editor/README.md), which registers
+it in every edit and play `App`.
 
 ## What it draws
 

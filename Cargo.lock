@@ -1368,7 +1368,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytemuck",
- "concerto-color",
  "concerto-ecs",
  "concerto-foundation",
  "concerto-name",
@@ -1484,6 +1483,15 @@ dependencies = [
  "polyanya",
  "rerecast",
  "serde",
+]
+
+[[package]]
+name = "concerto-navigation-editor"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-editor",
+ "concerto-navigation-gizmos",
 ]
 
 [[package]]

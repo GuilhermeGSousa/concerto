@@ -1536,7 +1536,10 @@ not, each link as a line with an arrowhead on a one-way link, and the route
 each agent has left, and the polygon edges of each loaded navmesh in amber.
 Register `NavigationGizmosPlugin` after `DefaultPlugins`; the
 `NavigationGizmos` resource turns the graph, routes and mesh layers off. The
-graph and the navmesh are drawn in the editor's scene view as well.
+graph is drawn in the editor's scene view as well. The navmesh is drawn there
+by `NavMeshGizmo` once the game lists `concerto-navigation-editor` among its
+editor plugins, while its entity is selected or with Navmesh set to Always in
+the viewport's Gizmos menu.
 Its [README](../../crates/navigation-gizmos/README.md) says more.
 
 ### Limits

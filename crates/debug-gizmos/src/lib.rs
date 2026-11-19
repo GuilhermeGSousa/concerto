@@ -17,14 +17,15 @@
 //! Drawing is immediate mode: shapes must be re-issued every frame to stay
 //! visible.
 
+pub mod component;
 pub mod gizmos;
 pub mod pipeline;
 pub mod plugin;
 pub mod render;
-mod skeleton;
 pub mod storage;
 pub mod vertex;
 
+pub use component::ComponentGizmo;
 pub use gizmos::DebugGizmos;
 pub use plugin::DebugGizmosPlugin;
 pub use storage::GizmoStorage;

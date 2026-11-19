@@ -661,6 +661,7 @@ mod tests {
                 recipe: scene_recipe,
                 gpu: None,
                 clipboard: None,
+                scene_plugins: Vec::new(),
             })
             .insert_resource(ViewportShown(Some(ViewportView {
                 origin: Vec2::ZERO,

@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use concerto_app::{edit_time::AtEditTime, plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_color::Color;
-use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
-use concerto_ecs::{IntoSystemConfig, Query, Res, Resource};
+use concerto_debug_gizmos::{ComponentGizmo, DebugGizmos, DebugGizmosPlugin};
+use concerto_ecs::{Entity, IntoSystemConfig, Query, Res, Resource};
 use concerto_foundation::{assets::asset_store::AssetStore, transform::GlobalTransform};
 use concerto_navigation::{
     NavGraph, NavGraphPoint, NavMesh, NavMeshComponent, NavMeshData, NavRoute, rebuild_nav_graph,
@@ -55,7 +55,7 @@ impl Plugin for NavigationGizmosPlugin {
                 draw_nav_graph.after(rebuild_nav_graph).at_edit_time(),
             );
             app.add_system(LateUpdate, draw_nav_routes.after(rebuild_nav_graph));
-            app.add_system(LateUpdate, draw_nav_mesh.at_edit_time());
+            app.add_system(LateUpdate, draw_nav_mesh);
         }
     }
 }
@@ -213,7 +213,7 @@ pub fn draw_nav_routes(
     }
 }
 
-/// Draws the polygon edges of each loaded navmesh a `NavMeshComponent` holds while `NavigationGizmos::mesh` is on, in the editor too.
+/// Draws the polygon edges of each loaded navmesh a `NavMeshComponent` holds while `NavigationGizmos::mesh` is on, at game time.
 pub fn draw_nav_mesh(
     components: Query<&NavMeshComponent>,
     navmeshes: Res<AssetStore<NavMesh>>,
@@ -233,6 +233,34 @@ pub fn draw_nav_mesh(
         };
         for shape in mesh_shapes(data) {
             draw_shape(&mut gizmos, shape);
+        }
+    }
+}
+
+/// Draws the polygon edges of a `NavMeshComponent`'s loaded navmesh in the editor's viewport.
+pub struct NavMeshGizmo;
+
+impl ComponentGizmo for NavMeshGizmo {
+    type Component = NavMeshComponent;
+    type Input = Option<Res<'static, AssetStore<NavMesh>>>;
+    const NAME: &'static str = "Navmesh";
+
+    fn draw(
+        _entity: Entity,
+        component: &NavMeshComponent,
+        _transform: &GlobalTransform,
+        navmeshes: &Option<Res<'_, AssetStore<NavMesh>>>,
+        gizmos: &mut DebugGizmos,
+    ) {
+        let Some(data) = navmeshes
+            .as_ref()
+            .and_then(|navmeshes| navmeshes.get(&component.handle))
+            .and_then(NavMesh::data)
+        else {
+            return;
+        };
+        for shape in mesh_shapes(data) {
+            draw_shape(gizmos, shape);
         }
     }
 }

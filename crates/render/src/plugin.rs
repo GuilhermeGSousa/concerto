@@ -118,8 +118,7 @@ impl Plugin for RenderPlugin {
             .register_type::<NotShadowCaster>()
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
-            .register_type::<concerto_mesh::SkeletonComponent>()
-            .register_type::<concerto_mesh::SkeletonGizmo>();
+            .register_type::<concerto_mesh::SkeletonComponent>();
         register_sync_requirements(app);
         app.track_removals::<concerto_mesh::MeshComponent>()
             .track_removals::<concerto_mesh::SkeletonComponent>()
