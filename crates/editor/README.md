@@ -1079,9 +1079,8 @@ dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
 while the camera is being flown, and is not shown for the scene root. A drag
 marks the scene dirty when it ends.
 
-Component gizmos draw a component while its entity, or one of its ancestors,
-is selected: selecting a parent, or the scene root, shows the gizmos of
-everything under it. A gizmo is a type implementing
+Component gizmos draw a component while its entity is selected; selecting a
+parent does not draw its children's. A gizmo is a type implementing
 `concerto_debug_gizmos::ComponentGizmo`, which names its component, the inputs
 it reads, and its kind's `NAME`, and draws one entity at a time. The scene
 tools (`src/tools/component_gizmos.rs`) register the engine's in every edit and

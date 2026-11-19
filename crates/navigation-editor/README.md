@@ -13,8 +13,8 @@ plugins = [{ package = "concerto-navigation-editor", install = "concerto_navigat
 `install` calls `add_scene_tools_plugin`, so every edit and play `App` the
 editor hosts registers `NavMeshGizmo` from `concerto-navigation-gizmos` with
 `register_component_gizmo`. The viewport then draws a `NavMeshComponent`'s
-loaded navmesh, its polygon edges in amber, while its entity or one of its
-ancestors is selected, or always with Navmesh set to Always. Nothing is drawn
+loaded navmesh, its polygon edges in amber, while its entity is selected, or
+always with Navmesh set to Always. Nothing is drawn
 for a navmesh that has not loaded.
 
 The game's own `NavigationGizmos::mesh` layer is separate: it draws every
