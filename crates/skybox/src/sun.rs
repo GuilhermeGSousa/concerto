@@ -1,6 +1,6 @@
 use concerto_color::Color;
 use concerto_ecs::{
-    component::Component,
+    component::{Component, scene::SceneEntityRef},
     reflect::{ReflectComponent, ReflectSceneComponent},
 };
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -141,6 +141,8 @@ impl Atmosphere {
 #[reflect(Component, Default, SceneComponent)]
 #[require(Camera)]
 pub struct Sky {
+    /// The directional light with a [`Sun`] this sky follows; unset, the sky shows night.
+    pub sun: SceneEntityRef,
     /// Radiance added to the sky and to sky-colored fog, so night is not black.
     pub night_color: Color,
     /// Light added to the ambient term, in the units of `CameraEnvironment::ambient`.
@@ -150,6 +152,7 @@ pub struct Sky {
 impl Default for Sky {
     fn default() -> Self {
         Self {
+            sun: SceneEntityRef::default(),
             night_color: Color::rgba(0.008, 0.009, 0.012, 1.0),
             night_ambient: Color::rgba(0.016, 0.018, 0.024, 1.0),
         }
@@ -157,6 +160,11 @@ impl Default for Sky {
 }
 
 impl Sky {
+    pub fn with_sun(mut self, sun: SceneEntityRef) -> Self {
+        self.sun = sun;
+        self
+    }
+
     pub fn with_night_color(mut self, night_color: Color) -> Self {
         self.night_color = night_color;
         self

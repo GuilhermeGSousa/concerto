@@ -21,6 +21,7 @@ impl Plugin for SkyPlugin {
             .register_type::<Sky>()
             .insert_resource(AtmosphereLuts::default())
             .track_removals::<Sun>()
+            .track_removals::<Sky>()
             .add_system(
                 LateUpdate,
                 (build_atmosphere_luts, update_sun_lighting)

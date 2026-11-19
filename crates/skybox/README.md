@@ -11,20 +11,27 @@ re-exported as `concerto::skybox`.
   the light comes from, `rotation * Vec3::Z`, so turning the light moves it
   across the sky through dawn, noon, sunset and night. `Sun` requires a
   directional `Light`; a `Light` you give yourself wins, and a `Sun` on a
-  point or spot light is ignored with a warning. When several directional
-  lights have `Sun`, the one with the lowest entity index is the sun and the
-  others are ignored with a warning.
+  point or spot light is ignored with a warning. Every directional `Sun`
+  tints its own light from its own atmosphere.
 - **`Sky`** on a camera draws the sky behind everything that camera sees and
-  lights the scene with it. It requires `Camera`.
+  lights the scene with it. It requires `Camera`. Its `sun` is a
+  `SceneEntityRef` naming the directional light with `Sun` it follows; in the
+  editor, the entity picker sets it. One sun is lit per frame: the one named
+  by the `Sky` camera with the lowest entity index. A `Sky` naming another sun
+  shows that one and warns.
 
 ```rust
-use concerto::skybox::{Sky, Sun};
+use concerto::{ecs::component::scene::SceneEntityRef, skybox::{Sky, Sun}};
 
-cmd.spawn((Camera::default(), Sky::default(), Transform::from_translation(Vec3::new(0.0, 1.7, 5.0))));
-cmd.spawn((
+let sun = cmd.spawn((
     Sun::default(),
     Light::directional_light().with_intensity(2.0),
     Transform::from_rotation(Quat::from_rotation_x(-0.8)),
+)).entity();
+cmd.spawn((
+    Camera::default(),
+    Sky::default().with_sun(SceneEntityRef::Entity(sun)),
+    Transform::from_translation(Vec3::new(0.0, 1.7, 5.0)),
 ));
 ```
 
@@ -34,7 +41,7 @@ What each does:
 |---|---|
 | `Sun` | Its light's color is multiplied by a `LightTint`, the light left after crossing the atmosphere: near white at noon, warmer and dimmer as the sun sets, zero below the horizon. This holds whether or not any camera has a `Sky`. |
 | `Sky` | The camera draws the sky and the sun's disk behind the scene. Its ambient light comes from the sky, as spherical harmonics, instead of `CameraEnvironment::ambient`. Its fog takes the sky's color in the direction you look instead of `Fog::color`. |
-| `Sky` without a `Sun` | Night: only `night_color` and `night_ambient`, with a warning. |
+| `Sky` whose `sun` is unset or names no directional `Sun` | Night: only `night_color` and `night_ambient`, with a warning. |
 | neither | The scene draws as it did before. |
 
 | Field | Meaning | Default |
@@ -86,8 +93,9 @@ Where `Rgba16Float` cannot be rendered to, the map is `Rgba8Unorm` holding
 `Sun`, `Atmosphere` and `Sky` are reflected scene components, so the
 inspector edits them and the editor's MCP tools reach every setting:
 
-1. `add_component` `Sky` on the scene's camera.
-2. `add_component` `Sun` on a directional light.
+1. `add_component` `Sun` on a directional light.
+2. `add_component` `Sky` on a camera in the level, and `set_property` its
+   `sun` to that light's entity id.
 3. `set_property` on the light's `Transform` rotation to move the sun, or on
    `Sun`'s `atmosphere` and `Sky`'s night terms to tune them.
 

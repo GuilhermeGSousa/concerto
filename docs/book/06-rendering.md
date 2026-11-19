@@ -231,17 +231,21 @@ grid that fades with distance; its fields set the cell size, colors and fade.
 
 The sky comes from `concerto::skybox`, whose `SkyboxPlugin` is part of
 `DefaultPlugins`. Mark one directional light `Sun` and its rotation sets the
-time of day; put `Sky` on a camera and that camera draws a physically based
-sky behind the scene:
+time of day; put `Sky` on a camera, name the sun in its `sun` field, and that
+camera draws a physically based sky behind the scene:
 
 ```rust
-use concerto::skybox::{Sky, Sun};
+use concerto::{ecs::component::scene::SceneEntityRef, skybox::{Sky, Sun}};
 
-cmd.spawn((Camera::default(), Sky::default(), Transform::from_translation(Vec3::new(0.0, 1.7, 5.0))));
-cmd.spawn((
+let sun = cmd.spawn((
     Sun::default(),
     Light::directional_light().with_intensity(2.0),
     Transform::from_rotation(Quat::from_rotation_x(-0.8)),
+)).entity();
+cmd.spawn((
+    Camera::default(),
+    Sky::default().with_sun(SceneEntityRef::Entity(sun)),
+    Transform::from_translation(Vec3::new(0.0, 1.7, 5.0)),
 ));
 ```
 

@@ -7,7 +7,7 @@ use concerto_app::{
     plugins::{TimePlugin, TransformPlugin},
 };
 use concerto_color::{Color, LinearRgba};
-use concerto_ecs::entity::Entity;
+use concerto_ecs::{component::scene::SceneEntityRef, entity::Entity};
 use concerto_foundation::transform::Transform;
 use concerto_render::{
     CameraSkyLight, LightTint,
@@ -59,8 +59,13 @@ fn a_sun_sets_the_sky_lighting_from_noon_to_night() {
         .register_plugin(SkyPlugin);
     app.finish_plugin_build();
     let world = app.main_mut().world_mut();
-    let camera = world.spawn((Sky::default(), Transform::default()));
     let sun = world.spawn((Sun::default(), sun_at(90.0)));
+    let camera = world.spawn((
+        Sky::default().with_sun(SceneEntityRef::Entity(sun)),
+        Transform::default(),
+    ));
+    let unlinked = world.spawn((Sky::default(), Transform::default()));
+    let unnamed = world.spawn((Sun::default(), sun_at(2.0)));
     app.update();
 
     let light = app
@@ -76,6 +81,19 @@ fn a_sun_sets_the_sky_lighting_from_noon_to_night() {
     assert!(
         blueness(up) > blueness(down),
         "the sky above is bluer than the ground below: up {up}, down {down}"
+    );
+    assert_eq!(
+        sky_light(&mut app, unlinked)
+            .unwrap()
+            .irradiance
+            .coefficients,
+        [Vec3::ZERO; 9],
+        "a Sky that names no sun shows night"
+    );
+    let unnamed_tint = tint(&mut app, unnamed).unwrap();
+    assert!(
+        unnamed_tint.r > unnamed_tint.b,
+        "a Sun no Sky names still tints its light: {unnamed_tint:?}"
     );
     let noon_tint = tint(&mut app, sun).unwrap();
     assert!(
@@ -129,6 +147,11 @@ fn a_sun_sets_the_sky_lighting_from_noon_to_night() {
         app.main_mut()
             .world_mut()
             .spawn((Light::spot_light(0.5), Sun::default(), sun_at(90.0)));
+    app.main_mut()
+        .world_mut()
+        .get_component_for_entity_mut::<Sky>(camera)
+        .unwrap()
+        .sun = SceneEntityRef::Entity(spot);
     app.update();
     assert_eq!(tint(&mut app, spot), None);
     assert_eq!(

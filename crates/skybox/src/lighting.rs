@@ -24,8 +24,8 @@ use glam::Vec3;
 
 use crate::{
     atmosphere::{
-        Lut, fibonacci_direction, multiple_scattering_lut, observer_radius, sky_radiance,
-        transmittance_lut, transmittance_lut_unit,
+        Lut, distance_to_top, fibonacci_direction, multiple_scattering_lut, observer_radius,
+        sky_radiance, transmittance_along, transmittance_lut,
     },
     sun::{Atmosphere, Sky, Sun},
 };
@@ -72,15 +72,34 @@ pub(crate) type SunQuery<'w, 's> = Query<
     ),
 >;
 
-pub(crate) fn pick_sun(suns: &SunQuery) -> Option<Entity> {
-    suns.iter()
-        .filter(|(_, _, light, _)| matches!(light.light_type, LightType::Directional))
-        .map(|(entity, ..)| entity)
-        .min_by_key(|entity| entity.index())
+pub(crate) type SkyQuery<'w, 's> = Query<'w, 's, (Entity, &'static Sky)>;
+
+fn is_directional(light: &Light) -> bool {
+    matches!(light.light_type, LightType::Directional)
 }
 
-pub(crate) fn build_atmosphere_luts(suns: SunQuery, mut luts: ResMut<AtmosphereLuts>) {
-    let Some((_, sun, _, _)) = pick_sun(&suns).and_then(|entity| suns.get_entity(entity)) else {
+pub(crate) fn sky_sun(sky: &Sky, suns: &SunQuery) -> Option<Entity> {
+    sky.sun.entity().filter(|entity| {
+        suns.get_entity(*entity)
+            .is_some_and(|(_, _, light, _)| is_directional(light))
+    })
+}
+
+pub(crate) fn active_sun(skies: &SkyQuery, suns: &SunQuery) -> Option<Entity> {
+    skies
+        .iter()
+        .filter(|(_, sky)| sky_sun(sky, suns).is_some())
+        .min_by_key(|(camera, _)| camera.index())
+        .and_then(|(_, sky)| sky_sun(sky, suns))
+}
+
+pub(crate) fn build_atmosphere_luts(
+    skies: SkyQuery,
+    suns: SunQuery,
+    mut luts: ResMut<AtmosphereLuts>,
+) {
+    let Some((_, sun, _, _)) = active_sun(&skies, &suns).and_then(|entity| suns.get_entity(entity))
+    else {
         return;
     };
     if !luts.is_built_for(&sun.atmosphere) {
@@ -89,48 +108,59 @@ pub(crate) fn build_atmosphere_luts(suns: SunQuery, mut luts: ResMut<AtmosphereL
 }
 
 pub(crate) struct SunWarnings {
-    ignored: EntityHashSet,
-    without_sun: bool,
+    undirected_suns: EntityHashSet,
+    dark_skies: EntityHashSet,
+    redirected_skies: EntityHashSet,
 }
 
 impl FromWorld for SunWarnings {
     fn from_world(_world: &World) -> Self {
         Self {
-            ignored: EntityHashSet::default(),
-            without_sun: false,
+            undirected_suns: EntityHashSet::default(),
+            dark_skies: EntityHashSet::default(),
+            redirected_skies: EntityHashSet::default(),
         }
     }
 }
 
 impl SunWarnings {
-    fn warn(&mut self, suns: &SunQuery, picked: Option<Entity>, has_skies: bool) {
-        let mut ignored = EntityHashSet::default();
-        for (entity, _, light, _) in suns.iter().filter(|(entity, ..)| Some(*entity) != picked) {
-            if !self.ignored.contains(&entity) {
-                match (picked, &light.light_type) {
-                    (Some(sun), LightType::Directional) => log::warn!(
-                        "Sun on {entity:?} is ignored: {sun:?} is the sun, the first directional Sun"
-                    ),
-                    _ => log::warn!("Sun on {entity:?} is ignored: its Light is not directional"),
-                }
-            }
-            ignored.insert(entity);
+    fn warn(&mut self, suns: &SunQuery, skies: &SkyQuery, active: Option<Entity>) {
+        let undirected: EntityHashSet = suns
+            .iter()
+            .filter(|(_, _, light, _)| !is_directional(light))
+            .map(|(entity, ..)| entity)
+            .collect();
+        for entity in undirected.difference(&self.undirected_suns) {
+            log::warn!("Sun on {entity:?} is ignored: its Light is not directional");
         }
-        self.ignored = ignored;
-        let without_sun = has_skies && picked.is_none();
-        if without_sun && !self.without_sun {
-            log::warn!(
-                "A Sky has no Sun, so it shows night: add Sun to a directional light to light it"
-            );
-        }
-        self.without_sun = without_sun;
-    }
-}
+        self.undirected_suns = undirected;
 
-struct SunLighting {
-    entity: Entity,
-    tint: LinearRgba,
-    irradiance: SphericalHarmonics,
+        let mut dark = EntityHashSet::default();
+        let mut redirected = EntityHashSet::default();
+        for (camera, sky) in skies.iter() {
+            match (sky_sun(sky, suns), active) {
+                (None, _) => {
+                    if !self.dark_skies.contains(&camera) {
+                        log::warn!(
+                            "Sky on {camera:?} names no directional light with Sun, so it shows night: set its sun"
+                        );
+                    }
+                    dark.insert(camera);
+                }
+                (Some(sun), Some(active)) if sun != active => {
+                    if !self.redirected_skies.contains(&camera) {
+                        log::warn!(
+                            "Sky on {camera:?} names {sun:?} but shows {active:?}, the sun of the Sky with the lowest entity index: one sun is lit per frame"
+                        );
+                    }
+                    redirected.insert(camera);
+                }
+                _ => {}
+            }
+        }
+        self.dark_skies = dark;
+        self.redirected_skies = redirected;
+    }
 }
 
 fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
@@ -138,16 +168,24 @@ fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn sun_tint(luts: &AtmosphereLuts, disk_radius: f32, toward_sun: Vec3) -> Vec3 {
-    let atmosphere = &luts.atmosphere;
+fn sun_tint(atmosphere: &Atmosphere, disk_radius: f32, toward_sun: Vec3) -> Vec3 {
     let observer = observer_radius(atmosphere);
     let ground = atmosphere.planet_radius / observer;
     let horizon = -(1.0 - ground * ground).max(0.0).sqrt();
     let disk = disk_radius.to_radians().sin().max(1e-4);
     let visible = smoothstep(horizon - disk, horizon + disk, toward_sun.y);
-    luts.transmittance
-        .sample(transmittance_lut_unit(atmosphere, observer, toward_sun.y))
-        * visible
+    let mu = toward_sun.y.max(horizon);
+    transmittance_along(
+        atmosphere,
+        observer,
+        mu,
+        distance_to_top(atmosphere, observer, mu),
+    ) * visible
+}
+
+fn tint_of(sun: &Sun, transform: &GlobalTransform) -> LinearRgba {
+    let tint = sun_tint(&sun.atmosphere, sun.disk_radius, toward_sun(transform));
+    LinearRgba::new(tint.x, tint.y, tint.z, 1.0)
 }
 
 pub(crate) fn rgb(color: LinearRgba) -> Vec3 {
@@ -205,21 +243,16 @@ pub(crate) fn toward_sun(transform: &GlobalTransform) -> Vec3 {
     (transform.rotation() * Vec3::Z).normalize_or(Vec3::Y)
 }
 
-fn light_sun(
-    entity: Entity,
+fn sun_irradiance(
     luts: &AtmosphereLuts,
     sun: &Sun,
     light: &Light,
     transform: &GlobalTransform,
-) -> SunLighting {
+) -> SphericalHarmonics {
     let toward_sun = toward_sun(transform);
-    let tint = sun_tint(luts, sun.disk_radius, toward_sun);
+    let tint = sun_tint(&luts.atmosphere, sun.disk_radius, toward_sun);
     let illuminance = rgb(light.color.to_linear()) * light.intensity;
-    SunLighting {
-        entity,
-        tint: LinearRgba::new(tint.x, tint.y, tint.z, 1.0),
-        irradiance: sky_irradiance(luts, toward_sun, illuminance, tint),
-    }
+    sky_irradiance(luts, toward_sun, illuminance, tint)
 }
 
 pub(crate) fn update_sun_lighting(
@@ -233,13 +266,15 @@ pub(crate) fn update_sun_lighting(
         ),
     >,
     tints: Query<(Entity, &LightTint), With<Sun>>,
-    skies: Query<(Entity, &Sky, Option<&CameraSkyLight>)>,
+    skies: SkyQuery,
+    lit: Query<(Entity, &Sky, Option<&CameraSkyLight>)>,
     changed_skies: Query<(), Changed<Sky>>,
     mut removed_suns: RemovedComponents<Sun>,
+    mut removed_skies: RemovedComponents<Sky>,
     mut warnings: SystemLocal<SunWarnings>,
     mut cmd: CommandQueue,
 ) {
-    let removed = removed_suns.read().count() > 0;
+    let removed = removed_suns.read().count() + removed_skies.read().count() > 0;
     let changed = luts.is_changed()
         || removed
         || changed_suns.iter().next().is_some()
@@ -248,29 +283,34 @@ pub(crate) fn update_sun_lighting(
         return;
     }
 
-    let picked = pick_sun(&suns);
-    warnings.warn(&suns, picked, skies.iter().next().is_some());
-    let lighting = picked
-        .and_then(|entity| suns.get_entity(entity))
-        .map(|(entity, sun, light, transform)| light_sun(entity, &luts, sun, light, transform));
+    let active = active_sun(&skies, &suns);
+    warnings.warn(&suns, &skies, active);
 
-    for (entity, _) in tints.iter() {
-        if Some(entity) != picked {
-            cmd.remove::<LightTint>(entity);
+    for (entity, sun, light, transform) in suns.iter() {
+        let current = tints.get_entity(entity).map(|(_, tint)| tint.0);
+        if !is_directional(light) {
+            if current.is_some() {
+                cmd.remove::<LightTint>(entity);
+            }
+            continue;
+        }
+        let tint = tint_of(sun, transform);
+        if current != Some(tint) {
+            cmd.insert(LightTint(tint), entity);
         }
     }
-    if let Some(lighting) = &lighting
-        && tints.get_entity(lighting.entity).map(|(_, tint)| tint.0) != Some(lighting.tint)
-    {
-        cmd.insert(LightTint(lighting.tint), lighting.entity);
-    }
 
-    let irradiance = lighting
-        .map(|lighting| lighting.irradiance)
+    let irradiance = active
+        .and_then(|entity| suns.get_entity(entity))
+        .map(|(_, sun, light, transform)| sun_irradiance(&luts, sun, light, transform))
         .unwrap_or_default();
-    for (camera, sky, current) in skies.iter() {
+    for (camera, sky, current) in lit.iter() {
         let sky_light = CameraSkyLight {
-            irradiance,
+            irradiance: if sky_sun(sky, &suns).is_some() {
+                irradiance
+            } else {
+                SphericalHarmonics::default()
+            },
             night_color: sky.night_color.to_linear(),
             night_ambient: sky.night_ambient.to_linear(),
         };

@@ -4,7 +4,7 @@ use concerto_app::{
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
 use concerto_color::Color;
-use concerto_ecs::entity::Entity;
+use concerto_ecs::{component::scene::SceneEntityRef, entity::Entity};
 use concerto_foundation::{assets::asset_server::AssetServer, transform::Transform};
 use concerto_mesh::{MeshComponent, primitives::cuboid};
 use concerto_render::{
@@ -93,12 +93,19 @@ impl SkyScene {
         };
         let world = app.main_mut().world_mut();
         world.register_component::<Transform>();
+        let sun = world.spawn((
+            Sun::default().with_disk_radius(2.0),
+            Light::directional_light().with_intensity(10.0),
+            sun_toward(toward(sun_elevation_degrees, 0.0)),
+        ));
         let camera = world.spawn((
             Camera {
                 clear_color: Color::rgba(0.0, 0.0, 0.0, 1.0),
                 ..Camera::perspective(70f32.to_radians(), WIDTH as f32 / HEIGHT as f32)
             },
-            Sky::default().with_night_ambient(Color::rgba(0.1, 0.1, 0.1, 1.0)),
+            Sky::default()
+                .with_sun(SceneEntityRef::Entity(sun))
+                .with_night_ambient(Color::rgba(0.1, 0.1, 0.1, 1.0)),
             CameraEnvironment::default()
                 .with_ambient(Color::rgba(1.0, 1.0, 1.0, 1.0))
                 .with_fog(Fog {
@@ -107,11 +114,6 @@ impl SkyScene {
                     start: 10.0,
                 }),
             Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH_DEGREES.to_radians())),
-        ));
-        let sun = world.spawn((
-            Sun::default().with_disk_radius(2.0),
-            Light::directional_light().with_intensity(10.0),
-            sun_toward(toward(sun_elevation_degrees, 0.0)),
         ));
         world.spawn((
             MeshComponent {

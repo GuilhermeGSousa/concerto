@@ -35,7 +35,7 @@ use crate::{
         Lut, MULTIPLE_SCATTERING_LUT_SIZE, TRANSMITTANCE_LUT_HEIGHT, TRANSMITTANCE_LUT_WIDTH,
         observer_radius, top_radius,
     },
-    lighting::{AtmosphereLuts, SunQuery, pick_sun, rgb, toward_sun},
+    lighting::{AtmosphereLuts, SkyQuery, SunQuery, active_sun, rgb, toward_sun},
     sun::{Atmosphere, Sky},
 };
 
@@ -108,13 +108,14 @@ pub(crate) struct ExtractedSky {
 
 pub(crate) fn extract_sky(
     suns: Extracted<SunQuery>,
+    sky_suns: Extracted<SkyQuery>,
     tints: Extracted<Query<&LightTint>>,
     skies: Extracted<Query<&RenderEntity, With<Sky>>>,
     main_luts: Extracted<Res<AtmosphereLuts>>,
     mut luts: ResMut<AtmosphereLuts>,
     mut sky: ResMut<ExtractedSky>,
 ) {
-    let sun = pick_sun(&suns)
+    let sun = active_sun(&sky_suns, &suns)
         .and_then(|entity| suns.get_entity(entity))
         .map(|(entity, sun, light, transform)| ExtractedSun {
             toward_sun: toward_sun(transform),
