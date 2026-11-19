@@ -236,7 +236,7 @@ pub struct SkyRadianceMap {
   - `clear_cameras` moves into it. Today it runs before `Draw` only because
     it shares `ResMut<RenderDevice>` with the material passes and is
     registered first. The set makes that order explicit.
-  - The sky pass runs in the set after `clear_cameras`.
+  - Inside it, `BackgroundSet { Clear, Draw }` are chained. `clear_cameras` is in `Clear` and the sky pass in `Draw`, so neither names the other's system.
 
 ### Standard shader changes
 
@@ -299,7 +299,7 @@ material-macro materials:
 |---|---|---|
 | `extract_sky` | `Extract` | Copies the sun direction, `Sun::disk_radius`, the sun light's color × intensity, its `LightTint`, which cameras have a `Sky` with their night terms, and `AtmosphereLuts` when it `is_changed()`. |
 | `upload_atmosphere_luts`, then `render_sky_view` | `Render`, chained, before `Background` | `upload_atmosphere_luts`: when the LUTs changed, converts them to f16 (the `half` crate, already in `Cargo.lock` through wgpu, becomes a direct dependency) and writes them to two `Rgba16Float` textures. `render_sky_view`: renders the sky-radiance map (256×128, allocated once at startup) in place. A fragment pass raymarches 32 steps per texel through the LUTs. It runs when the sun direction, light or LUTs differ from the values it last rendered with, which it keeps in a `SystemLocal`. |
-| `draw_sky` | `Background`, after `clear_cameras` | For each camera with a `Sky`, it draws a fullscreen triangle into the camera's viewport rect. There is no depth test or write; opaque geometry covers it in `Draw`. The view direction is rebuilt from `inverse_view_proj`. The output is map radiance, plus the analytic sun disk, plus `night_color`, then ACES. The sun disk is `LightTint` × illuminance / disk solid angle, with limb darkening. |
+| `draw_sky` | `RenderSet::Background` and `BackgroundSet::Draw`, after the clears in `BackgroundSet::Clear` | For each camera with a `Sky`, it draws a fullscreen triangle into the camera's viewport rect. There is no depth test or write; opaque geometry covers it in `Draw`. The view direction is rebuilt from `inverse_view_proj`. The output is map radiance, plus the analytic sun disk, plus `night_color`, then ACES. The sun disk is `LightTint` × illuminance / disk solid angle, with limb darkening. |
 
 Deleted from `crates/skybox`:
 
