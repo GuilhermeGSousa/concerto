@@ -1,41 +1,62 @@
 use std::collections::HashSet;
 
+use concerto_color::Color;
 use concerto_ecs::{Entity, Query, component::scene::SceneEntityRef, entity::hierarchy::ChildOf};
 use concerto_foundation::transform::GlobalTransform;
-use concerto_mesh::{SkeletonComponent, SkeletonGizmo};
+use concerto_mesh::SkeletonComponent;
 
 use crate::DebugGizmos;
 
+pub(crate) struct BoneStyle {
+    pub(crate) color: Color,
+    pub(crate) joint_size: f32,
+    pub(crate) axes: bool,
+}
+
 pub(crate) fn draw_skeleton_gizmos(
-    skeletons: Query<(&SkeletonGizmo, &SkeletonComponent)>,
+    skeletons: Query<(&concerto_mesh::SkeletonGizmo, &SkeletonComponent)>,
     bones: Query<(&GlobalTransform, Option<&ChildOf>)>,
     mut gizmos: DebugGizmos,
 ) {
     for (gizmo, skeleton) in skeletons.iter() {
-        let entities: Vec<Entity> = skeleton
-            .bones()
-            .iter()
-            .filter_map(|bone| SceneEntityRef::entity(*bone))
-            .collect();
-        let members: HashSet<Entity> = entities.iter().copied().collect();
-        for bone in entities {
-            let Some((global, parent)) = bones.get_entity(bone) else {
-                continue;
-            };
-            let joint = global.translation();
-            gizmos.sphere(joint, gizmo.joint_size, gizmo.color);
-            if gizmo.axes {
-                gizmos.axes(&global.to_transform(), gizmo.joint_size * 4.0);
-            }
-            let Some(parent) = parent
-                .map(ChildOf::parent)
-                .filter(|parent| members.contains(parent))
-            else {
-                continue;
-            };
-            if let Some((parent_global, _)) = bones.get_entity(parent) {
-                gizmos.line(parent_global.translation(), joint, gizmo.color);
-            }
+        let style = BoneStyle {
+            color: gizmo.color,
+            joint_size: gizmo.joint_size,
+            axes: gizmo.axes,
+        };
+        draw_skeleton(skeleton, &bones, &style, &mut gizmos);
+    }
+}
+
+pub(crate) fn draw_skeleton(
+    skeleton: &SkeletonComponent,
+    bones: &Query<(&GlobalTransform, Option<&ChildOf>)>,
+    style: &BoneStyle,
+    gizmos: &mut DebugGizmos,
+) {
+    let entities: Vec<Entity> = skeleton
+        .bones()
+        .iter()
+        .filter_map(|bone| SceneEntityRef::entity(*bone))
+        .collect();
+    let members: HashSet<Entity> = entities.iter().copied().collect();
+    for bone in entities {
+        let Some((global, parent)) = bones.get_entity(bone) else {
+            continue;
+        };
+        let joint = global.translation();
+        gizmos.sphere(joint, style.joint_size, style.color);
+        if style.axes {
+            gizmos.axes(&global.to_transform(), style.joint_size * 4.0);
+        }
+        let Some(parent) = parent
+            .map(ChildOf::parent)
+            .filter(|parent| members.contains(parent))
+        else {
+            continue;
+        };
+        if let Some((parent_global, _)) = bones.get_entity(parent) {
+            gizmos.line(parent_global.translation(), joint, style.color);
         }
     }
 }
@@ -47,6 +68,7 @@ mod tests {
 
     use super::*;
     use crate::GizmoStorage;
+    use concerto_mesh::SkeletonGizmo;
 
     fn bone(world: &mut World, at: Vec3, parent: Option<Entity>) -> Entity {
         let global = GlobalTransform::new(Mat4::from_translation(at));
