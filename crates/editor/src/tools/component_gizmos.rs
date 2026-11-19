@@ -161,9 +161,17 @@ pub(crate) fn build(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concerto_app::edit_time::EditTime;
     use concerto_debug_gizmos::GizmoStorage;
     use concerto_ecs::{
-        IntoSystem, System, World, component::Component, entity::hierarchy::Children,
+        IntoSystem, System, World,
+        component::Component,
+        entity::hierarchy::Children,
+        system::{
+            executor::single_thread::SingleThreadedExecutor,
+            schedule::Schedules,
+            tag::{SystemTag, TagFilter},
+        },
     };
     use concerto_mesh::Aabb;
     use concerto_render::components::{Camera, Light};
@@ -267,5 +275,28 @@ mod tests {
         set(&mut world, "Camera", false);
         set(&mut world, "Bounds", true);
         assert_eq!(drawn(&mut world), bounds, "bounds with nothing selected");
+
+        let mut app = App::for_editing();
+        app.register_plugin(DebugGizmosPlugin);
+        app.register_component_gizmo::<BoundsGizmo>();
+        let world = app.main_mut().world_mut();
+        placed(world, aabb, Vec3::ZERO);
+        set(world, "Bounds", true);
+        let schedules = world.remove_resource::<Schedules>().unwrap();
+        let edit_time = TagFilter {
+            include: vec![EditTime.intern()],
+            exclude: Vec::new(),
+        };
+        let compiled = schedules.compile_filtered::<SingleThreadedExecutor>(world, &edit_time);
+        world.insert_resource(compiled);
+        world.run_schedule(LateUpdate);
+        assert_eq!(
+            world
+                .get_resource::<GizmoStorage>()
+                .unwrap()
+                .segment_count(),
+            bounds,
+            "an edit App draws in LateUpdate"
+        );
     }
 }
