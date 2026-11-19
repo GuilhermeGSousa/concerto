@@ -16,6 +16,7 @@ use concerto_animation::clip::{
 };
 use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_color::Color;
+use concerto_director::{Lens, VirtualCamera};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
@@ -26,7 +27,6 @@ use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{Texture, TextureRole};
-use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
 use concerto_render::importers::image_importer::{ImportedTexture, imported_texture};
@@ -547,31 +547,25 @@ impl Importer for GltfImporter {
                 }
             }
 
-            // A node's glTF `camera` becomes a `Camera` component. Only the
-            // perspective projection maps onto the engine's camera; an
-            // orthographic one is warned about and falls back to
-            // `Camera::default()`, faithful to the old runtime loader.
             if let Some(camera) = gltf_node.camera() {
-                match camera.projection() {
-                    gltf::camera::Projection::Perspective(perspective) => {
-                        push_node_component(
-                            &mut scene_node,
-                            &Camera {
-                                fovy: perspective.yfov(),
-                                znear: perspective.znear(),
-                                zfar: perspective.zfar().unwrap_or(100.0),
-                                ..Camera::default()
-                            },
-                        )?;
-                    }
+                let lens = match camera.projection() {
+                    gltf::camera::Projection::Perspective(perspective) => Lens {
+                        fovy: perspective.yfov(),
+                        znear: perspective.znear(),
+                        zfar: perspective.zfar().unwrap_or(Lens::default().zfar),
+                    },
                     gltf::camera::Projection::Orthographic(_) => {
                         warn!(
-                            "Orthographic camera '{}' is not supported, using default perspective",
+                            "Orthographic camera '{}' is not supported, using the default lens",
                             camera.name().unwrap_or("<unnamed>")
                         );
-                        push_node_component(&mut scene_node, &Camera::default())?;
+                        Lens::default()
                     }
-                }
+                };
+                push_node_component(
+                    &mut scene_node,
+                    &VirtualCamera::new(0).disabled().with_lens(lens),
+                )?;
             }
 
             // A `KHR_lights_punctual` light becomes a `Light` (+ render-world

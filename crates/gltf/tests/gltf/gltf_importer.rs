@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use concerto_animation::clip::{Additive, AdditiveBase, AnimationClip, ClipRange};
 use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
+use concerto_director::{Lens, VirtualCamera};
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_gltf::gltf_importer::{GltfImporter, GltfSettings};
@@ -181,7 +182,7 @@ fn a_source_and_its_settings_import_their_sub_assets_or_are_refused() {
 }
 
 #[test]
-fn a_single_primitive_node_carries_its_mesh_material_and_light_by_stable_id() {
+fn a_single_primitive_node_carries_its_mesh_material_light_and_shot_by_stable_id() {
     let outputs = imported("triangle.gltf", "");
     let scene: Scene = emitted(&outputs, "scene");
     assert_eq!(scene.nodes.len(), 1);
@@ -193,6 +194,26 @@ fn a_single_primitive_node_carries_its_mesh_material_and_light_by_stable_id() {
     );
     assert!(has_component_ending_in(node, "MaterialComponent"));
     assert!(has_component_ending_in(node, "light::Light"));
+    let shot: VirtualCamera = decode(
+        node.components
+            .iter()
+            .find(|c| c.type_name == VirtualCamera::name())
+            .expect("a glTF camera imports as a virtual camera"),
+    );
+    assert!(!shot.is_enabled(), "an imported shot is dormant");
+    assert_eq!(shot.priority(), 0);
+    assert_eq!(
+        shot.lens,
+        Some(Lens {
+            fovy: 0.8,
+            znear: 0.1,
+            zfar: 50.0,
+        })
+    );
+    assert!(
+        !has_component_ending_in(node, "camera::Camera"),
+        "an import adds no window camera"
+    );
     assert!(
         scene
             .referenced_assets

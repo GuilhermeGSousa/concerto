@@ -17,6 +17,7 @@ concerto-mesh.workspace = true
 glam.workspace = true
 concerto-world-grid.workspace = true
 concerto-skybox.workspace = true
+concerto-director.workspace = true
 concerto-debug-gizmos.workspace = true
 bincode = "1.3"
 concerto-app.workspace = true

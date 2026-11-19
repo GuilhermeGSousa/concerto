@@ -5,6 +5,7 @@
   "nodes": [{
     "name": "Triangle",
     "mesh": 0,
+    "camera": 0,
     "extensions": { "KHR_lights_punctual": { "light": 0 } },
     "extras": { "components": { "MeshCollider": {} } }
   }],
@@ -14,6 +15,10 @@
     }
   },
   "extensionsUsed": ["KHR_lights_punctual"],
+  "cameras": [{
+    "type": "perspective",
+    "perspective": { "yfov": 0.8, "znear": 0.1, "zfar": 50.0, "aspectRatio": 1.5 }
+  }],
   "meshes": [{
     "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }]
   }],

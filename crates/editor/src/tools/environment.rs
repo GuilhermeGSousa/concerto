@@ -1,12 +1,13 @@
-//! The editor camera shows the scene camera's sky and environment.
+//! The editor camera shows the scene's main camera's sky and environment.
 use concerto_app::{App, Plugin, edit_time::AtEditTime, schedule_groups::Update};
+use concerto_director::MainCamera;
 use concerto_ecs::{Component, Entity, Query, With, Without, command::CommandQueue};
-use concerto_render::components::{camera::Camera, camera_environment::CameraEnvironment};
+use concerto_render::components::camera_environment::CameraEnvironment;
 use concerto_skybox::Sky;
 
 use crate::tools::camera::{EditorCamera, EditorHelper};
 
-/// Copies the scene camera's `Sky` and `CameraEnvironment` onto the editor camera, so the viewport lights and draws the scene as it will play.
+/// Copies the scene's `MainCamera`'s `Sky` and `CameraEnvironment` onto the editor camera, so the viewport lights and draws the scene as it will play.
 pub struct ViewportEnvironmentPlugin;
 
 impl Plugin for ViewportEnvironmentPlugin {
@@ -17,20 +18,21 @@ impl Plugin for ViewportEnvironmentPlugin {
 
 pub(crate) fn mirror_scene_environment(
     editor: Query<(Entity, Option<&Sky>, Option<&CameraEnvironment>), With<EditorCamera>>,
-    skies: Query<(Entity, &Sky), (With<Camera>, Without<EditorHelper>)>,
-    environments: Query<(Entity, &CameraEnvironment), (With<Camera>, Without<EditorHelper>)>,
+    main_cameras: Query<
+        (Entity, Option<&Sky>, Option<&CameraEnvironment>),
+        (With<MainCamera>, Without<EditorHelper>),
+    >,
     mut cmd: CommandQueue,
 ) {
+    let source = main_cameras
+        .iter()
+        .min_by_key(|(entity, ..)| entity.index());
+    let sky_source = source.and_then(|(_, sky, _)| sky);
+    let environment_source = source.and_then(|(_, _, environment)| environment);
     for (camera, sky, environment) in editor.iter() {
-        mirror(&mut cmd, camera, sky, lowest(skies.iter()));
-        mirror(&mut cmd, camera, environment, lowest(environments.iter()));
+        mirror(&mut cmd, camera, sky, sky_source);
+        mirror(&mut cmd, camera, environment, environment_source);
     }
-}
-
-fn lowest<'a, T: 'a>(sources: impl Iterator<Item = (Entity, &'a T)>) -> Option<&'a T> {
-    sources
-        .min_by_key(|(entity, _)| entity.index())
-        .map(|(_, value)| value)
 }
 
 fn mirror<T: Component + Clone + PartialEq>(
@@ -55,6 +57,7 @@ mod tests {
     };
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_color::Color;
+    use concerto_director::MainCamera;
     use concerto_ecs::{Component, Entity};
     use concerto_reflect::PropertyPath;
     use concerto_render::{
@@ -80,6 +83,7 @@ mod tests {
         crate::tools::build_core(&mut app);
         app.register_type::<Sky>()
             .register_type::<CameraEnvironment>()
+            .register_type::<MainCamera>()
             .register_plugin(ViewportEnvironmentPlugin);
         app.finish_plugin_build();
         let world = app.main_mut().world_mut();
@@ -89,9 +93,10 @@ mod tests {
             fog: None,
             ambient: Color::rgba(0.2, 0.3, 0.4, 1.0),
         };
-        let first = world.spawn((Sky::default(), environment));
         let second_sky = Sky::default().with_night_color(Color::rgba(0.5, 0.0, 0.0, 1.0));
-        let second = world.spawn(second_sky.clone());
+        world.spawn((Camera::default(), second_sky.clone()));
+        let first = world.spawn((MainCamera, Sky::default(), environment));
+        let second = world.spawn((MainCamera, second_sky.clone()));
 
         for _ in 0..3 {
             app.update();
@@ -120,9 +125,9 @@ mod tests {
         };
         remove(&mut app, first, TypeId::of::<CameraEnvironment>());
         assert_eq!(held::<CameraEnvironment>(&mut app, editor), None);
-        remove(&mut app, first, TypeId::of::<Sky>());
+        remove(&mut app, first, TypeId::of::<MainCamera>());
         assert_eq!(held(&mut app, editor), Some(second_sky));
-        remove(&mut app, second, TypeId::of::<Sky>());
+        remove(&mut app, second, TypeId::of::<MainCamera>());
         assert_eq!(held::<Sky>(&mut app, editor), None);
         assert_eq!(held::<CameraEnvironment>(&mut app, editor), None);
     }

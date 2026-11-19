@@ -550,12 +550,13 @@ steps, and drops. The crate has three parts:
   each edit. `EditToolsPlugin` installs it. The half that edits and captures a
   scene needs no renderer; the viewport half is added when the recipe has one.
   In that half, `ViewportEnvironmentPlugin` mirrors the scene's environment
-  onto the editor camera: each frame it copies `Sky` and `CameraEnvironment`,
-  each from the scene camera with the lowest entity index that has it, and
-  removes the copy when no scene camera has one. It writes only when the value
-  differs, so the viewport is lit and drawn as the scene's camera sees it, and
-  an agent changes it through `add_component`, `set_property` and
-  `remove_component` on the scene camera.
+  onto the editor camera: each frame it copies `Sky` and `CameraEnvironment`
+  from the scene's `MainCamera` (the one with the lowest entity index), and
+  removes each copy when that camera lacks it or the scene has no
+  `MainCamera`. It writes only when the value differs, so the viewport is lit
+  and drawn as the level's camera sees it in Play, and an agent changes it
+  through `add_component`, `set_property` and `remove_component` on that
+  camera.
 - The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
   editor's `App`.
 
