@@ -69,26 +69,24 @@ call `register_component_gizmo`. A preview does not run them. It panics in an
 
 A game draws a component of its own the same way. The game crate implements
 `ComponentGizmo` against `concerto-debug-gizmos`, since it never depends on the
-editor, and its `<game>-editor` crate registers it with a plugin passed to
-`run_with`:
+editor. A small crate of the game's, which may depend on the editor, registers
+it:
 
 ```rust
 use concerto_editor::{scene::SceneToolsAppExt, tools::component_gizmos::ComponentGizmosAppExt};
 
-fn door_gizmos(app: &mut App) {
+pub fn install(app: &mut App) {
     app.add_scene_tools_plugin(|app| {
         app.register_component_gizmo::<my_game::DoorGizmo>();
     });
 }
-
-fn main() {
-    concerto_editor::run_with(
-        my_game::game,
-        concat!(env!("CARGO_MANIFEST_DIR"), "/.."),
-        &[door_gizmos],
-    );
-}
 ```
+
+The game lists that crate with a `path` under
+`[package.metadata.concerto.editor]`, as the project tool's
+[README](../project/README.md#editor-plugins) describes, so `editor --update`
+keeps it; a plugin written into `editor/src/main.rs` by hand is lost on the
+next update.
 
 An extension crate's tests can use the `testing` feature, which exposes
 `hosted::testing` and its `SceneFixture` and `forwarding`, the system that
