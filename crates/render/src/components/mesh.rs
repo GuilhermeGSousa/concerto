@@ -38,6 +38,7 @@ bitflags! {
         const SKINNED = 1;
         const NO_FRUSTUM_CULLING = 1 << 1;
         const SHADOW_CASTER = 1 << 2;
+        const BLENDED = 1 << 3;
     }
 }
 

@@ -188,6 +188,15 @@ fix the entry in the same commit as the change that made it false.
   and nothing checks it against the Rust layout in `camera.rs`. A change to
   `CameraUniform` changes the render crate's `shader.wgsl` and `sky.wgsl`
   together.
+- **Blended instances cast no shadow, and blended assets of different
+  material types do not interleave.** `flag_blended_instances<M>` sets
+  `RenderMeshInstanceFlags::BLENDED` every frame from the prepared material's
+  alpha mode, because `extract_mesh` overwrites the flags whenever it
+  extracts the mesh again, and `queue_shadow_meshes` skips the flag. Each
+  `MaterialPlugin<M>` sorts and draws only its own blended instances in
+  `RenderSet::Transparent`, so where blended surfaces of two types overlap,
+  one type is drawn wholly over the other whatever their distance; one sorted
+  phase across types is #898.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 

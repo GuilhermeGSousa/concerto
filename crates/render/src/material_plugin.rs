@@ -27,7 +27,7 @@ use crate::{
     components::{
         camera::RenderCamera,
         material::{HasMaterial, MaterialComponent, RenderMaterialComponent},
-        mesh::RenderMeshInstances,
+        mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
         render_entity::{MainEntity, RenderEntity},
         shadows::RenderLighting,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -310,6 +310,25 @@ pub(crate) fn assign_fallback_material(
                 render_entity,
             );
         }
+    }
+}
+
+pub(crate) fn flag_blended_instances<M: Material>(
+    render_mesh_query: Query<(&MainEntity, &RenderMaterialComponent<M>)>,
+    render_materials: Res<RenderAssets<RenderMaterial<M>>>,
+    mut render_mesh_instances: ResMut<RenderMeshInstances>,
+) {
+    for (main_entity, material) in render_mesh_query.iter() {
+        let (Some(instance), Some(render_material)) = (
+            render_mesh_instances.get_mut(main_entity),
+            render_materials.get(&material.material_asset_id),
+        ) else {
+            continue;
+        };
+        instance.flags.set(
+            RenderMeshInstanceFlags::BLENDED,
+            render_material.alpha_mode == AlphaMode::Blend,
+        );
     }
 }
 
@@ -800,6 +819,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
         app.add_render_system(Extract, extract_materials::<M>)
+            .add_render_system(Render, flag_blended_instances::<M>.before(clear_draw_stats))
             .add_render_system(
                 Render,
                 queue_material_meshes::<M>

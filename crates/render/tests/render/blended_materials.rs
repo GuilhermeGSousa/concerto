@@ -18,8 +18,10 @@ use concerto_render::{
         mesh::Mesh,
         texture::Texture,
     },
+    batching::{RenderDrawStats, ViewDrawStats},
     components::{
         camera::{Camera, RenderCamera, RenderTarget},
+        light::Light,
         material::MaterialComponent,
         render_entity::RenderEntity,
     },
@@ -28,6 +30,7 @@ use concerto_render::{
     material_plugin::MaterialPlugin,
     plugin::RenderPlugin,
     readback::read_texture,
+    shadow_pipeline::ShadowPipelinePlugin,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
 use glam::{Quat, Vec2, Vec3};
@@ -46,6 +49,7 @@ fn app(gpu: &Gpu) -> App {
         .register_plugin(WindowPlugin)
         .register_plugin(TransformPlugin)
         .register_plugin(RenderPlugin)
+        .register_plugin(ShadowPipelinePlugin)
         .register_plugin(MaterialPlugin::<StandardMaterial>::default());
     app.main_mut().world_mut().register_component::<Transform>();
     app
@@ -95,6 +99,14 @@ fn centre_pixel(app: &App, gpu: &Gpu, camera: Entity) -> [u8; 3] {
     let image = read_texture(gpu, render_camera.render_target.as_ref().unwrap().texture());
     let [r, g, b, _] = image.get_pixel(SIZE / 2, SIZE / 2).0;
     [r, g, b]
+}
+
+fn shadow_layers(app: &App) -> Vec<ViewDrawStats> {
+    app.render()
+        .get_resource::<RenderDrawStats>()
+        .unwrap()
+        .shadow_layers
+        .clone()
 }
 
 fn aces(color: Vec3) -> Vec3 {
@@ -160,6 +172,11 @@ fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it()
     spawn(&mut app, &sheet_mesh, far_material, 1.0);
     spawn(&mut app, &floor_mesh, floor_material, 0.0);
 
+    app.main_mut().world_mut().spawn((
+        Light::directional_light().with_shadows(),
+        Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
+    ));
+
     let target = AssetId::from_path("textures/blended_materials");
     app.main_mut()
         .world_mut()
@@ -186,6 +203,14 @@ fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it()
         over(&near, over(&far, aces(floor.emissive))),
         "the near sheet over the far sheet over the floor",
     );
+    assert_eq!(
+        shadow_layers(&app),
+        [ViewDrawStats {
+            draws: 1,
+            culled: 0
+        }],
+        "only the opaque floor casts a shadow"
+    );
 
     app.main_mut()
         .world_mut()
@@ -200,5 +225,13 @@ fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it()
         centre_pixel(&app, &gpu, camera),
         aces(near_opaque.emissive),
         "an opaque near sheet hides what is behind it",
+    );
+    assert_eq!(
+        shadow_layers(&app),
+        [ViewDrawStats {
+            draws: 2,
+            culled: 0
+        }],
+        "an opaque near sheet casts a shadow again"
     );
 }

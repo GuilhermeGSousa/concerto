@@ -263,7 +263,8 @@ after every opaque surface of their material type, farthest from the camera
 first, measured to the centre of each mesh's `Aabb`, or to its position while
 it has none. They are culled like any
 other mesh, but two of them merge into one draw call only when they share a
-mesh and a material and come one after the other in that order.
+mesh and a material and come one after the other in that order. They
+receive shadows but cast none.
 
 ## The world grid and the sky
 
