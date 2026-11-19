@@ -26,7 +26,7 @@ and distance fog takes the sky's color in the direction you look.
 | Lighting | Sky irradiance (L2 spherical harmonics) replaces the flat ambient, and atmospheric transmittance tints the Sun light. |
 | Night | Fades to a configurable night sky color and ambient floor. No stars or moon. |
 | Skybox crate | Fix it and build the sky in it. Cube maps are follow-up work. |
-| Placement | A `Sky` component on the camera turns the sky on for that camera. |
+| Placement | A `Sky` component on a camera placed in the level turns the sky on for that camera, and names its sun with an entity reference. |
 | Units | Relative to the Sun: sky radiance scales with the Sun light's color and intensity under the existing per-material ACES. No HDR target or exposure in this change. |
 | Where lighting is computed | On the CPU, when the Sun, its atmosphere or a `Sky` changes (change detection). |
 | Fog | Per pixel: with a sky, fog takes the sky radiance in the view direction. |
@@ -102,6 +102,8 @@ pub struct Atmosphere {
 #[reflect(Component, Default, SceneComponent)]
 #[require(Camera)]
 pub struct Sky {
+    /// The directional light with a `Sun` this sky follows.
+    pub sun: SceneEntityRef,
     /// Radiance added to the sky and to sky-colored fog, so night is not black.
     pub night_color: Color,
     /// Light added to the ambient term, in the units of `CameraEnvironment::ambient`.
@@ -129,12 +131,21 @@ pub struct Sky {
     (`docs/required-components.md`). So a `Sun` on a spot or point light is
     possible, and is ignored with one warning.
   - `Sky` requires `Camera`, which brings `SyncWithRenderWorld`.
-- **Picking the sun.**
-  - The sun is the first entity, in entity order, that has `Sun` and a
-    directional `Light`.
-  - A second one logs one warning and is ignored.
-  - With no sun, every `Sky` camera draws night: `night_color` and
-    `night_ambient` only, with one warning.
+- **Naming the sun.** `Sky::sun` is a `SceneEntityRef`, as `CharacterLink`
+  names its capsule. The editor's entity picker edits it and `set_property`
+  writes it. Saving fails while it names a deleted entity, as for any
+  reference.
+  - A `Sky` whose `sun` is unset, or names an entity without `Sun` and a
+    directional `Light`, draws night (`night_color` and `night_ambient`
+    only), with one warning per camera.
+- **One active sun per frame.** There is one set of atmosphere tables and
+  one sky-radiance map.
+  - The active sun is the one named by the `Sky` camera with the lowest
+    entity index whose reference resolves.
+  - A `Sky` camera that names a different sun draws with the active sun and
+    warns once.
+- **Every `Sun` tints its own light.** Each directional `Sun` writes its
+  `LightTint` from its own `atmosphere`, whether or not a `Sky` names it.
 - **Sun direction.** The direction *toward* the sun is `rotation * Vec3::Z`,
   the opposite of the light's travel direction (`-(rotation * Z)`, as
   `Light::attenuation_at` and the shadows use).
@@ -274,8 +285,8 @@ editor's edit `App` as well as in a game.
 
 | System | Runs when | Does |
 |---|---|---|
-| `build_atmosphere_luts` | Every frame; rebuilds only when the picked sun's `Atmosphere` differs from the one the tables were built from (a value comparison, which also covers the picked sun changing) | Builds the transmittance LUT (256×64) and the multiple-scattering LUT (32×32) on the CPU from the picked sun's `atmosphere` into `AtmosphereLuts`. The resource is inserted empty at build and holds the LUT data and the `Atmosphere` they were built from; readers see a rebuild through `is_changed()`. It writes the resource directly through `ResMut`, not through commands. |
-| `update_sun_lighting` | Chained after `build_atmosphere_luts`; does work when any of these changed: `AtmosphereLuts`, `Changed<Sky>` (covers added), `Changed<Sun>`, `Changed<Light>` or `Changed<GlobalTransform>` on a `Sun` entity, or a `Sun` was removed (`RemovedComponents<Sun>`, after `App::track_removals::<Sun>()`). | Picks the sun and computes its direction. Inserts or updates `LightTint` on it: transmittance from the ground toward the sun, zero below the horizon, with a smooth fade across the disk. Integrates the sky on the CPU into `SphericalHarmonics`: 256 Fibonacci directions, 16 march steps each, through the CPU LUTs. The upper hemisphere is sky radiance; the lower is ground bounce, `ground_albedo × irradiance on the ground / π`. Scales by the Sun light's color × intensity and inserts or updates `CameraSkyLight` on every `Sky` camera. Without a sun, it writes zero irradiance (night). |
+| `build_atmosphere_luts` | Every frame; rebuilds only when the active sun's `Atmosphere` differs from the one the tables were built from (a value comparison, which also covers the active sun changing); with no active sun it builds nothing | Builds the transmittance LUT (256×64) and the multiple-scattering LUT (32×32) on the CPU from the active sun's `atmosphere` into `AtmosphereLuts`. The resource is inserted empty at build and holds the LUT data and the `Atmosphere` they were built from; readers see a rebuild through `is_changed()`. It writes the resource directly through `ResMut`, not through commands. |
+| `update_sun_lighting` | Chained after `build_atmosphere_luts`; does work when any of these changed: `AtmosphereLuts`, `Changed<Sky>` (covers added), `Changed<Sun>`, `Changed<Light>` or `Changed<GlobalTransform>` on a `Sun` entity, or a `Sun` was removed (`RemovedComponents<Sun>`, after `App::track_removals::<Sun>()`). | Resolves each `Sky`'s sun and the active sun (*Naming the sun*). Inserts or updates `LightTint` on every directional `Sun`, from its own atmosphere: transmittance from the ground toward the sun, zero below the horizon, with a smooth fade across the disk. Integrates the sky on the CPU into `SphericalHarmonics`: 256 Fibonacci directions, 16 march steps each, through the CPU LUTs. The upper hemisphere is sky radiance; the lower is ground bounce, `ground_albedo × irradiance on the ground / π`. Scales by the Sun light's color × intensity and inserts or updates `CameraSkyLight` on every `Sky` camera. A `Sky` whose sun does not resolve gets zero irradiance (night). |
 | listener `On<Remove<Sky>>` | a `Sky` is removed | Removes `CameraSkyLight` from that camera. |
 | listener `On<Remove<Sun>>` | a `Sun` is removed | Removes `LightTint` from that light. |
 
@@ -326,8 +337,9 @@ Without a `Sun` and a `Sky`, the sky adds no per-frame cost:
 - **Reachable today.** `Sun`, `Atmosphere` and `Sky` are reflected scene
   components, so the inspector shows and edits them. The existing MCP tools
   `add_component` and `set_property` reach every setting:
-  - adding `Sky` to the scene camera;
   - marking a light `Sun`;
+  - adding `Sky` to a camera in the level, and pointing its `sun` at that
+    light with `set_property` (an entity id, as for any `SceneEntityRef`);
   - turning the sun through its transform;
   - tuning the atmosphere.
 
@@ -403,7 +415,8 @@ without an adapter.
   - Every value is non-negative.
 - **`a_sun_sets_the_sky_lighting_from_noon_to_night`.** The `App` has
   `MainSchedulePlugin`, `TransformPlugin` and `SkyPlugin`, a camera with
-  `Sky`, and a light spawned with only `Sun`.
+  `Sky` whose `sun` names a light spawned with only `Sun`.
+  - A `Sky` with an unset `sun` gets zero irradiance.
   - The light is directional.
   - At noon, `CameraSkyLight`'s upward irradiance is bluer than its downward
     one, and `LightTint` is near white.
@@ -443,8 +456,11 @@ missing components, then implement.
 
 ## Visual checks (owner, on the local Sponza scenes)
 
-Use the `visual-verification` skill in Play, with a `Sky` on the Sponza camera
-and the scene's directional light marked `Sun`:
+Use the `visual-verification` skill. Setup in render-test's `main.gasset`,
+after copying it to `main.gasset.bak`: its own `Sun` light becomes a
+directional light marked `Sun` (Sponza's imported `SUN` is a read-only linked
+node with intensity 0), and a new camera in the level gets a `Sky` whose `sun`
+names it. Then:
 
 1. **Noon.** Blue sky above the atrium, a white sun disk, and shaded areas lit
    by a cool sky ambient instead of grey.
@@ -522,6 +538,12 @@ and the scene's directional light marked `Sun`:
    environment mirror*.
 
 Decisions 1 and 2 were confirmed as written.
+
+4. **`Sky` names its sun** (owner, 2026-11-19, after the first build). The
+   level gets a camera of its own with a `Sky` whose `sun` is a
+   `SceneEntityRef` to the `Sun`, replacing the implicit "first `Sun` by
+   entity index" rule. One sun is active per frame: the one named by the
+   lowest-index `Sky` camera. The editor mirror keeps its lowest-index rule.
 
 ## Follow-up work
 
