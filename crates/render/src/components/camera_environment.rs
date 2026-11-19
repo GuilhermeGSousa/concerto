@@ -50,7 +50,7 @@ impl CameraEnvironment {
         self
     }
 
-    /// The ambient light the standard material is drawn with.
+    /// The ambient light the standard material is drawn with, unless the camera has a sky, which lights it instead.
     pub fn ambient_light(&self) -> LinearRgba {
         self.ambient.to_linear()
     }

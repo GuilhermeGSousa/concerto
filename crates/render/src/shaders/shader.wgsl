@@ -482,8 +482,11 @@ fn sky_radiance(direction: vec3<f32>) -> vec3<f32> {
 }
 
 fn sky_fog_color(to_fragment: vec3<f32>) -> vec3<f32> {
-    let level = vec3<f32>(to_fragment.x, max(to_fragment.y, 0.0), to_fragment.z);
-    let direction = level / max(length(level), 1e-6);
+    var level = vec3<f32>(to_fragment.x, max(to_fragment.y, 0.0), to_fragment.z);
+    if length(level.xz) < 1e-6 {
+        level = vec3<f32>(0.0, level.y, -1e-6);
+    }
+    let direction = normalize(level);
     return sky_radiance(direction) + camera.night_color.rgb;
 }
 

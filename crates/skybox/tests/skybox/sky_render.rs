@@ -10,7 +10,11 @@ use concerto_mesh::{MeshComponent, primitives::cuboid};
 use concerto_render::{
     MaterialComponent, MaterialPlugin,
     assets::material::StandardMaterial,
-    components::{camera::Camera, light::Light},
+    components::{
+        camera::Camera,
+        camera_environment::{CameraEnvironment, Fog},
+        light::Light,
+    },
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
@@ -24,6 +28,7 @@ use glam::{Quat, Vec3, Vec4Swizzles};
 const WIDTH: u32 = 128;
 const HEIGHT: u32 = 96;
 const CAMERA_PITCH_DEGREES: f32 = 25.0;
+const FAR_CUBE_AZIMUTH_DEGREES: f32 = -30.0;
 
 struct Pixel {
     rgb: Vec3,
@@ -93,7 +98,14 @@ impl SkyScene {
                 clear_color: Color::rgba(0.0, 0.0, 0.0, 1.0),
                 ..Camera::perspective(70f32.to_radians(), WIDTH as f32 / HEIGHT as f32)
             },
-            Sky::default(),
+            Sky::default().with_night_ambient(Color::rgba(0.1, 0.1, 0.1, 1.0)),
+            CameraEnvironment::default()
+                .with_ambient(Color::rgba(1.0, 1.0, 1.0, 1.0))
+                .with_fog(Fog {
+                    color: Color::rgba(1.0, 0.0, 0.0, 1.0),
+                    density: 0.1,
+                    start: 10.0,
+                }),
             Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH_DEGREES.to_radians())),
         ));
         let sun = world.spawn((
@@ -102,9 +114,19 @@ impl SkyScene {
             sun_toward(toward(sun_elevation_degrees, 0.0)),
         ));
         world.spawn((
+            MeshComponent {
+                handle: mesh.clone(),
+            },
+            MaterialComponent::<StandardMaterial> {
+                handle: material.clone(),
+            },
+            Transform::from_translation(Vec3::new(0.0, 0.0, -4.0)),
+        ));
+        world.spawn((
             MeshComponent { handle: mesh },
             MaterialComponent::<StandardMaterial> { handle: material },
-            Transform::from_translation(Vec3::new(0.0, 0.0, -4.0)),
+            Transform::from_translation(toward(0.0, FAR_CUBE_AZIMUTH_DEGREES) * 60.0)
+                .with_scale(Vec3::splat(12.0)),
         ));
         app.finish_plugin_build();
         let mut scene = Self {
@@ -130,13 +152,13 @@ impl SkyScene {
         }
     }
 
-    fn turn_sun(&mut self, elevation_degrees: f32) {
+    fn turn_sun(&mut self, elevation_degrees: f32, azimuth_degrees: f32) {
         *self
             .app
             .main_mut()
             .world_mut()
             .get_component_for_entity_mut::<Transform>(self.sun)
-            .unwrap() = sun_toward(toward(elevation_degrees, 0.0));
+            .unwrap() = sun_toward(toward(elevation_degrees, azimuth_degrees));
         for _ in 0..3 {
             self.app.update();
         }
@@ -188,7 +210,22 @@ fn the_sky_draws_behind_geometry_and_follows_the_sun() {
         sun.rgb
     );
 
-    scene.turn_sun(1.0);
+    let far_fog = scene.pixel_toward(toward(0.0, FAR_CUBE_AZIMUTH_DEGREES));
+    assert!(
+        far_fog.is_blue(),
+        "far fog takes the sky's color, not Fog::color: {:?}",
+        far_fog.rgb
+    );
+
+    scene.turn_sun(50.0, 180.0);
+    let sunlit_cube = scene.pixel_toward(Vec3::NEG_Z);
+    assert!(
+        sunlit_cube.rgb.x > 150.0,
+        "the sun lights the face toward it: {:?}",
+        sunlit_cube.rgb
+    );
+
+    scene.turn_sun(1.0, 0.0);
     let horizon = scene.pixel_toward(toward(2.0, 15.0));
     assert!(
         horizon.is_red(),
@@ -196,11 +233,24 @@ fn the_sky_draws_behind_geometry_and_follows_the_sun() {
         horizon.rgb
     );
 
-    scene.turn_sun(-10.0);
+    scene.turn_sun(-10.0, 0.0);
     let night = scene.pixel_toward(toward(30.0, -25.0));
     assert!(
         night.rgb.max_element() < 30.0,
         "the sky past twilight is dark: {:?}",
         night.rgb
+    );
+
+    scene.turn_sun(-10.0, 180.0);
+    let night_cube = scene.pixel_toward(Vec3::NEG_Z);
+    assert!(
+        night_cube.rgb.x < 60.0 && night_cube.rgb.x < sunlit_cube.rgb.x,
+        "below the horizon the sun's tint puts out its light and the sky's ambient replaces CameraEnvironment::ambient: {:?}",
+        night_cube.rgb
+    );
+    assert!(
+        night_cube.rgb.x > 10.0,
+        "night_ambient keeps the face from black: {:?}",
+        night_cube.rgb
     );
 }

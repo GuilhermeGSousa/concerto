@@ -12,8 +12,8 @@ re-exported as `concerto::skybox`.
   across the sky through dawn, noon, sunset and night. `Sun` requires a
   directional `Light`; a `Light` you give yourself wins, and a `Sun` on a
   point or spot light is ignored with a warning. When several directional
-  lights have `Sun`, the first in entity order is the sun and the others are
-  ignored with a warning.
+  lights have `Sun`, the one with the lowest entity index is the sun and the
+  others are ignored with a warning.
 - **`Sky`** on a camera draws the sky behind everything that camera sees and
   lights the scene with it. It requires `Camera`.
 
@@ -70,7 +70,8 @@ stands 200 m above the ground whatever the camera's height.
   or a `Sky` change, it writes the sun's `LightTint` and each `Sky` camera's
   `CameraSkyLight`. It runs while editing as well as in a game.
 - **`SkyRenderPlugin`**, the render world, registered only when `RenderPlugin`
-  was registered first. It uploads the tables, renders the sky-radiance map
+  was registered first; `SkyboxPlugin` warns when `RenderPlugin` came after
+  it. It uploads the tables, renders the sky-radiance map
   (256×128, equirectangular) when the sun, its light or the atmosphere
   changed, and draws the sky into each `Sky` camera's viewport after the
   camera is cleared and before the scene. The map is the

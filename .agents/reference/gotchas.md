@@ -183,6 +183,11 @@ fix the entry in the same commit as the change that made it false.
   Change one and change all three. The skybox replaces the render crate's
   1×1 black map once in `finish` and then renders into it in place, so
   `rebind_sky_radiance` rebuilds camera bind groups only then.
+- **The sky shader copies `CameraUniform`.** The skybox crate's `sky.wgsl`
+  declares the whole struct to reach `inverse_view_proj` and `night_color`,
+  and nothing checks it against the Rust layout in `camera.rs`. A change to
+  `CameraUniform` changes the render crate's `shader.wgsl` and `sky.wgsl`
+  together.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 

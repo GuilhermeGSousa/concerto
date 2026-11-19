@@ -43,4 +43,12 @@ impl Plugin for SkyboxPlugin {
             app.register_plugin(SkyRenderPlugin);
         }
     }
+
+    fn finish(&self, app: &mut App) {
+        if app.is_plugin_added::<RenderPlugin>() && !app.is_plugin_added::<SkyRenderPlugin>() {
+            log::warn!(
+                "SkyboxPlugin was registered before RenderPlugin, so no sky is drawn: register it after RenderPlugin"
+            );
+        }
+    }
 }
