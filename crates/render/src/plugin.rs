@@ -34,7 +34,7 @@ use crate::{
         RenderAssetPlugin,
     },
     resources::RenderContext,
-    sets::RenderSet,
+    sets::{BackgroundSet, RenderSet},
     sky_light::SkyRadianceMap,
     systems::{
         render::{finish_render, present_window},
@@ -154,7 +154,13 @@ impl Plugin for RenderPlugin {
             )
                 .chain(),
         )
-        .add_render_system(Render, clear_cameras.in_set(RenderSet::Background))
+        .configure_render_sets(Render, (BackgroundSet::Clear, BackgroundSet::Draw).chain())
+        .add_render_system(
+            Render,
+            clear_cameras
+                .in_set(RenderSet::Background)
+                .in_set(BackgroundSet::Clear),
+        )
         .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
         .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))

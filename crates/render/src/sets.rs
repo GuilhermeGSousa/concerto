@@ -20,3 +20,12 @@ pub enum RenderSet {
     /// Presenting the finished frame.
     Present,
 }
+
+/// The ordered steps inside [`RenderSet::Background`]: `Clear`, then `Draw`.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum BackgroundSet {
+    /// Clearing each camera's target and depth.
+    Clear,
+    /// Drawing what lies behind the scene, such as the sky, over the cleared target.
+    Draw,
+}

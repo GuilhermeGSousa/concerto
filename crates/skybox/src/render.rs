@@ -21,11 +21,10 @@ use concerto_render::{
     components::{camera::RenderCamera, render_entity::RenderEntity},
     device::RenderDevice,
     layouts::CameraLayout,
-    material_plugin::clear_cameras,
     queue::RenderQueue,
     render_asset::render_window::RenderWindow,
     resources::RenderContext,
-    sets::RenderSet,
+    sets::{BackgroundSet, RenderSet},
     shader::create_shader_module,
 };
 use glam::Vec3;
@@ -60,7 +59,9 @@ impl Plugin for SkyRenderPlugin {
             )
             .add_render_system(
                 Render,
-                draw_sky.in_set(RenderSet::Background).after(clear_cameras),
+                draw_sky
+                    .in_set(RenderSet::Background)
+                    .in_set(BackgroundSet::Draw),
             );
     }
 
