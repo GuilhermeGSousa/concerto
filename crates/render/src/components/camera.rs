@@ -279,7 +279,6 @@ impl CameraUniform {
         self.view_proj
     }
 
-    #[expect(dead_code)]
     pub(crate) fn view_position(&self) -> Vec3 {
         self.view_pos
     }

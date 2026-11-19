@@ -258,6 +258,13 @@ Skinned meshes are never culled, and each one takes its own draw call. A mesh
 whose shader ignores its vertices or its model matrix needs both components,
 or it is culled whenever its vertices' box is out of view. The world grid requires both already.
 
+Blended surfaces, those whose material's alpha mode is `Blend`, are drawn
+after every opaque surface of their material type, farthest from the camera
+first, measured to the centre of each mesh's `Aabb`, or to its position while
+it has none. They are culled like any
+other mesh, but two of them merge into one draw call only when they share a
+mesh and a material and come one after the other in that order.
+
 ## The world grid and the sky
 
 `WorldGrid::default()`, from `concerto::world_grid`, draws an infinite ground

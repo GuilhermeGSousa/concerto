@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cmp::Reverse, ops::Range};
 
 use bytemuck::Pod;
 use concerto_ecs::{
@@ -105,7 +105,6 @@ impl<K> ViewBins<K> {
         })
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn rebuild_back_to_front<'a>(
         &mut self,
         candidates: impl IntoIterator<Item = BinCandidate<'a, K>>,
@@ -131,10 +130,8 @@ impl<K> ViewBins<K> {
                 .distance_squared(view_position)
         };
         self.rebuild_in_order(candidates, frustum, input, |visible| {
-            visible.sort_by(|a, b| {
-                distance(b)
-                    .total_cmp(&distance(a))
-                    .then_with(|| a.key.cmp(&b.key))
+            visible.sort_by_cached_key(|candidate| {
+                (Reverse(distance(candidate).to_bits()), candidate.key)
             });
         })
     }

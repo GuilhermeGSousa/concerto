@@ -1,0 +1,204 @@
+use std::f32::consts::FRAC_PI_2;
+
+use concerto_app::{
+    main_schedule::MainSchedulePlugin,
+    plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
+    App,
+};
+use concerto_color::Color;
+use concerto_ecs::Entity;
+use concerto_foundation::{
+    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle, AssetId},
+    transform::Transform,
+};
+use concerto_mesh::{primitives::plane, MeshComponent};
+use concerto_render::{
+    assets::{
+        material::{AlphaMode, StandardMaterial},
+        mesh::Mesh,
+        texture::Texture,
+    },
+    components::{
+        camera::{Camera, RenderCamera, RenderTarget},
+        material::MaterialComponent,
+        render_entity::RenderEntity,
+    },
+    draw_target::DrawTarget,
+    gpu::Gpu,
+    material_plugin::MaterialPlugin,
+    plugin::RenderPlugin,
+    readback::read_texture,
+};
+use concerto_window::plugin::{Window, WindowPlugin};
+use glam::{Quat, Vec2, Vec3};
+
+const SIZE: u32 = 32;
+const TOLERANCE: u8 = 2;
+
+fn app(gpu: &Gpu) -> App {
+    let mut app = App::new();
+    app.insert_resource(gpu.clone())
+        .insert_resource(DrawTarget::None)
+        .insert_resource(Window::new((64, 48), 1.0));
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(WindowPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(RenderPlugin)
+        .register_plugin(MaterialPlugin::<StandardMaterial>::default());
+    app.main_mut().world_mut().register_component::<Transform>();
+    app
+}
+
+struct Surface {
+    emissive: Vec3,
+    alpha: f32,
+    mode: AlphaMode,
+}
+
+fn material(app: &App, surface: &Surface) -> AssetHandle<StandardMaterial> {
+    let mut material = StandardMaterial::default()
+        .with_base_color_factor(Color::rgba(0.0, 0.0, 0.0, surface.alpha))
+        .with_alpha_mode(surface.mode);
+    material.set_emissive_factor(surface.emissive);
+    material.set_metallic_factor(1.0);
+    app.get_resource::<AssetServer>().unwrap().add(material)
+}
+
+fn spawn(
+    app: &mut App,
+    mesh: &AssetHandle<Mesh>,
+    material: AssetHandle<StandardMaterial>,
+    height: f32,
+) -> Entity {
+    app.main_mut().world_mut().spawn((
+        MeshComponent {
+            handle: mesh.clone(),
+        },
+        MaterialComponent::<StandardMaterial> { handle: material },
+        Transform::from_translation(Vec3::new(0.0, height, 0.0)),
+    ))
+}
+
+fn centre_pixel(app: &App, gpu: &Gpu, camera: Entity) -> [u8; 3] {
+    let render_entity = **app
+        .main()
+        .world()
+        .get_component_for_entity::<RenderEntity>(camera)
+        .unwrap();
+    let render_camera = app
+        .render()
+        .world()
+        .get_component_for_entity::<RenderCamera>(render_entity)
+        .unwrap();
+    let image = read_texture(gpu, render_camera.render_target.as_ref().unwrap().texture());
+    let [r, g, b, _] = image.get_pixel(SIZE / 2, SIZE / 2).0;
+    [r, g, b]
+}
+
+fn aces(color: Vec3) -> Vec3 {
+    let mapped = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
+    mapped.clamp(Vec3::ZERO, Vec3::ONE)
+}
+
+fn over(surface: &Surface, behind: Vec3) -> Vec3 {
+    aces(surface.emissive) * surface.alpha + behind * (1.0 - surface.alpha)
+}
+
+fn assert_pixel(actual: [u8; 3], expected: Vec3, what: &str) {
+    let expected = (expected * 255.0)
+        .round()
+        .to_array()
+        .map(|channel| channel as u8);
+    assert!(
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(&actual, expected)| actual.abs_diff(expected) <= TOLERANCE),
+        "{what}: read {actual:?}, expected {expected:?}"
+    );
+}
+
+#[test]
+fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it() {
+    let Some(gpu) = Gpu::request_for_test() else {
+        return;
+    };
+    let mut app = app(&gpu);
+
+    let floor = Surface {
+        emissive: Vec3::new(0.2, 0.2, 1.0),
+        alpha: 1.0,
+        mode: AlphaMode::Opaque,
+    };
+    let far = Surface {
+        emissive: Vec3::new(1.0, 0.0, 0.0),
+        alpha: 0.5,
+        mode: AlphaMode::Blend,
+    };
+    let near = Surface {
+        emissive: Vec3::new(0.0, 1.0, 0.0),
+        alpha: 0.5,
+        mode: AlphaMode::Blend,
+    };
+    let near_opaque = Surface {
+        mode: AlphaMode::Opaque,
+        ..near
+    };
+
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let floor_mesh = server.add(plane(Vec2::splat(8.0)));
+    let sheet_mesh = server.add(plane(Vec2::splat(4.0)));
+    let (floor_material, far_material, near_material, near_opaque_material) = (
+        material(&app, &floor),
+        material(&app, &far),
+        material(&app, &near),
+        material(&app, &near_opaque),
+    );
+    let near_entity = spawn(&mut app, &sheet_mesh, near_material, 2.0);
+    spawn(&mut app, &sheet_mesh, far_material, 1.0);
+    spawn(&mut app, &floor_mesh, floor_material, 0.0);
+
+    let target = AssetId::from_path("textures/blended_materials");
+    app.main_mut()
+        .world_mut()
+        .get_resource_mut::<AssetStore<Texture>>()
+        .unwrap()
+        .insert(target, Texture::render_target(SIZE, SIZE));
+    let camera = app.main_mut().world_mut().spawn((
+        Camera {
+            render_target: RenderTarget::Texture(AssetHandle::weak(target)),
+            ..Camera::default()
+        },
+        Transform::from_translation_rotation(
+            Vec3::new(0.0, 10.0, 0.0),
+            Quat::from_rotation_x(-FRAC_PI_2),
+        ),
+    ));
+    app.finish_plugin_build();
+    for _ in 0..10 {
+        app.update();
+    }
+
+    assert_pixel(
+        centre_pixel(&app, &gpu, camera),
+        over(&near, over(&far, aces(floor.emissive))),
+        "the near sheet over the far sheet over the floor",
+    );
+
+    app.main_mut()
+        .world_mut()
+        .get_component_for_entity_mut::<MaterialComponent<StandardMaterial>>(near_entity)
+        .unwrap()
+        .handle = near_opaque_material;
+    for _ in 0..3 {
+        app.update();
+    }
+
+    assert_pixel(
+        centre_pixel(&app, &gpu, camera),
+        aces(near_opaque.emissive),
+        "an opaque near sheet hides what is behind it",
+    );
+}
