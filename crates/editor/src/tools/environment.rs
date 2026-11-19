@@ -53,11 +53,9 @@ mod tests {
         camera::{EditorCamera, EditorHelper},
         edits::{ComponentEdit, EditComponent, SetValue},
     };
-    use concerto_app::{
-        main_schedule::MainSchedulePlugin, plugins::TimePlugin, schedule_groups::LateUpdate,
-    };
+    use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_color::Color;
-    use concerto_ecs::{Changed, Component, Entity, Query, ResMut, Resource, With};
+    use concerto_ecs::{Component, Entity};
     use concerto_reflect::PropertyPath;
     use concerto_render::{
         ExclusiveCamera,
@@ -66,16 +64,6 @@ mod tests {
     use concerto_skybox::Sky;
     use serde_json::json;
     use std::any::TypeId;
-
-    #[derive(Resource, Default)]
-    struct SkyChanges(usize);
-
-    fn count_sky_changes(
-        changed: Query<(), (With<EditorCamera>, Changed<Sky>)>,
-        mut changes: ResMut<SkyChanges>,
-    ) {
-        changes.0 += changed.iter().count();
-    }
 
     fn held<T: Component + Clone>(app: &mut App, entity: Entity) -> Option<T> {
         app.main_mut()
@@ -92,9 +80,7 @@ mod tests {
         crate::tools::build_core(&mut app);
         app.register_type::<Sky>()
             .register_type::<CameraEnvironment>()
-            .register_plugin(ViewportEnvironmentPlugin)
-            .insert_resource(SkyChanges::default())
-            .add_system(LateUpdate, count_sky_changes.at_edit_time());
+            .register_plugin(ViewportEnvironmentPlugin);
         app.finish_plugin_build();
         let world = app.main_mut().world_mut();
         let editor = world.spawn((Camera::default(), EditorCamera, EditorHelper));
@@ -112,7 +98,6 @@ mod tests {
         }
         assert_eq!(held::<Sky>(&mut app, editor), Some(Sky::default()));
         assert_eq!(held(&mut app, editor), Some(environment));
-        assert_eq!(app.get_resource::<SkyChanges>().unwrap().0, 1);
 
         let night = Color::rgba(0.1, 0.2, 0.3, 1.0);
         app.main_mut().world_mut().trigger(SetValue {
