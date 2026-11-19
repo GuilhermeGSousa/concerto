@@ -24,9 +24,22 @@ exception: removing `MeshComponent` stops the mesh drawing.
 
 ## Cameras
 
-Spawn a `VirtualCamera` with a `Transform`. The **camera director** keeps a
-stack of virtual cameras and drives the main camera from the live one, the
-highest priority that is enabled:
+The level holds its camera: an entity with `MainCamera`, which brings a
+`Camera`. Add `MainCamera` to an entity in the editor, or spawn one:
+
+```rust
+use concerto::director::MainCamera;
+
+cmd.spawn((MainCamera, Transform::from_translation(Vec3::new(0.0, 1.7, 5.0))));
+```
+
+The camera director spawns no camera. With several `MainCamera`s it drives the
+one with the lowest entity index and warns about the others. Its `Sky` and
+`CameraEnvironment` are what the editor viewport shows while editing.
+
+To move it, spawn a `VirtualCamera` with a `Transform`. The **camera director**
+keeps a stack of virtual cameras and drives the main camera from the live one,
+the highest priority that is enabled:
 
 ```rust
 use concerto::director::VirtualCamera;
@@ -39,12 +52,16 @@ cmd.spawn((VirtualCamera::new(10), Transform::default()));
 ```
 
 `VirtualCamera::new(priority)` sets its priority; with several, the director
-switches to the highest. A camera looks down its local −Z axis.
+switches to the highest. A camera looks down its local −Z axis. With no live
+virtual camera, the main camera keeps its own pose; a parented main camera
+still reaches each virtual camera's world pose.
 
-A game that moves its own cameras inserts a director built without its main
-camera, `app.insert_resource(CameraDirector::default().with_main_camera(false))`,
-from its plugin's `build`. `CameraDirectorPlugin` keeps a director that is already
-there, so this works before or after `DefaultPlugins`.
+A glTF's cameras import as disabled `VirtualCamera`s at priority 0, with the
+file's lens: shots to enable, not window cameras. Content imported before this
+keeps real `Camera`s until it is re-imported.
+
+A game that moves its own cameras spawns `Camera`s without `MainCamera`, and
+the director drives none of them.
 
 ### Split screen
 
@@ -53,10 +70,7 @@ given as `min` and `max` in fractions of the target's size, from its top-left
 corner. It follows a window resize with no game code. Two players side by side:
 
 ```rust
-use concerto::director::CameraDirector;
 use concerto::render::components::camera::{Camera, Viewport};
-
-app.insert_resource(CameraDirector::default().with_main_camera(false));
 
 cmd.spawn((
     Camera::default().with_viewport(Viewport::new(Vec2::ZERO, Vec2::new(0.5, 1.0))),
@@ -74,13 +88,13 @@ cmd.spawn((
   outside every viewport is black.
 - Window cameras must not overlap: where two do, which one shows is undefined.
   A camera without a viewport covers the whole window and overlaps every other
-  one, so split screen either builds the director without its main camera or
-  gives that camera a viewport too. The renderer warns once when it sees both kinds.
+  one, so a split-screen level either has no `MainCamera` or gives it a
+  viewport too. The renderer warns once when it sees both kinds.
 - A camera that renders to a texture keeps the `aspect` you give it, with a
   viewport or without one; setting it is yours.
 - Culling is per camera, and shadow maps are per light and shared by every
   camera.
-- Without its main camera, the director drives no camera: virtual cameras still
+- Without a `MainCamera`, the director drives no camera: virtual cameras still
   stack, but nothing follows them. Move your cameras' `Transform`s yourself,
   from your own controllers.
 
@@ -231,11 +245,11 @@ grid that fades with distance; its fields set the cell size, colors and fade.
 
 The sky comes from `concerto::skybox`, whose `SkyboxPlugin` is part of
 `DefaultPlugins`. Mark one directional light `Sun` and its rotation sets the
-time of day; put `Sky` on a camera, name the sun in its `sun` field, and that
-camera draws a physically based sky behind the scene:
+time of day; put `Sky` on the level's `MainCamera`, name the sun in its `sun`
+field, and that camera draws a physically based sky behind the scene:
 
 ```rust
-use concerto::{ecs::component::scene::SceneEntityRef, skybox::{Sky, Sun}};
+use concerto::{director::MainCamera, ecs::component::scene::SceneEntityRef, skybox::{Sky, Sun}};
 
 let sun = cmd.spawn((
     Sun::default(),
@@ -243,7 +257,7 @@ let sun = cmd.spawn((
     Transform::from_rotation(Quat::from_rotation_x(-0.8)),
 )).entity();
 cmd.spawn((
-    Camera::default(),
+    MainCamera,
     Sky::default().with_sun(SceneEntityRef::Entity(sun)),
     Transform::from_translation(Vec3::new(0.0, 1.7, 5.0)),
 ));

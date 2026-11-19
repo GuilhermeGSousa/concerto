@@ -21,7 +21,7 @@ re-exported as `concerto::skybox`.
   shows that one and warns.
 
 ```rust
-use concerto::{ecs::component::scene::SceneEntityRef, skybox::{Sky, Sun}};
+use concerto::{director::MainCamera, ecs::component::scene::SceneEntityRef, skybox::{Sky, Sun}};
 
 let sun = cmd.spawn((
     Sun::default(),
@@ -29,7 +29,7 @@ let sun = cmd.spawn((
     Transform::from_rotation(Quat::from_rotation_x(-0.8)),
 )).entity();
 cmd.spawn((
-    Camera::default(),
+    MainCamera,
     Sky::default().with_sun(SceneEntityRef::Entity(sun)),
     Transform::from_translation(Vec3::new(0.0, 1.7, 5.0)),
 ));
@@ -94,11 +94,11 @@ Where `Rgba16Float` cannot be rendered to, the map is `Rgba8Unorm` holding
 inspector edits them and the editor's MCP tools reach every setting:
 
 1. `add_component` `Sun` on a directional light.
-2. `add_component` `Sky` on a camera in the level, and `set_property` its
+2. `add_component` `Sky` on the level's `MainCamera`, and `set_property` its
    `sun` to that light's entity id.
 3. `set_property` on the light's `Transform` rotation to move the sun, or on
    `Sun`'s `atmosphere` and `Sky`'s night terms to tune them.
 
 The viewport shows the result while editing, because the editor camera mirrors
-the scene camera's `Sky` and `CameraEnvironment`, and the game shows it in
-Play.
+the `MainCamera`'s `Sky` and `CameraEnvironment`, and the game shows it in
+Play through that same camera.

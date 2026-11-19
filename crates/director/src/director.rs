@@ -4,7 +4,7 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform},
 };
 use concerto_render::components::camera::Camera;
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat};
 
 use crate::{
     main_camera::MainCamera,
@@ -26,25 +26,12 @@ use crate::{
 /// `enabled`: the entry mirrors them, and [`sync_virtual_cameras`] re-sorts the
 /// stack on the next run after either is edited, so [`live`](Self::live) and
 /// [`is_live`](Self::is_live) follow an edit one frame later.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct CameraDirector {
     main_camera: Option<Entity>,
-    spawns_main_camera: bool,
     stack: Vec<StackEntry>,
     state: DirectorState,
     blend: BlendIn,
-}
-
-impl Default for CameraDirector {
-    fn default() -> Self {
-        Self {
-            main_camera: None,
-            spawns_main_camera: true,
-            stack: Vec::new(),
-            state: DirectorState::default(),
-            blend: BlendIn::default(),
-        }
-    }
 }
 
 /// A virtual camera's place in the stack, mirrored from its component.
@@ -71,19 +58,7 @@ enum DirectorState {
 }
 
 impl CameraDirector {
-    /// Whether the director spawns its main camera at startup; turn it off for a game that moves its own cameras.
-    pub fn with_main_camera(mut self, spawns: bool) -> Self {
-        self.spawns_main_camera = spawns;
-        self
-    }
-
-    /// Whether the director spawns its main camera at startup.
-    pub fn spawns_main_camera(&self) -> bool {
-        self.spawns_main_camera
-    }
-
-    /// The entity holding the one [`Camera`] that renders to the window.
-    /// `None` until [`spawn_main_camera`](crate::main_camera::spawn_main_camera) runs.
+    /// The [`MainCamera`] being driven: the one with the lowest entity index, `None` while the level has none.
     pub fn main_camera(&self) -> Option<Entity> {
         self.main_camera
     }
@@ -210,8 +185,8 @@ impl CameraDirector {
         self.blend = blend;
     }
 
-    pub(crate) fn set_main_camera(&mut self, entity: Entity) {
-        self.main_camera = Some(entity);
+    pub(crate) fn set_main_camera(&mut self, entity: Option<Entity>) {
+        self.main_camera = entity;
     }
 }
 
@@ -235,12 +210,12 @@ pub fn drive_main_camera(
     mut director: ResMut<CameraDirector>,
     time: Res<Time>,
     vcams: Query<(&VirtualCamera, &GlobalTransform)>,
-    main_cameras: Query<(&mut Transform, &mut Camera), With<MainCamera>>,
+    main_cameras: Query<(&mut Transform, &GlobalTransform, &mut Camera), With<MainCamera>>,
 ) {
     let Some(main_camera) = director.main_camera() else {
         return;
     };
-    let Some((mut transform, mut camera)) = main_cameras.get_entity(main_camera) else {
+    let Some((mut transform, global, mut camera)) = main_cameras.get_entity(main_camera) else {
         return;
     };
 
@@ -283,9 +258,12 @@ pub fn drive_main_camera(
     director.state = state;
 
     if let Some(pose) = pose {
-        transform.translation = pose.translation;
-        transform.rotation = pose.rotation;
-        transform.scale = Vec3::ONE;
+        let world = Mat4::from_rotation_translation(pose.rotation, pose.translation);
+        let local = transform.compute_matrix() * global.matrix().inverse() * world;
+        let (scale, rotation, translation) = local.to_scale_rotation_translation();
+        transform.translation = translation;
+        transform.rotation = normalize(rotation);
+        transform.scale = scale;
 
         pose.lens.apply_to(&mut camera);
     }
@@ -328,8 +306,10 @@ mod tests {
     use glam::Vec3;
 
     use super::{CameraDirector, drive_main_camera, sync_virtual_cameras};
+    use concerto_foundation::transform::systems::update_simple_entities;
+
     use crate::{
-        main_camera::MainCamera,
+        main_camera::{MainCamera, adopt_main_camera},
         virtual_camera::{BlendIn, Lens, VirtualCamera},
     };
 
@@ -351,14 +331,12 @@ mod tests {
             world.insert_resource(CameraDirector::default());
 
             let main_camera = world.spawn((MainCamera, Camera::default(), Transform::IDENTITY));
-            world
-                .get_resource_mut::<CameraDirector>()
-                .unwrap()
-                .set_main_camera(main_camera);
 
             let mut schedule = Schedule::new();
             schedule.add_system(drive_main_camera);
             schedule.add_system(sync_virtual_cameras.before(drive_main_camera));
+            schedule.add_system(adopt_main_camera.before(drive_main_camera));
+            schedule.add_system(update_simple_entities.after(drive_main_camera));
             let schedule = schedule.compile::<SingleThreadedExecutor>(&mut world);
 
             Self {

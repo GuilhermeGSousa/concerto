@@ -51,12 +51,12 @@ pub struct MainCamera;
 - **Which camera.** The `MainCamera` with the lowest `Entity::index()`, as the
   sky picks its active sun. Others log one warning each and are not driven.
   They still draw, so the renderer's overlap warning applies as it does
-  today. The choice is recomputed in `sync_virtual_cameras`'s run each frame,
+  today. The choice is recomputed each frame by `adopt_main_camera`, before the drive,
   so a level loading or a Play/Stop respawn needs no lifecycle bookkeeping.
 - **No live virtual camera.** The director leaves the main camera's
   `Transform` and `Camera` lens alone, so the authored pose shows. A virtual
-  camera going live from there blends in with its `BlendIn` from the main
-  camera's current pose and lens. When the last live camera leaves, the main
+  camera going live from there cuts to its pose, as a takeover with no
+  outgoing virtual camera does today. When the last live camera leaves, the main
   camera stays where it was.
 - **Parented cameras.** A scene's nodes are children of the scene's root, so
   the main camera usually has a parent. The director writes the pose in the
