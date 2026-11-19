@@ -546,8 +546,8 @@ steps, and drops. The crate has three parts:
   `finish_plugin_build`, so a game's own `RenderAssetBytesPerFrame` does not
   apply in the editor.
 - `src/tools/` is everything that runs inside an edit `App`: the editor camera,
-  the grid, picking, the selection box, the gizmo, and the listeners that apply
-  each edit. `EditToolsPlugin` installs it. The half that edits and captures a
+  the grid, picking, the component gizmos (`component_gizmos.rs`), the
+  transform gizmo, and the listeners that apply each edit. `EditToolsPlugin` installs it. The half that edits and captures a
   scene needs no renderer; the viewport half is added when the recipe has one.
 - The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
   editor's `App`.
@@ -1022,7 +1022,8 @@ declares `Component` without `Default`, such as `Camera`, is edited and removed
 but never offered.
 
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
-to it, and draws a box around it; clicking empty space clears the selection. A
+to it, and shows its component gizmos, among them a box around its bounds;
+clicking empty space clears the selection. A
 press that moves more than a few pixels is not a click. Picking tests the
 mesh's triangles, so a mesh seen through a gap in another is the one selected.
 Limits: a skinned mesh is picked and boxed in its bind pose; a click selects
@@ -1037,6 +1038,22 @@ one. Drag a handle with the left button. A ring seen nearly edge-on cannot be
 dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
 while the camera is being flown, and is not shown for the scene root. A drag
 marks the scene dirty when it ends.
+
+Component gizmos draw a component while its entity, or one of its ancestors,
+is selected: selecting a parent, or the scene root, shows the gizmos of
+everything under it. A gizmo is a type implementing
+`concerto_debug_gizmos::ComponentGizmo`, which names its component, the inputs
+it reads, and its kind's `NAME`, and draws one entity at a time. The scene
+tools (`src/tools/component_gizmos.rs`) register the engine's in every edit and
+play `App`: `Bounds` boxes each `Aabb`, `Skeleton` joins each bone to its
+parent, `Light` shows a light's reach (`range`, or 5 m when it is 0) and
+`Camera` a camera's frustum cut at 5 m. `app.register_component_gizmo::<G>()`
+registers another in a hosted `App`; it lists the kind in that `App`'s
+`ComponentGizmos` resource, and draws it only when the `App` has
+`DebugGizmosPlugin`. Two gizmo types with one `NAME` panic. The
+`SetGizmoAlways { kind, always }` signal draws a kind for every entity, or
+again only for the selection; an unknown kind changes nothing. The editor's own
+camera and grid are `EditorHelper`s and never draw a gizmo.
 
 Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the
