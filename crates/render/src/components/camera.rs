@@ -10,7 +10,7 @@ use encase::{ShaderType, UniformBuffer};
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
-    query::Query,
+    query::{change_detection::DetectChanges, Query},
     reflect::{ReflectComponent, ReflectSceneComponent},
     resource::{Res, ResMut, Resource},
     Entity,
@@ -31,7 +31,7 @@ use crate::{
     queue::RenderQueue,
     render_asset::{render_texture::RenderTexture, RenderAssets},
     resources::RenderContext,
-    sky_light::CameraSkyLight,
+    sky_light::{CameraSkyLight, SkyRadianceMap},
 };
 
 #[rustfmt::skip]
@@ -375,6 +375,7 @@ pub(crate) fn extract_cameras(
     texture_assets: Extracted<Res<AssetStore<Texture>>>,
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
+    sky_radiance: Res<SkyRadianceMap>,
 ) {
     for (entity, camera, environment, sky_light, layers, transform, render_entity) in cameras.iter()
     {
@@ -437,14 +438,8 @@ pub(crate) fn extract_cameras(
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_layouts.camera_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
+        let camera_bind_group =
+            camera_bind_group(&device, &camera_layouts, &camera_buffer, &sky_radiance);
 
         let render_target: Option<RenderTexture> = target_size.map(|size| {
             create_rtt(
@@ -481,6 +476,51 @@ pub(crate) fn extract_cameras(
         publish_render_target(camera, &render_cam, &mut render_textures);
 
         cmd.insert(render_cam, render_entity);
+    }
+}
+
+fn camera_bind_group(
+    device: &wgpu::Device,
+    layout: &CameraLayout,
+    camera_buffer: &wgpu::Buffer,
+    sky_radiance: &SkyRadianceMap,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &layout.camera_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&sky_radiance.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&sky_radiance.sampler),
+            },
+        ],
+        label: Some("camera_bind_group"),
+    })
+}
+
+pub(crate) fn rebind_sky_radiance(
+    sky_radiance: Res<SkyRadianceMap>,
+    render_cameras: Query<&mut RenderCamera>,
+    device: Res<RenderDevice>,
+    camera_layouts: Res<CameraLayout>,
+) {
+    if !sky_radiance.is_changed() {
+        return;
+    }
+    for mut render_camera in render_cameras.iter() {
+        render_camera.camera_bind_group = camera_bind_group(
+            &device,
+            &camera_layouts,
+            &render_camera.camera_buffer,
+            &sky_radiance,
+        );
     }
 }
 

@@ -15,7 +15,8 @@ pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
 /// material. Goes on the same entity as the [`Camera`](super::camera::Camera);
 /// a camera without one gets no fog and the default ambient light. A camera
 /// with a [`CameraSkyLight`](crate::sky_light::CameraSkyLight) is lit by its
-/// sky instead of `ambient`.
+/// sky instead of `ambient`, and its fog takes the sky's color instead of
+/// [`Fog::color`].
 #[derive(Component, Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CameraEnvironment {
@@ -76,6 +77,7 @@ impl CameraEnvironment {
 /// Exponential-squared distance fog toward `color`, starting at `start`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
 pub struct Fog {
+    /// The color fog fades toward; ignored under a sky, where fog takes the sky's color.
     pub color: Color,
     pub density: f32,
     pub start: f32,

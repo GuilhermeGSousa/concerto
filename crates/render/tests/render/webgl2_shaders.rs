@@ -1,4 +1,7 @@
-use concerto_render::{capabilities::RenderCapabilities, shader::compose_shader};
+use concerto_render::{
+    capabilities::RenderCapabilities,
+    shader::{compose_shader, ShaderDefs, NO_CUBE_ARRAY_TEXTURES_SUPPORT, SKY_RADIANCE_SQRT},
+};
 use naga::{
     back::glsl,
     proc::BoundsCheckPolicies,
@@ -11,6 +14,12 @@ const WEBGL2: RenderCapabilities = RenderCapabilities {
     depth_bias_clamp: false,
     single_layer_texture_arrays: false,
     bc_textures: false,
+    float_render_targets: true,
+};
+
+const WEBGL2_WITHOUT_FLOAT_TARGETS: RenderCapabilities = RenderCapabilities {
+    float_render_targets: false,
+    ..WEBGL2
 };
 
 struct EntryPoint {
@@ -34,8 +43,13 @@ struct Shader {
     entry_points: &'static [EntryPoint],
 }
 
-fn assert_translates_to_glsl_es_300(label: &str, source: &str, entry_points: &[EntryPoint]) {
-    let module = compose_shader(label, source, &WEBGL2.shader_defs()).unwrap();
+fn assert_translates_to_glsl_es_300(
+    label: &str,
+    source: &str,
+    entry_points: &[EntryPoint],
+    defs: &ShaderDefs,
+) {
+    let module = compose_shader(label, source, defs).unwrap();
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .unwrap_or_else(|err| panic!("{label} failed validation: {err:?}"));
@@ -75,9 +89,15 @@ fn assert_translates_to_glsl_es_300(label: &str, source: &str, entry_points: &[E
 
 #[test]
 fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
-    assert!(WEBGL2
-        .shader_defs()
-        .contains(concerto_render::shader::NO_CUBE_ARRAY_TEXTURES_SUPPORT));
+    let def_sets = [
+        WEBGL2.shader_defs(),
+        WEBGL2_WITHOUT_FLOAT_TARGETS.shader_defs(),
+    ];
+    assert!(def_sets
+        .iter()
+        .all(|defs| defs.contains(NO_CUBE_ARRAY_TEXTURES_SUPPORT)));
+    assert!(!def_sets[0].contains(SKY_RADIANCE_SQRT));
+    assert!(def_sets[1].contains(SKY_RADIANCE_SQRT));
 
     let shaders = [
         Shader {
@@ -96,7 +116,14 @@ fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
             entry_points: &[VERTEX, FRAGMENT],
         },
     ];
-    for shader in &shaders {
-        assert_translates_to_glsl_es_300(shader.label, shader.source, shader.entry_points);
+    for defs in &def_sets {
+        for shader in &shaders {
+            assert_translates_to_glsl_es_300(
+                shader.label,
+                shader.source,
+                shader.entry_points,
+                defs,
+            );
+        }
     }
 }

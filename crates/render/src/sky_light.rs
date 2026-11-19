@@ -1,10 +1,10 @@
 use std::f32::consts::{FRAC_PI_4, PI, TAU};
 
 use concerto_color::LinearRgba;
-use concerto_ecs::component::Component;
+use concerto_ecs::{component::Component, resource::Resource};
 use glam::Vec3;
 
-use crate::components::render_entity::SyncWithRenderWorld;
+use crate::{capabilities::RenderCapabilities, components::render_entity::SyncWithRenderWorld};
 
 /// One radiance sample over the sphere, for building spherical harmonics.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +87,63 @@ pub struct CameraSkyLight {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 #[require(SyncWithRenderWorld)]
 pub struct LightTint(pub LinearRgba);
+
+/// The largest radiance an `Rgba8Unorm` [`SkyRadianceMap`] holds.
+pub const SKY_RADIANCE_SCALE: u32 = 16;
+
+/// Render world: sky radiance per world direction `d` at `u = atan2(d.x, -d.z) / 2π + 0.5`, `v = 0.5 - asin(d.y) / π`, as `Rgba16Float` or, without float targets, `Rgba8Unorm` holding `sqrt(radiance / SKY_RADIANCE_SCALE)`.
+#[derive(Resource)]
+pub struct SkyRadianceMap {
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+    pub format: wgpu::TextureFormat,
+}
+
+impl SkyRadianceMap {
+    /// The map's format on a GPU with `capabilities`.
+    pub fn format_for(capabilities: &RenderCapabilities) -> wgpu::TextureFormat {
+        if capabilities.float_render_targets {
+            wgpu::TextureFormat::Rgba16Float
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        }
+    }
+
+    /// Views `texture` as the map, wrapping in azimuth and clamped at the poles.
+    pub fn new(device: &wgpu::Device, texture: &wgpu::Texture) -> Self {
+        Self {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("sky_radiance_sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
+            format: texture.format(),
+        }
+    }
+
+    /// A 1×1 black map, the sky of a renderer that draws none.
+    pub fn black(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sky_radiance_black"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::format_for(capabilities),
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        Self::new(device, &texture)
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -9,6 +9,9 @@ pub use naga_oil::compose::ShaderDefValue;
 /// Defined when cube-map arrays can't be sampled (WebGL2).
 pub const NO_CUBE_ARRAY_TEXTURES_SUPPORT: &str = "NO_CUBE_ARRAY_TEXTURES_SUPPORT";
 
+/// Defined, with `SKY_RADIANCE_SCALE` as its value, when the sky-radiance map holds `sqrt(radiance / scale)`.
+pub const SKY_RADIANCE_SQRT: &str = "SKY_RADIANCE_SQRT";
+
 /// Named shader defs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShaderDefs(HashMap<String, ShaderDefValue>);

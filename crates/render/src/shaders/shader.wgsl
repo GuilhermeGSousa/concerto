@@ -200,6 +200,12 @@ var<uniform> material: MaterialUniform;
 @group(1) @binding(0)
 var<uniform> camera: CameraUniform;
 
+@group(1) @binding(1)
+var t_sky_radiance: texture_2d<f32>;
+
+@group(1) @binding(2)
+var s_sky_radiance: sampler;
+
 @group(2) @binding(0)
 var<uniform> lights: Lights;
 
@@ -337,7 +343,11 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         let fog_distance = max(length(camera.view_pos - in.world_position) - camera.fog_params.y, 0.0);
         let fog_depth = fog_distance * camera.fog_params.x;
         let fog_amount = 1.0 - exp(-(fog_depth * fog_depth));
-        color = mix(color, camera.fog_color.rgb, fog_amount);
+        var fog_color = camera.fog_color.rgb;
+        if camera.sky_lit != 0u {
+            fog_color = sky_fog_color(in.world_position - camera.view_pos);
+        }
+        color = mix(color, fog_color, fog_amount);
     }
 
     // Tone map to LDR; the sRGB surface format applies gamma encoding.
@@ -449,6 +459,32 @@ fn sky_irradiance(normal: vec3<f32>) -> vec3<f32> {
         + sh[7].rgb * (1.0925484 * x * z)
         + sh[8].rgb * (0.5462742 * (x * x - y * y));
     return max(irradiance, vec3<f32>(0.0));
+}
+
+#ifdef SKY_RADIANCE_SQRT
+const SKY_RADIANCE_SCALE: f32 = f32(#{SKY_RADIANCE_SQRT});
+#endif
+
+fn sky_radiance_uv(direction: vec3<f32>) -> vec2<f32> {
+    return vec2<f32>(
+        atan2(direction.x, -direction.z) / (2.0 * PI) + 0.5,
+        0.5 - asin(clamp(direction.y, -1.0, 1.0)) / PI,
+    );
+}
+
+fn sky_radiance(direction: vec3<f32>) -> vec3<f32> {
+    let texel = textureSampleLevel(t_sky_radiance, s_sky_radiance, sky_radiance_uv(direction), 0.0).rgb;
+#ifdef SKY_RADIANCE_SQRT
+    return texel * texel * SKY_RADIANCE_SCALE;
+#else
+    return texel;
+#endif
+}
+
+fn sky_fog_color(to_fragment: vec3<f32>) -> vec3<f32> {
+    let level = vec3<f32>(to_fragment.x, max(to_fragment.y, 0.0), to_fragment.z);
+    let direction = level / max(length(level), 1e-6);
+    return sky_radiance(direction) + camera.night_color.rgb;
 }
 
 // Trowbridge-Reitz GGX normal distribution

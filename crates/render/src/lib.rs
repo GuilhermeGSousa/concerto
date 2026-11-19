@@ -52,4 +52,7 @@ pub use assets::material::Material;
 pub use components::camera::ExclusiveCamera;
 pub use components::material::MaterialComponent;
 pub use material_plugin::{MaterialPipeline, MaterialPlugin, RenderMaterial};
-pub use sky_light::{CameraSkyLight, LightTint, RadianceSample, SphericalHarmonics};
+pub use sky_light::{
+    CameraSkyLight, LightTint, RadianceSample, SkyRadianceMap, SphericalHarmonics,
+    SKY_RADIANCE_SCALE,
+};
