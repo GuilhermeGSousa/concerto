@@ -127,8 +127,10 @@ light shines along its transform's −Z. `shadowmaps_enabled` makes it cast
 shadows; it and `light_type` can be changed at any time and take effect on the
 next frame.
 
-A `LightTint` on the light's entity multiplies its color. Systems such as the
-sky keep it up to date, and it is not saved with the scene.
+A `LightTint` on the light's entity multiplies its color. A `Sun`, from
+`concerto::skybox`, keeps it up to date with the light that crosses the
+atmosphere, warmer and dimmer as the sun sets, and it is not saved with the
+scene.
 
 Only the lights a camera sees are drawn and cast shadows. A point or spot
 light with a `range` is seen when the sphere of that radius around it touches
@@ -219,9 +221,8 @@ Two components from `concerto::render::components` opt a mesh out:
 - `NotShadowCaster` keeps it out of every shadow map.
 
 Skinned meshes are never culled, and each one takes its own draw call. A mesh
-whose shader ignores its vertices or its model matrix, such as a skybox built
-from `SkyboxCube`, needs both components, or it is culled whenever its
-vertices' box is out of view. The world grid requires both already.
+whose shader ignores its vertices or its model matrix needs both components,
+or it is culled whenever its vertices' box is out of view. The world grid requires both already.
 
 ## The world grid and the sky
 

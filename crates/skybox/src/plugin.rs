@@ -1,25 +1,41 @@
-use concerto_app::plugins::Plugin;
-use concerto_foundation::assets::asset_server::AssetServer;
-use concerto_render::{MaterialPlugin, assets::mesh::Mesh};
+use concerto_app::{App, edit_time::AtEditTime, plugins::Plugin, schedule_groups::LateUpdate};
+use concerto_ecs::IntoSystemConfig;
+use concerto_foundation::transform::systems::propagate_global_transforms;
 
-use crate::{SKYBOX_INDICES, SKYBOX_VERTICES, SkyboxCube, material::SkyboxMaterial};
+use crate::{
+    lighting::{
+        AtmosphereLuts, build_atmosphere_luts, forget_sky_light, forget_sun_tint,
+        update_sun_lighting,
+    },
+    sun::{Sky, Sun},
+};
 
+/// Keeps the sun's tint and every sky's lighting up to date in the main world; needs no GPU.
+pub struct SkyPlugin;
+
+impl Plugin for SkyPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_type::<Sun>()
+            .register_type::<Sky>()
+            .insert_resource(AtmosphereLuts::default())
+            .track_removals::<Sun>()
+            .add_system(
+                LateUpdate,
+                (build_atmosphere_luts, update_sun_lighting)
+                    .chain()
+                    .after(propagate_global_transforms)
+                    .at_edit_time(),
+            )
+            .add_listener(forget_sky_light.at_edit_time())
+            .add_listener(forget_sun_tint.at_edit_time());
+    }
+}
+
+/// The sun and the sky; part of `DefaultPlugins`.
 pub struct SkyboxPlugin;
 
 impl Plugin for SkyboxPlugin {
-    fn build(&self, app: &mut concerto_app::App) {
-        // Setup skybox
-        let skybox_cube = Mesh {
-            vertices: SKYBOX_VERTICES.to_vec(),
-            indices: SKYBOX_INDICES.to_vec(),
-        };
-
-        let skybox_cube = SkyboxCube(
-            app.get_resource_mut::<AssetServer>()
-                .expect("Could not find Mesh asset store")
-                .add(skybox_cube),
-        );
-        app.register_plugin(MaterialPlugin::<SkyboxMaterial>::new())
-            .insert_resource(skybox_cube);
+    fn build(&self, app: &mut App) {
+        app.register_plugin(SkyPlugin);
     }
 }
