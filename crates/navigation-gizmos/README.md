@@ -29,7 +29,7 @@ scene view shows the graph while points are authored. `draw_nav_routes` and
 
 `NavMeshGizmo` is the navmesh's component gizmo: it draws the edges of a
 `NavMeshComponent`'s loaded navmesh, as the `mesh` layer does, for one entity.
-The editor draws it while that entity or one of its ancestors is selected, or
+The editor draws it while that entity is selected, or
 always with Navmesh set to Always, once the game lists
 [`concerto-navigation-editor`](../navigation-editor/README.md), which registers
 it in every edit and play `App`.

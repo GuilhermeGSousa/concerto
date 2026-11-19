@@ -1,4 +1,4 @@
-//! Gizmos that draw a component while its entity, or one of its ancestors, is selected.
+//! Gizmos that draw a component while its entity is selected.
 use std::any::{TypeId, type_name};
 
 use concerto_app::{App, edit_time::AtEditTime, schedule_groups::LateUpdate};
@@ -8,7 +8,6 @@ use concerto_debug_gizmos::{
 };
 use concerto_ecs::{
     Entity, IntoSystemConfig, Query, Res, ResMut, Resource, Without,
-    entity::hierarchy::ChildOf,
     signal::{On, Signal},
     system::input::StaticSystemInput,
 };
@@ -91,7 +90,7 @@ pub(crate) fn set_gizmo_always(on: On<SetGizmoAlways>, mut gizmos: ResMut<Compon
 
 /// Registers component gizmos in an `App` the editor hosts.
 pub trait ComponentGizmosAppExt {
-    /// Draws `G` for the selection and its descendants, and lists its kind; panics when another gizmo type has its `NAME`.
+    /// Draws `G` for the selected entity, and lists its kind; panics when another gizmo type has its `NAME`.
     fn register_component_gizmo<G: ComponentGizmo>(&mut self) -> &mut Self;
 }
 
@@ -119,7 +118,6 @@ impl ComponentGizmosAppExt for App {
 
 fn draw_component_gizmo<G: ComponentGizmo>(
     drawn: Query<(Entity, &G::Component, &GlobalTransform), Without<EditorHelper>>,
-    parents: Query<&ChildOf>,
     selection: Option<Res<Selection>>,
     kinds: Res<ComponentGizmos>,
     input: StaticSystemInput<G::Input>,
@@ -131,21 +129,10 @@ fn draw_component_gizmo<G: ComponentGizmo>(
         return;
     }
     for (entity, component, transform) in drawn.iter() {
-        if always || selected.is_some_and(|selected| within(entity, selected, &parents)) {
+        if always || selected == Some(entity) {
             G::draw(entity, component, transform, &input, &mut gizmos);
         }
     }
-}
-
-fn within(entity: Entity, ancestor: Entity, parents: &Query<&ChildOf>) -> bool {
-    let mut current = Some(entity);
-    while let Some(at) = current {
-        if at == ancestor {
-            return true;
-        }
-        current = parents.get_entity(at).map(|child_of| child_of.parent());
-    }
-    false
 }
 
 pub(crate) fn build(app: &mut App) {
@@ -166,7 +153,7 @@ mod tests {
     use concerto_ecs::{
         IntoSystem, System, World,
         component::Component,
-        entity::hierarchy::Children,
+        entity::hierarchy::{ChildOf, Children},
         system::{
             executor::single_thread::SingleThreadedExecutor,
             schedule::Schedules,
@@ -229,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gizmo_draws_for_the_selection_and_its_descendants_or_always_when_set() {
+    fn a_gizmo_draws_for_the_selected_entity_alone_or_always_when_set() {
         let mut world = World::new();
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
@@ -262,7 +249,7 @@ mod tests {
 
         assert_eq!(drawn(&mut world), 0, "nothing is selected");
         world.trigger(Select(Some(parent)));
-        assert_eq!(drawn(&mut world), lit + bounds, "the parent and its child");
+        assert_eq!(drawn(&mut world), lit, "the parent, not its child");
         world.trigger(Select(Some(child)));
         assert_eq!(drawn(&mut world), bounds, "the child alone");
         world.trigger(Select(None));
