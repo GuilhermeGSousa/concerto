@@ -13,6 +13,7 @@ concerto-render.workspace = true
 concerto-ecs.workspace = true
 concerto-reflect.workspace = true
 glam.workspace = true
+log = "0.4.27"
 
 [dev-dependencies]
 concerto-scene.workspace = true

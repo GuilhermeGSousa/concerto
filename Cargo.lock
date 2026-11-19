@@ -1155,6 +1155,7 @@ dependencies = [
  "concerto-render",
  "concerto-scene",
  "glam 0.33.12",
+ "log",
 ]
 
 [[package]]
