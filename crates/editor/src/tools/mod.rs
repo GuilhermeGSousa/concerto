@@ -3,6 +3,7 @@ pub mod camera;
 pub mod component_gizmos;
 pub mod edits;
 pub mod entity_ops;
+pub mod environment;
 pub mod gizmo;
 pub mod picking;
 pub mod placement;
@@ -55,6 +56,7 @@ pub(crate) fn build_core(app: &mut App) {
 
 pub(crate) fn build_viewport(app: &mut App) {
     camera::build(app);
+    app.register_plugin(environment::ViewportEnvironmentPlugin);
     picking::build(app);
     gizmo::build(app);
 }

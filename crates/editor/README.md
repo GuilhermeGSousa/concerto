@@ -589,6 +589,14 @@ steps, and drops. The crate has three parts:
   the grid, picking, the component gizmos (`component_gizmos.rs`), the
   transform gizmo, and the listeners that apply each edit. `EditToolsPlugin` installs it. The half that edits and captures a
   scene needs no renderer; the viewport half is added when the recipe has one.
+  In that half, `ViewportEnvironmentPlugin` mirrors the scene's environment
+  onto the editor camera: each frame it copies `Sky` and `CameraEnvironment`
+  from the scene's `MainCamera` (the one with the lowest entity index), and
+  removes each copy when that camera lacks it or the scene has no
+  `MainCamera`. It writes only when the value differs, so the viewport is lit
+  and drawn as the level's camera sees it in Play, and an agent changes it
+  through `add_component`, `set_property` and `remove_component` on that
+  camera.
 - The panels (hierarchy, inspector, viewport, tabs, content, dock) and the
   viewport's Gizmos menu (`gizmo_choices.rs`) run in the editor's `App`.
 

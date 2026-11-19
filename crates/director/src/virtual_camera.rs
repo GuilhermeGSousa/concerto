@@ -111,7 +111,7 @@ impl VirtualCamera {
 
 /// Projection parameters, split out of [`Camera`] so they can be overridden and
 /// blended independently of the render target and clear colour.
-#[derive(Clone, Copy, Reflect)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub struct Lens {
     pub fovy: f32,
     pub znear: f32,

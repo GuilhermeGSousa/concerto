@@ -21,6 +21,7 @@ use crate::{
     components::{camera::RenderCamera, render_entity::RenderEntity},
     frustum::Frustum,
     queue::RenderQueue,
+    sky_light::LightTint,
 };
 
 const MAX_LIGHTS: usize = 128;
@@ -185,9 +186,21 @@ pub struct RenderLight {
 }
 
 impl RenderLight {
-    fn synced_with(mut self, light: &Light, transform: &GlobalTransform) -> Self {
+    fn synced_with(
+        mut self,
+        light: &Light,
+        tint: Option<&LightTint>,
+        transform: &GlobalTransform,
+    ) -> Self {
         self.direction = -(transform.rotation() * Vec3::Z);
-        self.color = light.color.to_linear();
+        let color = light.color.to_linear();
+        let tint = tint.map_or(LinearRgba::WHITE, |tint| tint.0);
+        self.color = LinearRgba::new(
+            color.r * tint.r,
+            color.g * tint.g,
+            color.b * tint.b,
+            color.a,
+        );
         self.translation = transform.translation();
         self.intensity = light.intensity;
         self.light_type = light.light_type.index();
@@ -349,17 +362,17 @@ pub(crate) fn write_visible_lights(
 }
 
 pub(crate) fn extract_lights(
-    lights: Extracted<Query<(&Light, &GlobalTransform, &RenderEntity)>>,
+    lights: Extracted<Query<(&Light, Option<&LightTint>, &GlobalTransform, &RenderEntity)>>,
     render_lights: Query<(&mut RenderLight, &mut RenderShadowsEnabled)>,
     mut cmd: CommandQueue,
 ) {
-    for (light, transform, render_entity) in lights.iter() {
+    for (light, tint, transform, render_entity) in lights.iter() {
         let render_entity = **render_entity;
 
         if let Some((mut render_light, mut shadows_enabled)) =
             render_lights.get_entity(render_entity)
         {
-            let synced = render_light.synced_with(light, transform);
+            let synced = render_light.synced_with(light, tint, transform);
             render_light.set_if_neq(synced);
             if shadows_enabled.0 != light.shadowmaps_enabled {
                 shadows_enabled.0 = light.shadowmaps_enabled;
@@ -367,7 +380,7 @@ pub(crate) fn extract_lights(
             continue;
         }
 
-        let render_light = RenderLight::zeroed().synced_with(light, transform);
+        let render_light = RenderLight::zeroed().synced_with(light, tint, transform);
 
         cmd.insert(
             (render_light, RenderShadowsEnabled(light.shadowmaps_enabled)),

@@ -1,30 +1,46 @@
-use concerto_ecs::{CommandQueue, Component, ResMut};
-use concerto_foundation::transform::Transform;
+use concerto_ecs::{
+    Component, Entity, Query, ResMut, With,
+    entity::EntityHashSet,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    system::input::SystemLocal,
+    world::{FromWorld, World},
+};
+use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::camera::Camera;
 
-use crate::{director::CameraDirector, virtual_camera::VirtualCamera};
+use crate::director::CameraDirector;
 
-/// Marks the camera the director drives.
-///
-/// Spawned once at startup unless the [`CameraDirector`] is built without one, and never
-/// despawned or re-parented: there is no `camera_removed` counterpart to
-/// `camera_added`, so removing the `Camera` component leaves its `RenderCamera`
-/// rendering forever, and the director writes world-space poses straight to its
-/// `Transform`, which a parent would reinterpret as local.
-#[derive(Component)]
+/// Marks the level's camera that the director drives from the live virtual camera.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
+#[reflect(Component, Default, SceneComponent)]
+#[require(Camera)]
 pub struct MainCamera;
 
-/// Spawns the main camera plus a lowest-priority fallback virtual camera, so the
-/// stack is never empty and the window always has a view, unless the director is built without a main camera.
-pub(crate) fn spawn_main_camera(mut cmd: CommandQueue, mut director: ResMut<CameraDirector>) {
-    if !director.spawns_main_camera() {
-        return;
+pub(crate) struct UndrivenWarnings(EntityHashSet);
+
+impl FromWorld for UndrivenWarnings {
+    fn from_world(_world: &World) -> Self {
+        Self(EntityHashSet::default())
     }
+}
 
-    let main_camera = cmd
-        .spawn((MainCamera, Camera::default(), Transform::default()))
-        .entity();
-    director.set_main_camera(main_camera);
-
-    cmd.spawn((VirtualCamera::new(i32::MIN), Transform::default()));
+pub(crate) fn adopt_main_camera(
+    mut director: ResMut<CameraDirector>,
+    main_cameras: Query<Entity, With<MainCamera>>,
+    mut warned: SystemLocal<UndrivenWarnings>,
+) {
+    let driven = main_cameras.iter().min_by_key(|entity| entity.index());
+    if director.main_camera() != driven {
+        director.set_main_camera(driven);
+    }
+    let undriven: EntityHashSet = main_cameras
+        .iter()
+        .filter(|entity| Some(*entity) != driven)
+        .collect();
+    for entity in undriven.difference(&warned.0) {
+        log::warn!(
+            "MainCamera on {entity:?} is not driven: {driven:?}, the MainCamera with the lowest entity index, is"
+        );
+    }
+    warned.0 = undriven;
 }

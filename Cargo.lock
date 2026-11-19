@@ -1155,6 +1155,7 @@ dependencies = [
  "concerto-render",
  "concerto-scene",
  "glam 0.33.12",
+ "log",
 ]
 
 [[package]]
@@ -1201,6 +1202,7 @@ dependencies = [
  "concerto-app",
  "concerto-color",
  "concerto-debug-gizmos",
+ "concerto-director",
  "concerto-ecs",
  "concerto-foundation",
  "concerto-import",
@@ -1210,6 +1212,7 @@ dependencies = [
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
+ "concerto-skybox",
  "concerto-ui",
  "concerto-window",
  "concerto-winit",
@@ -1293,6 +1296,7 @@ dependencies = [
  "concerto-animation",
  "concerto-asset-import",
  "concerto-color",
+ "concerto-director",
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
@@ -1648,6 +1652,7 @@ dependencies = [
  "naga_oil",
  "pollster",
  "profiling",
+ "proptest",
  "serde",
  "wgpu",
  "wgpu-types",
@@ -1685,12 +1690,20 @@ dependencies = [
 name = "concerto-skybox"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "concerto-app",
+ "concerto-color",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-mesh",
+ "concerto-reflect",
  "concerto-render",
- "derive_more",
- "serde",
+ "concerto-window",
+ "glam 0.33.12",
+ "half",
+ "log",
+ "naga",
+ "wgpu",
 ]
 
 [[package]]

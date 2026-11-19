@@ -58,3 +58,4 @@ wgpu = { version = "30.0.2", default-features = false, features = ["std", "webgl
 
 [dev-dependencies]
 naga = { version = "30", features = ["glsl-out"] }
+proptest.workspace = true

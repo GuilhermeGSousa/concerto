@@ -5,7 +5,7 @@ use crate::{
     },
     capabilities::RenderCapabilities,
     components::{
-        camera::{extract_cameras, sync_camera_aspect, Camera},
+        camera::{extract_cameras, rebind_sky_radiance, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
         light::{
             cull_lights, extract_lights, write_visible_lights, Light, RenderLights, VisibleLights,
@@ -34,7 +34,8 @@ use crate::{
         RenderAssetPlugin,
     },
     resources::RenderContext,
-    sets::RenderSet,
+    sets::{BackgroundSet, RenderSet},
+    sky_light::SkyRadianceMap,
     systems::{
         render::{finish_render, present_window},
         update_window,
@@ -146,12 +147,20 @@ impl Plugin for RenderPlugin {
                 RenderSet::Lights,
                 RenderSet::Queue,
                 RenderSet::Shadows,
+                RenderSet::Background,
                 RenderSet::Draw,
                 RenderSet::Overlay,
             )
                 .chain(),
         )
-        .add_render_system(Render, clear_cameras)
+        .configure_render_sets(Render, (BackgroundSet::Clear, BackgroundSet::Draw).chain())
+        .add_render_system(
+            Render,
+            clear_cameras
+                .in_set(RenderSet::Background)
+                .in_set(BackgroundSet::Clear),
+        )
+        .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
         .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
         .add_render_system(
@@ -241,6 +250,7 @@ impl Plugin for RenderPlugin {
             RenderSpotDirectionalShadowMaps::new(&device, &capabilities);
         let render_point_shadow_maps = RenderPointShadowMaps::new(&device, &capabilities);
         let render_shadow_view_projs = RenderShadowViewProjs::new(&device);
+        let sky_radiance = SkyRadianceMap::black(&device, &capabilities);
         let render_lighting = RenderLighting::new(
             &device,
             &lighting_layout,
@@ -267,6 +277,7 @@ impl Plugin for RenderPlugin {
             })
             .insert_resource(RenderQueue { queue })
             .insert_resource(capabilities)
+            .insert_resource(sky_radiance)
             .insert_resource(viewport_clear)
             .insert_resource(RenderWindow::new())
             .insert_resource(camera_layouts)

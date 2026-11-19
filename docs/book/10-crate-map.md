@@ -22,7 +22,7 @@ game adds itself when it needs them.
 | | `gltf`, `obj` | the glTF and OBJ importers | |
 | Rendering | `render` | the wgpu renderer, cameras, lights, materials, the render world | `render` |
 | | `mesh` | mesh data, mesh primitives, bounds, ray tests, `MeshComponent`, skeleton assets and `JointPose` | `mesh` |
-| | `skybox` | the sky | `skybox` |
+| | `skybox` | `Sun` and `Sky`: a physically based sky that follows the sun, lights the scene and colors its fog | `skybox` |
 | | `world-grid` | the ground grid | `world_grid` |
 | | `debug-gizmos` | immediate-mode debug lines and shapes, and `ComponentGizmo` with the engine's component gizmos for bounds, skeletons, lights and cameras | add `concerto-debug-gizmos` |
 | | `motion-matching-gizmos` | `MotionMatchingGizmos`, which draws a running character's motion matching, and the drawing the database preview shares | add `concerto-motion-matching-gizmos` |

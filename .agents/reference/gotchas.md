@@ -174,6 +174,20 @@ fix the entry in the same commit as the change that made it false.
   `register_type`.** `register_type` alone makes the node load into a graph,
   but its inputs are in no walk's input set, so every walk skips the node with
   a warning each frame and its pose stays rest.
+- **The `SkyRadianceMap` encoding is written in three shaders.** The standard
+  shader's `sky_radiance_uv` and `sky_radiance` and the skybox crate's
+  `sky.wgsl` read the map, and `sky_view.wgsl` writes it with the inverse
+  mapping: equirectangular, `u = atan2(d.x, -d.z) / 2π + 0.5`,
+  `v = 0.5 - asin(d.y) / π`, `Rgba16Float`, or `Rgba8Unorm` holding
+  `sqrt(radiance / SKY_RADIANCE_SCALE)` when `SKY_RADIANCE_SQRT` is defined.
+  Change one and change all three. The skybox replaces the render crate's
+  1×1 black map once in `finish` and then renders into it in place, so
+  `rebind_sky_radiance` rebuilds camera bind groups only then.
+- **The sky shader copies `CameraUniform`.** The skybox crate's `sky.wgsl`
+  declares the whole struct to reach `inverse_view_proj` and `night_color`,
+  and nothing checks it against the Rust layout in `camera.rs`. A change to
+  `CameraUniform` changes the render crate's `shader.wgsl` and `sky.wgsl`
+  together.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 
@@ -401,7 +415,11 @@ fix the entry in the same commit as the change that made it false.
 - **Only the editor camera draws in an edit `App`.** The viewport tools insert
   `ExclusiveCamera` naming it at `Startup`, and `extract_cameras` skips every
   other camera while the resource exists, so a scene camera never gets a render
-  camera. Nothing removes one afterwards.
+  camera. Nothing removes one afterwards. The scene `MainCamera`'s `Sky` and
+  `CameraEnvironment` reach the viewport only because `ViewportEnvironmentPlugin`
+  copies them onto the editor camera; another camera's are ignored, and another
+  per-camera setting does not show while editing unless it is mirrored the same
+  way.
 - **The scene root in the hierarchy is the editor's wrapper,** not part of the
   scene. It cannot be deleted, duplicated, or renamed.
 - **Entity edits pick their rules from whether the world has a `SceneRoot`.**
