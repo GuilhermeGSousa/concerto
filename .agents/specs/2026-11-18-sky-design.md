@@ -1,9 +1,11 @@
 # Procedural sky with time of day
 
-Status: draft, awaiting the owner's approval. Reviewed once by `spec-reviewer`;
-its findings are folded in.
+Status: approved by the owner on 2026-11-19, with the answers recorded in
+*Decisions confirmed*. Reviewed once by `spec-reviewer`; its findings are
+folded in.
 
-Closes #512 (the skybox draws nothing). Builds the sky that #655 (One More
+Closes #512 (the skybox draws nothing) and #886 (the editor viewport shows
+none of the scene camera's environment). Builds the sky that #655 (One More
 Night's dusk-to-night lighting) needs, without the moon. Makes #866 obsolete in
 its current form, because the cube-map material it describes is deleted; see
 *Follow-up work*. Leaves the HDR target to #427.
@@ -30,8 +32,8 @@ and distance fog takes the sky's color in the direction you look.
 | Fog | Per pixel: with a sky, fog takes the sky radiance in the view direction. |
 | Web | Nice to have. The design is fragment-only and works on WebGL2. |
 
-Facts found while writing this change three of those answers slightly; see
-*Decisions to confirm* at the end.
+Facts found while writing this changed three of those answers slightly; see
+*Decisions confirmed* at the end.
 
 ## How Bevy does it, and what differs
 
@@ -330,19 +332,43 @@ Without a `Sun` and a `Sky`, the sky adds no per-frame cost:
   - tuning the atmosphere.
 
   No new tool is needed.
-- **What shows when.**
-  - An edit `App` draws only the editor camera (`ExclusiveCamera`), which has
-    no `Sky` and is outside the open scene. So while editing, the viewport
-    shows the sun's tint, because `LightTint` is written at edit time, but
-    neither the sky nor its ambient.
-  - In Play, the scene camera draws, with its `Sky`.
-  - This matches `CameraEnvironment` today, whose fog and ambient also show
-    only in Play.
-  - Showing the scene camera's environment in the editor viewport is a
-    separate issue, #886.
+- **What shows when.** An edit `App` draws only the editor camera
+  (`ExclusiveCamera`), which is outside the open scene. The viewport
+  environment mirror below copies the scene camera's `Sky` and
+  `CameraEnvironment` onto it, so the editor viewport shows the sky, its
+  ambient, the sun's tint and the fog while editing, as Play does.
 - **README.** `crates/skybox/README.md` gives the agent recipe:
   `add_component Sky` on the camera, `add_component Sun` on a directional
-  light, `set_property` on the light's rotation, then Play to see the sky.
+  light, `set_property` on the light's rotation. The viewport shows the
+  result while editing and in Play.
+
+### Viewport environment mirror (`concerto-editor`)
+
+Closes #886. Bevy has no equivalent: its editor-less scenes render through
+whichever camera the game spawns.
+
+- **Plugin.** `ViewportEnvironmentPlugin`, in
+  `crates/editor/src/tools/environment.rs`, registered by `build_viewport`
+  next to the camera tools. A play `App` gets only `EditToolsCorePlugin`, so
+  the mirror runs only where the editor camera exists. The editor gains a
+  `concerto-skybox` dependency, as it has `concerto-world-grid`.
+- **What it copies.** `Sky` and `CameraEnvironment`, each on its own.
+- **From where.** For each of the two, the source is the scene camera with the
+  lowest `Entity` that has it, among cameras without `EditorHelper`. Different
+  cameras may supply the two.
+- **How.** One `Update` system, `mirror_scene_environment`, marked
+  `.at_edit_time()`. Each frame it compares each source value with the editor
+  camera's copy. When they differ, it inserts the source's value on the editor
+  camera with `CommandQueue::insert`. When there is no source and the editor
+  camera has a copy, it removes the copy. It compares values, so it writes
+  nothing while nothing changed, and the skybox's `Changed<Sky>` systems stay
+  idle.
+- **What follows.** The skybox's `update_sun_lighting` sees the editor
+  camera's `Sky` like any other and writes its `CameraSkyLight`. Removing the
+  mirrored `Sky` triggers the skybox's `On<Remove<Sky>>` listener.
+- **Agents.** There's no new tool. An agent changes the scene camera with
+  `add_component`, `set_property` and `remove_component`, and the viewport
+  follows.
 - **Not covered.** Time-of-day animation is the owner's to drive, for example by
   animating the Sun's rotation. This change adds no clock.
 
@@ -361,6 +387,12 @@ without an adapter.
 | `a_sun_sets_the_sky_lighting_from_noon_to_night` | Feature scenario, no GPU | See below. |
 | `the_sky_draws_behind_geometry_and_follows_the_sun` | Feature (render), GPU readback | See below. |
 | `sky_shaders_compose_for_webgl2` | Invariant | The sky-view and sky shaders compose and validate with WebGL2 defs, with and without `SKY_RADIANCE_SQRT`. |
+
+**New test in `crates/editor`:**
+
+| Test | Kind | Asserts |
+|---|---|---|
+| `the_viewport_mirrors_the_scene_cameras_sky_and_environment` | Feature scenario, through the edit signals | An open scene with a camera holding `Sky` and `CameraEnvironment`: after a frame, the editor camera holds equal values. A property edit to the scene camera's `Sky` reaches the editor camera. Removing the component from the scene camera removes it from the editor camera. With no source, the editor camera holds neither. |
 
 - **`transmittance_and_scattering_behave_physically`:**
   - Transmittance is 1 at zero path length and falls monotonically toward the
@@ -400,9 +432,10 @@ without an adapter.
 | `camera_uniform_keeps_its_wgsl_layout` (existing, updated) | Invariant | The new size and field offsets match the WGSL struct. |
 | `webgl2_shaders.rs` (existing, updated) | Invariant | Builds `RenderCapabilities` with the new field. Composes the standard shader with a second def set that includes `SKY_RADIANCE_SQRT`. |
 
-Budget: `crates/skybox` gets a new entry at 4, and `crates/render` goes from
-79 to 80. The added tests are the sky maths, the scenario, the readback and
-the WebGL2 check in skybox, and the SH law in render. The other changes edit
+Budget: `crates/skybox` gets a new entry at 4, `crates/render` goes from
+79 to 80, and `crates/editor` from 176 to 177. The added tests are the sky
+maths, the scenario, the readback and the WebGL2 check in skybox, the SH law
+in render, and the mirror scenario in the editor. The other changes edit
 existing tests.
 
 The red step comes first in each task: write the scenario, watch it fail on the
@@ -423,7 +456,8 @@ and the scene's directional light marked `Sun`:
 5. **Turning the sun live.** While playing, turn the Sun with `set_property`
    on its rotation, or with the gizmo if Play allows it. The sky follows
    within a frame.
-6. **Editor.** While editing (not playing), the sun's tint changes as the Sun
+6. **Editor.** While editing (not playing), the viewport shows the sky, its
+   ambient and the fog, and the sky and the sun's tint follow as the Sun
    turns.
 7. **Web build** (`wasm-run` skill). The sky matches native. If the
    `Rgba8Unorm` fallback is taken, it shows no visible banding.
@@ -431,7 +465,9 @@ and the scene's directional light marked `Sun`:
 ## Documentation
 
 - **`crates/skybox/README.md` (new).** What `Sun` and `Sky` do, the spawn
-  recipe, the agent recipe, the units, and that the sky shows in Play only.
+  recipe, the agent recipe and the units.
+- **`crates/editor/README.md`.** The viewport mirrors the scene camera's
+  `Sky` and `CameraEnvironment`.
 - **`docs/book/06-rendering.md`.**
   - Lines 218–227, which name `SkyboxCube` and say `SkyboxPlugin` draws the
     skybox, are rewritten for `Sun` and `Sky`.
@@ -442,7 +478,9 @@ and the scene's directional light marked `Sun`:
 - **`CameraEnvironment` doc comments.** State that under a sky, `ambient` and
   `Fog::color` are replaced by the sky's.
 - **`.agents/reference/gotchas.md`.** Gains two entries:
-  - The sky shows only in Play, because the editor camera is exclusive.
+  - The editor camera mirrors `Sky` and `CameraEnvironment` from the scene
+    camera with the lowest `Entity` that has each. This amends the existing
+    "Only the editor camera draws in an edit `App`" entry.
   - The `SkyRadianceMap` encoding is shared between the standard shader and
     the skybox shaders.
 
@@ -461,7 +499,7 @@ and the scene's directional light marked `Sun`:
   Marking a light `Sun` changes its color with the time of day. Adding `Sky`
   changes the ambient and fog. A scene with neither looks as it does today.
 
-## Decisions to confirm
+## Decisions confirmed
 
 1. **The atmosphere's medium lives on `Sun`, not on `Sky`.** You chose "Sky on
    the camera" when its settings were described as the atmosphere's. Lights are
@@ -477,11 +515,13 @@ and the scene's directional light marked `Sun`:
    binding.
    - This spec deletes `SkyboxMaterial`.
    - Adding `Sky` cube maps goes in the follow-up (#866, reworded).
-3. **The sky shows in Play, not while editing.** The editor viewport draws
-   only the editor camera. This spec accepts that, matching
-   `CameraEnvironment`, and leaves the editor-viewport gap to #886. The
-   alternative is an edit-time plugin in this change that mirrors the scene
-   camera's `Sky` onto the editor camera.
+3. **The sky shows while editing too.** The owner chose the edit-time mirror
+   over Play-only. They also chose to mirror `CameraEnvironment` (closing
+   #886), to take each component from the lowest-`Entity` scene camera that
+   has it, and to put the mirror in the editor crate. See *Viewport
+   environment mirror*.
+
+Decisions 1 and 2 were confirmed as written.
 
 ## Follow-up work
 
@@ -494,7 +534,5 @@ and the scene's directional light marked `Sun`:
   shader drops its own ACES and the `Rgba8Unorm` fallback can be reconsidered.
 - **Moonlight: #655.** A moon disk, and a second light that follows it, build
   on this sky.
-- **The editor viewport shows none of the scene camera's environment: #886.**
-  Fog, ambient and sky show only in Play.
 - **Specular reflections.** Reflections from the sky through a prefiltered
   environment map. No issue yet; it gets one when the owner wants it.
