@@ -65,6 +65,11 @@ struct CameraUniform {
     fog_color: vec4<f32>,
     fog_params: vec4<f32>,
     ambient: vec4<f32>,
+    inverse_view_proj: mat4x4<f32>,
+    sky_irradiance: array<vec4<f32>, 9>,
+    night_color: vec4<f32>,
+    night_ambient: vec4<f32>,
+    sky_lit: u32,
 };
 
 struct VertexInput {
@@ -321,7 +326,11 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         total_light += (kd * diffuse_color / PI + specular) * radiance * NdotL;
     }
 
-    let ambient = camera.ambient.rgb * base_color.rgb * occlusion;
+    var ambient_light = camera.ambient.rgb;
+    if camera.sky_lit != 0u {
+        ambient_light = sky_irradiance(mapped_normal) / PI + camera.night_ambient.rgb;
+    }
+    let ambient = ambient_light * base_color.rgb * occlusion;
     var color = ambient + total_light + emissive;
 
     if camera.fog_color.a > 0.0 {
@@ -423,6 +432,23 @@ fn sample_point_shadow(direction: vec3<f32>, shadow_layer: i32, depth: f32) -> f
         depth,
     );
 #endif
+}
+
+fn sky_irradiance(normal: vec3<f32>) -> vec3<f32> {
+    let x = normal.x;
+    let y = normal.y;
+    let z = normal.z;
+    let sh = camera.sky_irradiance;
+    let irradiance = sh[0].rgb * 0.2820948
+        + sh[1].rgb * (0.4886025 * y)
+        + sh[2].rgb * (0.4886025 * z)
+        + sh[3].rgb * (0.4886025 * x)
+        + sh[4].rgb * (1.0925484 * x * y)
+        + sh[5].rgb * (1.0925484 * y * z)
+        + sh[6].rgb * (0.3153916 * (3.0 * z * z - 1.0))
+        + sh[7].rgb * (1.0925484 * x * z)
+        + sh[8].rgb * (0.5462742 * (x * x - y * y));
+    return max(irradiance, vec3<f32>(0.0));
 }
 
 // Trowbridge-Reitz GGX normal distribution

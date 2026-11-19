@@ -31,6 +31,7 @@ use crate::{
     queue::RenderQueue,
     render_asset::{render_texture::RenderTexture, RenderAssets},
     resources::RenderContext,
+    sky_light::CameraSkyLight,
 };
 
 #[rustfmt::skip]
@@ -220,6 +221,11 @@ pub struct CameraUniform {
     pub(crate) fog_color: Vec4,
     pub(crate) fog_params: Vec4,
     pub(crate) ambient: Vec4,
+    inverse_view_proj: Mat4,
+    pub(crate) sky_irradiance: [Vec4; 9],
+    pub(crate) night_color: Vec4,
+    pub(crate) night_ambient: Vec4,
+    pub(crate) sky_lit: u32,
 }
 
 impl CameraUniform {
@@ -230,6 +236,11 @@ impl CameraUniform {
             fog_color: Vec4::ZERO,
             fog_params: Vec4::ZERO,
             ambient: Vec3::splat(DEFAULT_AMBIENT_INTENSITY).extend(1.0),
+            inverse_view_proj: Mat4::IDENTITY,
+            sky_irradiance: [Vec4::ZERO; 9],
+            night_color: Vec4::ZERO,
+            night_ambient: Vec4::ZERO,
+            sky_lit: 0,
         }
     }
 
@@ -237,11 +248,31 @@ impl CameraUniform {
         &mut self,
         camera: &Camera,
         environment: Option<&CameraEnvironment>,
+        sky_light: Option<&CameraSkyLight>,
         transform: &GlobalTransform,
     ) {
         self.view_pos = transform.translation();
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
+        self.inverse_view_proj = self.view_proj.inverse();
         environment.copied().unwrap_or_default().fill(self);
+        self.fill_sky_light(sky_light);
+    }
+
+    fn fill_sky_light(&mut self, sky_light: Option<&CameraSkyLight>) {
+        let Some(sky_light) = sky_light else {
+            self.sky_irradiance = [Vec4::ZERO; 9];
+            self.night_color = Vec4::ZERO;
+            self.night_ambient = Vec4::ZERO;
+            self.sky_lit = 0;
+            return;
+        };
+        self.sky_irradiance = sky_light
+            .irradiance
+            .coefficients
+            .map(|coefficient| coefficient.extend(0.0));
+        self.night_color = Vec4::from_array(sky_light.night_color.to_array());
+        self.night_ambient = Vec4::from_array(sky_light.night_ambient.to_array());
+        self.sky_lit = 1;
     }
 
     pub(crate) fn view_proj(&self) -> Mat4 {
@@ -330,6 +361,7 @@ pub(crate) fn extract_cameras(
             Entity,
             &Camera,
             Option<&CameraEnvironment>,
+            Option<&CameraSkyLight>,
             Option<&RenderLayers>,
             &GlobalTransform,
             &RenderEntity,
@@ -344,7 +376,8 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
-    for (entity, camera, environment, layers, transform, render_entity) in cameras.iter() {
+    for (entity, camera, environment, sky_light, layers, transform, render_entity) in cameras.iter()
+    {
         let layers = layers.copied().unwrap_or_default();
         if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
             continue;
@@ -352,7 +385,7 @@ pub(crate) fn extract_cameras(
         let render_entity = **render_entity;
 
         let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(camera, environment, transform);
+        camera_uniform.update_view_proj(camera, environment, sky_light, transform);
 
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;
@@ -545,6 +578,13 @@ mod tests {
             fog_color: Vec4::new(30.0, 31.0, 32.0, 33.0),
             fog_params: Vec4::new(40.0, 41.0, 42.0, 43.0),
             ambient: Vec4::new(50.0, 51.0, 52.0, 53.0),
+            inverse_view_proj: Mat4::from_cols_array(&std::array::from_fn(|index| {
+                60.0 + index as f32
+            })),
+            sky_irradiance: std::array::from_fn(|index| Vec4::splat(80.0 + index as f32)),
+            night_color: Vec4::new(90.0, 91.0, 92.0, 93.0),
+            night_ambient: Vec4::new(94.0, 95.0, 96.0, 97.0),
+            sky_lit: 1,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 0.0]);
@@ -554,9 +594,18 @@ mod tests {
         expected.extend(float_words(&[30.0, 31.0, 32.0, 33.0]));
         expected.extend(float_words(&[40.0, 41.0, 42.0, 43.0]));
         expected.extend(float_words(&[50.0, 51.0, 52.0, 53.0]));
+        expected.extend(float_words(&std::array::from_fn::<f32, 16, _>(|index| {
+            60.0 + index as f32
+        })));
+        for index in 0..9 {
+            expected.extend(float_words(&[80.0 + index as f32; 4]));
+        }
+        expected.extend(float_words(&[90.0, 91.0, 92.0, 93.0]));
+        expected.extend(float_words(&[94.0, 95.0, 96.0, 97.0]));
+        expected.extend([1, 0, 0, 0]);
 
         assert_eq!(uniform_words(&uniform), expected);
-        assert_eq!(uniform.size().get(), 128);
+        assert_eq!(uniform.size().get(), 384);
     }
 
     struct Case {

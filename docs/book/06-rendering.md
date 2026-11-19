@@ -127,6 +127,9 @@ light shines along its transform's −Z. `shadowmaps_enabled` makes it cast
 shadows; it and `light_type` can be changed at any time and take effect on the
 next frame.
 
+A `LightTint` on the light's entity multiplies its color. Systems such as the
+sky keep it up to date, and it is not saved with the scene.
+
 Only the lights a camera sees are drawn and cast shadows. A point or spot
 light with a `range` is seen when the sphere of that radius around it touches
 some camera's view; a directional light, and a light whose `range` is 0, is

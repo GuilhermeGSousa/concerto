@@ -1784,6 +1784,7 @@ dependencies = [
  "offset-allocator",
  "pollster",
  "profiling",
+ "proptest",
  "send_wrapper",
  "serde",
  "web-sys",
