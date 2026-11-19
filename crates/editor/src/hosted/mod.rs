@@ -264,7 +264,7 @@ impl PendingApp {
         }
     }
 
-    fn held_mut(&mut self) -> Option<&mut HostedApp> {
+    pub(crate) fn held_mut(&mut self) -> Option<&mut HostedApp> {
         match &mut self.phase {
             Phase::Building(hosted) => Some(hosted.as_mut()),
             Phase::WarmingUp(warming) => Some(&mut warming.hosted),
@@ -673,7 +673,7 @@ pub(crate) fn toggle_play(
 
 /// A play `App` building beside its document's edit `App`; `finish_pending` never takes it.
 #[derive(Component)]
-pub struct PendingPlayApp(PendingApp);
+pub struct PendingPlayApp(pub(crate) PendingApp);
 
 impl PendingPlayApp {
     /// Holds `pending`, begun in the [`HostRole::Game`] role, until it is ready to play.

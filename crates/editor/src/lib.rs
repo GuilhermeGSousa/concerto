@@ -8,6 +8,7 @@ pub mod dock;
 pub mod drag_drop;
 pub mod entity_picker;
 pub mod fonts;
+pub mod gizmo_choices;
 pub mod graph_canvas;
 pub mod guard;
 pub mod hierarchy;
@@ -111,6 +112,7 @@ impl Plugin for EditorPlugin {
         );
         app.add_listener(workspace::reset_input_for_viewport_target);
         app.register_plugin(viewport::ViewportPlugin);
+        app.register_plugin(gizmo_choices::ComponentGizmosPlugin);
         app.register_plugin(shell::ShellPlugin);
         app.register_plugin(tabs::TabsPlugin);
         app.register_plugin(window_chrome::WindowChromePlugin {

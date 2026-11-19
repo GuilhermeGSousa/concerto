@@ -263,6 +263,15 @@ stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
 no editor camera. All three need an open scene.
 
+`gizmos` lists the component gizmo kinds of the edited scene's `App`, or of the
+game while it plays, one `Bounds · selected` or `Navmesh · always` line per
+kind: drawn for the selection and its descendants, or for every entity. With
+`kind`, ignoring case, and `always` it sets that kind for every edit and play
+`App`, as the viewport's Gizmos menu does, and answers the list as it reads
+with the change. A kind the scene does not have answers `unknown_gizmo`, listing
+the kinds it has, and `kind` without `always`, or `always` without `kind`,
+answers `invalid_arguments`. It needs an open scene.
+
 `set_panel_size` sets the size of `panel`, one of `left`, `right`, `bottom`
 and `browser`, to `size` logical pixels: a width, or for `bottom` the strip's
 height. It triggers `ResizePanel`, the signal a splitter's drag triggers, and
@@ -515,7 +524,7 @@ A failed call is a tool result marked `isError` whose text is
 
 | Code | Meaning |
 | --- | --- |
-| `invalid_arguments` | The arguments do not match the tool's input schema, or `target`, `entity`, `component` and `components` are given in a combination the tool does not take |
+| `invalid_arguments` | The arguments do not match the tool's input schema, or `target`, `entity`, `component` and `components`, or `kind` and `always`, are given in a combination the tool does not take |
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
 | `busy` | `open_project` while a project is opening, `save` of a scene still loading, or `screenshot` of a picture not drawn yet |
 | `unknown_entity`, `stale_entity` | The id names no live entity of the open scene, such as the editor's camera, or of the game while it plays; or a slot that now holds a newer one |
@@ -529,6 +538,7 @@ A failed call is a tool result marked `isError` whose text is
 | `not_a_list` | `list_push` or `list_remove` on a path that is not a list, or on a `Vec` with an editor registered for its exact type |
 | `index_out_of_range` | `list_remove` with an index past the end; the message names the length |
 | `unknown_asset` | The asset is not in the catalogue |
+| `unknown_gizmo` | The scene has no gizmo kind of that name; the message lists those it has |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
 | `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
@@ -579,8 +589,8 @@ steps, and drops. The crate has three parts:
   the grid, picking, the component gizmos (`component_gizmos.rs`), the
   transform gizmo, and the listeners that apply each edit. `EditToolsPlugin` installs it. The half that edits and captures a
   scene needs no renderer; the viewport half is added when the recipe has one.
-- The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
-  editor's `App`.
+- The panels (hierarchy, inspector, viewport, tabs, content, dock) and the
+  viewport's Gizmos menu (`gizmo_choices.rs`) run in the editor's `App`.
 
 The dock (`src/dock.rs`) tiles the window; nothing is drawn over anything
 else. From the top: a bar with the brand, the tabs, the stats and the window
@@ -1084,6 +1094,16 @@ registers another in a hosted `App`; it lists the kind in that `App`'s
 `SetGizmoAlways { kind, always }` signal draws a kind for every entity, or
 again only for the selection; an unknown kind changes nothing. The editor's own
 camera and grid are `EditorHelper`s and never draw a gizmo.
+
+The Gizmos button on the viewport's top-right corner, shown while a scene is
+edited or played, opens a menu with a checkbox per kind of the `App` in front,
+or "No gizmos"; a checked kind is drawn for every entity. The choice is the
+editor's `GizmoChoices`, one set for every scene, kept for the session:
+`ComponentGizmosPlugin` (`src/gizmo_choices.rs`) sets each kind to it in every
+edit and play `App`, in front, in a background tab, parked while its game plays,
+or still building, by triggering `SetGizmoAlways`. A preview keeps its own. The
+`gizmos` tool reads and sets the same choices. Without the plugin every kind is
+drawn for the selection.
 
 Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the

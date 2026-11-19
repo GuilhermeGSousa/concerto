@@ -62,7 +62,8 @@ it to an AI agent (below).
   moves with the gizmo; the inspector, titled **Looking Glass**, adds and
   edits components. Selecting an entity draws the component gizmos of it and
   of everything under it: each mesh's bounds, a skeleton's bones, a light's
-  reach and a camera's frustum.
+  reach and a camera's frustum. The **Gizmos** menu on the viewport's
+  top-right corner draws a kind for every entity instead, in every scene.
 - **Save** with Ctrl+S. A scene an import made belongs to its source and is
   read-only: a save of it is refused. To build on it, make a scene of your own
   and place the import's scene in it. That makes a link: your scene stores

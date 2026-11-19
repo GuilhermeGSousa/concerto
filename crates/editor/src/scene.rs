@@ -785,8 +785,9 @@ pub(crate) fn update_scenes(
 mod tests {
     use super::*;
     use crate::{
+        gizmo_choices::{GizmoChoices, apply_gizmo_choices},
         hosted::{PlayStarted, PlayState, PlayStopped, testing::SceneFixture},
-        tools::entity_ops::EntityEdit,
+        tools::{component_gizmos::ComponentGizmos, entity_ops::EntityEdit},
     };
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_ecs::{
@@ -1146,12 +1147,33 @@ mod tests {
         app.insert_resource(ScenePluginBuilt { after_scene_tools });
     }
 
+    fn always(world: &World) -> Vec<&'static str> {
+        world
+            .get_resource::<ComponentGizmos>()
+            .unwrap()
+            .kinds()
+            .iter()
+            .filter(|kind| kind.always)
+            .map(|kind| kind.name)
+            .collect()
+    }
+
+    fn choose(f: &mut SceneFixture, kind: &str, always: bool) {
+        f.world
+            .get_resource_mut::<GizmoChoices>()
+            .unwrap()
+            .set(kind, always);
+    }
+
     #[test]
-    fn the_recipes_clipboard_opener_and_scene_plugins_reach_the_edit_app_and_the_play_app() {
+    fn the_clipboard_opener_scene_plugins_and_gizmo_choices_reach_the_edit_and_play_apps() {
         let mut f = SceneFixture::new();
         let recipe = f.world.get_resource_mut::<SceneRecipe>().unwrap();
         recipe.clipboard = Some(mark_clipboard);
         recipe.scene_plugins.push(mark_scene_tools);
+        f.world.insert_resource(GizmoChoices::default());
+        f.add_delivery(apply_gizmo_choices.into_boxed_system());
+        choose(&mut f, "Bounds", true);
         let document = f.open();
         let built = ScenePluginBuilt {
             after_scene_tools: true,
@@ -1159,12 +1181,20 @@ mod tests {
 
         assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
         assert_eq!(f.scene_world(document).get_resource(), Some(&built));
+        assert_eq!(always(f.scene_world(document)), ["Bounds"]);
 
         play(&mut f, document);
         f.frames_until_playing(document);
         assert!(!f.hosted_is_editing(document));
         assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
         assert_eq!(f.scene_world(document).get_resource(), Some(&built));
+        assert_eq!(always(f.scene_world(document)), ["Bounds"]);
+
+        choose(&mut f, "Bounds", false);
+        choose(&mut f, "Light", true);
+        f.frame();
+        assert_eq!(always(f.scene_world(document)), ["Light"]);
+        assert_eq!(always(f.parked_world(document)), ["Light"]);
     }
 
     #[test]
