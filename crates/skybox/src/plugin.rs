@@ -1,12 +1,14 @@
 use concerto_app::{App, edit_time::AtEditTime, plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::IntoSystemConfig;
 use concerto_foundation::transform::systems::propagate_global_transforms;
+use concerto_render::plugin::RenderPlugin;
 
 use crate::{
     lighting::{
         AtmosphereLuts, build_atmosphere_luts, forget_sky_light, forget_sun_tint,
         update_sun_lighting,
     },
+    render::SkyRenderPlugin,
     sun::{Sky, Sun},
 };
 
@@ -31,11 +33,14 @@ impl Plugin for SkyPlugin {
     }
 }
 
-/// The sun and the sky; part of `DefaultPlugins`.
+/// The sun and the sky, drawn when `RenderPlugin` is registered before it; part of `DefaultPlugins`.
 pub struct SkyboxPlugin;
 
 impl Plugin for SkyboxPlugin {
     fn build(&self, app: &mut App) {
         app.register_plugin(SkyPlugin);
+        if app.is_plugin_added::<RenderPlugin>() {
+            app.register_plugin(SkyRenderPlugin);
+        }
     }
 }

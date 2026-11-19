@@ -1824,14 +1824,20 @@ dependencies = [
 name = "concerto-skybox"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "concerto-app",
  "concerto-color",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-mesh",
  "concerto-reflect",
  "concerto-render",
+ "concerto-window",
  "glam 0.33.12",
+ "half",
  "log",
+ "naga",
+ "wgpu",
 ]
 
 [[package]]

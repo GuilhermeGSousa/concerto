@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[derive(Resource)]
-pub(crate) struct ViewportClearPipeline {
+pub struct ViewportClearPipeline {
     pipeline: wgpu::RenderPipeline,
 }
 

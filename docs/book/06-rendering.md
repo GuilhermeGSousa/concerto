@@ -228,7 +228,31 @@ or it is culled whenever its vertices' box is out of view. The world grid requir
 
 `WorldGrid::default()`, from `concerto::world_grid`, draws an infinite ground
 grid that fades with distance; its fields set the cell size, colors and fade.
-The skybox is drawn by `SkyboxPlugin`, part of `DefaultPlugins`.
+
+The sky comes from `concerto::skybox`, whose `SkyboxPlugin` is part of
+`DefaultPlugins`. Mark one directional light `Sun` and its rotation sets the
+time of day; put `Sky` on a camera and that camera draws a physically based
+sky behind the scene:
+
+```rust
+use concerto::skybox::{Sky, Sun};
+
+cmd.spawn((Camera::default(), Sky::default(), Transform::from_translation(Vec3::new(0.0, 1.7, 5.0))));
+cmd.spawn((
+    Sun::default(),
+    Light::directional_light().with_intensity(2.0),
+    Transform::from_rotation(Quat::from_rotation_x(-0.8)),
+));
+```
+
+The sun sits where the light comes from, so turning the light moves it across
+the sky through dawn, noon, sunset and night. The sky's brightness follows the
+light's color and intensity. Under a `Sky`, the camera's ambient light comes
+from the sky instead of `CameraEnvironment::ambient`, and its fog takes the
+sky's color in the direction you look instead of `Fog::color`. `Sky`'s
+`night_color` and `night_ambient` keep night from going black. The air itself,
+Earth's by default, is `Sun::atmosphere`. A scene with neither component draws
+as it did before; see `crates/skybox/README.md` for the details.
 
 ## Debug drawing
 

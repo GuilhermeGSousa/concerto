@@ -174,6 +174,15 @@ fix the entry in the same commit as the change that made it false.
   `register_type`.** `register_type` alone makes the node load into a graph,
   but its inputs are in no walk's input set, so every walk skips the node with
   a warning each frame and its pose stays rest.
+- **The `SkyRadianceMap` encoding is written in three shaders.** The standard
+  shader's `sky_radiance_uv` and `sky_radiance` and the skybox crate's
+  `sky.wgsl` read the map, and `sky_view.wgsl` writes it with the inverse
+  mapping: equirectangular, `u = atan2(d.x, -d.z) / 2π + 0.5`,
+  `v = 0.5 - asin(d.y) / π`, `Rgba16Float`, or `Rgba8Unorm` holding
+  `sqrt(radiance / SKY_RADIANCE_SCALE)` when `SKY_RADIANCE_SQRT` is defined.
+  Change one and change all three. The skybox replaces the render crate's
+  1×1 black map once in `finish` and then renders into it in place, so
+  `rebind_sky_radiance` rebuilds camera bind groups only then.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 

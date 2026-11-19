@@ -300,7 +300,7 @@ pub(crate) fn assign_fallback_material(
     }
 }
 
-pub(crate) struct WindowOverlapWarned {
+pub struct WindowOverlapWarned {
     warned: bool,
 }
 
@@ -338,7 +338,8 @@ fn clear_window(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
     });
 }
 
-pub(crate) fn clear_cameras(
+/// Clears every camera's target and depth in `RenderSet::Background`; a pass behind the scene runs after it.
+pub fn clear_cameras(
     mut device: ResMut<RenderDevice>,
     render_cameras: Query<&RenderCamera>,
     render_window: Res<RenderWindow>,

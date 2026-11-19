@@ -1,3 +1,6 @@
+mod sky_render;
+mod webgl2_shaders;
+
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,

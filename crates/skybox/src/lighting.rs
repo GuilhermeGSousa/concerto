@@ -61,7 +61,7 @@ impl AtmosphereLuts {
     }
 }
 
-type SunQuery<'w, 's> = Query<
+pub(crate) type SunQuery<'w, 's> = Query<
     'w,
     's,
     (
@@ -72,7 +72,7 @@ type SunQuery<'w, 's> = Query<
     ),
 >;
 
-fn pick_sun(suns: &SunQuery) -> Option<Entity> {
+pub(crate) fn pick_sun(suns: &SunQuery) -> Option<Entity> {
     suns.iter()
         .filter(|(_, _, light, _)| matches!(light.light_type, LightType::Directional))
         .map(|(entity, ..)| entity)
@@ -150,7 +150,7 @@ fn sun_tint(luts: &AtmosphereLuts, disk_radius: f32, toward_sun: Vec3) -> Vec3 {
         * visible
 }
 
-fn rgb(color: LinearRgba) -> Vec3 {
+pub(crate) fn rgb(color: LinearRgba) -> Vec3 {
     Vec3::new(color.r, color.g, color.b)
 }
 
@@ -201,6 +201,10 @@ fn sky_irradiance(
     SphericalHarmonics::from_radiance(&samples)
 }
 
+pub(crate) fn toward_sun(transform: &GlobalTransform) -> Vec3 {
+    (transform.rotation() * Vec3::Z).normalize_or(Vec3::Y)
+}
+
 fn light_sun(
     entity: Entity,
     luts: &AtmosphereLuts,
@@ -208,7 +212,7 @@ fn light_sun(
     light: &Light,
     transform: &GlobalTransform,
 ) -> SunLighting {
-    let toward_sun = (transform.rotation() * Vec3::Z).normalize_or(Vec3::Y);
+    let toward_sun = toward_sun(transform);
     let tint = sun_tint(luts, sun.disk_radius, toward_sun);
     let illuminance = rgb(light.color.to_linear()) * light.intensity;
     SunLighting {
