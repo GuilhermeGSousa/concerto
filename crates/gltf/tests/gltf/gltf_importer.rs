@@ -13,6 +13,7 @@ use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_gltf::gltf_importer::{GltfImporter, GltfSettings};
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
 use concerto_reflect::{Reflect, apply_value};
+use concerto_render::assets::material::{AlphaMode, StandardMaterial};
 use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 
@@ -133,7 +134,7 @@ fn a_source_and_its_settings_import_their_sub_assets_or_are_refused() {
         ),
         emits(
             "triangle_two_prims.gltf",
-            &["mesh/0", "mesh/1", "material/0", "scene"],
+            &["mesh/0", "mesh/1", "material/0", "material/1", "scene"],
             &[],
             &[],
         ),
@@ -193,6 +194,8 @@ fn a_single_primitive_node_carries_its_mesh_material_light_and_shot_by_stable_id
         Some(AssetId::from_path("triangle.gltf#mesh/0"))
     );
     assert!(has_component_ending_in(node, "MaterialComponent"));
+    let material: StandardMaterial = emitted(&outputs, "material/0");
+    assert_eq!(material.alpha_mode(), AlphaMode::Opaque);
     assert!(has_component_ending_in(node, "light::Light"));
     let shot: VirtualCamera = decode(
         node.components
@@ -250,6 +253,11 @@ fn a_multi_primitive_mesh_becomes_a_parent_with_one_child_per_primitive() {
         assert!(has_component_ending_in(child, "MaterialComponent"));
         assert_eq!(mesh_handle_id(child), Some(AssetId::from_path(address)));
     }
+
+    let blended: StandardMaterial = emitted(&outputs, "material/0");
+    assert_eq!(blended.alpha_mode(), AlphaMode::Blend);
+    let masked: StandardMaterial = emitted(&outputs, "material/1");
+    assert_eq!(masked.alpha_mode(), AlphaMode::Mask { cutoff: 0.3 });
 }
 
 struct Skin {

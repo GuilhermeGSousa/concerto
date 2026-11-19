@@ -200,9 +200,29 @@ fn spawn_triangle(mut cmd: CommandQueue, assets: Res<AssetServer>) {
 
 `StandardMaterial` is a physically based material. `new` takes an optional base
 color texture and normal map; the `with_*` methods add a color factor,
-metallic-roughness, emissive and occlusion textures, an alpha cutoff and a UV
+metallic-roughness, emissive and occlusion textures, an alpha mode and a UV
 scale. Share one mesh or material handle between many entities by cloning the
 handle.
+
+The alpha mode, from `concerto::render::assets::material::AlphaMode`, says what
+the base color's alpha does:
+
+- `Opaque`, the default, ignores it: the surface hides what is behind it;
+- `Mask { cutoff }` discards the fragments whose alpha is below `cutoff` and
+  draws the rest opaque, for leaves and fences;
+- `Blend` blends the surface over what is behind it by its alpha, for glass and
+  decals.
+
+```rust
+use concerto::render::assets::material::AlphaMode;
+
+let glass = StandardMaterial::new(None, None)
+    .with_base_color_factor(Color::rgba(0.6, 0.8, 1.0, 0.3))
+    .with_alpha_mode(AlphaMode::Blend);
+```
+
+The glTF importer maps a material's `alphaMode` to these: `OPAQUE`, `MASK`
+with its `alphaCutoff` (0.5 when absent), and `BLEND`.
 
 `concerto::mesh::primitives` builds the common shapes, with normals, tangents
 and texture coordinates: `plane` on the XZ plane facing up, `cuboid`,
@@ -360,5 +380,26 @@ Entities then use `MaterialComponent::<Glow>`. The material's own bindings
 are in bind group 0; the camera, lighting and skeleton groups (1, 2 and 3) are
 added when the material asks for them. The comments at the top of
 `crates/render/src/material_plugin.rs` describe the convention.
+
+Two settings blend a material. `blend = "alpha"` in `#[material(...)]` blends
+every asset of the type in the type's one pass, unsorted and writing depth
+unless `depth_stencil` says otherwise, as the world grid does. Marking one field
+`#[alpha_mode]` lets each asset choose: the derive reads
+`Material::alpha_mode()` from that field, and an asset whose mode is `Blend` is
+drawn after the opaque surfaces of its type, back to front, without writing
+depth. The field is an `AlphaMode`, or any type `AlphaMode` converts from by
+reference, as `StandardMaterial`'s uniform is. Only one field may carry it;
+without one, every asset is `Opaque`.
+
+```rust
+#[derive(Asset, AsBindGroup, serde::Serialize, serde::Deserialize)]
+#[material(fragment_shader = include_str!("tint.wgsl"))]
+struct Tint {
+    #[uniform(0)]
+    color: [f32; 4],
+    #[alpha_mode]
+    alpha_mode: AlphaMode,
+}
+```
 
 Next: [Physics, animation and gameplay](07-physics-animation-gameplay.md).

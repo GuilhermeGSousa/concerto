@@ -5,7 +5,7 @@ use std::path::Path;
 use concerto_color::{Color, LinearRgba};
 use concerto_foundation::assets::content::{check_encoding, check_uncooked_encoding};
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
-use concerto_render::assets::material::StandardMaterial;
+use concerto_render::assets::material::{AlphaMode, Material, StandardMaterial};
 use concerto_render::assets::texture::{
     ColorSpace, Compression, MaxSize, SourceEncoding, Texture, TextureRole, TextureSettings,
     TextureSource,
@@ -73,7 +73,7 @@ fn standard_material_encoding_matches_its_fixture() {
     .with_emissive_texture(texture("textures/emissive"))
     .with_occlusion_texture(texture("textures/occlusion"))
     .with_base_color_factor(Color::from(LinearRgba::new(0.25, 0.5, 0.75, 0.5)))
-    .with_alpha_cutoff(0.25)
+    .with_alpha_mode(AlphaMode::Mask { cutoff: 0.25 })
     .with_uv_scale([2.0, 3.0]);
     material.set_metallic_factor(0.75);
     material.set_roughness_factor(0.25);
@@ -81,4 +81,10 @@ fn standard_material_encoding_matches_its_fixture() {
     material.set_occlusion_strength(0.5);
 
     check_encoding(&material, encoding_dir());
+
+    let version_1 = std::fs::read(encoding_dir().join("StandardMaterial.v1.bin")).unwrap();
+    let decoded: StandardMaterial = bincode::deserialize(&version_1).unwrap();
+    let mask = AlphaMode::Mask { cutoff: 0.25 };
+    assert_eq!(decoded.alpha_mode(), mask);
+    assert_eq!(Material::alpha_mode(&decoded), mask);
 }
