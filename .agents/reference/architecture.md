@@ -289,13 +289,14 @@ while it runs:
   held as a `HostedApp` component on the scene's document, and dropped with
   it. Like a play `App`, it is stepped hidden after its build until its loads
   and uploads settle, and only then becomes the `HostedApp`. It holds the scene's entities and the scene tools: the editor camera, the
-  grid, picking, the component gizmos, and the transform gizmo. It draws its window into a texture that the
+  grid, picking, the component gizmos, and the transform gizmo, then the plugins
+  that editor extensions add with `add_scene_tools_plugin`. It draws its window into a texture that the
   viewport panel shows.
 - **A play `App`,** while the Scene tab plays its scene. Play (the tab's
   button, or Ctrl+P) saves the scene if needed, then builds an `App` with the
   game role, `App::new()`, from the same recipe plus `EditToolsCorePlugin`
   (selection, edits, `DebugGizmosPlugin` and the component gizmos, no viewport
-  tools), with the project's content and the
+  tools), then the plugins added with `add_scene_tools_plugin`, with the project's content and the
   open scene's saved file as its startup scene. While it builds it is a
   `PendingPlayApp` beside the edit `App`. Once built, it is stepped hidden,
   with no input, until its loads, scene spawns and render uploads settle, or
