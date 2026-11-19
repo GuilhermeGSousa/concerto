@@ -31,7 +31,7 @@
 "crates/procedural-animation-gizmos" = 1
 "crates/project" = 15
 "crates/reflect" = 16
-"crates/render" = 79
+"crates/render" = 80
 "crates/render/macros" = 1
 "crates/scene" = 12
 "crates/skybox" = 4
