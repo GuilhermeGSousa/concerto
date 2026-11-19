@@ -50,6 +50,7 @@ const LIGHT_COLOR: Color = Color::srgba(1.0, 0.9, 0.4, 1.0);
 const CAMERA_COLOR: Color = Color::srgba(0.85, 0.85, 0.85, 1.0);
 const BONE_COLOR: Color = Color::srgba(1.0, 0.8, 0.2, 1.0);
 const JOINT_SIZE: f32 = 0.02;
+const WIDEST_CONE: f32 = 89.0 * std::f32::consts::PI / 180.0;
 
 impl ComponentGizmo for BoundsGizmo {
     type Component = Aabb;
@@ -94,6 +95,9 @@ impl ComponentGizmo for SkeletonGizmo {
         bones: &SystemInputData<'_, '_, Self::Input>,
         gizmos: &mut DebugGizmos,
     ) {
+        if skeleton.root().is_none() {
+            return;
+        }
         let entities: Vec<Entity> = skeleton
             .bones()
             .iter()
@@ -143,7 +147,7 @@ impl ComponentGizmo for LightGizmo {
             LightType::Point => gizmos.sphere(origin, reach, LIGHT_COLOR),
             LightType::Spot { cone_angle } => {
                 let center = origin + forward * reach;
-                let radius = reach * cone_angle.tan();
+                let radius = reach * cone_angle.min(WIDEST_CONE).tan();
                 gizmos.circle(center, forward, radius, LIGHT_COLOR);
                 for side in [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y] {
                     gizmos.line(origin, center + rotation * side * radius, LIGHT_COLOR);
@@ -241,7 +245,7 @@ mod tests {
         drawn::<G>(&mut world)
     }
 
-    fn skeleton() -> Vec<Segment> {
+    fn skeleton(rooted: bool) -> Vec<Segment> {
         let mut world = World::default();
         let owner = world.spawn(GlobalTransform::new(Mat4::IDENTITY));
         let mut bone = |at: Vec3, parent: Entity| {
@@ -257,7 +261,7 @@ mod tests {
             SkeletonComponent::new(
                 Default::default(),
                 [hip, knee, foot].map(SceneEntityRef::Entity).to_vec(),
-                None,
+                rooted.then_some(SceneEntityRef::Entity(owner)),
             ),
             GlobalTransform::new(Mat4::IDENTITY),
         ));
@@ -287,6 +291,7 @@ mod tests {
     }
 
     enum Expected {
+        Nothing,
         Corners(Vec<Vec3>),
         Joins {
             bones: Vec<Segment>,
@@ -313,7 +318,7 @@ mod tests {
     }
 
     fn close(a: f32, b: f32) -> bool {
-        (a - b).abs() < 1e-3
+        (a - b).abs() < 1e-3 * b.abs().max(1.0)
     }
 
     #[test]
@@ -342,7 +347,7 @@ mod tests {
             },
             Row {
                 name: "skeleton",
-                drawn: skeleton(),
+                drawn: skeleton(true),
                 expected: Expected::Joins {
                     bones: vec![
                         Segment {
@@ -356,6 +361,11 @@ mod tests {
                     ],
                     never: Vec3::ZERO,
                 },
+            },
+            Row {
+                name: "rootless skeleton",
+                drawn: skeleton(false),
+                expected: Expected::Nothing,
             },
             Row {
                 name: "point light with a range",
@@ -385,6 +395,16 @@ mod tests {
                     along: forward,
                     depth: REACH,
                     farthest: REACH / cone.cos(),
+                },
+            },
+            Row {
+                name: "spot light wider than a right angle",
+                drawn: one::<LightGizmo>(light(LightType::Spot { cone_angle: 45.0 }, 0.0), placed),
+                expected: Expected::Reach {
+                    from: at,
+                    along: forward,
+                    depth: REACH,
+                    farthest: REACH / 89.0_f32.to_radians().cos(),
                 },
             },
             Row {
@@ -421,8 +441,14 @@ mod tests {
 
         for row in rows {
             let name = row.name;
-            assert!(!row.drawn.is_empty(), "{name}: nothing drawn");
+            assert_eq!(
+                row.drawn.is_empty(),
+                matches!(row.expected, Expected::Nothing),
+                "{name}: drew {} segments",
+                row.drawn.len()
+            );
             match row.expected {
+                Expected::Nothing => {}
                 Expected::Corners(corners) => {
                     for vertex in vertices(&row.drawn) {
                         assert!(
