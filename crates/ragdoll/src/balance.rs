@@ -17,6 +17,7 @@ use crate::{
     behaviour::{BehaviourEnded, BodyDrive, BodyState, Outcome, PartCommand, PhysicalState},
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     generate::BRACED,
+    ik::{Chain, reach},
     resolve::Limbs,
     sensing::BodySense,
 };
@@ -105,6 +106,8 @@ pub struct Hindrance {
     pub left_leg: f32,
     /// The share of its strength the right leg keeps.
     pub right_leg: f32,
+    /// Steps the body may take on top of `max_steps` before it gives up: a stumble is many short steps.
+    pub more_steps: u32,
 }
 
 impl Default for Hindrance {
@@ -116,6 +119,7 @@ impl Default for Hindrance {
             give: 0.0,
             left_leg: 1.0,
             right_leg: 1.0,
+            more_steps: 0,
         }
     }
 }
@@ -205,6 +209,7 @@ impl Balance {
         held.give = held.give.max(hindrance.give);
         held.left_leg *= hindrance.left_leg;
         held.right_leg *= hindrance.right_leg;
+        held.more_steps = held.more_steps.max(hindrance.more_steps);
     }
 
     fn muscle(&self, kept: f32) -> PartStrength {
@@ -245,62 +250,6 @@ impl Leg {
 fn smooth(phase: f32) -> f32 {
     let phase = phase.clamp(0.0, 1.0);
     phase * phase * (3.0 - 2.0 * phase)
-}
-
-pub(crate) struct Reach {
-    pub(crate) thigh: Quat,
-    pub(crate) shin: Quat,
-}
-
-pub(crate) struct Chain {
-    pub(crate) upper: usize,
-    pub(crate) lower: usize,
-    pub(crate) end: usize,
-}
-
-pub(crate) fn reach(
-    chain: &Chain,
-    rest: &[BodyPose],
-    carried: &[Quat],
-    hip: Vec3,
-    ankle: Vec3,
-    forward: Vec3,
-) -> Reach {
-    let upper = rest[chain.lower].translation - rest[chain.upper].translation;
-    let lower = rest[chain.end].translation - rest[chain.lower].translation;
-    let upper_length = upper.length().max(1e-3);
-    let lower_length = lower.length().max(1e-3);
-    let to_ankle = ankle - hip;
-    let distance = to_ankle.length().clamp(
-        (upper_length - lower_length).abs() + 1e-3,
-        (upper_length + lower_length) * 0.999,
-    );
-    let direction = to_ankle.try_normalize().unwrap_or(Vec3::NEG_Y);
-    let cosine = ((upper_length * upper_length + distance * distance
-        - lower_length * lower_length)
-        / (2.0 * upper_length * distance))
-        .clamp(-1.0, 1.0);
-    let bend = (forward - direction * forward.dot(direction))
-        .try_normalize()
-        .unwrap_or_else(|| direction.any_orthonormal_vector());
-    let knee = hip
-        + direction * (upper_length * cosine)
-        + bend * (upper_length * (1.0 - cosine * cosine).max(0.0).sqrt());
-    let foot = hip + direction * distance;
-    let upper_local = rest[chain.upper].rotation.inverse() * upper / upper_length;
-    let lower_local = rest[chain.lower].rotation.inverse() * lower / lower_length;
-    let thigh = (Quat::from_rotation_arc(
-        carried[chain.upper] * upper_local,
-        (knee - hip).try_normalize().unwrap_or(direction),
-    ) * carried[chain.upper])
-        .normalize();
-    let shin_carried = thigh * (carried[chain.upper].inverse() * carried[chain.lower]);
-    let shin = (Quat::from_rotation_arc(
-        shin_carried * lower_local,
-        (foot - knee).try_normalize().unwrap_or(direction),
-    ) * shin_carried)
-        .normalize();
-    Reach { thigh, shin }
 }
 
 /// Each fixed step, in `BehaviourSet`: for every balancing body, pushes the pelvis towards upright and its animated height, holds the legs strong, steps the foot further from the capture point to just past it when the point has left the feet, and ends with success once the body has stood balanced and slow, or by giving up, which makes the character `Falling`.
@@ -367,7 +316,7 @@ pub fn balance_bodies(
             || (wants_step
                 && balance.step.is_none()
                 && balance.since_step >= balance.step_rest
-                && balance.steps >= balance.max_steps);
+                && balance.steps >= balance.max_steps + hindrance.more_steps);
         if fallen {
             physical.state = BodyState::Falling;
             ended(Outcome::GaveUp, &mut cmd);
@@ -584,7 +533,7 @@ pub fn balance_bodies(
                 BALANCE_PRIORITY,
                 1.0,
                 PartCommand::held(muscle)
-                    .with_target((pose[pelvis].rotation.inverse() * aimed.thigh).normalize()),
+                    .with_target((pose[pelvis].rotation.inverse() * aimed.upper).normalize()),
             );
             drive.claim(
                 BALANCE,
@@ -592,7 +541,7 @@ pub fn balance_bodies(
                 BALANCE_PRIORITY,
                 1.0,
                 PartCommand::held(muscle)
-                    .with_target((aimed.thigh.inverse() * aimed.shin).normalize()),
+                    .with_target((aimed.upper.inverse() * aimed.lower).normalize()),
             );
             drive.claim(
                 BALANCE,
@@ -600,7 +549,7 @@ pub fn balance_bodies(
                 BALANCE_PRIORITY,
                 1.0,
                 PartCommand::held(muscle)
-                    .with_target((aimed.shin.inverse() * carried[leg.foot]).normalize()),
+                    .with_target((aimed.lower.inverse() * carried[leg.foot]).normalize()),
             );
             let touched = phase > 0.6 && sense.supporting.contains(&leg.foot);
             if phase >= 1.0 || touched {

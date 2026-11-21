@@ -805,7 +805,8 @@ on top of it instead of placing the feet itself:
 - **Legs.** Each step it calls `Balance::hinder` with a `Hindrance`: steps
   cover less of the distance balance wants (`short_steps`), take longer
   (`slow_steps`), the legs and balance's assists are weaker (`weak_legs`), and
-  the knees lose strength for a quarter of a second after each landing. All of
+  the knees lose strength for a quarter of a second after each landing, and
+  the body may take `more_steps` steps on top of balance's `max_steps`. All of
   it scales with the severity and wears off over `seconds`. Any behaviour can
   hinder balance the same way.
 - **Trunk.** The spine bends towards the direction, by `bend` radians at
@@ -818,7 +819,7 @@ on top of it instead of placing the feet itself:
 It claims the spine and the arms at `STAGGER_PRIORITY`, above balance and
 below nothing the engine has yet. It ends when balance ends and triggers
 `BehaviourEnded` for `stagger` with the same outcome. On the reference
-humanoid a 70 N·s push with severity 0.4 takes more steps than balance alone
+humanoid a 70 N·s push with severity 0.3 takes more steps than balance alone
 and ends standing; with severity 1 it ends `Falling`. Between those the
 outcome is in doubt, as it should be: do not build game logic on a stagger of
 a given severity surviving.

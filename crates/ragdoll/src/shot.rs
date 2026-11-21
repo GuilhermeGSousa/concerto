@@ -14,10 +14,11 @@ use glam::{Quat, Vec3};
 
 use crate::{
     asset::{PartStrength, Segment, Side},
-    balance::{BALANCE, Balance, Chain, Hindrance, reach},
+    balance::{BALANCE, Balance, Hindrance},
     behaviour::{BehaviourEnded, BodyDrive, BodyState, Outcome, PartCommand, PhysicalState},
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     hit::{BodyHit, HitKind},
+    ik::{Chain, bent_spine, reach_hinged},
     resolve::{Limbs, ResolvedRagdoll},
     sensing::BodySense,
 };
@@ -401,24 +402,14 @@ pub fn shot_bodies(
             fold += Vec3::Y.cross(from) * reaction.fold * left * risen;
         }
         let fold = fold.clamp_length_max(reaction.fold);
-        if fold.length() > 1e-3 && !landmarks.spine.is_empty() {
-            let axis = turned.inverse() * fold.normalize();
-            let share = fold.length() / landmarks.spine.len() as f32;
-            for (index, &part) in landmarks.spine.iter().enumerate() {
-                let Some(parent) = settings[part].parent else {
-                    continue;
-                };
-                let bent = Quat::from_axis_angle(axis, share * (index + 1) as f32);
-                let below = Quat::from_axis_angle(axis, share * index as f32);
-                targets[part] = Some(
-                    (animated[parent].rotation.inverse()
-                        * below.inverse()
-                        * bent
-                        * animated[part].rotation)
-                        .normalize(),
-                );
-                touched[part] = true;
-            }
+        for aimed in bent_spine(
+            &landmarks.spine,
+            settings,
+            animated,
+            turned.inverse() * fold,
+        ) {
+            targets[aimed.part] = Some(aimed.target);
+            touched[aimed.part] = true;
         }
 
         let across = (pose[pelvis].rotation * rest[pelvis].rotation.inverse() * Vec3::X)
@@ -454,42 +445,21 @@ pub fn shot_bodies(
                     Side::Left => across,
                     _ => -across,
                 };
-                let aimed = reach(
+                let aimed = reach_hinged(
                     &Chain {
                         upper: arm.upper,
                         lower: arm.lower,
                         end: arm.hand,
                     },
+                    settings,
                     &rest,
                     &carried,
                     pose[arm.upper].translation,
                     place,
                     outward - Vec3::Y - forward * 0.3,
                 );
-                let elbow = &settings[arm.lower].joint;
-                let upper_local = rest[arm.upper].rotation.inverse()
-                    * (rest[arm.lower].translation - rest[arm.upper].translation)
-                        .normalize_or_zero();
-                let lower_local = rest[arm.lower].rotation.inverse()
-                    * (rest[arm.hand].translation - rest[arm.lower].translation)
-                        .normalize_or_zero();
-                let along = aimed.thigh * upper_local;
-                let fore = aimed.shin * lower_local;
-                let flat = |vector: Vec3| (vector - along * vector.dot(along)).try_normalize();
-                let hinged = elbow.normal_half_cone.max(elbow.plane_half_cone) < 0.1;
-                let mut upper = aimed.thigh;
-                let mut lower = aimed.shin;
-                if hinged
-                    && let Some(bent) = along.cross(fore).try_normalize()
-                    && let Some(axis) =
-                        flat(upper * (rest[arm.upper].rotation.inverse() * elbow.twist_axis))
-                    && let Some(bent) = flat(bent)
-                {
-                    upper = (Quat::from_rotation_arc(axis, bent) * upper).normalize();
-                    let hanging = upper * (carried[arm.upper].inverse() * carried[arm.lower]);
-                    lower = (Quat::from_rotation_arc(hanging * lower_local, fore) * hanging)
-                        .normalize();
-                }
+                let upper = aimed.upper;
+                let lower = aimed.lower;
                 targets[arm.upper] = Some((pose[shoulder].rotation.inverse() * upper).normalize());
                 targets[arm.lower] = Some((upper.inverse() * lower).normalize());
                 for part in [arm.upper, arm.lower, arm.hand] {

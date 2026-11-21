@@ -6,6 +6,7 @@ pub mod behaviour;
 pub mod character;
 pub mod generate;
 pub mod hit;
+mod ik;
 pub mod overlap;
 pub mod plugin;
 pub mod resolve;
