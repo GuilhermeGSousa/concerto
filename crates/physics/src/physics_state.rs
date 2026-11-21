@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::Resource;
+use concerto_foundation::time::Time;
 use concerto_foundation::transform::Transform;
 use glam::Vec3;
 
@@ -11,9 +12,9 @@ use crate::collider::{Collider, ColliderOffset};
 use crate::contact::{Contact, ContactChange};
 use crate::ground::{GroundContact, GroundState};
 use crate::query::{QueryFilter, ShapeHit};
-use crate::ragdoll::{BodyPose, BuiltRagdoll, RagdollId};
+use crate::ragdoll::{BodyPose, BuiltRagdoll, JointDrive, RagdollId};
 use crate::ray::RayHit;
-use crate::rigid_body::RigidBody;
+use crate::rigid_body::{MotionType, RigidBody};
 use crate::sensor::SensorContact;
 use crate::ActiveBackend;
 
@@ -198,6 +199,48 @@ impl PhysicsState {
             self.backend
                 .create_body(collider, transform, rigid_body, offset, sensor),
         )
+    }
+
+    /// Sets each part's velocity so that it reaches its world pose in `pose` at the end of the next fixed step. Kinematic parts follow it exactly and push dynamic bodies aside; see [`set_ragdoll_part_motion`](Self::set_ragdoll_part_motion).
+    pub fn drive_ragdoll_kinematic(&mut self, ragdoll: RagdollId, pose: &[BodyPose]) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.drive_ragdoll_kinematic(
+                ragdoll.0,
+                pose,
+                Time::fixed_delta_time().as_secs_f32(),
+            );
+        }
+    }
+
+    /// Turns every joint's motor on, aimed at the rotation each part has relative to its parent in `pose`, with the spring the joint last had.
+    pub fn drive_ragdoll_motors(&mut self, ragdoll: RagdollId, pose: &[BodyPose]) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.drive_ragdoll_motors(ragdoll.0, pose);
+        }
+    }
+
+    /// Sets what the motor of the joint between `part` and its parent does; the root has no joint and ignores it.
+    pub fn set_ragdoll_joint_drive(&mut self, ragdoll: RagdollId, part: usize, drive: JointDrive) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.set_ragdoll_joint_drive(ragdoll.0, part, drive);
+        }
+    }
+
+    /// Makes one part kinematic or dynamic, keeping its velocity, so a kinematic pelvis can carry a powered torso.
+    pub fn set_ragdoll_part_motion(&mut self, ragdoll: RagdollId, part: usize, motion: MotionType) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend
+                .set_ragdoll_part_motion(ragdoll.0, part, motion);
+        }
+    }
+
+    /// The angular impulse the motor of the joint between `part` and its parent applied in the last collision step, about the joint's twist, normal and plane axes; a motor at its torque limit is saturated.
+    pub fn ragdoll_joint_motor_impulse(&self, ragdoll: RagdollId, part: usize) -> Vec3 {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.ragdoll_joint_motor_impulse(ragdoll.0, part)
+        } else {
+            Vec3::ZERO
+        }
     }
 
     /// Removes `body` from the simulation and destroys it. Called by

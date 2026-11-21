@@ -187,6 +187,23 @@ moves them all at once. `ragdoll_bodies` gives each part's `BodyId`, for
 velocities and impulses. A ray or sphere cast that hits a part reports the
 `owner` entity and the part's index in `RayHit::part`.
 
+A ragdoll hangs from its joints until something drives it:
+
+- `drive_ragdoll_motors(id, &pose)` turns every joint's motor on, aimed at the
+  rotation each part has relative to its parent in `pose`. The body reaches for
+  the pose and holds it against gravity as far as its motors can.
+- `set_ragdoll_joint_drive(id, part, drive)` sets one joint: `JointDrive::Off`,
+  or `JointDrive::Target(JointTarget { rotation, motor })` with a
+  `MotorSettings { frequency, damping, torque_limit }`. A low torque limit
+  makes a weak muscle that sags.
+- `ragdoll_joint_motor_impulse(id, part)` reads what the motor applied in the
+  last collision step, which tells a controller that a muscle is saturated.
+- `set_ragdoll_part_motion(id, part, MotionType::Kinematic)` takes one part out
+  of the simulation's hands, so a kinematic pelvis can carry a powered torso.
+- `drive_ragdoll_kinematic(id, &pose)` sets each part's velocity so it reaches
+  `pose` at the end of the next fixed step. Kinematic parts follow it exactly
+  and push dynamic bodies aside.
+
 Ragdolls exist on Jolt only. On Rapier, and so in the browser, `build`
 succeeds and `create_ragdoll` returns `None`.
 

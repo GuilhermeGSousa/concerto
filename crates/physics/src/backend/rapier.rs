@@ -33,7 +33,7 @@ use crate::backend::{
     RawRayHit, RawSensorContact, RawShapeHit, SensorContactKind,
 };
 use crate::collider::{Collider, ColliderOffset};
-use crate::ragdoll::{BodyPose, RagdollBuildError, RagdollSettings};
+use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
 /// Jolt's default gravity, so both backends simulate the same world.
@@ -242,6 +242,36 @@ impl PhysicsBackend for RapierBackend {
     fn ragdoll_pose(&self, _ragdoll: Self::RagdollHandle, _out: &mut Vec<BodyPose>) {}
 
     fn set_ragdoll_pose(&mut self, _ragdoll: Self::RagdollHandle, _pose: &[BodyPose]) {}
+
+    fn drive_ragdoll_kinematic(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _pose: &[BodyPose],
+        _delta_time: f32,
+    ) {
+    }
+
+    fn drive_ragdoll_motors(&mut self, _ragdoll: Self::RagdollHandle, _pose: &[BodyPose]) {}
+
+    fn set_ragdoll_joint_drive(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _part: usize,
+        _drive: JointDrive,
+    ) {
+    }
+
+    fn set_ragdoll_part_motion(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _part: usize,
+        _motion: MotionType,
+    ) {
+    }
+
+    fn ragdoll_joint_motor_impulse(&self, _ragdoll: Self::RagdollHandle, _part: usize) -> Vec3 {
+        Vec3::ZERO
+    }
 
     fn new() -> Self {
         Self {

@@ -15,7 +15,7 @@ use crate::backend::{
     RawSensorContact, RawShapeHit, SensorContactKind,
 };
 use crate::collider::{Collider, ColliderOffset};
-use crate::ragdoll::{BodyPose, PartShape, RagdollBuildError, RagdollSettings};
+use crate::ragdoll::{BodyPose, JointDrive, PartShape, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
 const MAX_BODIES: u32 = 10_240;
@@ -157,6 +157,14 @@ fn to_jolt_dofs(dofs: AllowedDofs) -> concerto_jolt_ffi::JoltAllowedDofs {
         }
     }
     jolt_dofs
+}
+
+impl JoltBackend {
+    fn pose_fits(&self, ragdoll: RagdollHandle, pose: &[BodyPose]) -> bool {
+        // SAFETY: `ragdoll` is a live ragdoll of this world.
+        let parts = unsafe { concerto_jolt_ffi::jolt_ragdoll_part_count(ragdoll.0) };
+        pose.len() == parts as usize
+    }
 }
 
 impl PhysicsBackend for JoltBackend {
@@ -679,6 +687,92 @@ impl PhysicsBackend for JoltBackend {
         unsafe {
             concerto_jolt_ffi::jolt_ragdoll_set_pose(ragdoll.0, floats.as_ptr());
         }
+    }
+
+    fn drive_ragdoll_kinematic(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        pose: &[BodyPose],
+        delta_time: f32,
+    ) {
+        if !self.pose_fits(ragdoll, pose) {
+            return;
+        }
+        let floats = flatten_pose(pose);
+        // SAFETY: `ragdoll` is a live ragdoll of this world and `floats` holds seven floats for each of its parts.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_drive_kinematic(ragdoll.0, floats.as_ptr(), delta_time);
+        }
+    }
+
+    fn drive_ragdoll_motors(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]) {
+        if !self.pose_fits(ragdoll, pose) {
+            return;
+        }
+        let floats = flatten_pose(pose);
+        // SAFETY: `ragdoll` is a live ragdoll of this world and `floats` holds seven floats for each of its parts.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_drive_motors(ragdoll.0, floats.as_ptr());
+        }
+    }
+
+    fn set_ragdoll_joint_drive(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        part: usize,
+        drive: JointDrive,
+    ) {
+        let (enabled, rotation, motor) = match drive {
+            JointDrive::Off => (false, Quat::IDENTITY, Default::default()),
+            JointDrive::Target(target) => (true, target.rotation, target.motor),
+        };
+        let rotation = rotation.to_array();
+        // SAFETY: `ragdoll` is a live ragdoll of this world, the shim ignores a part it does not have, and `rotation` is a valid xyzw quaternion.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_set_joint_motor(
+                ragdoll.0,
+                part as u32,
+                enabled,
+                rotation.as_ptr(),
+                motor.frequency,
+                motor.damping,
+                motor.torque_limit,
+            );
+        }
+    }
+
+    fn set_ragdoll_part_motion(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        part: usize,
+        motion: MotionType,
+    ) {
+        let motion_type = match motion {
+            MotionType::Dynamic => concerto_jolt_ffi::JOLT_MOTION_TYPE_DYNAMIC,
+            MotionType::Kinematic => concerto_jolt_ffi::JOLT_MOTION_TYPE_KINEMATIC,
+        };
+        // SAFETY: `ragdoll` is a live ragdoll of this world and the shim ignores a part it does not have.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_set_part_motion_type(
+                self.world,
+                ragdoll.0,
+                part as u32,
+                motion_type,
+            );
+        }
+    }
+
+    fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3 {
+        let mut impulse = [0.0f32; 3];
+        // SAFETY: `ragdoll` is a live ragdoll of this world, the shim answers zero for a part it does not have, and `impulse` is a valid xyz triple.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_get_joint_motor_impulse(
+                ragdoll.0,
+                part as u32,
+                impulse.as_mut_ptr(),
+            );
+        }
+        Vec3::from(impulse)
     }
 
     fn shape_local_aabb(shape: &Self::ShapeHandle) -> Aabb {

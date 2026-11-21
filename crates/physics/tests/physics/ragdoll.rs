@@ -141,3 +141,160 @@ fn a_three_part_chain_dropped_on_a_floor_stays_joined_within_its_limits_and_come
         "a destroyed ragdoll should leave no bodies behind"
     );
 }
+
+struct MotorChain {
+    world: concerto_ecs::world::World,
+    pipeline: PhysicsPipeline,
+    settings: RagdollSettings,
+    ragdoll: concerto_physics::ragdoll::RagdollId,
+    pose: Vec<BodyPose>,
+}
+
+impl MotorChain {
+    fn state(&mut self) -> &mut PhysicsState {
+        self.world.get_resource_mut::<PhysicsState>().unwrap()
+    }
+
+    fn step(&mut self, seconds: f32) {
+        let steps = (seconds / 0.033).round() as usize;
+        let state = self.world.get_resource_mut::<PhysicsState>().unwrap();
+        for _ in 0..steps {
+            self.pipeline.step(state);
+        }
+        state.ragdoll_pose(self.ragdoll, &mut self.pose);
+    }
+
+    fn bend(&self, part: usize) -> Quat {
+        let parent = self.settings.parts[part].parent.unwrap();
+        self.pose[parent].rotation.inverse() * self.pose[part].rotation
+    }
+}
+
+#[test]
+fn a_chain_is_driven_to_a_pose_by_motors_and_kinematically() {
+    use concerto_physics::body::BodyId;
+    use concerto_physics::ragdoll::{JointDrive, JointTarget, MotorSettings};
+    use concerto_physics::rigid_body::{MotionType, RigidBody};
+
+    let strong = MotorSettings {
+        frequency: 10.0,
+        ..MotorSettings::default()
+    };
+    let mut settings = chain_settings();
+    for part in &mut settings.parts {
+        part.joint = part.joint.with_motor(strong).with_max_friction_torque(0.5);
+    }
+    let mut world = physics_world();
+    world.spawn((
+        Collider::cuboid(20.0, 0.5, 20.0),
+        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    let loose = world.spawn((
+        RigidBody::default(),
+        Collider::cuboid(0.25, 0.25, 0.25),
+        Transform::from_translation(Vec3::new(0.8, 0.25, 0.0)),
+    ));
+    let owner = world.spawn(Transform::default());
+    register_bodies(&mut world);
+    let built = settings.build().unwrap();
+    let hanging = placed(
+        &settings,
+        BodyPose::from_translation(Vec3::new(0.0, 1.8, 0.0)),
+    );
+    let state = world.get_resource_mut::<PhysicsState>().unwrap();
+    let ragdoll = state.create_ragdoll(&built, owner, &hanging).unwrap();
+    state.set_ragdoll_part_motion(ragdoll, 0, MotionType::Kinematic);
+    let mut chain = MotorChain {
+        world,
+        pipeline: PhysicsPipeline::new(),
+        settings,
+        ragdoll,
+        pose: Vec::new(),
+    };
+
+    let bent = Quat::from_rotation_z(-0.4);
+    let target = vec![
+        hanging[0],
+        BodyPose::new(hanging[1].translation, bent),
+        BodyPose::new(hanging[2].translation, bent * bent),
+    ];
+    chain.state().drive_ragdoll_motors(ragdoll, &target);
+    chain.step(3.0);
+    for part in 1..3 {
+        let error = chain.bend(part).angle_between(bent);
+        assert!(
+            error < 0.1,
+            "motors should hold part {part} at its target under gravity, was {error} rad off"
+        );
+        let impulse = chain.state().ragdoll_joint_motor_impulse(ragdoll, part);
+        assert!(
+            impulse.length() > 0.0,
+            "the motor of part {part} should be working"
+        );
+    }
+
+    let weak = JointDrive::Target(JointTarget {
+        rotation: bent,
+        motor: MotorSettings {
+            torque_limit: 0.5,
+            ..strong
+        },
+    });
+    chain.state().set_ragdoll_joint_drive(ragdoll, 1, weak);
+    chain.state().set_ragdoll_joint_drive(ragdoll, 2, weak);
+    chain.step(3.0);
+    let sag = chain.bend(1).angle_between(bent);
+    assert!(
+        sag > 0.2,
+        "a motor limited to 0.5 N·m should sag under the chain's weight, was {sag} rad off"
+    );
+
+    chain
+        .state()
+        .set_ragdoll_joint_drive(ragdoll, 1, JointDrive::Off);
+    chain
+        .state()
+        .set_ragdoll_joint_drive(ragdoll, 2, JointDrive::Off);
+    chain.step(6.0);
+    for part in 1..3 {
+        let lean = (chain.pose[part].rotation * Vec3::NEG_Y).angle_between(Vec3::NEG_Y);
+        assert!(
+            lean < 0.25,
+            "with motors off part {part} should hang, leaned {lean} rad"
+        );
+        let impulse = chain.state().ragdoll_joint_motor_impulse(ragdoll, part);
+        assert_eq!(impulse, Vec3::ZERO);
+    }
+
+    for part in 0..3 {
+        chain
+            .state()
+            .set_ragdoll_part_motion(ragdoll, part, MotionType::Kinematic);
+    }
+    let mut carried = hanging.clone();
+    for step in 1..=30 {
+        carried = placed(
+            &chain.settings,
+            BodyPose::from_translation(Vec3::new(0.05 * step as f32, 1.8, 0.0)),
+        );
+        chain.state().drive_ragdoll_kinematic(ragdoll, &carried);
+        chain.step(0.033);
+    }
+    for (part, (read, target)) in chain.pose.iter().zip(&carried).enumerate() {
+        let off = read.translation.distance(target.translation);
+        assert!(
+            off < 1e-3,
+            "kinematic part {part} should be on its target, was {off} m off"
+        );
+        assert!(read.rotation.dot(target.rotation).abs() > 0.9999);
+    }
+    let body = *chain
+        .world
+        .get_component_for_entity::<BodyId>(loose)
+        .unwrap();
+    let pushed = chain.state().body_transform(body).translation.x;
+    assert!(
+        pushed > 1.2,
+        "the kinematic chain should push the loose box out of its way, it was at x = {pushed}"
+    );
+}
